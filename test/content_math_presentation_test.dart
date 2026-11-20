@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ml_path/ui/rich_prose.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -13,24 +14,69 @@ void main() {
     );
     final failures = <Map<String, Object?>>[];
     var checked = 0;
+
+    void checkFormula(String formula, Map<String, Object?> meta) {
+      final equation = Math.tex(formula);
+      checked++;
+      if (equation.parseError != null) {
+        failures.add({
+          ...meta,
+          'formula': formula,
+          'error': equation.parseError.toString(),
+        });
+      }
+    }
+
+    void checkProse(String? raw, Map<String, Object?> meta) {
+      if (raw == null || raw.isEmpty) return;
+      for (final expr in RichProse.extractLatexExpressions(raw)) {
+        checkFormula(expr, meta);
+      }
+    }
+
     for (final asset in catalog['chapters']) {
       final chapter = jsonDecode(await rootBundle.loadString(asset as String));
       for (final lesson in chapter['lessons']) {
         final blocks = lesson['blocks'] as List;
         for (var index = 0; index < blocks.length; index++) {
           final block = blocks[index];
-          if (block['type'] != 'math') continue;
-          final equation = Math.tex(block['body'] as String);
-          checked++;
-          if (equation.parseError != null) {
-            failures.add({
+          final btype = (block['type'] as String?) ?? 'text';
+          if (btype == 'math') {
+            checkFormula(block['body'] as String, {
               'lesson': lesson['id'],
               'block': index,
-              'formula': block['body'],
-              'error': equation.parseError.toString(),
             });
+          } else if (btype == 'text' ||
+              btype == 'callout' ||
+              btype == 'checkpoint') {
+            checkProse(block['body'] as String?, {
+              'lesson': lesson['id'],
+              'block': index,
+              'field': 'body',
+            });
+            if (btype == 'checkpoint') {
+              checkProse(block['solution'] as String?, {
+                'lesson': lesson['id'],
+                'block': index,
+                'field': 'solution',
+              });
+            }
           }
         }
+      }
+      final interviews = (chapter['interviews'] as List?) ?? const [];
+      for (var i = 0; i < interviews.length; i++) {
+        final iv = interviews[i] as Map<String, dynamic>;
+        checkProse(iv['prompt'] as String?, {
+          'chapter': chapter['id'],
+          'interview': i,
+          'field': 'prompt',
+        });
+        checkProse(iv['answer'] as String?, {
+          'chapter': chapter['id'],
+          'interview': i,
+          'field': 'answer',
+        });
       }
     }
     final codingCatalog = jsonDecode(
@@ -40,16 +86,17 @@ void main() {
       final pack = jsonDecode(await rootBundle.loadString(packAsset as String));
       for (final problem in (pack['problems'] as List? ?? const [])) {
         final formula = (problem['mathFormula'] as String?) ?? '';
-        if (formula.isEmpty) continue;
-        final equation = Math.tex(formula);
-        checked++;
-        if (equation.parseError != null) {
-          failures.add({
-            'problem': problem['id'],
-            'formula': formula,
-            'error': equation.parseError.toString(),
-          });
+        if (formula.isNotEmpty) {
+          checkFormula(formula, {'problem': problem['id']});
         }
+        checkProse(problem['problemStatement'] as String?, {
+          'problem': problem['id'],
+          'field': 'problemStatement',
+        });
+        checkProse(problem['walkthrough'] as String?, {
+          'problem': problem['id'],
+          'field': 'walkthrough',
+        });
       }
     }
     final vivaCatalog = jsonDecode(
@@ -59,15 +106,18 @@ void main() {
       final pack = jsonDecode(await rootBundle.loadString(packAsset as String));
       for (final q in (pack['questions'] as List? ?? const [])) {
         final formula = (q['mathFormula'] as String?) ?? '';
-        if (formula.isEmpty) continue;
-        final equation = Math.tex(formula);
-        checked++;
-        if (equation.parseError != null) {
-          failures.add({
-            'viva': q['id'],
-            'formula': formula,
-            'error': equation.parseError.toString(),
-          });
+        if (formula.isNotEmpty) {
+          checkFormula(formula, {'viva': q['id']});
+        }
+        for (final field in const [
+          'elevatorAnswer',
+          'coreBreakdown',
+          'concreteExample',
+          'comparisonTable',
+          'followUpQuestion',
+          'followUpAnswer',
+        ]) {
+          checkProse(q[field] as String?, {'viva': q['id'], 'field': field});
         }
       }
     }

@@ -119,21 +119,28 @@ void main() {
   testWidgets(
     'RichProse renders plain text, bold/inline-code, bullets, callouts, fenced code and tables cleanly without narrow overflow',
     (tester) async {
-      const sampleRich =
-          '**Bias-Variance Tradeoff** বোঝা FAANG Viva-র মূল ভিত্তি।\n\n'
-          '- **High Bias:** `underfitting` ঘটে, train ও validation উভয় loss বেশি।\n'
-          '- **High Variance:** `overfitting` ঘটে, train loss কম কিন্তু test loss বেশি।\n'
-          '1. প্রথমে baseline model বানান।\n'
-          '2. তারপর learning curve দেখে সিদ্ধান্ত নিন।\n\n'
-          '> **উদাহরণ:** Degree-15 polynomial মাত্র 10টি data point-এ fit করলে variance আকাশছোঁয়া হয়।\n\n'
-          '```python\n'
-          'bias_sq, var, noise = 0.04, 0.16, 0.05\n'
-          'print(round(bias_sq + var + noise, 2))\n'
-          '```\n\n'
-          '| Symptom | Root Cause | Fix |\n'
-          '| --- | --- | --- |\n'
-          '| High Train Error | High Bias | Bigger model / more features |\n'
-          '| Train-Val Gap | High Variance | Regularization / more data |';
+      const sampleRich = r'''**Bias-Variance Tradeoff** ($\mathbb{E}[(y - \hat{f}(x))^2]$) বোঝা FAANG Viva-র মূল ভিত্তি।
+
+$$
+\mathrm{MSE}(\hat{f}) = \mathrm{Bias}(\hat{f})^2 + \mathrm{Var}(\hat{f}) + \sigma^2
+$$
+
+- **High Bias:** `underfitting` ঘটে, train ও validation উভয় loss বেশি ($\hat{y} = f_\theta(x)$)।
+- **High Variance:** `overfitting` ঘটে, খরচ `$100` থেকে `$200` বাড়ে না কিন্তু test loss বাড়ে।
+1. প্রথমে baseline model বানান।
+2. তারপর learning curve দেখে সিদ্ধান্ত নিন।
+
+> **উদাহরণ:** Degree-15 polynomial মাত্র 10টি data point-এ fit করলে $\mathrm{Var}(\hat{f})$ আকাশছোঁয়া হয়।
+
+```python
+bias_sq, var, noise = 0.04, 0.16, 0.05
+print(round(bias_sq + var + noise, 2))
+```
+
+| Symptom | Formula | Fix |
+| --- | --- | --- |
+| High Train Error | $\mathrm{Bias}^2 \gg 0$ | Bigger model / more features |
+| Train-Val Gap | $\mathrm{Var}(\hat{f}) \gg 0$ | Regularization / more data |''';
 
       for (final width in [320.0, 390.0]) {
         for (final scale in [1.0, 1.6, 2.0]) {

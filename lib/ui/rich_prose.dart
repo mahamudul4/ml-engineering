@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_math_fork/flutter_math.dart';
 
 import '../features/lessons/horizontal_reading_view.dart';
 import 'code_block.dart';
@@ -7,6 +8,8 @@ import 'theme.dart';
 /// Lightweight, offline rich prose renderer supporting:
 /// - **bold** key phrases
 /// - `inline code` monospace pills
+/// - $inline LaTeX$ equations (rendered via flutter_math_fork)
+/// - $$display LaTeX$$ equation cards (horizontally scrollable)
 /// - Bullet (- / •) and numbered (1. / ১.) indented points
 /// - > Blockquote example / key takeaway cards
 /// - Fenced ```python ... ``` short code snippets
@@ -23,15 +26,77 @@ class RichProse extends StatelessWidget {
     this.paragraphSpacing = 12,
   });
 
-  static final _inlinePattern = RegExp(r'\*\*(.+?)\*\*|`([^`]+)`');
+  static final _inlinePattern = RegExp(
+    r'\*\*(.+?)\*\*|`([^`]+)`|\$(?!\s)([^\$\n\u0980-\u09FF]+?)(?<!\s)\$',
+  );
   static final _bulletPattern = RegExp(r'^\s*(?:[-•*])\s+(.*)$');
   static final _numberedPattern = RegExp(r'^\s*([0-9০-৯]+[.)])\s+(.*)$');
-  static final _tableSepPattern = RegExp(r'^\|?(?:\s*:?-+:?\s*\|)+\s*:?-+:?\s*\|?$');
+  static final _tableSepPattern = RegExp(
+    r'^\|?(?:\s*:?-+:?\s*\|)+\s*:?-+:?\s*\|?$',
+  );
+  static final _currencyLikePattern = RegExp(
+    r'^[0-9][0-9,\.]*(?:\s*[KMBkmbx×%/-]|\s+(?:per|to|or|and|month|day|year|query|M|K|B))',
+  );
 
-  bool _hasRichStructure(String raw) =>
+  static bool _isLikelyInlineLatex(String expr) {
+    final trimmed = expr.trim();
+    if (trimmed.isEmpty) return false;
+    // Guard against currency ranges like "$100 to $200" if ever unbackticked.
+    if (_currencyLikePattern.hasMatch(trimmed) && !trimmed.contains(r'\')) {
+      return false;
+    }
+    return true;
+  }
+
+  /// Extracts every display (`$$...$$`) and inline (`$...$`) LaTeX expression
+  /// that [RichProse] will render from [raw]. Used by editorial math QA tests.
+  static List<String> extractLatexExpressions(String raw) {
+    final found = <String>[];
+    if (!_hasRichStructureStatic(raw)) return found;
+    final blocks = _parseBlocksStatic(raw);
+    void collectInline(String src) {
+      for (final m in _inlinePattern.allMatches(src)) {
+        final bold = m.group(1);
+        final math = m.group(3);
+        if (bold != null) {
+          if (bold.contains('`') || bold.contains(r'$')) {
+            collectInline(bold);
+          }
+        } else if (math != null && _isLikelyInlineLatex(math)) {
+          found.add(math.trim());
+        }
+      }
+    }
+
+    for (final b in blocks) {
+      if (b is _MathBlock) {
+        found.add(b.tex);
+      } else if (b is _ParagraphBlock) {
+        collectInline(b.body);
+      } else if (b is _ListItemBlock) {
+        collectInline(b.body);
+      } else if (b is _CalloutQuoteBlock) {
+        collectInline(b.body);
+      } else if (b is _TableBlock) {
+        for (final h in b.headers) {
+          collectInline(h);
+        }
+        for (final row in b.rows) {
+          for (final cell in row) {
+            collectInline(cell);
+          }
+        }
+      }
+    }
+    return found;
+  }
+
+  static bool _hasRichStructureStatic(String raw) =>
       raw.contains('**') ||
       raw.contains('`') ||
       raw.contains('```') ||
+      raw.contains(r'$$') ||
+      _inlinePattern.hasMatch(raw) ||
       raw.contains('\n- ') ||
       raw.contains('\n• ') ||
       raw.contains('\n> ') ||
@@ -54,23 +119,33 @@ class RichProse extends StatelessWidget {
           color: Theme.of(context).colorScheme.onSurface.withValues(alpha: .90),
         );
 
-    if (!_hasRichStructure(text)) {
+    if (!_hasRichStructureStatic(text)) {
       return SelectableText(text, style: baseStyle);
     }
 
-    final blocks = _parseBlocks(text);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        for (var i = 0; i < blocks.length; i++) ...[
-          if (i > 0) SizedBox(height: blocks[i].topSpacing(paragraphSpacing)),
-          _buildBlock(context, blocks[i], baseStyle),
-        ],
-      ],
+    final blocks = _parseBlocksStatic(text);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final availWidth = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : 320.0;
+        return SelectionArea(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (var i = 0; i < blocks.length; i++) ...[
+                if (i > 0)
+                  SizedBox(height: blocks[i].topSpacing(paragraphSpacing)),
+                _buildBlock(context, blocks[i], baseStyle, availWidth),
+              ],
+            ],
+          ),
+        );
+      },
     );
   }
 
-  List<_ProseBlock> _parseBlocks(String raw) {
+  static List<_ProseBlock> _parseBlocksStatic(String raw) {
     final lines = raw.replaceAll('\r\n', '\n').split('\n');
     final out = <_ProseBlock>[];
     var i = 0;
@@ -103,7 +178,37 @@ class RichProse extends StatelessWidget {
         continue;
       }
 
-      // 2. Markdown pipe table
+      // 2. Display LaTeX math block: $$ ... $$ (single-line or multi-line)
+      if (trimmed.startsWith(r'$$')) {
+        if (trimmed.length >= 4 && trimmed.endsWith(r'$$')) {
+          final inner = trimmed.substring(2, trimmed.length - 2).trim();
+          if (inner.isNotEmpty) {
+            out.add(_MathBlock(inner));
+          }
+          i++;
+          continue;
+        }
+        final buf = <String>[];
+        final firstRest = trimmed.substring(2).trim();
+        if (firstRest.isNotEmpty) buf.add(firstRest);
+        i++;
+        while (i < lines.length) {
+          final cur = lines[i].trim();
+          if (cur.endsWith(r'$$')) {
+            final before = cur.substring(0, cur.length - 2).trim();
+            if (before.isNotEmpty) buf.add(before);
+            i++;
+            break;
+          }
+          buf.add(lines[i]);
+          i++;
+        }
+        final tex = buf.join('\n').trim();
+        if (tex.isNotEmpty) out.add(_MathBlock(tex));
+        continue;
+      }
+
+      // 3. Markdown pipe table
       if (trimmed.startsWith('|') &&
           i + 1 < lines.length &&
           _tableSepPattern.hasMatch(lines[i + 1].trim())) {
@@ -118,7 +223,7 @@ class RichProse extends StatelessWidget {
         continue;
       }
 
-      // 3. Blockquote callout (> ...)
+      // 4. Blockquote callout (> ...)
       if (trimmed.startsWith('>')) {
         final quoteLines = <String>[];
         while (i < lines.length && lines[i].trim().startsWith('>')) {
@@ -130,7 +235,7 @@ class RichProse extends StatelessWidget {
         continue;
       }
 
-      // 4. Bullet point (- / •)
+      // 5. Bullet point (- / •)
       final bulletMatch = _bulletPattern.firstMatch(line);
       if (bulletMatch != null) {
         out.add(_ListItemBlock(marker: '•', body: bulletMatch.group(1)!.trim()));
@@ -138,7 +243,7 @@ class RichProse extends StatelessWidget {
         continue;
       }
 
-      // 5. Numbered point (1. / ১.)
+      // 6. Numbered point (1. / ১.)
       final numMatch = _numberedPattern.firstMatch(line);
       if (numMatch != null) {
         out.add(
@@ -152,7 +257,7 @@ class RichProse extends StatelessWidget {
         continue;
       }
 
-      // 6. Regular paragraph lines until next blank or special block
+      // 7. Regular paragraph lines until next blank or special block
       final para = <String>[trimmed];
       i++;
       while (i < lines.length) {
@@ -160,6 +265,7 @@ class RichProse extends StatelessWidget {
         final nextTrim = next.trim();
         if (nextTrim.isEmpty ||
             nextTrim.startsWith('```') ||
+            nextTrim.startsWith(r'$$') ||
             nextTrim.startsWith('>') ||
             nextTrim.startsWith('|') ||
             _bulletPattern.hasMatch(next) ||
@@ -174,7 +280,7 @@ class RichProse extends StatelessWidget {
     return out;
   }
 
-  List<String> _splitTableRow(String line) {
+  static List<String> _splitTableRow(String line) {
     var clean = line.trim();
     if (clean.startsWith('|')) clean = clean.substring(1);
     if (clean.endsWith('|')) clean = clean.substring(0, clean.length - 1);
@@ -185,12 +291,41 @@ class RichProse extends StatelessWidget {
     BuildContext context,
     _ProseBlock block,
     TextStyle baseStyle,
+    double availWidth,
   ) {
     if (block is _CodeSnippetBlock) {
       return CodeBlock(code: block.code, title: block.label);
     }
+    if (block is _MathBlock) {
+      final mathWidget = Math.tex(
+        block.tex,
+        mathStyle: MathStyle.display,
+        textStyle: TextStyle(
+          fontSize: 17,
+          color: Theme.of(context).colorScheme.onSurface,
+        ),
+      );
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.primary.withValues(alpha: .05),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: HorizontalReadingView(
+          hint: 'পুরো সমীকরণ দেখতে ডানে-বাঁয়ে সরান।',
+          child: mathWidget.parseError == null
+              ? mathWidget
+              : SelectableText(
+                  block.tex,
+                  style: baseStyle.copyWith(fontFamily: 'monospace'),
+                ),
+        ),
+      );
+    }
     if (block is _CalloutQuoteBlock) {
       final isDark = Theme.of(context).brightness == Brightness.dark;
+      final innerWidth = (availWidth - 36).clamp(60.0, 2000.0);
       return Container(
         width: double.infinity,
         padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
@@ -199,12 +334,16 @@ class RichProse extends StatelessWidget {
           borderRadius: BorderRadius.circular(10),
           border: const Border(left: BorderSide(color: forest, width: 3.5)),
         ),
-        child: SelectableText.rich(
-          _buildInlineSpan(context, block.body, baseStyle),
+        child: _richText(
+          context,
+          block.body,
+          baseStyle,
+          maxInlineWidth: innerWidth,
         ),
       );
     }
     if (block is _ListItemBlock) {
+      final innerWidth = (availWidth - 32).clamp(60.0, 2000.0);
       return Padding(
         padding: const EdgeInsets.only(left: 2),
         child: Row(
@@ -222,8 +361,11 @@ class RichProse extends StatelessWidget {
             ),
             const SizedBox(width: 9),
             Expanded(
-              child: SelectableText.rich(
-                _buildInlineSpan(context, block.body, baseStyle),
+              child: _richText(
+                context,
+                block.body,
+                baseStyle,
+                maxInlineWidth: innerWidth,
               ),
             ),
           ],
@@ -234,7 +376,27 @@ class RichProse extends StatelessWidget {
       return _buildTable(context, block, baseStyle);
     }
     final p = block as _ParagraphBlock;
-    return SelectableText.rich(_buildInlineSpan(context, p.body, baseStyle));
+    return _richText(
+      context,
+      p.body,
+      baseStyle,
+      maxInlineWidth: (availWidth - 4).clamp(60.0, 2000.0),
+    );
+  }
+
+  Widget _richText(
+    BuildContext context,
+    String source,
+    TextStyle baseStyle, {
+    required double maxInlineWidth,
+  }) {
+    final span = _buildInlineSpan(
+      context,
+      source,
+      baseStyle,
+      maxInlineWidth: maxInlineWidth,
+    );
+    return Text.rich(span);
   }
 
   Widget _buildTable(
@@ -250,6 +412,17 @@ class RichProse extends StatelessWidget {
     ).colorScheme.onSurface.withValues(alpha: isDark ? .04 : .025);
     final colCount = table.headers.length;
     final cellStyle = baseStyle.copyWith(fontSize: 12, height: 1.7);
+    final colWidths = <int, TableColumnWidth>{};
+    for (var c = 0; c < colCount; c++) {
+      var maxLen = table.headers[c].length;
+      for (final row in table.rows) {
+        if (c < row.length && row[c].length > maxLen) {
+          maxLen = row[c].length;
+        }
+      }
+      final w = (maxLen * 7.5 + 36).clamp(112.0, 250.0);
+      colWidths[c] = FixedColumnWidth(w);
+    }
 
     return HorizontalReadingView(
       hint: 'টেবিলের বাকি অংশ দেখতে ডানে-বাঁয়ে সরান।',
@@ -260,7 +433,7 @@ class RichProse extends StatelessWidget {
         ),
         clipBehavior: Clip.antiAlias,
         child: Table(
-          defaultColumnWidth: const IntrinsicColumnWidth(),
+          columnWidths: colWidths,
           border: TableBorder.symmetric(
             inside: BorderSide(color: borderColor.withValues(alpha: .7)),
           ),
@@ -268,7 +441,7 @@ class RichProse extends StatelessWidget {
             TableRow(
               decoration: BoxDecoration(color: headerBg),
               children: [
-                for (final h in table.headers)
+                for (var c = 0; c < colCount; c++)
                   Padding(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 12,
@@ -277,8 +450,10 @@ class RichProse extends StatelessWidget {
                     child: Text.rich(
                       _buildInlineSpan(
                         context,
-                        h,
+                        table.headers[c],
                         cellStyle.copyWith(fontWeight: FontWeight.w800),
+                        maxInlineWidth:
+                            (colWidths[c]! as FixedColumnWidth).value - 26,
                       ),
                     ),
                   ),
@@ -296,14 +471,13 @@ class RichProse extends StatelessWidget {
                         horizontal: 12,
                         vertical: 9,
                       ),
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 260),
-                        child: Text.rich(
-                          _buildInlineSpan(
-                            context,
-                            c < table.rows[r].length ? table.rows[r][c] : '',
-                            cellStyle,
-                          ),
+                      child: Text.rich(
+                        _buildInlineSpan(
+                          context,
+                          c < table.rows[r].length ? table.rows[r][c] : '',
+                          cellStyle,
+                          maxInlineWidth:
+                              (colWidths[c]! as FixedColumnWidth).value - 26,
                         ),
                       ),
                     ),
@@ -318,8 +492,9 @@ class RichProse extends StatelessWidget {
   TextSpan _buildInlineSpan(
     BuildContext context,
     String source,
-    TextStyle baseStyle,
-  ) {
+    TextStyle baseStyle, {
+    required double maxInlineWidth,
+  }) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final codeBg = isDark
         ? const Color(0xFF26352C)
@@ -332,19 +507,23 @@ class RichProse extends StatelessWidget {
     for (final match in _inlinePattern.allMatches(source)) {
       if (match.start > cursor) {
         children.add(
-          TextSpan(text: source.substring(cursor, match.start), style: baseStyle),
+          TextSpan(
+            text: source.substring(cursor, match.start),
+            style: baseStyle,
+          ),
         );
       }
       final boldText = match.group(1);
       final codeText = match.group(2);
+      final mathText = match.group(3);
       if (boldText != null) {
-        // Support inline `code` nested inside **bold**
-        if (boldText.contains('`')) {
+        if (boldText.contains('`') || boldText.contains(r'$')) {
           children.add(
             _buildInlineSpan(
               context,
               boldText,
               baseStyle.copyWith(fontWeight: FontWeight.w800, color: boldColor),
+              maxInlineWidth: maxInlineWidth,
             ),
           );
         } else {
@@ -370,6 +549,48 @@ class RichProse extends StatelessWidget {
               color: codeFg,
               backgroundColor: codeBg,
             ),
+          ),
+        );
+      } else if (mathText != null && _isLikelyInlineLatex(mathText)) {
+        final tex = mathText.trim();
+        final mathWidget = Math.tex(
+          tex,
+          mathStyle: MathStyle.text,
+          textStyle: baseStyle.copyWith(
+            fontSize: (baseStyle.fontSize ?? 14) + 0.5,
+            height: 1.2,
+            color: boldColor,
+          ),
+        );
+        if (mathWidget.parseError == null) {
+          children.add(
+            WidgetSpan(
+              alignment: PlaceholderAlignment.middle,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 2),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: maxInlineWidth > 40 ? maxInlineWidth : 40,
+                  ),
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: mathWidget,
+                  ),
+                ),
+              ),
+            ),
+          );
+        } else {
+          children.add(
+            TextSpan(text: source.substring(match.start, match.end), style: baseStyle),
+          );
+        }
+      } else {
+        children.add(
+          TextSpan(
+            text: source.substring(match.start, match.end),
+            style: baseStyle,
           ),
         );
       }
@@ -416,9 +637,13 @@ class _CodeSnippetBlock extends _ProseBlock {
   _CodeSnippetBlock({required this.code, required this.label});
 }
 
+class _MathBlock extends _ProseBlock {
+  final String tex;
+  _MathBlock(this.tex);
+}
+
 class _TableBlock extends _ProseBlock {
   final List<String> headers;
   final List<List<String>> rows;
   _TableBlock({required this.headers, required this.rows});
 }
-
