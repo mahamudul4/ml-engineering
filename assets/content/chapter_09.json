@@ -1,0 +1,1336 @@
+{
+  "id": "chapter_09",
+  "number": 9,
+  "title": "Decision Trees",
+  "shortTitle": "Decision Trees",
+  "displayTitle": "Decision Trees\nFrom splits to decisions",
+  "subtitle": "একটি প্রশ্ন ও দুটি Branch থেকে কীভাবে পূর্ণাঙ্গ Decision Tree গড়ে ওঠে, তার গাণিতিক যুক্তি ও কোড এবার হাতে-কলমে বুঝে নিন।",
+  "description": "Classification ও regression trees: impurity derivations, scratch CART, pruning, বাস্তব data workflow এবং গভীর coding/interview practice।",
+  "difficulty": "Intermediate",
+  "lab": "trees",
+  "lessons": [
+    {
+      "id": "ch09_rules",
+      "title": "Decision Tree: প্রশ্ন থেকে Prediction",
+      "subtitle": "Node, Path, Region এবং Leaf থেকে কীভাবে সিদ্ধান্ত তৈরি হয়",
+      "duration": "26 min",
+      "icon": "account_tree",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "প্রশ্ন করে শেখার ধারণা",
+          "body": "Book 2 · Chapter 3 (Model Evaluation & Experiment Design)-এ আমরা শিখেছি কীভাবে একটি Model-কে সঠিকভাবে যাচাই করতে হয়, আর তার আগের অধ্যায়গুলোতে আমরা মূলত সরলরৈখিক সীমানাভিত্তিক Model দেখেছি। কিন্তু বাস্তবের অনেক সমস্যায় একটিমাত্র সরলরেখা টেনে সিদ্ধান্ত নেওয়া কঠিন—সেখানে মানুষ যেভাবে ধাপে ধাপে প্রশ্ন করে সিদ্ধান্তে পৌঁছায়, তেমন একটি কাঠামো অনেক বেশি কার্যকর হয়। এই অধ্যায়ে আমরা এমনই একটি Model তৈরি করব, যা একের পর এক প্রশ্ন করে পুরো Dataset-কে ছোট ছোট অংশে ভাগ করে। প্রথম প্রশ্নটি থাকে একদম শুরুর Root Node-এ। এরপর উত্তরের ওপর ভিত্তি করে Branch ধরে পরের Internal Node-গুলোর প্রশ্নের মধ্য দিয়ে এগিয়ে যেতে হয়, আর একদম শেষে একটি Leaf Node-এ পৌঁছে চূড়ান্ত Prediction পাওয়া যায়। Classification-এর ক্ষেত্রে প্রতিটি Leaf একটি নির্দিষ্ট Class বা Class Probability Distribution দেয়, আর Regression-এর ক্ষেত্রে দেয় একটি সংখ্যাসূচক মান।\n\nসবচেয়ে আকর্ষণীয় বিষয় হলো, এই প্রশ্নগুলো আমাদের আগে থেকে হাতে লিখে দিতে হয় না—Training Data বিশ্লেষণ করে Decision Tree নিজেই সেরা প্রশ্নগুলো বেছে নেয়। কীভাবে এই Split নির্বাচন করা হয়, কেন নিয়ন্ত্রণ না করলে Tree প্রয়োজনের চেয়ে বড় হয়ে Overfitting ঘটায় এবং Pruning কীভাবে সেই সমস্যার সমাধান করে, তা আমরা ধাপে ধাপে দেখব।"
+        },
+        {
+          "type": "text",
+          "title": "একটি Path মানে শর্তের AND, আর একাধিক Leaf মানে OR",
+          "body": "Root থেকে নির্দিষ্ট কোনো Leaf পর্যন্ত যাওয়ার পথ বা Path-টিকে যুক্তির ভাষায় দেখলে সেটি আসলে পরপর যুক্ত হওয়া শর্তগুলোর একটি AND সংযোগ। যেমন ধরুন, age <= 35 এবং education_num > 10—এই দুটি শর্ত একসাথে সত্য হলেই কেবল একটি নির্দিষ্ট Leaf-এ পৌঁছানো যাবে। অন্যদিকে, একই Class নির্দেশ করে এমন ভিন্ন ভিন্ন Leaf-গুলোকে একত্র করলে পাওয়া যায় শর্তগুলোর OR সংযোগ। একটি সাধারণ Axis-aligned Tree প্রতি ধাপে কেবল একটি নির্দিষ্ট Feature বা অক্ষ বরাবর Split তৈরি করে; ফলে পুরো Feature Space অসংখ্য আয়তাকার অঞ্চলে (Rectangular Regions) ভাগ হয়ে যায়। এমনকি একই Path-এ একটি Feature একাধিকবারও আসতে পারে—যেমন প্রথমে age > 25 এবং পরের ধাপে age <= 40 যাচাই করে 25 < age <= 40 ব্যবধানটি আলাদা করা যায়। প্রচলিত নিয়ম অনুযায়ী শুরুর Root Node-এর গভীরতা ধরা হয় depth 0, আর একটি Split-এর ঠিক পরের Child Node-গুলোর গভীরতা হয় depth 1।"
+        },
+        {
+          "type": "math",
+          "title": "Prediction-এর গাণিতিক রূপ",
+          "body": "\\widehat f(x)=\\sum_{m=1}^{M}c_m\\,\\mathbf{1}\\{x\\in R_m\\}"
+        },
+        {
+          "type": "text",
+          "title": "আয়তাকার Region ও ধ্রুবক মানের সম্পর্ক",
+          "body": "উপরের সমীকরণটি আমাদের জ্যামিতিক ছবিটিকে একেবারে সুনির্দিষ্ট গাণিতিক রূপ দেয়। এখানে R_1, R_2, ..., R_M হলো পরস্পর নিঃচ্ছেদ (Disjoint) মোট M-টি Leaf Region, অর্থাৎ যেকোনো নতুন Input x ঠিক একটি এবং কেবল একটি Leaf Region-এই গিয়ে পড়বে। সেই নির্দিষ্ট Region R_m-এর জন্য নির্ধারিত ধ্রুবক মানটি হলো c_m—যা Classification-এ একটি Probability Vector বা সংখ্যাগরিষ্ঠ Class হতে পারে, আর Regression-এ হতে পারে একটি স্থির সংখ্যা। লক্ষ করুন, কোথায় Split হবে এবং প্রতিটি অঞ্চলের c_m কত হবে তা নির্ধারণ করতে কেবল Training-এর সময় Target Label প্রয়োজন হয়; নতুন ডেটার ওপর Prediction দেওয়ার সময় কেবল Feature-এর মান দেখেই সঠিক ঘরে পৌঁছে যাওয়া যায়। সীমানা বা Boundary-এর ক্ষেত্রে সাধারণত x_j <= t হলে বাম দিকের Branch-এ এবং x_j > t হলে ডান দিকের Branch-এ পাঠানো হয়—তবে নিয়ম যা-ই হোক, Training এবং Inference উভয় সময়েই হুবহু একই নিয়ম মেনে চলা বাধ্যতামূলক।"
+        },
+        {
+          "type": "text",
+          "title": "Leaf-এর অনুপাত বনাম শতভাগ নিশ্চয়তা",
+          "body": "ধরা যাক, কোনো ওজনবিহীন (Unweighted) Binary Classification-এর একটি Leaf-এ মোট n-টি Training Sample এসে পড়েছে, যার মধ্যে k-টি Positive। তাহলে ওই অঞ্চলের জন্য আনুমানিক Positive Probability দাঁড়ায় k / n। কিন্তু কোনো Leaf পুরোপুরি Pure হওয়া—অর্থাৎ k / n = 1 হওয়া—মানেই এই নয় যে ভবিষ্যতে ওই ঘরে আসা প্রতিটি নতুন ডেটাই নিশ্চিতভাবে Positive হবে! Sample সংখ্যা কম হলে, ডেটা বাছাইয়ে ঝোঁক থাকলে কিংবা Tree অতিরিক্ত গভীর হয়ে Overfitting করলে এমন ভ্রান্ত আত্মবিশ্বাস তৈরি হতে পারে। চূড়ান্ত Class Prediction দেওয়ার সময় সাধারণত সর্বোচ্চ সম্ভাবনার Class-টিকেই বেছে নেওয়া হয়; তবে দুটি Class-এর অনুপাত হুবহু সমান (Tie) হয়ে গেলে কোনটি বেছে নেওয়া হবে তা নির্ভর করে নির্দিষ্ট লাইব্রেরির ইমপ্লিমেন্টেশনের ওপর—যেমন scikit-learn সবসময় সাজানো Class ক্রমের প্রথম সর্বোচ্চ মানটি নেয়। আবার বাস্তব প্রয়োগে ভুলের মাশুল ভিন্ন হলে আমরা সাধারণ সংখ্যাগরিষ্ঠতার বদলে Cost-based Threshold বসিয়েও সিদ্ধান্ত নিতে পারি।"
+        },
+        {
+          "type": "code",
+          "title": "কোডে একটি সুস্পষ্ট Decision Stump",
+          "body": "import numpy as np\nfrom sklearn.tree import DecisionTreeClassifier\n\nX = np.arange(6.0, dtype=float).reshape(-1, 1)\ny = np.array([0, 0, 0, 1, 1, 1])  # mathematical example, not real records\nmodel = DecisionTreeClassifier(max_depth=1, random_state=42).fit(X, y)\nassert model.tree_.threshold[0] == 2.5\nassert model.predict([[2.5], [3.0]]).tolist() == [0, 1]\nprint(model.predict_proba([[2.5], [3.0]]))\n"
+        },
+        {
+          "type": "text",
+          "title": "Decision Tree কোথায় শক্তিশালী, আর কোথায় দুর্বল?",
+          "body": "উপরের ছোট কোডটিতে যেমন 2.5 সীমারেখায় নিখুঁত একটি ধাপ তৈরি হয়েছে, বাস্তবেও Nonlinear Threshold, একাধিক Feature-এর পারস্পরিক ক্রিয়া (Interaction) এবং ভিন্ন ভিন্ন স্কেলের ডেটার জন্য Decision Tree দারুণ একটি Baseline হিসেবে কাজ করে। তবে এর সীমাবদ্ধতাগুলোও মনে রাখতে হবে: অসংখ্য ছোট ছোট সিঁড়ির মতো Split না করলে এটি Linear Model-এর মতো মসৃণ (Smooth) সম্পর্ক প্রকাশ করতে পারে না। একটি একক Tree স্বভাবতই বিচ্ছিন্ন (Discontinuous), এর Variance বেশ বেশি থাকে এবং এটি Training Data-র পরিচিত সীমার বাইরে গিয়ে কখনোই নতুন প্রবণতা Extrapolate করতে পারে না। তা ছাড়া ছোট আকারের Tree মানুষের পক্ষে সহজে বোঝা গেলেও, কয়েকশ Leaf-বিশিষ্ট বিশাল একটি Tree-কে মোটেও সহজবোধ্য বা সরাসরি ব্যাখ্যাযোগ্য বলা চলে না।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে এঁকে যাচাই ও Interview প্রস্তুতি",
+          "body": "ধারণাটি পুরোপুরি নিজের আয়ত্তে আনতে কাগজে age এবং education_num—এই দুটি Feature নিয়ে তিন Leaf-বিশিষ্ট একটি ছোট Tree-এর নিয়ম লিখে ফেলুন। এবার দ্বিমাত্রিক ছকে প্রতিটি Leaf-এর আয়তাকার Region আঁকুন, ঠিক Boundary-এর ওপর থাকা একটি Input কোন ঘরে যায় তা মিলিয়ে দেখুন এবং যাচাই করুন সম্ভাব্য সব Input-ই ঠিক একটি নির্দিষ্ট Leaf-এ পৌঁছাচ্ছে কি না। আর Interview-এ কখনোই ঢালাওভাবে বলবেন না যে 'Decision Tree সবসময়ই Explainable'—বরং একজন দক্ষ প্রকৌশলীর মতো সাথে সাথে Tree-এর আকার, যিনি ব্যাখ্যাটি দেখছেন তাঁর প্রেক্ষাপট এবং স্থানীয় নিয়মের সীমাবদ্ধতার কথাও উল্লেখ করবেন।"
+        }
+      ]
+    },
+    {
+      "id": "ch09_impurity",
+      "title": "Gini Impurity ও Entropy",
+      "subtitle": "একটি Node-এ বিভিন্ন Class কতটা মিশ্র অবস্থায় আছে তা মাপার গাণিতিক উপায়",
+      "duration": "30 min",
+      "icon": "account_tree",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "শুধু Misclassification Error কেন যথেষ্ট নয়?",
+          "body": "আগের পাঠে আমরা দেখেছি, একটি Decision Tree একের পর এক প্রশ্ন করে Dataset-কে ছোট ছোট অংশে বা Node-এ ভাগ করে। আমাদের লক্ষ্য হলো এমন Split বেছে নেওয়া, যাতে ভাগের পর প্রতিটি নতুন Node-এ মূলত একই Class-এর Sample জড়ো হয়—অর্থাৎ Node-গুলো যতটা সম্ভব Pure হয়। কিন্তু Training-এর সময় হাজারো সম্ভাব্য প্রশ্নের ভিড়ে Model কীভাবে বুঝবে কোন Split-টি সবচেয়ে ভালো? প্রথম দেখায় মনে হতে পারে, প্রতিটি Node-এ সংখ্যাগরিষ্ঠ Class ধরে নিলে কয়টি ভুল হয় (Misclassification Error = 1 - max_k p_k), সেটাই মাপি! কিন্তু একটু খেয়াল করলেই দেখবেন, Split খোঁজার সময় এই মাপকাঠিটি অনেক ভিন্ন ভিন্ন Class অনুপাতের ক্ষেত্রেও হুবহু একই মান দেয়, ফলে সূক্ষ্ম উন্নতিগুলো তার চোখে পড়ে না। Class অনুপাতের এই সূক্ষ্ম পরিবর্তন সংবেদনশীলভাবে ধরার জন্যই আমরা ব্যবহার করি Gini Impurity এবং Entropy। তবে শুরুতেই মনে রাখা জরুরি, Impurity হলো কেবল একটি Training Objective—এটি সরাসরি Validation পারফরম্যান্সের নিশ্চয়তা দেয় না।"
+        },
+        {
+          "type": "math",
+          "title": "Multiclass ক্ষেত্রে গাণিতিক সংজ্ঞা",
+          "body": "G=1-\\sum_{k=1}^{K}p_k^2,\\qquad H=-\\sum_{k:p_k>0}p_k\\log_2p_k"
+        },
+        {
+          "type": "math",
+          "title": "Binary Classification-এর বিশেষ রূপ",
+          "body": "G(p)=2p(1-p),\\quad H(p)=-p\\log_2p-(1-p)\\log_2(1-p)"
+        },
+        {
+          "type": "text",
+          "title": "সীমান্তবর্তী মান, একক ও কোডিং সতর্কতা",
+          "body": "সমীকরণ দুটি থেকে কয়েকটি গুরুত্বপূর্ণ বৈশিষ্ট্য খুব সহজেই বোঝা যায়। কোনো Node পুরোপুরি Pure হলে—অর্থাৎ সব Sample একই Class-এর হলে—Gini Impurity এবং Entropy দুটোর মানই হয় 0। অন্যদিকে, দুই Class-এর সুষম মিশ্রণে (p = 0.5) Gini হয় সর্বোচ্চ 0.5, আর 2-ভিত্তিক লগারিদম ব্যবহার করায় Entropy হয় 1 bit। সাধারণ K-সংখ্যক Class-এর Uniform Distribution-এ সর্বোচ্চ মান দাঁড়ায় যথাক্রমে Gini = 1 - 1 / K এবং Entropy = log_2(K)। যেহেতু দুটির গাণিতিক স্কেল ও একক আলাদা, তাই একটির কাঁচা Gain-এর সংখ্যার সাথে অন্যটির সংখ্যার সরাসরি তুলনা কখনোই করবেন না। আরেকটি জরুরি কোডিং সতর্কতা: গাণিতিকভাবে 0 * log_2(0)-এর সীমাস্থ মান (Limit) 0 হলেও কম্পিউটারে সরাসরি log2(0) হিসাব করতে গেলে এরর বা NaN তৈরি হবে, তাই কোডে কেবল p_k > 0 পদগুলোই যোগ করতে হবে। আর খালি বা Empty Node-এ কোনো Sample না থাকায় সেখানে Probability বা Impurity সংজ্ঞায়িত নয়।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে একটি হিসাব ও স্বজ্ঞাত অর্থ",
+          "body": "এবার একটি ছোট উদাহরণ দিয়ে সূত্র দুটি মিলিয়ে দেখা যাক। ধরুন একটি Node-এর Label-গুলো হলো [0, 0, 0, 1]; এখানে Positive Class-এর অনুপাত p = 0.25 এবং অন্যটির অনুপাত 0.75। তাহলে Gini Impurity হবে 2 * 0.25 * 0.75 = 0.375, আর Entropy হবে প্রায় 0.8113 bits। সংখ্যাগুলোর পেছনের স্বজ্ঞাটিও বেশ পরিষ্কার: ওই Node-এর Class Distribution থেকে স্বাধীনভাবে দুবার দুটি Label তুললে তারা পরস্পর ভিন্ন হওয়ার সম্ভাবনাই হলো Gini Impurity। আর Information Theory-এর ভাষায় একটি দৈব Sample-এর Class জানতে গড়ে কতটুকু বিস্ময় (Surprisal) কাজ করে, তারই পরিমাপ হলো Entropy। খেয়াল রাখবেন, এই দুটি মাপকাঠিই কেবল Target Label-এর অনুপাত থেকে আসে—age বা অন্য কোনো Feature-এর সংখ্যাসূচক Variance থেকে নয়।"
+        },
+        {
+          "type": "code",
+          "title": "নিরাপদ Python ইমপ্লিমেন্টেশন",
+          "body": "import math\n\n\ndef impurity(labels, criterion=\"gini\"):\n    if not labels or any(x not in (0, 1) for x in labels):\n        raise ValueError(\"Nonempty binary labels\")\n    p = sum(labels) / len(labels)\n    if criterion == \"gini\":\n        return 2 * p * (1 - p)\n    if criterion != \"entropy\":\n        raise ValueError(\"Unknown criterion\")\n    return -sum(q * math.log2(q) for q in (p, 1 - p) if q > 0)\n\n\nassert impurity([1, 1]) == 0\nassert impurity([0, 1], \"entropy\") == 1\nassert impurity([0, 0, 0, 1]) == 0.375\nprint(impurity([0, 0, 0, 1], \"entropy\"))\n"
+        },
+        {
+          "type": "text",
+          "title": "Entropy ও Log Loss-এর নিবিড় সম্পর্ক",
+          "body": "উপরের কোডে যেভাবে Entropy হিসাব করা হয়েছে, তার সাথে আমাদের পরিচিত Log Loss-এর সরাসরি একটি গাণিতিক যোগসূত্র রয়েছে। কোনো Leaf-এ থাকা Sample-গুলোর বাস্তব বা Empirical Class Probability দিয়েই যদি ওই Leaf-এর প্রতিটি ডেটার গড় Negative Log-Likelihood হিসাব করেন, তবে হুবহু সেই Node-এর Entropy-ই ফিরে পাবেন (লগারিদমের ভিত্তি অনুযায়ী কেবল একটি ধ্রুবক স্কেলের পার্থক্য থাকে)। এ কারণেই scikit-learn-এ entropy এবং log_loss—এই দুটি Split Criterion ভেতরে ভেতরে একই Shannon Information Objective ব্যবহার করে। তবে মনে রাখবেন, Training-এর সময় Entropy কমানো মানেই যে অদেখা ডেটায় সুবিন্যস্ত Calibrated Probability পাওয়া যাবে বা বাস্তব প্রয়োগে সেরা ফলাফল মিলবে—এমন কোনো নিশ্চয়তা নেই।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে গুছিয়ে বলবেন",
+          "body": "Interview-এ প্রায়ই প্রশ্ন করা হয়, 'Gini আর Entropy-এর মধ্যে কোনটি সবসময় ভালো?' এর পরিষ্কার উত্তর হলো: সার্বজনীনভাবে সেরা কোনোটিই নয়; দুটোই বেশিরভাগ বাস্তব সমস্যায় খুব কাছাকাছি Tree তৈরি করে, তাই Criterion-কে একটি Hyperparameter হিসেবে ধরে নির্ধারিত Evaluation Protocol দিয়ে যাচাই করাই সঠিক নিয়ম। প্রস্তুতির জন্য Binary ক্ষেত্রে p = 0.1, 0.5 এবং 0.9 বসিয়ে Impurity হাতে বের করুন এবং দেখুন কেন p = 0.1 ও p = 0.9 হুবহু একই মান দেয় (Symmetry)। পাশাপাশি Book 1 · Chapter 4 (Probability, Statistics & Inference)-এর প্রান্তিক সম্ভাবনার যুক্তি স্মরণ করে বুঝিয়ে বলুন কেন একটি ছোট কিন্তু পুরোপুরি Pure Training Leaf দেখেই ভবিষ্যতে অদেখা ঘটনার ঝুঁকি 0 ধরে নেওয়া মারাত্মক ভুল।"
+        }
+      ]
+    },
+    {
+      "id": "ch09_splits",
+      "title": "সঠিক Threshold খুঁজে নেওয়া",
+      "subtitle": "Weighted Child Impurity, Duplicate মান ও Minimum Leaf শর্ত",
+      "duration": "30 min",
+      "icon": "account_tree",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "স্থানীয় Greedy লক্ষ্যমাত্রা",
+          "body": "আগের পাঠে আমরা একটি একক Node-এর Impurity মাপতে শিখেছি। এবার মূল প্রশ্ন হলো: বর্তমান Node-এর ডেটা D-কে ভাগ করার জন্য আমরা কোন Feature j এবং কোন Threshold t বেছে নেব? Decision Tree এখানে একটি স্থানীয় Greedy কৌশল অনুসরণ করে—অর্থাৎ সে এমন একটি প্রশ্ন খোঁজে যাতে ভাগের পর দুই Child Node-এর Impurity-র ভারযুক্ত গড় (Weighted Average) সবচেয়ে বেশি কমে। এখানে প্রতিটি Child-এর Weight হলো Parent Node-এর মোট Row সংখ্যার তুলনায় ওই Child-এ যাওয়া Row সংখ্যার অনুপাত; আর Sample Weight দেওয়া থাকলে কার্যকর ওজনের যোগফল ব্যবহার করতে হয়। ভুলেও দুই Child-এর Impurity-র সরল গড় নেবেন না, কারণ তাতে অসম আকারের (Unequal Size) Split-গুলোর তুলনা পুরোপুরি ভুল হয়ে যাবে।"
+        },
+        {
+          "type": "math",
+          "title": "স্থানীয় Impurity Gain-এর সমীকরণ",
+          "body": "\\Delta I=I(D)-\\frac{n_L}{n}I(D_L)-\\frac{n_R}{n}I(D_R)"
+        },
+        {
+          "type": "text",
+          "title": "উদাহরণ দিয়ে হাতে-কলমে Split যাচাই",
+          "body": "সমীকরণটি একটি ছোট সংখ্যার উদাহরণ দিয়ে পরীক্ষা করা যাক। ধরুন, Parent Node-এর ৬টি Label হলো [0, 0, 0, 1, 1, 1], যার Gini Impurity হলো 0.5। কোনো একটি Split-এর ফলে বাম Child-এ গেল [0, 0] (Pure, তাই Gini = 0) এবং ডান Child-এ গেল [0, 1, 1, 1] (যার Gini = 0.375)। তাহলে ভারযুক্ত Child Impurity হবে (2 / 6) * 0 + (4 / 6) * 0.375 = 0.25, এবং Parent Node-এর Impurity থেকে বিয়োগ করলে Gain দাঁড়াবে 0.5 - 0.25 = 0.25। লক্ষ করুন, ওজন ছাড়া সরল গড় নিলে (0 + 0.375) / 2 = 0.1875 আসত, যা Gain-এর হিসাবকে ভুল পথে নিয়ে যেত। আরেকটি বিষয় মনে রাখবেন: এই Gain কেবল বর্তমান Training Node-এর Class মিশ্রণ কতটা পরিষ্কার হলো তা জানায়—বাইরের অদেখা ডেটায় Accuracy কতটা বাড়বে তার সরাসরি নিশ্চয়তা এটি দেয় না।"
+        },
+        {
+          "type": "text",
+          "title": "সম্ভাব্য Candidate Threshold কোথায় খুঁজব?",
+          "body": "একটি Numeric Feature-এর অসীম সংখ্যক বাস্তব মানের মধ্য থেকে আমরা ঠিক কোন কোন Threshold পরীক্ষা করব? কৌশলটি খুব গোছানো: প্রথমে ওই Feature-এর মানগুলোকে ছোট থেকে বড় ক্রমে Sort করে পাশাপাশি থাকা দুটি ভিন্ন মানের (Distinct Adjacent Values) মধ্যবিন্দুগুলোকে Candidate Threshold হিসেবে নেওয়া হয়। খেয়াল রাখবেন, হুবহু সমান Feature মানের দুটি Row-কে কখনোই আলাদা Child-এ পাঠানো যাবে না! আবার এমন প্রান্তিক Threshold নেওয়া যাবে না যাতে কোনো একটি Child পুরোপুরি Empty হয়ে যায়। এর পাশাপাশি min_samples_leaf শর্ত দেওয়া থাকলে বাম ও ডান—উভয় Child-এই কমপক্ষে ততগুলো Row থাকা বাধ্যতামূলক। একাধিক Candidate সমান Gain দিলে (Tie হলে) নির্দিষ্ট একটি সুশৃঙ্খল নিয়ম মেনে বাছাই করলে কোড তুলনা ও ডিবাগ করা সহজ হয়, যদিও বিভিন্ন লাইব্রেরির নিজস্ব Tie-breaking আচরণ আলাদা হতে পারে।"
+        },
+        {
+          "type": "math",
+          "title": "স্থানীয় Node Gain বনাম সামগ্রিক Global Decrease",
+          "body": "\\Delta I_{global}=\\frac{N_t}{N}\\left(I_t-\\frac{N_L}{N_t}I_L-\\frac{N_R}{N_t}I_R\\right)"
+        },
+        {
+          "type": "text",
+          "title": "Node-এর আকার অনুযায়ী Scaling কেন জরুরি?",
+          "body": "উপরের সমীকরণে N_t হলো বর্তমান Node-এর মোট Training Weight, আর N হলো পুরো Tree-এর একদম শুরুর মোট Training Weight। গভীরের কোনো ছোট্ট Node-এ অল্প কয়েকটি ডেটা ভাগ করে হয়তো বড় একটি Local Gain পাওয়া গেল, কিন্তু পুরো Dataset-এর সাপেক্ষে তার সামগ্রিক অবদান খুবই সামান্য হতে পারে। ঠিক এই কারণেই scikit-learn-এর min_impurity_decrease শর্তে স্থানীয় Gain নয়, বরং N_t / N দিয়ে গুণ করা এই সামগ্রিক হ্রাস (Global Weighted Decrease) ব্যবহার করা হয়। কেবল শুরুর Root Node-এ N_t = N হওয়ায় দুটি মান অভিন্ন থাকে। আর Class Weight বা Sample Weight ব্যবহার করলে প্রতিটি N সাধারণ সংখ্যার বদলে ওজনের যোগফল নির্দেশ করে।"
+        },
+        {
+          "type": "tree_split_lab",
+          "title": "ইন্টারঅ্যাক্টিভ Split Explorer",
+          "body": "সাথে যুক্ত আসল Adult Dataset-এর প্রথম 24টি বাস্তব Observation এই ইন্টারঅ্যাক্টিভ ল্যাবে নিরীক্ষা করে দেখুন। Threshold পরিবর্তন করে লক্ষ্য করুন কীভাবে Child Node-এর মোট সংখ্যা, Positive সংখ্যা, Probability এবং Gain তাৎক্ষণিকভাবে বদলে যায়। এরপর মাপকাঠি হিসেবে Entropy বেছে নিয়ে এককের পরিবর্তনটি মিলিয়ে দেখুন। এবার Minimum Leaf বাড়িয়ে 13 করে দিন—দেখবেন 24টি Row-কে দুই ভাগে অন্তত 13টি করে দেওয়া অসম্ভব হওয়ায় আর একটিও বৈধ Binary Partition সম্ভব হচ্ছে না! পাশাপাশি Empty-child নিয়ন্ত্রণটি ব্যবহার করে দেখুন কেন খালি Node-এ Impurity অসংজ্ঞায়িত হয়ে পড়ে।"
+        },
+        {
+          "type": "text",
+          "title": "Prefix Count দিয়ে দ্রুতগতির অনুসন্ধান",
+          "body": "হাজারো Row-এর ডেটায় কোডের মাধ্যমে দ্রুত সেরা Split খুঁজতে হলে Brute-force পদ্ধতিতে প্রতি Candidate-এর জন্য বারবার পুরো অ্যারে ফিল্টার করা চলবে না—তাতে সময় লাগবে O(n^2)। অথচ একবার Feature অনুযায়ী ডেটা Sort করে নিলে সাজানো Binary Label-এর ক্রমযোজিত যোগফল বা Prefix Count রেখে প্রতিটি Candidate-এর বাম ও ডান দিকের Class সংখ্যা ধ্রুব সময়ে O(1)-এ বের করা যায়! ফলে একটি Feature-এর জন্য সাজাতে লাগে O(n log n) এবং পুরো স্ক্যানে লাগে মাত্র O(n) সময়। তবে এই দ্রুতগতির স্ক্যান লেখার সময় Numerical Precision, পাশাপাশি থাকা সমান মান এড়িয়ে যাওয়া এবং Minimum Leaf-এর শর্তগুলো কখনোই বাদ দেবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "Feature-এর একক বদলালে Threshold-এর কী হয়?",
+          "body": "এখানে একটি চমৎকার প্রশ্ন নিয়ে ভেবে দেখুন: Label-গুলোতে হাত না দিয়ে যদি কোনো Feature-এর একক বদলে ফেলি, তবে Threshold কীভাবে বদলাবে? যেহেতু ডেটার ক্রম বা Ordering বদলাচ্ছে না, তাই সম্ভাব্য বৈধ বিভাজনগুলো (Admissible Partitions) একই থাকবে। ধনাত্মক রৈখিক রূপান্তরে (Positive Affine Scaling) দুটি বিন্দুর মধ্যবিন্দুটিও অবিকল সেই অনুপাতেই স্থানান্তরিত হয়। কিন্তু যেকোনো বক্র একমুখী রূপান্তরে (Nonlinear Monotone Transform, যেমন log বা বর্গ) Training-এর বিভাজন একই থাকলেও মধ্যবিন্দু নেওয়ার কারণে নতুন ডেটার ওপর Inference Boundary মূল স্কেলে হুবহু একই জায়গায় নাও থাকতে পারে—এর সূক্ষ্ম প্রভাব আমরা পরের দিকের পাঠেও দেখব।"
+        },
+        {
+          "type": "text",
+          "title": "সব বৈধ Threshold পাশাপাশি রেখে তুলনা",
+          "body": "কোডে যাওয়ার আগে একটি পরিষ্কার সংখ্যার উদাহরণ মিলিয়ে নিই। ধরুন x = [0, 1, 2, 3, 4, 5], labels = [0, 0, 0, 1, 1, 1] এবং শর্ত হলো min_leaf = 2। এখানে 0.5 এবং 4.5 বিন্দুতে ভাগ করলে এক পাশের Child খুব ছোট হয়ে যায়, তাই শর্ত ভঙ্গের কারণে সেগুলো বাদ। বৈধ Candidate Threshold থাকে তিনটি: 1.5, 2.5 এবং 3.5। এদের জন্য ভারযুক্ত Child Gini হিসাব করলে পাওয়া যায় যথাক্রমে 0.25, 0 এবং 0.25। Parent-এর Impurity 0.5 হওয়ায় তিনটির Gain দাঁড়ায় যথাক্রমে 0.25, 0.5 এবং 0.25। সুতরাং এই উদাহরণে বিতর্কহীনভাবে সেরা ও অদ্বিতীয় Threshold হলো 2.5।"
+        },
+        {
+          "type": "code",
+          "title": "Sorted Prefix Count দিয়ে Gain নির্ণয়ের কোড",
+          "body": "values, labels = [0, 1, 2, 3, 4, 5], [0, 0, 0, 1, 1, 1]\ncount, positives, left_positive = len(labels), sum(labels), 0\nparent = 2 * (positives / count) * (1 - positives / count)\ncandidates = []\nfor left_count in range(1, count):\n    left_positive += labels[left_count - 1]\n    right_count = count - left_count\n    if min(left_count, right_count) < 2 or values[left_count - 1] == values[left_count]:\n        continue\n    left_p = left_positive / left_count\n    right_p = (positives - left_positive) / right_count\n    child = (left_count * 2 * left_p * (1 - left_p)\n             + right_count * 2 * right_p * (1 - right_p)) / count\n    threshold = (values[left_count - 1] + values[left_count]) / 2\n    candidates.append((threshold, parent - child))\n# Values are already sorted; the scan itself is linear in row count.\nprint(*(value for pair in candidates for value in pair))\n"
+        },
+        {
+          "type": "text",
+          "title": "Local Gain ও Global Decrease আলাদা রাখতে ভুলবেন না",
+          "body": "উপরের কোডটি বর্তমান Node-এর ভেতরকার সেরা Local Gain বের করে আনে। কিন্তু ধরুন পুরো Training Set-এ মোট 10টি Row ছিল, আর বর্তমান Node-এ এসে পৌঁছেছে মাত্র 3টি Row। তাহলে এই Node-এর Local Gain 0.5 হলেও সামগ্রিক Global Scale-এ এর মান হবে (3 / 10) * 0.5 = 0.15। কেবল Root Node-এ ওজনের অনুপাত 1 হওয়ায় দুটি মান অভিন্ন হয়। তাই min_impurity_decrease-এর সাথে তুলনা করার সময় নির্দিষ্ট লাইব্রেরির API নিয়ম দেখে নিশ্চিত হয়ে নিন কোন স্কেলটি ব্যবহৃত হচ্ছে।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে হিসাব করে দেখুন",
+          "body": "উপরের ৬টি Row-এর উদাহরণে যদি min_leaf = 4 নির্ধারণ করে দেওয়া হয়, তবে কয়টি বৈধ Binary Split অবশিষ্ট থাকবে?",
+          "solution": "একটিও বৈধ Split থাকবে না। কারণ দুই Child Node-এ অন্তত ৪টি করে Row দিতে হলে মোট কমপক্ষে ৮টি Row প্রয়োজন। তাই Split Search কোনো বিভাজন না করে এই Node-টিকে সরাসরি একটি Leaf হিসেবেই রেখে দেবে।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch09_cart",
+      "title": "নিজে একটি CART Classifier তৈরি করি",
+      "subtitle": "Recursive Training, থামার শর্ত এবং Prediction Traversal",
+      "duration": "30 min",
+      "icon": "account_tree",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "আমাদের ইমপ্লিমেন্টেশনের সুনির্দিষ্ট পরিধি",
+          "body": "আগের দুটি পাঠে আমরা Impurity এবং সেরা Threshold খোঁজার গাণিতিক নিয়মগুলো আলাদাভাবে দেখেছি। এবার সেগুলোকে একত্র করে শূন্য থেকে একটি কার্যকর CART Classifier তৈরি করব। শেখার সুবিধার্থে আমাদের এই ইমপ্লিমেন্টেশনের পরিধি (Contract) খুব স্পষ্ট রাখছি: এটি সসীম Numeric Matrix এবং Binary Label ইনপুট নেয়, আর এতে রয়েছে Gini Criterion, সর্বোচ্চ গভীরতার সীমা (max_depth) ও ন্যূনতম আকারের শর্ত (min_leaf)। প্রোডাকশন লাইব্রেরির মতো Missing Value, Multiclass, Sample Weight বা Pruning এখানে রাখা হয়নি। তবে থামার শর্ত হিসেবে সুস্পষ্ট Positive-gain নীতি ব্যবহার করা হয়েছে: Gain <= 1e-12 হলে আর কোনো Split করা হবে না—ফলে XOR-এর মতো সমস্যায় শুরুর Root-এ শূন্য Gain দেখলেই এই Tree থেমে যাবে।"
+        },
+        {
+          "type": "text",
+          "title": "Recursive Training-এর ধাপগুলো",
+          "body": "কোডে হাত দেওয়ার আগে অ্যালগরিদমটির প্রবাহ সাজিয়ে নিই। প্রতিটি Node-এ পৌঁছানোর পর প্রথমেই সেখানকার Sample সংখ্যা n এবং বাস্তব Positive Probability সংরক্ষণ করতে হবে। যদি দেখা যায় সব Label ইতিমধ্যেই Pure হয়ে গেছে কিংবা গভীরতা max_depth সীমায় পৌঁছেছে, তবে সাথে সাথে এই Node-টিকে একটি Leaf হিসেবে ফিরিয়ে দেব। অন্যথায় বৈধ সব শর্ত মেনে সেরা Split-টি খুঁজব। বৈধ বা ধনাত্মক Gain-এর কোনো Split না পাওয়া গেলে এটি Leaf থেকে যাবে; আর পাওয়া গেলে একই Threshold দিয়ে বাম ও ডান দিকের Mask তৈরি করে পুনর্বার (Recursively) দুই Child Node বড় করতে থাকব। অন্যদিকে, Prediction-এর সময় নতুন করে আর কোনো Split খোঁজা হয় না—কেবল শেখা প্রশ্নগুলো অনুসরণ করে Root থেকে নির্দিষ্ট Leaf-এ নেমে যাওয়া হয়।"
+        },
+        {
+          "type": "code",
+          "title": "প্রজেক্টের কার্যকর CART ইমপ্লিমেন্টেশন",
+          "body": "from pathlib import Path\nimport runpy\nimport numpy as np\n\napi = runpy.run_path(str(Path(\"assets/datasets/adult/tree_workflow.py\")))\nfit_cart, predict_cart = api[\"fit_cart\"], api[\"predict_cart\"]\nX = np.arange(6.0).reshape(-1, 1)\ny = np.array([0, 0, 0, 1, 1, 1])\nmodel = fit_cart(X, y, max_depth=2, min_leaf=2)\nprobabilities = predict_cart(model, X)\nassert model[\"root\"][\"threshold\"] == 2.5\nassert probabilities.tolist() == [0.0, 0.0, 0.0, 1.0, 1.0, 1.0]\nprint(model[\"root\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "ভেতরের Split Function কীভাবে কাজ করে?",
+          "body": "সোর্স ফাইলের best_split Function-টি প্রতিটি Feature-এর ওপর লুপ চালায় এবং Stable Sort করার পর ক্রমযোজিত Positive Label গণনা করে নেয়। এরপর প্রতিটি সম্ভাব্য left_n-এর জন্য বাম ও ডান দিকের অনুপাত দিয়ে ভারযুক্ত Gini হিসাব করা হয়, তবে পুনরাবৃত্ত বা সমান Feature মানগুলো এড়িয়ে যাওয়া হয়। ধনাত্মক Gain-গুলোর মধ্যে কেবল স্পষ্টভাবে বড় (Strictly Better) মান পেলেই সেরা Candidate আপডেট করা হয়—ফলে সমান Gain বা Tie হলে আগের Feature ও ছোট Threshold-টিই বহাল থাকে। Floating-point Overflow এড়াতে মধ্যবিন্দু বের করা হয়েছে a / 2 + b / 2 সূত্র দিয়ে, আর দুটি সংখ্যা এত কাছাকাছি হলে যে মধ্যবিন্দু উপরের প্রান্তের সমান হয়ে যায়, তখন নিরাপদ বিকল্প হিসেবে নিচের প্রান্তটিকে নেওয়া হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "Recursion ও Prediction Traversal-এর খুঁটিনাটি",
+          "body": "মূল fit_cart Function-টি শুরুতেই Input যাচাই করার পর ভেতরের grow(matrix, labels, depth) Recursion চালু করে। প্রতিটি Node-এ n এবং p সবসময়ই সংরক্ষিত থাকে, সেটি Leaf হোক বা না হোক; কেবল বৈধ Split পাওয়া গেলেই feature, threshold, gain এবং দুই Branch যুক্ত হয়। এরপর predict_cart চালানোর সময় প্রথমেই মিলিয়ে দেখা হয় Input-এর Feature সংখ্যা শেখা Model-এর সমান কি না এবং সব মান সসীম (Finite) কি না; তারপর প্রতিটি Row শুরুর Root থেকে ধাপে ধাপে নিজের Leaf পর্যন্ত গিয়ে Probability ফিরিয়ে দেয়। এমনকি (0, d) Shape-এর Empty Batch দিলেও কোডটি সঠিকভাবে কাজ করে এবং কলকারীর মূল Array-তে কোনো পরিবর্তন (Mutate) ঘটায় না।"
+        },
+        {
+          "type": "text",
+          "title": "কী ধরনের Unit Test লেখা জরুরি?",
+          "body": "নিজের লেখা ইমপ্লিমেন্টেশন যাচাই করতে অর্থবহ কিছু Unit Test লেখা অপরিহার্য। যেখানে অদ্বিতীয় সেরা Split আছে, সেখানে scikit-learn-এর এক-ধাপের Stump-এর সাথে আপনার Threshold ও Predicted Probability মিলিয়ে দেখুন। পাশাপাশি সব মান সমান এমন Feature, পুরোপুরি Pure Label, min_leaf > n / 2, max_depth = 0, অবৈধ Label বা ভুল Shape এবং ঠিক Boundary-এর সমান মান দিয়ে প্রান্তিক ক্ষেত্রগুলো পরীক্ষা করুন। তবে খেয়াল রাখবেন, Exact Tie-এর ক্ষেত্রে দুটি ভিন্ন কোডের Tree কাঠামো আলাদা হতেই পারে—তাই অন্ধভাবে হুবহু এক Tree দাবি না করে অর্জিত Objective, Prediction এবং নথিবদ্ধ Tie-breaking নিয়ম মিলিয়ে দেখুন।"
+        },
+        {
+          "type": "text",
+          "title": "তাহলে প্রোডাকশনে প্রতিষ্ঠিত লাইব্রেরি কেন ব্যবহার করব?",
+          "body": "ধারণা পরিষ্কার করার জন্য নিজের হাতে কোড লেখার বিকল্প নেই, কিন্তু আমাদের এই শিক্ষামূলক কোডটি Recursion-এর প্রতি ধাপে নতুন Sub-matrix কপি করে এবং বারবার Sort চালায়—তাই বড় ডেটায় এর মেমোরি ও Runtime মোটেও অপ্টিমাইজড নয়। বিপরীতে scikit-learn-এর মতো প্রতিষ্ঠিত লাইব্রেরিগুলো দক্ষ লো-লেভেল ডেটা স্ট্রাকচার ব্যবহার করে এবং Sample Weight, Multiclass, Missing Value ও Pruning-এর মতো জটিল সুবিধাগুলো নিখুঁতভাবে সামলায়। তাই মূলনীতি বোঝার জন্য Scratch ইমপ্লিমেন্টেশন চর্চা করলেও, বাস্তব প্রোডাকশন সিস্টেমে সবসময় সুপরিচিত ও সংস্করণ-নিয়ন্ত্রিত (Versioned) লাইব্রেরি ব্যবহার করাই পেশাদার সিদ্ধান্ত।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ কোডিং প্রশ্ন যেভাবে সামলাবেন",
+          "body": "Coding Interview-এ শূন্য থেকে Decision Tree লিখতে দিলে শুরুতেই অযথা সব জটিল সুবিধা একসাথে যোগ করতে যাবেন না। প্রথমে পরিষ্কারভাবে max_depth, min_leaf এবং Node-এর মৌলিক পরিসংখ্যানসহ একটি নির্ভুল মূল কাঠামো দাঁড় করান এবং প্রান্তিক Unit Test-গুলোর কথা বলুন। এরপর ইন্টারভিউয়ার চাইলে ধাপে ধাপে Weighted Gini বা Multiclass গণনা কীভাবে যুক্ত করবেন তার ডিজাইন তুলে ধরুন। পাশাপাশি গভীর Tree-তে Stack Overflow এড়ানো, ইনপুট Schema যাচাই, Prediction Latency এবং ডিস্কে সংরক্ষণের Serialization Format নিয়ে আলোচনা করলে আপনার বাস্তব প্রকৌশল-দৃষ্টিভঙ্গি স্পষ্ট হয়ে উঠবে।"
+        },
+        {
+          "type": "text",
+          "title": "XOR সমস্যায় Positive-Gain Stopping নীতির সীমাবদ্ধতা",
+          "body": "এবার আমাদের বেঁধে দেওয়া থামার নিয়মটির একটি চমৎকার তাত্ত্বিক পরীক্ষা করা যাক। চারটি বিন্দুর পরিচিত XOR বিন্যাসটি নিন: (0, 0) -> 0, (0, 1) -> 1, (1, 0) -> 1 এবং (1, 1) -> 0। যেকোনো একটি Feature-এর ওপর প্রথম Split করলে বাম ও ডান উভয় Child-এই সমান সংখ্যক 0 এবং 1 পড়ে—ফলে Root-এ Gain হয় হুবহু 0! আমাদের এই বইয়ের Scratch CART যেহেতু ধনাত্মক Gain ছাড়া এগোয় না, তাই সে Root-এই থেমে যায়। অথচ শূন্য Gain-এর এই প্রথম ধাপটি পেরিয়ে দ্বিতীয় Feature-এ আরেকবার Split করার সুযোগ দিলেই চারটি বিন্দুকে শতভাগ নিখুঁতভাবে আলাদা করা সম্ভব। এখান থেকে বোঝা যায়, একটি Function Class-এর প্রকাশক্ষমতা (Expressive Capacity) এবং আমাদের বেছে নেওয়া স্থানীয় Stopping Rule—এই দুটি সম্পূর্ণ আলাদা বিষয়।"
+        },
+        {
+          "type": "code",
+          "title": "Scratch Stopping বনাম depth 2 Tree-এর তুলনা",
+          "body": "from pathlib import Path\nimport runpy\nimport numpy as np\nfrom sklearn.tree import DecisionTreeClassifier\n\napi = runpy.run_path(str(Path(\"assets/datasets/adult/tree_workflow.py\")))\nfeatures = np.array([[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]])\nlabels = np.array([0, 1, 1, 0])\nown = api[\"fit_cart\"](features, labels, max_depth=2, min_leaf=1)\nown_p = api[\"predict_cart\"](own, features)\nmaintained = DecisionTreeClassifier(max_depth=2, random_state=42).fit(features, labels)\n# Compare predictions rather than requiring identical tie-breaking structure.\nprint(*own_p, int(np.array_equal(maintained.predict(features), labels)))\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে ভেবে উত্তর দিন",
+          "body": "XOR-এর সীমাবদ্ধতা এড়াতে যদি আমরা সবসময়ই Zero-gain Split করার অনুমতি দিয়ে দিই, তবে কি বাস্তব ডেটায় ভালো Validation ফলাফল পাওয়া নিশ্চিত হবে?",
+          "solution": "না, তা মোটেও নিশ্চিত নয়। আরও গভীর বৃদ্ধি কখনো কখনো লুকিয়ে থাকা কার্যকর Interaction খুঁজে পেতে সাহায্য করতে পারে ঠিকই, আবার বাস্তব ডেটায় অর্থহীন বিভাজন তৈরি করে Noise মুখস্থ (Overfitting) করার ঝুঁকিও বাড়িয়ে দেয়। তাই max_depth, min_leaf এবং Pruning সবসময় সুনির্দিষ্ট Validation Protocol দিয়েই বেছে নিতে হবে।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch09_geometry",
+      "title": "জ্যামিতিক গঠন, Interaction ও Greedy পদ্ধতির সীমা",
+      "subtitle": "Axis-aligned Region, তির্যক সীমানা এবং XOR উদাহরণ",
+      "duration": "30 min",
+      "icon": "account_tree",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Tree-তে Nonlinearity ও Interaction কীভাবে তৈরি হয়?",
+          "body": "আগের পাঠে কোড চালানোর পর এবার জ্যামিতিক দৃষ্টিতে দেখা যাক একটি Decision Tree কীভাবে অরৈখিকতা (Nonlinearity) তৈরি করে। ধরুন, প্রথমে age দিয়ে ডেটা ভাগ করা হলো—এটি কেবল একটি সাধারণ Threshold। কিন্তু তার নিচের ধাপে যখন ভিন্ন ভিন্ন শাখায় আবার education_num দিয়ে ভাগ করা হয়, তখন বয়সের স্তরভেদে শিক্ষার প্রভাব বদলে যায়—আর এটিই হলো Feature Interaction! তবে মনে রাখতে হবে, সাধারণ Tree নিজে থেকে নতুন কোনো গাণিতিক রূপান্তর উদ্ভাবন করতে পারে না। তাই x_1 + x_2 > c-এর মতো একটি সরল তির্যক সীমানা (Oblique Boundary) আনুমানিকভাবে প্রকাশ করতেও তাকে অসংখ্য ছোট ছোট আয়তাকার ঘর (Rectangular Cells) তৈরি করতে হয়। ফলে স্থানাঙ্ক ব্যবস্থা সামান্য ঘুরিয়ে দিলেও (Coordinate Rotation) একটি Tree-এর জটিলতা নাটকীয়ভাবে বদলে যেতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "গভীরতা (Depth) বনাম মোট Leaf-এর সংখ্যা",
+          "body": "একটি Binary Tree-এর সর্বোচ্চ গভীরতা max_depth = d হলে পূর্ণ ও সুষম অবস্থায় (Balanced/Full) এতে সর্বোচ্চ 2^d-টি Leaf থাকতে পারে। তবে বাস্তবে সব Tree এতগুলো Leaf পায় না—min_leaf শর্ত, পুনরাবৃত্ত Feature মান, আগেই Pure হয়ে যাওয়া Node কিংবা Greedy Search-এর থামার নিয়ম কোনো শাখাকে আগেই থামিয়ে দিতে পারে। ফলে একই Tree-এর বিভিন্ন Leaf-এ পৌঁছানোর Path Length সমান নাও হতে পারে। আর একদম প্রান্তিক ক্ষেত্রে depth 0-এর একটি Tree কোনো প্রশ্নই করে না; সেটি পুরো ডেটার জন্য একটিমাত্র ধ্রুবক Prediction দেয়।"
+        },
+        {
+          "type": "text",
+          "title": "XOR কেন Greedy পদ্ধতির সেরা পাল্টা-উদাহরণ?",
+          "body": "চারটি বিন্দু (0, 0), (0, 1), (1, 0), (1, 1) এবং তাদের Label 0, 1, 1, 0 নিয়ে গঠিত XOR উদাহরণটি দ্বিমাত্রিক ছকে বসালে Greedy পদ্ধতির মূল সীমাবদ্ধতাটি স্পষ্ট ধরা পড়ে। যেকোনো একটি Feature বরাবর প্রথম Split করলে বাম ও ডান দুই Child-ই পুরোপুরি সুষম থাকে, অর্থাৎ তাৎক্ষণিক Gain হয় 0। অথচ depth 2-এ গিয়ে চারটি ঘর তৈরি করলেই নিখুঁত Classification সম্ভব! আসলে তাৎক্ষণিক লাভের লক্ষ্যমাত্রা (Immediate Gain Objective) ভবিষ্যতের ধাপে কী সুবিধা লুকিয়ে আছে তা দেখতে পায় না। আমাদের Scratch কোড কঠোরভাবে ধনাত্মক Gain চায় বলে Root-এই থেমে যায়; তবে সব লাইব্রেরি একইভাবে থামবে এমন কোনো বাধ্যবাধকতা নেই।"
+        },
+        {
+          "type": "code",
+          "title": "শূন্য স্থানীয় Gain থেকেও পরের ধাপে নিখুঁত বিভাজন",
+          "body": "import numpy as np\nfrom sklearn.tree import DecisionTreeClassifier\n\nX = np.array([[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]])\ny = np.array([0, 1, 1, 0])\nroot_gini = 0.5\nleft = y[X[:, 0] <= 0.5]\nright = y[X[:, 0] > 0.5]\ngini = lambda z: 2 * z.mean() * (1 - z.mean())\nassert root_gini - (gini(left) + gini(right)) / 2 == 0\nmodel = DecisionTreeClassifier(max_depth=2, random_state=42).fit(X, y)\nassert model.score(X, y) == 1\nprint(model.get_depth(), model.get_n_leaves())\n"
+        },
+        {
+          "type": "text",
+          "title": "স্থানীয়ভাবে সেরা বনাম সামগ্রিকভাবে সেরা Tree",
+          "body": "উপরের উদাহরণটি প্রমাণ করে যে একটি একক Node-এ সেরা মনে হওয়া Split পুরো Tree-এর সামগ্রিকভাবে সর্বোত্তম গঠন (Globally Optimal Structure) নিশ্চিত করে না। শুরুর দিকের কোনো Split অদূরদর্শী হলে প্রচলিত পদ্ধতিতে পেছনে ফিরে তা মুছে ফেলা হয় না, বরং নিচের শাখাগুলোতে অতিরিক্ত বিভাজন তৈরি করে সেই ঘাটতি পুষিয়ে নিতে হয়। সম্ভাব্য সব Tree খুঁজে সর্বনিম্ন ত্রুটির গঠন বের করা একটি জটিল কম্বিনেটোরিয়াল সমস্যা; তাই বাস্তবসম্মত সমাধান হিসেবে CART স্থানীয় Greedy বৃদ্ধি এবং তার সাথে Regularization ব্যবহার করে।"
+        },
+        {
+          "type": "text",
+          "title": "বিচ্ছিন্নতা (Discontinuity) ও গঠনের অস্থিরতা",
+          "body": "আয়তাকার সীমারেখার আরেকটি বাস্তব প্রভাব হলো বিচ্ছিন্নতা বা Discontinuity। কোনো Threshold-এর খুব কাছাকাছি থাকা Input সামান্য বদলে গেলেই ভিন্ন Leaf-এ চলে গিয়ে Prediction-এ বড় লাফ তৈরি করতে পারে। তা ছাড়া সামান্য পরিমাপজনিত ত্রুটি (Measurement Noise), Tie-breaking বা Training Row-এর অল্প পরিবর্তনেও পুরো Tree-এর কাঠামো বদলে যেতে পারে। তাই বাস্তব কাজে সবসময় সংবেদনশীলতা পরীক্ষা (Sensitivity Study) করুন; কেবল একটি পরিষ্কার Path দেখেই Model-টির সার্বজনীন স্থিতিশীলতা দাবি করবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "Decision Tree-তেও Feature Engineering কেন কাজে লাগে?",
+          "body": "অনেকেই ভাবেন Tree যেহেতু অরৈখিক, তাই এখানে কোনো Feature Engineering দরকার নেই—কিন্তু ধারণাটি ঠিক নয়। যেমন ঘড়ির ঘণ্টাকে কাঁচা 0 থেকে 23 সংখ্যা হিসেবে দিলে মধ্যরাতের কাছাকাছি ঘণ্টাগুলো (যেমন 23 ও 0) সংখ্যারেখায় পরস্পর থেকে অনেক দূরে পড়ে যায়। একইভাবে অনুপাত (Ratio), ডোমেইন-সম্মত রূপান্তর কিংবা Missing Indicator যোগ করলে Tree অনেক সহজে আসল সংকেত ধরতে পারে। পাশাপাশি অনুমানের সময় প্রতিটি Feature বাস্তবে পাওয়া যাবে কি না এবং কোনো Data Leakage ঘটছে কি না তা যাচাই করাও অপরিহার্য। Tree অরৈখিক হওয়া মানে ডোমেইন জ্ঞান ও সঠিক Preprocessing অপ্রয়োজনীয় হয়ে যাওয়া নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে গুছিয়ে বলবেন",
+          "body": "Interview-এ এই অংশ থেকে প্রশ্ন এলে একটি তির্যক বা কর্ণ বরাবর সরলরেখার (Diagonal Decision Boundary) ছবি এঁকে দেখান কীভাবে অগভীর একটি Tree সিঁড়ির মতো ধাপ কেটে সেটিকে আনুমানিক রূপ দেয়। সাথে XOR উদাহরণটি দিয়ে Zero-gain Stopping নীতির সীমাবদ্ধতা ব্যাখ্যা করুন। আর সবশেষে Bias–Variance ভারসাম্য ও প্রতিটি Leaf-এ কমে যাওয়া Sample Support-এর যুক্তি দিয়ে বুঝিয়ে বলুন কেন Tree-এর আকার বাড়ালে Training Error কমলেও Validation Error উল্টো বেড়ে যেতে পারে।"
+        }
+      ]
+    },
+    {
+      "id": "ch09_regression",
+      "title": "Regression Trees",
+      "subtitle": "Sample Mean, Squared Error, Median এবং Extrapolation-এর সীমা",
+      "duration": "34 min",
+      "icon": "account_tree",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Classification থেকে এবার অবিচ্ছিন্ন Target-এর দিকে",
+          "body": "এতক্ষণ আমরা কেবল বিচ্ছিন্ন Class অনুমান করার কথা বলেছি। কিন্তু আমাদের Target যদি অবিচ্ছিন্ন সংখ্যাসূচক মান (Continuous Target) হয়, তখন প্রতিটি Leaf-এর জন্য এমন একটি ধ্রুবক c বেছে নেওয়া হয় যাতে মোট বর্গত্রুটি (Total Squared Error বা SSE) সর্বনিম্ন হয়। ক্যালকুলাসের সহজ নিয়মে সেই সেরা ধ্রুবক c হলো ওই Leaf-এ থাকা Sample-গুলোর Sample Mean। কোনো সম্ভাব্য Split যাচাই করার সময় দুই Child Leaf-এর SSE যোগ করে দেখা হয় Parent-এর SSE থেকে ত্রুটি কতটা কমল। খেয়াল রাখবেন, এখানে সংখ্যাসূচক Target-এর Variance কমানোই মূল লক্ষ্য—Classification-এর Label অনুপাতভিত্তিক Gini এখানে প্রযোজ্য নয়।"
+        },
+        {
+          "type": "math",
+          "title": "Leaf-এর সেরা ধ্রুবক হিসেবে Mean-এর গাণিতিক প্রমাণ",
+          "body": "\\frac{\\partial}{\\partial c}\\sum_{i\\in L}(y_i-c)^2=-2\\sum_{i\\in L}(y_i-c)=0\\ \\Longrightarrow\\ c=\\overline y_L"
+        },
+        {
+          "type": "math",
+          "title": "Weighted Child Variance হ্রাসের সমীকরণ",
+          "body": "\\Delta=\\frac{SSE_{parent}-SSE_L-SSE_R}{n}=\\mathrm{Var}_{0}(y)-\\frac{n_L}{n}\\mathrm{Var}_{0}(y_L)-\\frac{n_R}{n}\\mathrm{Var}_{0}(y_R)"
+        },
+        {
+          "type": "text",
+          "title": "Variance হিসাবে এখানে ddof = 0 কেন?",
+          "body": "উপরের সমীকরণে Var_0 দেখে প্রশ্ন জাগতে পারে—এখানে হরে Unbiased Variance Estimator-এর মতো n - 1 না বসিয়ে সরাসরি n (অর্থাৎ ddof = 0) নেওয়া হলো কেন? কারণ এখানে Impurity মানে হলো ওই Node-এর ভেতরকার Empirical Mean Squared Residual। একটি নির্দিষ্ট Parent Node-এ n স্থির থাকায় মোট SSE হ্রাস এবং Mean Variance হ্রাস সম্ভাব্য সব Split-কে হুবহু একই ক্রমে (Ranking) সাজায়। ডেটায় Sample Weight থাকলে সাধারণ Mean ও Squared Residual-এর জায়গায় Weighted Mean এবং Weighted Squared Residual ব্যবহৃত হয়। আর শূন্য Variance-এর কোনো Parent Node-কে ভাগ করে কখনোই Squared Loss কমানো যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "Absolute Error ও Poisson Criterion কখন ব্যবহার করবেন?",
+          "body": "Squared-error মাপকাঠিতে ব্যবহৃত Sample Mean চরম প্রান্তিক ডেটা বা Outlier-এর প্রতি ভীষণ সংবেদনশীল। তাই ডেটায় Outlier-এর প্রভাব কমাতে Absolute-error (L1 Loss) Criterion নিলে প্রতিটি Leaf-এর সেরা Prediction হয় সেখানকার Median; জোড় সংখ্যক Sample থাকলে মধ্যবর্তী একটি ব্যবধানের যেকোনো মানই সর্বনিম্ন L1 Loss দিতে পারে। অন্যদিকে, অঋণাত্মক গণনা বা হার-সংক্রান্ত ডেটার জন্য scikit-learn-এর Poisson Criterion ব্যবহৃত হয়, যা Poisson Deviance কমায় এবং Leaf-এ Mean মান দেয়—তবে এর জন্য সব Outcome অঋণাত্মক এবং মোট Target ধনাত্মক হওয়া আবশ্যক। তাই সমস্যার ডোমেইন ও Evaluation Metric বুঝেই সঠিক Criterion বেছে নিন।"
+        },
+        {
+          "type": "code",
+          "title": "কোডে Regression Stump ও সীমানার বাইরের আচরণ",
+          "body": "import numpy as np\nfrom sklearn.tree import DecisionTreeRegressor\n\nX = np.arange(6.0).reshape(-1, 1)\ny = np.array([1.0, 1.0, 2.0, 8.0, 9.0, 9.0])\nmodel = DecisionTreeRegressor(max_depth=1, random_state=42).fit(X, y)\nleft = y[:3]\nright = y[3:]\nsse = lambda z: float(np.sum((z - z.mean()) ** 2))\nassert model.tree_.threshold[0] == 2.5\nassert sse(y) > sse(left) + sse(right)\nassert model.predict([[100.0]])[0] == right.mean()\nprint(sse(y) - sse(left) - sse(right), model.predict([[-100.0], [100.0]]))\n"
+        },
+        {
+          "type": "text",
+          "title": "Extrapolation না করতে পারার সীমাবদ্ধতা",
+          "body": "উপরের কোডের শেষ অংশটি একটি মৌলিক সীমাবদ্ধতা স্পষ্ট করে দেয়: ধ্রুবক-মানবিশিষ্ট সাধারণ Squared-error Regression Tree কখনোই তার সসীম Training Target-এর সর্বনিম্ন ও সর্বোচ্চ সীমার বাইরে Prediction দিতে পারে না। কোনো Feature-এর মান Training পরিসর ছাড়িয়ে যত বাইরেই চলে যাক (-100 বা +100), সেটি সর্বশেষ প্রান্তিক Leaf-এ গিয়ে সেই বাঁধাধরা ধ্রুবক মানটিই পায়। তাই ক্রমবর্ধমান রৈখিক প্রবণতা (Linear Trend) Extrapolate করার কাজে এটি মোটেও উপযুক্ত নয়। পাশাপাশি মনে রাখবেন, সব Tree কেবল ধনাত্মক সংখ্যা দেয় এমন কোনো কথা নেই—Training Target-এ ঋণাত্মক মান থাকলে Leaf-এর Mean এবং Prediction অনায়াসেই ঋণাত্মক হতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব ডেটার Workflow-এ এর প্রয়োগ",
+          "body": "এই অধ্যায়ের প্রজেক্ট Workflow-এ আমরা Adult Dataset-এর age এবং education_num ব্যবহার করে সাপ্তাহিক কর্মঘণ্টা (hours_per_week) অনুমানের একটি নির্দিষ্ট Regression পরীক্ষা (max_depth = 4, min_leaf = 100) চালিয়ে দেখব। Data Leakage এড়াতে প্রোফাইল গ্রুপিংয়ের Key থেকে income এবং hours_per_week—উভয় Outcome-ই বাদ রাখা হয়েছে, এবং অর্জিত Validation RMSE তুলনা করা হয়েছে সরল Training-mean Baseline-এর সাথে। মনে রাখবেন, এটি পদ্ধতিটি বোঝার জন্য একটি সুনির্দিষ্ট উন্নয়নমূলক অনুশীলন মাত্র—এখান থেকে চূড়ান্ত Model নির্বাচন, শিক্ষার কার্যকারণ (Causal) প্রভাব কিংবা বর্তমান জনসংখ্যার শ্রমবাজার নিয়ে কোনো দাবি করা যাবে না।"
+        }
+      ]
+    },
+    {
+      "id": "ch09_regularization",
+      "title": "Tree-এর বৃদ্ধি নিয়ন্ত্রণ ও Regularization",
+      "subtitle": "Depth, Support, Leaf Budget এবং Impurity Decrease-এর ভারসাম্য",
+      "duration": "30 min",
+      "icon": "account_tree",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "লাগামহীন বৃদ্ধি কেন বিপজ্জনক?",
+          "body": "আগের পাঠগুলোতে আমরা দেখেছি কীভাবে একটি Decision Tree প্রশ্ন যোগ করে ক্রমাগত ডালপালা মেলে। কিন্তু ডেটায় যদি প্রচুর ভিন্ন ভিন্ন Feature মান থাকে আর আমরা কোনো সীমা না টানি, তবে গভীর একটি Tree অতি ক্ষুদ্র একেকটি Leaf তৈরি করে পুরো Training Label হুবহু মুখস্থ (Memorize) করে ফেলতে পারে! মনে রাখা জরুরি, Training ডেটায় Purity বাড়ানো আমাদের চূড়ান্ত লক্ষ্য নয়—আসল লক্ষ্য হলো অদেখা ডেটায় ভালো Generalization। ঠিক এখানেই Regularization এসে Model Capacity, প্রতিটি ঘরের ডেটার ভিত্তি (Sample Support) এবং Estimation Variance-এর মধ্যে একটি কার্যকর ভারসাম্য তৈরি করে। ডেটার ভেতরকার অনিবার্য এলোমেলো ত্রুটি (Irreducible Label Noise) দূর করার আশায় অতিরিক্ত Split যোগ করলে বাস্তবে উল্টো ক্ষতিই হয়।"
+        },
+        {
+          "type": "text",
+          "title": "max_depth বনাম max_leaf_nodes",
+          "body": "Tree-এর আকার বেঁধে দেওয়ার সবচেয়ে পরিচিত দুটি উপায় হলো max_depth এবং max_leaf_nodes, কিন্তু এদের কাজ করার ধরন আলাদা। max_depth শুরুর Root থেকে যেকোনো Leaf পর্যন্ত যাওয়ার প্রতিটি Path-এর সর্বোচ্চ দৈর্ঘ্য সীমিত করে। অন্যদিকে, max_leaf_nodes বেঁধে দেয় পুরো Tree-তে মোট কয়টি প্রান্তিক অঞ্চল বা Leaf থাকতে পারবে তার বাজেট; সেখানে Best-first Growth নীতিতে সেরা শাখাগুলো আগে বাড়ানো হয় বলে গভীরতম Path-এর দৈর্ঘ্যের ওপর একই গ্যারান্টি পাওয়া যায় না। ফলে মোট Leaf সংখ্যা সমান হলেও দুটি পদ্ধতির তৈরি Tree-এর কাঠামো ও গভীরতা ভিন্ন হতে পারে। আর খেয়াল রাখবেন, কম গভীরতার ছোট Tree মানেই যে সব Feature-এর প্রভাব রৈখিক (Global Linear) হয়ে গেছে তা কিন্তু নয়।"
+        },
+        {
+          "type": "text",
+          "title": "min_samples_split বনাম min_samples_leaf",
+          "body": "আকারের পাশাপাশি ন্যূনতম ডেটা সংখ্যার শর্ত দিয়েও অযথা বিভাজন থামানো যায়। এখানে min_samples_split দেখে বর্তমান Parent Node-এ ভাঙার আগে কমপক্ষে কয়টি Row আছে, আর min_samples_leaf নিশ্চিত করে ভাগের পর বাম ও ডান—উভয় Child Node-এই কমপক্ষে কয়টি করে Row থাকবে। উদাহরণস্বরূপ, Parent-এ n = 10 থাকলে এবং min_samples_split = 10 হলেও যদি min_samples_leaf = 6 দেওয়া থাকে, তবে একটিও বৈধ Split পাওয়া যাবে না। এ ছাড়া সরাসরি পূর্ণসংখ্যার হিসাব (Count Threshold) এবং ওজনযুক্ত ভগ্নাংশের শর্ত (Weighted Fraction Constraint) আলাদাভাবে কাজ করে; তাই Class Weight ব্যবহারের সময় কোন Parameter কাঁচা Sample গুনছে আর কোনটি Weight দেখছে তা ডকুমেন্টেশন থেকে মিলিয়ে নিন।"
+        },
+        {
+          "type": "text",
+          "title": "সামগ্রিক মানদণ্ড: min_impurity_decrease",
+          "body": "আরেকটি সূক্ষ্ম নিয়ন্ত্রক হলো min_impurity_decrease, যা Root-এর মোট ওজনের সাপেক্ষে নরমালাইজ করা সামগ্রিক Weighted Gain-এর নিম্নসীমা নির্ধারণ করে। শুরুর Root Node-এর n এবং গভীরের ছোট কোনো Node-এর n আলাদা করে না ভাবলে এই Hyperparameter-এর প্রকৃত প্রভাব বুঝতে ভুল হবে। একইভাবে, সংখ্যার বিচারে একই Threshold মান বসালেও Gini এবং Entropy-র একক ও স্কেল ভিন্ন হওয়ায় তাদের কার্যকর Regularization শক্তি সমান হবে না।"
+        },
+        {
+          "type": "code",
+          "title": "নিয়ন্ত্রিত বনাম অবাধ Tree বৃদ্ধির তুলনা",
+          "body": "import numpy as np\nfrom sklearn.tree import DecisionTreeClassifier\n\nX = np.arange(12.0).reshape(-1, 1)\ny = np.array([0, 1] * 6)\nsmall = DecisionTreeClassifier(max_depth=2, min_samples_leaf=3, random_state=42).fit(\n    X, y\n)\nlarge = DecisionTreeClassifier(random_state=42).fit(X, y)\nleaf = small.tree_.children_left == -1\nassert np.all(small.tree_.n_node_samples[leaf] >= 3)\nassert small.get_depth() <= 2\nassert large.score(X, y) >= small.score(X, y)\nprint(small.get_n_leaves(), large.get_n_leaves())\n"
+        },
+        {
+          "type": "text",
+          "title": "সঠিক নিয়মে Hyperparameter নির্বাচন",
+          "body": "উপরের কোডে যেমন নিয়ন্ত্রিত ছোট Tree-তে সুসংহত কয়েকটি Leaf তৈরি হয়েছে, বাস্তব কাজেও সঠিক max_depth বা min_samples_leaf বেছে নিতে আমরা Validation পারফরম্যান্সের সাহায্য নিই। তবে সতর্ক থাকবেন: একটি নির্দিষ্ট Validation Set বারবার দেখে সিদ্ধান্ত নিলে সেটিও কার্যত Development Data হয়ে ওঠে! তাই ডেটার গ্রুপিং বা সময়ের শর্ত অক্ষুণ্ণ রেখে শুধুমাত্র Training Partition-এর ভেতরেই Cross-validation চালান। আর বিশাল একটি Hyperparameter Grid চালালে কেবল কম্পিউট খরচই বাড়ে না, অজান্তেই বহু তুলনার ফাঁদে (Multiple Comparisons) পড়ার ঝুঁকিও তৈরি হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Leaf-এর Sample Support ও Probability-র বিশ্বাসযোগ্যতা",
+          "body": "Regularization-এর প্রভাব Probability অনুমানের ওপরেও সরাসরি পড়ে। একটি ক্ষুদ্র Leaf-এ মোট 1টি ডেটার মধ্যে 1টিই Positive হওয়ায় আনুমানিক Probability = 1, আবার আরেকটি বড় Leaf-এ 100টির মধ্যে 100টি Positive হওয়ায় সেখানেও Probability = 1—দুটির Point Prediction এক হলেও তাদের পেছনের প্রমাণের ভিত্তি (Support) সম্পূর্ণ ভিন্ন! min_samples_leaf বাড়িয়ে দিলে এমন অতিক্ষুদ্র ও ভঙ্গুর অনুমান কমানো যায় ঠিকই, তবে কেবল এটিই সুবিন্যস্ত Calibration বা আস্থার গ্যারান্টি দেয় না। প্রয়োজন অনুযায়ী আলাদা ডেটা বা Fold-এ Calibration Fit ও মূল্যায়ন করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে গুছিয়ে বলবেন",
+          "body": "ধরুন Interview-এ বলা হলো: আপনার Model-এর Training Accuracy এসেছে 99%, কিন্তু Validation Accuracy মাত্র 77%। চোখ বন্ধ করে প্রথমেই কেবল depth কমানোর কথা না বলে আগে ডেটার স্বাস্থ্য কীভাবে যাচাই করবেন তা বলুন—যেমন Data Leakage, ভুল Split কৌশল, ডুপ্লিকেট Entity, Label Noise এবং Distribution Drift পরীক্ষা করা। সমাধানের সাথে সাথে Learning Curve, প্রতিটি Leaf-এর Support Distribution এবং Train–Validation Gap একসাথে রিপোর্ট করার কথা উল্লেখ করুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch09_pruning",
+      "title": "Cost-Complexity Pruning",
+      "subtitle": "Weakest-link ছাঁটাই, Alpha-এর একক এবং Training-only Path",
+      "duration": "30 min",
+      "icon": "account_tree",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "আগে বাড়তে দিন, তারপর ছাঁটাই করুন (Grow then Prune)",
+          "body": "আগের পাঠে দেখা max_depth বা min_samples_leaf-কে বলা হয় Pre-pruning, কারণ এগুলো Tree বড় হওয়ার সময়েই তাকে আটকে দেয়। কিন্তু শুরুতে আপাতদৃষ্টিতে দুর্বল একটি Split-এর নিচে কখনো কখনো দারুণ কার্যকর Interaction লুকিয়ে থাকতে পারে। এর বিকল্প কৌশল হলো Post-pruning: প্রথমে তুলনামূলক বড় একটি Tree গড়ে উঠতে দিন, তারপর নিচ থেকে অপ্রয়োজনীয় Subtree সরিয়ে সরল একটি Tree তৈরি করুন। আগে কার্যকর Interaction তৈরি হতে দেওয়া এবং পরে অতিরিক্ত জটিলতাকে জরিমানা করা একটি স্বতন্ত্র ও শক্তিশালী নীতি। তবে মনে রাখবেন, এতে কেবল বিদ্যমান শাখা সংকুচিত হয়—প্রাথমিক Tree-এর বাইরে নতুন কোনো Split তৈরি হয় না।"
+        },
+        {
+          "type": "math",
+          "title": "Cost-Complexity লক্ষ্যমাত্রার সমীকরণ",
+          "body": "R_\\alpha(T)=R(T)+\\alpha|L(T)|,\\qquad R(T)=\\sum_{l\\in L(T)}\\frac{N_l}{N}I_l"
+        },
+        {
+          "type": "text",
+          "title": "এখানে Risk R(T)-এর প্রকৃত অর্থ কী?",
+          "body": "সমীকরণের R(T) রাশিটির অর্থ শুরুতেই স্পষ্ট করে নেওয়া জরুরি। scikit-learn-এর ধাঁচে এখানে R(T) হলো পুরো Training ওজনের সাপেক্ষে নরমালাইজ করা সব Leaf-এর ভারযুক্ত Impurity (Normalized Sample-weighted Leaf Impurity)—সরাসরি Classification-এর Misclassification Error নয়। ফলে Gini, Entropy বা Regression Objective বদলালে জরিমানার Parameter alpha-এর সংখ্যাসূচক স্কেলও বদলে যায়। alpha = 0 হলে কেবল Impurity কমানোই লক্ষ্য থাকে; আর alpha যত বাড়বে, অতিরিক্ত Leaf রাখার জরিমানা তত বেশি হবে। তবে এই পেনাল্টিযুক্ত Training Criterion অপ্টিমাইজ করা মানেই স্বয়ংক্রিয়ভাবে সর্বোচ্চ Validation Accuracy নিশ্চিত হওয়া নয়।"
+        },
+        {
+          "type": "math",
+          "title": "Weakest-link ছাঁটাইয়ের ক্রান্তিক Alpha",
+          "body": "\\alpha_{eff}(t)=\\frac{R(t)-R(T_t)}{|L(T_t)|-1}"
+        },
+        {
+          "type": "text",
+          "title": "সমীকরণটি কোথা থেকে এলো?",
+          "body": "উপরের সূত্রটির পেছনের হিসাবটি খুব পরিষ্কার। কোনো একটি Internal Node t-কে ছেঁটে একক একটি Leaf বানিয়ে দিলে ওই অংশের Objective দাঁড়ায় R(t) + alpha, আর তার নিচের পুরো Subtree T_t অক্ষত রাখলে খরচ হয় R(T_t) + alpha * |L(T_t)|। রাশি দুটি সমান ধরলেই বেরিয়ে আসে কার্যকর ক্রান্তিক মান alpha_eff(t)। এখানে R(t) এবং R(T_t) উভয়কেই পুরো Training Set-এর একই সাপেক্ষে নরমালাইজড হতে হবে। যেমন ধরুন, R(t) = 0.5 এবং 3টি Leaf-বিশিষ্ট Subtree-এর ঝুঁকি R(T_t) = 0.2 হলে alpha_eff = (0.5 - 0.2) / (3 - 1) = 0.15। হর 0 হওয়ার অর্থ Node-টি আগে থেকেই একটি Leaf, তাই সেখানে এই সূত্র প্রযোজ্য নয়।"
+        },
+        {
+          "type": "text",
+          "title": "কেন এই Pruning Path একের ভেতর আরেকটি (Nested) হয়?",
+          "body": "আমরা যখন ধীরে ধীরে alpha বাড়াতে থাকি, তখন প্রতি ধাপে সবচেয়ে ছোট কার্যকর alpha-বিশিষ্ট দুর্বলতম Subtree-টি (Weakest Link) সবার আগে গুটিয়ে একটি Leaf হয়ে যায়—এভাবেই একের ভেতর আরেকটি নেস্টেড ক্রমে (Nested Path) ছাঁটাই এগোয়। সমান মান বা Tie হলে একসাথে একাধিক শাখা ছাঁটাই হতে পারে, এবং কিছু alpha-তে একাধিক Subtree একই Objective দিতে পারে; Floating-point Boundary-র সূক্ষ্ম আচরণ লাইব্রেরির ডকুমেন্টেশন অনুযায়ী যাচাই করে নিন। সবচেয়ে জরুরি নিয়ম হলো: এই Pruning Path অবশ্যই কেবল Training Data থেকেই বের করতে হবে; Validation Label ব্যবহার করে কখনোই Path বা Candidate তালিকা তৈরি করবেন না।"
+        },
+        {
+          "type": "tree_pruning_lab",
+          "title": "ইন্টারঅ্যাক্টিভ Pruning Path Explorer",
+          "body": "নির্ধারিত Adult Dataset-এর শিক্ষামূলক Tree-টির পূর্বগণনাকৃত 27টি ছাঁটাই ধাপ (Stages) এই ল্যাবে পরখ করে দেখুন। Alpha বাড়ালে দেখবেন মোট Leaf সংখ্যা 29 থেকে কমে 1-এ এবং গভীরতা depth 5 থেকে depth 0-তে নেমে আসে। ছাঁটাই বাড়লে Training Impurity Risk বাড়তে পারে, আর পেনাল্টিযুক্ত Objective ভিন্ন ভিন্ন alpha-তে সরাসরি তুলনা করলে তার গাণিতিক অর্থ বদলে যায়। এখানে প্রদর্শিত Validation Curve দেখলে মনে রাখবেন এটি কেবল Model নির্বাচনের অনুসন্ধান—নতুন অদেখা Test মূল্যায়ন নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Cross-validation-এর ভেতরে সঠিক ব্যবহারবিধি",
+          "body": "সেরা alpha বেছে নিতে Training Data থেকে নির্ধারিত নির্দিষ্ট Alpha Grid অথবা প্রতিটি Inner Fold-এর নিজস্ব Path ব্যবহার করে সংশ্লিষ্ট Held-out Fold-এ মূল্যায়ন করুন। পুরো Dataset-এর সব Label দিয়ে আগে Path তৈরি করে পরে সেই Candidate-দের CV Score-কে নিরপেক্ষ বলে দাবি করবেন না। এই অধ্যায়ের Workflow-এ চূড়ান্ত বিজয়ী Model-টি বেছে নেওয়া হয়েছে Inner Grouped Grid থেকে; ল্যাবের প্রদর্শনী Path-টি সেখানে বিজয়ী নির্বাচনে ব্যবহৃত হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে গুছিয়ে বলবেন",
+          "body": "Interview-এ দুটি প্রশ্ন প্রায়ই আসে: একই ডেটায় Entropy-র alpha = 0.01 আর Gini-র alpha = 0.01 কি সরাসরি তুলনীয়? সাধারণভাবে না, কারণ দুই মাপকাঠির একক ও স্কেল আলাদা। আর alpha বাড়ালেই কি Validation Accuracy একটানা (Monotonically) বাড়তে থাকে? মোটেই না! Alpha বাড়লে Model-এর সরলতা একমুখীভাবে বাড়ে—যা Pruning Path-এর গাণিতিক ধর্ম; কিন্তু বাস্তব Prediction পারফরম্যান্স বাড়বে না কমবে, তা সম্পূর্ণ আলাদা একটি পরীক্ষানির্ভর প্রশ্ন।"
+        },
+        {
+          "type": "text",
+          "title": "কোথায় দুটি সিদ্ধান্তের খরচ সমান হয়: একটি সংখ্যার হিসাব",
+          "body": "কোডে যাওয়ার আগে সন্ধিক্ষণটি স্পষ্ট করে মিলিয়ে নিই। ধরুন, গুটিয়ে ফেলা একক Root-এর ঝুঁকি 0.5 এবং 3টি Leaf-বিশিষ্ট প্রসারিত Subtree-এর ঝুঁকি 0.2। তাহলে গুটিয়ে ফেলার Objective হলো 0.5 + alpha, আর শাখা রেখে দেওয়ার Objective হলো 0.2 + 3 * alpha। সমান করলে সন্ধিক্ষণ মেলে alpha = 0.15। ফলে alpha = 0.1 বসালে শাখা রাখার খরচ 0.5 এবং গুটিয়ে ফেলার খরচ 0.6 (শাখা থাকবে); কিন্তু alpha = 0.2 বসালেই গুটিয়ে ফেলার খরচ 0.7 আর রাখার খরচ বেড়ে 0.8 হয়ে যায় (শাখা ছাঁটাই হবে)। খেয়াল রাখবেন, এখানে ঝুঁকি দুটি একই Globally Normalized স্কেলে দেওয়া।"
+        },
+        {
+          "type": "code",
+          "title": "কোডে Pruning Threshold ও Tie-breaking নীতি",
+          "body": "collapsed_risk, subtree_risk, leaves = 0.5, 0.2, 3\ncrossing = (collapsed_risk - subtree_risk) / (leaves - 1)\nselected_leaf_counts = []\nfor alpha in [0.0, 0.1, 0.15, 0.2]:\n    collapse = collapsed_risk + alpha\n    keep = subtree_risk + alpha * leaves\n    # Prefer the smaller tree on a numerical objective tie.\n    selected_leaf_counts.append(1 if collapse <= keep + 1e-12 else leaves)\nprint(crossing, *selected_leaf_counts)\n"
+        },
+        {
+          "type": "text",
+          "title": "বড় Tree-তে ধারাবাহিক হিসাব ও Validation-এর দায়িত্ব",
+          "body": "বড় একটি Tree-তে প্রতিটি Internal Node-এর কার্যকর alpha হিসাব করে সবচেয়ে দুর্বল সংযোগটি (Weakest Link) বেছে নিতে হয়। নিচের একটি শাখা সরে গেলেই তার পূর্বসূরি (Ancestor) Node-গুলোর ঝুঁকি ও Leaf সংখ্যা বদলে যায়, তাই সেগুলো আবার নতুন করে হিসাব করতে হয়। এরপর সেরা alpha বেছে নিতে সাহায্য করে Validation Score। Cross-validation-এ ডেটার Label থেকে শেখা প্রার্থী Path ব্যবহার করলে সেটি ঠিক কোন Training Subset-এ তৈরি হয়েছে তাও কঠোরভাবে Audit করুন; নির্দিষ্ট Candidate Grid অথবা Fold-local Path দিয়ে এই নির্বাচন পরিষ্কারভাবে সাজানো যায়।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে হিসাব করে দেখুন",
+          "body": "Global Risk-এর বদলে কোনো Node-এর স্থানীয় Local Impurity সরাসরি সূত্রে বসালে alpha-এর তুলনা কেন ভ্রান্ত হয়ে যাবে?",
+          "solution": "Global Normalization-এর ভেতরে ওই Node-এ মোট ডেটার কত ভগ্নাংশ (Sample বা Weight Fraction) রয়েছে সেই গুণিতকটি থাকে, কিন্তু Local Impurity সেই অনুপাতটি বাদ দেয়। আলাদা স্কেল মিশিয়ে সমীকরণ সমাধান করলে জরিমানা alpha-এর শক্তির প্রকৃত গাণিতিক অর্থ বদলে যায়।",
+          "reference": "https://scikit-learn.org/stable/modules/tree.html#minimal-cost-complexity-pruning"
+        }
+      ]
+    },
+    {
+      "id": "ch09_data",
+      "title": "Categorical ও Missing Feature সামলানো",
+      "subtitle": "Schema শৃঙ্খলা, Train-only Encoding এবং অনুপস্থিত মানের সঠিক ব্যবস্থাপনা",
+      "duration": "34 min",
+      "icon": "account_tree",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Decision Tree কি কাঁচা String সরাসরি বুঝতে পারে?",
+          "body": "নির্দিষ্ট লাইব্রেরির ইমপ্লিমেন্টেশন অনুযায়ী এর উত্তর ভিন্ন হয়। যেমন scikit-learn-এর প্রচলিত CART ইমপ্লিমেন্টেশনে Categorical String সরাসরি Input দেওয়া যায় না—আগে সংখ্যাসূচক রূপান্তর (Numeric Encoding) প্রয়োজন হয়। কোনো Ordinal Category-র সত্যিকারের প্রাকৃতিক ক্রম থাকলে ক্রমানুসারে সংখ্যা বসানো কার্যকর; কিন্তু ক্রমহীন Category-তে ইচ্ছেমতো আইডি বসিয়ে Threshold নিলে সেখানে একটি কৃত্রিম ক্রম তৈরি হয়ে যায়। ক্রমহীন Category-র জন্য One-Hot Encoding একটি নিরাপদ Baseline, তবে একাধিক Category-র দল তৈরি করতে তখন Tree-কে অনেকগুলো Split খরচ করতে হতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "প্রোডাকশনে অচেনা (Unknown) Category এলে কী হবে?",
+          "body": "শুধুমাত্র Training Data দেখেই বৈধ Category-র তালিকা বা Vocabulary স্থির (Freeze) করুন এবং প্রোডাকশনে অচেনা কোনো Category এলে তা কীভাবে Encode হবে তা স্পষ্ট রাখুন। যেমন OneHotEncoder(handle_unknown=\"ignore\") অদেখা Category-কে All-zero Vector-এ রূপান্তর করতে পারে—মনে রাখবেন এটি কেবল অপরিচিত মানের সংকেত, কোনো নির্দিষ্ট Category উপস্থিত থাকার প্রমাণ নয়। আবার drop অপশন চালু থাকলে বাদ পড়া Category ও অদেখা Category দুটোই সর্বশূন্য হয়ে যে দ্ব্যর্থতা (Ambiguity) তৈরি করে তা বোঝা জরুরি। ডেটার Schema-তে Column-এর নাম, ক্রম ও dtype সবসময় কঠোরভাবে যাচাই করুন।"
+        },
+        {
+          "type": "text",
+          "title": "অনুপস্থিত মান ও Missingness Indicator",
+          "body": "শূন্যস্থান পূরণের (Imputation) জন্য ব্যবহৃত Median বা Mode অবশ্যই কেবল Training Fold-এ Fit করতে হবে। ডেটা অনুপস্থিত থাকাটা নিজেই যদি অর্থবহ সংকেত হয়, তবে আলাদা Missingness Indicator যোগ করা বেশ কাজের; তবে ভবিষ্যতে ডেটা সংগ্রহের প্রক্রিয়া বদলে গেলে সেই শর্টকাট ভেঙে পড়তে পারে। সত্যিকারের 0 মান আর অনুপস্থিত ডেটার সংকেত হিসেবে বসানো Sentinel সংখ্যা এক করে ফেললে Model ভুল Split তৈরি করতে পারে। তা ছাড়া NaN সামলানোর আচরণ লাইব্রেরি, Criterion ও Splitter-এর ওপর নির্ভরশীল—'সব Tree নিজে থেকেই Missing Data সামলে নেয়' এমন ধারণা ভুল।"
+        },
+        {
+          "type": "text",
+          "title": "লাইব্রেরির সংস্করণভেদে Native NaN Routing",
+          "body": "নির্দিষ্ট সংস্করণের scikit-learn-এ নথিবদ্ধ কিছু সেটিংস সরাসরি Native NaN Routing সমর্থন করে। সমর্থিত ক্ষেত্রে Training Criterion ব্যবহার করেই শেখা হয় যে অনুপস্থিত মানগুলো বাম শাখায় যাবে নাকি ডান শাখায়; এর শর্ত ও Fallback আচরণ ডকুমেন্টেশন দেখেই নিশ্চিত করতে হয়। আমাদের এই অধ্যায়ের বাস্তব Workflow-টি সসীম Numeric-only চুক্তি মেনে চলে, তাই কোনো লুকানো Missing Routing-এর ওপর নির্ভর করে না।"
+        },
+        {
+          "type": "code",
+          "title": "Train-only নিয়ম মেনে মিশ্র ডেটার নিরাপদ Pipeline",
+          "body": "import pandas as pd\nfrom sklearn.compose import ColumnTransformer\nfrom sklearn.pipeline import make_pipeline\nfrom sklearn.impute import SimpleImputer\nfrom sklearn.preprocessing import OneHotEncoder\nfrom sklearn.tree import DecisionTreeClassifier\n\ntrain = pd.DataFrame(\n    {\"age\": [20.0, 30.0, None, 50.0], \"device\": [\"web\", \"app\", None, \"web\"]}\n)\ny = [0, 0, 1, 1]  # constructed schema example\nprep = ColumnTransformer(\n    [\n        (\n            \"num\",\n            make_pipeline(SimpleImputer(strategy=\"median\", add_indicator=True)),\n            [\"age\"],\n        ),\n        (\n            \"cat\",\n            make_pipeline(\n                SimpleImputer(strategy=\"most_frequent\"),\n                OneHotEncoder(handle_unknown=\"ignore\"),\n            ),\n            [\"device\"],\n        ),\n    ]\n)\nmodel = make_pipeline(prep, DecisionTreeClassifier(max_depth=2, random_state=42))\nmodel.fit(train, y)\nprediction = model.predict(pd.DataFrame({\"age\": [None], \"device\": [\"unknown\"]}))\nassert prediction.shape == (1,)\nprint(prediction)\n"
+        },
+        {
+          "type": "text",
+          "title": "Tree-তে Feature Scaling-এর সীমিত প্রয়োজন",
+          "body": "Axis-aligned Split খোঁজার ক্রম নির্ধারণে সাধারণত StandardScaler জরুরি নয়, কারণ ধনাত্মক রৈখিক রূপান্তর আদর্শ অবস্থায় সম্ভাব্য বিভাজনগুলো অক্ষুণ্ণ রাখে। তবে Pipeline-এ অন্য কোনো Estimator থাকলে বা সংখ্যাসূচক উপস্থাপনের প্রয়োজনে Scaling লাগতে পারে। পাশাপাশি One-Hot Column-এর ক্ষেত্রে Dense বনাম Sparse Matrix-এর মেমোরি খরচ আলাদাভাবে খেয়াল রাখুন, এবং উচ্চ বৈচিত্র্যময় (High-cardinality) আইডি অন্ধভাবে Encode করবেন না—তাতে মুখস্থ করার (Memorization) ঝুঁকি অনেক বেড়ে যায়।"
+        },
+        {
+          "type": "text",
+          "title": "Data Leakage-এর ফাঁদ থেকে সতর্কতা",
+          "body": "ফলাফল ঘটার পরে তৈরি হওয়া approved_status, ভবিষ্যতের সমষ্টিগত হিসাব কিংবা অসতর্ক Target-based Encoding পেলে একটি Decision Tree অতি সহজেই তা ব্যবহার করে ফেলবে। তাই চমৎকার Training Purity দেখে আনন্দিত হওয়ার আগে প্রতিটি Feature-এর প্রাপ্যতার সময়কাল (Availability Timestamp) কঠোরভাবে Audit করুন। মনে রাখবেন, Decision Tree মোটেও Data Leakage থেকে সুরক্ষিত নয়—বরং ফাঁস হওয়া বিচ্ছিন্ন Status Column-এ সে সবচেয়ে দ্রুত ও সহজ Split খুঁজে পায়।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে অনুশীলন",
+          "body": "ক্রমহীন কাঁচা Category আইডি 1, 2, 3-এর ম্যাপিং ওলটপালট করে অগভীর একটি Tree-এর Prediction তুলনা করে দেখুন। এর মাধ্যমে প্রকৃত Ordinal এবং ক্রমহীন Nominal Feature-এর পার্থক্য স্পষ্টভাবে ব্যাখ্যা করার চর্চা করুন। একই সাথে আপনার Missing-value Policy ও Unknown-category পরীক্ষার জন্য এমন Unit Test লিখুন, যাতে ভবিষ্যতে প্রোডাকশন Input-এ ক্র্যাশ বা নীরবে Column সরে যাওয়া (Silent Column Shift) সাথে সাথে ধরা পড়ে।"
+        }
+      ]
+    },
+    {
+      "id": "ch09_weights",
+      "title": "Class Imbalance, Weight এবং Probability",
+      "subtitle": "Training Objective বনাম বাস্তব Deployment-এর সিদ্ধান্ত নীতি",
+      "duration": "30 min",
+      "icon": "account_tree",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "শুরুতেই চাই সঠিক Baseline ও Evaluation Metric",
+          "body": "ডেটায় Positive Class বিরল হলে সবাইকে সংখ্যাগরিষ্ঠ Class বলে দিলেও উচ্চ Accuracy পাওয়া যায়। তাই শুরুতেই সংখ্যাগরিষ্ঠ Baseline Accuracy, Positive Class-এর প্রকৃত হার (Prevalence), PR/AP Metric এবং ভুলের বাস্তব মাশুল (Task Cost) রিপোর্ট করুন। মনে রাখবেন, Split করে Gini কমানোর অর্থ এই নয় যে আপনার কাঙ্ক্ষিত Precision বা Recall Threshold-এ উন্নতি ঘটবেই—Probability Estimation এবং নির্দিষ্ট সীমারেখায় সিদ্ধান্ত নেওয়া দুটি আলাদা বিষয়।"
+        },
+        {
+          "type": "math",
+          "title": "Node-এর ওজনযুক্ত Class অনুপাত",
+          "body": "p_k=\\frac{\\sum_{i\\in node}w_i\\mathbf{1}(y_i=k)}{\\sum_{i\\in node}w_i}"
+        },
+        {
+          "type": "text",
+          "title": "Class Weight আসলে কী পরিবর্তন ঘটায়?",
+          "body": "Class Weight সরাসরি Training-এর Sample Weight-এর সাথে গুণ হয়ে Impurity, প্রতিটি Leaf-এর Class Distribution এবং সেরা Split নির্বাচনের ক্রম বদলে দিতে পারে। যেমন balanced অপশনটি Training Data-র Class অনুপাতের ব্যস্তানুপাতে নতুন Weight বসায়। কিন্তু এভাবে পুনর্ভারযুক্ত (Reweighted) Leaf Probability-কে বাস্তব পরিবেশের Prevalence-এর সাপেক্ষে Calibrated Posterior হিসেবে ধরে নেওয়া যাবে না! খেয়াল রাখবেন, কেবল Decision Threshold বদলালে Trained Model স্থির থেকে সিদ্ধান্তের নিয়ম বদলায়; কিন্তু Weight বদলালে খোদ Model-এর Fit-ই বদলে যায়।"
+        },
+        {
+          "type": "text",
+          "title": "ছোট একটি সংখ্যার উদাহরণে Weight-এর প্রভাব",
+          "body": "ধরুন একটি Leaf-এ তিনটি ডেটার Label হলো [0, 0, 1]। সাধারণ ওজনবিহীন অবস্থায় এখানে Positive Probability হয় 1 / 3; কিন্তু যদি Sample Weight দেওয়া হয় [1, 1, 4], তবে ওজনযুক্ত Positive Probability দাঁড়ায় 4 / 6 = 0.6667! লক্ষ করুন, পর্যবেক্ষণগুলো একই থাকলেও Objective-এর Weight বদলানোয় Model-এর Prediction বদলে গেছে। জরিপের Sampling Weight, ভুলের ব্যবসায়িক খরচ (Error Cost) এবং কৃত্রিম Class Balancing Weight—এই তিনটির পরিসংখ্যানিক অর্থ কখনোই এক নয়।"
+        },
+        {
+          "type": "code",
+          "title": "কোডে ওজনযুক্ত Leaf সরাসরি যাচাই",
+          "body": "import numpy as np\nfrom sklearn.tree import DecisionTreeClassifier\n\nX = np.zeros((3, 1))\ny = np.array([0, 0, 1])\nw = np.array([1.0, 1.0, 4.0])\nmodel = DecisionTreeClassifier(random_state=42).fit(X, y, sample_weight=w)\nassert np.isclose(model.predict_proba([[0.0]])[0, 1], 2 / 3)\nassert model.tree_.n_node_samples[0] == 3\nassert model.tree_.weighted_n_node_samples[0] == 6\nprint(model.predict_proba([[0.0]]))\n"
+        },
+        {
+          "type": "text",
+          "title": "Predicted Probability ও Calibration যাচাই",
+          "body": "প্রতিটি Leaf-এর অনুপাত আসলে Training Data থেকে নেওয়া একটি হিসাব মাত্র। অতি ক্ষুদ্র Leaf সরাসরি চরম 0 বা 1 Probability দেয়, আর সেরা Split বাছাইয়ের কারণে Tree-তে একধরনের অতি-আশাবাদ (Selection-induced Optimism) থাকতে পারে। তাই Calibration যাচাই করতে অবশ্যই অদেখা Held-out বা Cross-fitted Prediction ব্যবহার করতে হবে—Training Data-র ওপরই Calibrator Fit করলে তা সৎ মূল্যায়ন নয়। পাশাপাশি মনে রাখবেন, Brier Score বা Reliability বিশ্লেষণ Predicted Probability-র মানগত গুণমান মাপে, আর AP মাপে ক্রম সাজানোর সক্ষমতা (Ranking)—একটি ভালো হওয়া মানেই অন্যটির নিশ্চয়তা নয়।"
+        },
+        {
+          "type": "text",
+          "title": "খরচ-সংবেদনশীল (Cost-sensitive) সিদ্ধান্তের সূত্র",
+          "body": "Binary Classification-এ আপনার হাতে যদি সত্যিকারের Calibrated Probability p থাকে, এবং সঠিক সিদ্ধান্তের খরচ শূন্য ধরে False Positive খরচ C_FP ও False Negative খরচ C_FN স্থির থাকে, তবে Positive অনুমান করার আদর্শ শর্ত হলো p > C_FP / (C_FP + C_FN)। কিন্তু সঠিক Calibration ও এই শর্তগুলো যাচাই না করে সরল এই Threshold প্রযোজ্য বলে দাবি করবেন না। তা ছাড়া বাস্তব অপারেশনাল সক্ষমতা এবং গ্রুপভিত্তিক খরচের সীমা আলাদা শর্ত আরোপ করতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে গুছিয়ে বলবেন",
+          "body": "class_weight=\"balanced\" দেওয়ার পরে Recall বাড়ল কিন্তু Precision কমল—এটি কি সবসময়ই ভালো? উত্তরে বলুন, বাস্তব পরিবেশের Base Rate, গ্রহণযোগ্য False-alarm বাজেট, Calibration এবং চূড়ান্ত Threshold Policy মিলিয়ে তা বিচার করতে হবে। আর ন্যায্যতা (Fairness) প্রসঙ্গে মনে করিয়ে দিন যে কেবল সংবেদনশীল Column বাদ দিলেই নিরপেক্ষতা নিশ্চিত হয় না; পরোক্ষ Proxy Column, ডেটা বাছাইয়ের প্রক্রিয়া এবং খোদ Outcome-এর সংজ্ঞাও Audit করা জরুরি।"
+        }
+      ]
+    },
+    {
+      "id": "ch09_interpretation",
+      "title": "Prediction Path ও Feature Importance",
+      "subtitle": "স্থানীয় নিয়ম, MDI এবং Permutation Importance-এর প্রকৃত সীমা",
+      "duration": "34 min",
+      "icon": "account_tree",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "একটি একক Prediction-এর পথরেখা (Decision Path)",
+          "body": "একটি Decision Tree কোনো নির্দিষ্ট Input-এর জন্য ঠিক কীভাবে সিদ্ধান্ত নিল তা জানতে আমরা শুরুর Root থেকে প্রান্তিক Leaf পর্যন্ত কোন কোন Feature শর্ত পরীক্ষা করা হয়েছে তা ধাপে ধাপে অনুসরণ করতে পারি। স্বচ্ছতা বজায় রাখতে এর সাথে ওই Leaf-এর Support, প্রতিটি Class-এর সংখ্যা এবং Predicted Probability-ও উল্লেখ করা উচিত। তবে মনে রাখবেন, এই Decision Path কেবল Model-টি কেন এই পথে গেল তার যান্ত্রিক ব্যাখ্যা দেয়—বাস্তব জগতে ওই Feature-টিই ফলাফলের কার্যকারণ (Cause) কি না, তার উত্তর দেয় না। তা ছাড়া কোনো Threshold-এর খুব কাছাকাছি থাকা Input সামান্য বদলে গেলেই পুরো Path বদলে যেতে পারে।"
+        },
+        {
+          "type": "math",
+          "title": "Impurity-ভিত্তিক সামগ্রিক গুরুত্ব (MDI Aggregation)",
+          "body": "v_j=\\sum_{t:\\,feature(t)=j}\\frac{N_t}{N}\\Delta I_t,\\qquad importance_j=\\frac{v_j}{\\sum_kv_k}"
+        },
+        {
+          "type": "text",
+          "title": "MDI-এর নরমালাইজেশন, প্রান্তিক ক্ষেত্র ও Bias",
+          "body": "উপরের সমীকরণ অনুযায়ী পুরো Tree জুড়ে Training-এর ওজনযুক্ত Impurity হ্রাস প্রতিটি Feature অনুযায়ী যোগ করা হয়। মোট হ্রাস ধনাত্মক হলে সবগুলোর যোগফল 1 করার জন্য নরমালাইজ করা হয়; আর Tree-তে কোনো Split না হলে সব Importance-ই 0 হতে পারে। বড় MDI পাওয়ার অর্থ কেবল এটুকুই যে শেখা Training Objective কমাতে ওই Column-টি ব্যবহৃত হয়েছে—এটি স্থিতিশীল Predictive তথ্য বা Causal প্রভাবের প্রমাণ নয়। বিশেষ করে High-cardinality Column-গুলো বেশি Candidate Split পাওয়ার কারণে MDI-তে বাড়তি সুবিধা বা Bias পেতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "পরস্পর সম্পর্কযুক্ত (Correlated) Feature থাকলে কী ঘটে?",
+          "body": "ডেটায় একই তথ্যবাহী দুটি পরস্পর সম্পর্কযুক্ত বা পুনরাবৃত্ত (Redundant) Feature থাকলে Tree একটিকে আগে বেছে নিয়ে অন্যটিকে খুব কম Importance দিতে পারে। ডেটার সামান্য পরিবর্তন বা Tie-breaking Policy বদলে গেলেই আবার সেই কৃতিত্ব অন্য Column-এর দিকে ঘুরে যেতে পারে! তাই কোনো Column-এর Feature Importance 0 হওয়া মানে এটি নয় যে সম্ভাব্য সব Model-এই Column-টি অকেজো—এটি কেবল এই নির্দিষ্ট Fitted Tree কী করেছে তা জানায়।"
+        },
+        {
+          "type": "code",
+          "title": "কোডে Decision Path ও Feature Importance নিরীক্ষা",
+          "body": "import numpy as np\nfrom sklearn.tree import DecisionTreeClassifier\n\nX = np.arange(6.0).reshape(-1, 1)\ny = np.array([0, 0, 0, 1, 1, 1])\nm = DecisionTreeClassifier(max_depth=1, random_state=42).fit(X, y)\nrow = np.array([[3.0]])\nids = m.decision_path(row).indices\nleaf = int(m.apply(row)[0])\nassert ids.tolist() == [0, 2] and leaf == 2\nassert np.isclose(m.feature_importances_.sum(), 1)\nprint(ids.tolist(), leaf, m.predict_proba(row)[0].tolist())\n"
+        },
+        {
+          "type": "text",
+          "title": "Held-out ডেটায় Permutation Importance",
+          "body": "MDI-এর সীমাবদ্ধতা এড়াতে আমরা Fitted Model-টিকে স্থির (Fixed) রেখে অদেখা Held-out ডেটায় একটি নির্দিষ্ট Feature এলোমেলো (Permute) করে নির্বাচিত Evaluation Metric-এর পতন মাপতে পারি। তবে এখানেও সতর্কতা প্রয়োজন: Correlated Column থাকলে একটির বদলে অন্যটি কাজ চালিয়ে দেওয়ায় স্কোর কম পড়তে পারে, আবার অবাস্তব মানের সমন্বয় তৈরি হয়ে ব্যাখ্যায় জটিলতা আনতে পারে। গ্রুপকৃত বা পুনরাবৃত্ত ডেটায় অবাধে Row ওলটপালট করলে ভেতরকার নির্ভরশীলতা ভেঙে যায়। এমনকি কাকতালীয়ভাবে ঋণাত্মক Importance আসাও সম্ভব; তাই সবসময় অনিশ্চয়তা এবং Metric-সংবেদনশীলতা একসাথে রিপোর্ট করুন।"
+        },
+        {
+          "type": "text",
+          "title": "ব্যবসায়িক ব্যাখ্যায় ভাষার সতর্কতা",
+          "body": "বাস্তব প্রেক্ষাপটে 'Age > 40 হলেই ঝুঁকিপূর্ণ'—এভাবে বললে যান্ত্রিক একটি বিভাজনকে কার্যকারণ বা নৈতিক ব্যবসায়িক নিয়ম বানিয়ে ফেলা হয়। এর চেয়ে অনেক বেশি দায়িত্বশীল উপস্থাপন হলো: 'আমাদের এই Model-এর এই নির্দিষ্ট Path-এ Threshold = 40 ব্যবহৃত হয়েছে, সংশ্লিষ্ট Leaf-এ Support হলো n এবং পর্যবেক্ষিত Training Distribution ছিল এমন; তবে বাস্তব Deployment-এর প্রমাণ ও নীতিগত যৌক্তিকতা আলাদা বিষয়।' ঠিক একই কারণে ঐতিহাসিক Adult Dataset-এর Label দিয়ে বাস্তব জীবনের গুরুত্বপূর্ণ সিদ্ধান্ত নেওয়ার সুপারিশ আমরা কখনোই করি না।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে গুছিয়ে বলবেন",
+          "body": "ধরুন Interview-এ জিজ্ঞেস করা হলো: একটি অর্থহীন র‍্যান্ডম আইডি সর্বোচ্চ MDI পেল—কীভাবে কারণ খুঁজবেন? উত্তরে Candidate-count Bias, গভীর শাখায় Memorization, সম্ভাব্য Data Leakage এবং Held-out পারফরম্যান্স পরীক্ষার কথা বলুন। পাশাপাশি পরস্পর সম্পর্কযুক্ত Input-এর ক্ষেত্রে স্থির Model-এর Permutation ফলাফল বনাম Column বাদ দিয়ে নতুন করে Training দেওয়া (Drop-column Refit) কীভাবে সম্পূর্ণ আলাদা প্রশ্ন করে, এবং তার Refitting খরচ ও Selection Protocol কেমন হবে তা পরিষ্কারভাবে ব্যাখ্যা করুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch09_book_explanations",
+      "title": "Feature Importance, Permutation ও ব্যাখ্যার সীমা: হাতে-কলমে বিশ্লেষণ",
+      "subtitle": "ধারণা থেকে সমীকরণ, খাতাকলমের হিসাব ও Python কোডে যাচাই",
+      "duration": "18 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ধারণাটি আলাদা করে বোঝা কেন দরকার?",
+          "body": "কোনো একটি Feature-কে ঢালাওভাবে 'গুরুত্বপূর্ণ' বলা অসম্পূর্ণ—আগে জানতে হবে কোন Model, কোন Dataset এবং কোন Metric-এর সাপেক্ষে? আগের পাঠে আমরা দেখেছি, Tree-এর Impurity Importance বহু সম্ভাব্য Split-বিশিষ্ট Column-কে বাড়তি সুবিধা দিতে পারে। অন্যদিকে Held-out Permutation Importance মাপে Column-টি এলোমেলো (Shuffle) করার পর Evaluation Metric কতটা কমে; তবে মনে রাখতে হবে এটিও শেষ পর্যন্ত ওই নির্দিষ্ট Model-এর নিজস্ব Predictive নির্ভরতা মাত্র।"
+        },
+        {
+          "type": "text",
+          "title": "ধাপে ধাপে হিসাবের প্রক্রিয়া",
+          "body": "হিসাবটি নির্ভুল রাখতে প্রথমে Training-এ অব্যবহৃত একটি পরিষ্কার Evaluation Subset এবং নির্দিষ্ট Baseline Metric স্থির করুন। এরপর Model স্থির রেখে একটি Feature Column এলোমেলো (Shuffle) করে আবার স্কোর মাপুন এবং স্থিতিশীল গড় পেতে একাধিকবার Permutation চালান। যদি একাধিক Column পরস্পর Correlated হয়, তবে একটি এলোমেলো করলেও অন্যটি তার জায়গা পূরণ করতে পারে; তখন দলগত প্রভাব মাপতে সেগুলো একসাথে (Jointly) এলোমেলো করতে হয়। আবার একক Column আলাদাভাবে এলোমেলো করলে বাস্তবে অসম্ভব এমন মানের সমন্বয়ও তৈরি হতে পারে।"
+        },
+        {
+          "type": "math",
+          "title": "Permutation Importance-এর গাণিতিক রূপ",
+          "body": "I_j=\\mathrm{Score}(f,X,y)-\\mathbb E_\\pi[\\mathrm{Score}(f,X^{\\pi_j},y)]"
+        },
+        {
+          "type": "text",
+          "title": "খাতাকলমে একটি ছোট উদাহরণ",
+          "body": "সূত্রটি মেলানোর জন্য ধরুন আমাদের কাছে এমন একটি স্থির (Frozen) Model আছে যা Prediction হিসেবে সরাসরি Input Feature a-এর মানই ফিরিয়ে দেয়। এখানে a = [0, 0, 1, 1] এবং প্রকৃত Label y = a। তাহলে শুরুর Baseline Accuracy হলো 1.0। এবার বোঝার সুবিধার্থে a-কে উল্টে দিয়ে [1, 1, 0, 0] বসালে Accuracy নেমে আসে 0.0-তে; ফলে এই নির্দিষ্ট বিন্যাসটির জন্য Importance দাঁড়ায় 1.0। তবে যেকোনো একটি দৈব (Random) Shuffle-এ ফলাফল কমবেশি হতে পারে, তাই বাস্তবে কেবল একবার Shuffle-এর ওপর নির্ভর করা যথেষ্ট নয়।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ হিসাবটি নিজে করি",
+          "body": "labels = [0, 0, 1, 1]\nfeature = labels.copy()\nbaseline = sum(x == y for x, y in zip(feature, labels)) / len(labels)\npermuted = list(\n    reversed(feature)\n)  # Explicit teaching permutation, not a random estimate.\nafter = sum(x == y for x, y in zip(permuted, labels)) / len(labels)\nprint(baseline, baseline - after)\n"
+        },
+        {
+          "type": "text",
+          "title": "কোড চালালে কী ঘটছে?",
+          "body": "কোডটি চালালে আউটপুট আসবে 1.0 1.0—প্রথমটি মূল Baseline এবং পরেরটি Shuffle-এর ফলে স্কোরের পতন। খেয়াল করুন, এখানে Model-টি স্থির (Fixed) রাখা হয়েছে; Shuffle-এর পর Model নতুন করে Refit করলে সেটি সম্পূর্ণ ভিন্ন প্রশ্নের উত্তর দিত। আর Regression-এ ঋণাত্মক Loss Scorer ব্যবহার করলে বিয়োগের দিক (Score Direction) ঠিক রাখবেন যাতে ভালো পারফরম্যান্স মানেই বড় স্কোর বোঝায়।"
+        },
+        {
+          "type": "text",
+          "title": "কখন এই হিসাব প্রযোজ্য নয়?",
+          "body": "মনে রাখবেন, Feature Importance কখনোই বাস্তব Causal Effect নয়। এমনকি জনপ্রিয় SHAP মানগুলোও নির্বাচিত Background Distribution এবং Conditional নাকি Interventional নিয়ম ধরা হচ্ছে তার ওপর নির্ভর করে; পরস্পর সম্পর্কযুক্ত Proxy থাকলে কেবল Model থেকে অদ্বিতীয় কোনো কার্যকারণ কৃতিত্ব পাওয়া যায় না। তা ছাড়া অসতর্ক ব্যাখ্যা কখনো কখনো সংবেদনশীল ব্যক্তিগত তথ্যও ফাঁস (Data Leak) করে দিতে পারে।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে চেষ্টা করুন",
+          "body": "যদি একটি Feature a-এর হুবহু নকল (Exact Duplicate) আরেকটি Feature b থাকে, তবে a-এর Importance 0 হতে পারে কেন? আর পরস্পর সম্পর্কযুক্ত Input-এর ক্ষেত্রে Partial Dependence Plot-এ কী সমস্যা তৈরি হয়?",
+          "solution": "Model-টি যদি তার সমস্ত সিদ্ধান্তে কেবল নকল Column b ব্যবহার করে থাকে, তবে a এলোমেলো (Shuffle) করলেও কোনো Prediction বদলাবে না—ফলে a-এর Importance আসবে 0। অন্যদিকে, Partial Dependence Plot একটি Feature-এর মান জোর করে বদলে বাকি Column-গুলোকে পর্যবেক্ষিত মানেই স্থির রাখে; এতে Column-গুলোর স্বাভাবিক Correlation ভেঙে বাস্তবে অসমর্থিত ও অবাস্তব সমন্বয়ে Model মূল্যায়িত হতে পারে। তাই সবসময় ডোমেইন জ্ঞান ও ডেটার প্রকৃত Support যাচাই করুন।",
+          "reference": "https://scikit-learn.org/stable/modules/permutation_importance.html"
+        }
+      ]
+    },
+    {
+      "id": "ch09_complexity",
+      "title": "Runtime, গাণিতিক নির্ভুলতা ও স্থিতিশীলতা",
+      "subtitle": "সুষম গঠনের অনুমান, Monotone রূপান্তরের সূক্ষ্মতা ও Floating-point সীমা",
+      "duration": "30 min",
+      "icon": "account_tree",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Prediction-এর সময় ও মেমোরি জটিলতা",
+          "body": "বাস্তব সিস্টেমে একটি Decision Tree চালানোর খরচ কতটুকু? একটি একক Input-এর Prediction Time হলো O(h), যেখানে h হলো Root থেকে অতিক্রান্ত পথের উচ্চতা (Visited Path Height)। সুষম বা Balanced Tree-তে h ≈ log_2(leaves), যা অত্যন্ত দ্রুত; কিন্তু একপেশে লম্বা শিকলের মতো (Degenerate Chain) গঠনে h অনেক বড় হতে পারে। তা ছাড়া Batch Memory এবং প্রোডাকশনের Serving Latency কেবল Training-এর Row সংখ্যা n_train দিয়ে বোঝা যায় না। মেমোরিতে Model-এর মোট Node সংখ্যা O(M), যেখানে প্রতিটি Node নিজের Feature, Threshold, দুই শাখার সংযোগ এবং Prediction পরিসংখ্যান ধরে রাখে।"
+        },
+        {
+          "type": "text",
+          "title": "Training Complexity হিসাব করার সতর্কতা",
+          "body": "Training-এর সময় একটি একক Node-এ d-সংখ্যক Feature সাজিয়ে স্ক্যান করতে সময় লাগে O(d n log n)। আমাদের শিক্ষামূলক ইমপ্লিমেন্টেশনের মতো সুষম Recursion-এর প্রতি স্তরে নতুন করে Sort করলে মোট খরচ O(d n log^2 n) হতে পারে, আর গভীর অসুষম ক্ষেত্রে তা আরও বেশি হয়। বিপরীতে অপ্টিমাইজড লাইব্রেরিগুলো পূর্বসাজানো ক্রম (Cached Order) ও বিশেষ ডেটা স্ট্রাকচার ব্যবহার করে। তাই কোনো লাইব্রেরির সব কনফিগারেশনের জন্য একটিমাত্র স্থির অ্যাসিম্পটোটিক সীমা ঘোষণা করবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "Prefix পরিসংখ্যান ও বিয়োগজনিত ত্রুটি",
+          "body": "দ্রুত Candidate যাচাইয়ের জন্য Binary Gini-তে ক্রমযোজিত Positive গণনা, Multiclass-এ প্রতিটি Class-এর সংখ্যা এবং Regression-এর Squared Error-এ মোট গণনা, যোগফল (sum) ও বর্গের যোগফল (sum of squares) ব্যবহার করা যায়। তবে Target মানগুলো আকারে অনেক বড় এবং পরস্পরের খুব কাছাকাছি হলে সরাসরি sumsq - sum^2 / n হিসাবে মারাত্মক নির্ভুলতা ক্ষয় (Catastrophic Cancellation) ঘটতে পারে; তাই কেন্দ্রস্থ স্থিতিশীল হিসাব (Stable Centering) এবং স্বাধীন রেফারেন্স দিয়ে যাচাই করা জরুরি।"
+        },
+        {
+          "type": "text",
+          "title": "Monotone রূপান্তরের সূক্ষ্মতা",
+          "body": "একটি প্রচলিত ধারণা হলো যেকোনো ক্রমবর্ধমান রূপান্তরে Tree অপরিবর্তিত থাকে—কিন্তু এখানে একটি সূক্ষ্ম ফাঁক আছে! কঠোরভাবে ক্রমবর্ধমান (Strictly Increasing) রূপান্তর Training Data-র ক্রম অক্ষুণ্ণ রাখে, তাই সম্ভাব্য বিভাজনগুলো একই থাকতে পারে। কিন্তু রূপান্তরিত স্কেলে পাশাপাশি দুটি মানের মধ্যবিন্দু নিয়ে মূল স্কেলে ফিরিয়ে আনলে (Inverse-map) তা মূল মধ্যবিন্দুর সমান নাও হতে পারে। ফলে Training-এর সব Row একই ঘরে থেকেও মাঝামাঝি মানের নতুন কোনো Input ভিন্ন শাখায় চলে যেতে পারে! কেবল ধনাত্মক রৈখিক স্কেলিং (Positive Affine Scaling) আদর্শ গণিতে মধ্যবিন্দু ও Boundary হুবহু ধরে রাখে, যদিও বাস্তবে Floating-point Rounding তখনো বিবেচ্য।"
+        },
+        {
+          "type": "code",
+          "title": "কোডে বর্গ রূপান্তরে সরে যাওয়া Boundary-র উদাহরণ",
+          "body": "from math import sqrt\n\na, b = 1.0, 3.0\nraw_threshold = (a + b) / 2\ntransformed_threshold = (a * a + b * b) / 2\ninverse_boundary = sqrt(transformed_threshold)\nprobe = 2.1\nassert probe > raw_threshold\nassert probe * probe < transformed_threshold\nprint(raw_threshold, inverse_boundary)\n# Increasing square transform on positive values preserves training order,\n# but a new between-values probe can route differently.\n"
+        },
+        {
+          "type": "text",
+          "title": "Floating-point চুক্তি ও Numerical Precision",
+          "body": "scikit-learn-এর Tree ভেতরে নিজস্ব সংখ্যাসূচক রূপান্তর (যেমন float32) করতে পারে; ফলে প্রায়-অভিন্ন বিশাল Feature মান সংকুচিত হয়ে এক হয়ে গেলে আদর্শ ক্রমের যুক্তি ভেঙে পড়ে। তাই ডেটার Schema-তে একক, dtype, সসীম পরিসর ও সীমান্তবর্তী আচরণ যাচাই করুন। পাশাপাশি মনে রাখবেন, স্ক্রিনে Threshold প্রিন্ট করলে আসন্নীকৃত প্রদর্শনী মান আর মেমোরিতে সংরক্ষিত প্রকৃত মান এক নয়—নিয়ম এক্সপোর্ট করার সময় পর্যাপ্ত Numerical Precision বজায় রাখুন।"
+        },
+        {
+          "type": "text",
+          "title": "গঠনের স্থিতিশীলতা (Stability) পরীক্ষা",
+          "body": "Training Data থেকে মাত্র একটি Row বাদ দিয়ে বা র‍্যান্ডম Seed বদলে দুটি Fitted Tree-এর গঠন তুলনা করে দেখুন। সামগ্রিক Prediction Accuracy একই থাকলেও ভেতরের Threshold ও Feature Importance বদলে যেতে পারে! মনে রাখবেন, পুনরুৎপাদনযোগ্য Seed কেবল Audit সহজ করে, Model-এর পরিসংখ্যানিক স্থিতিশীলতা প্রমাণ করে না। একক Tree-র এই উচ্চ Variance কেন গুরুত্বপূর্ণ তা মাথায় রাখুন—পরের অধ্যায় Book 2 · Chapter 5 (Ensembles & Boosting)-এ আমরা এর পূর্ণাঙ্গ সমাধান দেখব।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে গুছিয়ে বলবেন",
+          "body": "'Training O(n log n) আর Inference O(log n)'—কখন এই সরল স্লোগানটি খাটে না? উত্তরে Feature সংখ্যা d, গভীরতা, Tree-এর ভারসাম্য (Balance), সাজানোর কৌশল, Sample Weight এবং Feature Representation কীভাবে হিসাব বদলে দেয় তা বলুন। পাশাপাশি গভীর Tree-এর Serialization আকার, Training-এর Peak Memory এবং মোবাইল বা এজ ডিভাইসের Inference বাজেট আলাদাভাবে মাপার কথা উল্লেখ করুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch09_evaluation",
+      "title": "Decision Tree মূল্যায়ন প্রোটোকল",
+      "subtitle": "Grouped Tuning, সৎ Baseline এবং Test Peeking এড়ানোর নিয়ম",
+      "duration": "32 min",
+      "icon": "account_tree",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "আগে সঠিক Split, তারপরে Tuning",
+          "body": "যেকোনো Model টিউন করার আগে মূল্যায়নের নকশাটি নিশ্ছিদ্র করা জরুরি। ডেটায় একই সত্তার পুনরাবৃত্তি থাকলে গ্রুপ-সচেতন বাহ্যিক বিভাজন (Group-aware Outer Split) এবং সময়ের সাপেক্ষে Prediction হলে কালানুক্রমিক নকশা (Chronology-aware Design) অপরিহার্য। সাধারণ র‍্যান্ডম Row Split ভবিষ্যৎ পারফরম্যান্সের সার্বজনীন মাপকাঠি নয়। মনে রাখবেন, গ্রুপিং Key কখনোই Target থেকে বানানো যাবে না, আর প্রোফাইলভিত্তিক Proxy মানেই প্রকৃত মানুষের স্বাধীন পরিচয় নয়। পুরো Pipeline Fit, Feature Selection ও Tuning অবশ্যই কেবল Training Fold-এর ভেতরেই সীমাবদ্ধ থাকতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "কাজ শুরুর আগেই Selection Metric লিখুন",
+          "body": "আমাদের এই অধ্যায়ের Workflow-এ Classifier নির্বাচনের সুনির্দিষ্ট মাপকাঠি হলো ভেতরের Fold-গুলোর গড় Average Precision (Mean Inner-fold AP); আর Accuracy ও Brier Score রাখা হয়েছে আলাদা Diagnostic হিসেবে। মনে রাখবেন, AP নির্ভর করে Class Prevalence ও Ranking-এর ওপর—এটি ROC-AUC বা নির্দিষ্ট সীমারেখার Precision-এর সমার্থক নয়। এমনকি প্রতিটি Fold-এর স্কোরের গড় এবং সব Out-of-fold Prediction একত্র করে হিসাব করা Pooled AP হুবহু এক নাও হতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "ঘোষিত Grid ও Tie-breaking চুক্তি",
+          "body": "আমাদের পরীক্ষায় ঘোষিত ৮টি Hyperparameter সমন্বয় হলো: max_depth (3 ও 6), min_samples_leaf (50 ও 200) এবং ccp_alpha (0.0 ও 0.002), যা মূল্যায়িত হয় 3টি ভেতরের গ্রুপকৃত Fold-এ। নির্বাচন চলাকালীন বাহ্যিক Validation অংশে কোনো প্রবেশাধিকার নেই। স্কোর সমান হলে (Tie হলে) ছোট depth, বড় min_leaf ও বড় alpha অগ্রাধিকার পায়। সবশেষে বিজয়ী Model-টিকে পুরো Training Partition-এর সব Row-তে পুনরায় Fit করে ডেভেলপমেন্ট Validation-এ একবার রিপোর্ট করা হয়।"
+        },
+        {
+          "type": "text",
+          "title": "সৎ Baseline ও অনিশ্চয়তা",
+          "body": "তুলনার ভিত্তি হিসেবে DummyClassifier(strategy=\"prior\") কেবল Training Data-র অনুপাত ধরে স্থির Probability দেয়, ফলে Validation AP Baseline সেখানকার প্রকৃত Positive অনুপাতের সাথে মিলে যায়। আমাদের Row-ভিত্তিক Metric-গুলোতে fnlwgt ওজন ব্যবহৃত হয়নি। একটিমাত্র Split-এর স্কোর দেখেই চূড়ান্ত আস্থার দাবি না করে ডেটার পারস্পরিক নির্ভরশীলতা, উৎসের পুনর্ব্যবহার এবং Model নির্বাচনের ওঠানামা স্পষ্টভাবে ব্যাখ্যা করুন।"
+        },
+        {
+          "type": "text",
+          "title": "Nested Preprocessing-এর শৃঙ্খলা",
+          "body": "মিশ্র ধরনের Feature Pipeline হলে Imputer ও Encoder অবশ্যই প্রতিটি ভেতরের Fit-এর কেবল নিজস্ব Training Row-তেই Fit হতে হবে। পুরো মূল Dataset-এর Category বা Median আগেভাগে বের করে ভেতরের Validation রূপান্তর করলে সরাসরি Data Leakage ঘটতে পারে। আমাদের বর্তমান Workflow-এ সুনির্ধারিত সসীম Numeric-only Column ব্যবহার করায় কোনো আলাদা Fitted Preprocessing প্রয়োজন হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "প্রদর্শনী Pruning Path আলাদা রাখুন",
+          "body": "আরেকটি গুরুত্বপূর্ণ সতর্কতা: ইন্টারঅ্যাক্টিভ ল্যাবের Path-টি কেবল দুটি Feature-এর একটি নির্দিষ্ট শিক্ষামূলক Tree থেকে তৈরি; এটিকে পাঁচ Feature-বিশিষ্ট টিউন করা Classifier-এর নিজস্ব Pruning Path হিসেবে দেখানো হচ্ছে না। Validation চার্ট দেখে আকর্ষণীয় একটি ধাপ বেছে নিয়ে পরে সেই একই চার্টের স্কোরকে চূড়ান্ত Test ফলাফল বলবেন না। এমনকি Training Data থেকে Candidate তালিকা তৈরি করলেও সেরা ধাপ নির্বাচনের জন্য ভেতরের আলাদা Validation দরকার।"
+        },
+        {
+          "type": "text",
+          "title": "পুনর্ব্যবহৃত ডেটা উৎসের সীমাবদ্ধতা",
+          "body": "এই Adult Dataset ফাইলটি আগের অধ্যায়গুলোতেও অনুসন্ধান করা হয়েছে। তাই এখানকার Training ও Validation ডায়াগনস্টিকস কোনো আনকোরা নতুন Confirmatory Benchmark বা প্রচলিত UCI প্রোটোকল নয়, এবং বাহ্যিক adult.test ফাইলটি আমরা পড়ছি না। ভবিষ্যৎ প্রোডাকশন Deployment-এর দাবি করতে হলে যথাযথভাবে সংগৃহীত স্বাধীন মূল্যায়ন ডেটা প্রয়োজন; তা ছাড়া ঐতিহাসিক আয়ের Label-এ সামাজিক Bias ও নমুনায়নের সীমাবদ্ধতা রয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে গুছিয়ে বলবেন",
+          "body": "ধরুন টিউনিংয়ের CV Score দারুণ এসেছে, কিন্তু চূড়ান্ত গ্রুপ বিভাজনে ফলাফল খারাপ—কী কী যাচাই করবেন? উত্তরে Group Overlap, Fold-ভেদে Prevalence-এর পার্থক্য, Proxy ID, উচ্চ Variance, Category Shift এবং বড় Tuning Grid-এর Overfitting নিরীক্ষা করার কথা বলুন। পাশাপাশি কেন সেরা Validation Score দেওয়া র‍্যান্ডম Seed খুঁজে রিপোর্ট করা সৎ পারফরম্যান্স প্রাক্কলন নয়, তা পরিষ্কারভাবে বুঝিয়ে বলুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch09_workflow",
+      "title": "বাস্তব ডেটায় পূর্ণাঙ্গ Workflow: Training থেকে Audit",
+      "subtitle": "আসল Adult Dataset, গ্রুপ-নিরাপদ নির্বাচন ও পুনরুৎপাদনযোগ্য ল্যাব",
+      "duration": "55 min",
+      "icon": "account_tree",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কোড চালানোর পরিবেশ ও নিয়ম (Run Contract)",
+          "body": "এতক্ষণ শেখা সবগুলো তত্ত্ব এবার আসল ডেটার ওপর এক সুতোয় গেঁথে দেখার পালা। রিপোজিটরির মূল ফোল্ডার থেকে python assets/datasets/adult/tree_workflow.py --output build/chapter-09-report.json কমান্ডটি চালান। হুবহু এক ফলাফল পেতে Python 3.12 এবং নির্ধারিত সংস্করণের NumPy, pandas ও scikit-learn পরিবেশ প্রয়োজন (এই অ্যাপ নিজে Python কোড রান করে না)। নিচের চারটি কোড অংশ একই লোকাল সেশনে ক্রমানুসারে চালানো যায়, যেখানে রিপোজিটরি-আপেক্ষিক DATA পাথ দেওয়া আছে।"
+        },
+        {
+          "type": "text",
+          "title": "ডেটার উৎস যাচাই ও সমস্যার সংজ্ঞা",
+          "body": "কাজ শুরু হয় আসল UCI Adult ফাইলের SHA256 হ্যাশ মিলিয়ে দেখার মাধ্যমে। এরপর পাঁচটি নির্দিষ্ট Numeric Feature দিয়ে আয়ের Classification এবং আলাদাভাবে age ও education_num দিয়ে সাপ্তাহিক কর্মঘণ্টার নির্দিষ্ট Regression চালানো হয়। Data Leakage রোধে প্রোফাইল গ্রুপিংয়ের Key থেকে income এবং hours_per_week—উভয় Outcome-ই বাদ রাখা হয়েছে এবং মূল সোর্স ফাইল অপরিবর্তিত থাকে। এখানে fnlwgt অব্যবহৃত রেখে সব Metric ওজনবিহীন Row-তে হিসাব করা হয়েছে।"
+        },
+        {
+          "type": "code",
+          "title": "ডেটা উৎস, সংখ্যাসূচক চুক্তি ও গ্রুপ-নিরাপদ বিভাজন",
+          "body": "from pathlib import Path\nimport argparse\nimport hashlib\nimport json\nimport platform\nimport numpy as np\nimport pandas as pd\nimport sklearn\nfrom sklearn.model_selection import GroupShuffleSplit, StratifiedGroupKFold\nfrom sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor\nfrom sklearn.dummy import DummyClassifier\nfrom sklearn.metrics import (\n    average_precision_score,\n    accuracy_score,\n    brier_score_loss,\n    mean_squared_error,\n)\n\nDATA = Path(\"assets/datasets/adult\")\nCOLUMNS = [\n    \"age\",\n    \"workclass\",\n    \"fnlwgt\",\n    \"education\",\n    \"education_num\",\n    \"marital_status\",\n    \"occupation\",\n    \"relationship\",\n    \"race\",\n    \"sex\",\n    \"capital_gain\",\n    \"capital_loss\",\n    \"hours_per_week\",\n    \"native_country\",\n    \"income\",\n]\nFEATURES = [\"age\", \"education_num\", \"capital_gain\", \"capital_loss\", \"hours_per_week\"]\nSOURCE_HASH = \"5b00264637dbfec36bdeaab5676b0b309ff9eb788d63554ca0a249491c86603d\"\n\n\ndef load_source(path):\n    digest = hashlib.sha256(path.read_bytes()).hexdigest()\n    if digest != SOURCE_HASH:\n        raise ValueError(\"Expected original adult.data\")\n    frame = pd.read_csv(path, names=COLUMNS, skipinitialspace=True, na_values=\"?\")\n    labels = frame[\"income\"].astype(\"string\").str.strip()\n    if not labels.isin([\"<=50K\", \">50K\"]).all():\n        raise ValueError(\"Invalid income labels\")\n    X = frame[FEATURES].to_numpy(dtype=float, copy=True)\n    if not np.isfinite(X).all():\n        raise ValueError(\"Finite numeric features required\")\n    y = (labels == \">50K\").to_numpy(dtype=int)\n    keys = (\n        frame[[c for c in COLUMNS if c not in (\"income\", \"hours_per_week\")]]\n        .astype(\"string\")\n        .fillna(\"__MISSING__\")\n    )\n    groups = pd.util.hash_pandas_object(keys, index=False).to_numpy()\n    return frame, X, y, groups, digest\n\n\ndef development_split(X, y, groups):\n    train, valid = next(\n        GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=42).split(\n            X, y, groups\n        )\n    )\n    if not set(groups[train]).isdisjoint(groups[valid]):\n        raise ValueError(\"Group overlap\")\n    return train, valid\n"
+        },
+        {
+          "type": "text",
+          "title": "প্রথম অংশের কোড বিশ্লেষণ",
+          "body": "প্রথম কোড ব্লকে শুরুতেই CSV ফাইলের Schema এবং সসীম সংখ্যাসূচক মানের শর্তগুলো যাচাই হয়। এরপর GroupShuffleSplit (seed = 42) পুরো ডেটাকে 26,050টি Training Row এবং 6,511টি Validation Row-তে ভাগ করে দেয়, এবং ভেতরের সমস্ত Fold তৈরি হয় কেবল এই Training সূচকগুলো থেকেই। মনে রাখবেন, প্রোফাইল গ্রুপিং মূল তথ্যের একটি আনুমানিক Proxy মাত্র—প্রকৃত স্বাধীন ব্যক্তিদের যাচাইকৃত পরিচয় নয়।"
+        },
+        {
+          "type": "code",
+          "title": "স্বচ্ছ শিক্ষামূলক CART ইমপ্লিমেন্টেশন (সসীম সংখ্যাসূচক ও Binary Gini)",
+          "body": "def binary_data(X, y):\n    X, y = np.asarray(X, dtype=float), np.asarray(y)\n    if (\n        X.ndim != 2\n        or min(X.shape) < 1\n        or y.shape != (len(X),)\n        or not np.isfinite(X).all()\n        or not np.isin(y, [0, 1]).all()\n    ):\n        raise ValueError(\"Finite matrix and aligned binary labels required\")\n    return X, y.astype(int, copy=True)\n\n\ndef gini(y):\n    y = np.asarray(y)\n    if y.ndim != 1 or len(y) == 0 or not np.isin(y, [0, 1]).all():\n        raise ValueError(\"Nonempty binary labels\")\n    p = float(y.mean())\n    return 2 * p * (1 - p)\n\n\ndef best_split(X, y, min_leaf=1):\n    X, y = binary_data(X, y)\n    if not isinstance(min_leaf, int) or isinstance(min_leaf, bool) or min_leaf < 1:\n        raise ValueError(\"Positive min_leaf\")\n    n = len(y)\n    parent = gini(y)\n    best = None\n    for j in range(X.shape[1]):\n        order = np.argsort(X[:, j], kind=\"stable\")\n        values = X[order, j]\n        ordered = y[order]\n        positives = np.cumsum(ordered)\n        for left_n in range(min_leaf, n - min_leaf + 1):\n            if values[left_n - 1] == values[left_n]:\n                continue  # Never separate equal feature values.\n            lp = positives[left_n - 1] / left_n\n            rp = (positives[-1] - positives[left_n - 1]) / (n - left_n)\n            child = (left_n * 2 * lp * (1 - lp) + (n - left_n) * 2 * rp * (1 - rp)) / n\n            gain = parent - child\n            # Positive gain only; ties keep earlier feature/threshold. This policy is explicit.\n            if gain > 1e-12 and (best is None or gain > best[\"gain\"] + 1e-12):\n                threshold = float(values[left_n - 1] / 2 + values[left_n] / 2)\n                if not values[left_n - 1] <= threshold < values[left_n]:\n                    threshold = float(values[left_n - 1])\n                best = {\"feature\": j, \"threshold\": threshold, \"gain\": float(gain)}\n    return best\n\n\ndef fit_cart(X, y, *, max_depth=3, min_leaf=1):\n    X, y = binary_data(X, y)\n    if (\n        not isinstance(max_depth, int)\n        or isinstance(max_depth, bool)\n        or not 0 <= max_depth <= 20\n    ):\n        raise ValueError(\"Bounded max_depth0..20\")\n    if not isinstance(min_leaf, int) or isinstance(min_leaf, bool) or min_leaf < 1:\n        raise ValueError(\"Positive min_leaf\")\n\n    def grow(matrix, labels, depth):\n        node = {\"n\": len(labels), \"p\": float(labels.mean())}\n        split = (\n            best_split(matrix, labels, min_leaf)\n            if depth < max_depth and gini(labels) > 0\n            else None\n        )\n        if split is not None:\n            left = matrix[:, split[\"feature\"]] <= split[\"threshold\"]\n            node.update(split)\n            node[\"left\"] = grow(matrix[left], labels[left], depth + 1)\n            node[\"right\"] = grow(matrix[~left], labels[~left], depth + 1)\n        return node\n\n    return {\"features\": X.shape[1], \"root\": grow(X, y, 0)}\n\n\ndef predict_cart(model, X):\n    X = np.asarray(X, dtype=float)\n    if X.ndim != 2 or X.shape[1] != model[\"features\"] or not np.isfinite(X).all():\n        raise ValueError(\"Prediction shape/value mismatch\")\n    result = []\n    for row in X:\n        node = model[\"root\"]\n        while \"feature\" in node:\n            node = (\n                node[\"left\"]\n                if row[node[\"feature\"]] <= node[\"threshold\"]\n                else node[\"right\"]\n            )\n        result.append(node[\"p\"])\n    return np.asarray(result, dtype=float)\n"
+        },
+        {
+          "type": "text",
+          "title": "দ্বিতীয় অংশের কোড বিশ্লেষণ",
+          "body": "দ্বিতীয় কোড ব্লকে আমাদের স্বচ্ছ Binary Gini ইমপ্লিমেন্টেশনের সম্পূর্ণ Function-গুলো একত্রে সাজানো রয়েছে। এখানে Stable Sort, ক্রমযোজিত Positive গণনা, কেবল ভিন্ন মানের Candidate পরীক্ষা, ধনাত্মক Gain-এর থামার নিয়ম এবং সসীম সংখ্যাসূচক Prediction চুক্তি খেয়াল করুন। অদ্বিতীয় সেরা বিভাজনবিশিষ্ট ছোট Stump উদাহরণে লাইব্রেরির সাথে সমতুল্যতা যাচাই করা হয়েছে; তবে সম্ভাব্য সব Tree-তে হুবহু অভিন্ন কাঠামোর দাবি করা হচ্ছে না।"
+        },
+        {
+          "type": "code",
+          "title": "ভেতরের গ্রুপকৃত নির্বাচন, Pruning Path, ব্যাখ্যা ও Regression",
+          "body": "def classification_report(model, X, y):\n    probabilities = model.predict_proba(X)[:, 1]\n    return {\n        \"accuracy\": float(accuracy_score(y, model.predict(X))),\n        \"average_precision\": float(average_precision_score(y, probabilities)),\n        \"brier\": float(brier_score_loss(y, probabilities)),\n    }\n\n\ndef leaf_risk(model):\n    t = model.tree_\n    leaf = t.children_left == -1\n    return float(\n        np.dot(t.weighted_n_node_samples[leaf], t.impurity[leaf])\n        / t.weighted_n_node_samples[0]\n    )\n\n\ndef run_analysis(path):\n    frame, X, y, groups, digest = load_source(path)\n    train, valid = development_split(X, y, groups)\n    folds = list(\n        StratifiedGroupKFold(n_splits=3, shuffle=True, random_state=42).split(\n            X[train], y[train], groups[train]\n        )\n    )\n    candidates = []\n    for depth in [3, 6]:\n        for minimum in [50, 200]:\n            for alpha in [0.0, 0.002]:\n                params = {\n                    \"max_depth\": depth,\n                    \"min_samples_leaf\": minimum,\n                    \"ccp_alpha\": alpha,\n                }\n                scores = []\n                for fit, check in folds:\n                    fit, check = train[fit], train[check]\n                    if not set(groups[fit]).isdisjoint(groups[check]):\n                        raise ValueError(\"Inner group overlap\")\n                    estimator = DecisionTreeClassifier(**params, random_state=42).fit(\n                        X[fit], y[fit]\n                    )\n                    scores.append(\n                        average_precision_score(\n                            y[check], estimator.predict_proba(X[check])[:, 1]\n                        )\n                    )\n                candidates.append(\n                    {\"params\": params, \"mean_inner_ap\": float(np.mean(scores))}\n                )\n    # Rank only on inner folds; exact-score ties prefer smaller depth, larger leaves, larger alpha.\n    winner = max(\n        candidates,\n        key=lambda row: (\n            row[\"mean_inner_ap\"],\n            -row[\"params\"][\"max_depth\"],\n            row[\"params\"][\"min_samples_leaf\"],\n            row[\"params\"][\"ccp_alpha\"],\n        ),\n    )\n    model = DecisionTreeClassifier(**winner[\"params\"], random_state=42).fit(\n        X[train], y[train]\n    )\n    baseline = DummyClassifier(strategy=\"prior\").fit(X[train], y[train])\n    # A separate fixed teaching tree/path, never used to select the reported winner.\n    base = DecisionTreeClassifier(\n        max_depth=5, min_samples_leaf=100, random_state=42\n    ).fit(X[train, :2], y[train])\n    alphas = np.unique(\n        base.cost_complexity_pruning_path(X[train, :2], y[train]).ccp_alphas\n    )\n    snapshots = []\n    for alpha in alphas:\n        fitted = DecisionTreeClassifier(\n            max_depth=5, min_samples_leaf=100, ccp_alpha=float(alpha), random_state=42\n        ).fit(X[train, :2], y[train])\n        snapshots.append(\n            {\n                \"alpha\": float(alpha),\n                \"leaves\": int(fitted.get_n_leaves()),\n                \"depth\": int(fitted.get_depth()),\n                \"risk\": leaf_risk(fitted),\n                \"train_accuracy\": float(fitted.score(X[train, :2], y[train])),\n                \"valid_accuracy\": float(fitted.score(X[valid, :2], y[valid])),\n            }\n        )\n    # Verify that nondecreasing alpha produces a nested complexity/risk trend.\n    if np.any(np.diff([s[\"leaves\"] for s in snapshots]) > 0) or np.any(\n        np.diff([s[\"risk\"] for s in snapshots]) < -1e-12\n    ):\n        raise ValueError(\"Unexpected pruning path\")\n    regression = DecisionTreeRegressor(\n        max_depth=4, min_samples_leaf=100, random_state=42\n    ).fit(X[train, :2], frame[\"hours_per_week\"].to_numpy()[train])\n    hours = frame[\"hours_per_week\"].to_numpy(dtype=float)\n    reg_pred = regression.predict(X[valid, :2])\n    # The teaching CART deliberately excludes zero-gain splits (e.g. XOR root).\n    small_X = np.array([[0.0], [1.0], [2.0], [3.0], [4.0], [5.0]])\n    small_y = np.array([0, 0, 0, 1, 1, 1])\n    scratch = fit_cart(small_X, small_y, max_depth=1)\n    reference = DecisionTreeClassifier(max_depth=1, random_state=42).fit(\n        small_X, small_y\n    )\n    np.testing.assert_allclose(\n        predict_cart(scratch, small_X), reference.predict_proba(small_X)[:, 1]\n    )\n    row = 0\n    tree = model.tree_\n    node_ids = model.decision_path(X[valid[row : row + 1]]).indices.tolist()\n    lab = {\n        \"source\": \"UCI Adult, Becker & Kohavi (1996), CC BY 4.0\",\n        \"sha256\": digest,\n        \"scope\": \"First 24 original source rows; age and income label only. Descriptive split calculator, not validation.\",\n        \"rows\": [\n            {\"source_row_1based\": i + 1, \"age\": float(X[i, 0]), \"positive\": int(y[i])}\n            for i in range(24)\n        ],\n    }\n    pruning = {\n        \"source\": lab[\"source\"],\n        \"sha256\": digest,\n        \"scope\": \"Fixed depth5/min_leaf100 teaching tree, age/education_num only; training path and reused development validation.\",\n        \"train_rows\": len(train),\n        \"valid_rows\": len(valid),\n        \"snapshots\": snapshots,\n    }\n    report = {\n        \"source\": lab[\"source\"],\n        \"sha256\": digest,\n        \"versions\": {\n            \"python\": platform.python_version(),\n            \"numpy\": np.__version__,\n            \"pandas\": pd.__version__,\n            \"sklearn\": sklearn.__version__,\n        },\n        \"scope\": \"Reused historical development source; no external test, fresh confirmation, causal or deployment claim\",\n        \"features\": FEATURES,\n        \"train_rows\": len(train),\n        \"valid_rows\": len(valid),\n        \"groups\": int(len(np.unique(groups))),\n        \"seed\": 42,\n        \"inner_folds\": 3,\n        \"candidate_count\": len(candidates),\n        \"candidates\": candidates,\n        \"selected\": winner,\n        \"train\": classification_report(model, X[train], y[train]),\n        \"validation\": classification_report(model, X[valid], y[valid]),\n        \"baseline_validation\": classification_report(baseline, X[valid], y[valid]),\n        \"selected_leaves\": int(model.get_n_leaves()),\n        \"selected_depth\": int(model.get_depth()),\n        \"feature_importance_mdi\": dict(\n            zip(FEATURES, model.feature_importances_.tolist())\n        ),\n        \"example_path\": {\n            \"validation_position\": row,\n            \"node_ids\": node_ids,\n            \"leaf\": int(model.apply(X[valid[row : row + 1]])[0]),\n            \"positive_probability\": float(\n                model.predict_proba(X[valid[row : row + 1]])[0, 1]\n            ),\n        },\n        \"regression_fixed\": {\n            \"features\": FEATURES[:2],\n            \"target\": \"hours_per_week\",\n            \"depth\": 4,\n            \"min_leaf\": 100,\n            \"validation_rmse\": float(\n                np.sqrt(mean_squared_error(hours[valid], reg_pred))\n            ),\n            \"training_mean_baseline_rmse\": float(\n                np.sqrt(\n                    mean_squared_error(\n                        hours[valid], np.full(len(valid), hours[train].mean())\n                    )\n                )\n            ),\n        },\n        \"assumptions\": [\n            \"Raw profile groups exclude both outcomes; they are proxies, not verified independent people.\",\n            \"fnlwgt weights are unused; all metrics are unweighted rows, not population estimates.\",\n            \"No global preprocessing is fitted. Numeric finite inputs use fixed declared features.\",\n            \"Validation/path inspection is development exploration; no retuning claim based on these diagnostics.\",\n            \"MDI is a fitted training impurity attribution, not causal importance or a stability guarantee.\",\n        ],\n    }\n    return report, lab, pruning\n"
+        },
+        {
+          "type": "text",
+          "title": "তৃতীয় অংশের কোড বিশ্লেষণ",
+          "body": "তৃতীয় কোড ব্লকে ৮টি Parameter সমন্বয়ের 3টি ভেতরের Fold-এর গড় AP থেকে বিজয়ী Model বেছে নেওয়া হয়। পুরো Training Data-য় Refit করার পর Baseline এবং Validation ডায়াগনস্টিকস হিসাব করা হয়। আলাদাভাবে দুই Feature-এর নির্দিষ্ট Pruning Path স্ন্যাপশটগুলো নরমালাইজড ওজনযুক্ত Leaf Impurity সংরক্ষণ করে, ফলে Leaf-risk নরমালাইজেশন ও alpha-এর একক সামঞ্জস্যপূর্ণ থাকে। সবশেষে নির্দিষ্ট স্পেসিফিকেশনে কর্মঘণ্টার Regression চালানো হয়েছে।"
+        },
+        {
+          "type": "code",
+          "title": "Import-নিরাপদ CLI ও ল্যাব স্ন্যাপশট তৈরি",
+          "body": "def main(argv=None):\n    parser = argparse.ArgumentParser(description=__doc__)\n    parser.add_argument(\"--output\", type=Path)\n    parser.add_argument(\n        \"--write-labs\",\n        action=\"store_true\",\n        help=\"Regenerate the two bundled lab JSON assets\",\n    )\n    args = parser.parse_args(argv)\n    report, lab, pruning = run_analysis(DATA / \"adult.data\")\n    if args.write_labs:\n        for name, asset in [\n            (\"tree_split_lab.json\", lab),\n            (\"tree_pruning_lab.json\", pruning),\n        ]:\n            (DATA / name).write_text(\n                json.dumps(asset, indent=2, allow_nan=False) + \"\\n\", encoding=\"utf-8\"\n            )\n    rendered = json.dumps(report, indent=2, allow_nan=False)\n    if args.output:\n        args.output.parent.mkdir(parents=True, exist_ok=True)\n        temporary = args.output.with_name(args.output.name + \".tmp\")\n        temporary.write_text(rendered + \"\\n\", encoding=\"utf-8\")\n        temporary.replace(args.output)\n    print(rendered)\n    return report\n\n\nreport, split_asset, pruning_asset = run_analysis(DATA / \"adult.data\")\nprint(json.dumps(report, indent=2, allow_nan=False))\n"
+        },
+        {
+          "type": "text",
+          "title": "চতুর্থ অংশের কোড বিশ্লেষণ",
+          "body": "মডিউল হিসেবে ফাইলটি Import করলে একা একাই CLI কমান্ড চালু হয় না (কেবল স্ক্রিপ্টের শেষের উদাহরণ অংশটুকু ছাড়া)। CLI-এ --output দিলে রিপোর্ট JSON লেখা হয়, আর --write-labs স্পষ্টভাবে দিলে অ্যাপে যুক্ত দুটি ল্যাব JSON নতুন করে তৈরি হয়। রিপোর্টে সোর্স হ্যাশ, Feature-এর নাম, Fold ও Candidate সংখ্যা, Metric, নির্বাচিত গঠন, Path-এর উদাহরণ, লাইব্রেরির সংস্করণ ও মূল অনুমানগুলো সংরক্ষিত থাকে—একই সোর্স, সংস্করণ ও Seed-এ পুরো ল্যাব ফলাফল পুনরুৎপাদন করা যায়।"
+        },
+        {
+          "type": "text",
+          "title": "যাচাইকৃত শিক্ষামূলক ফলাফল",
+          "body": "নির্ধারিত পরিবেশের রানে বিজয়ী হয় depth = 6, min_leaf = 50 ও alpha = 0.0 সমন্বয়টি, যা মোট 37টি Leaf তৈরি করে। ভেতরের গড় AP আসে প্রায় 0.655088; ডেভেলপমেন্ট Validation ডেটায় AP প্রায় 0.675787, Accuracy প্রায় 0.827830 এবং Brier Score প্রায় 0.124991। বিপরীতে Prior Baseline-এর AP প্রায় 0.252957 এবং Accuracy প্রায় 0.747043। এগুলো নির্দিষ্ট প্রোটোকল-নির্ভর ডায়াগনস্টিকস মাত্র—সার্বজনীন শ্রেষ্ঠত্ব বা সরাসরি প্রোডাকশন গ্যারান্টি নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Regression ও ব্যাখ্যার ফলাফল",
+          "body": "একইভাবে নির্দিষ্ট Regression পরীক্ষায় Validation RMSE এসেছে প্রায় 11.28554 ঘণ্টা, যেখানে সরল Training-mean Baseline ছিল প্রায় 12.31979 ঘণ্টা। প্রতিটি Feature-এর আপেক্ষিক অবদান হিসেবে MDI রিপোর্ট করা হয়েছে এবং decision_path ও apply দিয়ে উদাহরণস্বরূপ প্রান্তিক Leaf যাচাই করা যায়। মনে রাখবেন, এর কোনো ফলাফলই শিক্ষার বাস্তব Causal প্রভাব নির্দেশ করে না। আপনি নতুন কোনো Criterion বা Grid পরীক্ষা করলে সেই অনুসন্ধানটিও স্পষ্টভাবে রিপোর্ট করবেন।"
+        }
+      ]
+    },
+    {
+      "id": "ch09_project",
+      "title": "Coding Project: নিজের হাতে তৈরি ও নিরীক্ষা",
+      "subtitle": "পূর্ণাঙ্গ ইমপ্লিমেন্টেশন, কঠোর Unit Test এবং পুনরুৎপাদনযোগ্য রিপোর্ট",
+      "duration": "30 min",
+      "icon": "account_tree",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "প্রদেয় ১: শূন্য থেকে নিজস্ব CART",
+          "body": "এবার পুরো অধ্যায়ের দক্ষতা নিজের কোডে প্রমাণ করার পালা। প্রথম ধাপে সসীম বাইনারি সংখ্যাসূচক চুক্তি বজায় রেখে নিজের হাতে Gini, best_split, Recursive fit ও predict Function লিখুন। আপনার স্থিতিশীল Tie-breaking Policy ও Threshold নিয়ম স্পষ্টভাবে নথিবদ্ধ করুন। এরপর max_depth = 0, পুরোপুরি Pure Label, ডুপ্লিকেট মান, কোনো বৈধ Split না থাকা এবং অবৈধ Input পরীক্ষা করুন। একই Array দিয়ে দুবার Prediction চালিয়ে নিশ্চিত হোন Input Array-তে কোনো অবাঞ্ছিত পরিবর্তন (Mutation) ঘটছে না।"
+        },
+        {
+          "type": "text",
+          "title": "প্রদেয় ২: বাস্তব ডেটার Pipeline",
+          "body": "দ্বিতীয় ধাপে আসল Adult ফাইলের হ্যাশ মিলিয়ে নির্ধারিত গ্রুপ বিভাজন পুনরুৎপাদন করুন। শুধুমাত্র Training অংশের ভেতরের গ্রুপকৃত Grid, Prior Baseline এবং নির্বাচিত Model-এর ফলাফল রিপোর্ট করুন। পাঁচ Feature-এর Classifier এবং দুই Feature-এর Pruning ও Regression পরীক্ষাগুলো আলাদা স্পেসিফিকেশন হিসেবে রাখুন। ডেটা পুনর্ব্যবহার ও প্রোফাইল গ্রুপিংয়ের সীমাবদ্ধতাগুলো নিজের ভাষায় স্পষ্টভাবে লিখুন।"
+        },
+        {
+          "type": "text",
+          "title": "প্রদেয় ৩: Pruning-এর গাণিতিক ব্যাখ্যা",
+          "body": "তৃতীয় ধাপে নিজের তৈরি ছোট একটি Subtree উদাহরণে R(t), R(T_t) এবং মোট Leaf সংখ্যা বসিয়ে হাতে-কলমে ক্রান্তিক alpha_eff প্রতিপাদন করুন। এরপর ল্যাব স্ন্যাপশটগুলোর Leaf ও ঝুঁকির একমুখী প্রবণতা (Monotonicity) এবং কেন Validation Accuracy ওঠানামা (Non-monotonic) করতে পারে তা ব্যাখ্যা করুন। খেয়াল রাখবেন, Path-এর ধাপগুলো সমান ব্যবধানের alpha নয়—প্লটের ক্যাপশন মনোযোগ দিয়ে পড়ুন।"
+        },
+        {
+          "type": "text",
+          "title": "প্রদেয় ৪: প্রোডাকশনের Serving Contract",
+          "body": "চতুর্থ ধাপে Feature-এর ক্রম, dtype, বৈধ পরিসর, অনুপস্থিত মানের Policy, Model-এর সংস্করণ এবং Threshold-এর Numerical Precision লিখে একটি স্পষ্ট চুক্তি তৈরি করুন। Probability Estimation এবং চূড়ান্ত Class সিদ্ধান্ত নেওয়ার কাজ দুটিকে আলাদা Function-এ রাখুন। সাথে ব্যাখ্যা করুন: পরিসরের বাইরের সংখ্যাসূচক Input সাধারণ Tree কোথায় পাঠাবে? অচেনা Category কে সামলাবে? আর সংখ্যার বিচারে বৈধ Input হলেও সময়ের সাথে Semantic Drift কীভাবে শনাক্ত করবেন?"
+        },
+        {
+          "type": "text",
+          "title": "আটটি Coding Exercise",
+          "body": "অনুশীলন অংশে রয়েছে Binary Impurity, ওজনযুক্ত Split Gain, সেরা Threshold, Regression-এর SSE, ছাঁটাইয়ের Alpha, ওজনযুক্ত Leaf Probability, Traversal এবং নরমালাইজড MDI। সংখ্যাসূচক উত্তর মেলানো কেবল একটি ছোট যাচাই; নিজের লোকাল পরিবেশে আসল Python সমাধান, টেস্ট ও ব্যাখ্যা লিখুন। মনে রাখবেন, অ্যাপটি কেবল নোট সেভ করে ও সংখ্যাসূচক উত্তর মেলায়—যেকোনো Python কোড সরাসরি রান বা গ্রেড করে না।"
+        },
+        {
+          "type": "text",
+          "title": "উন্নত মানের Unit Test লেখার কৌশল",
+          "body": "নিজের ইমপ্লিমেন্টেশন আর প্রত্যাশিত সূত্র একইভাবে লিখে কেবল সমতা পরীক্ষা করা দুর্বল অভ্যাস। প্রতিষ্ঠিত লাইব্রেরির নিরপেক্ষ রেফারেন্স, গাণিতিক Invariant, ইচ্ছাকৃতভাবে ভুল ওজনবিহীন সূত্র, প্রান্তিক ক্ষেত্র এবং ভুল Shape বা অসীম Input-এর ব্যর্থতাগুলো পরীক্ষা করুন। কখনোই সামগ্রিক সর্বোত্তম গঠন বা ভবিষ্যৎ পারফরম্যান্সের অবাস্তব গ্যারান্টি দাবি করবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "প্রকৌশল Review Memo প্রস্তুতকরণ",
+          "body": "ডেটার উৎস, লাইসেন্স, হ্যাশ, Feature-এর সময়কাল, Split ও গ্রুপ, Selection Metric, Grid, Seed, সংস্করণ, Baseline, Leaf Support, Calibration-এর সীমা এবং ব্যাখ্যার পরিধি সংক্ষেপে নথিবদ্ধ করুন। কেন নির্দিষ্ট একটি Tree বেছে নিয়েছেন এবং ঠিক কোন দাবিগুলো তথ্য-উপাত্ত দ্বারা সমর্থিত নয়—দুটোই স্পষ্ট করুন। মনে রাখবেন, একটি সুন্দর ডায়াগ্রাম কখনোই নিরেট প্রমাণের বিকল্প নয়।"
+        },
+        {
+          "type": "text",
+          "title": "প্রস্তাবিত অনুশীলনের সময়সূচি",
+          "body": "সূত্র প্রতিপাদনে 20 মিনিট, শূন্য থেকে ইমপ্লিমেন্টেশনে 35 মিনিট, টেস্ট লেখায় 25 মিনিট, ডেটা নিরীক্ষায় 30 মিনিট এবং মৌখিক যুক্তি উপস্থাপনে 15 মিনিট সময় রাখতে পারেন। এগুলো কেবল প্রস্তাবিত চর্চার ব্লক, দক্ষতার বাঁধাধরা সময়সীমা নয়। সমাধান না দেখে পরপর দুবার বুঝিয়ে বলতে ও কোড লিখতে পারলে পরবর্তী রিভিউতে নিজের দুর্বল জায়গাগুলো চিহ্নিত করুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch09_readiness",
+      "title": "Interview প্রস্তুতি ও অতিরিক্ত পড়াশোনা",
+      "subtitle": "গাণিতিক প্রতিপাদন, ইমপ্লিমেন্টেশন, ডিবাগিং ও যুক্তিনির্ভর উপস্থাপন",
+      "duration": "28 min",
+      "icon": "account_tree",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "উত্তর সাজানোর আদর্শ কাঠামো",
+          "body": "যেকোনো কারিগরি Interview-এ উত্তর দেওয়ার সময় একটি পরিষ্কার ছন্দ বজায় রাখুন: সমস্যা ও একক পরিষ্কার করুন → ব্যবহৃত Criterion ও অনুমানগুলো বলুন → সমীকরণ প্রতিপাদন করুন → ছোট ও সুস্পষ্ট গাণিতিক উদাহরণ দিন → ইমপ্লিমেন্টেশন ও জটিলতা বলুন → প্রান্তিক ক্ষেত্র (Edge Case) ধরুন → মূল্যায়ন পদ্ধতি ও সীমাবদ্ধতা উল্লেখ করুন। কেবল 'Tree সহজে ব্যাখ্যাযোগ্য এবং Scaling লাগে না'—এমন মুখস্থ কথা বলে থেমে যাবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "মৌলিক তত্ত্বের চেকপয়েন্ট",
+          "body": "নিজেকে যাচাই করুন: Gini ও Entropy প্রতিপাদন করতে পারেন কি? Split বাছাইয়ে Child-এর আকার অনুযায়ী Weight কেন দরকার? সমান Feature মান কেন আলাদা করা যায় না? min_samples_split এবং min_samples_leaf-এর পার্থক্য কী? শূন্য স্থানীয় Gain সত্ত্বেও নিচের ধাপে কেন কার্যকর গঠন থাকতে পারে? আর প্রতিটি Leaf-এ Mean ও Median কেন যথাক্রমে সেরা ধ্রুবক হয়, তা ব্যাখ্যা করুন।"
+        },
+        {
+          "type": "text",
+          "title": "Pruning সংক্রান্ত চেকপয়েন্ট",
+          "body": "নিশ্চিত করুন আপনি স্পষ্টভাবে বলতে পারছেন: R(T) ঠিক কোন ঝুঁকি মাপে? ক্রান্তিক alpha_eff-এর হরে leaves - 1 থাকে কেন? সমীকরণের কোথায় একই সামগ্রিক নরমালাইজেশন অপরিহার্য? Alpha বাড়লে Validation পারফরম্যান্স একমুখী হয় না কেন? Training Data থেকে শেখা Path কীভাবে ভেতরের CV-তে ব্যবহার করবেন? আর আমাদের ল্যাবের Path ও রিপোর্টের নির্বাচিত Classifier কেন আলাদা?"
+        },
+        {
+          "type": "text",
+          "title": "প্রোডাকশন ও সিস্টেম চেকপয়েন্ট",
+          "body": "বাস্তব প্রয়োগের জন্য প্রস্তুত রাখুন: Input Schema ও Feature-এর সময়কাল, অনুপস্থিত ও অচেনা ডেটা সামলানো, Class Weight বনাম Calibrated Posterior, প্রতিটি Path-এর Support, Boundary-র Numerical Precision এবং প্রোডাকশনের Latency বাজেট। MDI বনাম Causal গুরুত্ব আলাদা করে দেখান এবং ডেটা বা Seed বদলালে গঠনের অস্থিরতা কীভাবে পরিমাপ করবেন তা ব্যাখ্যা করুন।"
+        },
+        {
+          "type": "text",
+          "title": "মৌলিক Interview Case অনুশীলন",
+          "body": "অনুশীলন ট্যাবে শীর্ষ প্রযুক্তি প্রতিষ্ঠানের ধাঁচে তৈরি আটটি মৌলিক কেস দেওয়া আছে, প্রতিটির সাথেই বিস্তারিত যুক্তি ও পাল্টা প্রশ্ন রয়েছে। ধারণা গভীরভাবে যাচাই করার জন্যই এগুলো তৈরি করা হয়েছে। প্রশ্ন পড়ে আগে নিজের উত্তর খাতায় লিখুন, তারপর রেফারেন্স উত্তরের সাথে মিলিয়ে দেখুন কোথায় যুক্তি আরও ধারালো করা যায়।"
+        },
+        {
+          "type": "text",
+          "title": "প্রাথমিক রেফারেন্স ও ডকুমেন্টেশন",
+          "body": "অতিরিক্ত বাহ্যিক লিংকগুলো খুলতে ইন্টারনেট সংযোগ প্রয়োজন; তবে অধ্যায়ের প্রয়োজনীয় সব ব্যাখ্যা অফলাইনেই সম্পূর্ণ দেওয়া আছে:\nScikit-learn Decision Trees: https://scikit-learn.org/stable/modules/tree.html\nClassifier API: https://scikit-learn.org/stable/modules/generated/sklearn.tree.DecisionTreeClassifier.html\nRegressor API: https://scikit-learn.org/stable/modules/generated/sklearn.tree.DecisionTreeRegressor.html\nPruning example: https://scikit-learn.org/stable/auto_examples/tree/plot_cost_complexity_pruning.html\nPermutation importance: https://scikit-learn.org/stable/modules/permutation_importance.html"
+        },
+        {
+          "type": "text",
+          "title": "নিজের প্রস্তুতির মূল্যায়ন রিপোর্ট",
+          "body": "Quiz-এর ভুলগুলো বিশ্লেষণ করে নিজের তিনটি ভ্রান্ত ধারণা নোট করুন। স্বাধীনভাবে কোড চালিয়ে প্রাপ্ত রিপোর্টটি সংরক্ষণ করুন এবং নতুন কোনো Feature বা এককের পরিবর্তন হলে পদ্ধতিটি কীভাবে আচরণ করবে তা মুখে বুঝিয়ে বলার চর্চা করুন। মনে রাখবেন, কেবল Quiz-এ পূর্ণ নম্বর পাওয়া একাই কোডিং বা Interview প্রস্তুতির চূড়ান্ত প্রমাণ নয়।"
+        },
+        {
+          "type": "text",
+          "title": "পরবর্তী অধ্যায়ে যাওয়ার আগে শেষ যাচাই",
+          "body": "বই না দেখে নিজের ভাষায় Greedy Split, থামার নিয়ম, Pruning এবং Probability Estimation-এর মূলনীতি বুঝিয়ে বলুন। আত্মবিশ্বাসের সাথে বলতে পারলেই আমাদের পরবর্তী অধ্যায় Book 2 · Chapter 5 (Ensembles & Boosting) পড়া শুরু করুন।"
+        }
+      ]
+    }
+  ],
+  "quizzes": [
+    {
+      "id": "ch09_q1",
+      "question": "একটি সাধারণ Axis-aligned Decision Tree-এর প্রতিটি Internal Node কী কাজ করে?",
+      "options": [
+        "একটি নির্দিষ্ট Feature-এর ওপর Threshold শর্ত পরীক্ষা করে ডেটাকে ভাগ করে",
+        "একই ধাপে সব Feature-এর ওজনযুক্ত যোগফল (Weighted Sum) হিসাব করে",
+        "বাইরের কোনো API কল করে সরাসরি উত্তর নিয়ে আসে",
+        "নতুন ডেটার Target Label দেখে সিদ্ধান্ত নেয়"
+      ],
+      "answer": 0,
+      "explanation": "একটি Axis-aligned Tree প্রতি ধাপে কেবল একটি নির্দিষ্ট Feature অক্ষ বরাবর প্রশ্ন করে। পরপর একাধিক ধাপে এমন Split যুক্ত হয়েই জটিল Interaction এবং আয়তাকার Region তৈরি হয়।"
+    },
+    {
+      "id": "ch09_q2",
+      "question": "কোনো Binary Classification Node-এ Positive Class-এর অনুপাত p = 0.25 হলে সেখানকার Gini Impurity কত?",
+      "options": [
+        "0.25",
+        "0.375",
+        "0.50",
+        "0.8113"
+      ],
+      "answer": 1,
+      "explanation": "Binary ক্ষেত্রে Gini Impurity-র সূত্র হলো 2p(1 - p) = 2 × 0.25 × 0.75 = 0.375। অন্যদিকে, 0.8113 bits হলো একই Node-এর 2-ভিত্তিক Entropy—মনে রাখবেন দুটির গাণিতিক স্কেল ও একক আলাদা।"
+    },
+    {
+      "id": "ch09_q3",
+      "question": "দুই Class সমান অনুপাতে আছে এমন সুষম (Balanced) একটি Binary Node-এর 2-ভিত্তিক Entropy কত?",
+      "options": [
+        "0 bit",
+        "0.5 bit",
+        "1 bit",
+        "2 bits"
+      ],
+      "answer": 2,
+      "explanation": "p = 0.5 বসালে 2-ভিত্তিক Entropy হয় -0.5 log_2(0.5) - 0.5 log_2(0.5) = 1 bit। একই সুষম অবস্থায় Gini Impurity তার সর্বোচ্চ মান 0.5 স্পর্শ করে।"
+    },
+    {
+      "id": "ch09_q4",
+      "question": "একটি Split-এর ফলে তৈরি দুই Child Node-এর আকার অসমান হলে মোট Child Impurity কীভাবে হিসাব করা হয়?",
+      "options": [
+        "দুই Child Node-এর Impurity-র সরল গড় নিয়ে",
+        "কেবল বড় Child Node-টির Impurity দেখে",
+        "কেবল ছোট Child Node-টির Impurity দেখে",
+        "প্রতিটি Child-এর আকার অনুযায়ী ওজনযুক্ত গড় (Weighted Average) নিয়ে"
+      ],
+      "answer": 3,
+      "explanation": "Parent Node-এর মোট Row-এর কত ভগ্নাংশ কোন Child-এ যাচ্ছে, সেই অনুপাত দিয়েই প্রতিটি Child-এর Impurity-কে Weight দেওয়া হয়। আর ডেটায় Sample Weight থাকলে কার্যকর ওজনের যোগফল ব্যবহার করতে হয়।"
+    },
+    {
+      "id": "ch09_q5",
+      "question": "কোনো নির্দিষ্ট Feature-এ হুবহু একই মান থাকা দুটি Row-কে কি ওই Feature-এর Threshold Split দিয়ে আলাদা করা সম্ভব?",
+      "options": [
+        "না, একই Feature-এর সুনির্দিষ্ট (Deterministic) Threshold শর্তে তা অসম্ভব",
+        "হ্যাঁ, যদি তাদের Target Label আলাদা হয়",
+        "হ্যাঁ, কেবল Entropy Criterion ব্যবহার করলে সম্ভব",
+        "হ্যাঁ, যদি Dataset-এ যথেষ্ট বড় Sample থাকে"
+      ],
+      "answer": 0,
+      "explanation": "একই সংখ্যাসূচক মান x <= t শর্তে সবসময় হুবহু একই উত্তর দেবে, তাই তারা বাধ্যতামূলকভাবে একই শাখায় যাবে। এ কারণেই সাজানো ক্রমে পাশাপাশি থাকা সমান মানগুলোর মাঝখানে কখনো Candidate Threshold নেওয়া হয় না।"
+    },
+    {
+      "id": "ch09_q6",
+      "question": "ধরুন একটি Parent Node-এ মোট Sample সংখ্যা n = 10, এবং শর্ত দেওয়া আছে min_samples_split = 10 ও min_samples_leaf = 6। এখানে কি কোনো বৈধ Split সম্ভব?",
+      "options": [
+        "হ্যাঁ, যেকোনো বিন্দুতেই বৈধ Split করা যাবে",
+        "না, কারণ ১০টি Row ভেঙে দুই Child-এই কমপক্ষে ৬টি করে দেওয়া অসম্ভব",
+        "হ্যাঁ, কেবল ৫ ও ৫ আকারে ভাগ করলে বৈধ হবে",
+        "হ্যাঁ, যদি ভাগের পর উভয় Child পুরোপুরি Pure হয়"
+      ],
+      "answer": 1,
+      "explanation": "min_samples_split কেবল দেখে Parent Node ভাঙার যোগ্য কি না, কিন্তু min_samples_leaf দাবি করে ভাগের পর বাম ও ডান উভয় Child-এই অন্তত ৬টি করে Row থাকতে হবে (যার জন্য কমপক্ষে ১২টি Row দরকার)। ফলে Parent যোগ্য হলেও এখানে একটিও বৈধ বিভাজন নেই।"
+    },
+    {
+      "id": "ch09_q7",
+      "question": "Root-এর গভীরতা depth 0 ধরলে max_depth = 3 সীমার একটি Binary Tree-তে সর্বোচ্চ কয়টি Leaf থাকতে পারে?",
+      "options": [
+        "3",
+        "6",
+        "8",
+        "16"
+      ],
+      "answer": 2,
+      "explanation": "একটি পূর্ণ ও সুষম (Full Balanced) Binary Tree-তে depth 3 পর্যন্ত পৌঁছালে সর্বোচ্চ 2^3 = 8টি Leaf তৈরি হতে পারে। তবে বাস্তবে আগেভাগে কোনো শাখা থেমে গেলে মোট Leaf সংখ্যা এর চেয়ে কমও হতে পারে।"
+    },
+    {
+      "id": "ch09_q8",
+      "question": "প্রতি ধাপে সেরা স্থানীয় Split বেছে নেওয়ার Greedy পদ্ধতি কি সবসময় সামগ্রিকভাবে সর্বোত্তম (Globally Optimal) Tree নিশ্চিত করে?",
+      "options": [
+        "হ্যাঁ, সব ক্ষেত্রেই তা নিশ্চিত করে",
+        "হ্যাঁ, যদি কেবল Gini Impurity ব্যবহার করা হয়",
+        "হ্যাঁ, যদি Training Sample সংখ্যা অনেক বড় হয়",
+        "না, স্থানীয়ভাবে সেরা পছন্দ সামগ্রিক সেরা গঠনের গ্যারান্টি দেয় না"
+      ],
+      "answer": 3,
+      "explanation": "তাৎক্ষণিক Impurity Gain ভবিষ্যতের নিচের ধাপগুলোতে লুকিয়ে থাকা যৌথ সুবিধা দেখতে পায় না। চার বিন্দুর XOR সমস্যায় Root-এ Gain শূন্য হওয়া এর একটি চমৎকার পাল্টা-উদাহরণ।"
+    },
+    {
+      "id": "ch09_q9",
+      "question": "Squared-error Objective-এ একটি Regression Tree-এর প্রতিটি Leaf-এ সর্বনিম্ন ত্রুটি দেয় কোন ধ্রুবক মানটি?",
+      "options": [
+        "ওই Leaf-এ থাকা Target মানগুলোর গাণিতিক গড় (Mean)",
+        "সব ক্ষেত্রে কেবল Median",
+        "সবচেয়ে বেশিবার আসা মান বা Mode",
+        "ওই Leaf-এর সর্বোচ্চ Target মান (Maximum)"
+      ],
+      "answer": 0,
+      "explanation": "মোট বর্গত্রুটির Derivative শূন্য ধরলে সেরা ধ্রুবক হিসেবে সরাসরি Sample Mean বেরিয়ে আসে। অন্যদিকে, Absolute-error (L1 Loss) কমাতে গেলে সেরা ধ্রুবক হয় Median।"
+    },
+    {
+      "id": "ch09_q10",
+      "question": "Regression Tree-এর Impurity হিসেবে ব্যবহৃত Variance হিসাব করার সময় হরে (Denominator) কোনটি বসে?",
+      "options": [
+        "n - 1",
+        "n, অর্থাৎ Empirical Mean Squared Residual হিসেবে",
+        "n + 1",
+        "পুরো Tree-এর মোট Leaf সংখ্যা"
+      ],
+      "answer": 1,
+      "explanation": "এখানে আমাদের লক্ষ্য হলো ওই Node-এর গড় বর্গত্রুটি বা Training Objective মাপা—অজানা পপুলেশনের Unbiased Variance প্রাক্কলন করা নয়। তাই হরে সরাসরি n (ddof = 0) ব্যবহৃত হয়।"
+    },
+    {
+      "id": "ch09_q11",
+      "question": "নতুন কোনো Input-এর মান Training পরিসরের অনেক বাইরে চলে গেলে সাধারণ ধ্রুবক-মানবিশিষ্ট Regression Tree কী ধরনের Prediction দেয়?",
+      "options": [
+        "নিজে থেকেই সরলরৈখিক প্রবণতা ধরে Extrapolate করে",
+        "সবসময় অসংজ্ঞায়িত (Undefined) এরর দেয়",
+        "সর্বশেষ প্রান্তিক (Outermost) Leaf-এর বাঁধাধরা ধ্রুবক মানটি ফিরিয়ে দেয়",
+        "অবশ্যই Training Target-এর সর্বোচ্চ সীমা অতিক্রম করে যায়"
+      ],
+      "answer": 2,
+      "explanation": "শেখা Threshold শর্তগুলো অনুসরণ করে নতুন ডেটাটি একদম প্রান্তের নির্দিষ্ট Leaf-এ গিয়ে পৌঁছায় এবং সেখানকার স্থির Mean মানটিই পায়। এ কারণেই ক্রমবর্ধমান রৈখিক প্রবণতা Extrapolate করতে সাধারণ Tree অপারগ।"
+    },
+    {
+      "id": "ch09_q12",
+      "question": "এই অধ্যায়ে ব্যবহৃত Cost-Complexity Pruning সমীকরণে R(T) রাশিটি ঠিক কী নির্দেশ করে?",
+      "options": [
+        "অদেখা ডেটার Validation Accuracy",
+        "কেবল কাঁচা Misclassification Error",
+        "মেমোরিতে সংরক্ষিত Model-এর বাইট আকার",
+        "পুরো Training ওজনের সাপেক্ষে নরমালাইজ করা সব Leaf-এর ভারযুক্ত Impurity"
+      ],
+      "answer": 3,
+      "explanation": "আমরা এখানে scikit-learn-এর ধাঁচে Normalized Sample-weighted Leaf Impurity ব্যবহার করছি। জরিমানার Parameter alpha একই Impurity এককে কাজ করে বলে Criterion বদলালে এর স্কেলও বদলে যায়।"
+    },
+    {
+      "id": "ch09_q13",
+      "question": "কোনো Node-এর নরমালাইজড ঝুঁকি R(t) = 0.5 এবং তার নিচের 3টি Leaf-বিশিষ্ট Subtree-এর ঝুঁকি R(T_t) = 0.2 হলে কার্যকর ক্রান্তিক alpha_eff কত হবে?",
+      "options": [
+        "0.15",
+        "0.10",
+        "0.30",
+        "0.70"
+      ],
+      "answer": 0,
+      "explanation": "সূত্র অনুযায়ী alpha_eff = (0.5 - 0.2) / (3 - 1) = 0.15। খেয়াল রাখবেন, এখানে একক Node ও Subtree উভয়ের ঝুঁকিই পুরো Training ডেটার একই সাপেক্ষে নরমালাইজড থাকতে হবে।"
+    },
+    {
+      "id": "ch09_q14",
+      "question": "Pruning-এর সময় জরিমানা alpha বাড়ালে অদেখা ডেটার Validation Accuracy কীভাবে আচরণ করে?",
+      "options": [
+        "প্রতি ধাপে অবশ্যই একটানা বাড়তে থাকে",
+        "একমুখী (Monotonic) হওয়ার কোনো নিশ্চয়তা নেই; বাড়তে বা কমতে পারে",
+        "প্রতি ধাপে অবশ্যই একটানা কমতে থাকে",
+        "সব alpha-তেই হুবহু অপরিবর্তিত থাকে"
+      ],
+      "answer": 1,
+      "explanation": "Alpha বাড়ালে মোট Leaf সংখ্যা কমে আসা হলো Pruning Path-এর গাণিতিক ধর্ম; কিন্তু অদেখা ডেটায় পারফরম্যান্স কতটা ভালো বা খারাপ হবে, তা সম্পূর্ণ আলাদা একটি পরীক্ষানির্ভর ফলাফল।"
+    },
+    {
+      "id": "ch09_q15",
+      "question": "scikit-learn-এর প্রচলিত CART ইমপ্লিমেন্টেশনে কাঁচা Categorical String নিয়ে কীভাবে কাজ করতে হয়?",
+      "options": [
+        "কোনো রূপান্তর ছাড়াই সবসময় সরাসরি কাজ করে",
+        "কেবল depth 1-এর Tree হলে সরাসরি কাজ করে",
+        "উপযুক্ত Numeric Encoding এবং সুনির্দিষ্ট Schema ব্যবস্থাপনা প্রয়োজন হয়",
+        "Decision Tree-তে Categorical তথ্য কখনোই ব্যবহার করা যায় না"
+      ],
+      "answer": 2,
+      "explanation": "ক্রমহীন Nominal Category-তে ইচ্ছেমতো পূর্ণসংখ্যা বসালে কৃত্রিম ক্রম তৈরি হয়ে যায়। তাই শুধুমাত্র Training ডেটায় Fit করা One-Hot Encoding এখানে একটি নিরাপদ Baseline।"
+    },
+    {
+      "id": "ch09_q16",
+      "question": "Training-এর সময় Class Weight ব্যবহার করলে প্রতিটি Leaf-এর Predicted Probability-তে কী প্রভাব পড়ে?",
+      "options": [
+        "তা স্বয়ংক্রিয়ভাবে বাস্তব প্রোডাকশনের জন্য নিখুঁত Calibrated হয়ে যায়",
+        "ওজনবিহীন কাঁচা Sample অনুপাতই অপরিবর্তিত থাকে",
+        "Model একই থেকে কেবল শেষের Decision Threshold বদলে যায়",
+        "কার্যকর Weight অনুযায়ী প্রতিটি Leaf-এর Class অনুপাত ও পুরো Fit বদলে যেতে পারে"
+      ],
+      "answer": 3,
+      "explanation": "Class Weight সরাসরি Impurity এবং Split নির্বাচনকে প্রভাবিত করে। ফলে পুনর্ভারযুক্ত (Reweighted) সেই অনুপাতকে বাস্তব পরিবেশের Calibrated Posterior ধরে নেওয়া ঠিক নয়।"
+    },
+    {
+      "id": "ch09_q17",
+      "question": "কোনো Feature-এর উচ্চ MDI (Impurity Importance) দেখেই কি বাস্তব জগতের কার্যকারণ বা Causal গুরুত্ব দাবি করা যায়?",
+      "options": [
+        "না, কেবল MDI থেকে কখনোই Causal প্রভাব দাবি করা যায় না",
+        "হ্যাঁ, এটি সরাসরি কার্যকারণ সম্পর্কের প্রমাণ",
+        "হ্যাঁ, যদি সব প্রান্তিক Leaf পুরোপুরি Pure হয়",
+        "হ্যাঁ, যদি Dataset-এর আকার যথেষ্ট বড় হয়"
+      ],
+      "answer": 0,
+      "explanation": "MDI কেবল জানায় এই নির্দিষ্ট Fitted Tree তার Training Impurity কমাতে কোন Column কতটা ব্যবহার করেছে। এতে High-cardinality Bias, পারস্পরিক Correlation এবং Data Leakage লুকিয়ে থাকতে পারে।"
+    },
+    {
+      "id": "ch09_q18",
+      "question": "একটি Trained Decision Tree দিয়ে একক একটি Row-এর Prediction বের করতে সময়ের জটিলতা (Time Complexity) কত?",
+      "options": [
+        "সব ধরনের গঠনেই আবশ্যিকভাবে O(log n)",
+        "O(h), যেখানে h হলো Root থেকে অতিক্রান্ত Path-এর উচ্চতা",
+        "সবসময় O(n^2)",
+        "Tree যত বড়ই হোক সবসময় স্থির O(1)"
+      ],
+      "answer": 1,
+      "explanation": "প্রতিটি স্তরে কেবল একটি শর্ত পরীক্ষা করে নিচে নামতে হয় বলে খরচ হয় O(h)। সুষম Tree-তে h লগারিদমিক হলেও একপেশে লম্বা অসুষম Tree-তে তা অনেক বড় হতে পারে।"
+    },
+    {
+      "id": "ch09_q19",
+      "question": "কোনো Feature-এর ওপর যেকোনো কঠোরভাবে ক্রমবর্ধমান অরৈখিক রূপান্তর (Increasing Nonlinear Transform) প্রয়োগ করলে কী অক্ষুণ্ণ থাকে?",
+      "options": [
+        "নতুন সব মধ্যবর্তী Input-এর মধ্যবিন্দুভিত্তিক শাখা নির্বাচন অবশ্যই অভিন্ন থাকে",
+        "কম্পিউটারের সমস্ত dtype এবং Floating-point Rounding অভিন্ন থাকে",
+        "Training মানগুলোর ক্রম অক্ষুণ্ণ থাকে, তবে নতুন মধ্যবর্তী Input ভিন্ন শাখায় যেতে পারে",
+        "অদেখা ডেটার Validation Score অবশ্যই অপরিবর্তিত থাকে"
+      ],
+      "answer": 2,
+      "explanation": "ভিন্ন মানগুলোর ক্রম এক থাকলেও রূপান্তরিত স্কেলের মধ্যবিন্দুকে মূল স্কেলে ফিরিয়ে আনলে তা আগের মধ্যবিন্দুর সমান নাও হতে পারে। কেবল ধনাত্মক রৈখিক রূপান্তর (Positive Affine Transform) আদর্শ গণিতে মধ্যবিন্দু হুবহু ধরে রাখে।"
+    },
+    {
+      "id": "ch09_q20",
+      "question": "পুরো Dataset-এর সব Label ব্যবহার করে আগেভাগে একটি Pruning Path বানিয়ে পরে তার ওপর Cross-validation চালালে কী সমস্যা হবে?",
+      "options": [
+        "কোনো ধরনের Data Leakage ঘটার সুযোগই থাকে না",
+        "এটিই পরিসংখ্যানগতভাবে একমাত্র বৈধ পদ্ধতি",
+        "কেবল একটি নির্দিষ্ট র‍্যান্ডম Seed দিলেই তা নিখুঁত হয়ে যাবে",
+        "Candidate তৈরির ধাপেই Held-out অংশের তথ্য ঢুকে পড়ে মূল্যায়নকে পক্ষপাতদুষ্ট করতে পারে"
+      ],
+      "answer": 3,
+      "explanation": "যেমন Fitted Preprocessing কেবল Training Fold-এ সীমাবদ্ধ রাখতে হয়, তেমনি ডেটা থেকে শেখা Pruning Path-ও সংশ্লিষ্ট Training বা Inner Fold-এর সীমা মেনে তৈরি করতে হবে। আর বারবার দেখা Validation সেটকে কখনোই নতুন Test সেট বলা যাবে না।"
+    }
+  ],
+  "exercises": [
+    {
+      "id": "ch09_ex_gini",
+      "title": "Binary Gini Impurity নির্ণয়",
+      "prompt": "Label তালিকা [0, 0, 0, 1]-এর জন্য Gini Impurity হিসাব করে ফলাফলটি answer ভেরিয়েবলে রাখুন। ফাঁকা বা অবৈধ Input এলে স্পষ্ট Exception তুলুন।",
+      "starter": "def gini(labels):\n    # TODO validate and compute\n    pass\n\n\nanswer = None\n",
+      "solution": "def gini(labels):\n    if not labels or any(v not in (0, 1) for v in labels):\n        raise ValueError(\"Nonempty binary labels\")\n    p = sum(labels) / len(labels)\n    return 2 * p * (1 - p)\n\n\nassert gini([1, 1]) == 0\nanswer = gini([0, 0, 0, 1])\nprint(answer)\n",
+      "expected": 0.375,
+      "explanation": "এখানে Positive অনুপাত p = 1 / 4 = 0.25। ফলে Gini Impurity = 2 × 0.25 × 0.75 = 0.375। পুরোপুরি Pure Node হলে এই মান 0 হয়, আর ফাঁকা Node-এ অনুপাত অসংজ্ঞায়িত বলে শুরুতেই Input যাচাই করে নেওয়া জরুরি।"
+    },
+    {
+      "id": "ch09_ex_gain",
+      "title": "Weighted Split Gain হিসাব",
+      "prompt": "ধরুন Parent Node-এর Label তালিকা [0, 0, 0, 1, 1, 1]। কোনো Split-এ প্রথম দুটি উপাদান বাম Child-এ এবং শেষ চারটি উপাদান ডান Child-এ গেলে Child-এর আকার অনুযায়ী Weight ব্যবহার করে Gini Gain বের করুন এবং answer ভেরিয়েবলে রাখুন।",
+      "starter": "y = [0, 0, 0, 1, 1, 1]\n# TODO parent minus weighted child impurity\nanswer = None\n",
+      "solution": "def gini(y):\n    p = sum(y) / len(y)\n    return 2 * p * (1 - p)\n\n\ny = [0, 0, 0, 1, 1, 1]\nleft, right = y[:2], y[2:]\nweighted = (len(left) * gini(left) + len(right) * gini(right)) / len(y)\nanswer = gini(y) - weighted\nassert weighted == 0.25\nprint(answer)\n",
+      "expected": 0.25,
+      "explanation": "Parent Node-এর Gini Impurity হলো 0.5। ভাগের পর বাম Child পুরোপুরি Pure (Gini = 0) এবং ডান Child-এর Gini হলো 0.375। তাই ভারযুক্ত Child Impurity = (2 × 0 + 4 × 0.375) / 6 = 0.25, এবং অর্জিত Gain = 0.5 - 0.25 = 0.25।"
+    },
+    {
+      "id": "ch09_ex_threshold",
+      "title": "সেরা Numeric Stump নির্বাচন",
+      "prompt": "X = [0, 1, 2, 3, 4, 5], labels = [0, 0, 0, 1, 1, 1] এবং min_leaf = 2 শর্তে পাশাপাশি থাকা ভিন্ন মানগুলোর মধ্যবিন্দু স্ক্যান করে সেরা Threshold বের করুন এবং তা answer ভেরিয়েবলে রাখুন।",
+      "starter": "import numpy as np\n\nX = np.arange(6.0)\ny = np.array([0, 0, 0, 1, 1, 1])\n# TODO distinct midpoint search\nanswer = None\n",
+      "solution": "import numpy as np\nfrom sklearn.tree import DecisionTreeClassifier\n\nX = np.arange(6.0)\ny = np.array([0, 0, 0, 1, 1, 1])\ngini = lambda z: 2 * z.mean() * (1 - z.mean())\nbest_gain = -1.0\nanswer = None\nfor t in (X[:-1] + X[1:]) / 2:\n    left = y[X <= t]\n    right = y[X > t]\n    if min(len(left), len(right)) < 2:\n        continue\n    gain = gini(y) - (len(left) * gini(left) + len(right) * gini(right)) / len(y)\n    if gain > best_gain:\n        best_gain, answer = gain, float(t)\nref = DecisionTreeClassifier(max_depth=1, min_samples_leaf=2, random_state=42).fit(\n    X[:, None], y\n)\nassert answer == ref.tree_.threshold[0]\nprint(answer)\n",
+      "expected": 2.5,
+      "explanation": "Threshold = 2.5 বিন্দুতে ভাগ করলে দুই পাশেই তিনটি করে Row থাকে (যা min_leaf = 2 শর্ত পূরণ করে) এবং উভয় Child-ই পুরোপুরি Pure হয়ে যায়। ফলে এই উদাহরণে 2.5-ই অদ্বিতীয় সেরা Threshold। মনে রাখবেন, সমান Feature মান পাশাপাশি থাকলে তাদের মাঝখানে কখনো Split করা যাবে না।"
+    },
+    {
+      "id": "ch09_ex_sse",
+      "title": "Regression Leaf-এর SSE নির্ণয়",
+      "prompt": "Target মান [1.0, 2.0, 6.0]-এর জন্য Squared-error মাপকাঠিতে সেরা ধ্রুবক (Leaf Mean) এবং মোট বর্গত্রুটি (SSE) হিসাব করুন। চূড়ান্ত সংখ্যাসূচক উত্তর হিসেবে SSE-এর মানটি answer ভেরিয়েবলে রাখুন।",
+      "starter": "import numpy as np\n\ny = np.array([1.0, 2.0, 6.0])\n# TODO optimal constant and SSE\nanswer = None\n",
+      "solution": "import numpy as np\n\ny = np.array([1.0, 2.0, 6.0])\nconstant = y.mean()\nanswer = float(np.sum((y - constant) ** 2))\nassert constant == 3\nassert np.isclose(answer / len(y), y.var(ddof=0))\nprint(answer)\n",
+      "expected": 14,
+      "explanation": "এখানে Leaf Mean হলো (1 + 2 + 6) / 3 = 3.0। প্রতিটি মানের Squared Residual যথাক্রমে 4, 1 এবং 9 যোগ করলে মোট SSE পাওয়া যায় 14। লক্ষ করুন, Empirical Mean Squared Residual হলো 14 / 3 এবং Unbiased Sample Variance হলো 14 / 2—হরের পরিবর্তনে রাশির গাণিতিক অর্থও বদলে যায়।"
+    },
+    {
+      "id": "ch09_ex_alpha",
+      "title": "Weakest-link ক্রান্তিক Alpha",
+      "prompt": "সামগ্রিকভাবে নরমালাইজ করা কোনো Node-এর ঝুঁকি 0.5, তার নিচের Subtree-এর ঝুঁকি 0.2 এবং Subtree-তে মোট 3টি Leaf রয়েছে। শাখা গুটিয়ে ফেলা (Collapse) ও অক্ষত রাখার (Keep) Objective সমান ধরে কার্যকর alpha বের করে answer ভেরিয়েবলে রাখুন।",
+      "starter": "node_risk, subtree_risk, leaves = 0.5, 0.2, 3\n# TODO effective alpha\nanswer = None\n",
+      "solution": "import math\n\n\ndef effective_alpha(node_risk, subtree_risk, leaves):\n    if (\n        leaves <= 1\n        or not all(math.isfinite(x) for x in (node_risk, subtree_risk))\n        or not 0 <= subtree_risk <= node_risk\n    ):\n        raise ValueError(\"Valid non-leaf risk contract\")\n    return (node_risk - subtree_risk) / (leaves - 1)\n\n\nanswer = effective_alpha(0.5, 0.2, 3)\nassert math.isclose(0.5 + answer, 0.2 + answer * 3)\nprint(answer)\n",
+      "expected": 0.15,
+      "explanation": "Subtree গুটিয়ে ফেললে অবশিষ্ট থাকে 1টি মাত্র Leaf। তাই সমীকরণ 0.5 + alpha = 0.2 + 3 * alpha সমাধান করলে পাওয়া যায় alpha = (0.5 - 0.2) / (3 - 1) = 0.15। এই তুলনা বৈধ রাখতে উভয় ঝুঁকিই একই সামগ্রিক নরমালাইজেশনে থাকা আবশ্যক।"
+    },
+    {
+      "id": "ch09_ex_weights",
+      "title": "ওজনযুক্ত Leaf Probability",
+      "prompt": "কোনো Leaf-এর Label তালিকা [0, 0, 1] এবং সংশ্লিষ্ট Sample Weight [1.0, 1.0, 4.0] হলে ওজনযুক্ত Positive অনুপাত হিসাব করে answer ভেরিয়েবলে রাখুন। কাঁচা Row সংখ্যা ও কার্যকর Weight-এর পার্থক্যটি খেয়াল করুন।",
+      "starter": "import numpy as np\n\ny = np.array([0, 0, 1])\nw = np.array([1.0, 1.0, 4.0])\n# TODO weighted fraction\nanswer = None\n",
+      "solution": "import numpy as np\nfrom sklearn.tree import DecisionTreeClassifier\n\ny = np.array([0, 0, 1])\nw = np.array([1.0, 1.0, 4.0])\nanswer = float(np.dot(w, y) / w.sum())\nm = DecisionTreeClassifier(random_state=42).fit(np.zeros((3, 1)), y, sample_weight=w)\nassert np.isclose(answer, m.predict_proba([[0.0]])[0, 1])\nprint(answer)\n",
+      "expected": 0.6666666666666666,
+      "explanation": "এখানে মোট Positive Weight হলো 4 এবং মোট কার্যকর Weight হলো 1 + 1 + 4 = 6; ফলে ওজনযুক্ত Positive অনুপাত দাঁড়ায় 4 / 6 = 2 / 3 (প্রায় 0.6666667), অথচ কাঁচা Row অনুপাত ছিল 1 / 3। বাস্তব কাজে Weight দেওয়ার উদ্দেশ্য এবং Deployment Calibration সবসময় আলাদাভাবে বিচার করতে হবে।"
+    },
+    {
+      "id": "ch09_ex_traverse",
+      "title": "Prediction Traversal অনুসরণ",
+      "prompt": "একটি Node-এর Threshold = 2.5, বাম Leaf-এর Probability = 0.0 এবং ডান Leaf-এর Probability = 1.0। সমান মান (x <= threshold) হলে বাম শাখায় যাওয়ার নিয়ম মেনে x = 3.0 ইনপুটের Predicted Probability বের করে answer ভেরিয়েবলে রাখুন।",
+      "starter": "tree = {\"feature\": 0, \"threshold\": 2.5, \"left\": {\"p\": 0.0}, \"right\": {\"p\": 1.0}}\n# TODO traverse without using labels\nanswer = None\n",
+      "solution": "import math\n\ntree = {\"feature\": 0, \"threshold\": 2.5, \"left\": {\"p\": 0.0}, \"right\": {\"p\": 1.0}}\n\n\ndef predict(node, row):\n    if any(not math.isfinite(x) for x in row):\n        raise ValueError(\"Finite row\")\n    while \"feature\" in node:\n        node = (\n            node[\"left\"] if row[node[\"feature\"]] <= node[\"threshold\"] else node[\"right\"]\n        )\n    return node[\"p\"]\n\n\nassert predict(tree, [2.5]) == 0\nanswer = predict(tree, [3.0])\nprint(answer)\n",
+      "expected": 1,
+      "explanation": "যেহেতু 3.0 > 2.5, তাই শেখা শর্ত অনুসরণ করে Input-টি ডান দিকের শাখায় যাবে এবং সেখানকার Probability 1.0 ফিরিয়ে দেবে। মনে রাখবেন, Boundary সমতার নিয়মটি Training এবং Serving উভয় পরিবেশে হুবহু অভিন্ন রাখতে হবে।"
+    },
+    {
+      "id": "ch09_ex_mdi",
+      "title": "Impurity Importance নরমালাইজেশন",
+      "prompt": "ধরুন Root-এ থাকা Feature 0-এর Local Gain = 0.2 ও Node Weight = 1.0, এবং নিচের Child-এ থাকা Feature 1-এর Local Gain = 0.3 ও Node Weight = 0.4। নরমালাইজ করার পর Feature 0-এর MDI মানটি বের করে answer ভেরিয়েবলে রাখুন।",
+      "starter": "import numpy as np\n\n# TODO weighted decreases by feature\nanswer = None\n",
+      "solution": "import numpy as np\n\nweighted_decreases = np.array([1 * 0.2, 0.4 * 0.3])\nimportance = weighted_decreases / weighted_decreases.sum()\nanswer = float(importance[0])\nassert np.isclose(importance.sum(), 1)\nprint(answer)\n",
+      "expected": 0.625,
+      "explanation": "সামগ্রিক ওজনযুক্ত হ্রাস হিসাব করলে Feature 0 পায় 1.0 × 0.2 = 0.20 এবং Feature 1 পায় 0.4 × 0.3 = 0.12। দুটির যোগফল 0.32 দিয়ে ভাগ করলে Feature 0-এর নরমালাইজড অংশ দাঁড়ায় 0.20 / 0.32 = 0.625। এটি কেবল ওই Fitted Tree-এর অভ্যন্তরীণ Impurity বণ্টন জানায়—বাস্তব Causal প্রভাব নয়।"
+    }
+  ],
+  "interviews": [
+    {
+      "title": "Numeric Splitter ইমপ্লিমেন্টেশন ও জটিলতা বিশ্লেষণ",
+      "tag": "Coding · 35 min",
+      "prompt": "সসীম Numeric Matrix এবং Binary Label ইনপুট নিয়ে সেরা Gini Split খুঁজে বের করার অ্যালগরিদমটি কীভাবে লিখবেন? ডুপ্লিকেট মান, Tie-breaking, min_leaf শর্ত এবং Runtime Complexity ব্যাখ্যা করুন। সাথে x = [0, 1, 2, 3, 4, 5], labels = [0, 0, 0, 1, 1, 1] ও min_leaf = 2 উদাহরণে বৈধ প্রতিটি Candidate-এর Gain হাতে হিসাব করে দেখান।",
+      "answer": "শুরুতেই ইনপুট Matrix-এর Shape, সব মান সসীম (Finite) কি না, Label কেবল 0 ও 1 কি না এবং min_leaf ধনাত্মক পূর্ণসংখ্যা কি না তা যাচাই করে নেব। এরপর প্রতিটি Feature Column-এর ওপর Stable Sort চালিয়ে সাজানো Label-এর ক্রমযোজিত যোগফল বা Prefix Positive Count তৈরি করব। স্ক্যান করার সময় পাশাপাশি থাকা সমান Feature মান এবং যেসব বিভাজনে কোনো Child-এর আকার min_leaf-এর নিচে নেমে যায় সেগুলো বাদ দিয়ে দেব। বৈধ Candidate-গুলোর ক্ষেত্রে Child-এর আকার অনুযায়ী ওজনযুক্ত Gini Impurity হিসাব করে Parent থেকে বিয়োগ করলে Gain পাওয়া যাবে, আর সমান Gain বা Tie হলে পূর্বনির্ধারিত সুস্পষ্ট নিয়ম (যেমন আগের Feature ও ছোট Threshold রাখা) মেনে চলব।\n\nএকটি একক Node-এ d-সংখ্যক Feature সাজাতে সময় লাগে O(d n log n) এবং Prefix স্ক্যানে লাগে O(d n); পুরো Tree-এর মোট খরচ নির্ভর করে গঠনের ভারসাম্য ও প্রতি স্তরে পুনরায় Sort করা হচ্ছে নাকি সাজানো ক্রম ক্যাশ রাখা হচ্ছে তার ওপর। যাচাইয়ের জন্য অদ্বিতীয় সেরা Split-বিশিষ্ট ডেটায় প্রতিষ্ঠিত লাইব্রেরির সাথে তুলনা এবং ফাঁকা, Pure, ধ্রুবক Feature ও বড় min_leaf-এর প্রান্তিক টেস্ট লিখব—পাশাপাশি মনে করিয়ে দেব যে সেরা তাৎক্ষণিক Split সামগ্রিকভাবে সর্বোত্তম Tree নিশ্চিত করে না।\n\nপ্রদত্ত উদাহরণে 0.5 ও 4.5 বিন্দুতে ভাগ করলে এক পাশের আকার 1 হয়ে min_leaf = 2 শর্ত ভাঙে। তাই বৈধ Candidate Threshold থাকে তিনটি: 1.5, 2.5 এবং 3.5। Parent-এর Gini 0.5 থেকে এদের ওজনযুক্ত Child Gini (যথাক্রমে 0.25, 0.0 ও 0.25) বিয়োগ করলে Gain পাওয়া যায় যথাক্রমে 0.25, 0.50 এবং 0.25; অর্থাৎ 2.5 হলো সেরা। সাজানো অ্যারেতে Prefix Count রাখলে প্রতিটি Candidate-এর গণনা O(1) ধ্রুব সময়েই পাওয়া যায়, তবে কাঁচা ডেটা অগোছালো থাকলে শুরুতে সাজানোর খরচ যোগ করতে হবে।",
+      "prerequisiteLessons": [
+        "ch09_splits"
+      ]
+    },
+    {
+      "title": "উচ্চ Training Accuracy কিন্তু দুর্বল Validation ফলাফল ডিবাগিং",
+      "tag": "Debugging · 20 min",
+      "prompt": "একটি Decision Tree-এর Training Accuracy এসেছে 99.8%, কিন্তু গ্রুপ-ভিত্তিক Validation-এ নেমে গেছে 76%-এ। আপনি কোন ক্রমে সমস্যাটি নিরীক্ষা (Audit) করবেন? কেবল max_depth কমিয়ে দিলেই কি সমস্যার পূর্ণ সমাধান হয়ে যাবে?",
+      "answer": "চোখ বন্ধ করে শুরুতেই কেবল max_depth কমাতে যাওয়া ঠিক নয়; আগে ডেটা ও মূল্যায়ন পদ্ধতির অখণ্ডতা নিরীক্ষা করব। প্রথমেই দেখব Label-এর সংজ্ঞা ঠিক আছে কি না, কোনো Feature-এ ভবিষ্যতের তথ্য বা Data Leakage ঢুকেছে কি না, একই গ্রুপের Entity ভুলক্রমে দুই পাশে ছড়িয়ে পড়েছে কি না এবং Training ও Validation-এর মধ্যে Class Prevalence বা সময়ের বড় কোনো Shift ঘটেছে কি না। যদি মূল Split নকশা বা ডেটাতেই গলদ থাকে, তবে কেবল Model Regularization দিয়ে সেই মূল্যায়ন ত্রুটি সারানো সম্ভব নয়। এর পাশাপাশি প্রতিটি Leaf-এর Sample Support, বর্তমান গভীরতা, Train–Validation Gap এবং সরল Prior Baseline মিলিয়ে দেখব।\n\nডেটার স্বাস্থ্য নিশ্চিত হওয়ার পর শুধুমাত্র Training অংশের ভেতরে গ্রুপ-নিরাপদ Inner Cross-validation চালিয়ে max_depth, min_samples_leaf এবং ccp_alpha নির্বাচন করব। Predicted Probability-র Calibration এবং চূড়ান্ত Decision Threshold Policy আলাদাভাবে যাচাই করব, এবং কখনোই ভালো স্কোর দেখানোর লোভে বিভিন্ন Validation Seed ঘুরিয়ে সেরা ফলাফলটি বেছে নেব না। সবশেষে ডেটার পরিমাপজনিত সীমাবদ্ধতা ও অনিবার্য Label Noise স্পষ্টভাবে রিপোর্ট করব।",
+      "prerequisiteLessons": [
+        "ch09_cart",
+        "ch09_regularization"
+      ]
+    },
+    {
+      "title": "সমীকরণ থেকে Cost-Complexity Pruning প্রতিপাদন",
+      "tag": "Math · 20 min",
+      "prompt": "Cost-Complexity Pruning-এর মূল Objective লিখে সেখান থেকে Weakest-link ক্রান্তিক alpha প্রতিপাদন করুন। এখানে R(T) ঠিক কী নির্দেশ করে এবং জরিমানা alpha কেন ব্যবহৃত Split Criterion-এর ওপর নির্ভরশীল?",
+      "answer": "Cost-Complexity Pruning-এর লক্ষ্যমাত্রা হলো R_alpha(T) = R(T) + alpha * |L(T)|, যেখানে |L(T)| হলো মোট Leaf সংখ্যা এবং R(T) হলো পুরো Training ওজনের সাপেক্ষে নরমালাইজ করা সব Leaf-এর ওজনযুক্ত Impurity। কোনো Internal Node t-কে গুটিয়ে একক একটি Leaf বানালে খরচ হয় R(t) + alpha, আর তার নিচের পুরো Subtree T_t অক্ষত রাখলে খরচ হয় R(T_t) + alpha * |L(T_t)|। এই দুটি খরচ সমান ধরলেই পাওয়া যায় কার্যকর ক্রান্তিক মান alpha_eff(t) = (R(t) - R(T_t)) / (|L(T_t)| - 1)। আগে থেকেই Leaf এমন কোনো Node-এ হর 0 হওয়ায় সেখানে এই সূত্র প্রযোজ্য নয়।\n\nখেয়াল রাখতে হবে, সমীকরণের R(t) এবং R(T_t) উভয়কেই পুরো Training ডেটার একই সাপেক্ষে নরমালাইজড হতে হবে। যেহেতু Gini Impurity, Entropy (bits) এবং Regression-এর বর্গত্রুটির একক ও গাণিতিক স্কেল আলাদা, তাই সংখ্যার বিচারে একই alpha মান ভিন্ন ভিন্ন Criterion-এ সমান শক্তির জরিমানা দেয় না। বাস্তব প্রয়োগে কেবল Training Data থেকে Pruning Path তৈরি করে ভেতরের CV Fold-এ সেরা alpha বেছে নিতে হয়; বড় alpha নিশ্চিতভাবে সরলতর Tree দিলেও Validation Accuracy একটানা বাড়বে—এমন কোনো গ্যারান্টি নেই।",
+      "prerequisiteLessons": [
+        "ch09_pruning"
+      ]
+    },
+    {
+      "title": "Training পরিসরের বাইরে Regression Tree-এর আচরণ",
+      "tag": "Regression · 15 min",
+      "prompt": "ধরুন প্রোডাকশনে কোনো পণ্যের বিক্রয়-সংক্রান্ত Feature হঠাৎ Training পরিসরের চেয়ে অনেক বড় মানে চলে গেল। একটি সাধারণ Regression Tree তখন কী ধরনের Prediction দেবে? প্রতিটি Leaf-এর Mean ও Median ধ্রুবকের গাণিতিক যুক্তি এবং Extrapolation সীমা ব্যাখ্যা করুন।",
+      "answer": "ধ্রুবক-মানবিশিষ্ট একটি Leaf-এ মোট বর্গত্রুটি sum(y_i - c)^2-কে c-এর সাপেক্ষে অন্তরীকরণ করে Derivative -2 sum(y_i - c) = 0 ধরলে সেরা ধ্রুবক হিসেবে সরাসরি Sample Mean বেরিয়ে আসে। অন্যদিকে, Absolute-error (L1 Loss) কমাতে গেলে সেরা ধ্রুবক হয় ওই Leaf-এর Median। এবার কোনো Feature-এর মান Training পরিসর ছাড়িয়ে যত দূরেই চলে যাক না কেন, সাধারণ একটি Regression Tree শেখা Threshold প্রশ্নগুলো অনুসরণ করে একদম প্রান্তের (Outermost) নির্দিষ্ট Leaf-টিতে পৌঁছাবে এবং সেখানকার বাঁধাধরা ধ্রুবক মানটিই ফিরিয়ে দেবে—নিজে থেকে কোনো রৈখিক Extrapolation করবে না।\n\nফলে ওজনবিহীন সাধারণ Squared-error Regression Tree-এর যেকোনো Prediction সবসময় তার সসীম Training Target-এর সর্বনিম্ন ও সর্বোচ্চ মানের ভেতরেই আবদ্ধ থাকে। যদি সমস্যার মূল চাহিদাই হয় সময়ের সাথে বাড়তে থাকা প্রবণতা বা Trend Extrapolation ধরা, তবে ডোমেইন-উপযোগী Model বা উপযুক্ত Feature Engineering এবং কালানুক্রমিক (Time-based) Validation বেছে নিতে হবে; পাশাপাশি পৃষ্ঠের মসৃণতা, প্রান্তিক আচরণ ও অনিশ্চয়তা আলাদাভাবে বিবেচনা করতে হবে।"
+    },
+    {
+      "title": "Balanced Class Weight বনাম Calibrated Probability",
+      "tag": "Probabilities · 20 min",
+      "prompt": "Model-এ class_weight=\"balanced\" ব্যবহারের পর Positive Class-এর Predicted Probability বেশ বেড়ে গেছে। এটি দেখে Product Manager বললেন, 'দারুণ, Model এখন প্রোডাকশনের আসল ঝুঁকির সম্ভাবনা আরও নিখুঁতভাবে জানে!' আপনি কীভাবে বিষয়টি ব্যাখ্যা করবেন?",
+      "answer": "আমি বিনয়ের সাথে স্পষ্ট করব যে Class Weight পরিবর্তন করা আর Probability Calibration এক বিষয় নয়। class_weight=\"balanced\" দিলে Training Objective-এ বিরল Class-এর ওজন কৃত্রিমভাবে বাড়িয়ে দেওয়া হয়, যা Split নির্বাচনের ক্রম বদলে দেয় এবং প্রতিটি Leaf-এর আউটপুটকে কার্যকর ওজনযুক্ত অনুপাতে (Effective Weighted Frequency) পরিণত করে। তাই এভাবে পুনর্ভারযুক্ত Model-এর আউটপুটকে সরাসরি বাস্তব প্রোডাকশন পরিবেশের প্রকৃত Posterior Probability বলা যায় না। সঠিক বিচার করতে হলে Training-এর পুনর্ভারয়ন, প্রোডাকশনের আসল Prevalence এবং সম্ভাব্য Distribution Shift মিলিয়ে দেখতে হবে।\n\nসমাধান হিসেবে আমরা অদেখা Held-out বা Cross-fitted Prediction-এর ওপর Brier Score, Reliability ডায়াগ্রাম এবং ব্যবসায়িক লক্ষ্য অনুযায়ী Precision ও Recall আলাদাভাবে মূল্যায়ন করব। সাথে এটিও পরিষ্কার করে দেব যে কেবল Decision Threshold বদলালে স্থির একটি Model-এর সিদ্ধান্তের সীমারেখা বদলায়, কিন্তু Weight বদলালে খোদ Model-এর গঠনই নতুন করে ফিট হয়—আর অতি ছোট কোনো Pure Leaf মানেই বাস্তব জগতে শতভাগ নিশ্চয়তা নয়।"
+    },
+    {
+      "title": "অর্থহীন র‍্যান্ডম আইডির সর্বোচ্চ MDI পাওয়ার রহস্য",
+      "tag": "Interpretation · 20 min",
+      "prompt": "একটি Tree ফিট করার পর দেখা গেল MDI তালিকায় একটি র‍্যান্ডম User ID সবার ওপরে, অথচ বাস্তবসম্মত কিন্তু পরস্পর সম্পর্কযুক্ত age Feature-এর গুরুত্ব প্রায় শূন্যের কাছাকাছি! এর মানে কি Model ওই আইডির ভেতর আসল Causal সংকেত খুঁজে পেয়েছে?",
+      "answer": "মোটেই না। MDI কেবল পুরো Tree জুড়ে Training-এর ওজনযুক্ত Impurity হ্রাসকে প্রতিটি ব্যবহৃত Feature-এর মধ্যে ভাগ করে দেয়। র‍্যান্ডম আইডির মতো High-cardinality Column-এ অসংখ্য সম্ভাব্য Split Candidate থাকায় গভীর শাখাগুলোতে ডেটা মুখস্থ (Memorize) করে সে অনায়াসেই বড় MDI বাগিয়ে নিতে পারে—অবশ্য শুরুতেই আমরা পরীক্ষা করে নেব ওই আইডির ভেতরে অ্যাকাউন্ট তৈরির সময় বা স্ট্যাটাসের মতো কোনো Data Leakage লুকিয়ে আছে কি না। অন্যদিকে, পরস্পর সম্পর্কযুক্ত বা পুনরাবৃত্ত Feature থাকলে একটি ব্যবহৃত হয়ে গেলে অন্যটির কৃতিত্ব শূন্যের কাছাকাছি নেমে যেতে পারে।\n\nসঠিক চিত্র পেতে আমরা গ্রুপ-নিরাপদ Held-out পারফরম্যান্স, যথাযথ Held-out Permutation Importance বা Drop-column Refit বিশ্লেষণ এবং একাধিকবার ফিট করে গঠনের স্থিতিশীলতা পরীক্ষা করব। পাশাপাশি খেয়াল রাখব যেন গ্রুপকৃত ডেটায় অবাধে Row ওলটপালট করে ভেতরকার নির্ভরশীলতা ভেঙে ফেলা না হয়, এবং রিপোর্টে ব্যবহৃত Metric ও গ্রুপিং স্পষ্ট উল্লেখ করব। মনে রাখতে হবে, এমনকি একটি স্থানীয় Decision Path-ও কেবল যান্ত্রিক পথরেখা মাত্র—কার্যকারণ বা Causal প্রমাণ নয়।"
+    },
+    {
+      "title": "Monotone রূপান্তরে অপরিবর্তনীয়তার দাবি ও Complexity যাচাই",
+      "tag": "Nuance · 20 min",
+      "prompt": "'যেকোনো ক্রমবর্ধমান (Monotonic) রূপান্তরে Decision Tree-এর সব Prediction হুবহু অভিন্ন থাকে'—প্রচলিত এই বক্তব্যটি গাণিতিক উদাহরণসহ সংশোধন করুন। পাশাপাশি 'Training O(n log n) ও Prediction O(log n)' স্লোগানটির সীমাবদ্ধতা ব্যাখ্যা করুন।",
+      "answer": "কঠোরভাবে ক্রমবর্ধমান যেকোনো রূপান্তর Training মানগুলোর ক্রম অক্ষুণ্ণ রাখে বলে আদর্শ গণিতে সম্ভাব্য বিভাজনগুলো একই থাকতে পারে—কিন্তু রূপান্তরিত স্কেলে পাশাপাশি দুটি বিন্দুর মধ্যবিন্দুকে মূল স্কেলে ফিরিয়ে আনলে তা আগের মধ্যবিন্দুর সমান নাও হতে পারে! যেমন 1 এবং 3-এর মূল মধ্যবিন্দু হলো 2.0; কিন্তু ধনাত্মক মানে বর্গ রূপান্তর নিলে 1 ও 9-এর মধ্যবিন্দু হয় 5.0, যা মূল স্কেলে sqrt(5) ≈ 2.236-এর সমতুল্য। ফলে নতুন ইনপুট x = 2.1 মূল Tree-তে ডান শাখায় গেলেও বর্গ-রূপান্তরিত Tree-তে বাম শাখায় চলে যাবে! কেবল ধনাত্মক রৈখিক রূপান্তর (Positive Affine Transform) আদর্শ গণিতে মধ্যবিন্দু ঠিক রাখে, যদিও বাস্তবে কম্পিউটারের dtype ও Rounding তখনো প্রভাব ফেলতে পারে।\n\nঅন্যদিকে, একটি Row-এর Prediction জটিলতা প্রকৃতপক্ষে O(h), যা কেবল সুষম (Balanced) গঠনে লগারিদমিক হয়; একপেশে লম্বা শিকলের মতো গভীর Tree-তে তা অনেক বড় হতে পারে। একইভাবে Training-এর সময়সীমা কেবল n দিয়ে নির্ধারিত হয় না—Feature সংখ্যা d, প্রতি স্তরে সাজানো নাকি ক্যাশ ব্যবহারের কৌশল এবং Tree-এর ভারসাম্যের ওপর তা সরাসরি নির্ভর করে।"
+    },
+    {
+      "title": "Adult Dataset পরীক্ষার প্রোটোকল ও সমর্থিত দাবির সীমা",
+      "tag": "Project · 25 min",
+      "prompt": "এই অধ্যায়ের পরীক্ষায় Validation AP ≈ 0.676 দেখে একজন সহকর্মী দাবি করলেন, 'এই Model এখন যেকোনো মানুষের আয় অনুমান করার জন্য প্রোডাকশনে যাওয়ার প্রস্তুত!' আমাদের প্রোটোকল ও তথ্য-উপাত্ত আসলে কতটুকু দাবি সমর্থন করে তা যুক্তিসহ তুলে ধরুন।",
+      "answer": "সহকর্মীর এই ঢালাও দাবিটি তথ্য-উপাত্ত দ্বারা সমর্থিত নয়। আমাদের পরীক্ষায় সুনির্দিষ্ট ৫টি Numeric Feature, ফলাফল-মুক্ত কাঁচা প্রোফাইলের গ্রুপকৃত ডেভেলপমেন্ট বিভাজন, শুধুমাত্র Training অংশের ভেতরে 3-fold-এর ৮টি কনফিগারেশন নির্বাচন এবং একটি Prior Baseline রিপোর্ট করা হয়েছে। এখানে Ranking মাপকাঠি হিসেবে ব্যবহৃত হয়েছে AP, আর আলাদা ডায়াগনস্টিক হিসেবে রয়েছে Accuracy ও Brier Score; নির্ধারিত এই প্রোটোকলের অধীনেই বিজয়ী Tree-টি depth 6 এবং 37টি Leaf পেয়েছে।\n\nকিন্তু মনে রাখতে হবে, ঐতিহাসিক এই Adult Dataset পাঠ্যক্রমের আগের অধ্যায়গুলোতেও ব্যবহৃত হয়েছে, প্রোফাইল গ্রুপিং প্রকৃত স্বাধীন মানুষের যাচাইকৃত পরিচয় নয় এবং জনসংখ্যার ওজন fnlwgt এখানে অব্যবহৃত। তাই এটি কোনো আনকোরা নতুন Test, বর্তমান জনসংখ্যার শ্রমবাজারের প্রতিফলন কিংবা শিক্ষার Causal প্রভাবের প্রমাণ নয় (আর দুই Feature-এর Pruning ল্যাব ও কর্মঘণ্টার Regression সম্পূর্ণ আলাদা পরীক্ষা)। বাস্তব প্রোডাকশনে কোনো Model পাঠাতে হলে নতুন স্বাধীন মূল্যায়ন ডেটা, যথাযথ Calibration, Input প্রাপ্যতা যাচাই, ন্যায্যতা বা Fairness নিরীক্ষা এবং বাস্তব অপারেশনাল উপযোগিতা পর্যালোচনা করা অপরিহার্য।"
+    }
+  ],
+  "book": {
+    "order": 9,
+    "part": "Book 2 · Classical Machine Learning",
+    "prerequisites": [
+      "chapter_02",
+      "chapter_03",
+      "chapter_05"
+    ],
+    "purpose": "Greedy Partition ও Pruning-এর মূলনীতি আয়ত্ত করে আমরা এখানে দেখব একটি Decision Tree কীভাবে Prediction দেয়, কোথায় তার সীমাবদ্ধতা তৈরি হয় এবং Feature Importance বা ব্যাখ্যার দাবিগুলো কতদূর বিশ্বাসযোগ্য।",
+    "outcomes": [
+      "শূন্য থেকে নিজের হাতে একটি CART Decision Tree তৈরি করে Impurity-ভিত্তিক Importance, Held-out Permutation Importance এবং বাস্তব Causal প্রভাবের পার্থক্য স্পষ্টভাবে নির্ণয় করতে পারবেন।",
+      "গাণিতিক উদাহরণ, Python কোড ও নিখুঁত মূল্যায়ন পদ্ধতির মাধ্যমে Classification ও Regression Tree-এর Split নির্বাচন, Regularization, Pruning এবং ব্যাখ্যাযোগ্যতার সীমা বিশ্লেষণ করতে পারবেন।"
+    ],
+    "recall": [
+      "একটি Split-এর Impurity Reduction হিসাব করার সময় Child Node-গুলোর আকার অনুযায়ী কীভাবে Weight দেওয়া হয় এবং অতিরিক্ত বড় Tree নিয়ন্ত্রণে Pruning কেন অপরিহার্য?",
+      "যদি একটি Feature a-এর হুবহু নকল আরেকটি Feature b থাকে, তবে a-এর Importance 0 হয়ে যেতে পারে কেন? আর পরস্পর সম্পর্কযুক্ত (Correlated) Input থাকলে Partial Dependence Plot-এ কী ধরনের বিভ্রান্তি তৈরি হয়?"
+    ],
+    "bridge": "আমাদের পরবর্তী গন্তব্য Book 2 · Chapter 5 (Ensembles & Boosting), যেখানে একক Tree-এর উচ্চ Variance ও অস্থিরতা কাটিয়ে ওঠার কৌশল শিখব। তবে সেখানে যাওয়ার আগে এই অধ্যায়ের Quiz, Coding Exercise ও না-দেখে ব্যাখ্যা করার প্রশ্নগুলো সমাধান করে নিজের প্রস্তুতি যাচাই করে নিন।",
+    "bookId": "classical",
+    "bookChapter": 4
+  }
+}

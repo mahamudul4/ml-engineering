@@ -1,0 +1,1494 @@
+{
+  "id": "chapter_41",
+  "number": 41,
+  "title": "Reinforcement Learning & Bandits",
+  "shortTitle": "RL & Bandits",
+  "displayTitle": "Reinforcement Learning\nActions. Rewards. Decisions.",
+  "subtitle": "একক Prediction ছাড়িয়ে ধারাবাহিক সিদ্ধান্তের জগৎ: MDP, Bellman Equation, TD Control, Bandits এবং Policy Gradient।",
+  "description": "Understand delayed rewards. Trace Bellman updates.\nSeparate planning, learning and real-world evidence.",
+  "difficulty": "Intermediate · sequential decisions",
+  "lab": "reinforcement",
+  "lessons": [
+    {
+      "id": "ch41_contract",
+      "title": "RL Problem Formulation: Agent, Environment ও Reward",
+      "subtitle": "কখন সাধারণ Prediction যথেষ্ট নয় এবং কীভাবে একটি ধারাবাহিক সিদ্ধান্তের সমস্যাকে State, Action ও Reward দিয়ে সাজাতে হয়।",
+      "duration": "22 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন শুধু Prediction সবসময় যথেষ্ট নয়?",
+          "body": "Book 3-এর আগের অধ্যায়গুলোতে আমরা যেসব Supervised Model তৈরি করেছি, সেখানে একটি স্থির Dataset থেকে Label অনুমান করাই ছিল মূল কাজ—আমাদের Prediction পরের Sample-টিকে বদলে দিত না। কিন্তু বাস্তব জগতের অনেক সিস্টেমে আপনি যখন একটি সিদ্ধান্ত নিয়ে কাজ করেন, তখন সেই সিদ্ধান্তই পরের মুহূর্তের পরিস্থিতি ও ভবিষ্যতের Data বদলে দেয়! Reinforcement Learning বা RL ঠিক এই জায়গাটিতেই কাজ করে: এখানে একজন Agent পরিবেশের ওপর একটি Action নেয়, আর তার জবাবে Environment পরের State এবং একটি Reward ফিরিয়ে দেয়। যেহেতু আজকের Action আগামীকালের সুযোগ তৈরি বা নষ্ট করতে পারে, তাই কোনো সিদ্ধান্ত ভালো না মন্দ তা বুঝতে কেবল তাৎক্ষণিক প্রাপ্তি নয়, ভবিষ্যতের সম্ভাব্য Reward-গুলোকেও হিসাবে ধরতে হয়।\n\nএই অধ্যায়ে আমরা State, Action ও Reward সংজ্ঞায়িত করা থেকে শুরু করে ধাপে ধাপে Bellman Equation, Temporal-Difference (TD) Learning, Control, Bandits, Policy Gradient এবং Offline Evaluation পর্যন্ত এগোব। প্রতিটি গাণিতিক ধারণা আমরা ছোট ও সুনির্দিষ্ট Environment-এ হাতে-কলমে যাচাই করে শিখব—তবে একজন প্রকৌশলী হিসেবে সবসময় মনে রাখবেন, সব সমস্যার জন্য যেমন RL-এর প্রয়োজন হয় না, তেমনি ছোট পরিবেশে অ্যালগরিদমের নিখুঁত হিসাব মেলানো মানেই বাস্তব প্রোডাকশনে তা সরাসরি Deploy করার ছাড়পত্র নয়।"
+        },
+        {
+          "type": "text",
+          "title": "সমস্যার কাঠামো ধাপে ধাপে সাজানো",
+          "body": "যেকোনো RL সমস্যার কোড লেখার আগে পাঁচটি মৌলিক অংশ স্পষ্টভাবে ঠিক করে নিতে হয়: সিদ্ধান্ত নেওয়ার সময়ের ব্যবধান (Decision Interval), Agent যা দেখছে (Observation), অনুমোদিত কাজের তালিকা (Action Space), লক্ষ্যমাত্রা (Reward) এবং কখন একটি পর্ব শেষ হবে তার শর্ত (Episode Termination)। একটি আদর্শ State-এর ভেতর ভবিষ্যতের গতিপ্রকৃতি বোঝার জন্য প্রয়োজনীয় সব তথ্য উপস্থিত থাকতে হয়; যদিও বাস্তবে Agent যে Observation পায় তাতে কিছু তথ্য লুকানো বা অনুপস্থিত থাকতে পারে। অন্যদিকে Reward হলো একটি একক সংখ্যাগত সংকেত (Scalar Objective)—এবং এই সংখ্যাটি বাড়ানো সত্যিই ইউজারের কাঙ্ক্ষিত উপকার করছে কি না, তা আলাদাভাবে যাচাই করা আমাদের অন্যতম প্রধান দায়িত্ব।"
+        },
+        {
+          "type": "math",
+          "title": "Agent ও Environment-এর মিথস্ক্রিয়ার সমীকরণ",
+          "body": "(S_t,A_t)\\longrightarrow(R_{t+1},S_{t+1}),\\qquad A_t\\sim\\pi(\\cdot\\mid S_t)"
+        },
+        {
+          "type": "text",
+          "title": "খাতাকলমে একটি ছোট উদাহরণ",
+          "body": "উপরের সমীকরণের ভাবনাটি একটি ছোট উদাহরণে দেখা যাক। ধরুন শুরুর অবস্থানে দাঁড়িয়ে Agent যদি Safe নামের Action-টি নেয়, তবে সে সাথে সাথে 1 Reward পায় এবং সেখানেই Episode শেষ হয়ে যায়। কিন্তু সে যদি Advance বেছে নেয়, তবে তাৎক্ষণিক কোনো প্রাপ্তি মেলে না (Immediate Reward = 0), কিন্তু সে এমন একটি পরবর্তী State-এ পৌঁছায় যেখানে ভবিষ্যতে বড় Reward পাওয়ার প্রত্যাশিত মান বা Next-State Value হলো 3.0 (ধরা যাক Discount ফ্যাক্টর 0.9)। খেয়াল করুন, আজ হাতে নগদ প্রাপ্তি শূন্য হলেও পরের State-এর উচ্চ Value থাকার কারণে Advance নেওয়াটাই এখানে অনেক বেশি লাভজনক হতে পারে!"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Action Value-এর হিসাব",
+          "body": "immediate_reward, next_state_value, discount = 0.0, 3.0, 0.9\n# Action value includes the future, not only today's observed reward.\naction_value = immediate_reward + discount * next_state_value\nprint(action_value)\n"
+        },
+        {
+          "type": "text",
+          "title": "কোডের ফলাফল কী বোঝাচ্ছে?",
+          "body": "কোডটি চালালে ভবিষ্যতের প্রত্যাশিত মান যোগ হয়ে Advance-এর Action Value দাঁড়াচ্ছে 2.7, যা Safe অপশনের 1.0-এর চেয়ে স্পষ্টতই বেশি। এখানে অবশ্য পরের State-এর Value (3.0) আমরা আগে থেকেই জানা আছে বলে ধরে নিয়েছি। তাৎক্ষণিক প্রাপ্ত Reward (0.0) আর দীর্ঘমেয়াদি প্রত্যাশিত Return (2.7)-এর এই যে মৌলিক পার্থক্য—সেটিই RL-এর মূল চালিকাশক্তি। পরের পাঠে আমরা দেখব পরিবেশের নিয়মগুলো কীভাবে সাজালে পরের State-এর এই Value আমাদের আর আন্দাজ করে নিতে হয় না।"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব সিস্টেমে সতর্কতা ও সীমাবদ্ধতা",
+          "body": "বাস্তবে Reward যদি অসতর্কভাবে সংজ্ঞায়িত করা হয়, তবে Agent আসল লক্ষ্য বাদ দিয়ে ফাঁকফোকর খুঁজে কেবল ওই Proxy Metric বাড়াতে শিখে যেতে পারে। তাই প্রোডাকশনে কখনো RL বা অন্বেষণমূলক সিদ্ধান্ত চালানোর আগে Exploration-এর সম্ভাব্য ঝুঁকি, খরচ এবং অনুমোদিত নিরাপদ Action-এর সীমা কঠোরভাবে বেঁধে দিতে হয়। আর যদি কোনো Simulator-এর ভেতর Agent-কে প্রশিক্ষণ দেওয়া হয়, তবে Simulator-এর গতিপ্রকৃতি ও Reward বাস্তব জগতের সমস্যার সাথে কতটা মিলছে তা পুঙ্খানুপুঙ্খভাবে পরীক্ষা করে নিতে হবে।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজেকে যাচাই করুন",
+          "body": "সাধারণ Spam Classification এবং Spam-Review Queue Control—এই দুটি সমস্যার মধ্যে কোনটিকে ধারাবাহিক সিদ্ধান্তের RL কাঠামোতে সাজানো যৌক্তিক হতে পারে? সেক্ষেত্রে সম্ভাব্য State, Action এবং Reward কী হবে?",
+          "solution": "সাধারণ Spam Classification একটি স্থির Supervised Prediction সমস্যা, যেখানে প্রতিটি মেইল আলাদাভাবে চিহ্নিত করলেই চলে। কিন্তু Spam-Review Queue Control একটি Sequential RL সমস্যা হতে পারে—কারণ এখন কোন সন্দেহজনক মেইল কোন পথে পাঠাবেন, তার ওপর পরের ঘণ্টার জমে থাকা কাজের চাপ নির্ভর করে। এখানে State হতে পারে বর্তমান Queue Backlog ও উপলব্ধ Reviewer Capacity; Action হতে পারে স্বয়ংক্রিয় সিদ্ধান্ত বনাম মানব রিভিউয়ারের কাছে পাঠানোর Routing পছন্দ; আর Reward হতে পারে সঠিক নিষ্পত্তির সুফল বিয়োগ ভুল সিদ্ধান্ত ও বিলম্বের খরচ। তবে পূর্ণাঙ্গ RL ব্যবহারের আগে অবশ্যই যাচাই করা উচিত যে আজকের সিদ্ধান্ত সত্যিই ভবিষ্যতের Queue Dynamics উল্লেখযোগ্যভাবে বদলে দিচ্ছে কি না।",
+          "reference": "https://mitpress.mit.edu/9780262039246/reinforcement-learning/"
+        }
+      ]
+    },
+    {
+      "id": "ch41_mdp",
+      "title": "Markov Decision Process (MDP) ও Transition Model",
+      "subtitle": "Markov Assumption কী এবং কীভাবে Transition Probability ও Expected Reward দিয়ে পরিবেশের গাণিতিক মডেল তৈরি হয়।",
+      "duration": "22 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "পরিবেশের নিয়মকে গাণিতিক কাঠামোয় বাঁধা",
+          "body": "আগের পাঠে আমরা দেখেছি, আজকের Action বিচার করতে হলে পরের ধাপে কী ঘটবে তা বুঝতে হয়। পরিবেশের এই নিয়মগুলোকে নিখুঁত গাণিতিক রূপ দেওয়ার আদর্শ কাঠামো হলো একটি সসীম Markov Decision Process বা MDP। একটি MDP-তে সম্ভাব্য সব State, প্রতিটি State-এ অনুমোদিত Action, এক ধাপ থেকে পরের ধাপে যাওয়ার Transition ও Reward-এর সম্ভাব্যতা নিয়ম, Discount ফ্যাক্টর এবং শুরুর Initial-State Distribution সুনির্দিষ্ট থাকে। এর মূল স্তম্ভ হলো Markov Assumption—যার বক্তব্য হলো, বর্তমান State এবং গৃহীত Action পুরোপুরি জানা থাকলে ভবিষ্যৎ কোন পথে যাবে তা বোঝার জন্য অতীতের দীর্ঘ History ঘাঁটার আর কোনো দরকার পড়ে না। কিন্তু State সাজানোর সময় যদি কোনো গুরুত্বপূর্ণ তথ্য বাদ পড়ে যায়, তখনই এই Markov Assumption ভেঙে পড়ে।"
+        },
+        {
+          "type": "text",
+          "title": "Transition Probability ও Reward কীভাবে সাজাবেন?",
+          "body": "একটি MDP হাতে-কলমে লেখার সময় প্রতিটি (State, Action) জোড়ার জন্য সম্ভাব্য সব ফলাফল (Next State ও Reward) এবং তাদের Probability পরিষ্কারভাবে লিখে ফেলুন। বৈধ Probability Distribution হওয়ার শর্ত হিসেবে প্রতিটি মান অঋণাত্মক (Nonnegative) হবে এবং সব সম্ভাব্য ফলাফলের যোগফল হবে ঠিক 1। যখন কোনো Episode একটি Terminal State-এ পৌঁছে শেষ হয়, তখন তার পরবর্তী Continuation Value ধরা হয় 0, আর সেখানে পৌঁছানোর প্রাপ্তি ওই শেষ Transition-এর Reward হিসেবেই যুক্ত থাকে। ঝুঁকি-নিরপেক্ষ (Risk-Neutral) গড় Bellman Value হিসাব করার জন্য প্রতিটি ধাপের গড় তাৎক্ষণিক প্রাপ্তি r(s, a) এবং পরের অবস্থানে যাওয়ার সম্ভাব্যতা P(s′ | s, a) জানাই যথেষ্ট। তবে আপনি যদি গড় ছাড়িয়ে ফলাফলের ওঠানামা (Return Variance) বা ঝুঁকি-সংবেদনশীল (Risk-Sensitive) কোনো Objective নিয়ে কাজ করতে চান, তখন পুরো যৌথ Distribution-এর তথ্যই সংরক্ষণ করতে হবে।"
+        },
+        {
+          "type": "math",
+          "title": "Markov বৈশিষ্ট্যের গাণিতিক রূপ",
+          "body": "P(S_{t+1},R_{t+1}\\mid S_{0:t},A_{0:t})=P(S_{t+1},R_{t+1}\\mid S_t,A_t)"
+        },
+        {
+          "type": "text",
+          "title": "খাতাকলমে আমাদের Lab MDP-এর হিসাব",
+          "body": "এই অধ্যায়ের ইন্টারেক্টিভ Lab-এ আমরা যে ছোট MDP-টি ব্যবহার করব, তার Middle নামের State থেকে উদাহরণটি দেখা যাক। Middle থেকে Try Action নিলে দুটি ঘটনা ঘটতে পারে: Probability p-তে Agent 4 Reward পেয়ে Terminal অবস্থায় পৌঁছে Episode শেষ করে, আর বাকি 1 − p Probability-তে −1 Reward পেয়ে আবার শুরুর Start State-এ ফিরে আসে। যদি p = 0.7 হয়, তবে শুধুমাত্র এই এক ধাপের গড় তাৎক্ষণিক প্রাপ্তি বা Immediate Expected Reward হবে 0.7 × 4 + 0.3 × (−1) = 2.5। খেয়াল রাখবেন, এটি কেবল আজকের ধাপের তাৎক্ষণিক গড়—ব্যর্থ হয়ে Start-এ ফিরে যাওয়ার শাখায় ভবিষ্যতের Start State-এর Value-ও পরে আমাদের যোগ করতে হবে।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Immediate Expected Reward যাচাই",
+          "body": "success_probability = 0.7\noutcomes = [(success_probability, 4.0), (1 - success_probability, -1.0)]\nassert abs(sum(p for p, _ in outcomes) - 1) < 1e-12\nexpected_reward = sum(p * reward for p, reward in outcomes)\n# Failure returns to Start in the lab; this calculation excludes future value.\nprint(round(expected_reward, 6))\n"
+        },
+        {
+          "type": "text",
+          "title": "কোড থেকে Planning বনাম Learning-এর পার্থক্য",
+          "body": "কোডটি প্রথমেই নিশ্চিত করছে যে সব শাখার Probability যোগ করলে ঠিক 1 হয়, এবং এরপর গড় তাৎক্ষণিক Reward হিসেবে 2.5 বের করছে। এখানে একটি অত্যন্ত গুরুত্বপূর্ণ পার্থক্য লক্ষ করুন: আমাদের হাতে যদি এভাবে পরিবেশের সম্পূর্ণ Transition নিয়ম বা Model আগে থেকেই জানা থাকে, তবে বাস্তবে কোনো ট্রায়াল না চালিয়েই আমরা হিসাব কষে সেরা নীতি বের করতে পারি—যাকে বলা হয় Planning। আর বাস্তব জগতে যখন এই Transition Probability-গুলো অজানা থাকে, তখন পরিবেশের সাথে মিথস্ক্রিয়া করে সংগৃহীত অভিজ্ঞতা (Observed Transitions) থেকে সরাসরি শেখা বা Model অনুমান করার (Learning) প্রয়োজন হয়।"
+        },
+        {
+          "type": "text",
+          "title": "কখন সাধারণ MDP অনুমান কাজে দেয় না?",
+          "body": "অনেক বাস্তব সিস্টেমেই Agent পরিবেশের পুরো সত্যিকারের অবস্থা দেখতে পায় না—Observation অসম্পূর্ণ হলে Markov বৈশিষ্ট্য বজায় রাখতে অতীতের History, সম্ভাব্যতার Belief State বা Recurrent Representation ব্যবহার করতে হয়। আবার মৌসুমি পরিবর্তন বা পণ্যের নতুন ফিচারের কারণে ইউজারের আচরণ বদলে গেলে স্থির বা Stationary MDP-র অনুমানটি আর খাটে না। তাছাড়া ঐতিহাসিক Data থেকে Transition Dynamics অনুমান করে Planning চালালে সেই অনুমানের নিজস্ব অনিশ্চয়তাকেও (Model Uncertainty) চূড়ান্ত ফলাফলের অংশ হিসেবে বিবেচনায় রাখতে হবে।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজেকে যাচাই করুন",
+          "body": "ধরুন একটি গুদাম ব্যবস্থাপনা সিস্টেমে দুটি ভিন্ন সময়ে হুবহু একই Observation দেখা যাচ্ছে, কিন্তু ভেতরে তাদের অমীমাংসিত Inventory Backlog আলাদা। এই Observation-কে কি একটি স্বয়ংসম্পূর্ণ Markov State বলা যাবে? এখানে অনুপস্থিত তথ্যটি কী?",
+          "solution": "না, এই Observation স্বয়ংসম্পূর্ণ Markov State নয়। কারণ লুকানো Inventory Backlog পরের ধাপের পণ্য সরবরাহের সক্ষমতা, Transition এবং বিলম্বজনিত খরচ বা Reward সরাসরি বদলে দেবে—ফলে শুধু বর্তমান Observation দিয়ে ভবিষ্যৎ নির্ধারিত হবে না এবং Markov Assumption ভেঙে যাবে। এটিকে সঠিক State বানাতে হলে বর্তমান Queue বা Inventory Backlog-এর পরিমাণ সরাসরি State-এ যুক্ত করতে হবে, অথবা তা সরাসরি দেখা না গেলে অতীতের History থেকে একটি Belief Representation তৈরি করতে হবে।",
+          "reference": "https://mitpress.mit.edu/9780262039246/reinforcement-learning/"
+        }
+      ]
+    },
+    {
+      "id": "ch41_returns",
+      "title": "Return, Discount ফ্যাক্টর ও Horizon-এর ধারণা",
+      "subtitle": "তাৎক্ষণিক Reward থেকে দীর্ঘমেয়াদি Return কীভাবে হিসাব করতে হয় এবং Discount ফ্যাক্টর γ কেন এত গুরুত্বপূর্ণ।",
+      "duration": "22 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "এক ধাপের Reward বনাম পুরো যাত্রার Return",
+          "body": "আগের পাঠে আমরা কেবল এক ধাপের তাৎক্ষণিক গড় Reward (2.5) বের করেছিলাম, কিন্তু সেখানেই দেখেছি ব্যর্থতার শাখায় আবার Start-এ ফিরে ভবিষ্যতের মুখোমুখি হতে হয়। RL-এ Reward হলো একটিমাত্র ধাপের তাৎক্ষণিক প্রতিক্রিয়া, আর Return হলো ওই মুহূর্তের পর থেকে পাওয়া সব ভবিষ্যৎ Reward-এর Discounted যোগফল। আজকের নগদ প্রাপ্তির তুলনায় ভবিষ্যতের বিলম্বিত প্রাপ্তিকে কতটা ওজন দেওয়া হবে, তা নির্ধারণ করে Discount ফ্যাক্টর γ (gamma)। মনে রাখবেন, আপনার সিস্টেমে দুটি সিদ্ধান্তের মধ্যবর্তী সময় (Decision Interval) বা কাজের মেয়াদ (Task Horizon) বদলে গেলে একই γ-এর বাস্তব অর্থও বদলে যায়।"
+        },
+        {
+          "type": "text",
+          "title": "Recursive সমীকরণ ও অসীম ধারার সীমা",
+          "body": "প্রতিটি ধাপের জন্য শুরু থেকে নতুন করে যোগ না করে G_t = R_{t+1} + γ G_{t+1} এই চমৎকার Recursive সম্পর্কটি কাজে লাগিয়ে শেষ দিক থেকে উল্টো পথে (Backward) খুব সহজেই সব Return বের করা যায়। সত্যিকারের Terminal অবস্থায় পৌঁছালে তার পরের Continuation Value হয় ঠিক 0। কাজটি যদি বিরতিহীনভাবে চলতে থাকে (Continuing Task), তবে প্রতি ধাপের পরম Reward সর্বোচ্চ R_max-এর ভেতর সীমাবদ্ধ থাকলে এবং γ < 1 হলে অসীম ধাপ চললেও মোট পরম Return কখনোই R_max / (1 − γ) সীমা ছাড়াতে পারে না। অন্যদিকে নির্দিষ্ট দৈর্ঘ্যের সসীম Episode-এ যখন যোগফল সুসংজ্ঞায়িত থাকে, তখন চাইলে γ = 1 ব্যবহার করা যায়; কিন্তু বিরতিহীন ধনাত্মক Reward-এর ক্ষেত্রে γ = 1 ধরলে যোগফল অসীমে ছড়িয়ে (Diverge) পড়বে।"
+        },
+        {
+          "type": "math",
+          "title": "Discounted Return ও তার Recursive সম্পর্ক",
+          "body": "G_t=\\sum_{k=0}^{T-t-1}\\gamma^kR_{t+k+1}=R_{t+1}+\\gamma G_{t+1}"
+        },
+        {
+          "type": "text",
+          "title": "খাতাকলমে দুই দিক থেকে Return হিসাব",
+          "body": "হিসাবটি পরিষ্কারভাবে বোঝার জন্য ধরা যাক তিন ধাপের একটি ছোট Episode-এ ক্রমান্বয়ে পাওয়া Reward হলো [1, 2, 3] এবং Discount ফ্যাক্টর γ = 0.5। সামনের দিক থেকে সরাসরি সূত্র বসিয়ে হিসাব করলে শুরুর প্রথম Return হয় 1 + 0.5 × 2 + 0.25 × 3 = 2.75।\n\nএবার দেখা যাক শেষ দিক থেকে উল্টো পথে (Backward) গেলে হিসাবটি কত সহজ হয়ে যায়! একদম শেষ ধাপের Return হলো 3। তার ঠিক আগের ধাপে ফিরলে পাই 2 + 0.5 × 3 = 3.5। আর একদম প্রথম ধাপে ফিরে এলে পাই 1 + 0.5 × 3.5 = 2.75। কোডে পুরো Episode-এর Return বের করার সময় আমরা ঠিক এই উল্টো দিকের Recursion-টিই ব্যবহার করি।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Backward Loop দিয়ে Return গণনা",
+          "body": "rewards, discount = [1.0, 2.0, 3.0], 0.5\nreturn_value = 0.0\nfor reward in reversed(rewards):\n    return_value = reward + discount * return_value\n    # The initial zero is terminal continuation value, not an extra reward.\nprint(return_value)\n"
+        },
+        {
+          "type": "text",
+          "title": "কোডের সূক্ষ্ম দিক ও Indexing শৃঙ্খলা",
+          "body": "কোডটি চালিয়ে আমরা প্রথম Return হিসেবে ঠিক 2.75 পাচ্ছি। খেয়াল করুন, লুপের শুরুতে return_value = 0.0 ধরা হয়েছে—এটি কোনো বাড়তি ধাপের Reward নয়, বরং Episode শেষ হওয়ার পরের শূন্য Continuation Value। কোড লেখার সময় সময়ের সূচক নিয়ে সবসময় সতর্ক থাকবেন: সময় t-তে নেওয়া Action A_t-এর ফলাফল হিসেবে পরের মুহূর্তে Reward R_{t+1} আসে, তাই লিস্টের Indexing যেন কখনোই গুলিয়ে না যায়। পাশাপাশি মডেল মূল্যায়নের রিপোর্টে সাধারণ যোগফল (Undiscounted Reward Sum) এবং প্রশিক্ষণে ব্যবহৃত Discounted Return সবসময় আলাদা ও স্পষ্ট নামে উল্লেখ করবেন।"
+        },
+        {
+          "type": "text",
+          "title": "Horizon ও Truncation নিয়ে বাস্তব সতর্কতা",
+          "body": "হিসাব সহজ করার লোভে যদি কৃত্রিমভাবে খুব ছোট Horizon বা অতি ক্ষুদ্র γ বেছে নেওয়া হয়, তবে আজকের সিদ্ধান্তের দীর্ঘমেয়াদি ক্ষতিকর ফলাফলগুলো Objective-এর নজরদারির বাইরে চলে যেতে পারে। এছাড়া দুটি ঘটনাকে কখনোই এক করে দেখবেন না: কাজটি সত্যিই সম্পন্ন হয়ে যাওয়া (True Termination), আর সিমুলেশনের সর্বোচ্চ ধাপসংখ্যা পূর্ণ হওয়ায় বাইরে থেকে থামিয়ে দেওয়া (External Rollout Truncation)। পরের পাঠগুলোতেই দেখব এদের গাণিতিক আচরণ সম্পূর্ণ আলাদা। আর যেসব দীর্ঘমেয়াদি সিস্টেমে Episode কখনোই থামে না এবং Discount ব্যবহার করাও অযৌক্তিক, সেখানে সম্পূর্ণ ভিন্ন Average-Reward Objective নিয়ে কাজ করতে হয়।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজেকে যাচাই করুন",
+          "body": "উপরের [1, 2, 3] Reward তালিকায় γ = 0 হলে প্রথম Return কত হবে? আর γ = 1 হলে কত হবে? বাস্তব প্রোডাক্টে দীর্ঘমেয়াদি নির্ভরশীলতার (Long-Horizon Dependence) একটি উদাহরণ দিন।",
+          "solution": "γ = 0 হলে ভবিষ্যতের সব Reward-এর ওজন শূন্য হয়ে যায়, তাই প্রথম Return হবে শুধু প্রথম ধাপের Reward, অর্থাৎ 1। আর γ = 1 হলে কোনো Discount ছাড়াই সবগুলো যোগ হয়ে Return হবে 1 + 2 + 3 = 6। প্রোডাক্টের উদাহরণ হিসেবে একটি Recommender System-এর কথা ভাবা যায়: উত্তেজনাকর Clickbait দেখিয়ে তাৎক্ষণিক Click বাড়ানো গেলেও কিছুদিনের মধ্যে ইউজারের বিরক্তি বা Fatigue তৈরি হয় এবং দীর্ঘমেয়াদি Retention কমে যায়—তাই স্বল্পমেয়াদি Click মোটেও দীর্ঘমেয়াদি Utility-র সমান নয়।",
+          "reference": "https://mitpress.mit.edu/9780262039246/reinforcement-learning/"
+        }
+      ]
+    },
+    {
+      "id": "ch41_bellman",
+      "title": "Policy Value ও Bellman Expectation Equation",
+      "subtitle": "একটি নির্দিষ্ট Policy অনুসরণ করলে গড় Return কত হবে তা Bellman সমীকরণ দিয়ে এক ধাপে প্রকাশ ও সমাধান করা।",
+      "duration": "22 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "একটি নির্দিষ্ট Policy কতটা ভালো?",
+          "body": "আগের পাঠে আমরা একটি নির্দিষ্ট ঘটে যাওয়া যাত্রাপথের Return হিসাব করেছি। কিন্তু পরিবেশ বা সিদ্ধান্তে যদি অনিশ্চয়তা (Randomness) থাকে, তবে একই জায়গা থেকে শুরু করেও প্রতিবার আলাদা Return পাওয়া যেতে পারে। একটি Policy π আমাদের বলে দেয় প্রতিটি State-এ কোন Action নেওয়ার Probability কত। কোনো State s থেকে শুরু করে আগাগোড়া ওই π Policy অনুসরণ করলে গড়ে কত Return পাওয়া যাবে, সেই প্রত্যাশিত মানকেই বলা হয় State Value বা V^π(s)। আর প্রথম ধাপে একটি নির্দিষ্ট Action a স্থির রেখে পরের ধাপ থেকে π অনুসরণ করলে যে গড় Return পাওয়া যায়, তা হলো Action Value বা Q^π(s, a)। পরিবেশের Transition এবং Policy-র সব সম্ভাব্যতা গড় করেই এই Value-গুলো পাওয়া যায়।"
+        },
+        {
+          "type": "text",
+          "title": "Recursive গড় থেকে রৈখিক সমীকরণ",
+          "body": "আগের পাঠের Return Recursion-এর ওপর শর্তসাপেক্ষ গড় (Conditional Expectation) নিলেই বেরিয়ে আসে বিখ্যাত Bellman Expectation Equation। হিসাবের যুক্তিটি ধাপে ধাপে দেখুন: প্রথমে বর্তমান State-এ Policy অনুযায়ী সম্ভাব্য সব Action-এর গড় নিন, তারপর প্রতিটি Action-এর অধীনে সম্ভাব্য সব পরবর্তী State ও Reward-এর গড় নিন—যেখানে পরের State-এর ভবিষ্যৎ Value গুণ হবে γ দিয়ে। একটি স্থির Policy-র জন্য এটি আসলে একটি Linear Fixed-Point Equation, কারণ অজানা V^π সমীকরণের দুই পাশেই একঘাত বা রৈখিকভাবে রয়েছে। সসীম ও Discounted (γ < 1) পরিবেশে যেকোনো শুরুর মান নিয়ে বারবার এই সমীকরণ দিয়ে আপডেট চালালে Contraction ধর্মের জোরে তা নিশ্চিতভাবেই আসল V^π-তে গিয়ে মেলে।"
+        },
+        {
+          "type": "math",
+          "title": "Bellman Expectation Equation",
+          "body": "V^\\pi(s)=\\sum_a\\pi(a\\mid s)\\sum_{s^\\prime,r}p(s^\\prime,r\\mid s,a)[r+\\gamma V^\\pi(s^\\prime)]"
+        },
+        {
+          "type": "text",
+          "title": "খাতাকলমে এক-State পরিবেশের Fixed Point",
+          "body": "সমীকরণটি কীভাবে কাজ করে তা দেখতে একটি সরল চলমান (Continuing) State কল্পনা করি, যেখানে প্রতি ধাপে ঠিক 2 Reward পাওয়া যায় এবং আবার একই State-এ ফিরে আসা হয়, আর γ = 0.5। তাহলে Bellman সমীকরণ সরাসরি বলছে V = 2 + 0.5 V, যা সমাধান করলে পাওয়া যায় V = 4। এমনকি আমরা যদি শুরুতে Value = 0 ধরে বারবার আপডেট করতে থাকি, তবে মানটি ক্রমান্বয়ে 2, 3, 3.5, 3.75... এভাবে ধাপে ধাপে ঠিক 4-এর দিকেই এগোতে থাকবে।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Iterative Policy Evaluation",
+          "body": "value, reward, discount = 0.0, 2.0, 0.5\nfor _ in range(20):\n    value = reward + discount * value\n# Closed form applies to this one-state, constant-reward fixture only.\nexact = reward / (1 - discount)\nprint(round(value, 5), exact)\n"
+        },
+        {
+          "type": "text",
+          "title": "Iterative আপডেট ও পরের ধাপের ইঙ্গিত",
+          "body": "কোডে ২০ বার লুপ ঘোরানোর পর আসন্ন মান এবং সরাসরি সূত্রের (Closed-Form, যা কেবল এই এক-State ও ধ্রুবক Reward-এর সরল উদাহরণের জন্য প্রযোজ্য) ফলাফল দুটোই 4.0 দেখাচ্ছে। অবশ্য দশমিক আসন্ন মান নেওয়ার আগে সসীম সংখ্যক ধাপ চালানোর কারণে ভেতরে অতি ক্ষুদ্র একটি পার্থক্য বা Residual থেকে যেতে পারে। এখানে আমরা একটি নির্দিষ্ট স্থির Policy-র গড় মান বের করলাম; পরের পাঠেই দেখব, Policy-র গড় নেওয়ার বদলে সেরা Action-এর সর্বোচ্চ মান (max) নিলে কীভাবে সরাসরি সেরা Policy খুঁজে পাওয়া যায়!"
+        },
+        {
+          "type": "text",
+          "title": "গড় মান বনাম একক অভিজ্ঞতা ও Model Error",
+          "body": "সবসময় মনে রাখবেন, Value হলো অসংখ্য সম্ভাব্য যাত্রাপথের গাণিতিক গড় (Expectation)—বাস্তবে একবার চালিয়ে পাওয়া একটি একক Trajectory Return এর চেয়ে বেশ আলাদা হতে পারে। তাছাড়া Planning করে পাওয়া এই Value কোন Transition Model-এর ওপর দাঁড়িয়ে হিসাব করা হয়েছে তা স্পষ্টভাবে নথিবদ্ধ রাখুন। আপনার ধরে নেওয়া Model যদি আসল পরিবেশের চেয়ে আলাদা হয়, তবে সমীকরণের নিখুঁত Fixed Point-টিও বাস্তব পরিবেশের প্রকৃত Value থেকে দূরে সরে যাবে।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজেকে যাচাই করুন",
+          "body": "উপরের উদাহরণেই ধরুন প্রতি ধাপে তাৎক্ষণিক Reward আগের মতোই 2 এবং γ = 0.5, কিন্তু প্রতি ধাপে 0.5 Probability-তে Episode-টি Terminal হয়ে শেষ হয়ে যায় আর বাকি 0.5 Probability-তে একই State-এ ফিরে আসে। এবার ওই State-এর Value কত হবে?",
+          "solution": "প্রতি ধাপে (এমনকি Terminal-এ যাওয়ার শেষ ধাপেও) তাৎক্ষণিক Reward হিসেবে 2 পাওয়া যাচ্ছে। কিন্তু Terminal-এ গেলে পরের Continuation Value হয় 0, আর কেবল 0.5 Probability-তে একই State-এ ফিরে ভবিষ্যৎ Value V পাওয়া যায়। তাই Bellman সমীকরণ হবে V = 2 + 0.5 × (0.5 × V) = 2 + 0.25 V। সমাধান করলে 0.75 V = 2 থেকে পাওয়া যায় V = 8/3 ≈ 2.666667।",
+          "reference": "https://mitpress.mit.edu/9780262039246/reinforcement-learning/"
+        }
+      ]
+    },
+    {
+      "id": "ch41_optimality",
+      "title": "Bellman Optimality ও Synchronous Value Iteration",
+      "subtitle": "সম্ভাব্য সব Policy-র মধ্যে সর্বোচ্চ Value খুঁজে বের করার সমীকরণ এবং ধাপে ধাপে Synchronous Value Iteration চালানো।",
+      "duration": "22 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "গড় মূল্যায়ন থেকে সেরা সিদ্ধান্তের খোঁজে",
+          "body": "আগের পাঠে আমরা একটি নির্দিষ্ট Policy-র মান বের করেছি, কিন্তু আমাদের চূড়ান্ত লক্ষ্য হলো প্রতিটি State থেকে অর্জনযোগ্য সর্বোচ্চ প্রত্যাশিত Return—অর্থাৎ Optimal Value V* খুঁজে বের করা। Bellman Optimality Backup-এ আমরা স্থির Policy-র গড় নেওয়ার জায়গায় অনুমোদিত সব Action-এর মধ্য থেকে সর্বোচ্চ মানটি (Action Maximum) বেছে নিই। পরিবেশের সসীম ও Discounted MDP জানা থাকলে এই Backup বারবার চালিয়ে যেকোনো শুরুর মান থেকে V*-এর দিকে এগিয়ে যাওয়া যায়। নিচের উদাহরণ ও ইন্টারেক্টিভ Lab-এ আমরা Synchronous পদ্ধতি অনুসরণ করব, যেখানে প্রতিটি পূর্ণ Sweep-এ সবগুলো State আগের ধাপের একই পুরোনো Value Vector থেকে মান পড়ে।"
+        },
+        {
+          "type": "text",
+          "title": "Synchronous বনাম In-Place আপডেটের নিয়ম",
+          "body": "প্রতিটি Synchronous Sweep ঠিক কীভাবে কাজ করে তা খেয়াল করুন: প্রথমে প্রতিটি State-এর সবগুলো Action-এর জন্য পুরোনো মান V_old ব্যবহার করে Q = E[r + γ × V_old(next)] বের করুন। এরপর ওই State-এর সর্বোচ্চ Action Value-টি নিয়ে আলাদা একটি V_new ভেক্টরে রাখুন। সবগুলো State-এর হিসাব শেষ হওয়ার পর একসাথে পুরোনো ভেক্টরটিকে V_new দিয়ে প্রতিস্থাপন করুন। উল্লেখ্য, হিসাবের মাঝপথেই নতুন মান বসিয়ে দেওয়ার In-Place Asynchronous Update-ও উপযুক্ত শর্তে একই চূড়ান্ত V*-এ পৌঁছায়, তবে তার মধ্যবর্তী প্রতিটি Sweep-এর সংখ্যাগুলো এই Synchronous অ্যালগরিদম থেকে আলাদা হবে।"
+        },
+        {
+          "type": "math",
+          "title": "Bellman Optimality Operator ও Contraction ধর্ম",
+          "body": "(TV)(s)=\\max_a\\mathbb E[r+\\gamma V(s^\\prime)],\\quad\\|TV-TW\\|_\\infty\\le\\gamma\\|V-W\\|_\\infty"
+        },
+        {
+          "type": "text",
+          "title": "খাতাকলমে দুই Sweep-এর নিখুঁত হিসাব",
+          "body": "আমাদের পরিচিত দুই-State (Start ও Middle) Lab MDP-তে p = 0.7 এবং γ = 0.9 ধরা যাক। শুরুতে Start এবং Middle—দুটি State-এরই Value হলো 0, আর যেকোনো জায়গায় Safe নিলে 1 Reward পেয়ে কাজ শেষ হয়। প্রথম Sweep-এ Start হয় max(1, 0) = 1 এবং Middle হয় max(1, 2.5) = 2.5।\n\nদ্বিতীয় Sweep-এ আমাদের অবশ্যই আগের ধাপের পূর্ণ ভেক্টর [1, 2.5]-ই পড়তে হবে! তাই নতুন Start হবে max(1, 0.9 × 2.5) = 2.25, এবং নতুন Middle হবে max(1, 2.5 + 0.3 × 0.9 × 1) = 2.77। খেয়াল রাখবেন, Start-এর সদ্য বের হওয়া নতুন মান 2.25 ভুলেও একই Sweep-এর ভেতর Middle-এর হিসাবে বসাবেন না—তাহলে সেটি Synchronous না থেকে অন্য একটি Update Order হয়ে যাবে।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ দুই ধাপের Synchronous Value Iteration",
+          "body": "start, middle, discount, probability = 0.0, 0.0, 0.9, 0.7\nfor _ in range(2):\n    # Both next values read the previous sweep, never a half-updated vector.\n    new_start = max(1.0, discount * middle)\n    new_middle = max(1.0, probability * 4 + (1 - probability) * (-1 + discount * start))\n    start, middle = new_start, new_middle\nprint(round(start, 6), round(middle, 6))\n"
+        },
+        {
+          "type": "text",
+          "title": "কোডের আচরণ ও প্যারামিটার পরিবর্তন",
+          "body": "দুটি Synchronous Sweep চালানোর পর কোডে আমরা ঠিক [2.25, 2.77] মানগুলো পাচ্ছি। নিচের ইন্টারেক্টিভ Lab-এ আপনি যখন সাফল্যের Probability বা Discount ফ্যাক্টর বদলাবেন, তখন মূল পরিবেশ বা Objective বদলে যায় বলে Value-গুলো আবার শূন্য থেকে Reset হয়। বরাবরের মতোই এখানে Terminal অবস্থার ভবিষ্যৎ Value শূন্য, আর সেখানে যাওয়ার তাৎক্ষণিক Reward সরাসরি ওই Action-এর হিসাবের ভেতরেই ধরা থাকে।"
+        },
+        {
+          "type": "text",
+          "title": "কখন বাড়তি সতর্কতা প্রয়োজন?",
+          "body": "উপরের হিসাবেই দেখা গেল, শুরুর দিকের Sweep-গুলোতে ভবিষ্যৎ তথ্য পুরোপুরি পৌঁছানোর আগে Greedy Action বদলে যেতে পারে (যেমন প্রথম Sweep-এ Start-এ Safe বড় ছিল, দ্বিতীয় Sweep-এ Advance বড় হয়েছে)। এছাড়া γ = 1 হলে এই Discounted Contraction প্রমাণটি সরাসরি প্রযোজ্য হয় না। আর বাস্তব সমস্যায় যখন আনুমানিক Transition Dynamics বা Neural Network দিয়ে Function Approximation যুক্ত করা হয়, তখন এই max অপারেটরের সাথে আনুমানিক ত্রুটি মিশে নতুন ধরনের অস্থিরতা তৈরি করতে পারে।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজেকে যাচাই করুন",
+          "body": "Sweep 2 শেষে Start অবস্থানে Safe নাকি Advance—কোন Action-টি Greedy হবে? আর সাফল্যের সম্ভাব্যতা p = 0 হলে Middle অবস্থানে Try নেওয়া কেন অলাভজনক হয়ে পড়ে?",
+          "solution": "Sweep 2-এ Start অবস্থানে Advance-এর Action Value হলো 2.25, যা Safe-এর মান 1.0-এর চেয়ে বড়—তাই Advance-ই এখানে Greedy Action। অন্যদিকে p = 0 হলে Middle-এ Try নিলে জেতার কোনো সুযোগ থাকে না; নিশ্চিতভাবে −1 Reward পেয়ে বিলম্বিত Start-এ ফিরে যেতে হয়, অথচ শুরুতেই বা Middle-এ Safe নিলে নিশ্চিতভাবে +1 Reward পাওয়া যায়। নিচের ইন্টারেক্টিভ Lab-এ γ ও p ঘুরিয়ে কোন সীমায় সিদ্ধান্ত বদলায় (Policy Boundary) তা নিজেই খুঁজে দেখুন।",
+          "reference": "https://mitpress.mit.edu/9780262039246/reinforcement-learning/"
+        },
+        {
+          "type": "bellman_lab",
+          "title": "ইন্টারেক্টিভ Bellman Lab: হাতে-কলমে Value Sweep",
+          "body": "এই জানা গাণিতিক MDP-টিতে সাফল্যের Probability এবং Discount ফ্যাক্টর বদলে দেখুন কীভাবে প্রতিটি Synchronous Sweep-এ State Value ও সেরা Policy পরিবর্তিত হয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch41_policy_iteration",
+      "title": "Policy Iteration: মূল্যায়ন, উন্নয়ন ও যাচাই",
+      "subtitle": "বারবার ছোট Sweep না চালিয়ে সরাসরি Policy Evaluation ও Policy Improvement-এর পালাক্রমিক ধাপে সেরা সিদ্ধান্তে পৌঁছানো।",
+      "duration": "37 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Value Iteration-এর বিকল্প পথ কেন?",
+          "body": "Value Iteration-এ দশমিকের পর বহু ঘর পর্যন্ত Value স্থির হতে অনেকগুলো Sweep লাগতে পারে, অথচ অনেক সময় দেখা যায় সেরা Policy-টি তার অনেক আগেই স্থির হয়ে গেছে! Policy Iteration এই বৈশিষ্ট্যটিকেই কাজে লাগায়: এখানে আমরা প্রথমে একটি নির্দিষ্ট স্থির Policy-কে পুরোপুরি মূল্যায়ন (Policy Evaluation) করি, তারপর সেই Value ব্যবহার করে প্রতিটি State-এ আরও ভালো Action বেছে নিয়ে Policy-টিকে উন্নত (Policy Improvement) করি। সসীম Discounted MDP-তে নিখুঁত মূল্যায়ন এবং সমান মানের ক্ষেত্রে সুনির্দিষ্ট নিয়ম (Consistent Tie Handling) বজায় রাখলে, যখন আর কোনো Action বদলায় না তখন সেই স্থির Greedy Policy-টি নিশ্চিতভাবেই Optimal হয়। আর পূর্ণ মূল্যায়নের বদলে আংশিক কয়েক ধাপ মূল্যায়ন ও উন্নয়ন পালাক্রমে চালালে পাওয়া যায় Modified Policy Iteration।"
+        },
+        {
+          "type": "text",
+          "title": "রৈখিক সমাধান ও Tie-Breaking-এর কৌশল",
+          "body": "একটি স্থির Policy π-এর জন্য Bellman সমীকরণটি আসলে (I − γ P^π) V = r^π আকারের একটি রৈখিক সমীকরণ জোট (Linear System)। বাস্তব কোডে সংখ্যাগত স্থিতিশীলতা ও গতির স্বার্থে কখনোই সরাসরি ম্যাট্রিক্স ইনভার্স (Explicit Inverse) তৈরি করবেন না; বরং স্ট্যান্ডার্ড Linear Solver ব্যবহার করে V বের করুন। এরপর প্রতিটি State-এ সব সম্ভাব্য Action-এর Q মান তুলনা করুন। নতুন কোনো Action-এর মান যদি পুরোনো Action-এর হুবহু সমান হয় (Equal-Value Tie), তবে পুরোনো Action-টি ধরে রাখার নিয়ম মেনে চললে অপ্রয়োজনীয় Policy Switching এড়ানো যায়।"
+        },
+        {
+          "type": "math",
+          "title": "Policy Evaluation ও Improvement-এর সমীকরণ",
+          "body": "V^\\pi=(I-\\gamma P^\\pi)^{-1}r^\\pi,\\qquad \\pi_{new}(s)\\in\\arg\\max_a Q^\\pi(s,a)"
+        },
+        {
+          "type": "text",
+          "title": "খাতাকলমে এক ধাপ উন্নয়ন বনাম পুনর্মূল্যায়ন",
+          "body": "একটি এক-State উদাহরণে পার্থক্যটি স্পষ্ট করা যাক: Safe Action নিলে 1 Reward দিয়ে কাজ শেষ হয়, আর Loop Action নিলে 0.8 Reward দিয়ে আবার একই State-এ ফিরে আসে, যেখানে γ = 0.5। শুরুতে আমাদের Policy যদি Safe হয়, তবে তার মান V = 1। এই পুরোনো Policy-র মান ধরে একবার Loop নিয়ে পরে আগের নীতিতে চললে মান দাঁড়ায় Q = 0.8 + 0.5 × 1 = 1.3। যেহেতু 1.3 > 1, তাই আমরা Policy বদলে Loop বেছে নিই! এবার নতুন এই Loop Policy-কে যখন আবার নতুন করে মূল্যায়ন (Re-evaluate) করব, তখন প্রতি ধাপেই সে Loop নেবে বলে তার প্রকৃত Value আরও বেড়ে হবে V = 0.8 / (1 − 0.5) = 1.6।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Policy Improvement ও Re-evaluation",
+          "body": "discount, loop_reward = 0.5, 0.8\nsafe_value = 1.0\nloop_q_under_safe = loop_reward + discount * safe_value\nimproved_policy_value = loop_reward / (1 - discount)\n# Policy improvement uses the old policy's value, then reevaluates the new one.\nprint(loop_q_under_safe, improved_policy_value)\n"
+        },
+        {
+          "type": "text",
+          "title": "এক ধাপের উন্নতি আর নতুন Policy-র মান এক নয়",
+          "body": "কোডের আউটপুটে পুরোনো Policy-র অধীনে Loop Action-এর মান আসছে 1.3, আর নতুন Loop Policy-র পূর্ণ মূল্যায়িত মান আসছে 1.6। অর্থাৎ Policy Improvement এবং নতুন Policy-র Re-evaluation দুটি আলাদা ধাপ। তবে বাস্তব সিস্টেমে State Space যদি বিশাল বড় হয়, তখন সরাসরি রৈখিক ম্যাট্রিক্স সমাধানের মেমরি ও কম্পিউটেশন খরচও (Resource Cost) মাথায় রাখতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "আনুমানিক মূল্যায়ন ও পরিবেশের সীমাবদ্ধতা",
+          "body": "মনে রাখবেন, প্রতি ধাপে নিশ্চিত উন্নতির তাত্ত্বিক গ্যারান্টিটি (Exact Policy-Improvement Theorem) নিখুঁত মূল্যায়নের ওপর দাঁড়িয়ে আছে—Approximate Evaluation-এ ত্রুটি থাকলে সেই শর্তগুলো আবার যাচাই করে দেখতে হয়। তাছাড়া পরিবেশে যদি লুকানো তথ্য (Hidden State) থাকে বা সময়ের সাথে পরিবেশ বদলাতে থাকে (Nonstationarity), তবে আপনি ঠিক কোন Policy এবং কোন সময়ের Environment-এর Value তুলনা করছেন তা আগে সুনির্দিষ্ট করা জরুরি।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজেকে যাচাই করুন",
+          "body": "উপরের উদাহরণে Loop নেওয়ার তাৎক্ষণিক Reward যদি 0.8-এর বদলে 0.2 হতো, তবে কি Safe থেকে Policy বদলে উন্নয়ন ঘটত? এছাড়া Exact Policy Evaluation এবং TD Prediction-এর মধ্যে প্রয়োজনীয় Data-র মূল পার্থক্য কী?",
+          "solution": "Loop-এর Reward 0.2 হলে পুরোনো Safe Policy (V = 1)-এর অধীনে এর মান হতো Q = 0.2 + 0.5 × 1 = 0.7, যা 1.0-এর চেয়ে কম—তাই Safe-ই সেরা থাকত, কোনো পরিবর্তন হতো না। আর Data-র পার্থক্য হলো: রৈখিক সমীকরণে Exact Evaluation করতে পরিবেশের সম্পূর্ণ Transition Model জানা থাকতে হয়, কিন্তু TD Prediction কোনো জানা Model ছাড়াই সরাসরি পর্যবেক্ষণ করা (Observed Transitions) অভিজ্ঞতা থেকে শিখতে পারে।",
+          "reference": "https://mitpress.mit.edu/9780262039246/reinforcement-learning/"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের Lab MDP-কে Linear System দিয়ে যাচাই",
+          "body": "এবার আমাদের দুই-State Lab MDP-তে একটি নির্দিষ্ট Policy স্থির করি: Start-এ Advance এবং Middle-এ Try। কেবল দুটি চলমান (Nonterminal) State নিয়ে সাজালে এর Transition Matrix দাঁড়ায় P = [[0, 1], [1 − p, 0]] এবং তাৎক্ষণিক গড় Reward Vector হয় [0, 5p − 1]। খেয়াল করুন, দ্বিতীয় সারির যোগফলে Terminal-এ চলে যাওয়ার সম্ভাব্যতা p অনুপস্থিত, কারণ Terminal-এর ভবিষ্যৎ Value শূন্য হওয়ায় সমীকরণে তার কোনো বাড়তি অবদান নেই। p = 0.7 এবং γ = 0.9 বসিয়ে এই রৈখিক সমীকরণ সমাধান করলে State Value পাওয়া যায় প্রায় [2.972259, 3.302510]। Policy-টি সত্যিই সেরা কি না তা দেখতে প্রতিটি State-এ এর মানকে বিকল্প Safe Action-এর মান 1.0-এর সাথে তুলনা করতে হবে। অথচ p = 0 বসালে এই একই স্থির Policy-র Value ঋণাত্মক হয়ে যায়—তাই কোনো নির্দিষ্ট Policy-কে যাচাই না করে সব Parameter Setting-এই সেরা বলে ধরে নেওয়া যাবে না।"
+        },
+        {
+          "type": "math",
+          "title": "স্থির Policy-র রৈখিক সমীকরণ ও Bellman Residual",
+          "body": "(I-\\gamma P^\\pi)V^\\pi=r^\\pi,\\qquad residual=\\|r^\\pi+\\gamma P^\\pi V^\\pi-V^\\pi\\|_\\infty"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Policy Evaluation ও Greedy সামঞ্জস্য যাচাই",
+          "body": "import numpy as np\n\n\ndef evaluate_try_policy(success_probability, discount):\n    transition = np.array([[0.0, 1.0], [1 - success_probability, 0.0]])\n    reward = np.array([0.0, 5 * success_probability - 1])\n    values = np.linalg.solve(np.eye(2) - discount * transition, reward)\n    action_values = reward + discount * transition @ values\n    np.testing.assert_allclose(action_values, values, atol=1e-12)\n    greedy = action_values >= 1.0  # Safe is terminal with reward 1.\n    return values, greedy\n\n\nvalues, greedy = evaluate_try_policy(0.7, 0.9)\nfailed_values, failed_greedy = evaluate_try_policy(0.0, 0.9)\nassert np.all(failed_values < 0)\nprint(*np.round(values, 6), *greedy.astype(int), *failed_greedy.astype(int))\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "আরেক ধাপ গভীরে যাচাই করুন",
+          "body": "উপরের কোডে Transition Matrix P-এর প্রতিটি সারির যোগফল (Row Sum) 1 না হওয়া সত্ত্বেও এই রৈখিক সমাধান কেন শতভাগ সঠিক ফলাফল দিচ্ছে?",
+          "solution": "কারণ এখানে ম্যাট্রিক্সটিতে শুধু দুটি Nonterminal State রাখা হয়েছে। অনুপস্থিত p পরিমাণ Probability সরাসরি Terminal State-এ চলে যায়, যার পরবর্তী Continuation Value শূন্য। অন্যদিকে Terminal-এ যাওয়ার তাৎক্ষণিক প্রাপ্তি আমাদের গড় Reward Vector-এর ভেতরেই হিসাব করা আছে। আপনি চাইলে Terminal State-কে আলাদা একটি সারি ও কলাম হিসেবে যুক্ত করে সারিগুলোর যোগফল 1 বানিয়েও সমাধান করতে পারেন—দুটি Nonterminal State-এর Value হুবহু একই আসবে।",
+          "reference": "https://mitpress.mit.edu/9780262039246/reinforcement-learning/"
+        }
+      ]
+    },
+    {
+      "id": "ch41_monte_carlo",
+      "title": "Monte Carlo Prediction ও Episode Returns",
+      "subtitle": "পরিবেশের Transition Model অজানা থাকলে সম্পূর্ণ Episode-এর বাস্তব Return গড় করে Policy Value অনুমান করা।",
+      "duration": "37 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "যখন পরিবেশের Transition Model আমাদের জানা নেই",
+          "body": "আগের পাঠ পর্যন্ত আমরা ধরে নিয়েছিলাম পরিবেশের Transition Probability ও Reward নিয়ম আমাদের জানা আছে। কিন্তু বাস্তবে এই Environment Model অজানা থাকলে কোনো Policy-র মান কীভাবে বের করব? সবচেয়ে সহজ ও স্বাভাবিক উপায় হলো Monte Carlo (MC) Prediction: ওই Policy চালিয়ে বেশ কয়েকটি সম্পূর্ণ Episode শেষ হতে দিন, তারপর বাস্তবে পাওয়া Return-গুলোর গড় নিয়ে Value অনুমান করুন। খেয়াল করুন, এখানে ভবিষ্যতের কোনো আনুমানিক Value দিয়ে Bootstrap করা হয় না—সরাসরি প্রকৃত Sampled Return-ই হয় শেখার Target। তবে সম্পূর্ণ Return পেতে Episode শেষ হওয়া পর্যন্ত অপেক্ষা করতে হয়, এবং দীর্ঘ Trajectory-তে ফলাফলের ওঠানামা বা Variance বেশ বড় হতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "First-Visit বনাম Every-Visit এবং ক্রমিক গড়",
+          "body": "একই Episode-এ কোনো State একাধিকবার ফিরে এলে দুটি প্রচলিত পদ্ধতি ব্যবহার করা যায়: First-Visit MC প্রতি Episode-এ ওই State-এর কেবল প্রথম উপস্থিতির পরবর্তী Return নেয়, আর Every-Visit MC সবগুলো উপস্থিতির Return হিসাবে ধরে। নির্বাচিত N-টি Return মেমরিতে জমিয়ে না রেখেও V ← V + (G − V) / N সূত্র দিয়ে ধাপে ধাপে (Incremental Update) গড় বের করা যায়। তবে একই Episode-এর ভেতর একাধিকবার আসার ঘটনাগুলো পরস্পর নির্ভরশীল (Dependent) হতে পারে—তাই ফলাফলের অনিশ্চয়তা বা Uncertainty রিপোর্ট করার সময় আপনার Sampling Unit স্পষ্টভাবে উল্লেখ করুন।"
+        },
+        {
+          "type": "math",
+          "title": "Incremental Sample Mean আপডেট সূত্র",
+          "body": "V_n(s)=V_{n-1}(s)+\\frac{1}{n}[G_n(s)-V_{n-1}(s)]"
+        },
+        {
+          "type": "text",
+          "title": "খাতাকলমে ক্রমিক গড়ের উদাহরণ",
+          "body": "ধরা যাক একই স্থির Policy থেকে কোনো একটি নির্দিষ্ট State-এ তিনটি পর্যবেক্ষিত Return পাওয়া গেল [2, 4, 3]। শূন্য থেকে শুরু করে ক্রমিক আপডেট চালালে গড় মানটি ধাপে ধাপে 2 → 3 → 3-এ পৌঁছায়, যা একসাথে হিসাব করা Batch Mean (3)-এর হুবহু সমান। তবে সতর্ক থাকবেন: Data সংগ্রহের মাঝপথে যদি Policy বদলে গিয়ে থাকে, তবে সব Return একসাথে মিশিয়ে গড় (Pooled Mean) করলে তা আসলে কোন নির্দিষ্ট Target Policy মাপছে তা আগে যাচাই করতে হবে।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Incremental Monte Carlo গড়",
+          "body": "returns = [2.0, 4.0, 3.0]\nvalue = 0.0\nfor count, sampled_return in enumerate(returns, start=1):\n    value += (sampled_return - value) / count\n    # No future value estimate is used in this Monte Carlo target.\nprint(value)\n"
+        },
+        {
+          "type": "text",
+          "title": "কোডের আচরণ ও পরিবর্তনশীল পরিবেশ",
+          "body": "কোডে চূড়ান্ত গড় হিসেবে 3.0 পাওয়া যাচ্ছে (বড় তালিকায় অবশ্য Floating-Point যোগের ক্রমের কারণে অতি সামান্য পার্থক্য হতে পারে)। এখানে সব অভিজ্ঞতাকে সমান ওজন দিতে 1 / count ব্যবহার করা হয়েছে; কিন্তু এর বদলে একটি স্থির Learning Rate ব্যবহার করলে পুরোনো তথ্যের চেয়ে নতুন ডেটা বেশি ওজন পায়, যা সময়ের সাথে পরিবর্তনশীল Environment অনুসরণ করতে কাজে লাগে।"
+        },
+        {
+          "type": "text",
+          "title": "Selection Bias ও Truncation নিয়ে সতর্কতা",
+          "body": "লগ বিশ্লেষণের সময় ভুলে শুধু সফলভাবে শেষ হওয়া Episode-গুলো রাখলে আপনি আসলে একটি বাছাইকৃত গোষ্ঠীর (Selected Population) পক্ষপাতদুষ্ট মান মাপবেন! এছাড়া সময়ের সীমায় মাঝপথে থামিয়ে দেওয়া (Early Truncation) Episode-এর পরবর্তী Continuation কীভাবে সামলানো হয়েছে তা স্পষ্টভাবে নথিবদ্ধ করুন। আর অন্য কোনো নীতির সংগৃহীত অভিজ্ঞতা থেকে শিখতে গেলে (Off-Policy MC) উভয় নীতির Support এবং উপযুক্ত Weighting প্রয়োজন হবে।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজেকে যাচাই করুন",
+          "body": "দুটি পর্যবেক্ষিত Return [0, 10] হলে তাদের Sample Mean কত? উচ্চ Variance-এর পরিবেশে নির্ভরযোগ্যতা বোঝাতে কেবল মোট Episode Count রিপোর্ট করাই কেন যথেষ্ট নয়?",
+          "solution": "Sample Mean হলো (0 + 10) / 2 = 5। কেবল Episode-এর সংখ্যা বললে ফলাফলের বিশাল বিস্তার (0 থেকে 10 পর্যন্ত Return Spread) বোঝা যায় না। সঠিক মূল্যায়নের জন্য Return Spread, ব্যবহৃত Policy ও Environment-এর পরিচয়, Episode-গুলো পরস্পর স্বাধীন কি না এবং গড়ের Uncertainty রিপোর্ট করা জরুরি—কারণ পরস্পর সম্পর্কিত (Correlated) Trajectory কার্যকর তথ্যের পরিমাণ কমিয়ে দেয়।",
+          "reference": "https://mitpress.mit.edu/9780262039246/reinforcement-learning/"
+        },
+        {
+          "type": "text",
+          "title": "একই Episode-এ একই State দুইবার এলে কী বদলায়?",
+          "body": "এবার দুটি সুনির্দিষ্ট Episode নিয়ে First-Visit ও Every-Visit-এর পার্থক্য হাতে-কলমে দেখা যাক। প্রথম Episode-এর State ক্রম [A, B, A], প্রাপ্ত Reward [1, 0, 3] এবং γ = 1। শেষ দিক থেকে উল্টো পথে হিসাব করলে ধাপগুলোর Return হয় [4, 3, 3]—তাই A-এর First-Visit স্যাম্পল হলো শুধু 4, কিন্তু Every-Visit স্যাম্পল দুটি: 4 এবং 3। দ্বিতীয় Episode-এ কেবল একবার A এসেছে এবং Reward পেয়েছে 0। ফলে দুটি Episode মিলিয়ে First-Visit গড় দাঁড়ায় (4 + 0) / 2 = 2.0, অথচ তিনটি উপস্থিতি মিলিয়ে Every-Visit গড় হয় (4 + 3 + 0) / 3 = 7/3 ≈ 2.333333! যেহেতু একই Episode-এর ভেতরের উপস্থিতিগুলো পরস্পর সম্পর্কিত হতে পারে, তাই রিপোর্টে কোন Sampling Unit ব্যবহার করছেন তা অবশ্যই স্পষ্ট করুন।"
+        },
+        {
+          "type": "code",
+          "title": "Episode সীমানা বজায় রেখে First-Visit ও Every-Visit হিসাব",
+          "body": "episodes = [([\"A\", \"B\", \"A\"], [1.0, 0.0, 3.0]), ([\"A\"], [0.0])]\nfirst_visits, every_visits = [], []\nfor states, rewards in episodes:\n    assert len(states) == len(rewards)\n    returns = [0.0] * len(rewards)\n    value = 0.0\n    for index in range(len(rewards) - 1, -1, -1):\n        value = rewards[index] + value  # gamma=1 for these finite episodes.\n        returns[index] = value\n    seen = set()\n    for state, value in zip(states, returns):\n        if state == \"A\":\n            every_visits.append(value)\n            if state not in seen:\n                first_visits.append(value)\n        seen.add(state)\nprint(\n    sum(first_visits) / len(first_visits),\n    round(sum(every_visits) / len(every_visits), 6),\n    len(first_visits),\n    len(every_visits),\n)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "আরেক ধাপ গভীরে যাচাই করুন",
+          "body": "First-Visit বের করার সময় কেউ যদি Episode-টিকে উল্টো করে স্ক্যান করতে গিয়ে প্রথম যে A পায় সেটিকেই তুলে নেয়, তবে কী ভুল হবে?",
+          "solution": "উল্টো দিক থেকে স্ক্যান করলে প্রথমে যে উপস্থিতি পাওয়া যায়, তা আসলে আসল Episode-এর একদম শেষ উপস্থিতি (Last Visit)! তাই সঠিক নিয়ম হলো: আগে উল্টো দিক থেকে পুরো Episode-এর Return তালিকা হিসাব করে নিন, তারপর সময়ের আসল ক্রমে (Original Time Order) স্ক্যান করে First-Visit বেছে নিন; আর রিপোর্টে Every-Visit স্যাম্পল সংখ্যা থেকে স্বতন্ত্র Episode সংখ্যা আলাদা রাখুন।",
+          "reference": "https://mitpress.mit.edu/9780262039246/reinforcement-learning/"
+        }
+      ]
+    },
+    {
+      "id": "ch41_td",
+      "title": "Temporal-Difference (TD) Learning ও Terminal Bootstrapping",
+      "subtitle": "পুরো Episode শেষ হওয়ার অপেক্ষা না করে এক ধাপের বাস্তব Reward ও পরের State-এর আনুমানিক Value মিলিয়ে শেখা।",
+      "duration": "22 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Episode শেষ হওয়ার আগেই শেখার কৌশল",
+          "body": "Monte Carlo পদ্ধতিতে পুরো Episode শেষ না হওয়া পর্যন্ত অপেক্ষা করতে হয়, কিন্তু Temporal-Difference বা TD(0) বর্তমান ধাপের বাস্তব Reward এবং পরের State-এর আনুমানিক Value ব্যবহার করে সাথে সাথেই মান আপডেট করে ফেলে! ফলে চলমান অভিজ্ঞতার মাঝপথেই শেখা সম্ভব হয়। Monte Carlo নেয় সম্পূর্ণ বাস্তব Sampled Return, আর TD নিজেরই আনুমানিক ভবিষ্যৎ মানের ওপর ভর করে (Bootstrapping) এগোয়—RL-এর Bias, Variance ও Convergence বিশ্লেষণে এই পার্থক্যটি অত্যন্ত মৌলিক।"
+        },
+        {
+          "type": "text",
+          "title": "TD Error এবং True Terminal বনাম Truncation",
+          "body": "প্রতি ধাপে আপডেটের নিয়মটি খুব পরিষ্কার: প্রথমে লক্ষ্যমাত্রা Target = r + γ × V(next) তৈরি করুন, এরপর বর্তমান মানের সাথে ব্যবধান বা TD Error = Target − V(current) বের করে বর্তমান মানের সাথে α × Error যোগ করুন। তবে এখানে সবচেয়ে সতর্ক থাকতে হয় সমাপ্তির শর্ত নিয়ে: ধাপটি সত্যিকারের সমাপ্তি (True Terminal Transition) হলে ভবিষ্যতের Continuation অবশ্যই 0 হবে। কিন্তু বাইরে থেকে সময়ের সীমা বেঁধে দেওয়ার কারণে (External Time Limit) যদি মূল কাজ শেষ না হয়েই Episode থেমে যায়, তবে প্রকৃত পরবর্তী State-এর Value দিয়ে Bootstrap চালু রাখার প্রয়োজন হতে পারে। তাই পরিবেশের API ফ্ল্যাগের প্রকৃত অর্থ বুঝে তবেই Terminal Mask নির্ধারণ করুন।"
+        },
+        {
+          "type": "math",
+          "title": "TD Error ও এক ধাপের TD(0) আপডেট",
+          "body": "\\delta_t=R_{t+1}+\\gamma V(S_{t+1})-V(S_t),\\qquad V(S_t)\\leftarrow V(S_t)+\\alpha\\delta_t"
+        },
+        {
+          "type": "text",
+          "title": "খাতাকলমে চলমান বনাম Terminal আপডেট",
+          "body": "ধরা যাক বর্তমান State-এর মান V = 2, পরের State-এর মান V_next = 4, প্রাপ্ত Reward = 1, γ = 0.9 এবং শেখার হার α = 0.5। ধাপটি চলমান হলে Target = 1 + 0.9 × 4 = 4.6, ফলে TD Error = 2.6 এবং আপডেটকৃত নতুন মান হবে 2 + 0.5 × 2.6 = 3.3। কিন্তু একই 1 Reward পাওয়ার পর ধাপটি যদি True Terminal হতো, তবে কোনো Bootstrap না থাকায় Target হতো শুধু 1 এবং আপডেটকৃত মান কমে দাঁড়াত 2 + 0.5 × (1 − 2) = 1.5!"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ চলমান ও Terminal TD আপডেট",
+          "body": "value, next_value, reward, discount, rate = 2.0, 4.0, 1.0, 0.9, 0.5\ntarget = reward + discount * next_value\nupdated = value + rate * (target - value)\nterminal_updated = value + rate * (reward - value)\n# True termination removes bootstrap; a time limit is not automatically terminal.\nprint(round(updated, 6), terminal_updated)\n"
+        },
+        {
+          "type": "text",
+          "title": "এক ধাপের গাণিতিক যাচাই থেকে দীর্ঘমেয়াদি স্থিতি",
+          "body": "কোডে আমরা চলমান ও সমাপ্ত অবস্থার জন্য যথাক্রমে 3.3 এবং 1.5 পাচ্ছি। এখানে একটি একক আপডেটের পাটিগণিত যাচাই করা হলো; একটি স্থির Policy-র জন্য পুরো Tabular TD আসল মানে স্থির হবে কি না (Convergence), তা বিশ্লেষণ করতে প্রতিটি State-এ পর্যাপ্ত Visit এবং উপযুক্ত Learning Rate-এর শর্তাবলি প্রয়োজন হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Deadly Triad ও বিলম্বিত সংকেতের ঝুঁকি",
+          "body": "মনে রাখবেন, Function Approximation (যেমন Neural Network), Off-Policy Data এবং Bootstrapping—এই তিনটি উপাদান একত্র হলে প্রশিক্ষণে গুরুতর অস্থিরতা (Instability) তৈরি হতে পারে। এছাড়া কোডে Terminal Mask ভুল হলে পুরো Continuation Target বিকৃত হয়ে যায়। আর সিস্টেমে Delayed Reward থাকলে কোন Action ও Next State-এর সাথে কোন Reward যুক্ত হচ্ছে সেই টাইমস্ট্যাম্প সামঞ্জস্যও (Alignment) পরীক্ষা করে নিন।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজেকে যাচাই করুন",
+          "body": "Learning Rate α = 1 হলে বর্তমান Target-এর সাথে আপডেটকৃত নতুন Value-র সম্পর্ক কী দাঁড়ায়? আর একটি চলমান কাজ সময়ের সীমায় থামিয়ে দেওয়ার পর (Truncated Continuing Task) ভুলে পরের State-এর মান বাদ দিলে কোন দিকে Bias তৈরি হতে পারে?",
+          "solution": "α = 1 হলে পুরোনো ধারণা মুছে গিয়ে নতুন Value সরাসরি বর্তমান Target-এর সমান হয়ে যায়। আর চলমান কাজে কেবল সময় ফুরানোর কারণে Bootstrap বাদ দিয়ে শূন্য ধরলে—ভবিষ্যতের প্রত্যাশিত Return ধনাত্মক হলে মডেল প্রকৃত মানকে কম করে অনুমান (Underestimate) করবে, আর ভবিষ্যৎ Return ঋণাত্মক হলে উল্টো বেশি করে অনুমান করবে।",
+          "reference": "https://mitpress.mit.edu/9780262039246/reinforcement-learning/"
+        }
+      ]
+    },
+    {
+      "id": "ch41_control",
+      "title": "SARSA বনাম Q-Learning: On-Policy ও Off-Policy Control",
+      "subtitle": "শুধু Policy মূল্যায়ন নয়, সরাসরি Action Value শিখে সেরা সিদ্ধান্তে পৌঁছানোর দুটি ভিন্ন পথ এবং তাদের ঝুঁকির পার্থক্য।",
+      "duration": "22 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "মূল্যায়ন পেরিয়ে সরাসরি Control-এ প্রবেশ",
+          "body": "পরিবেশের Model অজানা থাকলে শুধু State Value জেনে সেরা সিদ্ধান্ত নেওয়া যায় না; সরাসরি Action Value বা Q(s, a) শিখে Policy উন্নত করতে হয়। এখানেই দুটি প্রধান পথ দেখা দেয়: SARSA পরের State-এ বাস্তবে যে Action-টি বেছে নেওয়া হয়েছে তার Q মান দিয়ে Bootstrap করে (On-Policy), আর Q-Learning পরের State-এর সম্ভাব্য সেরা কাজের সর্বোচ্চ মান বা Greedy Maximum দিয়ে Target তৈরি করে (Off-Policy)। ফলে হুবহু একই পর্যবেক্ষিত Transition থেকেও এই দুটি নিয়ম ভিন্ন ভিন্ন শেখার Target দিতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "পাঁচ উপাদানের SARSA বনাম Greedy Q-Learning",
+          "body": "SARSA পুরো পাঁচটি উপাদানের জোড়া (S, A, R, S′, A′) ব্যবহার করে Target বানায় r + γ × Q(S′, A′)। অন্যদিকে Q-Learning পরের বাস্তব কাজের অপেক্ষা না করে সরাসরি r + γ × max_a Q(S′, a) নেয়। অবশ্য পরের অবস্থানটি True Terminal হলে দুটোর ক্ষেত্রেই ভবিষ্যতের Continuation শূন্য হয়ে যায়। কোড লেখার সময় পরিবেশে অভিজ্ঞতা সংগ্রহকারী Behavior Policy এবং আপডেটে ব্যবহৃত Target Action Rule স্পষ্টভাবে আলাদা রেখে সমীকরণ সাজান।"
+        },
+        {
+          "type": "math",
+          "title": "SARSA ও Q-Learning-এর Bootstrap পার্থক্য",
+          "body": "Q\\leftarrow Q+\\alpha[r+\\gamma B-Q],\\quad B_{SARSA}=Q(s^\\prime,a^\\prime),\\quad B_Q=\\max_a Q(s^\\prime,a)"
+        },
+        {
+          "type": "text",
+          "title": "খাতাকলমে Exploration-এর প্রভাব",
+          "body": "ধরা যাক পরের অবস্থানের দুটি কাজের মান Next Q = [2, 5], কিন্তু Exploration-এর কারণে বাস্তবে নির্বাচিত পরের কাজটি হলো 0 নম্বর কাজ (যার মান 2), প্রাপ্ত Reward = 1 এবং γ = 0.9। তাহলে বাস্তব আচরণ মেনে SARSA-র Target হবে 1 + 0.9 × 2 = 2.8, অথচ সেরা কাজের অনুমানে Q-Learning-এর Target হবে 1 + 0.9 × 5 = 5.5! যখনই অন্বেষণের কারণে নির্বাচিত কাজটি Greedy Action থেকে আলাদা হয়, তখনই এই পার্থক্য ফুটে ওঠে।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ SARSA ও Q-Learning Target তুলনা",
+          "body": "next_q, chosen_action, reward, discount = [2.0, 5.0], 0, 1.0, 0.9\nsarsa_target = reward + discount * next_q[chosen_action]\nq_learning_target = reward + discount * max(next_q)\n# Both targets use the same observed transition, but a different next-action rule.\nprint(sarsa_target, q_learning_target)\n"
+        },
+        {
+          "type": "text",
+          "title": "নিরাপদ আচরণ বনাম আদর্শ সেরা নীতি",
+          "body": "কোডে আমরা একই অভিজ্ঞতা থেকে যথাক্রমে 2.8 ও 5.5 পাচ্ছি। টেবিলভিত্তিক পরিবেশে সঠিক মানে স্থির হতে হলে পরিবেশটি স্থির (Stationary) হওয়া, সব প্রাসঙ্গিক (State, Action) পর্যাপ্তবার দেখা এবং উপযুক্ত Learning Rate থাকা জরুরি। খেয়াল রাখবেন, একটি স্থির অন্বেষণ হার বা Constant Epsilon চালু রাখলে SARSA ওই ঝুঁকিপূর্ণ অন্বেষণসহ আচরণের নিরাপদ মান শেখে; আর তাকেও চূড়ান্ত নিখুঁত Greedy সীমায় নিতে চাইলে সময়ের সাথে Exploration কমানোর (GLIE-ধরনের) শর্তগুলো আলাদাভাবে পূরণ করতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Maximization Bias ও আনুমানিক মডেলের ঝুঁকি",
+          "body": "এলোমেলো ত্রুটিযুক্ত আনুমানিক মানের ওপর বারবার max নিলে গড়পড়তা অতিরিক্ত আশাবাদী মান বা Overestimation Bias তৈরি হতে পারে। Double Q-Learning এবং Double DQN সেরা Action বাছাই করা ও তার মান মূল্যায়ন করার ধাপ দুটিকে আলাদা করে এই পক্ষপাত কমানোর চেষ্টা করে। এছাড়া Neural Network দিয়ে Function Approximation ব্যবহার করার আগে টেবিলভিত্তিক গ্যারান্টিগুলো কতটা খাটে তা নতুন করে যাচাই করে নিন।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজেকে যাচাই করুন",
+          "body": "উপরের উদাহরণে Behavior Policy যদি পরের ধাপে Greedy কাজটিই (Action 1) বেছে নিত, তবে কি দুটি Target মিলে যেত? আর পরের অবস্থানটি True Terminal হলে দুটিতে কী অবশিষ্ট থাকত?",
+          "solution": "হ্যাঁ, Action 1 নেওয়া হলে এই উদাহরণে দুটি Target-ই মিলে গিয়ে 5.5 হতো। আর পরের অবস্থানটি True Terminal হলে ভবিষ্যতের কোনো Action খোঁজার দরকারই পড়ত না—দুটি ক্ষেত্রেই Target থাকত কেবল তাৎক্ষণিক প্রাপ্ত Reward 1.0।",
+          "reference": "https://mitpress.mit.edu/9780262039246/reinforcement-learning/"
+        }
+      ]
+    },
+    {
+      "id": "ch41_bandits",
+      "title": "Multi-Armed ও Contextual Bandits: Exploration কেন জরুরি?",
+      "subtitle": "এক ধাপের সিদ্ধান্ত সমস্যায় অজানা বিকল্প যাচাই করা, Epsilon-Greedy নীতি এবং সঠিক Propensity লগ করার নিয়ম।",
+      "duration": "22 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "পূর্ণাঙ্গ MDP-র সহজ কিন্তু বহুল ব্যবহৃত ভাই: Bandit",
+          "body": "Multi-Armed Bandit সমস্যায় আমরা প্রতিবার একটি বিকল্প বা Arm বেছে নিই এবং কেবল সেটিরই প্রাপ্ত Reward দেখতে পাই—একই সময়ে অন্য Arm-গুলো নিলে কী হতো (Counterfactual Reward), তা অজানাই থেকে যায়। সিদ্ধান্তের সময় বর্তমান পরিস্থিতি বা ইউজারের তথ্য ব্যবহার করলে তাকে বলে Contextual Bandit। তবে মনে রাখবেন, আজকের গৃহীত Action যদি ইউজারের ভবিষ্যৎ State এবং পরবর্তী সিদ্ধান্তের সুযোগগুলোকেও দীর্ঘমেয়াদে বদলে দেয়, তখন সেই প্রভাব ধরতে পূর্ণাঙ্গ MDP কাঠামোর প্রয়োজন হতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "অন্ধ লোভের বিপদ ও Epsilon-Greedy কৌশল",
+          "body": "শুরুর অল্প কয়েকটি এলোমেলো অভিজ্ঞতার ওপর ভিত্তি করে একটি Pure Greedy Policy যদি আজীবন এক বিকল্পেই আটকে থাকে, তবে আসল সেরা Arm-টি হয়তো অদেখাই থেকে যাবে! এর সহজ সমাধান হলো Epsilon-Greedy নীতি: এখানে ε সম্ভাব্যতায় সব বৈধ বিকল্পের মধ্যে সমান সুযোগে (Uniform Exploration) অন্বেষণ করা হয়, আর বাকি সময়ে এ পর্যন্ত অনুমিত সেরা Arm-টি নেওয়া হয়। মোট k-টি বৈধ বিকল্প এবং একটিমাত্র একক সেরা Greedy Arm থাকলে সেটির সম্ভাব্যতা হয় 1 − ε + ε / k, এবং বাকি প্রতিটির হয় ε / k। সমান মান হলে কীভাবে বাছাই হবে সেই Tie Policy-ও সুনির্দিষ্ট করে রাখুন।"
+        },
+        {
+          "type": "math",
+          "title": "Epsilon-Greedy Action নির্বাচনের সম্ভাব্যতা",
+          "body": "\\pi(a)=\\begin{cases}1-\\epsilon+\\epsilon/k& a=a^*\\\\ \\epsilon/k& a\\ne a^*\\end{cases}"
+        },
+        {
+          "type": "text",
+          "title": "খাতাকলমে Propensity হিসাব",
+          "body": "ধরা যাক ε = 0.2 এবং বৈধ বিকল্পের সংখ্যা k = 2। তাহলে সেরা Greedy Arm বাছাই হওয়ার সম্ভাব্যতা দাঁড়ায় 1 − 0.2 + 0.2 / 2 = 0.9, এবং অপর Arm-টির সম্ভাব্যতা হয় 0.1। খেয়াল রাখবেন, একটি বিকল্পের অনুমিত গড় Reward এবং সেটি নির্বাচিত হওয়ার সম্ভাব্যতা বা Propensity দুটি সম্পূর্ণ আলাদা রাশি।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Logging Propensity গণনা",
+          "body": "epsilon, arm_count = 0.2, 2\ngreedy_probability = 1 - epsilon + epsilon / arm_count\nother_probability = epsilon / arm_count\n# These are logging propensities; preserve them with each chosen action.\nprint(greedy_probability, other_probability)\n"
+        },
+        {
+          "type": "text",
+          "title": "কোড ও বাস্তব ডেটা পাইপলাইনের শর্ত",
+          "body": "কোডে আমরা দুটি বিকল্পের Propensity হিসেবে 0.9 এবং 0.1 পাচ্ছি, যা প্রতিটি নির্বাচিত কাজের সাথে লগে সংরক্ষণ করে রাখা অপরিহার্য। Contextual Bandit-এ ব্যবহৃত সব Feature সিদ্ধান্ত নেওয়ার মুহূর্তেই লভ্য থাকতে হবে। আর ফিডব্যাক দেরিতে এলে (Delayed Rewards) বা এক ইউজারের অভিজ্ঞতা অন্যকে প্রভাবিত করলে (User Interference) সাধারণ স্বাধীন ও স্থির Bandit-এর অনুমানগুলো নতুন করে যাচাই করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "নিরাপত্তা গণ্ডি ও ব্যবসার লক্ষ্য মেলানো",
+          "body": "প্রোডাকশনে সবসময় আগে অনুমোদিত ও নিরাপদ বিকল্পের তালিকা (Allowed Actions ও Eligibility) ছেঁকে নিয়ে তার ওপরেই Exploration Policy তৈরি করুন। পাশাপাশি আপনার Reward সংগ্রহের প্রক্রিয়া এবং কার্যকারণ পরীক্ষার (Causal Experiment) মূল লক্ষ্যমাত্রা বা Target Estimand মিলিয়ে দেখুন; পণ্যের ঝুঁকি ও Fairness শর্ত অনুযায়ী অন্বেষণের নকশা বদলাতে হতে পারে।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজেকে যাচাই করুন",
+          "body": "শুরু থেকেই ε = 0 হলে ডেটা বিশ্লেষণে কোন Positivity বা Support সমস্যা দেখা দিতে পারে? আর ε = 1 হলে Policy-টির আচরণ কেমন হবে?",
+          "solution": "ε = 0 হলে Greedy বাদে অন্য সব বিকল্প বাছাই হওয়ার সম্ভাব্যতা শূন্য হয়ে যায়—ফলে লগে তাদের কোনো উপস্থিতি (Support) থাকে না এবং তাদের Counterfactual Reward আর নির্ভরযোগ্যভাবে শনাক্ত করা যায় না। অন্যদিকে ε = 1 হলে সব বিকল্প সমান র‍্যান্ডম সুযোগে বাছাই হতে থাকে; তখন ভেতরে ভেতরে Reward অনুমান করা হলেও বাস্তবে কোনো Exploitation ঘটে না।",
+          "reference": "https://mitpress.mit.edu/9780262039246/reinforcement-learning/"
+        },
+        {
+          "type": "text",
+          "title": "সমান মান (Ties) ও Eligibility কীভাবে Propensity বদলে দেয়",
+          "body": "উপরের সাধারণ Epsilon-Greedy সূত্রে একটিমাত্র একক সেরা Greedy Arm ধরা হয়েছিল। কিন্তু বাস্তবে যদি g-সংখ্যক Arm যৌথভাবে সেরা মানে সমান থাকে (Tied Best Arms) এবং Exploitation-এর সময় তাদের মধ্যে সমানভাবে বাছাই করা হয়, তবে প্রতিটি যৌথ সেরা Arm সম্ভাব্যতা পাবে (1 − ε) / g + ε / k, আর বাকিগুলো পাবে ε / k। তাই Eligibility Filter প্রয়োগের পর সক্রিয় বিকল্প সেট ও Tie Policy হিসাব করে তবেই প্রকৃত Propensity বের করতে হয়—লগে কেবল ε লিখে রাখলে পরে আসল Action Probability আর পুনরুদ্ধার নাও করা যেতে পারে।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "আরেক ধাপ গভীরে যাচাই করুন",
+          "body": "চারটি বৈধ Arm (k = 4), যার মধ্যে দুটি যৌথভাবে সেরা (g = 2), এবং ε = 0.2 হলে যৌথ সেরা ও বাকি Arm-গুলোর সঠিক Propensity কত হবে?",
+          "solution": "প্রতিটি যৌথ সেরা Arm পাবে 0.8 / 2 + 0.2 / 4 = 0.45, এবং অন্য দুটি সাধারণ Arm-এর প্রতিটি পাবে 0.2 / 4 = 0.05 (চারটির যোগফল 0.45 + 0.45 + 0.05 + 0.05 = 1.0)। বাস্তব সিস্টেমে সিদ্ধান্তের মুহূর্তের Context ও সক্রিয় সেট অনুযায়ী নির্বাচিত কাজের প্রকৃত Propensity সংরক্ষণ করুন।",
+          "reference": "https://mitpress.mit.edu/9780262039246/reinforcement-learning/"
+        }
+      ]
+    },
+    {
+      "id": "ch41_ucb",
+      "title": "UCB, অনিশ্চয়তা ও Regret-এর ধারণা",
+      "subtitle": "অন্ধভাবে র‍্যান্ডম অন্বেষণ না করে অনিশ্চয়তাকে ইতিবাচক বোনাস হিসেবে ব্যবহার করা এবং Regret দিয়ে শেখার দক্ষতা মাপা।",
+      "duration": "22 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "অন্ধ Exploration-এর চেয়ে বুদ্ধিদীপ্ত কৌতূহল",
+          "body": "Upper Confidence Bound বা UCB পদ্ধতিতে প্রতিটি বিকল্পের অনুমিত গড় প্রাপ্তির (Estimated Mean Reward) সাথে একটি অনিশ্চয়তা বোনাস (Uncertainty Bonus) যোগ করা হয়। যে Arm-টি এ পর্যন্ত কমবার দেখা হয়েছে তার অনিশ্চয়তা বেশি থাকে, ফলে বড় বোনাসের সুবাদে সেটি অন্বেষণের সুযোগ পায়। আর পুরো শেখার প্রক্রিয়ায় আমাদের দক্ষতা মাপা হয় Regret দিয়ে—যা একটি নির্দিষ্ট সেরা রেফারেন্স নীতির (Comparator) প্রত্যাশিত প্রাপ্তি এবং আমাদের বাছাই করা কাজগুলোর প্রত্যাশিত প্রাপ্তির ক্রমপুঞ্জিত ব্যবধান (Cumulative Gap) নির্দেশ করে।"
+        },
+        {
+          "type": "text",
+          "title": "UCB1 সূচক কীভাবে কাজ করে?",
+          "body": "সীমাবদ্ধ প্রাপ্তির ক্ষেত্রে প্রচলিত UCB1 সূচকটি হলো Mean + sqrt(2 × log(t) / N)। হরে শূন্য এড়াতে না-দেখা প্রতিটি Arm-কে শুরুতে অন্তত একবার চালিয়ে ধনাত্মক গণনা (Positive Counts) তৈরি করে নিন। এরপর কোনো Arm যত বেশিবার বাছাই হবে (Count বাড়বে) তার বোনাস তত কমবে, আর মোট ধাপ t বাড়ার সাথে সাথে বোনাস ধীরে ধীরে বাড়বে। মনে রাখবেন, সূত্রের ভেতরের ধ্রুবকগুলো প্রাপ্তির পাল্লা (Reward Range) এবং গাণিতিক উপপাদ্যের শর্ত অনুযায়ী নির্ধারিত।"
+        },
+        {
+          "type": "math",
+          "title": "UCB1 স্কোর ও Cumulative Regret-এর সমীকরণ",
+          "body": "UCB_a(t)=\\hat\\mu_a+\\sqrt{2\\log t/N_a},\\quad Regret_T=\\sum_{t=1}^T(\\mu^*-\\mu_{A_t})"
+        },
+        {
+          "type": "text",
+          "title": "খাতাকলমে কম দেখা বিকল্পের জয়",
+          "body": "ধরা যাক দুটি বিকল্পের বর্তমান গড় প্রাপ্তি [0.6, 0.5], বাছাই হওয়ার সংখ্যা যথাক্রমে [100, 4] এবং বর্তমান ধাপ t = 104। দ্বিতীয় Arm-টির গড় আপাতদৃষ্টিতে কম হলেও মাত্র 4 বার দেখার কারণে তার Uncertainty Bonus অনেক বড়—তাই UCB কৌতূহলবশত দ্বিতীয় বিকল্পটিকেই Explore করার জন্য বেছে নেবে।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ UCB1 নির্বাচন হিসাব",
+          "body": "import math\n\nmeans, counts, step = [0.6, 0.5], [100, 4], 104\nindices = [\n    mean + math.sqrt(2 * math.log(step) / count) for mean, count in zip(means, counts)\n]\nchosen = max(range(len(indices)), key=lambda i: (indices[i], -i))\n# Initialize unseen arms separately before applying this positive-count formula.\nprint(chosen)\n"
+        },
+        {
+          "type": "text",
+          "title": "নির্বাচন সূচকের অর্থ ও সীমা",
+          "body": "কোডে নির্বাচিত ইনডেক্স আসছে 1, অর্থাৎ দ্বিতীয় Arm। গড়ের সাথে বোনাস যোগ হওয়ায় এই সূচকের মান 1.0 ছাড়িয়ে যেতে পারে—কারণ এটি কোনো সম্ভাব্যতা নয়, বরং একটি তুলনামূলক Selection Score। বাস্তবে প্রয়োগের আগে আপনার সমস্যার শর্তগুলো UCB1-এর অনুমানের সাথে মেলে কি না তা যাচাই করে নিন।"
+        },
+        {
+          "type": "text",
+          "title": "পরিবর্তনশীল পরিবেশ ও Thompson Sampling বিকল্প",
+          "body": "সময়ের সাথে পরিবর্তনশীল প্রাপ্তি (Nonstationary Rewards), পরস্পর সম্পর্কিত ইউজার কিংবা বিলম্বিত ফিডব্যাকের পরিস্থিতি মৌলিক UCB1 কাঠামো থেকে আলাদা। এ ধরনের অনিশ্চয়তা সামলানোর আরেকটি শক্তিশালী বিকল্প হলো বায়েসিয়ান Thompson Sampling, যেখানে Posterior Distribution থেকে স্যাম্পল টেনে সিদ্ধান্ত নেওয়া হয়—তবে সেখানেও ব্যবহৃত Prior এবং Likelihood বাস্তব সমস্যার জন্য কতটা উপযুক্ত তা পরীক্ষা করতে হয়।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজেকে যাচাই করুন",
+          "body": "দুটি Arm-এর বাছাই সংখ্যা সমান (Equal Counts) কিন্তু গড় অসমান হলে UCB কোনটি নেবে? আর একবার চালিয়ে কোনো Arm-এ Reward = 1 পেলেই কি সেটি সেরা বলে প্রমাণিত হয়?",
+          "solution": "বাছাই সংখ্যা সমান হলে দুটির বোনাসও সমান হবে, তাই যার গড় (Mean) বড় সেটিই নির্বাচিত হবে। আর একটিমাত্র ট্রায়ালে 1 পাওয়া উচ্চ Variance ও র‍্যান্ডম ভাগ্যের অংশ হতে পারে—যথাযথ পদ্ধতিতে বারবার সংগৃহীত প্রমাণ ছাড়া এক ফলাফল দেখে কখনোই সেরা (Optimal) দাবি করা যায় না।",
+          "reference": "https://mitpress.mit.edu/9780262039246/reinforcement-learning/"
+        },
+        {
+          "type": "text",
+          "title": "Reward-এর স্কেল ও Regret মাপার শর্তাবলি",
+          "body": "এই UCB1 সূচকটি [0, 1] পাল্লার ভেতর সীমাবদ্ধ Reward-এর জন্য তৈরি; প্রাপ্তির স্কেল বদলে গেলে Confidence Bonus-কেও সেই স্কেল অনুযায়ী সামঞ্জস্য করতে হয়। অন্যদিকে শেখার উদাহরণে প্রকৃত গড় জানা থাকলে sum(μ_best − μ_chosen) দিয়ে Pseudo-Regret হিসাব করা যায়, কিন্তু বাস্তব প্রোডাকশনে আসল সেরা গড় সাধারণত অজানাই থাকে। এছাড়া পরিবেশ বদলালে বা বৈধ বিকল্পের সেট পরিবর্তিত হলে ঠিক কোন Comparator-এর বিপরীতে Regret মাপছেন তা নতুন করে সংজ্ঞায়িত করুন।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "আরেক ধাপ গভীরে যাচাই করুন",
+          "body": "ধরুন সব Reward-কে 100 দিয়ে গুণ করে গড় মানও 100 গুণ করলেন, কিন্তু UCB-র বোনাস অংশটি অপরিবর্তিত রাখলেন। এতে কি একই Exploration Policy বজায় থাকবে?",
+          "solution": "না, এতে গড় মান এবং Uncertainty পদের আপেক্ষিক অনুপাত (Relative Scale) পুরোপুরি বদলে যাবে এবং অন্বেষণ প্রায় বন্ধ হয়ে যাবে। সঠিক আচরণ বজায় রাখতে হয় Reward Normalization ব্যবহার করতে হবে, নতুবা প্রাপ্তির পাল্লার সাথে সামঞ্জস্যপূর্ণ (Range-Aware) বোনাস দিতে হবে এবং রিপোর্টে একক ও সংখ্যাগত স্থিতিশীলতার কথা উল্লেখ করতে হবে।",
+          "reference": "https://mitpress.mit.edu/9780262039246/reinforcement-learning/"
+        }
+      ]
+    },
+    {
+      "id": "ch41_policy_gradient",
+      "title": "Policy Gradients: REINFORCE ও Log-Derivative Trick",
+      "subtitle": "Action Value না শিখেও সরাসরি Policy-র Parameter টিউন করে প্রত্যাশিত Return বাড়ানোর গাণিতিক ভিত্তি ও সূক্ষ্ম খুঁটিনাটি।",
+      "duration": "47 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "সরাসরি Policy-কে নিখুঁত করার পথ",
+          "body": "একটি সম্ভাব্যতাভিত্তিক বা Stochastic Policy-র Parameter সরাসরি পরিবর্তন করে প্রত্যাশিত Return বাড়ানোই Policy-Gradient পদ্ধতির মূল লক্ষ্য। বিচ্ছিন্ন কাজ বাছাই করা নিজে অন্তরীকরণযোগ্য না হলেও, এখানে নির্বাচিত Action-এর Log-Probability-র Derivative ব্যবহার করে মসৃণভাবে শেখা যায়—এমনকি পরিবেশের Transition Dynamics আমাদের জানা বা অন্তরীকরণযোগ্য হওয়ারও কোনো প্রয়োজন নেই! তবে কোড লেখার আগে আপনার মূল Objective, Trajectory Sampling এবং Discount Weighting সুনির্দিষ্টভাবে ঠিক করে নিতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "Log-Derivative Trick ও বাইরের γ^t গুণকের রহস্য",
+          "body": "এখানে আমাদের মূল লক্ষ্যমাত্রা হলো J(θ) = E[G_0], যেখানে G_0 হলো শুরুর মুহূর্ত থেকে হিসাব করা Discounted Return। পুরো যাত্রাপথের সম্ভাব্যতায় Log-Derivative Trick প্রয়োগ করলে প্রতিটি ধাপের Action Log-Probability-র Gradient বেরিয়ে আসে। খেয়াল করুন, ধাপ t-এর Reward-to-Go বা G_t ওই ধাপ থেকেই নতুন করে Discount গোনা শুরু করে—তাই পুরো Episode-এর সাধারণ যোগফলে (Ordinary Episode Sum) শুরুর লক্ষ্যমাত্রার সাথে মিল রাখতে ধাপ t-এর সংকেতের সামনে স্পষ্টভাবে γ^t গুণকটি থাকে। একই লক্ষ্যমাত্রাকে অবশ্য Discounted State-Visitation ওজন দিয়েও লেখা যায়, তাই আপনি কোন Weighting Convention ব্যবহার করছেন তা শুরুতেই স্পষ্ট করে নিন।"
+        },
+        {
+          "type": "math",
+          "title": "Discounted Policy Gradient ও Baseline-সহ সমীকরণ",
+          "body": "J(\\theta)=E[G_0],\\qquad \\nabla J=E\\!\\left[\\sum_{t=0}^{T-1}\\gamma^t\\nabla\\log\\pi_\\theta(A_t\\mid S_t)(G_t-b(S_t))\\right]"
+        },
+        {
+          "type": "text",
+          "title": "খাতাকলমে এক ধাপের REINFORCE আপডেট",
+          "body": "এক ধাপের একটি Bernoulli Policy-তে কাজ 1 নেওয়ার সম্ভাব্যতা ধরা যাক p = 0.5। বাস্তবে নির্বাচিত কাজ হলো 1, প্রাপ্ত Sampled Return হলো 3 এবং স্থির Baseline ধরা হলো 1। এখানে Logit-এর সাপেক্ষে Log-Policy-র ডেরিভেটিভ হলো 1 − p = 0.5, ফলে প্রত্যাশিত মান বাড়ানোর Ascent সংকেত দাঁড়ায় 0.5 × (3 − 1) = 1.0। মনে রাখবেন, স্ট্যান্ডার্ড Optimizer যেহেতু Loss কমানোর কাজ করে, তাই প্রশিক্ষণে Negative Actor Loss মিনিমাইজ করলে Gradient-এর চিহ্ন উল্টে যাবে।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ এক ধাপের Ascent Gradient হিসাব",
+          "body": "probability, chosen_action, return_value, baseline = 0.5, 1, 3.0, 1.0\nlog_probability_gradient = chosen_action - probability\nadvantage = return_value - baseline\nascent_gradient = log_probability_gradient * advantage\n# Optimizers minimize: use the negative policy-gradient objective in training.\nprint(ascent_gradient)\n"
+        },
+        {
+          "type": "text",
+          "title": "Advantage সংকেত ও Gradient প্রবাহের সীমানা",
+          "body": "এই এক ধাপের উদাহরণে আমরা Ascent সংকেত পেলাম 1.0। মূলত Advantage দিয়ে গুণ হওয়া এই সংকেতই ঠিক করে দেয় কোন কাজের সম্ভাব্যতা বাড়বে আর কোনটির কমবে। সামনে যখন আমরা আলাদা একটি শিক্ষণীয় Critic থেকে এই Advantage নেব, তখন Actor Loss লেখার সময় Target বা Advantage-এর Gradient কোথায় detach করতে হবে তা স্পষ্টভাবে নির্ধারণ করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "ব্যবহারিক সূক্ষ্মতা ও অনুমানের সীমানা",
+          "body": "একই ছোট ব্যাচের ডেটা থেকে Baseline অনুমান করা হলে সসীম স্যাম্পলের পরিসংখ্যানগত নির্ভরশীলতা (Finite-Sample Dependence) তৈরি হতে পারে। এছাড়া প্রাপ্তির স্কেল, Episode-এর দৈর্ঘ্য এবং Discount লেখার প্রথা বদলালে আপনার মূল Objective-এর অর্থও বদলে যায়—তাই Parameter আপডেট করার আগে গাণিতিক ডেরিভেশন ও স্যাম্পলিং নিয়ম একসাথে মিলিয়ে নিন।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজেকে যাচাই করুন",
+          "body": "উপরের উদাহরণে একই ধনাত্মক Return Advantage (3 − 1 = 2) থাকা সত্ত্বেও নির্বাচিত কাজটি 0 হলে Ascent Gradient-এর চিহ্ন ও মান কী হতো? আর Baseline যদি গৃহীত Action-এর ফাংশন হতো, তবে পক্ষপাতহীনতার (Unbiasedness) যুক্তিটি কেন ভেঙে যেত?",
+          "solution": "নির্বাচিত কাজ 0 হলে ডেরিভেটিভ হতো −p = −0.5, ফলে সংকেত দাঁড়াত −1.0 (যা লজিট কমিয়ে কাজ 0-এর সম্ভাব্যতাই বাড়াত)। আর Baseline যদি Action-এর ওপর নির্ভরশীল হয়, তবে প্রত্যাশিত মানে Score-Weighted পদটির যোগফল সাধারণত 0 হয় না—ফলে বাড়তি সংশোধনী ছাড়া Gradient পক্ষপাতদুষ্ট (Biased) হয়ে পড়ে।",
+          "reference": "https://mitpress.mit.edu/9780262039246/reinforcement-learning/"
+        },
+        {
+          "type": "text",
+          "title": "দুই ধাপের উদাহরণে বাইরের γ^t গুণকের প্রমাণ",
+          "body": "বাইরের γ^t গুণকটির গুরুত্ব দেখতে একই Bernoulli Policy (সম্ভাব্যতা p = sigmoid(θ)) থেকে দুটি স্বাধীন কাজ A_0 ও A_1 নেওয়া যাক, যেখানে প্রাপ্তি R_1 = A_0, R_2 = A_1 এবং γ = 0.5। তাহলে মূল লক্ষ্যমাত্রা J = E[A_0 + 0.5 A_1] = 1.5 p। যখন θ = 0, তখন সরাসরি ক্যালকুলাসে নিখুঁত ডেরিভেটিভ হয় 1.5 × 0.25 = 0.375। চারটি সম্ভাব্য যাত্রাপথে Reward-to-Go ব্যবহার করে score_0 × G_0 + γ × score_1 × G_1 গড় করলেও ঠিক 0.375 আসে; কিন্তু বাইরের ওই γ বাদ দিলে গড় চলে আসে 0.5! তাই সাধারণ Episode যোগফলের ওজন সবসময় মূল Objective-এর সাথে মিলিয়ে নিন।"
+        },
+        {
+          "type": "code",
+          "title": "সব সম্ভাব্য Trajectory মিলিয়ে Discounted Gradient যাচাই",
+          "body": "import math\nfrom itertools import product\n\nprobability, discount = 0.5, 0.5\ncorrect, missing_outer_discount = 0.0, 0.0\nfor first, second in product([0, 1], repeat=2):\n    trajectory_probability = 0.25\n    first_return = first + discount * second\n    second_return = second\n    first_score, second_score = first - probability, second - probability\n    correct += trajectory_probability * (\n        first_score * first_return + discount * second_score * second_return\n    )\n    missing_outer_discount += trajectory_probability * (\n        first_score * first_return + second_score * second_return\n    )\n\n\ndef objective(logit):\n    return (1 + discount) / (1 + math.exp(-logit))\n\n\nstep = 1e-5\nnumerical_gradient = (objective(step) - objective(-step)) / (2 * step)\nassert abs(correct - numerical_gradient) < 1e-9\nprint(correct, missing_outer_discount, round(numerical_gradient, 6))\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "আরেক ধাপ গভীরে যাচাই করুন",
+          "body": "কোনো সূত্রে বাইরে γ^t ছাড়া Policy-Gradient সমীকরণ লেখা দেখলে আগে কোন প্রথাগুলো (Conventions) পরীক্ষা করবেন?",
+          "solution": "দেখতে হবে মূল Objective-টি Undiscounted কি না, প্রতিটি ধাপের Return-এর ভেতরেই শুরুর সাপেক্ষে পরম সময়ের Discount আছে কি না, এবং State-গুলোকে Discounted Visitation বণ্টন অনুযায়ী ওজন দেওয়া বা স্যাম্পল করা হয়েছে কি না। আমাদের কোডে J = E[G_0], G_t সময় t থেকে Discount গোনে এবং Episode-এর সাধারণ যোগফল নেওয়া হচ্ছে—তাই এখানে বাইরে γ^t রাখা আবশ্যক।",
+          "reference": "https://web.stanford.edu/class/psych209/Readings/SuttonBartoRL.pdf"
+        },
+        {
+          "type": "text",
+          "title": "একই ব্যাচের গড়কে Baseline ধরলে ক্ষুদ্র স্যাম্পলে কী ঘটে?",
+          "body": "এক ধাপের Bernoulli Bandit-এ Reward = A এবং p = 0.5 হলে প্রকৃত Logit Gradient হলো 0.25। এবার মাত্র দুটি স্বাধীন স্যাম্পলের একটি ব্যাচ নিন। শূন্য Baseline-এ গড় score × reward-এর প্রত্যাশিত মান ঠিক 0.25 থাকে। কিন্তু একই ব্যাচের গড় প্রাপ্তিকে Baseline ধরলে প্রতিটি স্যাম্পলের নিজস্ব প্রাপ্তি তার নিজের Baseline-এর ভেতর ঢুকে পড়ে এবং প্রত্যাশিত মান কমে 0.125 হয়ে যায়! অথচ প্রতিটি স্যাম্পলের Baseline হিসেবে শুধু অন্য স্যাম্পলটির প্রাপ্তি নিলে (Leave-One-Out) মানটি আবার নিখুঁত 0.25 ফিরে পায়। মনে রাখবেন, কোডে detach কেবল ব্যাকপ্রোপাগেশনের Gradient বন্ধ করে, কিন্তু Baseline কোন ডেটা থেকে হিসাব হয়েছে সেই পরিসংখ্যানগত নির্ভরশীলতা নিজে থেকে দূর করে না।"
+        },
+        {
+          "type": "math",
+          "title": "Action-নিরপেক্ষ স্থির Baseline কেটে শূন্য হওয়ার অভেদ",
+          "body": "E_A[b(s)\\nabla\\log\\pi(A\\mid s)]=b(s)\\nabla\\sum_a\\pi(a\\mid s)=0"
+        },
+        {
+          "type": "code",
+          "title": "দুই স্যাম্পলের ব্যাচে তিন ধরনের Baseline-এর নিখুঁত তুলনা",
+          "body": "import numpy as np\nfrom itertools import product\n\nzero, batch_mean, leave_one_out = [], [], []\nfor actions in product([0.0, 1.0], repeat=2):\n    reward = np.array(actions)\n    score = reward - 0.5\n    zero.append(np.mean(score * reward))\n    batch_mean.append(np.mean(score * (reward - reward.mean())))\n    leave_one_out.append(np.mean(score * (reward - reward[::-1])))\nprint(np.mean(zero), np.mean(batch_mean), np.mean(leave_one_out))\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "চূড়ান্ত ধারণা যাচাই",
+          "body": "একটি State-Only Critic নেটওয়ার্ককে Baseline হিসেবে রাখলেই কি সবসময় উপরের মতো হুবহু একই Finite-Sample Bias দেখা দেবে?",
+          "solution": "না, এর জন্য আগে পরীক্ষা করতে হবে Baseline-টি কীভাবে ফিট করা হচ্ছে এবং স্যাম্পলিং প্রক্রিয়াটি কী। উপরের অভেদটি কেবল একটি স্থির ও Action-নিরপেক্ষ Baseline কেটে শূন্য হওয়া দেখায়। একই স্যাম্পল দিয়ে ফিট করা Critic, যৌথ Parameter এবং Actor Target-এর Gradient সীমানা সম্পূর্ণ আলাদা প্রশ্ন—তাই দুই স্যাম্পলের এই নির্দিষ্ট অনুপাতটি সব Critic প্রশিক্ষণে নির্বিচারে প্রযোজ্য বলা যায় না।",
+          "reference": "https://mitpress.mit.edu/9780262039246/reinforcement-learning/"
+        }
+      ]
+    },
+    {
+      "id": "ch41_actor_critic",
+      "title": "Actor–Critic, Advantage ও PPO Clipping-এর অন্তর্দৃষ্টি",
+      "subtitle": "Actor ও Critic-এর যৌথ কাজ এবং পুরোনো Policy থেকে খুব দূরে সরে যাওয়া ঠেকাতে PPO-র Clipped Surrogate Objective কীভাবে কাজ করে।",
+      "duration": "37 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "REINFORCE-এর উচ্চ Variance কমাতে Actor ও Critic-এর জুটি",
+          "body": "Actor–Critic কাঠামোতে কাজ দুটি ভাগে বিভক্ত থাকে: Actor নির্ধারণ করে কোন অবস্থানে কোন কাজ নেওয়া হবে (Action Policy), আর Critic অনুমান করে ওই অবস্থানের প্রত্যাশিত মান (Expected Value) কত। এখান থেকেই আসে Advantage = Q − V, যা বোঝায় একটি নির্দিষ্ট Action ওই State-এর সাধারণ গড় বা Baseline-এর তুলনায় কতটা ভালো। বাস্তবে TD Residual ব্যবহার করে কম Variance-এ আনুমানিক Advantage তৈরি করা যায়। আর আধুনিক PPO (Proximal Policy Optimization) পুরোনো Policy-তে সংগৃহীত স্যাম্পলগুলো পুনর্ব্যবহার করার সময় নীতিটি যেন এক ধাপে বিপজ্জনকভাবে বদলে না যায়, সেজন্য একটি Clipped Surrogate Objective অপ্টিমাইজ করে।"
+        },
+        {
+          "type": "text",
+          "title": "Probability Ratio ও অপ্রতিসম Clipping-এর নিয়ম",
+          "body": "পুরোনো নীতিতে সংগৃহীত একটি কাজের জন্য নতুন ও পুরোনো সম্ভাব্যতার অনুপাত ধরা হয় r = π_new(a | s) / π_old(a | s)। PPO-তে আমরা min(r A, clip(r, 1 − ε, 1 + ε) × A) এই Surrogate রাশিটিকে সর্বোচ্চ (Maximize) করি। এর আচরণ পরিষ্কারভাবে বুঝতে ধনাত্মক এবং ঋণাত্মক Advantage-এর দুটি শাখা সবসময় আলাদা করে বিশ্লেষণ করুন। পাশাপাশি বাস্তব প্রশিক্ষণে প্রকৃত KL পরিবর্তন এবং আপডেট বাজেট (Update Budget) পর্যবেক্ষণ করেও নীতির পরিবর্তন নিয়ন্ত্রণে রাখতে হয়।"
+        },
+        {
+          "type": "math",
+          "title": "PPO Clipped Surrogate Objective",
+          "body": "L^{clip}=\\mathbb E[\\min(rA,\\mathrm{clip}(r,1-\\epsilon,1+\\epsilon)A)]"
+        },
+        {
+          "type": "text",
+          "title": "খাতাকলমে ধনাত্মক Advantage-এর উদাহরণ",
+          "body": "ধরা যাক সম্ভাব্যতার অনুপাত r = 1.5, কাজের Advantage A = 2 এবং ε = 0.2। এখানে ক্লিপ না করা পদটি হলো 1.5 × 2 = 3.0, আর ক্লিপ করা পদটি হলো 1.2 × 2 = 2.4; তাই দুটির মধ্যে ছোটটি নিয়ে Surrogate দাঁড়ায় 2.4। খেয়াল করুন, অনুপাত বাড়িয়ে 2.0 করে ফেললেও এই শাখায় বাড়তি সুবিধা 2.4-এই স্থির থাকে। ঋণাত্মক Advantage-এর ক্ষেত্রটি নিচে আলাদাভাবে দেখানো হয়েছে।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ PPO Surrogate হিসাব",
+          "body": "ratio, advantage, epsilon = 1.5, 2.0, 0.2\nclipped_ratio = min(max(ratio, 1 - epsilon), 1 + epsilon)\nsurrogate = min(ratio * advantage, clipped_ratio * advantage)\n# This is the maximized surrogate; actor loss typically negates its mean.\nprint(surrogate)\n"
+        },
+        {
+          "type": "text",
+          "title": "পূর্ণাঙ্গ PPO পাইপলাইনের অংশবিশেষ",
+          "body": "কোডে আমরা Surrogate মান হিসেবে 2.4 পাচ্ছি (মনে রাখবেন এটি ম্যাক্সিমাইজ করার রাশি; তাই Actor Loss লেখার সময় সাধারণত এর গড়ের ঋণাত্মক মান নেওয়া হয়)। পূর্ণাঙ্গ PPO প্রশিক্ষণে এর পাশাপাশি Critic Loss, Entropy পদ, Advantage অনুমান, সংরক্ষিত পুরোনো Log-Probability এবং রোলআউট সংগ্রহের নিয়মও যুক্ত থাকে—এখানে আমরা কেবল মূল Objective-টির পাটিগণিত ও গ্র্যাডিয়েন্ট শাখাগুলো বুঝে নিলাম।"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব প্রয়োগ ও LLM Preference Alignment-এর যোগসূত্র",
+          "body": "যৌথ নেটওয়ার্ক প্যারামিটার (Shared Parameters), বিরল অবস্থান (Rare States) এবং একই ব্যাচে বারবার Epoch চালানোর ক্ষেত্রে প্রকৃত Ratio ও KL কতটা বদলাচ্ছে তা পরীক্ষা করুন। এছাড়া মানুষের পছন্দের ওপর ভিত্তি করে শেখা (Preference-Based RL)-এ ব্যবহৃত Reward Model ঠিক কী ধরনের Label থেকে প্রশিক্ষিত হয়েছে তা স্পষ্টভাবে উল্লেখ করতে হয়। পরবর্তীতে Book 4 (LLMs & GenAI) · Chapter 4 (Fine-tuning & Adaptation)-এ LLM Preference Alignment পড়ার সময় এই Objective-টির সাথে সরাসরি মিল খুঁজে পাবেন।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজেকে যাচাই করুন",
+          "body": "অনুপাত r = 0.5, ঋণাত্মক Advantage A = −2 এবং ε = 0.2 হলে Unclipped পদ, Clipped পদ এবং তাদের min কত হবে? এছাড়া PPO ব্যবহার করা মানেই কি প্রোডাকশনে নিরাপদ ডিপ্লয়মেন্টের গ্যারান্টি?",
+          "solution": "এখানে Unclipped পদ হলো 0.5 × (−2) = −1.0, আর অনুপাত 0.8-এ ক্লিপ হওয়ায় Clipped পদ হলো 0.8 × (−2) = −1.6; ফলে দুটির min হবে −1.6। আর না—Surrogate অপ্টিমাইজেশন কেবল আপডেটের আকার সংযত করতে সাহায্য করে, এটি মোটেও কোনো Safety Guarantee নয়; বাস্তব নিরাপত্তার জন্য আলাদা Constraints, মূল্যায়ন এবং Monitoring অপরিহার্য।",
+          "reference": "https://mitpress.mit.edu/9780262039246/reinforcement-learning/"
+        },
+        {
+          "type": "text",
+          "title": "ধনাত্মক ও ঋণাত্মক Advantage-এ চারটি শাখার Gradient আচরণ",
+          "body": "অনুপাত r = 0.5 বা 1.5 এবং Advantage A = −2 বা 2 নিয়ে চারটি সম্ভাব্য ক্ষেত্র পাশাপাশি দেখুন। ε = 0.2 হলে চারটি ক্ষেত্রে Surrogate মান আসে যথাক্রমে [−1.6, −3.0, 1.0, 2.4] এবং অনুপাতের সাপেক্ষে তাদের ডেরিভেটিভ আসে [0.0, −2.0, 2.0, 0.0]! অর্থাৎ ধনাত্মক Advantage-এ অনুপাত বাড়ানোর বাড়তি মুনাফা উপরের সীমায় (1.2) থেমে যায়, আর ঋণাত্মক Advantage-এ অনুপাত কমানোর বাড়তি সুবিধা নিচের সীমায় (0.8) থেমে যায়। অথচ উল্টো দুটি ক্ষতিকর দিকে (যেমন খারাপ কাজের সম্ভাব্যতা বেড়ে গেলে বা ভালো কাজের সম্ভাব্যতা কমে গেলে) সমীকরণটি পূর্ণ শক্তি দিয়ে নীতিটিকে জরিমানা করে ভুল শোধরাতে বাধ্য করে। এই অপ্রতিসম (Asymmetric) min অপারেশনটি হাতে-কলমে বোঝা অত্যন্ত জরুরি।"
+        },
+        {
+          "type": "code",
+          "title": "PyTorch Autograd দিয়ে চারটি শাখার Gradient যাচাই",
+          "body": "import torch\n\nratio = torch.tensor([0.5, 1.5, 0.5, 1.5], dtype=torch.float64, requires_grad=True)\nadvantage = torch.tensor([-2.0, -2.0, 2.0, 2.0], dtype=ratio.dtype)\nsurrogate = torch.minimum(ratio * advantage, ratio.clamp(0.8, 1.2) * advantage)\ngradient = torch.autograd.grad(surrogate.sum(), ratio)[0]\nprint(*[round(value, 6) for value in surrogate.detach().tolist()], *gradient.tolist())\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "আরেক ধাপ গভীরে যাচাই করুন",
+          "body": "কোনো একটি নির্দিষ্ট স্যাম্পলে Surrogate-এর Gradient শূন্য হয়ে গেলেই কি ওই Action-এর সম্ভাব্যতা পরের আপডেটে আর বদলাবে না?",
+          "solution": "না, ব্যাচের অন্যান্য স্যাম্পল এবং যৌথ নেটওয়ার্কের (Shared Parameters) গ্র্যাডিয়েন্ট মিলে ওই অবস্থানের নীতিও বদলে দিতে পারে; পাশাপাশি যৌথ নেটওয়ার্কে Entropy ও Critic পদগুলোরও প্রভাব থাকে। তাই মনে রাখবেন, Surrogate Clipping কোনো কঠোর সম্ভাব্যতা সীমা (Hard Probability Constraint) নয়—প্রশিক্ষণে প্রকৃত Ratio, KL, Clipping Fraction এবং Return মূল্যায়ন নিয়মিত পর্যবেক্ষণ করুন।",
+          "reference": "https://arxiv.org/abs/1707.06347"
+        }
+      ]
+    },
+    {
+      "id": "ch41_dqn",
+      "title": "Deep Q-Learning: Replay Buffer, Target Network ও অস্থিরতা",
+      "subtitle": "বিশাল State Space-এ Neural Network দিয়ে Q-Learning চালানোর কৌশল, Double DQN এবং Terminal ও Truncation Mask-এর নিখুঁত ব্যবহার।",
+      "duration": "37 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "টেবিল ছেড়ে যখন Neural Network-এর দরকার পড়ে",
+          "body": "State Space অনেক বড় হলে সাধারণ Q-Table-এর জায়গায় একটি Neural Q-Network ব্যবহার করা যায়। প্রশিক্ষণকে স্থিতিশীল করতে DQN সংরক্ষিত অভিজ্ঞতার Replay Buffer থেকে র‍্যান্ডম ট্রানজিশন স্যাম্পল করে এবং কিছুটা পিছিয়ে থাকা আলাদা একটি Target Network দিয়ে Bootstrap লক্ষ্যমাত্রা তৈরি করে। এই দুটি কৌশল প্রশিক্ষণ স্থির রাখতে দারুণ সাহায্য করলেও Function Approximation, Off-Policy Data এবং Bootstrapping-এর পারস্পরিক ক্রিয়া সবসময় সতর্কভাবে পরীক্ষা করতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "DQN ও Double DQN-এর আপডেট প্রক্রিয়া",
+          "body": "প্রতি ধাপে Replay ব্যাচ থেকে লক্ষ্যমাত্রা r + γ × max Q_target(next) তৈরি করুন, সঠিক True Terminal Mask বসান এবং Target Network-এর গ্র্যাডিয়েন্ট প্রবাহ বন্ধ রাখুন। এরপর Online Network-এ বাস্তবে গৃহীত কাজের Q মানের সাথে এই লক্ষ্যমাত্রার Loss হিসাব করুন; আর নির্দিষ্ট বিরতিতে কপি করে বা ধীর আপডেটের মাধ্যমে Target Network হালনাগাদ করুন। অতিরিক্ত আশাবাদী অনুমান কমাতে Double DQN একটি সুন্দর পরিবর্তন আনে: এটি Online Network দিয়ে পরের সেরা Action-টি বাছাই করে, কিন্তু তার মানটি পড়ে Target Network থেকে।"
+        },
+        {
+          "type": "math",
+          "title": "DQN ও Double DQN-এর Target সমীকরণ",
+          "body": "m=1-\\mathbf1[terminated],\\quad y_{DQN}=r+\\gamma m\\max_a Q_{target}(s^\\prime,a),\\qquad y_{Double}=r+\\gamma mQ_{target}(s^\\prime,\\arg\\max_a Q_\\theta(s^\\prime,a))"
+        },
+        {
+          "type": "text",
+          "title": "খাতাকলমে DQN বনাম Double DQN",
+          "body": "ধরা যাক পরের অবস্থানে দুটি কাজের জন্য Online Network-এর মান [5, 4], Target Network-এর মান [2, 6], প্রাপ্ত Reward = 1 এবং γ = 0.9। সাধারণ DQN সরাসরি Target Network-এর সর্বোচ্চ মান 6 নিয়ে লক্ষ্যমাত্রা বানাবে 1 + 0.9 × 6 = 6.4। কিন্তু Double DQN আগে Online Network দেখে 0 নম্বর কাজটি (5 > 4) বাছাই করবে, তারপর Target Network থেকে তার মান (2) নিয়ে লক্ষ্যমাত্রা বানাবে 1 + 0.9 × 2 = 2.8! এই ছোট উদাহরণটি দুই নিয়মের পার্থক্য স্পষ্ট করে; তবে প্রকৃত মানের বেশি কাছাকাছি কোনটি তা জানতে পূর্ণ পরিবেশের আরও প্রমাণ প্রয়োজন।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ DQN ও Double DQN Target তুলনা",
+          "body": "online, target, reward, discount = [5.0, 4.0], [2.0, 6.0], 1.0, 0.9\nselected = max(range(2), key=lambda action: online[action])\ndqn_target = reward + discount * max(target)\ndouble_target = reward + discount * target[selected]\n# Target values are treated as constants for the online gradient update.\nprint(dqn_target, double_target)\n"
+        },
+        {
+          "type": "text",
+          "title": "কোডের খুঁটিনাটি ও পুরোনো নীতির মিশ্রণ",
+          "body": "কোডে আমরা দুটি লক্ষ্যমাত্রা হিসেবে 6.4 এবং 2.8 পাচ্ছি। বাস্তব কোডে নির্বাচিত কাজের মান তুলে আনার (gather) Tensor Shape, লক্ষ্যমাত্রার detach এবং Terminal Mask ভালোভাবে যাচাই করুন। পাশাপাশি মনে রাখবেন, Replay Buffer-এর ভেতর আগের পুরোনো নীতিগুলোর (Older Policies) ট্রানজিশনও একসাথে মিশে থাকে।"
+        },
+        {
+          "type": "text",
+          "title": "Deadly Triad ও Reward Clipping-এর প্রভাব",
+          "body": "Function Approximation, Bootstrapping এবং Off-Policy Learning—এই তিনটির সমন্বয়কে RL-এ Deadly Triad বলা হয়। তাই Replay ও Target Network ব্যবহার করলেও প্রশিক্ষণের স্থিতিশীলতা নিয়মিত মাপতে হবে। এছাড়া সংখ্যাগত সুবিধার জন্য যদি Reward Clipping করা হয়, তবে তাতে আপনার মূল কাঙ্ক্ষিত Objective কীভাবে বদলে যাচ্ছে তাও স্পষ্টভাবে নথিবদ্ধ করুন।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজেকে যাচাই করুন",
+          "body": "ভুলবশত Target Network-এর ভেতর দিয়ে গ্র্যাডিয়েন্ট চলতে দিলে কোন মৌলিক শর্তটি বদলে যায়? আর Replay Buffer-এর ট্রানজিশনগুলো র‍্যান্ডমভাবে Train/Test ভাগে ভাগ করলেই কি স্বাধীন মূল্যায়ন (Independent Evaluation) হয়?",
+          "solution": "লক্ষ্যমাত্রায় গ্র্যাডিয়েন্ট চললে Target আর স্থির রেফারেন্স না থেকে Online Loss-এর সাথে সাথে নড়তে থাকা চলমান নির্ভরশীলতায় (Moving Dependency) পরিণত হয়। আর একই যাত্রাপথ ও শেয়ার করা অবস্থানের র‍্যান্ডম বিভাজন Data Leakage ও পারস্পরিক নির্ভরশীলতা রেখে দেয়—সঠিক মূল্যায়নের জন্য আলাদা স্বতন্ত্র Evaluation Episodes এবং পূর্বনির্ধারিত Seeds ও পরিবেশের শর্ত দরকার।",
+          "reference": "https://mitpress.mit.edu/9780262039246/reinforcement-learning/"
+        },
+        {
+          "type": "text",
+          "title": "একই কোডে Terminal Mask, Truncation ও Detached Target যাচাই",
+          "body": "তিনটি ট্রানজিশনেই Reward = 1 এবং পরের অবস্থানের মান next_value = 4 ধরা যাক: প্রথমটি চলমান, দ্বিতীয়টি True Terminal, এবং তৃতীয়টি একটি চলমান কাজের বাহ্যিক সময়ের সীমায় থেমে যাওয়া (External Time-Limit Truncation)। γ = 0.9 হলে সঠিক লক্ষ্যমাত্রাগুলো হবে [4.6, 1.0, 4.6]। Truncation-এ কাজটি আসলে শেষ হয়নি বলে প্রকৃত শেষ পরবর্তী Observation দিয়ে Bootstrap চালু রাখতে হয়—পরিবেশ স্বয়ংক্রিয়ভাবে Auto-Reset করলে নতুন পর্বের শুরুর Observation বসিয়ে Target বানানো মারাত্মক ভুল হতে পারে! একই সাথে নিশ্চিত করুন যেন Target Network-এর মান Online Loss থেকে কোনো গ্র্যাডিয়েন্ট না পায়।"
+        },
+        {
+          "type": "code",
+          "title": "PyTorch-এ সঠিক Mask ও Gradient সীমানা পরীক্ষা",
+          "body": "import torch\nimport torch.nn.functional as F\n\ncurrent = torch.tensor([2.0, 2.0, 2.0], dtype=torch.float64, requires_grad=True)\nnext_value = torch.tensor([4.0, 4.0, 4.0], dtype=torch.float64, requires_grad=True)\nreward = torch.ones(3, dtype=torch.float64)\nterminated = torch.tensor([False, True, False])\ntruncated = torch.tensor([False, False, True])\nwith torch.no_grad():\n    target = reward + 0.9 * (~terminated) * next_value\n    wrong_target = reward + 0.9 * (~(terminated | truncated)) * next_value\nloss = F.mse_loss(current, target)\nloss.backward()\nassert next_value.grad is None and not target.requires_grad\nassert target[-1] != wrong_target[-1]\nprint(*target.tolist(), *[round(value, 6) for value in current.grad.tolist()])\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "আরেক ধাপ গভীরে যাচাই করুন",
+          "body": "যদি বাইরের কৃত্রিম সীমা না হয়ে মূল কাজের নিজস্ব সংজ্ঞাতেই নির্দিষ্ট Horizon শেষে পর্ব সমাপ্ত হয়, তবে কি সেখানেও একই Truncation নিয়ম প্রয়োগ করবেন?",
+          "solution": "না, সসীম মেয়াদের কোনো কাজের নিজস্ব নিয়মেই সময় শেষ হলে তা প্রকৃত Termination হিসেবে গণ্য হবে (এবং সেক্ষেত্রে Markov বৈশিষ্ট্য বজায় রাখতে State-এর ভেতর Remaining Time রাখার প্রয়োজন হতে পারে)। কেবল মূল কাজ চলমান থাকা অবস্থায় বাইরে থেকে স্যাম্পলিং থামানো হলেই তা Truncation। তাই সবসময় পরিবেশের API-তে terminated ও truncated-এর অর্থ এবং প্রকৃত শেষ Observation যাচাই করে নিন।",
+          "reference": "https://farama.org/Gymnasium-Terminated-Truncated-Step-API"
+        }
+      ]
+    },
+    {
+      "id": "ch41_offline_evaluation",
+      "title": "Offline RL, ডেটার Coverage ও মূল্যায়নের সীমাবদ্ধতা",
+      "subtitle": "নতুন কোনো ট্রায়াল না চালিয়ে কেবল পুরোনো লগ ডেটা থেকে নতুন Policy শেখা ও মূল্যায়ন করার চ্যালেঞ্জ এবং Importance Sampling।",
+      "duration": "37 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "যখন বাস্তবে ভুল করে শেখার সুযোগ নেই",
+          "body": "Offline RL নতুন কোনো অনলাইন মিথস্ক্রিয়া ছাড়াই কেবল আগে থেকে সংগৃহীত স্থির লগ ডেটা (Fixed Logged Transitions) থেকে নতুন Policy শেখে। পরিবেশে নতুন করে পরখ করার সুযোগ না থাকায় এখানে ডেটাসেটের Action Coverage হয়ে ওঠে সবচেয়ে গুরুত্বপূর্ণ শর্ত। লগে অনুপস্থিত বা অসমর্থিত কাজগুলোর (Unsupported Actions) আনুমানিক Q মান যদি ভুলবশত বেশি দেখায়, তবে নতুন নীতি সেগুলোর দিকেই ঝুঁকে পড়তে পারে। তাই মডেল ফিট করার Loss এবং ডিপ্লয়মেন্ট নীতির প্রকৃত Value মূল্যায়নের জন্য আলাদা ব্যবস্থা রাখা জরুরি।"
+        },
+        {
+          "type": "text",
+          "title": "ধারাবাহিক যাত্রাপথের Importance Sampling ওজন",
+          "body": "সঠিক অফলাইন বিশ্লেষণের জন্য লগে গৃহীত Action, তার Propensity, প্রাপ্তির সময় (Reward Timing) এবং প্রতিটি Trajectory-র সীমানা সংরক্ষণ করুন। খেয়াল রাখবেন, Contextual Bandit-এর এক ধাপের প্রাপ্তি এবং MDP-র ধারাবাহিক Return মূল্যায়ন এক নয়—কারণ MDP-তে নতুন Target Policy পরবর্তী State-গুলোর বণ্টনও বদলে দিতে পারে। ফলে পুরো যাত্রাপথের সম্ভাব্যতার অনুপাতগুলো পরস্পর গুণ (Product) করতে হয়, যার কারণে মাত্র গুটিকয়েক যাত্রাপথের বিশাল ওজন পুরো গড় অনুমানকে একাই নিয়ন্ত্রণ করে ফেলতে পারে।"
+        },
+        {
+          "type": "math",
+          "title": "Trajectory-ভিত্তিক Importance Sampling সমীকরণ",
+          "body": "w(\\tau)=\\prod_t\\frac{\\pi(A_t\\mid S_t)}{b(A_t\\mid S_t)},\\qquad \\hat V=\\frac1n\\sum_i w(\\tau_i)G_i"
+        },
+        {
+          "type": "text",
+          "title": "খাতাকলমে ওজনের সূচকীয় বিস্ফোরণ",
+          "body": "দুই ধাপের একটি লগ করা যাত্রাপথে নির্বাচিত কাজগুলোর জন্য নতুন Target Policy-র সম্ভাব্যতা [0.8, 0.6] এবং পুরোনো Behavior Policy-র সম্ভাব্যতা [0.4, 0.3] ধরা যাক। তাহলে দুই ধাপের অনুপাতের গুণফল ওজন হয় 2 × 2 = 4। একইভাবে দশটি ধাপে প্রতিটির অনুপাত মাত্র 2 করেও হলে মোট ওজন লাফিয়ে দাঁড়াবে 2^10 = 1024!"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Trajectory ওজন ও দীর্ঘ পথের বিস্ফোরণ",
+          "body": "target_probabilities, logging_probabilities = [0.8, 0.6], [0.4, 0.3]\nweight = 1.0\nfor target, behavior in zip(target_probabilities, logging_probabilities):\n    if behavior <= 0:\n        raise ValueError(\"Missing behavior-policy support\")\n    weight *= target / behavior\n# Long-horizon products can have extreme variance even with nonzero support.\nprint(weight, 2**10)\n"
+        },
+        {
+          "type": "text",
+          "title": "উন্নত এস্টিমেটর ও বাস্তব ডেটাসেটের সীমাবদ্ধতা",
+          "body": "কোডে আমরা দুই ও দশ ধাপের জন্য যথাক্রমে 4.0 এবং 1024 ওজন পাচ্ছি। উচ্চ Variance কমাতে ব্যবহৃত Marginalized কিংবা Doubly Robust মূল্যায়নেরও নিজস্ব গাণিতিক শর্ত থাকে। আর MovieLens রেটিংয়ের মতো যেসব ডেটাসেটে প্রকৃত Logging Propensity জানা থাকে না, সেখানে বিশ্লেষণ করার সময় তথ্যের সেই ঘাটতি (Evidence Gap) রিপোর্টে স্পষ্টভাবে উল্লেখ করুন।"
+        },
+        {
+          "type": "text",
+          "title": "গোপন Confounding ও Clipping-এর প্রভাব",
+          "body": "লুকানো চলক (Hidden Confounding), ভুল Propensity, ভবিষ্যতের তথ্য লিক হওয়া কিংবা পরিবর্তনশীল পরিবেশ—এর যেকোনোটি সঠিক মান শনাক্তকরণের (Identification) শর্ত ভেঙে দিতে পারে। আবার চরম ওজন কমাতে Importance Clipping করলে এস্টিমেটরের Bias এবং লক্ষ্যমাত্রার ব্যাখ্যা বদলে যায়। তাই যেকোনো Policy-Value রিপোর্টে ডেটার Support, Coverage এবং ক্লিপিং সংবেদনশীলতা অবশ্যই তুলে ধরুন।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজেকে যাচাই করুন",
+          "body": "নতুন নীতি নিতে চায় এমন কোনো কাজের পুরোনো লগ সম্ভাব্যতা (Logged Action Probability) 0 হলে কোন শর্তটি ভেঙে পড়ে? আর অফলাইন মূল্যায়নে Return বাড়ার পাশাপাশি বাস্তবে ডিপ্লয় করার আগে (Deployment Gate) আর কী কী সুরক্ষা প্রয়োজন?",
+          "solution": "লগ সম্ভাব্যতা শূন্য হলে Support বা Positivity শর্তটি ভেঙে পড়ে। আর বাস্তব ডিপ্লয়মেন্টের আগে কেবল অফলাইন স্কোরের উন্নতিই যথেষ্ট নয়; কাজের সুনির্দিষ্ট ঝুঁকি ও Guardrail, প্রতিনিধিত্বমূলক স্বতন্ত্র মূল্যায়ন, ফলাফলের Uncertainty, জরুরি অবস্থার Operational Fallback এবং অনুমোদিত অনলাইন Exploration প্রটোকল প্রস্তুত থাকা চাই।",
+          "reference": "https://mitpress.mit.edu/9780262039246/reinforcement-learning/"
+        },
+        {
+          "type": "text",
+          "title": "কেন আজকের Reward-এ আগামীকালের অনুপাত গুণ করার দরকার নেই?",
+          "body": "দুই ধাপের একটি প্রক্রিয়ায় পুরোনো নীতিতে কাজ 1 নেওয়ার সম্ভাব্যতা [0.4, 0.3], নতুন নীতিতে [0.8, 0.6], প্রতি ধাপের প্রাপ্তি গৃহীত কাজের সমান এবং γ = 0.5 ধরা যাক। এখানে নতুন নীতির প্রকৃত মান 0.8 + 0.5 × 0.6 = 1.1। সাধারণ Full-Trajectory IS-এ দুটি প্রাপ্তিই পুরো গুণফল ওজন পায়; কিন্তু Per-Decision IS (PDIS)-এ প্রথম প্রাপ্তি কেবল প্রথম অনুপাতটি পায় (কারণ ভবিষ্যতের কাজ অতীতের প্রাপ্তিকে বদলায় না!), আর দ্বিতীয় প্রাপ্তি পায় দুটি অনুপাতের গুণফল। চারটি সম্ভাব্য যাত্রাপথ মিলিয়ে হিসাব করলে দুটি পদ্ধতিরই প্রত্যাশিত গড় হুবহু 1.1 আসে, কিন্তু Variance প্রায় 3.495714 থেকে কমে PDIS-এ 1.85 হয়ে যায়! খেয়াল রাখবেন, কাজ 0 বা 1 যা-ই ঘটুক, সম্ভাব্যতা অবশ্যই পুরো Policy Distribution থেকে নিতে হবে।"
+        },
+        {
+          "type": "math",
+          "title": "Per-Decision Importance Sampling (PDIS) সমীকরণ",
+          "body": "\\hat V_{PDIS}=\\frac1n\\sum_i\\sum_{t=0}^{T_i-1}\\gamma^t\\left[\\prod_{k=0}^{t}\\frac{\\pi(A_{ik}\\mid H_{ik})}{b(A_{ik}\\mid H_{ik})}\\right]R_{i,t+1}"
+        },
+        {
+          "type": "code",
+          "title": "সব Trajectory মিলিয়ে গড় ও Variance-এর নিখুঁত তুলনা",
+          "body": "import numpy as np\nfrom itertools import product\n\nbehavior = np.array([0.4, 0.3])\ntarget = np.array([0.8, 0.6])\nprobabilities, full_estimates, step_estimates = [], [], []\nfor actions in product([0, 1], repeat=2):\n    actions = np.array(actions)\n    logged_probability = np.where(actions == 1, behavior, 1 - behavior)\n    target_probability = np.where(actions == 1, target, 1 - target)\n    ratio = target_probability / logged_probability\n    weight = np.cumprod(ratio)\n    rewards = actions.astype(float)\n    probabilities.append(np.prod(logged_probability))\n    full_estimates.append(weight[-1] * (rewards[0] + 0.5 * rewards[1]))\n    step_estimates.append(weight[0] * rewards[0] + 0.5 * weight[1] * rewards[1])\nprobabilities = np.array(probabilities)\nfull_estimates, step_estimates = np.array(full_estimates), np.array(step_estimates)\ntrue_value = target[0] + 0.5 * target[1]\nfull_mean, step_mean = probabilities @ full_estimates, probabilities @ step_estimates\nnp.testing.assert_allclose([full_mean, step_mean], true_value)\nfull_variance = probabilities @ (full_estimates - full_mean) ** 2\nstep_variance = probabilities @ (step_estimates - step_mean) ** 2\nprint(\n    true_value, full_mean, step_mean, round(full_variance, 6), round(step_variance, 6)\n)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "আরেক ধাপ গভীরে যাচাই করুন",
+          "body": "উপরের সমতাটি সঠিক হওয়ার পেছনে পরিবেশ এবং শুরুর Initial-State Distribution সম্পর্কে কী অনুমান কাজ করছিল?",
+          "solution": "অনুমান ছিল যে উভয় নীতির অধীনে পরিবেশের গতিপ্রকৃতি এবং শুরুর জনগোষ্ঠী (Initial Population) অপরিবর্তিত রয়েছে, লগ করা Propensity সঠিক এবং নতুন নীতির সব সম্ভাব্য যাত্রাপথ পুরোনো নীতির Support-এর ভেতরেই আছে। নীতি বদলালে পরবর্তী অবস্থানের বণ্টন বদলাতে পারে বলেই ধারাবাহিক অনুপাতের গুণফল প্রয়োজন হয়েছে; গোপন Confounding, ভুল লগিং বা হারানো প্রাপ্তি থাকলে কেবল এই সূত্র দিয়ে সঠিক মান নিশ্চিত হয় না।",
+          "reference": "https://mitpress.mit.edu/9780262039246/reinforcement-learning/"
+        }
+      ]
+    },
+    {
+      "id": "ch41_coverage_round",
+      "title": "Offline Policy Evaluation: Support, Weight ও Effective Sample Size",
+      "subtitle": "লগে হাজারো সারি থাকা সত্ত্বেও Target Policy-র পছন্দের কাজগুলো বিরল হলে কেন অনুমানের অনিশ্চয়তা বিপজ্জনকভাবে বেড়ে যায়।",
+      "duration": "24 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "আমরা ঠিক কোন Estimand মাপতে চাই?",
+          "body": "এক ধাপের একটি Contextual Bandit লগ থেকে আমরা একটি নির্দিষ্ট স্থির Target Policy-র গড় প্রাপ্তি (Mean Payoff) অনুমান করতে চাই। এর জন্য লগে গৃহীত কাজের প্রকৃত Propensity জানা থাকতে হবে এবং নতুন নীতি যেখানে যে কাজ নেয় সেখানে পুরোনো Behavior Policy-র সম্ভাব্যতা অবশ্যই ধনাত্মক হতে হবে। তবে খাতায়-কলমে Full-Support নীতি হলেও সসীম আকারের লগে বিরল কাজ (Rare Action) খুব কমবার দেখা যেতে পারে। হিসাব শুরুর আগে Context, Action ও Reward-এর সময়ের ক্রম (Timing) অবশ্যই যাচাই করে নিন।"
+        },
+        {
+          "type": "math",
+          "title": "IPS ওজন ও Effective Sample Size (ESS)-এর সূত্র",
+          "body": "w_i=\\frac{\\pi(a_i\\mid x_i)}{\\mu(a_i\\mid x_i)},\\qquad \\widehat V_{\\mathrm{IPS}}=\\frac{\\sum_i w_i r_i}{n},\\qquad \\mathrm{ESS}=\\frac{(\\sum_i w_i)^2}{\\sum_i w_i^2}"
+        },
+        {
+          "type": "text",
+          "title": "চার সারির একটি গাণিতিক উদাহরণ",
+          "body": "ধরুন নতুন Target Policy সব পরিস্থিতিতেই কাজ A বেছে নেয়। অন্যদিকে পুরোনো Behavior Policy-তে চারটি সারির Context অনুযায়ী A নেওয়ার সম্ভাব্যতা ছিল যথাক্রমে [0.1, 0.5, 0.5, 0.5]। বাস্তবে ওই চার সারিতে পর্যবেক্ষিত কাজ হয়েছে [\"A\", \"B\", \"A\", \"B\"]—যার মধ্যে প্রথম A-তে প্রাপ্তি 1 এবং দ্বিতীয় A-তে প্রাপ্তি 0। খেয়াল করুন, বাইনারি প্রাপ্তির ক্ষেত্রে যেকোনো নীতির আসল প্রত্যাশিত মান অবশ্যই 0 থেকে 1-এর ভেতরে থাকবে, অথচ সসীম স্যাম্পলে বিরল সম্ভাব্যতার কারণে সাধারণ IPS অনুমান 1-এর সীমাও ছাড়িয়ে যেতে পারে!"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ IPS, Self-Normalized IPS (SNIPS) ও ESS গণনা",
+          "body": "behavior_a = [0.1, 0.5, 0.5, 0.5]\nlogged_actions = [\"A\", \"B\", \"A\", \"B\"]\nrewards = [1, 1, 0, 0]\nweights = [\n    1 / chance if action == \"A\" else 0\n    for chance, action in zip(behavior_a, logged_actions)\n]\nweighted_reward = sum(weight * reward for weight, reward in zip(weights, rewards))\ness = sum(weights) ** 2 / sum(weight ** 2 for weight in weights)\nprint(weighted_reward / len(rewards), weighted_reward / sum(weights), ess)"
+        },
+        {
+          "type": "text",
+          "title": "সিদ্ধান্ত ও ঝুঁকির বিশ্লেষণ: IPS, SNIPS ও ESS",
+          "body": "কোডে দেখা যাচ্ছে সাধারণ Raw IPS আসছে 2.5, ওজনের যোগফল দিয়ে ভাগ করা SNIPS আসছে প্রায় 0.8333, এবং Effective Sample Size (ESS) দাঁড়াচ্ছে মাত্র 1.3846! SNIPS অনুমানের Variance কমাতে সাহায্য করলেও সসীম স্যাম্পলে পুরোপুরি পক্ষপাতমুক্ত (Unbiased) নয়। আবার ওজন কেটে ছোট করলে (Clipping) পরিসংখ্যানগত সিদ্ধান্তের অর্থ বদলে যায়—তাই রিপোর্টে সবসময় Raw ও Clipped সংবেদনশীলতা এবং যথাযথ Sampling Unit অনুযায়ী আস্থার সীমা দেখান। আর কোনো পরিস্থিতিতে পুরোনো নীতির Propensity যদি সত্যিই 0 হয়, তবে মনে রাখবেন—Clipping, SNIPS কিংবা Doubly Robust কোনো এস্টিমেটর দিয়েই সেই অনুপস্থিত Support উদ্ধার করা সম্ভব নয়।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "বই বন্ধ করে নিজেকে যাচাই করুন",
+          "body": "পুরোনো লগে কোনো Context-এ কাজ A নেওয়ার Propensity ছিল 0, অথচ নতুন Target Policy সেখানে কাজ A নিতে চায়—এমন পরিস্থিতিতে আপনি কী করবেন?",
+          "solution": "ওই নির্দিষ্ট জনগোষ্ঠী বা পরিস্থিতিতে নতুন নীতির প্রকৃত মান মডেল-নিরপেক্ষভাবে (Nonparametrically) শনাক্ত করা যায় না। এক্ষেত্রে তিনটি দায়িত্বশীল পথ হলো: নতুন নীতিটিকে কেবল লগে সমর্থিত অঞ্চলে (Supported Region) সীমিত রাখা, নিরাপদ উপায়ে নতুন ডেটা সংগ্রহ করা, অথবা মডেল দিয়ে অনুমান করতে হলে সেই অতিরিক্ত Extrapolation অনুমানের কথা স্পষ্টভাবে প্রকাশ করা।",
+          "reference": "https://www.microsoft.com/en-us/research/publication/doubly-robust-policy-evaluation-and-learning-2/"
+        }
+      ]
+    },
+    {
+      "id": "ch41_review",
+      "title": "RL Workflow: সমস্যা সাজানো, সমাধান, সিমুলেশন ও যুক্তি যাচাই",
+      "subtitle": "পুরো অধ্যায়ের সব ধারণা এক সুতোয় গেঁথে একটি নিখুঁত RL প্রজেক্ট ও ইন্টারভিউ প্রস্তুতির পূর্ণাঙ্গ রূপরেখা।",
+      "duration": "22 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Planning বনাম Learning-এর পার্থক্য মনে রেখে পুরো ছবি",
+          "body": "এই অধ্যায়ের ইন্টারেক্টিভ Lab একটি সম্পূর্ণ জানা গাণিতিক MDP-তে Planning করে, যেখানে নির্দিষ্ট Transition নিয়ম থেকে সরাসরি নিখুঁত Bellman প্রত্যাশা বেরিয়ে আসে। অন্যদিকে পরিবেশ অজানা থাকলে Model-Free Learning পরীক্ষা করার জন্য নতুন স্যাম্পল করা Episode এবং সুনির্দিষ্ট প্রশিক্ষণ প্রটোকল প্রয়োজন হয়। নিজের যেকোনো গাণিতিক ডেরিভেশন, কোড ও ফলাফল ব্যাখ্যা করার সময় এই মৌলিক পার্থক্যটি সবসময় স্পষ্ট রাখুন।"
+        },
+        {
+          "type": "text",
+          "title": "একজন দক্ষ প্রকৌশলীর ধাপে ধাপে RL চেকলিস্ট",
+          "body": "কাজের শুরুতেই State, অনুমোদিত Actions, Reward, Horizon এবং শুরুর বণ্টন স্পষ্টভাবে লিখে ফেলুন। মডেল জানা থাকলে Transition Probability-গুলো যাচাই করে একটি সরল Baseline Policy নিন, তারপর Bellman সমাধান এবং স্বতন্ত্র Policy Evaluation মিলিয়ে দেখুন। প্যারামিটারের সংবেদনশীলতা এবং Terminal শর্তের অখণ্ডতা (Invariants) পরীক্ষা করুন। আর ডেটা থেকে শেখার পরীক্ষা হলে প্রশিক্ষণ ও মূল্যায়নের Episode সংখ্যা, Seeds, কম্পিউট বাজেট এবং ফলাফলের Uncertainty রিপোর্টে যোগ করুন।"
+        },
+        {
+          "type": "math",
+          "title": "Value Iteration থামানোর Bellman Error Bound",
+          "body": "\\|V^*-V_k\\|_\\infty\\le\\frac{\\gamma}{1-\\gamma}\\|V_k-V_{k-1}\\|_\\infty\\quad(0\\le\\gamma<1)"
+        },
+        {
+          "type": "text",
+          "title": "খাতাকলমে আমাদের Lab MDP-র নিখুঁত বীজগাণিতিক সমাধান",
+          "body": "আমাদের Lab MDP-তে p = 0.7 এবং γ = 0.9 ধরে Start-এ Advance ও Middle-এ Try নেওয়ার নীতিটি সরাসরি বীজগণিত দিয়ে মূল্যায়ন করা যাক। এখানে V_Start = 0.9 × V_Middle এবং V_Middle = 2.5 + 0.27 × V_Start। সমীকরণ দুটি সমাধান করলে পাওয়া যায় V_Start = 2.25 / 0.757 ≈ 2.972259 এবং V_Middle ≈ 3.302510। সবশেষে প্রতিটি অবস্থানে বিকল্প Safe কাজের মান 1.0-এর সাথে তুলনা করে যাচাই করে নিন যে এই নীতিটি সত্যিই Greedy কি না।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ বীজগাণিতিক সমাধান ও Greedy শর্ত যাচাই",
+          "body": "discount, probability = 0.9, 0.7\nexpected_reward = 5 * probability - 1\nstart = discount * expected_reward / (1 - (1 - probability) * discount**2)\nmiddle = expected_reward + (1 - probability) * discount * start\n# Verify the candidate policy is greedy; this formula need not hold at other p.\nassert discount * middle >= 1 and middle >= 1\nprint(round(start, 6), round(middle, 6))\n"
+        },
+        {
+          "type": "text",
+          "title": "কোডের ফলাফল ও মডেল অনিশ্চয়তার সীমানা",
+          "body": "সরাসরি বীজগাণিতিক সূত্রে আমরা মান পাচ্ছি [2.972259, 3.302510]। মনে রাখবেন, সাফল্যের সম্ভাব্যতা p বদলালে এই স্থির Advance/Try নীতিটিকে নতুন করে মূল্যায়ন ও উন্নত করতে হবে। উপরের Bellman Error Bound কেবল একটি জানা ও Discounted মডেলের জন্য প্রযোজ্য; ডেটা থেকে অনুমান করা গতিপ্রকৃতির (Estimated Dynamics) নিজস্ব অনিশ্চয়তা আলাদাভাবে বিবেচনা করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "Deep RL-এ যাওয়ার আগে শেষ প্রকৌশলগত সতর্কবার্তা",
+          "body": "Discount ফ্যাক্টর γ যত 1-এর কাছাকাছি যায়, Contraction তত ধীর হয় এবং ত্রুটির সীমা (Error Bound) তত বড় হতে পারে; পাশাপাশি State টেবিল বড় হলে কম্পিউটেশন খরচও দ্রুত বাড়ে। তাই এই টেবিলভিত্তিক মূল ভিত্তি থেকে Deep RL-এ যাওয়ার সময় নেটওয়ার্কের Approximation, Optimization এবং Evaluation Design-এর নতুন অনুমানগুলো স্পষ্টভাবে লিখে নিন।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "অধ্যায় সমাপনী চূড়ান্ত যাচাই",
+          "body": "রেফারেন্স না দেখে বলুন: Bellman Expectation, Bellman Optimality, TD(0), SARSA এবং Q-Learning—এই পাঁচটির শেখার বা ব্যাকআপ Target কীভাবে আলাদা? আর আমাদের Lab-এ p = 0 বা 1 এবং γ = 0 বা 0.99 প্রান্তিক মানগুলোতে সেরা কাজ ও Terminal শর্ত কীভাবে আচরণ করে?",
+          "solution": "পাঁচটি Target-এর মূল কথা হলো: Bellman Expectation নেয় বর্তমান নীতির গড় (Policy-Average), Bellman Optimality নেয় সব কাজের সেরা মান (max), TD(0) পরের অবস্থানের আনুমানিক V ব্যবহার করে, SARSA বাস্তবে নেওয়া পরের কাজের Q ব্যবহার করে, আর Q-Learning পরের অবস্থানের সর্বোচ্চ max Q ব্যবহার করে। প্রান্তিক মানে: γ = 0 হলে কেবল তাৎক্ষণিক প্রাপ্তি গণ্য হয়; p = 0 হলে ব্যর্থ Try কেবল −1 দেয় বলে Safe জেতে, আর p = 1 হলে Try নিশ্চিতভাবে +4 দেয়; এবং সব ক্ষেত্রেই Terminal অবস্থার ভবিষ্যৎ Value অপরিবর্তনীয়ভাবে 0 থাকে।",
+          "reference": "https://mitpress.mit.edu/9780262039246/reinforcement-learning/"
+        },
+        {
+          "type": "text",
+          "title": "পরবর্তী অধ্যায়ের পথে: Book 4 ও সামনের যাত্রা",
+          "body": "এর মধ্য দিয়েই আমাদের Book 3 (Deep Learning & RL)-এর সমাপ্তি ঘটল—এরপর শুরু করুন Book 4 (LLMs & GenAI) · Chapter 1 (LLM Foundations)। আর এই অধ্যায়ে শেখা Policy Optimization, Surrogate Objective এবং Offline Support-এর ধারণাগুলো আবার সরাসরি কাজে লাগান Book 4 · Chapter 4 (Fine-tuning & Adaptation)-এর Preference Alignment এবং Book 5 (Recommender Systems) · Chapter 4 (RecSys Evaluation & Feedback Loops)-এর আলোচনায়।"
+        }
+      ]
+    }
+  ],
+  "quizzes": [
+    {
+      "id": "ch41_q01",
+      "question": "সাধারণ Supervised Prediction-এর তুলনায় একটি RL সমস্যায় কোন বৈশিষ্ট্যটি বিশেষভাবে গুরুত্বপূর্ণ?",
+      "options": [
+        "Agent-এর গৃহীত Action ভবিষ্যতের State এবং পরবর্তী Reward বদলে দিতে পারে",
+        "Label ছাড়া যেকোনো Dataset থাকলেই সেটি একটি RL সমস্যা হয়ে যায়",
+        "Reward মানেই সর্বদা তাৎক্ষণিক Prediction Accuracy",
+        "শেখার জন্য Environment-কে অবশ্যই Differentiable হতে হবে"
+      ],
+      "answer": 0,
+      "explanation": "RL সমস্যায় আজকের গৃহীত Action ভবিষ্যতের পরিস্থিতি ও বিলম্বিত ফলাফল বদলে দেয় বলে ধারাবাহিক (Sequential) Objective সাজাতে হয়। সাধারণ Clustering-এর মতো Unlabelled ডেটার অনুমান আর সিদ্ধান্তনির্ভর RL সমস্যার গাণিতিক কাঠামো সম্পূর্ণ আলাদা।"
+    },
+    {
+      "id": "ch41_q02",
+      "question": "নিচের কোন বক্তব্যটি Markov Assumption-এর মূল কথা সঠিকভাবে প্রকাশ করে?",
+      "options": [
+        "ভবিষ্যতের গতিপথ কেবল ঘড়ির সময়ের (Clock Time) ওপর নির্ভর করে",
+        "ভবিষ্যতের Transition বোঝার জন্য বর্তমান State এবং গৃহীত Action-ই যথেষ্ট",
+        "পরিবেশের প্রতিটি Observation পরস্পর সম্পূর্ণ স্বাধীন (Independent)",
+        "প্রতিটি ধাপের Reward অবশ্যই সুনির্দিষ্ট বা Deterministic হতে হবে"
+      ],
+      "answer": 1,
+      "explanation": "Markov বৈশিষ্ট্য অনুযায়ী অতীতের ইতিহাসের (History) প্রয়োজনীয় সব তথ্য বর্তমান State-এর ভেতরেই উপস্থিত থাকতে হবে। পরিবেশের Transition ও Reward সম্ভাব্যতাভিত্তিক (Random) হলেও এই শর্ত অনায়াসেই বজায় থাকতে পারে।"
+    },
+    {
+      "id": "ch41_q03",
+      "question": "ক্রমান্বয়ে প্রাপ্ত Reward [1, 2, 3] এবং Discount ফ্যাক্টর γ = 0.5 হলে শুরুর প্রথম Return কত হবে?",
+      "options": [
+        "6",
+        "3",
+        "2.75",
+        "1.5"
+      ],
+      "answer": 2,
+      "explanation": "সূত্র অনুযায়ী প্রথম ধাপের সূচক শূন্য থাকে, তাই প্রথম Return হবে 1 + 0.5 × 2 + 0.25 × 3 = 2.75।"
+    },
+    {
+      "id": "ch41_q04",
+      "question": "একটি সত্যিকারের সমাপ্তি বা True Terminal Transition-এর ক্ষেত্রে TD Target কী হবে?",
+      "options": [
+        "তাৎক্ষণিক Reward এবং পরের সব সম্ভাব্য Q মানের যোগফল",
+        "তাৎক্ষণিক Reward যা-ই হোক, সর্বদা শূন্য",
+        "অপরিবর্তিত আগের State Value",
+        "কেবল পর্যবেক্ষিত তাৎক্ষণিক Reward, কারণ পরবর্তী ভবিষ্যৎ Continuation শূন্য"
+      ],
+      "answer": 3,
+      "explanation": "পর্বটি শেষ হওয়ার ধাপেও ওই ট্রানজিশনের নিজস্ব তাৎক্ষণিক Reward পাওয়া যায়, কিন্তু তার পরে আর কোনো ভবিষ্যৎ ধাপ না থাকায় Continuation Value শূন্য ধরা হয়।"
+    },
+    {
+      "id": "ch41_q05",
+      "question": "Bellman Expectation এবং Bellman Optimality সমীকরণের মূল পার্থক্য কী?",
+      "options": [
+        "Expectation নেয় Policy অনুযায়ী কাজের গড়, আর Optimality নেয় সেরা কাজের সর্বোচ্চ মান (max)",
+        "দুটি সমীকরণের লক্ষ্যমাত্রার মধ্যে কোনো গাণিতিক সম্পর্কই নেই",
+        "Bellman Expectation কখনোই পরিবেশের Transition সম্ভাব্যতা বিবেচনা করে না",
+        "Bellman Optimality ভবিষ্যৎ বাদ দিয়ে কেবল সবচেয়ে বড় তাৎক্ষণিক Reward বেছে নেয়"
+      ],
+      "answer": 0,
+      "explanation": "Bellman Expectation নির্দিষ্ট Policy-র সম্ভাব্যতা দিয়ে সব কাজের গড় নেয়; আর Bellman Optimality তাৎক্ষণিক প্রাপ্তি ও Discounted ভবিষ্যৎ মান যোগ করে সব অনুমোদিত কাজের মধ্য থেকে সর্বোচ্চ মানটি (Action Maximum) বেছে নেয়।"
+    },
+    {
+      "id": "ch41_q06",
+      "question": "Synchronous Value Iteration-এর প্রতিটি Sweep-এর সঠিক নিয়ম কোনটি?",
+      "options": [
+        "প্রথম State আপডেট করেই দ্বিতীয় State-এর হিসাবে সেই নতুন মান বসানো বাধ্যতামূলক",
+        "ওই Sweep-এর সব নতুন Value আগের ধাপের স্থির (Frozen) পুরোনো ভেক্টর থেকেই হিসাব করা হয়",
+        "প্রতিটি Sweep-এ Terminal অবস্থার মান এলোমেলোভাবে বদলে দেওয়া হয়",
+        "প্রতিটি Sweep-এ কেবল একটিমাত্র র‍্যান্ডম Action মূল্যায়ন করা হয়"
+      ],
+      "answer": 1,
+      "explanation": "Synchronous পদ্ধতিতে সবগুলো State-এর নতুন মান আগের ধাপের একই স্থির পুরোনো ভেক্টর পড়ে তৈরি করা হয়। মাঝপথে নতুন মান বসানো হলে তা In-Place আপডেট হয়ে যায়, যার মধ্যবর্তী সংখ্যাগুলো আলাদা হতে পারে।"
+    },
+    {
+      "id": "ch41_q07",
+      "question": "সসীম ও সীমাবদ্ধ প্রাপ্তির MDP-তে স্থির Policy মূল্যায়নের সময় γ < 1 হওয়া কেন বিশেষভাবে গুরুত্বপূর্ণ?",
+      "options": [
+        "এতে পরিবেশের সব ঋণাত্মক Reward ধনাত্মক হয়ে যায়",
+        "এতে কম্পিউটারের সব Floating-Point সংখ্যাগত ত্রুটি পুরোপুরি দূর হয়ে যায়",
+        "এতে Bellman Operator একটি Contraction হয় এবং একক Fixed Point-এ স্থির হয়",
+        "এতে যেকোনো Policy বাস্তব প্রোডাকশনে আপনাআপনি নিরাপদ হয়ে যায়"
+      ],
+      "answer": 2,
+      "explanation": "জানা সসীম ও সীমাবদ্ধ Discounted পরিবেশে γ < 1 হলে Bellman Operator একটি Contraction তৈরি করে, যার ফলে বারবার আপডেট চালালে তা নিশ্চিতভাবে সঠিক Fixed Point-এ পৌঁছে। সংখ্যাগত নিখুঁততা ও বাস্তব নিরাপত্তা সবসময় আলাদাভাবে যাচাই করতে হয়।"
+    },
+    {
+      "id": "ch41_q08",
+      "question": "Monte Carlo (MC) এবং Temporal-Difference (TD) পদ্ধতির শেখার Target-এর মূল পার্থক্য কোনটি?",
+      "options": [
+        "MC পরের আনুমানিক V ব্যবহার করে, আর TD পুরো Episode-এর যোগফল নেয়",
+        "আপডেট করার আগে দুটি পদ্ধতিকেই সম্পূর্ণ ভবিষ্যৎ Return পর্যন্ত অপেক্ষা করতে হয়",
+        "MC পদ্ধতিতে সবসময় TD-র চেয়ে কম Variance দেখা যায়",
+        "MC নেয় সম্পূর্ণ বাস্তব Sampled Return, আর TD ব্যবহার করে আনুমানিক Bootstrapped Value"
+      ],
+      "answer": 3,
+      "explanation": "Monte Carlo পর্ব শেষ হওয়ার পর পুরো বাস্তব Sampled Return-কে লক্ষ্যমাত্রা বানায়; অন্যদিকে TD এক ধাপের তাৎক্ষণিক প্রাপ্তির সাথে পরের অবস্থানের আনুমানিক মান যোগ করে Bootstrap করে।"
+    },
+    {
+      "id": "ch41_q09",
+      "question": "আপডেট লক্ষ্যমাত্রা তৈরির সময় SARSA পরের ধাপের কোন Action Value-টি ব্যবহার করে?",
+      "options": [
+        "পরের অবস্থানে Behavior Policy বাস্তবে যে Action-টি বেছে নিয়েছে তার Q মান",
+        "পরের অবস্থানের সম্ভাব্য সব কাজের মধ্যকার সর্বোচ্চ Q মান",
+        "পরের অবস্থানের সবগুলো কাজের Q মানের যোগফল",
+        "কেবল আগের অবস্থানের পুরোনো State Value"
+      ],
+      "answer": 0,
+      "explanation": "On-Policy পদ্ধতি হিসেবে SARSA পরের অবস্থানে গিয়ে এজেন্ট বাস্তবে যে কাজটি বেছে নিয়েছে, ঠিক সেটিরই বর্তমান Q মান দিয়ে Bootstrap করে।"
+    },
+    {
+      "id": "ch41_q10",
+      "question": "মোট k = 2-টি বৈধ বিকল্পের মধ্যে একটি একক সেরা Arm থাকলে এবং ε = 0.2 হলে Epsilon-Greedy নীতিতে ওই সেরা Arm-টি নির্বাচিত হওয়ার সম্ভাব্যতা কত?",
+      "options": [
+        "0.8",
+        "0.9",
+        "0.2",
+        "0.5"
+      ],
+      "answer": 1,
+      "explanation": "একক সেরা বিকল্পের ক্ষেত্রে সম্ভাব্যতা হলো 1 − 0.2 + 0.2 / 2 = 0.9, কারণ সমান সুযোগের Exploration-এর ভেতরেও সেরা Arm-টি বাছাই হতে পারে।"
+    },
+    {
+      "id": "ch41_q11",
+      "question": "বাইনারি [0, 1] Reward-এর পরিবেশে কোনো বিকল্পের UCB সূচক 1.0 ছাড়িয়ে গেলে কোন ব্যাখ্যাটি সঠিক?",
+      "options": [
+        "হিসাবে ভুল হয়ে সম্ভাব্যতার নিয়ম ভেঙে গেছে",
+        "ওই বিকল্প থেকে আর কখনোই কোনো Reward পাওয়া সম্ভব নয়",
+        "এটি সম্ভাব্যতা নয়, বরং গড়ের সাথে Optimism Bonus যোগ করে তৈরি একটি Selection Index",
+        "সংরক্ষিত Model ফাইলটি নিশ্চিতভাবে নষ্ট হয়ে গেছে"
+      ],
+      "answer": 2,
+      "explanation": "UCB হলো অনুমিত গড় প্রাপ্তি এবং অনিশ্চয়তা বোনাস দিয়ে তৈরি একটি তুলনামূলক Selection Index—বোনাস যোগ হওয়ার কারণে এর মান অনায়াসেই 1.0 ছাড়িয়ে যেতে পারে।"
+    },
+    {
+      "id": "ch41_q12",
+      "question": "Policy Gradient পদ্ধতিতে একটি উপযুক্ত Action-নিরপেক্ষ স্থির Baseline কী ভূমিকা রাখতে পারে?",
+      "options": [
+        "লগ ডেটার সব লুকানো Confounding আপনাআপনি দূর করে দেয়",
+        "নীতির সব প্যারামিটারের Gradient স্থায়ীভাবে শূন্য করে দেয়",
+        "মূল সমস্যার দীর্ঘমেয়াদি Reward সংজ্ঞাকেই বদলে দেয়",
+        "প্রত্যাশিত আসল Gradient অক্ষুণ্ণ রেখে অনুমানের Variance কমাতে পারে"
+      ],
+      "answer": 3,
+      "explanation": "স্থির ও Action-নিরপেক্ষ Baseline-এর প্রত্যাশিত Score-গুণিতক পদটি শূন্য হয়ে কেটে যায়, ফলে গড় গ্র্যাডিয়েন্ট না বদলেই ওঠানামা কমানো যায়। তবে ফিট করা বা একই ব্যাচের গড় বেসলাইনের ক্ষেত্রে স্যাম্পল নির্ভরশীলতা ও গ্র্যাডিয়েন্ট সীমানা আলাদাভাবে দেখতে হয়।"
+    },
+    {
+      "id": "ch41_q13",
+      "question": "PPO-র Clipping কৌশল নিচের কোনটির নিশ্চয়তা (Guarantee) দেয় না?",
+      "options": [
+        "প্রতিটি আপডেটে নীতির পরিবর্তনের ওপর কঠোর গাণিতিক সীমা এবং নিরাপদ প্রোডাকশন ডিপ্লয়মেন্ট",
+        "একটি সুনির্দিষ্ট Clipped Surrogate Objective সংজ্ঞায়িত করা",
+        "নতুন ও পুরোনো নীতির সম্ভাব্যতার অনুপাত (Probability Ratio) হিসাব করা",
+        "সূত্রের ভেতর অনুপাতটিকে [1 − ε, 1 + ε] পাল্লায় সীমাবদ্ধ করা"
+      ],
+      "answer": 0,
+      "explanation": "PPO কেবল একটি Clipped Surrogate রাশি অপ্টিমাইজ করে; প্রকৃত KL পরিবর্তন, সম্ভাব্যতার বিচ্যুতি এবং বাস্তব সিস্টেমের নিরাপত্তা আলাদাভাবে পরিমাপ ও নিশ্চিত করতে হয়।"
+    },
+    {
+      "id": "ch41_q14",
+      "question": "DQN আর্কিটেকচারে কিছুটা পিছিয়ে থাকা আলাদা Target Network রাখার প্রধান উদ্দেশ্য কী?",
+      "options": [
+        "প্রশিক্ষণ চলাকালে পরিবেশে সব ধরনের Exploration বন্ধ করে দেওয়া",
+        "বারবার সরে যাওয়া চলমান Bootstrap Target-কে স্থিতিশীল করা",
+        "অজানা Dataset থেকে আসল Supervised Label উদ্ধার করা",
+        "পরিবেশের অজানা Transition Model-কে শতভাগ নিখুঁত করে ফেলা"
+      ],
+      "answer": 1,
+      "explanation": "পিছিয়ে থাকা Target Network ব্যবহার করলে শেখার লক্ষ্যমাত্রা প্রতি ধাপে অনলাইন নেটওয়ার্কের সাথে সাথে না নড়ে ধীরে বদলায়, যা প্রশিক্ষণকে স্থিতিশীল করে। তবে চূড়ান্ত সাফল্যের জন্য ডেটা ও অপ্টিমাইজেশনের শর্তগুলোও গুরুত্বপূর্ণ।"
+    },
+    {
+      "id": "ch41_q15",
+      "question": "নতুন Target Policy ধনাত্মক সম্ভাব্যতায় নেয় এমন একটি Action পুরোনো Behavior Policy কখনোই নেয়নি। সাধারণ Importance Sampling-এ এতে কী সমস্যা হবে?",
+      "options": [
+        "লগে শূন্য সম্ভাব্যতার আরও বেশি সারি যোগ করলেই সমস্যার সমাধান হয়ে যাবে",
+        "ওই কাজের ওজন শূন্য ধরে নিলেই নিখুঁত পক্ষপাতমুক্ত (Unbiased) অনুমান পাওয়া যাবে",
+        "Support শর্ত ভেঙে পড়বে এবং বাড়তি অনুমান ছাড়া প্রকৃত Policy Value শনাক্ত করা যাবে না",
+        "সাধারণ IPS-এর বদলে SNIPS ব্যবহার করলেই সবসময় নিখুঁত উত্তর পাওয়া যাবে"
+      ],
+      "answer": 2,
+      "explanation": "পুরোনো লগে ওই কাজের কোনো উপস্থিতি (Logging Support) না থাকলে সেটি নিলে কী Counterfactual Reward পাওয়া যেত তার কোনো প্রমাণ ডেটায় থাকে না। নিছক ওজন ক্লিপিং বা নরমালাইজেশন দিয়ে সেই তথ্য তৈরি করা সম্ভব নয়।"
+    },
+    {
+      "id": "ch41_q16",
+      "question": "এই অধ্যায়ের ইন্টারেক্টিভ Bellman Lab-এর আউটপুট আসলে কী নির্দেশ করে?",
+      "options": [
+        "বাস্তব ইউজারদের ওপর চালানো অনলাইন পরীক্ষার প্রমাণিত মুনাফা",
+        "প্রশিক্ষিত একটি বিশাল DQN নেটওয়ার্কের বেঞ্চমার্ক স্কোর",
+        "বাস্তব রোবটিক্স সিস্টেমের নিরাপত্তা সনদ (Safety Certification)",
+        "সুনির্দিষ্টভাবে সংজ্ঞায়িত একটি গাণিতিক MDP-র নিখুঁত Planning Trace"
+      ],
+      "answer": 3,
+      "explanation": "এই Lab-টি আগে থেকে জানা Transition Model ব্যবহার করে নিখুঁত প্রত্যাশিত Bellman Backup হিসাব করে। নতুন মডেল প্রশিক্ষণ বা অজানা পরিবেশের সাথে মিথস্ক্রিয়ার জন্য আলাদা প্রটোকল প্রয়োজন।"
+    },
+    {
+      "id": "ch41_q_outer_discount_revision",
+      "question": "যদি মূল লক্ষ্যমাত্রা J = E[G_0] হয়, G_t ধাপ t থেকে Discount গোনে এবং Episode-গুলোর সাধারণ যোগফল নেওয়া হয়, তবে Policy Gradient-এ ধাপ t-এর সংকেতের ওজন কী হবে?",
+      "options": [
+        "gamma^t",
+        "সবসময় 1",
+        "1/gamma^t",
+        "শুধু Episode-এর মোট দৈর্ঘ্য"
+      ],
+      "answer": 0,
+      "explanation": "Reward-to-Go-এর এই প্রথায় মূল লক্ষ্যমাত্রার পরম সময়ের ডিসকাউন্ট বজায় রাখতে বাইরে gamma^t গুণকটি লাগে। Discounted Visitation ওজন ব্যবহার করলে সমীকরণের প্রথাটি আলাদাভাবে লিখতে হয়।"
+    },
+    {
+      "id": "ch41_q_first_visit_revision",
+      "question": "একটি পর্বের State ক্রম [A, B, A], প্রাপ্ত Reward [1, 0, 3] এবং γ = 1 হলে State A-এর First-Visit Return কত?",
+      "options": [
+        "3",
+        "4",
+        "2",
+        "0"
+      ],
+      "answer": 1,
+      "explanation": "তিনটি ধাপের Return যথাক্রমে [4, 3, 3]। সময়ের আসল ক্রমে প্রথমবার আসা A-এর Return হলো 4। উল্টো দিক থেকে স্ক্যান করে প্রথম A নিলে ভুল করে শেষ উপস্থিতি (3) চলে আসবে।"
+    },
+    {
+      "id": "ch41_q_truncation_revision",
+      "question": "একটি চলমান কাজে বাহ্যিক সময়ের সীমায় রোলআউট থামানো হলো (External Time-Limit Truncation), যেখানে তাৎক্ষণিক প্রাপ্তি 1, প্রকৃত পরের অবস্থানের মান 4 এবং γ = 0.9। সঠিক TD Target কত?",
+      "options": [
+        "1",
+        "0",
+        "4.6",
+        "3.3"
+      ],
+      "answer": 2,
+      "explanation": "যেহেতু মূল কাজটি চলমান রয়েছে, তাই প্রকৃত শেষ পরবর্তী পর্যবেক্ষণের ভবিষ্যৎ মান ধরে রেখে 1 + 0.9 × 4 = 4.6 লক্ষ্যমাত্রা নেওয়া হয়। কেবল সত্যিকারের সমাপ্তি (True Terminal) হলেই লক্ষ্যমাত্রা 1 হতো।"
+    },
+    {
+      "id": "ch41_q_baseline_dependence_revision",
+      "question": "একই ব্যাচের গড় প্রাপ্তিকে (Same-Batch Mean Reward) Baseline ধরে কোডে detach করে দিলে স্যাম্পল নির্ভরশীলতা সম্পর্কে কী জানা যায়?",
+      "options": [
+        "এতে স্যাম্পলগুলোর ভেতরকার সব পরিসংখ্যানগত নির্ভরশীলতা দূর হয়ে যায়",
+        "এতে Actor নেটওয়ার্কের সব Gradient শূন্য হয়ে যায়",
+        "ক্ষুদ্র ব্যাচেও প্রকৃত Gradient অবশ্যই পক্ষপাতমুক্ত (Unbiased) থাকে",
+        "কেবল Autograd-এর গ্র্যাডিয়েন্ট প্রবাহ বন্ধ হয়, কিন্তু পরিসংখ্যানগত নির্ভরশীলতা আলাদাভাবে দেখতে হয়"
+      ],
+      "answer": 3,
+      "explanation": "detach কেবল কম্পিউটেশন গ্রাফের ব্যাকপ্রোপাগেশন নিয়ম বদলায়; কিন্তু Baseline কোন কোন স্যাম্পল থেকে অনুমান করা হয়েছে তার পরিসংখ্যানগত নির্ভরশীলতা সম্পূর্ণ আলাদা বিষয়।"
+    }
+  ],
+  "exercises": [
+    {
+      "id": "ch41_e_discounted_return",
+      "title": "Backward Recursion দিয়ে Discounted Return",
+      "prompt": "ক্রমান্বয়ে প্রাপ্ত Reward [1, 2, 3] এবং gamma = 0.5 দেওয়া হলো। উল্টো দিকের পুনরাবৃত্তি (Reverse Recursion) ব্যবহার করে প্রথম ধাপের Return বের করুন। খালি তালিকা (Empty Sequence) এবং সসীম প্রাপ্তি যাচাইয়ের নিয়মটিও ব্যাখ্যা করুন।",
+      "starter": "def discounted_return(rewards, gamma):\n    # Implement reverse recursion.\n    pass\n",
+      "solution": "def discounted_return(rewards, gamma):\n    value = 0.0\n    for reward in reversed(rewards):\n        value = reward + gamma * value\n    return value\n\n\nprint(discounted_return([1, 2, 3], 0.5))\n",
+      "expected": 2.75,
+      "explanation": "প্রথম ধাপের Return হলো 2.75। শেষের শূন্য Terminal Continuation থেকে শুরু করে উল্টো দিকে হিসাবটি এগোয়। সসীম দৈর্ঘ্যের Episode-এ gamma = 1 অনুমোদিত হবে কি না তা মূল কাজের Objective অনুযায়ী নির্ধারণ করতে হয়।"
+    },
+    {
+      "id": "ch41_e_td_target",
+      "title": "চলমান ও সমাপ্ত ধাপে TD(0) আপডেট",
+      "prompt": "বর্তমান মান value = 2, পরের অবস্থানের মান next_value = 4, তাৎক্ষণিক প্রাপ্তি reward = 1, gamma = 0.9 এবং শেখার হার alpha = 0.5 দেওয়া আছে। চলমান (Nonterminal) অবস্থার আপডেটকৃত মান বের করুন এবং একই ফাংশনে True Terminal ক্ষেত্রটিও পরীক্ষা করুন।",
+      "starter": "def td_update(value, reward, next_value, gamma, alpha, terminal):\n    pass\n",
+      "solution": "def td_update(value, reward, next_value, gamma, alpha, terminal):\n    continuation = 0.0 if terminal else next_value\n    target = reward + gamma * continuation\n    return value + alpha * (target - value)\n\n\nprint(td_update(2, 1, 4, 0.9, 0.5, False))\n",
+      "expected": 3.3,
+      "explanation": "চলমান অবস্থায় Target = 4.6 এবং আপডেটকৃত নতুন মান হয় 3.3। অন্যদিকে ধাপটি True Terminal হলে ভবিষ্যতের Continuation শূন্য হওয়ায় Target হয় শুধু 1 এবং আপডেটকৃত মান দাঁড়ায় 1.5।"
+    },
+    {
+      "id": "ch41_e_bellman",
+      "title": "দুই ধাপের Synchronous Bellman Sweep",
+      "prompt": "আমাদের Lab MDP-তে p = 0.7, gamma = 0.9 এবং শুরুর মান [0, 0] ধরা হলো। Safe কাজ নিলে 1 Reward দিয়ে পর্ব শেষ হয়, Advance নিলে Middle-এ যায়, আর Middle-এ Try সফল হলে 4 Reward দিয়ে শেষ হয় এবং ব্যর্থ হলে −1 Reward দিয়ে Start-এ ফেরে। ঠিক দুটি Synchronous Sweep শেষে Start অবস্থানের মান কত হবে?",
+      "starter": "# Store old Start/Middle before each sweep.\n",
+      "solution": "start, middle = 0.0, 0.0\nfor _ in range(2):\n    next_start = max(1.0, 0.9 * middle)\n    next_middle = max(1.0, 0.7 * 4 + 0.3 * (-1 + 0.9 * start))\n    start, middle = next_start, next_middle\nprint(start)\n",
+      "expected": 2.25,
+      "explanation": "প্রথম Sweep শেষে মান হয় [1, 2.5] এবং দ্বিতীয় Sweep শেষে হয় [2.25, 2.77]—সুতরাং Start-এর সংখ্যাগত উত্তর হলো 2.25। খেয়াল রাখবেন, প্রতিটি অবস্থানের নতুন মান অবশ্যই আগের ধাপের একই স্থির পুরোনো ভেক্টর থেকে পড়তে হবে।"
+    },
+    {
+      "id": "ch41_e_exploration",
+      "title": "Epsilon-Greedy নীতির নির্বাচন সম্ভাব্যতা",
+      "prompt": "তিনটি বৈধ বিকল্প (arm_count = 3), epsilon = 0.3 এবং একটিমাত্র একক সেরা Greedy Arm দেওয়া হলো। Epsilon-Greedy নীতিতে ওই সেরা Greedy Arm-টি নির্বাচিত হওয়ার মোট সম্ভাব্যতা (Selection Probability) বের করুন।",
+      "starter": "epsilon, arm_count = 0.3, 3\n# Include exploration probability of the greedy arm.\n",
+      "solution": "epsilon, arm_count = 0.3, 3\nprint(1 - epsilon + epsilon / arm_count)\n",
+      "expected": 0.8,
+      "explanation": "সম্ভাব্যতা হলো 0.7 + 0.3 / 3 = 0.8। সমান সুযোগের Uniform Exploration চলাকালেও সেরা Greedy Arm-টি নির্বাচিত হতে পারে বলে দুটি অংশ যোগ হয়েছে।"
+    },
+    {
+      "id": "ch41_e_ips",
+      "title": "Bandit লগে Inverse Propensity Scoring (IPS)",
+      "prompt": "দুটি লগ সারিতে গৃহীত কাজের জন্য নতুন Target Policy-র সম্ভাব্যতা [1, 0], পুরোনো Behavior Policy-র Propensity [0.5, 0.5] এবং প্রাপ্ত Reward [1, 1] দেওয়া আছে। সাধারণ IPS গড় মানটি বের করুন এবং Support ও সারিগুলোর সামঞ্জস্যের শর্ত ব্যাখ্যা করুন।",
+      "starter": "# Never divide by a zero logging propensity.\n",
+      "solution": "target, behavior, rewards = [1, 0], [0.5, 0.5], [1, 1]\nprint(sum(p / b * r for p, b, r in zip(target, behavior, rewards)) / len(rewards))\n",
+      "expected": 1.0,
+      "explanation": "ওজনযুক্ত প্রাপ্তিগুলো যথাক্রমে 2 এবং 0, তাই তাদের গড় মান হলো 1.0। এখানে প্রতিটি Propensity সংশ্লিষ্ট পর্যবেক্ষিত কাজেরই হতে হবে এবং সম্ভাব্যতার বৈধতা ও শনাক্তকরণের শর্তাবলি আগে যাচাই করতে হয়।"
+    },
+    {
+      "id": "ch41_e_policy_gradient",
+      "title": "Bernoulli Policy-র Gradient Ascent সংকেত",
+      "prompt": "এক ধাপের একটি Bernoulli Policy-তে কাজ 1 নেওয়ার সম্ভাব্যতা p = 0.5, বাস্তবে গৃহীত কাজ action = 1, প্রাপ্ত return = 3 এবং স্থির baseline = 1 দেওয়া হলো। Logit-এর সাপেক্ষে Gradient-Ascent সংকেতের মান বের করুন।",
+      "starter": "# Bernoulli log-probability derivative with respect to logit is action - p.\n",
+      "solution": "probability, action, sampled_return, baseline = 0.5, 1, 3, 1\nprint((action - probability) * (sampled_return - baseline))\n",
+      "expected": 1.0,
+      "explanation": "সংকেতের মান হলো (1 − 0.5) × (3 − 1) = 1.0। প্রশিক্ষণের সময় Negative Actor Loss মিনিমাইজ করলে গ্র্যাডিয়েন্টের চিহ্ন উল্টে যাবে, এবং শিক্ষণীয় বেসলাইন থাকলে গ্র্যাডিয়েন্ট থামানোর সীমানা স্পষ্ট রাখতে হবে।"
+    },
+    {
+      "id": "ch41_e_first_visit_revision",
+      "title": "পুনরাবৃত্ত State-সহ First-Visit Monte Carlo",
+      "prompt": "দুটি Episode দেওয়া আছে: ([A, B, A], [1, 0, 3]) এবং ([A], [0]), যেখানে gamma = 1। প্রতিটি Episode-এর ধাপওয়ারি Return বের করে State A-এর First-Visit গড় মান লিখুন এবং Every-Visit স্যাম্পল সংখ্যাও মিলিয়ে দেখুন।",
+      "starter": "# Keep episode boundaries and scan visits in original time order.\n",
+      "solution": "episodes = [([\"A\", \"B\", \"A\"], [1.0, 0.0, 3.0]), ([\"A\"], [0.0])]\nselected = []\nfor states, rewards in episodes:\n    returns = [0.0] * len(rewards)\n    total = 0.0\n    for index in range(len(rewards) - 1, -1, -1):\n        total += rewards[index]\n        returns[index] = total\n    if \"A\" in states:\n        selected.append(returns[states.index(\"A\")])\nanswer = sum(selected) / len(selected)\nprint(answer)\n",
+      "expected": 2.0,
+      "explanation": "দুটি পর্বে A-এর First-Visit স্যাম্পল হলো [4, 0], তাই গড় মান 2.0। অন্যদিকে Every-Visit স্যাম্পল তিনটি: [4, 3, 0]। বিশ্লেষণের সময় স্যাম্পলগুলো কোন একক (Episode নাকি Visit) থেকে এসেছে তা সবসময় আলাদা করে উল্লেখ করুন।"
+    },
+    {
+      "id": "ch41_e_discounted_gradient_revision",
+      "title": "Discounted REINFORCE-এর নিখুঁত প্রত্যাশিত Gradient",
+      "prompt": "দুটি স্বাধীন Bernoulli কাজের প্রতিটির সম্ভাব্যতা p = 0.5, প্রতি ধাপের প্রাপ্তি গৃহীত কাজের সমান এবং gamma = 0.5। চারটি সম্ভাব্য Trajectory তালিকাভুক্ত করে মূল লক্ষ্যমাত্রা J = E[G_0]-এর নিখুঁত Logit Gradient বের করুন (Reward-to-Go সূত্রে বাইরের gamma^t গুণকটি অবশ্যই রাখবেন)।",
+      "starter": "# Compute trajectory probabilities and sum the correctly weighted scores.\n",
+      "solution": "from itertools import product\n\nprobability, discount = 0.5, 0.5\nanswer = 0.0\nfor first, second in product([0, 1], repeat=2):\n    first_return = first + discount * second\n    second_return = second\n    signal = (first - probability) * first_return\n    signal += discount * (second - probability) * second_return\n    answer += 0.25 * signal\nprint(answer)\n",
+      "expected": 0.375,
+      "explanation": "নিখুঁত প্রত্যাশিত Gradient হলো 0.375, যা সরাসরি J = 1.5 × sigmoid(θ)-এর ডেরিভেটিভ হিসাব করলেও মিলে যায়। সাধারণ যোগফলের এই প্রথায় বাইরের Discount গুণকটি বাদ দিলে ভুলবশত প্রত্যাশিত মান 0.5 চলে আসে।"
+    },
+    {
+      "id": "ch41_e_ppo_negative_revision",
+      "title": "PPO-র ঋণাত্মক Advantage শাখার হিসাব",
+      "prompt": "PPO-র Clipped Surrogate ফাংশনটি লিখুন। যখন অনুপাত ratio = 1.5, advantage = −2 এবং epsilon = 0.2 হয়, তখন ম্যাক্সিমাইজযোগ্য Clipped Objective-টির মান কত হবে? পাশাপাশি ধনাত্মক Advantage ও ছোট অনুপাতের ক্ষেত্রগুলোও মিলিয়ে দেখুন।",
+      "starter": "def clipped_objective(ratio, advantage, epsilon):\n    pass\n",
+      "solution": "def clipped_objective(ratio, advantage, epsilon):\n    clipped = min(max(ratio, 1 - epsilon), 1 + epsilon)\n    return min(ratio * advantage, clipped * advantage)\n\n\nassert abs(clipped_objective(1.5, 2, 0.2) - 2.4) < 1e-12\nassert abs(clipped_objective(0.5, -2, 0.2) + 1.6) < 1e-12\nanswer = clipped_objective(1.5, -2, 0.2)\nprint(answer)\n",
+      "expected": -3.0,
+      "explanation": "এখানে Unclipped পদ হলো −3.0 এবং অনুপাত 1.2-এ ক্লিপ হয়ে Clipped পদ হলো −2.4; তাই দুটির min নিলে মান দাঁড়ায় −3.0। ঋণাত্মক Advantage-এ খারাপ কাজের সম্ভাব্যতা বেড়ে গেলে এই পূর্ণ জরিমানাই নীতিটিকে ভুল শোধরাতে বাধ্য করে।"
+    },
+    {
+      "id": "ch41_e_pdis_variance_revision",
+      "title": "Per-Decision Importance Sampling-এর নিখুঁত Variance",
+      "prompt": "দুই ধাপে পুরোনো Behavior সম্ভাব্যতা [0.4, 0.3], নতুন Target সম্ভাব্যতা [0.8, 0.6], প্রতি ধাপের প্রাপ্তি গৃহীত কাজের সমান এবং gamma = 0.5। চারটি সম্ভাব্য Trajectory থেকে Per-Decision IS এস্টিমেটরের নিখুঁত Variance বের করুন এবং গড় মান আসল Target Value = 1.1-এর সাথে মেলে কি না যাচাই করুন।",
+      "starter": "# Weight each reward by the likelihood ratios up to that time.\n",
+      "solution": "from itertools import product\n\nprobabilities, estimates = [], []\nbehavior, target = [0.4, 0.3], [0.8, 0.6]\nfor first, second in product([0, 1], repeat=2):\n    actions = [first, second]\n    logged = [b if a else 1 - b for a, b in zip(actions, behavior)]\n    desired = [p if a else 1 - p for a, p in zip(actions, target)]\n    ratios = [p / b for p, b in zip(desired, logged)]\n    probabilities.append(logged[0] * logged[1])\n    estimates.append(ratios[0] * first + 0.5 * ratios[0] * ratios[1] * second)\nmean = sum(p * value for p, value in zip(probabilities, estimates))\nassert abs(mean - 1.1) < 1e-12\nanswer = sum(p * (value - mean) ** 2 for p, value in zip(probabilities, estimates))\nprint(answer)\n",
+      "expected": 1.85,
+      "explanation": "Per-Decision এস্টিমেটরের নিখুঁত Variance হলো 1.85, যেখানে একই প্রক্রিয়ায় সাধারণ Full-Trajectory এস্টিমেটরের Variance হয় প্রায় 3.495714। এমন তুলনা উপস্থাপনের সময় পরিবেশের স্থায়িত্ব ও Propensity-র নির্ভুলতার শর্তগুলোও সাথে উল্লেখ করুন।"
+    }
+  ],
+  "interviews": [
+    {
+      "title": "RL নাকি সাধারণ Supervised Learning?",
+      "tag": "Problem formulation",
+      "prompt": "একটি ডেলিভারি রাউটিং বা কন্টেন্ট রিকমেন্ডেশন সমস্যায় সত্যিই পূর্ণাঙ্গ RL দরকার কি না, তা আপনি কীভাবে বিচার করবেন?",
+      "answer": "আমি শুরুতেই তিনটি মৌলিক প্রশ্ন করব: আজকের নেওয়া Action কি ভবিষ্যতের State বা ইউজারের পরবর্তী আচরণ বদলে দিচ্ছে, ভালো-মন্দের সংকেত কি বিলম্বিত (Delayed Reward) হয়ে আসছে, এবং লগে শুধু গৃহীত কাজের আংশিক ফিডব্যাক পাওয়া যাচ্ছে কি না। প্রথমেই State, বাস্তবে দৃশ্যমান Observation, অনুমোদিত Action, Reward এবং Horizon খাতায় স্পষ্ট করে লিখে একটি সরল Baseline নেব। একই সাথে প্রোডাকশনে নিরাপদ Exploration-এর অনুমোদিত সীমা ও ফলাফলের প্রাপ্যতা নির্ধারণ করব। যদি দেখা যায় এটি স্থির Label-এর সমস্যা যেখানে আজকের সিদ্ধান্ত ভবিষ্যতের পরিস্থিতি বদলায় না, তবে অযথা জটিল RL না এনে শক্তিশালী Supervised Baseline-এর সাথেই আগে তুলনা করব।",
+      "prerequisiteLessons": [
+        "ch41_contract",
+        "ch41_mdp"
+      ]
+    },
+    {
+      "title": "Bellman Equation-এর গাণিতিক ডেরিভেশন",
+      "tag": "Mathematics",
+      "prompt": "Return-এর পুনরাবৃত্তিমূলক (Recursive) সংজ্ঞা থেকে কীভাবে Bellman Expectation এবং Bellman Optimality সমীকরণ দুটি প্রতিপাদন করবেন?",
+      "answer": "আমি শুরু করব Return-এর মৌলিক সম্পর্ক G_t = R_{t+1} + γ G_{t+1} থেকে, এবং বর্তমান State ও গৃহীত কাজের সাপেক্ষে এর শর্তসাপেক্ষ গড় (Conditional Expectation) নেব। নির্দিষ্ট নীতি π-এর মান V^π বের করার সময় কাজের সম্ভাব্যতা দিয়ে গড় নিলে Bellman Expectation সমীকরণ পাওয়া যায়, আর সেরা মান V*-এর ক্ষেত্রে কাজের গড়ের বদলে সর্বোচ্চ মান (Action Maximum) নিলে পাওয়া যায় Bellman Optimality সমীকরণ। উভয় ক্ষেত্রেই সত্যিকারের Terminal অবস্থার ভবিষ্যৎ Continuation শূন্য ধরা হয় এবং সেখানে পৌঁছানোর প্রাপ্তি ওই ট্রানজিশনেই যুক্ত থাকে। সবশেষে সসীম ও Discounted অপারেটরের Contraction ধর্ম এবং জানা মডেলের শর্ত উল্লেখ করে Lab-এর স্থির নীতির রৈখিক সমাধান ও Greedy সামঞ্জস্য দিয়ে উত্তরটি যাচাই করব।",
+      "prerequisiteLessons": [
+        "ch41_bellman",
+        "ch41_policy_iteration"
+      ]
+    },
+    {
+      "title": "ঝুঁকিপূর্ণ পরিবেশে SARSA বনাম Q-Learning",
+      "tag": "Control",
+      "prompt": "পরিবেশে ঝুঁকিপূর্ণ Exploration চালু থাকলে SARSA এবং Q-Learning-এর শেখার Target ও আচরণ কীভাবে আলাদা হয়ে যায়?",
+      "answer": "মূল পার্থক্যটি পরের ধাপের Bootstrap করার নিয়মে: SARSA পরের অবস্থানে এজেন্ট বাস্তবে যে কাজটি বেছে নিয়েছে তার Q মান নেয়, আর Q-Learning নেয় পরের অবস্থানের সম্ভাব্য সর্বোচ্চ Greedy Q মান। যেমন Next Q = [2, 5] থাকা অবস্থায় অন্বেষণের কারণে বাস্তবে 0 নম্বর কাজ নেওয়া হলে (Reward = 1, γ = 0.9) SARSA ও Q-Learning-এর লক্ষ্যমাত্রা হয় যথাক্রমে 2.8 এবং 5.5! ফলে একটি স্থির অন্বেষণ হার (Constant Exploration) চালু থাকলে সেই আচরণের ঝুঁকি SARSA-র শেখা মানের ভেতরে ধরা থাকে। ইন্টারভিউতে এর পাশাপাশি আমি টেবিলভিত্তিক ভিজিট ও Learning Rate শর্ত, চূড়ান্ত নিখুঁত সীমার জন্য GLIE শর্ত এবং Function Approximation-এর সীমাবদ্ধতাগুলোও ব্যাখ্যা করব।",
+      "prerequisiteLessons": [
+        "ch41_control",
+        "ch41_td"
+      ]
+    },
+    {
+      "title": "Adaptive Bandit বনাম স্থির A/B Test",
+      "tag": "Experimentation",
+      "prompt": "রিকমেন্ডেশন সিস্টেমে Click অপ্টিমাইজ করার জন্য আপনি কখন Bandit অ্যালগরিদম ব্যবহার করবেন আর কখন স্থির Randomized A/B Test বেছে নেবেন?",
+      "answer": "সিদ্ধান্ত নেওয়ার আগে আমি মূল Objective এবং কাঙ্ক্ষিত Estimand সুনির্দিষ্ট করব। Bandit অ্যালগরিদম ডেটা সংগ্রহের সাথে সাথেই ভালো বিকল্পে ট্রাফিক বাড়িয়ে (Adaptive Allocation) Exploration ও Exploitation চালায়, যা চলাকালীন Regret কমায়। অন্যদিকে স্থির Randomized Test-এর বরাদ্দ ও বিশ্লেষণ একটি সুনির্দিষ্ট Treatment প্রভাব পরিষ্কারভাবে পরিমাপ করে। তবে বিলম্বিত প্রাপ্তি (Delayed Rewards), সিদ্ধান্তের সময়ের Propensity লগিং, বৈধ বিকল্পের ছাঁকনি, ইউজারদের পারস্পরিক প্রভাব (Interference) এবং থামার নিয়ম—দুই নকশাতেই সতর্কভাবে বিবেচনা করতে হবে। এর ভিত্তির জন্য Book 2 (Classical ML) · Chapter 3 (Model Evaluation & Experiment Design)-এর তুলনা এবং আরও গভীর কার্যকারণ বিশ্লেষণের জন্য Book 6 (ML Systems & Interviews) · Chapter 3 (Experimentation & Causal Reasoning)-এর ধারণা ব্যবহার করব।",
+      "prerequisiteLessons": [
+        "ch41_bandits",
+        "ch05_experiments"
+      ]
+    },
+    {
+      "title": "DQN প্রশিক্ষণের অস্থিরতা ডিবাগ করা",
+      "tag": "PyTorch debugging",
+      "prompt": "ধরুন আপনার DQN প্রশিক্ষণে হঠাৎ Loss বিস্ফোরিত হচ্ছে এবং Q মানগুলো অবাস্তব রকম বড় দেখাচ্ছে—আপনি কী কী পরীক্ষা করবেন?",
+      "answer": "আমি প্রথমেই একটি ছোট ব্যাচ স্থির করে ডেটা যাচাই করব: Reward ও Next State-এর সামঞ্জস্য ঠিক আছে কি না, এবং True Terminal ও বাহ্যিক Truncation আলাদাভাবে মাস্ক করা হয়েছে কি না। এরপর নেটওয়ার্ক ইমপ্লিমেন্টেশনে গৃহীত কাজের মান তোলার gather অপারেশনের Tensor Shape, মানগুলোর সসীমতা, Target Network-এর গ্র্যাডিয়েন্ট detach, Target আপডেটের হার এবং Replay Buffer-এর ডেটা বণ্টন পরীক্ষা করব। হাতে হিসাব করা ক্ষুদ্র প্রত্যাশিত লক্ষ্যমাত্রার সাথে মিলিয়ে দেখব প্রথম কোথায় বিচ্যুতি শুরু হচ্ছে, এবং পরিশেষে Function Approximation, Bootstrapping ও Off-Policy Learning-এর পারস্পরিক ক্রিয়া (Deadly Triad) বিবেচনায় নিয়ে সমাধান করব।",
+      "prerequisiteLessons": [
+        "ch41_dqn",
+        "ch15_modes"
+      ]
+    },
+    {
+      "title": "Policy Gradient-এ Baseline-এর গাণিতিক ভূমিকা",
+      "tag": "Derivation",
+      "prompt": "একটি Action-নিরপেক্ষ Baseline কেন প্রত্যাশিত Policy Gradient না বদলেও সাহায্য করতে পারে, এবং ক্ষুদ্র ব্যাচে এতে কী সূক্ষ্ম সমস্যা হতে পারে?",
+      "answer": "কেবল অবস্থানের ওপর নির্ভরশীল একটি স্থির বেসলাইনের প্রত্যাশিত Score পদটি b(s) × ∇(∑ π) = 0 হয়ে কেটে যায়, ফলে গড় গ্র্যাডিয়েন্ট অক্ষুণ্ণ রেখেই Variance কমানো যায়। এছাড়া J = E[G_0]-এর সাধারণ Episode যোগফল হলে আমি বাইরের γ^t ওজনটি বজায় রাখব। তবে মনে রাখতে হবে, বেসলাইনকে কোডে Actor Target হিসেবে detach করা এবং একই স্যাম্পল থেকে বেসলাইন অনুমান করার পরিসংখ্যানগত নির্ভরশীলতা দুটি আলাদা বিষয়! যেমন দুই স্যাম্পলের Bandit-এ একই ব্যাচের গড় প্রাপ্তিকে বেসলাইন ধরলে প্রত্যাশিত গ্র্যাডিয়েন্ট 0.25 থেকে কমে 0.125 হয়ে যায়, অথচ Leave-One-Out বেসলাইন নিলে তা আবার নিখুঁত 0.25 দেয়।",
+      "prerequisiteLessons": [
+        "ch41_policy_gradient"
+      ]
+    },
+    {
+      "title": "Support-বিহীন লগে Offline Policy Evaluation",
+      "tag": "Counterfactual reasoning",
+      "prompt": "পুরোনো Logging Policy একটি নির্দিষ্ট Action কখনোই নেয়নি, অথচ আপনার নতুন Target Policy সেটি নেয়—এমন অবস্থায় অফলাইনে নীতির মান কীভাবে অনুমান করবেন?",
+      "answer": "নতুন নীতির সমর্থিত কোনো কাজ পুরোনো Behavior Policy কখনোই না নিয়ে থাকলে সাধারণ Importance Sampling-এর মৌলিক Support শর্ত ভেঙে পড়ে। ওই অদেখা ফলাফলের মান জানতে হলে হয় নিরাপদ গণ্ডিতে নতুন অনুমোদিত ডেটা সংগ্রহ করতে হবে, নতুবা অতিরিক্ত মডেলিং অনুমানের (Extrapolation Assumptions) আশ্রয় নিতে হবে। এছাড়া ধারাবাহিক সমস্যায় নীতি বদলের কারণে পরবর্তী অবস্থানের বণ্টন বদলে যায় বলে Trajectory বা Per-Decision অনুপাত প্রয়োজন হয়; রিপোর্টে আমি অবশ্যই Propensity-র নির্ভুলতা, প্রাপ্তির সময়ক্রম, পরিবেশের অভিন্নতা ও অনিশ্চয়তা তুলে ধরব।",
+      "prerequisiteLessons": [
+        "ch41_offline_evaluation",
+        "ch41_bandits"
+      ]
+    },
+    {
+      "title": "Simulator-এর সাফল্য বনাম প্রোডাকশন ডিপ্লয়মেন্ট",
+      "tag": "Evidence",
+      "prompt": "একটি Simulator-এ পাওয়া উচ্চ Return কেন সরাসরি প্রোডাকশনে লঞ্চ করার উপযুক্ত প্রমাণ নয়?",
+      "answer": "প্রথমেই দেখতে হবে Simulator-এর গতিপ্রকৃতি, Reward সংজ্ঞা এবং শুরুর ইউজার জনগোষ্ঠী আসল প্রোডাকশন সমস্যার সাথে কতটা মেলে। নির্ভরযোগ্য প্রমাণের জন্য স্বতন্ত্র Evaluation Episodes, একাধিক Random Seeds, শক্তিশালী Baseline, ফলাফলের Uncertainty এবং ব্যর্থতার উদাহরণ (Failure Traces) থাকা আবশ্যক। ঠিক যেমন আমাদের Lab-এর জানা মডেলের Planning ফলাফল থেকে বাস্তবে শেখা নীতির সাধারণীকরণ দাবি করতে নতুন প্রমাণ লাগে, তেমনি প্রস্তাবিত ডিপ্লয়মেন্টের বাস্তব ঝুঁকি, রিয়েল-টাইম Feature প্রাপ্যতা এবং জরুরি Fallback ব্যবস্থা আলাদাভাবে যাচাই করতে হবে।",
+      "prerequisiteLessons": [
+        "ch41_review",
+        "ch41_optimality"
+      ]
+    },
+    {
+      "title": "Discounted Actor Objective ও Detach সীমানা যাচাই",
+      "tag": "Policy-gradient coding",
+      "prompt": "ধরা যাক J = E[G_0], যেখানে G_t ধাপ t থেকে Discount গোনে। দুই ধাপের Bernoulli উদাহরণে বাইরের γ^t বাদ দিলে কী ঘটে, এবং Baseline detach করলেই কি একই ব্যাচের নির্ভরশীলতা দূর হয়?",
+      "answer": "সাধারণ Episode যোগফলের সঠিক গ্র্যাডিয়েন্টে অবশ্যই γ^t গুণকটি থাকে। প্রতি ধাপের প্রাপ্তি গৃহীত কাজের সমান, p = 0.5 এবং γ = 0.5 হলে নিখুঁত গ্র্যাডিয়েন্ট হয় 0.375; কিন্তু বাইরের ডিসকাউন্ট বাদ দিলে তা ভুলবশত 0.5 হয়ে যায়। সরাসরি Objective-এর ডেরিভেটিভ এবং সব যাত্রাপথের গণনা মিলিয়ে আমি এটি যাচাই করব।\n\nঅন্যদিকে detach কেবল কম্পিউটেশন গ্রাফের সীমানা নির্ধারণ করে; একই স্যাম্পল থেকে বেসলাইন ফিট করা হলে পরিসংখ্যানগত নির্ভরশীলতা থেকেই যেতে পারে। তাই স্থির Action-নিরপেক্ষ বেসলাইনের শূন্যে কেটে যাওয়া, Leave-One-Out উদাহরণ এবং ফিট করা Critic-এর শর্তগুলো আমি আলাদাভাবে ব্যাখ্যা করব।",
+      "prerequisiteLessons": [
+        "ch41_policy_gradient"
+      ]
+    },
+    {
+      "title": "Monte Carlo Visit গণনা ও মূল্যায়নের একক",
+      "tag": "RL statistics",
+      "prompt": "একই Episode-এ একটি State বারবার ফিরে আসে। আপনি কীভাবে First-Visit ও Every-Visit Monte Carlo কোডে বাস্তবায়ন করবেন এবং ফলাফলের Uncertainty-তে কোন এককটি রাখবেন?",
+      "answer": "আমি প্রথমে শেষ দিক থেকে উল্টো পথে প্রতিটি ধাপের Return হিসাব করে নেব, তারপর সময়ের আসল ক্রমে (Original Time Order) State-গুলো স্ক্যান করব। First-Visit-এর জন্য প্রতিটি পর্বের নিজস্ব একটি seen সেট রাখব, আর Every-Visit-এ সবগুলো উপস্থিতিই নেব। যেমন ([A, B, A], [1, 0, 3]) এবং ([A], [0]) পর্ব দুটিতে γ = 1 হলে A-এর গড় আসে যথাক্রমে 2.0 এবং 7/3।\n\nমনে রাখতে হবে, একই Episode-এর ভেতরের একাধিক ভিজিট পরস্পর নির্ভরশীল হতে পারে। তাই নীতি ও পরিবেশের পরিচয় স্পষ্ট রেখে স্বতন্ত্র ও স্বাধীন Evaluation Episodes-কে মূল একক ধরে Uncertainty হিসাব করব—কেবল মোট ভিজিট সংখ্যাকে কখনোই স্বাধীন স্যাম্পল সংখ্যা বলব না।",
+      "prerequisiteLessons": [
+        "ch41_monte_carlo"
+      ]
+    }
+  ],
+  "book": {
+    "order": 22,
+    "part": "Book 3 · Deep Learning & RL",
+    "prerequisites": [
+      "chapter_08",
+      "chapter_16",
+      "chapter_21"
+    ],
+    "purpose": "Book 3-এর আগের অধ্যায়গুলোতে আমরা স্থির Dataset থেকে শক্তিশালী Deep Learning Model তৈরি ও যাচাই করা শিখেছি। এই শেষ অধ্যায়ে আমরা একক Prediction-এর গণ্ডি পেরিয়ে এমন সমস্যার মুখোমুখি হব, যেখানে আজকের নেওয়া সিদ্ধান্তই আগামীকালের Data ও ফলাফল বদলে দেয়। Sequential Decision Making, Exploration এবং Policy Optimization-এর এই ভিত্তিই পরবর্তী বইগুলোতে LLM Alignment এবং Recommender System-এর Feedback Loop বোঝার মূল চাবিকাঠি হবে।",
+    "outcomes": [
+      "State, Action, Reward এবং Horizon সুনির্দিষ্টভাবে সংজ্ঞায়িত করে একটি সমস্যাকে Markov Decision Process (MDP) হিসেবে সাজাতে পারা এবং Bellman Planning ও Policy Evaluation-এর হিসাব মেলানো।",
+      "Monte Carlo, Temporal-Difference (TD), SARSA এবং Q-Learning-এর মধ্যে Sampling ও Bootstrapping-এর পার্থক্য বোঝা এবং True Terminal ও Truncation Mask সঠিকভাবে যাচাই করা।",
+      "Multi-Armed ও Contextual Bandit-এ Exploration বনাম Exploitation-এর ভারসাম্য, UCB ও Regret-এর গাণিতিক যুক্তি ব্যাখ্যা করতে পারা।",
+      "Discounted Policy Gradient, Baseline, Actor-Critic ও PPO Surrogate Objective বোঝা এবং Logged Data দিয়ে Offline Policy Evaluation-এর Support ও Uncertainty-র সীমাবদ্ধতা হিসাব করতে পারা।"
+    ],
+    "recall": [
+      "একটি Episode সত্যিই শেষ হওয়া (True Terminal) আর সময়ের সীমায় থামিয়ে দেওয়া (Rollout Truncation)—এই দুই ক্ষেত্রে Bootstrapping-এর নিয়ম কেন আলাদা হয়?",
+      "যখন Model-এর নেওয়া Action নিজেই ভবিষ্যতের State এবং সংগৃহীত Data বদলে দেয়, তখন সাধারণ Supervised Learning-এর Fixed-Label Evaluation কেন যথেষ্ট থাকে না?"
+    ],
+    "bridge": "এর মধ্য দিয়েই আমাদের Book 3 (Deep Learning & RL)-এর যাত্রা শেষ হচ্ছে; পরের ধাপে আমরা শুরু করব Book 4 (LLMs & GenAI) · Chapter 1 (LLM Foundations)। আর এই অধ্যায়ে শেখা Policy Optimization ও Offline Evaluation-এর ধারণাগুলো সরাসরি কাজে লাগবে Book 4 · Chapter 4 (Fine-tuning & Adaptation)-এর Preference Alignment এবং Book 5 · Chapter 4 (RecSys Evaluation & Feedback Loops)-এর আলোচনায়।",
+    "bookId": "deep_learning",
+    "bookChapter": 8
+  }
+}

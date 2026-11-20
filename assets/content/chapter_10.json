@@ -1,0 +1,1557 @@
+{
+  "id": "chapter_10",
+  "number": 10,
+  "title": "Ensembles & Boosting",
+  "shortTitle": "Ensembles & Boosting",
+  "displayTitle": "Ensembles\n& Boosting",
+  "subtitle": "একক Tree-এর অস্থিরতা পেরিয়ে একাধিক Model-এর সমন্বয়—Diversity, Bagging, Stacking ও Boosting-এর পূর্ণাঙ্গ গাণিতিক ও ব্যবহারিক যাত্রা।",
+  "description": "Bagging, Random Forest, AdaBoost ও Gradient Boosting: গভীর derivations, বাস্তব data labs, runnable code ও interview practice।",
+  "difficulty": "Intermediate",
+  "lab": "ensembles",
+  "lessons": [
+    {
+      "id": "ch10_averaging",
+      "title": "একাধিক Model কেন প্রয়োজন?",
+      "subtitle": "Bias, Variance, Diversity এবং Correlated Error-এর গাণিতিক সম্পর্ক",
+      "duration": "30 min",
+      "icon": "hub",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "একটি একক Tree থেকে Ensemble-এর ধারণা",
+          "body": "আগের অধ্যায়ে (Book 2, Chapter 4: Decision Trees) আমরা দেখেছি, একটি একক Decision Tree বেশ সংবেদনশীল—Training Data-য় সামান্য পরিবর্তন এলেই পুরো Tree-এর গঠন ও Split-গুলো অনেকখানি বদলে যেতে পারে। স্বভাবতই প্রশ্ন জাগে: একটিমাত্র Tree-এর ওপর পুরো ভরসা না করে আমরা যদি বেশ কয়েকটি Tree বা Predictor একসঙ্গে ব্যবহার করি, তবে কি এই অস্থিরতা (High Variance) কমানো সম্ভব? ঠিক এই প্রশ্নটি থেকেই শুরু হয় আমাদের Ensemble Learning-এর যাত্রা।\n\nতবে একটা বিষয় শুরুতেই পরিষ্কার থাকা দরকার—হুবহু একই ভুল করে এমন ১০০টি Model একসঙ্গে জড়ো করলেই কিন্তু ভুল জাদুমন্ত্রে উধাও হয়ে যায় না! একটি ভালো Ensemble গড়তে হলে প্রতিটি একক Model-এর নিজস্ব সক্ষমতার পাশাপাশি তাদের ভুলের ধরনের ভিন্নতা (Diversity)-ও সমান গুরুত্বপূর্ণ। নিচের সমীকরণগুলোতে আগে দেখে নিই, B-সংখ্যক Model-এর গড় Prediction নিলে তার সামগ্রিক Variance কীভাবে প্রতিটি Model-এর নিজস্ব Variance এবং তাদের মধ্যকার Covariance বা Correlation-এর ওপর নির্ভর করে। এরপর ধাপে ধাপে আমরা দেখব কীভাবে Bagging এই অস্থিরতা কমায়, আর কীভাবে Boosting আগের ধাপের ভুলগুলোর দিকে বিশেষ নজর দিয়ে ক্রমান্বয়ে নতুন Predictor যোগ করে।"
+        },
+        {
+          "type": "math",
+          "title": "গড় Prediction-এর সমীকরণ",
+          "body": "\\overline f(x)=\\frac1B\\sum_{b=1}^{B}f_b(x)"
+        },
+        {
+          "type": "math",
+          "title": "গড় Prediction-এর Variance নির্ণয়",
+          "body": "\\mathrm{Var}(\\overline f)=\\frac1{B^2}\\left(\\sum_b\\mathrm{Var}(f_b)+2\\sum_{b<c}\\mathrm{Cov}(f_b,f_c)\\right)"
+        },
+        {
+          "type": "math",
+          "title": "সমান Variance ও সমান Correlation-এর বিশেষ রূপ",
+          "body": "\\mathrm{Var}(\\overline f)=\\sigma^2\\left[\\rho+\\frac{1-\\rho}{B}\\right]"
+        },
+        {
+          "type": "text",
+          "title": "সমীকরণের শর্ত ও Variance কমার নিম্নসীমা",
+          "body": "ওপরের তৃতীয় সমীকরণটি তখনই প্রযোজ্য, যখন একটি নির্দিষ্ট Input x-এর জন্য প্রতিটি Base Model-এর সসীম Variance সমান (σ²) হয় এবং যেকোনো দুটি ভিন্ন Model-এর মধ্যকার Pairwise Correlation একই (ρ) থাকে। এখানে একটি মৌলিক প্রশ্ন সবসময় মনে রাখবেন: এই Variance বা Randomness আসলে কোন প্রক্রিয়া থেকে আসছে? সাধারণত বারবার Data Resampling বা ভিন্ন Random Seed দিয়ে পুনরায় Training করার প্রক্রিয়া থেকেই এই ভিন্নতা তৈরি হয়।\n\nএকটি ছোট সংখ্যার হিসাব করলেই বিষয়টি পরিষ্কার হয়ে যাবে। ধরা যাক, ρ = 0.25, σ² = 4 এবং B = 10। তাহলে সমীকরণ অনুযায়ী আমাদের গড় Prediction-এর Variance দাঁড়াবে 4 × (0.25 + 0.75 / 10) = 1.3, যা একক Model-এর Variance 4-এর চেয়ে অনেক কম! কিন্তু খেয়াল করুন, আমরা যদি Model-এর সংখ্যা বাড়াতে বাড়াতে অসীমের দিকে নিয়ে যাই (B → ∞), তবুও দ্বিতীয় অংশটি শূন্য হয়ে যাওয়ার পর σ²ρ = 4 × 0.25 = 1 মানের একটি অলঙ্ঘনীয় নিম্নসীমা (Floor) রয়েই যায়। কেবল তখনই গড় Variance পুরোপুরি শূন্যের দিকে যেতে পারে যখন Base Prediction-গুলো পরস্পর স্বাধীন (ρ = 0) হয়। বাস্তবে একই বা সমাপতিত (Overlapping) Training Dataset-এর ওপর শেখানো Model-গুলোর ভুল কখনোই পুরোপুরি স্বাধীন হয় না—তাই অন্ধভাবে ρ = 0 ধরে নেওয়া একটি বড় তাত্ত্বিক ভুল।"
+        },
+        {
+          "type": "code",
+          "title": "Soft বনাম Hard Aggregation এবং Variance যাচাই",
+          "body": "import numpy as np\n\np = np.array([0.49, 0.49, 0.99])  # explicit mathematical probabilities\nsoft = p.mean()\nhard = (p > 0.5).mean()\nassert soft > 0.5 and hard < 0.5\nvariance = 4 * (0.25 + (1 - 0.25) / 10)\nassert np.isclose(variance, 1.3)\nprint(soft, hard, variance)\n"
+        },
+        {
+          "type": "text",
+          "title": "আমরা আসলে ঠিক কী গড় করছি?",
+          "body": "ওপরের কোডে একটি অত্যন্ত গুরুত্বপূর্ণ সূক্ষ্মতা উঠে এসেছে। Regression সমস্যার ক্ষেত্রে সরাসরি সংখ্যাসূচক Prediction-গুলোর গড় নেওয়া খুবই স্বাভাবিক। কিন্তু Classification-এ আমরা দুটি ভিন্ন পথে এগোতে পারি: প্রতিটি Model-এর Predicted Class Probability-গুলোর গড় নেওয়া (Soft Voting / Averaging), অথবা প্রতিটি Model আগে যে চূড়ান্ত Class বেছে নিয়েছে তাদের সংখ্যাগরিষ্ঠ ভোট নেওয়া (Hard Voting)। কোডের উদাহরণেই দেখুন, তিনটি Model-এর Probability [0.49, 0.49, 0.99] হলে Soft Average আসে প্রায় 0.657 (> 0.5, তাই চূড়ান্ত Class 1), অথচ Hard Majority নিলে প্রথম দুটি Model 0 বলায় গড় ভোট আসে মাত্র 0.333 (< 0.5, তাই চূড়ান্ত Class 0)!\n\nএখানে ইঞ্জিনিয়ারিং সতর্কতা হিসেবে খেয়াল রাখতে হবে যেন সবগুলো Model-এর Class Order এবং Label Encoding হুবহু এক থাকে—নইলে একটি Model-এর Class 0-এর Probability অন্যটির Class 1-এর সাথে যোগ হয়ে বিপর্যয় ঘটাবে। তাছাড়া Raw Logit-এর গড় নেওয়া আর Probability-এর গড় নেওয়া গাণিতিকভাবে এক কথা নয় (কারণ Sigmoid বা Softmax একটি অরৈখিক রূপান্তর)। আর যদি সাধারণ গড়ের বদলে Weighted Combination ব্যবহার করেন, তবে সেই Weight-গুলো কোন Validation পদ্ধতিতে নির্ধারণ করা হয়েছে তা স্পষ্টভাবে নথিবদ্ধ করতে ভুলবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে উত্তর দেবেন",
+          "body": "Interview-এ প্রায়ই একটি জনপ্রিয় ভ্রান্ত ধারণা যাচাই করা হয়: “Ensemble-এ আরও বেশি Tree যোগ করলে Error সবসময়ই কমতে থাকবে—কথাটি কি সত্য?” উত্তরে শুরুতেই বিনয়ের সাথে এই ভুলটি ধরিয়ে দিন। ব্যাখ্যা করুন যে, B বাড়ালে কেবল Variance-এর (1 - ρ) / B অংশটুকুই কমে; Correlated Error-এর কারণে তৈরি হওয়া ρσ² সীমা, সসীম Sample-এর সীমাবদ্ধতা কিংবা মূল Model-এর নিজস্ব Bias কখনোই শুধু সংখ্যা বাড়িয়ে দূর করা যায় না। এর পাশাপাশি ব্যবহৃত Evaluation Metric এবং অতিরিক্ত Tree চালানোর Compute ও Latency খরচের দিকটিও আলাদাভাবে উল্লেখ করুন। সবশেষে যোগ করুন যে, একাধিক Model-এর Probability গড় করলে অনেক সময় Calibration উন্নত হয় ঠিকই, তবে এটি কোনো গাণিতিক নিশ্চয়তা নয়—Held-out Validation Data-তে পরীক্ষা করেই এর প্রমাণ দিতে হবে।"
+        }
+      ]
+    },
+    {
+      "id": "ch10_bootstrap",
+      "title": "Bootstrap ও Out-of-Bag (OOB) মূল্যায়ন",
+      "subtitle": "Duplicate Sample, অনন্য কাভারেজ ও Zero-Support পরিস্থিতি",
+      "duration": "25 min",
+      "icon": "hub",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "একটি Bootstrap Draw কীভাবে তৈরি হয়?",
+          "body": "আগের পাঠে আমরা দেখেছি, একাধিক Model-এর গড় নিয়ে Variance কমাতে হলে তাদের মধ্যে কিছুটা ভিন্নতা (Diversity) তৈরি করা দরকার। কিন্তু আমাদের হাতে যদি কেবল একটিই Training Dataset থাকে, তবে ভিন্ন ভিন্ন Model বানানোর জন্য আলাদা আলাদা Dataset পাব কোথায়? এই সমস্যার এক চমৎকার সমাধান হলো Bootstrap Resampling।\n\nমনে করুন, আমাদের মূল Training Dataset-এ মোট n-টি Row আছে। সেখান থেকে আমরা প্রতিস্থাপনসহ (With Replacement) মোট n বার লটারির মতো Row তুলে আনি। যেহেতু প্রতিবার তোলার পর Row-টিকে আবার ঝুড়িতে ফেরত দেওয়া হচ্ছে, তাই নতুন তৈরি হওয়া Bootstrap Sample-এ কিছু Row একাধিকবার চলে আসে, আবার কিছু Row একবারও সুযোগ পায় না। যে Row-গুলো একাধিকবার আসে, তাদের এই পুনরাবৃত্তি (Multiplicity) ট্রেনিংয়ের সময় কার্যত বাড়তি Sample Weight পাওয়ার মতোই প্রভাব ফেলে। তবে সবসময় মনে রাখবেন: Bootstrap কখনোই নতুন বা স্বাধীন (Independent) বাস্তব তথ্য তৈরি করে না, বরং বিদ্যমান তথ্যেরই পুনর্বিন্যাস ঘটায়। আর কোডে নির্দিষ্ট Random Seed ব্যবহার করলে আমরা ফলাফল পুনরুৎপাদন (Reproduce) করতে পারি ঠিকই, কিন্তু তা কোনোভাবেই Sample-গুলোর পরিসংখ্যানগত স্বাধীনতা প্রমাণ করে না।"
+        },
+        {
+          "type": "math",
+          "title": "বাদ পড়ার সম্ভাবনা ও প্রত্যাশিত অনন্য Row",
+          "body": "P(i\\text{ omitted})=\\left(1-\\frac1n\\right)^n\\longrightarrow e^{-1},\\quad E[unique]=n\\left[1-\\left(1-\\frac1n\\right)^n\\right]"
+        },
+        {
+          "type": "text",
+          "title": "প্রচলিত ৬৩.২% নিয়মের প্রকৃত অর্থ ও সীমা",
+          "body": "ওপরের সমীকরণটি থেকে আমরা Machine Learning-এর একটি খুব পরিচিত সংখ্যা পাই। যখন n অনেক বড় হয় (n → ∞), তখন (1 - 1/n)^n-এর মান e⁻¹ ≈ 0.368-এর কাছাকাছি পৌঁছায়। অর্থাৎ বড় Dataset-এ n বার Draw করলে গড়ে প্রায় 63.2% অনন্য (Unique) Row ওই Bootstrap Sample-এ জায়গা পায় (যাদের বলে In-Bag), আর প্রায় 36.8% Row বাদ পড়ে যায়—যাদের আমরা বলি Out-of-Bag বা সংক্ষেপে OOB।\n\nকিন্তু সতর্ক থাকুন: এই 63.2% বা 36.8% হলো বড় সংখ্যার সীমায় একটি গড় প্রত্যাশা (Asymptotic Expectation), প্রতিটি Draw-এর বাঁধাধরা হিসাব নয়; বাস্তবে প্রতিটি Random Draw-এ এর চেয়ে কম-বেশি হওয়াটাই স্বাভাবিক। আবার আমরা যদি n বার না তুলে max_samples = m সংখ্যক বার তুলি, তবে কোনো নির্দিষ্ট Row বাদ পড়ার সম্ভাবনা হবে q = (1 - 1/n)^m। ফলে মোট B-টি স্বাধীন Bootstrap Tree তৈরি করলে একটি নির্দিষ্ট Row গড়ে B × q সংখ্যক Tree-এর কাছে OOB থাকবে। সহজেই বোঝা যায়, B-এর মান যদি খুব ছোট হয়, তবে ভাগ্যক্রমে কোনো একটি Row সব কয়টি Tree-তেই In-Bag পড়ে যেতে পারে—অর্থাৎ তার জন্য একটিও OOB Tree না পাওয়ার ঝুঁকি থাকে!"
+        },
+        {
+          "type": "text",
+          "title": "OOB Prediction-এর সঠিক হর (Denominator)",
+          "body": "এই বাদ পড়া বা OOB অংশটির সবচেয়ে সুন্দর ব্যবহার হলো—আলাদা Validation Set খরচ না করেই প্রতিটি Training Row-এর ওপর একধরনের সততার সাথে মূল্যায়ন চালানো। নিয়মটি খুব সরল: কোনো একটি নির্দিষ্ট Training Row-এর OOB Prediction বের করার সময় আমরা কেবল সেই Fitted Model বা Tree-গুলোর মতামত নেব, যাদের Bootstrap Draw-এ ওই Row-টি একদমই ছিল না।\n\nএখানেই অনেকে কোড লেখার সময় একটি মারাত্মক ভুল করে বসেন: গড় বের করার সময় মোট Tree-এর সংখ্যা B দিয়ে ভাগ করে ফেলেন! অথচ সঠিক হর (Denominator) হবে কেবল ওই নির্দিষ্ট Row-টির জন্য যোগ্য (Eligible) OOB Tree-এর সংখ্যা, মোটেও মোট B নয়। আর যদি কোনো Row-এর ক্ষেত্রে যোগ্য OOB Tree-এর সংখ্যা শূন্য হয় (Zero Support), তবে তার Prediction অবশ্যই None বা অসংজ্ঞায়িত (Undefined) রাখতে হবে এবং মূল্যায়নের সময় কত শতাংশ Row-এর ওপর স্কোর হিসাব করা গেল সেই Coverage Mask স্পষ্টভাবে জানাতে হবে। সমর্থনহীন Row-কে জোর করে 0.0 Probability বসিয়ে দেওয়া সম্পূর্ণ ভুল। পাশাপাশি মনে রাখবেন, OOB Score দেখে যদি আপনি অসংখ্য Hyperparameter যাচাই করে সেরাটি বেছে নেন, তবে সেটিও কিন্তু একধরনের Model Selection—তাই চূড়ান্ত রিপোর্টের জন্য এটি কখনোই একটি আনকোরা Held-out Test Set-এর বিকল্প হতে পারে না।"
+        },
+        {
+          "type": "code",
+          "title": "ছোট আকারের নিখুঁত গাণিতিক হিসাব",
+          "body": "import numpy as np\n\nn, m, B = 10, 10, 24\nq = (1 - 1 / n) ** m\nexpected_unique = n * (1 - q)\nexpected_oob = B * q\nassert 0 < expected_unique < n\nrng = np.random.default_rng(42)\ndraw = rng.integers(0, n, size=m)\nin_bag = np.zeros(n, dtype=bool)\nin_bag[np.unique(draw)] = True\nassert np.count_nonzero(~in_bag) == n - len(np.unique(draw))\nprint(q, expected_unique, expected_oob)\n"
+        },
+        {
+          "type": "text",
+          "title": "Row-OOB মানেই কিন্তু Group-OOB নয়",
+          "body": "ওপরের কোডে আমরা সাধারণ Row-ভিত্তিক Bootstrap দেখেছি, কিন্তু বাস্তব প্রোডাকশন ডেটায় একটি বড় ফাঁদ লুকিয়ে থাকে। ধরুন, আপনার Dataset-এ একই ব্যবহারকারীর (User) একাধিক সেশন বা Request ভিন্ন ভিন্ন Row হিসেবে আছে। এখন একটি নির্দিষ্ট Row হয়তো কোনো Tree-তে OOB থাকল, কিন্তু ওই একই User-এর অন্য তিনটি Request ঠিকই সেই Tree-এর In-Bag Training-এ ঢুকে বসে আছে! ফলে কাগজে-কলমে Row-টি OOB হলেও ব্যবহারকারীর ব্যক্তিগত আচরণের তথ্য কিন্তু ফাঁস (Information Overlap / Data Leakage) হয়ে গেছে। একইভাবে Time Series ডেটায় সাধারণ Bootstrap চালালে ভবিষ্যতের Row অতীতের ঘটনা Predict করার কাজে ব্যবহৃত হয়ে যেতে পারে।\n\nএসব ক্ষেত্রে সাধারণ Row Bootstrap-এর বদলে পুরো ইউজার বা গ্রুপ ধরে Resampling (Block / Group Bootstrap) অথবা সময় ও গ্রুপ-সচেতন আলাদা Validation পদ্ধতি প্রয়োজন। কোনো Library-এর ডিফল্ট Row-ভিত্তিক oob_score=True অপশনকে কখনোই চোখ বন্ধ করে Group-safe মনে করবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের Interactive Lab-এ OOB কীভাবে কাজ করে",
+          "body": "একটু পরের পাঠেই আপনি একটি বাস্তব Dataset-এর ওপর তৈরি আমাদের Interactive Bagging Lab দেখতে পাবেন, যেখানে প্রতিটি Training Observation-এর জন্য আলাদা আলাদা Tree-এর Predicted Probability এবং সেটি In-Bag নাকি OOB ছিল তার নিখুঁত তালিকা সংরক্ষিত আছে। সেখানে ইচ্ছে করেই প্রথম Row-টিকে প্রথম Tree-এর ভেতরে In-Bag হিসেবে রাখা হয়েছে—যাতে আপনি কেবল ১টি Tree নিয়ে OOB মোড চালু করলেই নিজের চোখে দেখতে পান কীভাবে 'No Support' পরিস্থিতি তৈরি হয়! এরপর সদস্য সংখ্যা বাড়িয়ে 24 members করলে দেখবেন কীভাবে ধীরে ধীরে OOB Support বাড়ে। তাই কোনো নির্দিষ্ট Row কয়টি Tree-তে OOB আছে তা জানতে কখনোই গড়পড়তা 36.8% দিয়ে আন্দাজ করবেন না, বরং সরাসরি আসল Membership Mask পড়ে হিসাব করবেন।"
+        },
+        {
+          "type": "text",
+          "title": "নিজের হাতে অনুশীলনের খোরাক",
+          "body": "কলম-খাতা নিয়ে n = 5 এবং m = 5-এর জন্য কোনো একটি Row বাদ পড়ার সঠিক সম্ভাবনা (4/5)^5 নিজেই বের করে দেখুন। এরপর একটু গভীরভাবে চিন্তা করুন: যদি আমাদের Dataset-এ একেকজন User-এর Request সংখ্যা অসমান হয় এবং আমরা Row-এর বদলে পুরো User ধরে Resampling করি, তবে Request-weighted গড় এবং User-weighted গড়ের মধ্যে কী পার্থক্য দাঁড়াবে? এই প্রশ্নটির উত্তর খুঁজতে আমাদের Book 1, Chapter 4 (Probability, Statistics & Inference)-এ শেখা অনুপাতের যোগফল বনাম যোগফলের অনুপাত (Ratio-of-Totals)-এর যুক্তিটি আবার মনে করে দেখুন।"
+        },
+        {
+          "type": "text",
+          "title": "ধাপে ধাপে হিসাব: একটি Row ঠিক কতবার OOB থাকে?",
+          "body": "কোডে যাওয়ার আগে চলুন আরও একটি ছোট সংখ্যাগত উদাহরণ পুরোপুরি মিলিয়ে নিই। ধরা যাক, মোট n-টি Training Row থেকে প্রতিস্থাপনসহ n বার Draw করা হচ্ছে। যেকোনো একক Draw-এ একটি নির্দিষ্ট Row বাদ পড়ার সম্ভাবনা হলো 1 - 1/n, ফলে টানা n বারই বাদ পড়ার সম্ভাবনা দাঁড়ায় q = (1 - 1/n)^n। এখন n = 4 হলে q = (3/4)^4 = 81 / 256 ≈ 0.316406। সুতরাং আমরা যদি 8-টি স্বাধীন Bootstrap Tree তৈরি করি, তবে ওই Row-টির প্রত্যাশিত (Expected) OOB Support হবে 8q = 8 × (81 / 256) = 2.53125। বলাই বাহুল্য, বাস্তবে কোনো Row তো আর আড়াইটি Tree পেতে পারে না—কোনোটি হয়তো 2-টি বা 3-টি পাবে, আবার দুর্ভাগ্যক্রমে কোনো Row-এর OOB Support শূন্যও (0) হতে পারে!"
+        },
+        {
+          "type": "code",
+          "title": "কোডে OOB Denominator ও গড় নির্ণয়",
+          "body": "rows, trees = 4, 8\nq = (1 - 1 / rows) ** rows\nprobabilities = [0.1, 0.6, 0.8]\nin_bag = [True, False, False]\neligible = [p for p, included in zip(probabilities, in_bag) if not included]\n# Divide by this row's eligible tree count.\noob_mean = sum(eligible) / len(eligible) if eligible else None\nprint(round(q, 6), trees * q, oob_mean)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "আগে নিজে ভেবে দেখুন",
+          "body": "ধরুন কোনো একটি নির্দিষ্ট Training Row দুর্ভাগ্যবশত একটি Tree-তেও OOB হিসেবে থাকেনি (সবগুলোতেই In-Bag ছিল)। এখন কোড লেখার সময় যদি আপনি তার OOB Probability হিসেবে সরাসরি 0 বসিয়ে দেন, তবে ঠিক কী ধরনের মারাত্মক ভুল ঘটবে?",
+          "solution": "আসলে ওই Row-টির ওপর মূল্যায়ন করার মতো কোনো বৈধ OOB Tree বা Evaluation Support-ই আমাদের হাতে নেই। সেখানে জোর করে 0 বসিয়ে দেওয়ার অর্থ হলো—Model-টি ওই Row-কে অত্যন্ত আত্মবিশ্বাসের সাথে Negative Class (Probability = 0) হিসেবে চিহ্নিত করেছে বলে মিথ্যা দাবি করা! এতে সামগ্রিক Loss ও Accuracy দুটোই ভুল হয়ে যাবে। সঠিক নিয়ম হলো একে Missing বা Undefined (None) হিসেবে চিহ্নিত রাখা এবং মোট কতটি Row বৈধ OOB Support পেয়েছে সেই Coverage Count আলাদাভাবে রিপোর্ট করা।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch10_bagging",
+      "title": "Bagging: সমান্তরালভাবে শেখা Ensemble",
+      "subtitle": "Bootstrap Aggregation ও প্রতিটি Fitted Model খতিয়ে দেখা",
+      "duration": "32 min",
+      "icon": "hub",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Bagging-এর মূল ট্রেনিং প্রক্রিয়া",
+          "body": "Bootstrap কীভাবে কাজ করে তা তো আমরা জানলাম। এবার সেই ধারণার সাথে প্রথম পাঠের গড় (Aggregation) করার কৌশলটি জুড়ে দিলেই তৈরি হয় Bagging—যার পূর্ণরূপ Bootstrap Aggregating। এর ট্রেনিং প্রক্রিয়াটি খুবই পরিচ্ছন্ন: মূল Dataset থেকে আলাদা আলাদা Bootstrap Sample তৈরি করে প্রতিটি Base Model-কে পরস্পরের থেকে স্বাধীনভাবে (নির্ধারিত Source Data ও Random Seed সাপেক্ষে) ট্রেনিং দেওয়া হয়, এবং শেষে সবার Prediction একত্র করা হয়।\n\nকখন এই কৌশলটি সবচেয়ে ভালো কাজ করে? যখন আমাদের Base Estimator-গুলো স্বভাবগতভাবেই কম Bias কিন্তু উচ্চ Variance-যুক্ত হয়—যেমন গভীর (Deep), Unpruned Decision Tree। গড় করার ফলে এদের এলোমেলো অস্থিরতা অনেকটাই কেটে যায়। বিপরীতে, আপনার মূল Model-টিই যদি প্রবলভাবে Biased এবং অত্যন্ত কম Variance-এর হয় (যেমন জটিল অরৈখিক ডেটার ওপর একটি সাধারণ সরলরৈখিক Model), তবে তার শত শত Bootstrap কপি গড় করেও কিন্তু মূল Bias দূর হওয়ার কোনো আশা নেই।"
+        },
+        {
+          "type": "text",
+          "title": "ভিন্নতা বা Randomness আসার উৎসগুলো কী কী?",
+          "body": "একটি Bagging Ensemble-এ একাধিক উৎস থেকে বৈচিত্র্য (Randomness) আসতে পারে এবং একজন দক্ষ ML Engineer হিসেবে প্রতিটি নিয়ন্ত্রণ-চাবিকাঠি (Knob) আলাদাভাবে চেনা জরুরি। প্রথমত রয়েছে Row-ভিত্তিক Bootstrap (max_samples), দ্বিতীয়ত চাইলে প্রতিটি Estimator-এর জন্য নির্ধারিত Feature-এর উপসেট (max_features ও bootstrap_features), এবং তৃতীয়ত খোদ Base Estimator-এর ভেতরের নিজস্ব Random Seed (যেমন সমান Impurity পেলে কোন Split-টি নেবে তার Tie-breaking)।\n\nব্যবহার করার আগে সংশ্লিষ্ট Library-এর ডকুমেন্টেশনে এই Parameter-গুলোর সঠিক আচরণ দেখে নেওয়া ভালো। বিশেষ করে একটি সূক্ষ্ম পার্থক্য সবসময় মনে রাখবেন: Bagging-এ max_features ব্যবহার করলে পুরো একটি Tree শুরু থেকে শেষ পর্যন্ত কেবল ওই নির্বাচিত Feature-গুলোর ওপরই সীমাবদ্ধ থাকে; অথচ পরের পাঠেই আমরা Random Forest-এ দেখব যে সেখানে প্রতিটি আলাদা Split করার সময় নতুন করে Feature-এর উপসেট বেছে নেওয়া হয়—দুটো কিন্তু মোটেও এক জিনিস নয়!"
+        },
+        {
+          "type": "text",
+          "title": "Prediction একত্র করার নিয়ম ও সতর্কতা",
+          "body": "বিভিন্ন Member Model থেকে পাওয়া ফলাফল যখন একসঙ্গে মেশানো হয়, তখন সবার আউটপুটের গঠন (Prediction Contract) একসূত্রে গাঁথা থাকতে হয়। যেমন Classification-এর ক্ষেত্রে প্রতিটি Member যেন ঠিক একই ক্রমে (Aligned Class Order) তাদের Probability Column-গুলো ফেরত দেয়। scikit-learn-এর BaggingClassifier ভেতরের Base Estimator যদি predict_proba সমর্থন করে তবে স্বয়ংক্রিয়ভাবে Soft Probability গড় করে; আর তা না থাকলে Hard Label ভোটের পথে যায়।\n\nএখানে একটি বাস্তব জটিলতার কথা ভাবুন: ছোট Dataset বা বিরল (Rare) Class থাকলে কোনো একটি নির্দিষ্ট Bootstrap Draw-এ হয়তো তিনটি Class-এর মধ্যে একটি Class একবারও এল না! তখন ওই Tree-টির নিজস্ব আউটপুটে কলামই থাকবে দুটি। প্রতিষ্ঠিত Library-গুলো ভেতরে ভেতরে মূল Class তালিকা মিলিয়ে শূন্য কলাম বসিয়ে এবং Sample Weight ঠিক রেখে এই ঝামেলা সামলে নেয়—কিন্তু আপনি যদি কখনো নিজের হাতে স্ক্র্যাচ থেকে Bagging লেখেন, তবে এই Edge Case-গুলোর জন্য অবশ্যই আলাদা Unit Test রাখবেন।"
+        },
+        {
+          "type": "code",
+          "title": "হাতে-কলমে Bagging ও ভেতরের Tree যাচাই",
+          "body": "import numpy as np\nfrom sklearn.ensemble import BaggingClassifier\nfrom sklearn.tree import DecisionTreeClassifier\n\nX = np.arange(12.0).reshape(-1, 1)\ny = np.array([0] * 6 + [1] * 6)\nm = BaggingClassifier(\n    estimator=DecisionTreeClassifier(max_depth=2),\n    n_estimators=8,\n    random_state=42,\n    n_jobs=1,\n).fit(X, y)\nmember = np.column_stack(\n    [\n        tree.predict_proba(X[:, features])[:, 1]\n        for tree, features in zip(m.estimators_, m.estimators_features_)\n    ]\n)\nassert np.allclose(member.mean(axis=1), m.predict_proba(X)[:, 1])\nprint(m.predict_proba([[5.5]]))\n"
+        },
+        {
+          "type": "bagging_lab",
+          "title": "Interactive Bagging ও OOB Lab",
+          "body": "ওপরের কোডে আমরা দেখেছি কীভাবে প্রতিটি আলাদা Tree-এর Predicted Probability গড় করলে হুবহু পুরো BaggingClassifier-এর চূড়ান্ত আউটপুট পাওয়া যায়। এবার এই Interactive Lab-টিতে নিজেই নাড়াচাড়া করে বিষয়টি অনুভব করুন। বিভিন্ন Observation বেছে নিন এবং বিবেচনায় নেওয়া Tree-এর সংখ্যা (Considered Members) কমিয়ে-বাড়িয়ে দেখুন। 'Only OOB' সুইচটি চালু করলে কোন কোন Tree যোগ্য (Eligible Chips) হিসেবে টিকে থাকছে আর কোনগুলো In-Bag হওয়ার কারণে বাদ পড়ছে তা সরাসরি তুলনা করুন। খেয়াল করবেন, কোনো যোগ্য OOB Tree না থাকলে Prediction অসংজ্ঞায়িত (Undefined) দেখায়। এখানে 'Hard positive votes' অংশটি কেবল বোঝার সুবিধার্থে দেওয়া একটি বাড়তি সূচক; আসল চূড়ান্ত Probability কিন্তু হিসাব করা হচ্ছে Soft Average থেকেই (দ্রষ্টব্য: দ্রুত চালানোর সুবিধার্থে এখানকার আউটপুটগুলো আগে থেকেই বাস্তব ডেটার ওপর ট্রেনিং করে রাখা হয়েছে)।"
+        },
+        {
+          "type": "text",
+          "title": "বেশি Member যোগ করার বাস্তব খরচ কোথায়?",
+          "body": "যেহেতু Bagging-এর প্রতিটি Tree পরস্পরের ওপর নির্ভরশীল নয়, তাই ট্রেনিংয়ের কাজটি সহজেই একাধিক কোর-এ সমান্তরালভাবে (Parallelize) চালানো যায়। তবে বাস্তব সার্ভারে কাজ করার সময় n_jobs এবং ভেতরের BLAS বা OpenMP Thread সংখ্যা সতর্কতার সাথে নিয়ন্ত্রণ করতে হয়, যাতে অসংখ্য প্রসেস একসাথে চালু হয়ে CPU ও Memory Oversubscription না ঘটায়।\n\nআরেকটি বাস্তব দিক হলো Inference বা Serving: নতুন একটি ডেটার Prediction দিতে গেলে কিন্তু আপনাকে সবগুলো Tree-ই চালাতে হবে! এতে মেমোরিতে Model-এর আকার বড় হয় এবং মোবাইল অ্যাপ বা রিয়েল-টাইম সিস্টেমে Latency বেড়ে যায়। তাছাড়া বেশি Tree যোগ করলে কিন্তু মূল Training Dataset-এর তথ্যের পরিমাণ বাড়ে না; তাই একটি পর্যায়ের পর Error কমা থেমে গেলে (Plateau) বৃথা হাজার হাজার Tree না বাড়িয়ে Feature-এর মান উন্নত করা বা Model-এর মূল Bias কমানোর দিকে মনোযোগ দিন।"
+        },
+        {
+          "type": "text",
+          "title": "একটি আদর্শ OOB মূল্যায়ন রিপোর্টে কী কী থাকবে?",
+          "body": "আপনি যখন কোনো প্রজেক্টে OOB মূল্যায়ন ব্যবহার করবেন, তখন কেবল একটি একক সংখ্যা রিপোর্ট না করে পুরো চিত্রটি তুলে ধরুন: মোট কতটি Row ছিল, তার মধ্যে কতটি বৈধ OOB কাভারেজ পেয়েছে (Covered Rows), গড়ে প্রতিটি Row কয়টি করে যোগ্য Tree পেয়েছে এবং কেবল সমর্থিত Row-গুলোর ওপর নির্ণীত স্কোর কত। প্রথম দিককার Model Selection-এ এই কাভারেজ-সচেতন স্কোরটি বেশ কাজের হতে পারে, তবে ডেটায় যদি একই ইউজার বা সত্তার পুনরাবৃত্তি (Repeated-profile Leakage) থাকে, তবে এটি কখনোই সৎ Group-held-out মূল্যায়নের বিকল্প নয়। আর মনে রাখবেন, ওপরের Lab-এ দেখানো প্রথম 12 rows কেবল আচরণের খুঁটিনাটি বোঝানোর জন্য নেওয়া একটি ছোট অংশ—একে পুরো জনসংখ্যার প্রতিনিধিত্বকারী নমুনা মনে করার কারণ নেই।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে উত্তর দেবেন",
+          "body": "Interview-এ যদি প্রশ্ন আসে: “ধরুন একটি Bagging Model-এর OOB Score চমৎকার এসেছে, কিন্তু নতুন Group-held-out Data-তে পারফরম্যান্স খুবই খারাপ—কেন এমন হতে পারে?” উত্তরে চারটি নির্দিষ্ট দিক খতিয়ে দেখার কথা বলুন: (১) একই Entity বা User-এর একাধিক রেকর্ড ভিন্ন ভিন্ন Row-তে ছড়িয়ে আছে কি না, (২) সময়ের ক্রম (Temporal Leakage) লঙ্ঘিত হয়েছে কি না, (৩) একই OOB Score দেখে শত শতবার Hyperparameter টিউন করে Selection Overfitting ঘটানো হয়েছে কি না, এবং (৪) Preprocessing কখন করা হয়েছে। বিশেষ করে চতুর্থ পয়েন্টটি স্পষ্ট করে বুঝিয়ে বলুন: পুরো Dataset-এর ওপর আগেভাগে Imputation বা Scaling সেরে তারপর Bootstrap করলে সব তথ্য মিলেমিশে Data Leakage ঘটে; অথচ প্রতিটি Bootstrap Draw-এর ভেতরে আলাদা Pipeline ফিট করলে মূল্যায়নটি অনেক বেশি সৎ থাকে।"
+        }
+      ]
+    },
+    {
+      "id": "ch10_forest",
+      "title": "Random Forest: প্রতিটি Split-এ নতুন বৈচিত্র্য",
+      "subtitle": "Per-Split Feature Randomness এবং শক্তি বনাম Correlation-এর ভারসাম্য",
+      "duration": "34 min",
+      "icon": "hub",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "সাধারণ Bagging থেকে Random Forest কোথায় আলাদা?",
+          "body": "সাধারণ Bagging নিয়ে কাজ করার সময় একটি খুব পরিচিত সমস্যা দেখা দেয়। ধরুন, আপনার Dataset-এ এমন একটি বা দুটি অত্যন্ত শক্তিশালী Feature আছে যা বাকি সব Feature-কে ছাপিয়ে যায়। তখন আপনি যতই ভিন্ন ভিন্ন Bootstrap Sample তৈরি করুন না কেন, প্রায় প্রতিটি Tree-ই তাদের একদম শুরুর দিককার Root বা উপরের Split-গুলোতে ঘুরেফিরে ওই একই শক্তিশালী Feature-টিকে বেছে নেবে! ফলে সব কয়টি Tree দেখতে প্রায় একই রকম হয়ে যাবে এবং তাদের ভুলের মধ্যকার Correlation (ρ) অনেক বেশি থাকবে। আর প্রথম পাঠেই তো আমরা দেখেছি, ρ বড় থাকলে শত শত Tree গড় করেও Variance খুব একটা কমানো যায় না।\n\nএই জট খোলার জন্যই এসেছে Random Forest। এটি Bootstrap Tree তৈরির পাশাপাশি প্রতিটি আলাদা Node Split করার মুহূর্তে মোট Feature-গুলো থেকে দৈবচয়নে (Randomly) একটি ছোট উপসেট বেছে নেয় এবং কেবল তাদের ভেতর থেকেই সেরা Split-টি খোঁজে। ফলে ওই দাপুটে Feature-টি সবসময় তালিকায় থাকেই না, আর অন্য সহায়ক Feature-গুলোও নিজেদের প্যাটার্ন তুলে ধরার সুযোগ পায়। এতে Tree-গুলোর পারস্পরিক Correlation (ρ) দারুণভাবে কমে আসে। তবে এর একটি উল্টো দিকও আছে: সেরা Feature বাদ পড়ায় একেকটি একক Tree-এর নিজস্ব শক্তি (Individual Strength) কিছুটা কমে যেতে পারে। পুরো Random Forest-এর সাফল্য দাঁড়িয়ে থাকে একক Tree-এর শক্তি এবং তাদের মধ্যকার বৈচিত্র্যের (Diversity) এই সূক্ষ্ম ভারসাম্যের ওপর।"
+        },
+        {
+          "type": "text",
+          "title": "max_features প্যারামিটারটির আসল আচরণ",
+          "body": "কোডে এই বৈচিত্র্য নিয়ন্ত্রণের মূল চাবিকাঠি হলো max_features, যা ঠিক করে দেয় প্রতিটি Split খোঁজার সময় কয়টি করে Candidate Feature পরখ করে দেখা হবে। তবে মুখস্থ স্লোগানের ওপর ভরসা না করে দুটি ব্যবহারিক খুঁটিনাটি জেনে রাখুন। প্রথমত, Classification ও Regression-এর ক্ষেত্রে বিভিন্ন Library-তে এর ডিফল্ট মান আলাদা হতে পারে (যেমন Classification-এ প্রায়ই মোট Feature সংখ্যার বর্গমূল sqrt(p) ব্যবহার করা হয়, আর Regression-এ অনেক সময় সবকটি বা এক-তৃতীয়াংশ নেওয়া হয়), এবং সংস্করণ ভেদে Float ভগ্নাংশ, পূর্ণসংখ্যা বা বিশেষ String-এর অর্থ বদলাতে পারে।\n\nদ্বিতীয়ত, ভেতরের অ্যালগরিদমে একটি সূক্ষ্ম নিয়ম থাকে: দৈবচয়নে বাছা প্রথম max_features সংখ্যক Feature-এর সব কয়টিই যদি ওই Node-এ ধ্রুবক (Constant) হয়ে থাকে—অর্থাৎ একটিও বৈধ Split তৈরি করতে না পারে—তখন কিন্তু প্রতিষ্ঠিত Implementation-গুলো হাল ছেড়ে দেয় না; একটি বৈধ Split না পাওয়া পর্যন্ত অথবা সব Feature শেষ না হওয়া পর্যন্ত তারা অনুসন্ধানের পরিধি বাড়াতে থাকে! তাই সংক্ষিপ্ত সংজ্ঞার চেয়ে ভেতরের প্রকৃত আচরণটি জানা থাকলে ডিবাগিং অনেক সহজ হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Random Forest মানেই কিন্তু Boosting নয়",
+          "body": "শিক্ষানবিশ অবস্থায় অনেকেই Random Forest এবং Boosting-কে গুলিয়ে ফেলেন, তাই পার্থক্যটি এখানেই স্পষ্ট করে নেওয়া ভালো। Random Forest-এর কোনো Tree-ই আগের Tree-এর করা ভুল বা Residual সংশোধন করার চেষ্টা করে না! প্রতিটি Tree মূল Target Label-এর নিজস্ব Bootstrap Sample-এর ওপরেই স্বাধীনভাবে তার Impurity বা Error কমানোর চেষ্টা করে। অন্যদিকে Boosting চলে সম্পূর্ণ ধারাবাহিকভাবে (Sequentially)—যেখানে আগের সবগুলো ধাপের সম্মিলিত ভুল বা Gradient হিসাব করে পরের ধাপের ছোট Tree-টিকে শেখানো হয়। এই মৌলিক পার্থক্যের কারণেই Random Forest-কে অনায়াসে সমান্তরালভাবে (Parallel) ট্রেনিং দেওয়া যায় এবং Tree সংখ্যা অতিরিক্ত বাড়ালেও এটি চট করে নতুন করে Overfit করে না, যা Boosting-এর আচরণ থেকে পুরোপুরি আলাদা।"
+        },
+        {
+          "type": "code",
+          "title": "পুনরুৎপাদনযোগ্য (Reproducible) Random Forest উদাহরণ",
+          "body": "import numpy as np\nfrom sklearn.ensemble import RandomForestClassifier\n\nX = np.array([[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]] * 10)\ny = np.array([0, 1, 1, 0] * 10)\nm = RandomForestClassifier(\n    n_estimators=12, max_features=1, min_samples_leaf=2, random_state=42, n_jobs=1\n).fit(X, y)\np = m.predict_proba(X)\nassert p.shape == (40, 2) and np.allclose(p.sum(axis=1), 1)\nassert len(m.estimators_) == 12\nprint(m.score(X, y))  # training diagnostic only\n"
+        },
+        {
+          "type": "text",
+          "title": "Hyperparameter-গুলোকে বিচ্ছিন্নভাবে নয়, একসঙ্গে ভাবুন",
+          "body": "ওপরের কোডে আমরা n_estimators, max_features এবং min_samples_leaf একসাথে ব্যবহার করেছি। টিউনিং করার সময় এদের ভূমিকা আলাদাভাবে কিন্তু সমন্বিত দৃষ্টিতে বুঝতে হবে। n_estimators মূলত Monte Carlo Averaging-এর স্থিতিশীলতা বাড়ায়—যত বেশি Tree নেবেন, গড় ফলাফলের এলোমেলো কাঁপুনি তত কমবে। অন্যদিকে max_depth, min_samples_leaf এবং max_features সরাসরি প্রতিটি একক Tree-এর ধারণক্ষমতা (Capacity) ও তাদের পারস্পরিক বৈচিত্র্য নিয়ন্ত্রণ করে।\n\nযেমন min_samples_leaf অতিরিক্ত বড় করে দিলে প্রতিটি Leaf অনেক মসৃণ হবে ঠিকই, কিন্তু সূক্ষ্ম প্যাটার্ন ধরতে না পেরে পুরো Ensemble-এই উচ্চ Bias ঢুকে পড়তে পারে। আবার বিরল বা অসম (Imbalanced) Class-এর ক্ষেত্রে class_weight এবং Bootstrap Sample-এ সংখ্যালঘু Class-এর উপস্থিতি চূড়ান্ত Predicted Probability-এর মানকে প্রবলভাবে প্রভাবিত করে। তাই যেকোনো Hyperparameter সবসময় আপনার নির্দিষ্ট প্রজেক্টের আসল Evaluation Metric (যেমন Log Loss, PR-AUC বা Brier Score) সামনে রেখেই টিউন করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "Feature Importance-এর সেই পুরোনো সীমাবদ্ধতা",
+          "body": "আগের অধ্যায়ে (Book 2, Chapter 4: Decision Trees) একক Decision Tree পড়ার সময় আমরা দেখেছিলাম কীভাবে Impurity-ভিত্তিক Feature Importance বা MDI (Mean Decrease in Impurity) উচ্চ Cardinality-যুক্ত (অনেকগুলো ভিন্ন মান থাকা) Feature-এর প্রতি পক্ষপাতিত্ব দেখায়। মনে রাখবেন, Random Forest-এ শত শত Tree-এর MDI গড় করলেও কিন্তু এই মৌলিক সীমাবদ্ধতা জাদুবলে মিটে যায় না! এছাড়া দুটি Feature যদি পরস্পরের সাথে প্রবলভাবে সম্পর্কযুক্ত (Correlated) হয়, তবে তাদের গুরুত্বের কৃতিত্ব দুজনের মধ্যে ভাগ হয়ে যায় বা একজনের দিকে ঝুঁকে পড়ে।\n\nতাই কোনো রিপোর্টে গুরুত্ব বিশ্লেষণের সময় অন্ধভাবে ডিফল্ট MDI তালিকার ওপর নির্ভর না করে Held-out Validation Data-তে Permutation Importance এবং তার অনিশ্চয়তা (Uncertainty) যাচাই করুন। পাশাপাশি ভিন্ন ভিন্ন Random Seed দিয়ে চালিয়ে র‍্যাঙ্কিংটি কতটা স্থিতিশীল থাকে তা পরীক্ষা করুন—কারণ একটি সাধারণ সাজানো গুরুত্বের তালিকা কখনোই কার্যকারণ সম্পর্ক (Causal Explanation) প্রমাণ করে না।"
+        },
+        {
+          "type": "text",
+          "title": "Extra Trees (Extremely Randomized Trees)-এর সংক্ষিপ্ত পরিচয়",
+          "body": "বৈচিত্র্য বাড়ানোর এই ধারণাটিকে আরও এক ধাপ এগিয়ে নিয়ে গেছে Extra Trees। সাধারণ Random Forest যেখানে নির্বাচিত Candidate Feature-গুলোর জন্য প্রতিটি সম্ভাব্য Split Threshold খুঁটিয়ে পরীক্ষা করে সেরাটি বেছে নেয়, সেখানে Extra Trees প্রতিটি Candidate Feature-এর জন্য Threshold-গুলোকেও দৈবচয়নে (Randomly) তৈরি করে এবং তাদের মধ্য থেকেই সেরাটি নেয়! এছাড়া অনেক Library-তে (যেমন scikit-learn-এর ExtraTreesClassifier) ডিফল্ট অবস্থায় Bootstrap বন্ধ রেখে পুরো Training Set ব্যবহার করা হয়, যা সাধারণ Random Forest-এর ডিফল্ট আচরণের চেয়ে আলাদা। এই বাড়তি Randomness ট্রেনিংকে অনেক দ্রুত করে এবং কিছু সমস্যায় Variance আরও কমায়, তবে বিনিময়ে কিছুটা বাড়তি Bias-ও আনতে পারে। আপনার নির্দিষ্ট Dataset ও Compute Budget-এ কোনটি সেরা তা কেবল নিয়ন্ত্রিত পরীক্ষার মাধ্যমেই নির্ধারণ করা উচিত।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে উত্তর দেবেন",
+          "body": "Interview-এ যদি জিজ্ঞেস করা হয়: “max_features কমিয়ে দিলেই কি Random Forest-এর Accuracy নিশ্চিতভাবে বাড়বে?” সরাসরি ‘না’ বলে কারণটি ভেঙে বুঝিয়ে দিন। বলুন যে max_features কমালে Tree-গুলোর মধ্যকার Correlation (ρ) কমে ঠিকই, কিন্তু অতিরিক্ত কমিয়ে ফেললে (যেমন অনেক দুর্বল বা অপ্রাসঙ্গিক Feature থাকা অবস্থায় মাত্র 1-টি করে Feature দেখলে) প্রতিটি একক Tree এতটাই দুর্বল ও উচ্চ Bias-যুক্ত হয়ে পড়ে যে সামগ্রিক পারফরম্যান্স উল্টো খারাপ হয়ে যায়। তাই একই Cross-Validation Fold ও নির্দিষ্ট Seed প্রোটোকলে Tree-গুলোর গড় Correlation, একক Tree-এর স্কোর, পুরো Ensemble-এর স্কোর এবং ট্রেনিংয়ের সময়—সব কয়টি একসঙ্গে তুলনা করতে হয়। সবশেষে B (n_estimators) বাড়ানোর প্রভাবের সাথে max_features বদলানোর প্রভাবের পার্থক্যটি স্পষ্টভাবে আলাদা করে দেখান।"
+        }
+      ]
+    },
+    {
+      "id": "ch10_stacking",
+      "title": "Voting, Blending ও Stacking",
+      "subtitle": "ভিন্নধর্মী Model-এর সমন্বয় এবং Meta Learner-এর জন্য নিশ্ছিদ্র Out-of-Fold Prediction",
+      "duration": "35 min",
+      "icon": "hub",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "সাধারণ Voting ও গড় করার কৌশল",
+          "body": "এতক্ষণ আমরা মূলত একই ঘরানার Model (যেমন অনেকগুলো Decision Tree) একত্র করার কথা বলেছি। কিন্তু আমাদের হাতে যদি সম্পূর্ণ ভিন্ন প্রকৃতির কয়েকটি শক্তিশালী Model থাকে—যেমন একটি Regularized Logistic Regression, একটি Random Forest এবং একটি Gradient Boosted Tree—তখন তাদের সম্মিলিত শক্তি কাজে লাগাব কীভাবে? সবচেয়ে সহজ পথ হলো Voting বা Averaging।\n\nClassification-এ Hard Voting সরাসরি চূড়ান্ত Predicted Label-গুলোর সংখ্যাগরিষ্ঠতা দেখে, আর Soft Voting প্রতিটি Model-এর সারিবদ্ধ (Aligned) Class Probability-গুলোর গড় নেয়। তবে এখানে একটি বাস্তব ঝুঁকি আছে: কোনো একটি Base Model যদি দারুণ র‍্যাঙ্কিং দিলেও তার Probability Calibration খুব বাজে হয় (যেমন সবকিছুতেই চরম 0.01 বা 0.99 বলে বসে থাকে), তবে সাধারণ Soft Averaging-এ সেই একটি Model বাকিদের সূক্ষ্ম মতামতকে একাই ডুবিয়ে দিতে পারে! আবার আপনি যদি Validation Set-এর Label দেখে প্রতিটি Model-এর জন্য আলাদা আলাদা গড় করার Weight টিউন করেন, তবে সেটিও কিন্তু একধরনের লার্নিং—তাই সেই Validation প্রোটোকলটি স্বচ্ছভাবে নথিবদ্ধ করতে হবে। আর বলাই বাহুল্য, হুবহু একই Model-এর একাধিক কপি তালিকায় জুড়ে দিলে কোনো নতুন সংকেত (Signal) যোগ হয় না।"
+        },
+        {
+          "type": "text",
+          "title": "Stacking-এর স্থাপত্য ও মূল বিপদ",
+          "body": "হাতে ধরে গড় বা সাধারণ Weight ঠিক না করে আমরা যদি আরেকটি ছোট দ্বিতীয় স্তরের Model (যাকে বলা হয় Meta Learner বা Blender) বসিয়ে দিই, যে নিজেই শিখে নেবে কোন Base Model-কে কখন কতটা বিশ্বাস করতে হবে—সেই স্থাপত্যকেই বলা হয় Stacking (Stacked Generalization)। এখানে প্রথম স্তরের Base Model-গুলোর দেওয়া Prediction-গুলোই হয়ে ওঠে দ্বিতীয় স্তরের Meta Learner-এর Input Feature!\n\nকিন্তু ঠিক এই জায়গাটিতেই লুকিয়ে আছে ক্লাসিক্যাল Machine Learning-এর অন্যতম ভয়ংকর Data Leakage-এর ফাঁদ। ভাবুন তো, আপনি যদি পুরো Training Set-এর ওপর Base Model-গুলোকে ফিট করান এবং সেই একই Training Row-গুলোর ওপর তাদের সাধারণ In-Sample Prediction নিয়ে Meta Learner-কে শেখান, তবে কী ঘটবে? যে গভীর Tree-টি Training Data হুবহু মুখস্থ (Overfit) করে ফেলেছে, তার In-Sample Prediction তো আসল Label-এর প্রায় নকল হবে! ফলে Meta Learner ভাববে ওই Overfitted Model-টিই বুঝি সবচেয়ে নিখুঁত, এবং পুরো গুরুত্ব তাকেই দিয়ে বসবে—যার ফলাফল প্রোডাকশনে গিয়ে হবে ভয়াবহ পতন। তাই নিয়মটি পাথরে খোদাই করে নিন: Meta Learner-এর প্রতিটি Training Row-এর Feature অবশ্যই এমন Base Model থেকে আসতে হবে, যে ট্রেনিংয়ের সময় ওই নির্দিষ্ট Row-এর Label কখনোই দেখেনি!"
+        },
+        {
+          "type": "text",
+          "title": "কীভাবে নিখুঁত Out-of-Fold (OOF) Matrix তৈরি করবেন?",
+          "body": "এই শর্তটি পূরণ করার সর্বজনস্বীকৃত কৌশল হলো Out-of-Fold (OOF) Prediction তৈরি করা। প্রক্রিয়াটি ধাপে ধাপে এরকম:\n১. প্রথমে মূল Training Dataset-কে K-টি নিশ্ছিদ্র Fold-এ ভাগ করুন।\n২. প্রতিটি Fold-এর যে অংশটুকু বাইরে রাখা হয়েছে (Held-out Fold), তার Prediction বের করার জন্য প্রতিটি Base Model-কে কেবল বাকি K - 1-টি Fold-এর ওপর ফিট করুন।\n৩. এভাবে সবগুলো Fold ঘুরে এলে মূল Training Set-এর প্রতিটি Row-এর জন্য প্রতিটি Base Model থেকে ঠিক একটি করে সৎ, Out-of-Fold Prediction জমা হবে—এটিই আমাদের কাঙ্ক্ষিত OOF Matrix।\n৪. এবার এই OOF Matrix-কে Input Feature এবং আসল Training Label-কে Target ধরে আমাদের Meta Learner-টিকে ট্রেনিং দিন।\n৫. সবশেষে আসল Serving বা Test সময়ের জন্য প্রতিটি Base Model-কে পুরো Training Partition-এর ওপর নতুন করে ফিট (Refit) করে নিন। এখানে একটি ভালো ইঞ্জিনিয়ারিং অভ্যাস হলো—OOF Prediction-এর Distribution আর Full-refit Base Model-এর Prediction-এর Distribution কাছাকাছি থাকছে কি না তা ডায়াগনস্টিক হিসেবে মিলিয়ে দেখা।"
+        },
+        {
+          "type": "text",
+          "title": "Group ও সময়ের সীমাবদ্ধতা (Constraints) মানা জরুরি",
+          "body": "কোনো Library-এর রেডিমেড StackingClassifier বা StackingRegressor ব্যবহার করার সময় কখনোই ধরে নেবেন না যে তার ডিফল্ট Cross-Validation আপনাআপনি আপনার ডেটার বিশেষ গঠন বুঝে নেবে! আপনার ডেটায় যদি একই রোগী বা ইউজারের একাধিক Row থাকে, কিংবা সময়ের ধারাবাহিকতা (Time Order) বজায় রাখা জরুরি হয়, তবে OOF তৈরির Fold-গুলোতেও অবশ্যই GroupKFold বা সময়-ভিত্তিক Split ব্যবহার করতে হবে এবং প্রতিটি Fold-এর ভেতরে কেবল তার নিজস্ব Training অংশেই সব Preprocessing ফিট করাতে হবে।\n\nপাশাপাশি চূড়ান্ত মূল্যায়নের (Final Outer Evaluation) টেস্ট ডেটা যেন কোনোভাবেই Base বা Meta Model টিউনিংয়ে ব্যবহৃত না হয় সেদিকে কড়া নজর রাখুন। উল্লেখ্য, অনেকে পুরো Cross-Validation-এর ঝামেলা এড়াতে কেবল একটি নির্দিষ্ট Holdout অংশ আলাদা রেখে তার ওপর Meta Learner শেখান—যাকে বলা হয় Blending। এটি বাস্তবায়ন করা অনেক সহজ ও কম খরচের হলেও এতে মূল মডেলগুলোর ভাগে ট্রেনিং ডেটা কিছুটা কমে যায়।"
+        },
+        {
+          "type": "code",
+          "title": "Group-সচেতন OOF Index ও কাভারেজ যাচাই",
+          "body": "import numpy as np\nfrom sklearn.model_selection import GroupKFold\n\ngroups = np.repeat(np.arange(6), 2)\nX = np.arange(12.0).reshape(-1, 1)\nseen = np.zeros(len(X), dtype=int)\nfor fit, held in GroupKFold(3).split(X, groups=groups):\n    assert set(groups[fit]).isdisjoint(groups[held])\n    seen[held] += 1\nassert np.all(seen == 1)\nprint(seen.tolist())  # each row gets one held-out prediction slot\n"
+        },
+        {
+          "type": "text",
+          "title": "সূক্ষ্ম Data Leakage-এর আরেকটি স্তর",
+          "body": "ওপরের কোডের মতো নিখুঁত OOF ইনডেক্সিং করলেই কিন্তু সব ধরনের Leakage পুরোপুরি শেষ হয়ে যায় না—আরেকটি সূক্ষ্ম জায়গা রয়ে যায়। ধরুন, আপনি পুরো Meta-training সেটের OOF স্কোর বারবার দেখে দেখে Base Model-গুলোর শত শত Hyperparameter টিউন করলেন, এবং তারপর ঠিক সেই একই OOF Matrix-এর ওপর Meta Learner বসালেন। এতে পরোক্ষভাবে Selection Leakage ঢুকে পড়তে পারে, এবং পুরো প্রক্রিয়ার একদম নিরপেক্ষ পারফরম্যান্স জানতে তখন Nested Cross-Validation প্রয়োজন হয়। সবচেয়ে বড় কথা—Target Encoding, Feature Selection কিংবা Imputation কখনোই OOF Fold-এর সীমানার বাইরে গোটা Dataset-এর ওপর একসাথে ফিট করবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব প্রোডাকশনে এই বাড়তি জটিলতা কি সত্যিই লাভজনক?",
+          "body": "প্রতিযোগিতার লিডারবোর্ডে দশমিকের পর তৃতীয় বা চতুর্থ ঘরের উন্নতির জন্য বিশাল বহুস্তরীয় Stacking দারুণ জনপ্রিয় হলেও, বাস্তব সফটওয়্যার সিস্টেমে সিদ্ধান্ত নিতে হয় প্রকৌশলীর দৃষ্টিতে। ভেবে দেখুন, একটি Stacked Model-কে প্রোডাকশনে সার্ভ করতে হলে প্রতিটি নতুন ইনপুটের জন্য আপনাকে ভেতরের সবগুলো Base Model এবং তারপর Meta Model—সবকটিকেই চালাতে হবে! যদি সামান্য মেট্রিক উন্নতির বিনিময়ে আপনার সিস্টেমের Latency, Memory খরচ, ডিবাগিং জটিলতা এবং ভবিষ্যৎ রক্ষণাবেক্ষণের বোঝা কয়েক গুণ বেড়ে যায়, তবে সেটি ভালো ইঞ্জিনিয়ারিং সিদ্ধান্ত নয়। অনেক সময় স্রেফ একটি সু-টিউনড ও সু-ক্যালিব্রেটেড একক Ensemble প্রোডাকশনের জন্য যথেষ্টরও বেশি হয়। তাই মডেলের সংখ্যার মোহে না পড়ে নিয়ন্ত্রিত পরীক্ষার প্রমাণ ও খরচের হিসাব মিলিয়ে সিদ্ধান্ত নিন।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে উত্তর দেবেন",
+          "body": "Interview-এ একটি বাস্তব ডিবাগিং দৃশ্যপট প্রায়ই দেওয়া হয়: “আমাদের Meta Learner-এর ট্রেনিং AUC এসেছে প্রায় 1.0, কিন্তু প্রোডাকশনে নামানোর পর পারফরম্যান্স খুবই দুর্বল—সমস্যাটি আপনি কীভাবে খুঁজবেন?”\n\nউত্তরে একটি সুশৃঙ্খল চেকলিস্ট তুলে ধরুন:\n১. প্রথমেই দেখব Meta Learner কি আসল OOF Matrix-এর ওপর ট্রেনিং পেয়েছে, নাকি ভুলবশত Base Model-গুলোর সাধারণ In-Sample Prediction চলে গেছে (যা AUC 1.0 হওয়ার সবচেয়ে বড় কারণ!)।\n২. ট্রেনিং ও সার্ভিংয়ের সময় Base Model-গুলোর কলামের ক্রম (Column Schema) এবং Positive Class-এর ইনডেক্স হুবহু এক আছে কি না পরীক্ষা করব।\n৩. OOF তৈরির সময় একই Group বা ভবিষ্যতের তথ্য অন্য Fold-এ ফাঁস হয়েছে কি না এবং Refit প্রক্রিয়াটি ঠিকভাবে হয়েছে কি না দেখব।\n৪. সবশেষে স্পষ্ট করে বলব যে, একটি Leakage-মুক্ত OOF তৈরি করা আর পুরো Stacked Pipeline-এর নিরপেক্ষ মূল্যায়ন (Nested Model Selection) করা—দুটো কিন্তু আলাদা স্তরের প্রশ্ন।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে ট্রেস: OOF Matrix-এর প্রতিটি ঘর ঠিক কোথা থেকে আসে?",
+          "body": "পুরো ধারণাটি একদম পানির মতো পরিষ্কার করতে চলুন মাত্র 4-টি Row-এর একটি ক্ষুদ্র উদাহরণ হাতে হিসাব করি, যেখানে Input ও Label দুটিই x = y = [0, 1, 2, 3]। ধরা যাক, আমাদের দুটি Base Model আছে: প্রথমটি কেবল ট্রেনিং অংশের গড় (Training-mean Predictor) Predict করে, আর দ্বিতীয়টি একটি সাধারণ Linear Regression। আমরা ডেটাটিকে দুটি Fold-এ ভাগ করলাম:\n- প্রথম ধাপে Held-out Row [0, 2]-এর Prediction পাওয়ার জন্য আমরা কেবল [1, 3] Row দুটির ওপর Base Model দুটিকে ফিট করলাম। এখানে [1, 3]-এর গড় হলো 2, তাই প্রথম মডেলটি [0, 2] উভয় ঘরের জন্যই দেয় 2। আর [1, 3] দিয়ে যাওয়া সরলরেখাটি y = x হওয়ায় দ্বিতীয় মডেলটি [0, 2] ঘরের জন্য দেয় [0, 2]।\n- দ্বিতীয় ধাপে Held-out Row [1, 3]-এর Prediction পাওয়ার জন্য আমরা [0, 2]-এর ওপর ফিট করলাম। এবার গড় হলো 1, তাই প্রথম মডেলটি দেয় 1, আর সরলরেখাটি দেয় [1, 3]।\n\nএবার চারটি Row পরপর সাজালে প্রথম Base Model-এর পূর্ণ OOF কলাম দাঁড়ায় [2, 1, 2, 1] এবং দ্বিতীয়টির দাঁড়ায় [0, 1, 2, 3]। ফলে আমাদের 4 × 2 আকারের চূড়ান্ত OOF Meta Matrix-এর চারটি Row হয় যথাক্রমে [2, 0], [1, 1], [2, 2] এবং [1, 3]! খেয়াল করে দেখুন, এই ম্যাট্রিক্সের প্রতিটি ঘরে এমন একটি মডেলের Prediction বসেছে যে ট্রেনিংয়ের সময় ওই ঘরের আসল উত্তর কখনোই চোখে দেখেনি।"
+        },
+        {
+          "type": "code",
+          "title": "কোডে OOF Meta Training ও Serving Feature তৈরি",
+          "body": "import numpy as np\nfrom sklearn.base import clone\nfrom sklearn.dummy import DummyRegressor\nfrom sklearn.linear_model import LinearRegression, Ridge\n\nfeatures = np.arange(4.0).reshape(-1, 1)\nlabels = np.arange(4.0)\nbases = [DummyRegressor(strategy=\"mean\"), LinearRegression()]\nfolds = [([1, 3], [0, 2]), ([0, 2], [1, 3])]\noof = np.full((4, 2), np.nan)\ncoverage = np.zeros(4, dtype=int)\nfor training, held_out in folds:\n    assert set(training).isdisjoint(held_out)\n    for column, estimator in enumerate(bases):\n        fitted = clone(estimator).fit(features[training], labels[training])\n        oof[held_out, column] = fitted.predict(features[held_out])\n    coverage[held_out] += 1\nassert np.all(coverage == 1) and np.isfinite(oof).all()\nmeta = Ridge(alpha=1.0).fit(oof, labels)\n# Serving uses full-training base fits in the same column order.\nrefitted = [clone(base).fit(features, labels) for base in bases]\nserving = np.column_stack([base.predict([[4.0]]) for base in refitted])\nassert serving.shape == (1, 2) and np.isfinite(meta.predict(serving)).all()\nprint(*np.round(oof.ravel(), 6), *np.round(serving.ravel(), 6))\n"
+        },
+        {
+          "type": "text",
+          "title": "এই চার Row-এর উদাহরণ থেকে বড় প্রজেক্টে কোন নিয়মগুলো সঙ্গে নেব?",
+          "body": "ওপরের ছোট্ট কোডটি আমাদের ম্যাট্রিক্স তৈরির মূল কঙ্কালটি হাতে-কলমে দেখাল। বাস্তব বড় প্রজেক্টে কাজ করার সময় এর সঙ্গে চারটি অপরিহার্য নিয়ম সবসময় মেনে চলতে হবে:\n১. ডেটায় Group বা সময়ের ক্রম থাকলে সেই শর্ত মেনেই Fold তৈরি করতে হবে।\n২. প্রতিটি Base Model-এর নিজস্ব Preprocessing (যেমন Imputation, Scaling বা Encoding) অবশ্যই প্রতিটি Fold-এর কেবল training অংশের ওপরেই ফিট হতে হবে।\n৩. সার্ভিংয়ের সময় কোন কলামে কোন Base Model বসছে এবং কোন ক্লাসটি Positive ধরা হচ্ছে, সেই ক্রম স্থায়ীভাবে লক (Freeze) করে রাখতে হবে।\n৪. Meta Learner-এর নিজস্ব Hyperparameter (যেমন ওপরের কোডে Ridge-এর alpha) বাছাই করা এবং সম্পূর্ণ Stacked সিস্টেমটির চূড়ান্ত পারফরম্যান্স মাপার জন্য বাইরে আলাদা মূল্যায়ন প্রোটোকল রাখতে হবে।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "আগে নিজে ভেবে দেখুন",
+          "body": "ধরুন একটি Held-out Fold-এর জন্য প্রথম Base Model-এর Prediction-গুলো আসল Row ক্রমে বসানো হলো, কিন্তু কোডের ভুলে দ্বিতীয় Base Model-এর Prediction-গুলো উল্টো বা ভিন্ন Row ক্রমে বসে গেল। সাধারণ oof.shape == (n, 2) পরীক্ষা কি এই মারাত্মক ভুলটি ধরতে পারবে?",
+          "solution": "না, সাধারণ Shape পরীক্ষায় এই ভুল একদমই ধরা পড়বে না—কারণ কলাম দুটি ভুল ক্রমে বসলেও ম্যাট্রিক্সের আকার ঠিকই (n, 2) থাকবে! এই ধরনের নীরব বাগ (Silent Alignment Bug) ধরার জন্য আসল Row ID বা মূল ইনডেক্স ধরে সরাসরি সঠিক স্লটে (oof[held_out, column]) মান বসানো হচ্ছে কি না এবং প্রতিটি Row ঠিক একবার করেই পূর্ণ হয়েছে কি না তা আলাদাভাবে পরীক্ষা (Index & Coverage Assertion) করতে হবে।",
+          "reference": "https://scikit-learn.org/stable/modules/ensemble.html#stacked-generalization"
+        }
+      ]
+    },
+    {
+      "id": "ch10_adaboost",
+      "title": "AdaBoost: ভুলের ওপর ক্রমান্বয়ে বাড়তি নজর",
+      "subtitle": "Binary Exponential Loss, Stage Coefficient ও Sample Reweighting",
+      "duration": "28 min",
+      "icon": "hub",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "সমান্তরাল গড় থেকে ধারাবাহিক মনোযোগের পথে",
+          "body": "এতক্ষণ আমরা Bagging ও Random Forest-এ দেখেছি কীভাবে অনেকগুলো স্বতন্ত্র Model সমান্তরালভাবে শিখে নিজেদের গড় বের করে Variance কমায়। এবার আমরা সম্পূর্ণ ভিন্ন এক দর্শনের মুখোমুখি হব—Boosting। এর মূল প্রশ্নটি হলো: প্রতিটি নতুন Model-কে শূন্য থেকে স্বাধীনভাবে না শিখিয়ে আমরা যদি আগের ধাপগুলোতে যেখানে ভুল হয়েছে, ঠিক সেই কঠিন উদাহরণগুলোর দিকে পরের ছোট Model-টির বাড়তি মনোযোগ ঘুরিয়ে দিই, তবে কেমন হয়?\n\nএই ধারার পথিকৃৎ হলো ধ্রুপদী Binary AdaBoost (Adaptive Boosting), যেখানে আসল Label ধরা হয় y ∈ {-1, +1} এবং প্রতিটি দুর্বল শিক্ষার্থী (Weak Learner, যেমন এক Split-এর ছোট্ট Decision Stump)-এর আউটপুটও হয় h(x) ∈ {-1, +1}। প্রতি ধাপে আগের Ensemble যে Observation-গুলোকে ভুলভাবে চিহ্নিত করেছে, পরের ধাপের ট্রেনিংয়ে তাদের আপেক্ষিক ওজন (Relative Sample Weight) বাড়িয়ে দেওয়া হয়। তবে একটি গুরুত্বপূর্ণ সত্য শুরুতেই মনে রাখুন: AdaBoost কিন্তু নতুন কোনো কঠিন উদাহরণ কৃত্রিমভাবে তৈরি করে না, বরং বিদ্যমান Training Dataset-এর ওজনের বণ্টনটিকেই কেবল পুনর্বিন্যস্ত (Reweight) করে। ফলে ডেটায় যদি প্রচুর গোলমাল বা ভুল Label (Label Noise) থেকে থাকে, তবে সেই ভুল Row-গুলোই বারবার বাড়তি ওজন পেয়ে পুরো মডেলকে বিপথে টেনে নিয়ে যেতে পারে!"
+        },
+        {
+          "type": "math",
+          "title": "Additive Margin Model ও Exponential Loss",
+          "body": "F_M(x)=\\sum_{m=1}^{M}\\alpha_m h_m(x),\\qquad L=\\sum_i\\exp[-y_iF_M(x_i)]"
+        },
+        {
+          "type": "math",
+          "title": "Weighted Error এবং Stage Coefficient নির্ণয়",
+          "body": "\\epsilon_m=\\sum_iw_i\\mathbf{1}(y_i\\ne h_m(x_i)),\\qquad\\alpha_m=\\frac12\\log\\frac{1-\\epsilon_m}{\\epsilon_m}"
+        },
+        {
+          "type": "text",
+          "title": "Derivative দিয়ে α_m-এর সমীকরণটি কোত্থেকে এল?",
+          "body": "ওপরের α_m = (1/2) log((1 - ε_m) / ε_m) সূত্রটি কিন্তু আকাশ থেকে পড়েনি—ক্যালকুলাসের এক লাইনের হিসাব থেকেই এটি বেরিয়ে আসে! ধরা যাক, আগের ধাপ পর্যন্ত জমে থাকা স্কোর F_prev-এর সাপেক্ষে বর্তমান সুষমকৃত ওজন হলো w_i ∝ exp(-y_i F_prev(x_i))। এখন নতুন একটি Candidate Weak Learner h যোগ করলে সঠিক Prediction-এর ক্ষেত্রে y_i h(x_i) = +1 (মোট ওজন 1 - ε) এবং ভুল Prediction-এর ক্ষেত্রে y_i h(x_i) = -1 (মোট ওজন ε) হয়। ফলে নতুন ধাপের মোট Exponential Loss সমানুপাতিক দাঁড়ায় (1 - ε) e^(-α) + ε e^α-এর।\n\nএবার α-এর সাপেক্ষে এর Derivative শূন্য ধরলেই পাই -(1 - ε) e^(-α) + ε e^α = 0, অর্থাৎ e^(2α) = (1 - ε) / ε, যেখান থেকে সরাসরি বেরিয়ে আসে আমাদের কাঙ্ক্ষিত α! সমীকরণটি একটু নিরীক্ষণ করলেই দেখবেন, একটি কার্যকর Binary Weak Learner হতে হলে তার Weighted Error অবশ্যই অন্ধ আন্দাজের চেয়ে ভালো অর্থাৎ ε < 0.5 হতে হবে (তখন α > 0)। যদি ε = 0.5 হয় তবে α = 0—অর্থাৎ মুদ্রা নিক্ষেপের সমান এই মডেলের কোনো মতামতই নেওয়া হবে না। আর ε > 0.5 হলে সেই দিকনির্দেশনাটি বাতিল (Reject) করা হবে নাকি Binary চিহ্ন উল্টে নেওয়া হবে, কোডে সেই নীতি স্পষ্টভাবে নির্ধারণ করে দিতে হয়।"
+        },
+        {
+          "type": "math",
+          "title": "পরবর্তী ধাপের Weight হালনাগাদের নিয়ম",
+          "body": "w_i^{new}\\propto w_i\\exp[-\\alpha_my_ih_m(x_i)]"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে একটি গাণিতিক উদাহরণ",
+          "body": "চলুন ছোট একটি সংখ্যার হিসাব মিলিয়ে নিই। ধরা যাক, শুরুতে 4-টি Row-এর প্রতিটির সমান ওজন 0.25 এবং প্রথম Weak Learner-টি 3-টি সঠিক ও 1-টি ভুল করেছে। তাহলে আমাদের Weighted Error হলো ε = 0.25, এবং Stage Coefficient দাঁড়ায় α = 0.5 × log((1 - 0.25) / 0.25) = 0.5 × log(3) ≈ 0.549306।\n\nএবার ওপরের Update সূত্র অনুযায়ী, যে Row-টিতে ভুল হয়েছে (y_i h(x_i) = -1), তার ওজন গুণ হবে e^α = √3 দিয়ে; আর সঠিক হওয়া 3-টি Row-এর প্রতিটির ওজন গুণ হবে e^(-α) = 1/√3 দিয়ে। সবশেষে সব ওজনের যোগফল 1 করার জন্য Normalize করলে দেখা যাবে—একাই ভুল হওয়া Row-টির নতুন ওজন হয়ে গেছে পুরো 0.5, আর সঠিক হওয়া বাকি তিনটি Row প্রত্যেকে পেয়েছে মাত্র 1/6 করে! এভাবে সব রাউন্ড শেষে চূড়ান্ত Class নির্ধারিত হয় মোট স্কোরের চিহ্ন sign(F(x)) দেখে; এখানে y F(x) রাশিটিকে বলা হয় Margin (ধনাত্মক মানে সঠিক চিহ্ন)। ভুলেও এই কাঁচা Margin স্কোরটিকে সরাসরি Probability মনে করবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "সীমান্তবর্তী পরিস্থিতি (Boundary Cases) ও কোডিং সতর্কতা",
+          "body": "বাস্তবে AdaBoost কোড করার সময় কয়েকটি সূক্ষ্ম গাণিতিক সীমান্ত (Boundary Policy) আগেভাগে সামলাতে হয়:\n১. কোনো ধাপে যদি ভুল শূন্য হয়ে যায় (ε = 0), তবে (1 - ε) / ε অসীম হয়ে α নির্ণয়ের সূত্রটি ভেঙে পড়বে! তাই নিখুঁত ফিট পেলে লুপ থামানো (Perfect-fit Stop) ও তার আলাদা উপস্থাপনার নিয়ম লিখে রাখতে হবে।\n২. ε ≥ 0.5 হলে সেই দুর্বল শিক্ষার্থীকে কীভাবে প্রত্যাখ্যান (Reject) করা হবে তা নির্দিষ্ট থাকতে হবে।\n৩. ইনপুটে কোনো NaN, ঋণাত্মক ওজন বা সব শূন্য ওজন এলে শুরুতেই স্পষ্ট Exception ছুঁড়ে দিতে হবে।\n৪. অনেকগুলো রাউন্ড চলার পর অতি ক্ষুদ্র ওজনগুলো যেন ফ্লোটিং-পয়েন্ট Underflow না ঘটায়, সেজন্য সরাসরি গুণের বদলে Log-space-এ যোগ করে Normalize করা অনেক নিরাপদ। আর যদি Learning-rate Shrinkage ব্যবহার করা হয়, তবে তা সরাসরি α-এর মানকে ছোট করে দেয়—তাই ডিফল্ট মান ধরে না নিয়ে সমীকরণ লেখার সময় Shrinkage-এর উপস্থিতি স্পষ্ট করুন।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে উত্তর দেবেন",
+          "body": "Interview-এ একটি চিরচেনা প্রশ্ন হলো: “Training Data-য় ভুল Label বা তীব্র Outlier থাকলে AdaBoost-এর আচরণ কেমন হয়?” উত্তরে সরাসরি Exponential Loss exp(-y F(x))-এর গ্রাফের দিকে ইঙ্গিত করুন। বুঝিয়ে বলুন যে, ভুল Label থাকা Row-গুলোতে মডেল যতই সঠিক প্যাটার্ন ধরার চেষ্টা করুক না কেন, তাদের Margin y F(x) ততই বড় ঋণাত্মক হতে থাকে এবং সূচকীয় হারে (exp) তাদের ওজন বিস্ফোরিত হতে থাকে! ফলে “Boosting সবসময় কঠিন উদাহরণ সমাধান করে দেয়”—এই সরলীকরণটি বিপজ্জনক। গোলমেলে ডেটার ক্ষেত্রে Exponential Loss-এর বদলে তুলনামূলকভাবে সহনশীল Loss (যেমন Log Loss বা Huber Loss), যথাযথ Regularization এবং ডেটা অডিট করা অপরিহার্য।"
+        },
+        {
+          "type": "text",
+          "title": "কোডে যাওয়ার আগে: এক রাউন্ডের পূর্ণ Weight Table",
+          "body": "নিচের কোডটি চালানোর আগে চলুন তার প্রতিটি সংখ্যা নিজের হাতে মিলিয়ে নিই। ধরা যাক, চারটি উদাহরণের আসল Label হলো [1, 1, -1, -1], একটি Decision Stump-এর Prediction হলো [1, 1, 1, -1] এবং শুরুতে প্রতিটির ওজন 0.25। এখানে কেবল তৃতীয় Row-টি ভুল হওয়ায় মোট Weighted Error দাঁড়ায় 0.25 এবং ধ্রুপদী চিহ্নযুক্ত রীতিতে α = (1/2) log(3)। ফলে সঠিক তিনটি Row-এর অ-সুষমকৃত (Unnormalized) ওজন হয় 0.25 × exp(-α) ≈ 0.144338 করে, আর ভুল হওয়া তৃতীয় Row-টির ওজন হয় 0.25 × exp(α) ≈ 0.433013। এই চারটির যোগফল বা Normalizer আসে প্রায় 0.866025। এবার যোগফল দিয়ে ভাগ করে Normalize করলেই আমরা পেয়ে যাই নিখুঁত নতুন ওজন তালিকা: [1/6, 1/6, 1/2, 1/6]!"
+        },
+        {
+          "type": "code",
+          "title": "Signed Margin থেকে Normalized Weight নির্ণয়ের কোড",
+          "body": "from math import exp, log\n\nlabels, predictions = [1, 1, -1, -1], [1, 1, 1, -1]\nold_weights = [0.25] * 4\nerror = sum(weight for weight, y, h in zip(old_weights, labels, predictions) if y != h)\nalpha = 0.5 * log((1 - error) / error)\nunnormalized = [weight * exp(-alpha * y * h)\n                for weight, y, h in zip(old_weights, labels, predictions)]\nnormalizer = sum(unnormalized)\nupdated = [weight / normalizer for weight in unnormalized]\n# This is one classic binary round with learning rate one.\nprint(round(alpha, 6), *[round(weight, 6) for weight in updated], round(normalizer, 6))\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "আগে নিজে ভেবে দেখুন",
+          "body": "ওপরের উদাহরণে তৃতীয় যে Row-টিতে ভুল হওয়ায় ওজন বেড়ে 0.5 হয়ে গেল, ধরুন ডেটা এন্ট্রির ভুলে ওই Row-টির আসল Label-ই ভুল লেখা ছিল! তাহলে একই Reweighting প্রক্রিয়া পরের রাউন্ডগুলোতে কী প্রভাব ফেলবে?",
+          "solution": "পরের রাউন্ডের Weak Learner ওই ভুল Label-যুক্ত Row-টিকে ঠিক করার জন্য মরিয়া হয়ে উঠবে এবং ক্রমাগত তার ওজন বাড়তেই থাকবে—যার ফলে প্রকৃত সঠিক সীমানা (Decision Boundary) বিকৃত হয়ে Overfitting ঘটতে পারে। এজন্যই বাস্তবে বড় ঋণাত্মক Margin পাওয়া উদাহরণগুলো অডিট করা এবং Validation ডেটা দেখে রাউন্ড সংখ্যা, Shrinkage ও Base Learner-এর জটিলতা নিয়ন্ত্রণ করা অত্যন্ত জরুরি।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch10_ada_code",
+      "title": "AdaBoost কোড ও SAMME রীতি",
+      "subtitle": "Half-log গুণিতক, Log-space Normalization ও আধুনিক Library API",
+      "duration": "34 min",
+      "icon": "hub",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "আমাদের Helper Function-এর গঠন ও চুক্তি",
+          "body": "আগের পাঠে আমরা খাতায় যে গাণিতিক ধাপগুলো করলাম, আমাদের প্রজেক্টের সাথে যুক্ত ensemble_workflow.py ফাইলের adaboost_step ফাংশনটি ঠিক সেই কাজটিই কোডে সম্পন্ন করে। এটি ইনপুট হিসেবে চিহ্নযুক্ত Label (-1 ও +1), Weak Learner-এর Prediction এবং অঋণাত্মক সসীম Sample Weight গ্রহণ করে। ভেতরে প্রথমে ওজনগুলোকে সুষম করে Weighted Error মাপা হয়; যদি নিখুঁত ফিট (error == 0) বা অকার্যকর মডেল (error >= 0.5) পাওয়া যায়, তবে আলাদা স্পষ্ট status ফেরত দেয়। আর সাধারণ বৈধ ধাপের ক্ষেত্রে সংখ্যাগত স্থিতিশীলতার জন্য Log-space-এ নতুন ওজন হিসাব করে Normalize করে দেয়। খেয়াল রাখবেন, এটি মূলত একটি একক ধাপের স্বচ্ছ শিক্ষণীয় ফাংশন—পূর্ণাঙ্গ Multiclass প্যাকেজের হুবহু প্রতিরূপ নয়।"
+        },
+        {
+          "type": "code",
+          "title": "প্রকৃত Helper Function চালিয়ে ফলাফল যাচাই",
+          "body": "from pathlib import Path\nimport runpy\nimport numpy as np\n\napi = runpy.run_path(str(Path(\"assets/datasets/adult/ensemble_workflow.py\")))\ny = np.array([1, 1, -1, -1])\nh = np.array([1, -1, -1, -1])\nresult = api[\"adaboost_step\"](y, h, np.ones(4) / 4)\nassert np.isclose(result[\"alpha\"], 0.5 * np.log(3))\nassert np.allclose(result[\"weights\"], [1 / 6, 0.5, 1 / 6, 1 / 6])\nassert api[\"adaboost_step\"](y, y, np.ones(4))[\"status\"] == \"perfect_stop\"\nprint(result)\n"
+        },
+        {
+          "type": "math",
+          "title": "SAMME অ্যালগরিদমের ভিন্ন Coefficient রীতি",
+          "body": "\\alpha_{SAMME}=\\log\\frac{1-\\epsilon}{\\epsilon}+\\log(K-1)"
+        },
+        {
+          "type": "text",
+          "title": "ধ্রুপদী সূত্র বনাম SAMME: দুইয়ের সম্পর্ক কোথায়?",
+          "body": "আপনি যখন নিজের লেখা কোডের সাথে scikit-learn-এর AdaBoostClassifier-এর ভেতরের estimator_weights_ মিলিয়ে দেখবেন, তখন হঠাৎ চমকে উঠতে পারেন—দেখবেন লাইব্রেরির দেওয়া α-এর মান আপনার হিসাব করা ধ্রুপদী মানের ঠিক দ্বিগুণ! কোনো বাগ নয় তো? একদমই না; এর পেছনে আছে SAMME (Stagewise Additive Modeling using a Multi-class Exponential loss function) রীতির পার্থক্য।\n\nওপরের সমীকরণটিতে Binary ক্ষেত্র অর্থাৎ K = 2 বসান: দেখবেন log(K - 1) = log(1) = 0 হয়ে গিয়ে α_SAMME = log((1 - ε) / ε) দাঁড়াচ্ছে, যা ধ্রুপদী (1/2) log((1 - ε) / ε)-এর ঠিক দ্বিগুণ! কেন তবুও দুটো পদ্ধতি একই Sample Weight দেয়? কারণ SAMME-এর ওজন হালনাগাদের সূত্রে কেবল ভুল হওয়া Sample-গুলোকেই exp(α_SAMME) দিয়ে গুণ করা হয় আর সঠিকগুলোর গুণিতক থাকে 1। অথচ ধ্রুপদী সূত্রে ভুলগুলো পায় exp(+α_classic) এবং সঠিকগুলো পায় exp(-α_classic)—ফলে সঠিকের তুলনায় ভুলের আপেক্ষিক অনুপাত সেই একই exp(2 α_classic) = exp(α_SAMME) দাঁড়ায়! Normalize করার পর তাই উভয় পদ্ধতিতেই Sample Weight-এর বণ্টন হুবহু মিলে যায়; কেবল কাঁচা Coefficient-এর সংখ্যা দুটিকে না বুঝে সরাসরি তুলনা করবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "Multiclass ক্ষেত্রে দুর্বল শিক্ষার্থীর ন্যূনতম শর্ত",
+          "body": "ওপরের SAMME সমীকরণটিতে log(K - 1) যোগ হওয়ার আসল সুবিধাটি ধরা পড়ে যখন Class সংখ্যা দুইয়ের বেশি (K > 2) হয়। দ্বিমুখী Classification-এ না দেখে আন্দাজ করলে যেমন 50% ভুল হয় (ε < 0.5 দরকার), তেমনি K-টি সমান Class থাকলে অন্ধ আন্দাজে ভুলের হার হয় 1 - 1/K (যেমন K = 4 হলে 75% ভুল)। SAMME সূত্রে log(K - 1) পদটি থাকার কারণে কোনো Weak Learner কেবল তখনই ধনাত্মক গুরুত্ব (α_SAMME > 0) পায় যখন তার ভুলের হার ε < 1 - 1/K হয়—অর্থাৎ অন্ধ আন্দাজের চেয়ে সামান্য ভালো করলেই সে দলকে সাহায্য করতে পারে! এখানে ভুলেও Binary-এর ε < 0.5 শর্তটি Multiclass-এ কপি করে বসাবেন না।\n\nপাশাপাশি মনে রাখবেন, প্রতিষ্ঠিত Library-তে learning_rate, decision_function-এর স্কেলিং এবং predict_proba বের করার নিয়ম ধ্রুপদী চিহ্ন-মার্জিন থেকে আলাদা হতে পারে। যেমন আধুনিক scikit-learn সংস্করণে AdaBoostClassifier সরাসরি SAMME ব্যবহার করে (পুরোনো অবচিত algorithm=\"SAMME.R\" রীতিটি এখানকার কোডে আর ব্যবহৃত হয়নি)।"
+        },
+        {
+          "type": "code",
+          "title": "scikit-learn-এর AdaBoostClassifier চালিয়ে দেখা",
+          "body": "import numpy as np\nfrom sklearn.ensemble import AdaBoostClassifier\nfrom sklearn.tree import DecisionTreeClassifier\n\nX = np.arange(12.0).reshape(-1, 1)\ny = np.array([0] * 6 + [1] * 6)\nm = AdaBoostClassifier(\n    estimator=DecisionTreeClassifier(max_depth=1),\n    n_estimators=10,\n    learning_rate=0.5,\n    random_state=42,\n).fit(X, y)\nassert np.isfinite(m.predict_proba(X)).all()\nassert len(m.estimators_) <= 10\nprint(m.estimator_weights_[: len(m.estimators_)])\n"
+        },
+        {
+          "type": "text",
+          "title": "নিজের ইমপ্লিমেন্টেশন পরীক্ষা করার অগ্রাধিকার তালিকা",
+          "body": "আপনি যখন প্রোডাকশন বা প্রজেক্টের জন্য এ ধরনের ওজন-হালনাগাদ কোড লিখবেন, তখন Unit Test লেখার সময় বিশেষ কয়েকটি কোণ অবশ্যই যাচাই করবেন: সীমান্তবর্তী ভুল (ε = 0, 0.5 এবং 1.0), কোনো Sample-এর শূন্য ওজন থাকা, অসীম বা NaN অ্যারে, Label-গুলো সত্যিই {-1, +1} কি না তার পরীক্ষা, নতুন ওজনের যোগফল 1 হওয়া এবং মূল ইনপুট অ্যারে যেন ভেতরে পরিবর্তিত না হয় (Input Immutability)। বিশেষ করে নিখুঁত ফিটের (perfect_stop) ক্ষেত্রে যখন সংখ্যাগত alpha-এর বদলে None ফেরত দেওয়া হয়, তখন বাইরের কলকারী কোড যেন ভুলে সেটিকে 0 ভেবে সবচেয়ে সেরা Learner-টিকেই ফেলে না দেয়! নিখুঁত Classifier পেলে পুরো Ensemble কীভাবে থামবে এবং কীভাবে Prediction দেবে, তা আলাদাভাবে ডিজাইন করতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে উত্তর দেবেন",
+          "body": "Interview-এ যদি প্রশ্ন আসে: “একটি রেফারেন্স লাইব্রেরিতে α এসেছে 1.0986, কিন্তু আপনার কোডে এসেছে 0.5493—আপনার কোডে কি বাগ আছে?” আত্মবিশ্বাসের সাথে বলুন, 1.0986 ≈ log(3) আর 0.5493 ≈ 0.5 × log(3)—অর্থাৎ সংখ্যা দুটি হুবহু 2-এর গুণিতকে সম্পর্কিত! সুতরাং বাগ ঘোষণা করার আগে আমাদের দেখতে হবে কোনটি ধ্রুপদী Signed Update (exp(-α y h)) আর কোনটি SAMME Indicator Update ব্যবহার করছে, তাদের Label Encoding কী এবং learning_rate কত দেওয়া আছে। কেবল একটি কাঁচা গুণিতক দেখেই কোড শুদ্ধ বা ভুল বলা যায় না। আর কেউ যদি এর আউটপুটকে সরাসরি Probability হিসেবে ব্যাখ্যা করতে চায়, তবে অবশ্যই সংশ্লিষ্ট লাইব্রেরির Score-to-Probability রূপান্তর এবং Held-out Calibration যাচাই করে নিতে হবে।"
+        }
+      ]
+    },
+    {
+      "id": "ch10_gradient",
+      "title": "Gradient Boosting: Function-Space-এ ধাপে ধাপে সংশোধন",
+      "subtitle": "Squared-Loss Residual থেকে সাধারণ Negative Gradient-এর ধারণা",
+      "duration": "38 min",
+      "icon": "hub",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "প্যারামিটার নয়, সরাসরি ফাংশনের জগতে পদচারণা",
+          "body": "AdaBoost-এ আমরা দেখেছি কেবল একটি নির্দিষ্ট Exponential Loss এবং Sample Reweighting-এর কৌশল। কিন্তু আমাদের সামনে যদি Regression-এর Squared Error, Outlier-সহনশীল Huber Loss কিংবা র‍্যাঙ্কিংয়ের কোনো বিশেষ Loss থাকে—তখনও কি আমরা একইভাবে ধাপে ধাপে ছোট Tree যোগ করে শক্তিশালী মডেল গড়তে পারি? এই প্রশ্নের সার্বজনীন উত্তর হলো Gradient Boosting।\n\nএখানে আমাদের মডেলটি একটি যোগফল আকারের ফাংশন (Additive Function Model): F_m(x) = F_{m-1}(x) + η f_m(x)। সাধারণ Neural Network বা Linear Regression-এ আমরা যেমন নির্দিষ্ট কিছু ওজন বা Parameter-এর ওপর Gradient Descent চালাই, এখানে দৃষ্টিভঙ্গিটি একটু ভিন্ন: আমরা প্রতিটি Training বিন্দুতে বর্তমান ফাংশনের মান F_{m-1}(x_i)-এর সাপেক্ষে Loss-এর Negative Gradient বের করি—যা বলে দেয় প্রতিটি বিন্দুতে আমাদের বর্তমান Prediction কোন দিকে এবং কতটা সরানো দরকার। যেহেতু নতুন যেকোনো অজানা ডেটাতেও আমাদের এই সংশোধনটি করতে হবে, তাই আমরা একটি নতুন ছোট Regression Tree f_m(x) ফিট করাই যেন সে ওই Negative Gradient-গুলোকে সবচেয়ে ভালোভাবে অনুকরণ করতে পারে! মনে রাখবেন, Parameter-space-এর সাধারণ Gradient Descent আর Function-space-এ Tree দিয়ে এই Steepest-descent অনুমান ঘনিষ্ঠভাবে সম্পর্কিত হলেও কোডের বাস্তবায়নে দুটি হুবহু এক জিনিস নয়।"
+        },
+        {
+          "type": "math",
+          "title": "Pseudo-Residual বা Negative Gradient ও হালনাগাদ সমীকরণ",
+          "body": "r_{im}=-\\left.\\frac{\\partial\\ell(y_i,F)}{\\partial F}\\right|_{F=F_{m-1}(x_i)},\\qquad F_m(x)=F_{m-1}(x)+\\eta f_m(x)"
+        },
+        {
+          "type": "math",
+          "title": "Squared Loss-এর বিশেষ ক্ষেত্র",
+          "body": "\\ell=\\frac12(y-F)^2\\quad\\Rightarrow\\quad r=y-F,\\qquad F_0=\\overline y_{train}"
+        },
+        {
+          "type": "text",
+          "title": "সঠিক প্রারম্ভিক মান (Initialization) কেন এত গুরুত্বপূর্ণ?",
+          "body": "ওপরের সমীকরণ দুটি দেখলেই বোঝা যায় কেন প্রথমেই আমরা Squared Loss দিয়ে উদাহরণ শুরু করি: যখন ℓ(y, F) = (1/2)(y - F)², তখন F-এর সাপেক্ষে এর Negative Gradient দাঁড়ায় স্রেফ y - F—অর্থাৎ আমাদের চিরপরিচিত সাধারণ Residual (আসল মান বিয়োগ বর্তমান Prediction)! কিন্তু প্রথম ধাপের Tree যোগ করার আগে শূন্যতম ধাপে আমাদের প্রারম্ভিক ধ্রুবক মান F_0 কত হবে? নিয়ম হলো এমন ধ্রুবক যা একাই মোট প্রারম্ভিক Loss সর্বনিম্ন করে। যেমন Squared Error-এর বেলায় সেটি হলো ট্রেনিং টার্গেটের গড় (mean), কিন্তু Absolute Error (L1 Loss) নিলে সেটি হয়ে যায় মধ্যমা (median), আর Binary Logistic Loss-এর বেলায় হয় প্রারম্ভিক ক্লাস অনুপাতের Log-odds! অর্থাৎ Loss বদলালে F_0-ও বদলে যাবে।\n\nএরপর প্রতিটি নতুন ধাপের Tree আসল টার্গেট y-কে নয়, বরং সর্বশেষ অবশিষ্ট ভুল বা Pseudo-residual r-কে ফিট করে এবং η (Learning Rate বা Shrinkage) গুণিতকে মূল ফাংশনে যোগ হয়। এখানে একটি সূক্ষ্ম কথা মনে রাখবেন: η ছোট করলে প্রথম রাউন্ডের পদক্ষেপ ছোট হয়, যার ফলে দ্বিতীয় রাউন্ডের Residual-গুলোও সম্পূর্ণ বদলে যায়—তাই একটি η দিয়ে ফিট করা Tree-গুলোকে পরে শুধু স্কেল করে অন্য η-এর গতিপথ পাওয়া সম্ভব নয়; আলাদাভাবে পুরো পথ নতুন করে ফিট করতে হয়।"
+        },
+        {
+          "type": "code",
+          "title": "স্ক্র্যাচ থেকে লেখা Squared-Loss Boosting চালিয়ে দেখা",
+          "body": "from pathlib import Path\nimport runpy\nimport numpy as np\n\napi = runpy.run_path(str(Path(\"assets/datasets/adult/ensemble_workflow.py\")))\nX = np.arange(6.0).reshape(-1, 1)\ny = np.array([1.0, 1.0, 2.0, 8.0, 9.0, 9.0])\nmodel = api[\"fit_squared_boost\"](X, y, rounds=3, rate=0.5, min_leaf=1)\nstages = api[\"staged_squared_predict\"](model, X)\nassert stages.shape == (4, 6)\nassert np.allclose(stages[0], y.mean())\nassert np.all(np.diff(model[\"training_rmse\"]) <= 1e-12)\nprint(model[\"training_rmse\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "প্রতি রাউন্ডেই কি Training Loss কমতে বাধ্য?",
+          "body": "ওপরের কোডের শেষে আমরা একটি সুন্দর Assertion দেখেছি যে প্রতি ধাপে training_rmse কমছে বা অন্তত বাড়ছে না। কেন এমন হলো? কারণ Squared Loss-এর ক্ষেত্রে আমরা যখন নিখুঁত Least-squares Regression Tree দিয়ে Residual-কে ফিট করি, তখন গাণিতিকভাবে সেটি অর্থোগোনাল প্রজেকশনের মতো কাজ করে এবং উপযুক্ত ধনাত্মক Learning Rate 0 < η ≤ 1 নিলে ট্রেনিং SSE বাড়ার সুযোগ থাকে না।\n\nকিন্তু সতর্ক থাকুন: এই একমুখী কমার বৈশিষ্ট্যকে (Monotonic Decrease) কখনোই সব ধরনের Boosting-এর সার্বজনীন গ্যারান্টি হিসেবে দাবি করবেন না! অন্য কোনো জটিল অরৈখিক Loss ফাংশন, আনুমানিক (Approximate) Split, Stochastic Subsampling কিংবা অতিরিক্ত বড় Learning Rate নিলে কখনো কখনো ট্রেনিং Loss সাময়িকভাবে বাড়তেও পারে। আর Held-out Validation Loss তো একটি নির্দিষ্ট রাউন্ডের পর Overfitting-এর কারণে বাড়তে শুরু করতেই পারে—সেটাই স্বাভাবিক!"
+        },
+        {
+          "type": "boosting_lab",
+          "title": "Interactive Gradient Boosting Lab",
+          "body": "এবার বাস্তব Adult Dataset-এর কর্মঘণ্টা (Hours) Regression-এর ওপর তৈরি এই Interactive Lab-টিতে রাউন্ড 0 থেকে 16 পর্যন্ত প্রতিটি ধাপ নিজের চোখে পর্যবেক্ষণ করুন। যেকোনো একটি Validation Row বেছে নিয়ে দেখুন আগের ধাপের Prediction কত ছিল, নতুন Tree কত আউটপুট দিল, Learning Rate η দিয়ে গুণ করার পর নতুন Prediction কত দাঁড়াল এবং অবশিষ্ট Residual কীভাবে পরিবর্তিত হলো। খেয়াল করবেন, এখানে তিনটি ভিন্ন Learning Rate-এর জন্য Tree-গুলো সম্পূর্ণ আলাদাভাবে শুরু থেকে ফিট করা হয়েছে। পাশাপাশি পুরো সেটের Training ও Validation RMSE রেখা দুটি তুলনা করুন—মনে রাখবেন, একটি একক Row-এর Residual কখনোই একা পুরো Dataset-এর সামগ্রিক মেট্রিকের প্রতিনিধিত্ব করে না।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে উত্তর দেবেন",
+          "body": "Interview-এ অনেকেই মুখস্থ বলে ফেলেন: “Gradient Boosting মানেই হলো প্রতি ধাপে আগের ভুল বা Residual (y - F) ফিট করা।” আপনাকে প্রশ্ন করা হলে এই বক্তব্যটিকে নিখুঁতভাবে পরিমার্জিত করে বলুন! জানান যে, কেবলমাত্র Squared Loss-এর ক্ষেত্রেই সাধারণ Residual এবং Negative Gradient গাণিতিকভাবে অভিন্ন হয়। অন্য যেকোনো অবকলনযোগ্য (Differentiable) Loss-এ Tree মূলত ফিট করে Negative Gradient বা Pseudo-residual-কে—যেমন পরের পাঠেই আমরা দেখব Logistic Loss-এ সেটি হয় y - p, মোটেও কাঁচা y - F নয়! এর পাশাপাশি উল্লেখ করুন যে অনেক আধুনিক অ্যালগরিদম কেবল প্রথম ক্রমের Gradient দেখেই থেমে থাকে না; প্রতিটি Leaf-এর সেরা মান বের করতে তারা Line Search বা দ্বিতীয় ক্রমের Hessian (বক্রতা) তথ্যও ব্যবহার করে।"
+        }
+      ]
+    },
+    {
+      "id": "ch10_logistic",
+      "title": "Logistic Boosting ও দ্বিতীয় ক্রমের Newton পদক্ষেপ",
+      "subtitle": "Logit Space, Gradient, Hessian ও সংখ্যাগতভাবে স্থিতিশীল Loss",
+      "duration": "36 min",
+      "icon": "hub",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Classification সমস্যার ভেতরেও কেন Regression Tree ব্যবহৃত হয়?",
+          "body": "প্রথমবার Gradient Boosting Classifier-এর ভেতরের কোড দেখলে প্রায় সবাই অবাক হয়ে যান: বাইরে সমস্যাটি Binary Classification (y ∈ {0, 1}), অথচ ভেতরে প্রতি রাউন্ডে যোগ করা হচ্ছে একেকটি Regression Tree! কেন Classification Tree নয়?\n\nকারণটি একটু ভাবলেই পরিষ্কার হয়ে যাবে। আমাদের সংযোজনশীল মডেলকে প্রতি রাউন্ডে ধনাত্মক বা ঋণাত্মক সূক্ষ্ম সংখ্যাগত সংশোধন যোগ করতে হয়। আমরা যদি সরাসরি Probability [0, 1]-এর জগতে ইচ্ছেমতো সংখ্যা যোগ-বিয়োগ করতে যাই, তবে মুহূর্তেই যোগফল 0-এর নিচে বা 1-এর ওপরে চলে গিয়ে সম্ভাব্যতার সংজ্ঞা ভেঙে ফেলবে! তাই বুদ্ধিমানের কাজ হলো সীমাহীন বাস্তব সংখ্যার জগতে অর্থাৎ Raw Score বা Logit F(x) = log(p / (1 - p)) স্পেসে মডেলটিকে যোগফল আকারে গড়ে তোলা। এখানে প্রতিটি Regression Tree ওই Logit স্কোরের একটি সংখ্যাগত সংশোধন Predict করে, আর একদম শেষে Sigmoid ফাংশন σ(F) চালিয়ে তাকে সুন্দর [0, 1] পরিসরের Probability-তে রূপান্তর করা হয়। শূন্যতম ধাপের প্রারম্ভিক স্কোর F_0 নেওয়া হয় ট্রেনিং সেটের গড় পজিটিভ হারের Log-odds থেকে, তবে শর্ত থাকে যে ট্রেনিং গড়টি যেন নিখুঁতভাবে 0 এবং 1-এর মাঝখানে থাকে।"
+        },
+        {
+          "type": "math",
+          "title": "সংখ্যাগতভাবে স্থিতিশীল Logistic Objective, Gradient ও Hessian",
+          "body": "\\ell(y,F)=\\log(1+e^F)-yF,\\quad p=\\sigma(F),\\quad g=p-y,\\quad h=p(1-p)"
+        },
+        {
+          "type": "text",
+          "title": "শুধু Gradient বনাম দ্বিতীয় ক্রমের Newton সংশোধন",
+          "body": "ওপরের সমীকরণটি লক্ষ্য করুন: প্রতি উদাহরণের জন্য প্রথম অন্তরজ বা Gradient হলো g = p - y (ফলে Negative Gradient দাঁড়ায় y - p), এবং দ্বিতীয় অন্তরজ বা Hessian হলো h = p(1 - p)। প্রথম ক্রমের সাধারণ পদ্ধতি কেবল y - p দেখেই সন্তুষ্ট থাকে, কিন্তু দ্বিতীয় ক্রমের Newton Update স্থানীয় বক্রতা (Local Curvature) h দিয়ে ভাগ করে পদক্ষেপের আকারকে অনেক বেশি নিখুঁত করে তোলে!\n\nকিন্তু এখানে একটি বড় সংখ্যাগত ঝুঁকি আছে: কোনো উদাহরণে মডেল খুব আত্মবিশ্বাসী হয়ে গেলে অর্থাৎ p যখন 0 বা 1-এর খুব কাছাকাছি পৌঁছায় (Saturated Region), তখন h = p(1 - p) প্রায় শূন্যের কাছাকাছি চলে যায়! শূন্যের কাছাকাছি হর দিয়ে ভাগ করলে পদক্ষেপের আকার বিস্ফোরিত হতে পারে। এজন্যই বাস্তব ইমপ্লিমেন্টেশনে হরের সাথে Regularization যোগ করা, প্রতিটি Child Leaf-এ ন্যূনতম মোট Hessian ওজন (min_child_weight) বেঁধে দেওয়া কিংবা সর্বোচ্চ ধাপের সীমা (Clipping / Step Limits) আরোপ করার প্রয়োজন পড়ে। আর কোডে কখনোই কাঁচা exp(F) দিয়ে হাতে Sigmoid বা Log Loss লিখবেন না—বড় F-এ তা সহজেই Overflow ঘটায়; সবসময় লাইব্রেরির স্থিতিশীল expit এবং np.logaddexp(0, F) ব্যবহার করুন।"
+        },
+        {
+          "type": "code",
+          "title": "Finite Difference দিয়ে Gradient ও Hessian-এর নির্ভুলতা যাচাই",
+          "body": "import numpy as np\nfrom scipy.special import expit\n\ny, F = 1.0, 0.7\nloss = lambda z: float(np.logaddexp(0, z) - y * z)\np = expit(F)\ng = p - y\nh = p * (1 - p)\neps = 1e-4\nnumeric_g = (loss(F + eps) - loss(F - eps)) / (2 * eps)\nnumeric_h = (loss(F + eps) - 2 * loss(F) + loss(F - eps)) / eps**2\nassert np.isclose(g, numeric_g, atol=1e-8)\nassert np.isclose(h, numeric_h, atol=1e-7)\nassert np.isfinite(np.logaddexp(0, 1000.0))\nprint(g, h)\n"
+        },
+        {
+          "type": "text",
+          "title": "Pseudo-Response আর চূড়ান্ত Leaf-এর একক (Unit) কিন্তু এক নয়",
+          "body": "এখানে এককের (Units) একটি সূক্ষ্ম পার্থক্য পরিষ্কার থাকা খুব জরুরি। আমাদের Negative Gradient y - p দেখতে সম্ভাব্যতার পার্থক্যের মতো ([-1, +1] পরিসরের একটি সংখ্যা), অথচ আমাদের মূল মডেল F(x) কিন্তু বসবাস করে Logit স্কেলে ((-∞, +∞))! দুটি রাশির একক এক নয়। তাই প্রতিষ্ঠিত অ্যালগরিদমগুলো কেবল y - p-এর সাধারণ গড় নিয়েই চুপচাপ Logit-এ যোগ করে দেয় না—অনেক অ্যালগরিদম প্রথমে Pseudo-response ফিট করে Tree-এর গঠন (Regions) ঠিক করে, এবং তারপর প্রতিটি Leaf-এর ভেতরে Newton পদক্ষেপ বা Line Search চালিয়ে সঠিক Logit-স্কেলের অপটিমাল মানটি হিসাব করে নেয়। তাই সাধারণ গড়-ভিত্তিক খেলনা কোডের সাথে প্রতিষ্ঠিত Classifier লাইব্রেরির আচরণ হুবহু অভিন্ন হবে—এমনটা ধরে নেবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "Logit থেকে Probability ও বাস্তব ডিপ্লয়মেন্ট সতর্কতা",
+          "body": "সব রাউন্ড শেষে চূড়ান্ত স্কোর F(x)-এর ওপর expit(F) চালালে আমরা [0, 1] পরিসরের একটি সংখ্যা পাই বটে, কিন্তু মনে রাখবেন—শক্তিশালী Tree Ensemble অনেক সময় অতিরিক্ত আত্মবিশ্বাসী স্কোর দেয়, তাই এটি স্বয়ংক্রিয়ভাবে নিখুঁত Calibrated Posterior Probability হওয়ার গ্যারান্টি বহন করে না। বিশেষ করে ট্রেনিংয়ের সময় যদি আপনি কৃত্রিম class_weight বা sample_weight ব্যবহার করে থাকেন, তবে পুরো Objective-এর ভারসাম্যই সরে যায়; তখন আসল প্রোডাকশনের স্বাভাবিক ক্লাস অনুপাতে (Deployment Prevalence) ওই সম্ভাব্যতা কতটা মেলে তা আলাদাভাবে মূল্যায়ন করতে হবে। র‍্যাঙ্কিং মেট্রিক (যেমন Average Precision), কাঁচা Margin, Log Loss এবং Calibration—প্রতিটিই আলাদা আলাদা ডায়াগনস্টিক।"
+        },
+        {
+          "type": "text",
+          "title": "Multiclass ক্ষেত্রে হিসাবটি কীভাবে প্রসারিত হয়?",
+          "body": "যখন Class সংখ্যা দুইয়ের বেশি (K > 2) হয়, তখন একটি একক Logit আর যথেষ্ট থাকে না; প্রতিটি উদাহরণের জন্য একাধিক Logit, তাদের ওপর Softmax রূপান্তর এবং ভেক্টর Gradient প্রয়োজন হয়। এখানে ভুলেও Binary ক্ষেত্রের সরল h = p(1 - p) সূত্রটি অন্ধভাবে কপি করে বসাবেন না। তাছাড়া প্রতি রাউন্ডে কয়টি করে Tree তৈরি হচ্ছে তা ব্যবহৃত লাইব্রেরি ও Objective-এর ওপর নির্ভর করে (প্রায়ই প্রতি রাউন্ডে K-টি করে আলাদা Tree তৈরি হয়)। প্রোডাকশনে Serving Cost ও Latency হিসাব করার সময় তাই iterations × classes × tree_depth—এই পুরো গুণফলটিই বিবেচনায় রাখতে হবে!"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে উত্তর দেবেন",
+          "body": "Interview-এ একটি চমৎকার গাণিতিক প্রশ্ন প্রায়ই করা হয়: “ধরুন একটি উদাহরণের আসল Label y = 1 এবং বর্তমান অনুমিত সম্ভাবনা p = 0.8। এর Gradient ও Hessian কত এবং পরের ধাপে Logit বাড়ানোর সংশোধনটি কেন যৌক্তিক?”\n\nউত্তরে চটপট হিসাব করে দেখান: এখানে Gradient g = p - y = 0.8 - 1 = -0.2, ফলে Negative Gradient -g = +0.2 (ধনাত্মক), এবং Hessian h = 0.8 × 0.2 = 0.16। যেহেতু আসল উত্তর 1 হওয়া সত্ত্বেও মডেল এখনো 0.8 বলছে, তাই সম্ভাবনাটিকে 1-এর আরও কাছে নিতে হলে কাঁচা Logit স্কোর F-কে বাড়াতে হবে—এ কারণেই ধনাত্মক সংশোধন সম্পূর্ণ যৌক্তিক! এরপর F (Logit) ও p (Probability)-এর এককের পার্থক্য, logaddexp দিয়ে সংখ্যাগত স্থিতিশীলতা এবং Saturated Leaf-এ ক্ষুদ্র Hessian সামলানোর কৌশলগুলো সংক্ষেপে যোগ করে দিন।"
+        }
+      ]
+    },
+    {
+      "id": "ch10_stopping",
+      "title": "Learning Rate, Boosting Rounds ও Early Stopping",
+      "subtitle": "Shrinkage-এর বিনিময়, Patience নীতি এবং নিশ্ছিদ্র Validation ও Refit প্রোটোকল",
+      "duration": "34 min",
+      "icon": "hub",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Shrinkage (η) ও রাউন্ড সংখ্যার পারস্পরিক বিনিময়",
+          "body": "Gradient Boosting টিউন করার সময় সবচেয়ে গুরুত্বপূর্ণ যুগল হলো Learning Rate (η, যাকে Shrinkage-ও বলা হয়) এবং মোট Boosting Rounds। ছোট η ব্যবহার করলে প্রতিটি নতুন Tree-এর সংশোধন সংকুচিত হয়ে যায়, ফলে ভালো পারফরম্যান্স পেতে সাধারণত বেশি সংখ্যক রাউন্ড প্রয়োজন হয়। বাস্তবে ছোট পদক্ষেপ নিয়ে ধীরে এগোলে প্রায়ই ভালো Generalization পাওয়া যায়।\n\nতবে একটি প্রচলিত ভুল ধারণা থেকে সাবধান: রাউন্ড সংখ্যা বিশাল করে দেওয়াটা কিন্তু সবসময় নিরীহ (Harmless) নয়! Bagging বা Random Forest-এ বেশি Tree কেবল গড়কে স্থির করে, কিন্তু Boosting-এ প্রতিটি নতুন রাউন্ড মডেলটির মোট ধারণক্ষমতা (Capacity) বাড়ায়—ফলে ডেটার আকার, ব্যবহৃত Loss এবং বিশেষ করে Label Noise থাকলে অতিরিক্ত রাউন্ডে ঠিকই Overfitting শুরু হয়। আরেকটি মৌলিক কথা মনে রাখবেন: η এবং রাউন্ড সংখ্যা যৌথ (Joint) Hyperparameter; একটি নির্দিষ্ট η দিয়ে ফিট করা মডেলের গতিপথকে শুধু গুণ-ভাগ করে অন্য কোনো η-এর গতিপথ পাওয়া যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "একটি পরিচ্ছন্ন Early-Stopping প্রোটোকল যেভাবে সাজাবেন",
+          "body": "ঠিক কততম রাউন্ডে থামলে Overfitting এড়ানো যাবে, তা বের করার কার্যকর উপায় হলো Early Stopping। কিন্তু এটি সঠিকভাবে প্রয়োগ করতে হলে ট্রেনিং শুরু করার আগেই কয়েকটি নিয়ম সুনির্দিষ্ট করে নিতে হয়: মূল Training Set থেকে সম্পূর্ণ স্বতন্ত্র একটি Development Validation সেটে নির্বাচিত Metric নজরদারি করা, কত রাউন্ড পর্যন্ত উন্নতি না দেখলে অপেক্ষা করা হবে (Patience), ন্যূনতম কতটুকু পরিবর্তনকে উন্নতি ধরা হবে (Tolerance), সর্বোচ্চ রাউন্ডের সীমা এবং থামার পর সেরা রাউন্ডের মডেল ফিরিয়ে আনার নীতি (Best-stage Restoration)।\n\nসবচেয়ে গুরুত্বপূর্ণ তাত্ত্বিক সতর্কতাটি হলো: যে Validation Set-এর রেখা দেখে আপনি সেরা রাউন্ডটি বেছে নিলেন, সেই সেরা রাউন্ডটি কিন্তু এখন একটি Selected Model—তাই ওই একই Validation স্কোরটিকে কখনোই আনকোরা নিরপেক্ষ Test Score বলে চালিয়ে দেবেন না!"
+        },
+        {
+          "type": "text",
+          "title": "Group ও সময়-নির্ভর ডেটায় স্বয়ংক্রিয় Split-এর বিপদ",
+          "body": "অনেক আধুনিক লাইব্রেরিতে early_stopping চালু করে validation_fraction দিলেই ভেতরে ভেতরে আপনাআপনি এলোমেলো কিছু Row কেটে নিয়ে Validation চালানো হয়। সাধারণ স্বাধীন Row-এর ক্ষেত্রে এটি সুবিধাজনক হলেও, আপনার ডেটায় যদি একই ব্যবহারকারীর পুনরাবৃত্তি (Repeated User) থাকে কিংবা সময়ের ক্রম থাকে, তবে এই ভেতরের এলোমেলো কাটাকুটি নিঃশব্দে Data Leakage ঘটিয়ে দেবে!\n\nতাই এসব ক্ষেত্রে স্বয়ংক্রিয় ভগ্নাংশের ওপর নির্ভর না করে বাইরে থেকে সুস্পষ্টভাবে Group বা Time-অনুযায়ী আলাদা করা Stopping Set কিংবা Inner Fold ব্যবহার করুন। উদাহরণস্বরূপ, আমাদের এই অধ্যায়ের প্রজেক্ট ওয়ার্কফ্লোর HistGradientBoostingClassifier-এ সচেতনভাবেই early_stopping=False রাখা হয়েছে এবং বাইরের Group-সচেতন Fold অনুযায়ী নির্দিষ্ট 60 rounds বাজেট ব্যবহার করা হয়েছে, যাতে লুকানো কোনো এলোমেলো Row Split না ঘটে।"
+        },
+        {
+          "type": "text",
+          "title": "Patience ও উন্নতির সংজ্ঞায় সূক্ষ্ম খুঁটিনাটি",
+          "body": "বাস্তব ডেটায় Validation Loss সবসময় মসৃণভাবে নামে না; সাময়িকভাবে সামান্য বাড়তেই পারে। প্রথমবার বাড়তেই থেমে গেলে সিদ্ধান্তটি অস্থির হতে পারে। এজন্যই Patience ব্যবহার করা হয়, যা টানা কতগুলো অ-উন্নয়নশীল রাউন্ড পার হলো তার হিসাব রাখে।\n\nকিন্তু কোডে বা লাইব্রেরি বদলানোর সময় তিনটি সূক্ষ্ম বিষয় খেয়াল রাখবেন:\n১. 'উন্নতি' বলতে লাইব্রেরিটি পরম পার্থক্য (Absolute Tolerance) বোঝাচ্ছে নাকি আপেক্ষিক অনুপাত (Relative Tolerance)?\n২. মেট্রিকটি কি কমলে ভালো (যেমন Loss), নাকি বাড়লে ভালো (যেমন Average Precision বা AP)? দুটির তুলনাকারী চিহ্ন সম্পূর্ণ আলাদা।\n৩. কোনো রাউন্ডে গাণিতিক গোলযোগে মেট্রিক NaN এলে কোড যেন নীরবে সেটিকে 'সেরা রাউন্ড' বানিয়ে না ফেলে!"
+        },
+        {
+          "type": "code",
+          "title": "সেরা রাউন্ড খুঁজে বের করার পরীক্ষিত ছোট ফাংশন",
+          "body": "import numpy as np\n\n\ndef best_round(losses):\n    values = np.asarray(losses, dtype=float)\n    if values.ndim != 1 or len(values) == 0 or not np.isfinite(values).all():\n        raise ValueError(\"Finite loss curve\")\n    return int(np.argmin(values))  # earliest exact tie\n\n\nassert best_round([0.8, 0.6, 0.61, 0.6, 0.7]) == 1\nprint(\n    best_round([0.8, 0.6, 0.61, 0.6, 0.7])\n)  # illustrative curve, not real measurements\n"
+        },
+        {
+          "type": "text",
+          "title": "সেরা রাউন্ড বাছাইয়ের পর Refit করার নীতি",
+          "body": "সেরা রাউন্ড সংখ্যা ও প্যারামিটার বেছে নেওয়ার পর আপনি যদি মূল Train এবং Stopping Row-গুলো একত্র করে পুরো ডেটার ওপর আবার মডেল ফিট (Refit) করেন, তবে খেয়াল রাখবেন—আপনার মডেলটি কিন্তু বদলে গেছে! তাই পূর্ণ ডেটায় ফিট করা এবং সার্ভিংয়ের জন্য মডেল সেভ (Serialization) করার নীতিটি স্পষ্টভাবে লিখে রাখুন, এবং চূড়ান্ত পারফরম্যান্স মাপার জন্য সম্পূর্ণ অস্পৃষ্ট (Untouched) আলাদা Evaluation Set রাখুন। Refit করার পর আগের সেই Stopping স্কোরটি পুরোনো মডেলের প্রমাণ মাত্র—নতুন Refitted মডেলের সরাসরি পরিমাপ নয়।"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের Interactive Boosting Lab পড়ার সঠিক নিয়ম",
+          "body": "আগের পাঠের Interactive Boosting Lab-এ যে রেখাগুলো দেখেছেন, সেগুলো কয়েকটি নির্দিষ্ট Learning Rate-এর জন্য আগে থেকেই স্বাধীনভাবে ফিট করে রাখা হয়েছে। খেয়াল করবেন, ইউজার ইন্টারফেস (UI) নিজে থেকে স্বয়ংক্রিয়ভাবে কোনো সেরা ধাপ বেছে দেয় না। সেখানে নির্দিষ্ট কোনো Held-out Row-এর Residual খতিয়ে দেখা কিন্তু ট্রেনিংয়ের অংশ নয়, কারণ নির্বাচিত Row-টি ট্রেনিংয়ের বাইরেই রাখা হয়েছে। আর বাস্তব কাজে আপনি যদি Validation রেখাগুলো দেখার পর নতুন নতুন Learning Rate বা রাউন্ড সংখ্যা বেছে নেন, তবে সেই অনুসন্ধানের ইতিহাসও (Exploration History) আপনার রিপোর্টে স্বচ্ছভাবে উল্লেখ করবেন।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে উত্তর দেবেন",
+          "body": "Interview-এ একটি দারুণ প্রশ্ন করা হয়: “আমাদের তো Early Stopping চালু আছেই, তাহলে আর আলাদা কোনো Regularization লাগবে না—কথাটি কি ঠিক?” উত্তরে সরাসরি বলুন যে এটি ভুল! Early Stopping কেবল রাউন্ডের সংখ্যা নিয়ন্ত্রণ করে; কিন্তু একক Tree-এর গভীরতা বা সর্বোচ্চ Leaf সংখ্যা, ন্যূনতম Support, Row Subsample, Column Sample, L1/L2 Penalty এবং পরিচ্ছন্ন Label Quality—এগুলোর প্রতিটিই আলাদা ও স্বতন্ত্র নিয়ন্ত্রণ চাবিকাঠি। সবশেষে একটি খাঁটি প্রোডাকশন টিপস যোগ করুন: সার্ভিংয়ের জন্য মডেল সেভ করার সময় আসলে best_iteration সেভ হচ্ছে নাকি থামার মুহূর্তের সর্বশেষ last_iteration সেভ হচ্ছে, তা ডিপ্লয়মেন্টের আগে অবশ্যই পরীক্ষা করে নিতে হবে!"
+        }
+      ]
+    },
+    {
+      "id": "ch10_histograms",
+      "title": "Histogram Boosting: দ্রুত ও স্মার্ট Split অনুসন্ধান",
+      "subtitle": "Quantile Binning, Sufficient Statistics ও আনুমানিক Split-এর কৌশল",
+      "duration": "32 min",
+      "icon": "hub",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "নিখুঁত প্রতিটি বিন্দুর বদলে Bin-ভিত্তিক অনুসন্ধান",
+          "body": "সাধারণ Decision Tree বা প্রারম্ভিক যুগের Boosting-এ কোনো একটি অবিচ্ছিন্ন (Continuous) Feature-এর সেরা Split খুঁজতে হলে মানগুলোকে সাজিয়ে (Sort) হাজার হাজার ভিন্ন বিন্দুর মাঝামাঝি প্রতিটি সম্ভাব্য Threshold একে একে পরীক্ষা করতে হতো। লক্ষ লক্ষ Row-এর বড় Dataset-এ প্রতি রাউন্ডে এই কাজটি প্রচণ্ড সময়সাপেক্ষ!\n\nআধুনিক Histogram Boosting এই সমস্যার এক দুর্দান্ত প্রকৌশলগত সমাধান নিয়ে এসেছে। ট্রেনিংয়ের শুরুতে অবিচ্ছিন্ন মানগুলোকে সীমিত সংখ্যক বিচ্ছিন্ন বাক্স বা Bin-এ ভাগ (Quantize) করে ফেলা হয়। এরপর প্রতিটি Bin-এর ভেতরে কয়টি করে উদাহরণ পড়ল এবং তাদের মোট Gradient ও Hessian কত হলো তা যোগ করে রাখা হয়। ফলে হাজারো কাঁচা বিন্দু স্ক্যান করার বদলে আমাদের Candidate Split অনুসন্ধান চলে কেবল ওই সামান্য কয়েকটি Bin-এর সীমানার ওপর! তবে একটি গুরুত্বপূর্ণ সতর্কতা মনে রাখবেন: এই Bin-এর সীমানা নির্ধারণও (Quantization) একটি ডেটা-নির্ভর Preprocessing—তাই এটি অবশ্যই কেবল Training অংশের ওপর ফিট হতে হবে; Validation বা Test ডেটার বণ্টন দেখে Bin Edge বানালে সূক্ষ্ম Data Leakage ঢুকে পড়বে।"
+        },
+        {
+          "type": "text",
+          "title": "Sufficient Statistics ও সংখ্যার ক্রম রক্ষা",
+          "body": "একটি Bin-এর ভেতরে ঠিক কোন কোন তথ্য জমা রাখলে সেরা Split হিসাব করার জন্য আর কাঁচা Row-গুলোর কাছে ফিরে যেতে হবে না? পরিসংখ্যানের ভাষায় এদের বলা হয় Sufficient Statistics। যেমন দ্বিতীয় ক্রমের Newton Tree-এর Split স্কোর করতে প্রতি Bin-এ কেবল Gradient-এর যোগফল (G) এবং Hessian-এর যোগফল (H) রাখলেই যথেষ্ট; আর সাধারণ Squared-error Regression হলে সংখ্যা (count), যোগফল (sum) এবং বর্গের যোগফল (sumsq) কাজে লাগে।\n\nখেয়াল রাখবেন, এই Binning মানে কিন্তু সংখ্যাকে এলোমেলো নামমাত্র Category বানিয়ে ফেলা নয়—এটি সংখ্যার স্বাভাবিক ছোট-বড় ক্রম (Numeric Ordering) অক্ষুণ্ণ রেখেই আনুমানিক Threshold তৈরি করে। এখানে একটি স্পষ্ট বিনিময় (Tradeoff) কাজ করে: বেশি Bin নিলে মেমোরি ও হিসাবের খরচ বাড়ে, আবার খুব অল্প Bin নিলে পাশাপাশি দুটি গুরুত্বপূর্ণ মান একই বাক্সে পড়ে গিয়ে কোনো সূক্ষ্ম কার্যকর সীমানা (Narrow Boundary) চোখ এড়িয়ে যেতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "Histogram Subtraction কৌশলে দ্বিগুণ গতি",
+          "body": "Histogram ব্যবহারের আরেকটি চমৎকার গাণিতিক সুবিধা হলো Histogram Subtraction। যেহেতু একটি Parent Node-এর উদাহরণগুলো ভাগ হয়ে কেবল বাম (Left) ও ডান (Right) দুটি Child Node-এ যায়, তাই Parent Histogram = Left Histogram + Right Histogram সম্পর্কটি সবসময় সত্য। ফলে আমাদের দুটি Child-এর জন্যই আলাদা করে Row গুনে Histogram বানাতে হয় না—কেবল যে Child-টিতে উদাহরণের সংখ্যা কম, তার Histogram-টি তৈরি করে Parent থেকে বিয়োগ দিলেই প্রায় বিনা খরচে বড় Child-টির Histogram পাওয়া যায়!\n\nঅবশ্য বাস্তব ইমপ্লিমেন্টেশনে কাজের চাপ, ফ্লোটিং-পয়েন্ট বিয়োগজনিত ক্ষুদ্র Roundoff Error এবং বিয়োগের পর Hessian যেন অঋণাত্মক ও বৈধ থাকে তা খেয়াল রাখতে হয়। আর মনে রাখবেন, আনুমানিক (Approximate) Split ট্রেনিংকে বহুগুণ দ্রুত করে ঠিকই, কিন্তু সবসময় নিখুঁত Split-এর চেয়ে বেশি Accuracy দেবে—এমন কোনো সার্বজনীন গ্যারান্টি নেই।"
+        },
+        {
+          "type": "code",
+          "title": "হাতে-কলমে Quantile Binning ও Gradient একত্রীকরণ",
+          "body": "import numpy as np\n\ntraining = np.array([1.0, 2.0, 3.0, 4.0, 8.0, 9.0])\nedges = np.quantile(training, [1 / 3, 2 / 3])\nbins = np.searchsorted(edges, training, side=\"right\")\ngradients = np.array([-0.2, 0.1, 0.3, -0.1, 0.2, 0.4])\ncounts = np.bincount(bins, minlength=3)\nsums = np.bincount(bins, weights=gradients, minlength=3)\nassert counts.sum() == len(training)\nassert np.isclose(sums.sum(), gradients.sum())\nprint(edges, counts, sums)\n"
+        },
+        {
+          "type": "text",
+          "title": "scikit-learn-এর HistGradientBoosting ও তার পরিধি",
+          "body": "scikit-learn-এর আধুনিক HistGradientBoostingClassifier ও HistGradientBoostingRegressor সরাসরি এই কৌশলের ওপর নির্মিত এবং এগুলোতে Missing Value ও Categorical Feature-এর নিজস্ব (Native) সমর্থন রয়েছে। তবে ব্যবহারের আগে ইনপুট dtype, সর্বোচ্চ অনুমোদিত Cardinality, একমুখী সীমাবদ্ধতা (Constraints) ও সংস্করণভেদে নিয়মগুলো ডকুমেন্টেশন থেকে মিলিয়ে নেওয়া জরুরি। আমাদের বর্তমান প্রজেক্ট ওয়ার্কফ্লোতে কেবল সসীম সংখ্যাসূচক (Numeric Finite) ইনপুট ব্যবহার করা হয়েছে—এবং মনে রাখবেন, একই পরিবারভুক্ত হলেও HistGradientBoosting কোনো স্বতন্ত্র LightGBM প্যাকেজ নয়; পারিবারিক সাদৃশ্য মানেই API-এর অভিন্নতা নয়।"
+        },
+        {
+          "type": "text",
+          "title": "ট্রেনিং মেমোরি বনাম প্রোডাকশন Serving",
+          "body": "ট্রেনিংয়ের সময় বড় ফ্লোটের বদলে ছোট পূর্ণসংখ্যার Bin ইনডেক্স রাখায় মেমোরি খরচ নাটকীয়ভাবে কমে আসে; তবে সার্ভিং বা Inference-এর সময় চূড়ান্ত মডেলে কিন্তু আবার বাস্তব সংখ্যার সেই Split Threshold ও Leaf মানগুলোই ব্যবহৃত হয়। বাস্তব সিস্টেমে বিশাল Dense Category বিস্তার করার চেয়ে Native Categorical সমর্থন কতটা সাশ্রয়ী তা যাচাই করে দেখুন। বিশেষ করে মডেলকে অন্য রানটাইমে এক্সপোর্ট করার পর Missing Value কোন শাখায় যাবে সেই আচরণটি (Branch Semantics) অক্ষুণ্ণ থাকছে কি না তা অবশ্যই পরীক্ষা করবেন।"
+        },
+        {
+          "type": "text",
+          "title": "ন্যূনতম সমর্থন (Minimum Support)-এর ভিন্ন ভিন্ন সংজ্ঞা",
+          "body": "বিভিন্ন Boosting লাইব্রেরির প্যারামিটার পড়ার সময় নামের মিল দেখে বিভ্রান্ত হবেন না: min_samples_leaf (কাঁচা উদাহরণের সংখ্যা), ন্যূনতম Hessian যোগফল, ন্যূনতম Leaf Weight এবং L2 Leaf Regularization—এই চারটি গাণিতিকভাবে সম্পূর্ণ আলাদা জিনিস! যেমন Probability Saturation ঘটলে (অর্থাৎ p প্রায় 0 বা 1-এর কাছাকাছি চলে গেলে) একটি Node-এ অনেকগুলো Row থাকা সত্ত্বেও প্রতিটির h = p(1 - p) অতি ক্ষুদ্র হওয়ায় মোট Hessian ভর খুব ছোট হতে পারে! তাছাড়া প্যারামিটারের নাম এক শোনালেও লাইব্রেরিভেদে Objective Normalization আলাদা হতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে উত্তর দেবেন",
+          "body": "Interview-এ একটি দারুণ সিস্টেম-লেভেল প্রশ্ন করা হয়: “Histogram অ্যালগরিদমে Candidate Split খোঁজা অনেক দ্রুত হলেও পুরো ট্রেনিংয়ের মোট রানটাইম কেন কেবল O(bins) নয়?”\n\nউত্তরে পুরো হিসাবটি ভেঙে দেখান: O(bins) হলো কেবল প্রস্তুতকৃত Histogram স্ক্যান করে সেরা Split বিন্দু বেছে নেওয়ার খরচ। কিন্তু তার আগে ডেটাকে Bin-এ রূপান্তর করতে এবং প্রতিটি Node-এ কোন Row কোন Bin-এ পড়ছে তা ঘুরে ঘুরে জমা করে Histogram তৈরি করতে ঠিকই সক্রিয় Row-গুলো স্পর্শ করতে হয়! সুতরাং মোট রানটাইম হিসাব করার সময় ডেটা Binning, Row থেকে Histogram জমা করা, Feature সংখ্যা, মোট Iteration, Leaf সংখ্যা, Thread সংখ্যা এবং Memory Traffic—সব কয়টি উপাদানই একসঙ্গে গণনা করতে হবে।"
+        }
+      ]
+    },
+    {
+      "id": "ch10_xgboost",
+      "title": "XGBoost Objective: নিজের হাতে গাণিতিক প্রতিপাদন",
+      "subtitle": "দ্বিতীয় ক্রমের Leaf Weight, Regularization এবং Split Gain-এর পূর্ণাঙ্গ হিসাব",
+      "duration": "32 min",
+      "icon": "hub",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "লাইব্রেরি মুখস্থ করার আগে মূল গাণিতিক Objective বুঝুন",
+          "body": "ইন্ডাস্ট্রির টেবুলার ডেটা প্রজেক্টে XGBoost একটি অত্যন্ত সুপরিচিত ও সু-রক্ষণাবেক্ষণকৃত Boosting লাইব্রেরি। কিন্তু একজন প্রকৃত ML Engineer কেবল প্যাকেজ ইমপোর্ট করেই থেমে থাকেন না—তিনি জানেন এর ভেতরের ইঞ্জিনটি ঠিক কোন সমীকরণে চলে! এই পাঠে কোনো বাহ্যিক প্যাকেজ ইনস্টল বা বেঞ্চমার্ক না করেই আমরা সরাসরি এর কেন্দ্রীয় দ্বিতীয় ক্রমের (Second-order) Tree Objective-টি মূল গাণিতিক প্রতিপাদন ও ছোট চলমান কোড দিয়ে শিখব। মনে রাখবেন, বাস্তব API-এর ডিফল্ট আচরণ tree_method, ডিভাইস ও নির্বাচিত objective ভেদে বদলায়; মূল ভিত্তিটি জানা থাকলে অফিসিয়াল রেফারেন্স পড়া অনেক সহজ হয়ে যায়।"
+        },
+        {
+          "type": "math",
+          "title": "দ্বিতীয় ক্রমের Taylor বিস্তার ও Regularized Objective",
+          "body": "\\widetilde L=\\sum_i\\left[g_if(x_i)+\\frac12h_if(x_i)^2\\right]+\\gamma T+\\frac\\lambda2\\sum_{j=1}^{T}w_j^2"
+        },
+        {
+          "type": "math",
+          "title": "Leaf অনুযায়ী একত্রীকরণ ও সেরা Leaf Weight",
+          "body": "G_j=\\sum_{i\\in I_j}g_i,\\quad H_j=\\sum_{i\\in I_j}h_i,\\quad w_j^*=-\\frac{G_j}{H_j+\\lambda}"
+        },
+        {
+          "type": "text",
+          "title": "ক্যালকুলাসের এক ধাপে সেরা ওজন ও তার শর্তাবলি",
+          "body": "ওপরের সমীকরণ দুটি একটু মনোযোগ দিয়ে দেখুন—কতটা গোছানো! একটি নির্দিষ্ট Leaf j-এর ভেতরে পড়া সব উদাহরণ যেহেতু একই ধ্রুবক ওজন w_j পায়, তাই তাদের সবার প্রথম অন্তরজের যোগফল G_j এবং দ্বিতীয় অন্তরজের যোগফল H_j নিলে ওই একক Leaf-টির পরিবর্তনশীল Objective দাঁড়ায় একটি সরল দ্বিঘাত রাশি: G_j w_j + 0.5 (H_j + λ) w_j²।\n\nএখন w_j-এর সাপেক্ষে এর Derivative শূন্য ধরলেই (G_j + (H_j + λ) w_j = 0) সরাসরি বেরিয়ে আসে আমাদের বিখ্যাত অপটিমাল ওজন: w_j* = -G_j / (H_j + λ)! তবে এই সূত্রটি বৈধ হতে হলে হরটিকে অবশ্যই সসীম ও ধনাত্মক হতে হবে। উত্তল (Convex) Loss ফাংশনের ক্ষেত্রে h ≥ 0 হওয়া আমাদের পরিচিত ক্ষেত্র, এবং λ ≥ 0 হলো L2 Regularization প্যারামিটার। যদি কখনো λ = 0 এবং H_j = 0 হয়ে হর শূন্য হয়ে যায়, তবে ফলাফল অসংজ্ঞায়িত—কোডে সেখানে কৃত্রিম কোনো সসীম সংখ্যা বসাবেন না, বরং স্পষ্টভাবে প্রতিহত করবেন। আর মনে রাখবেন, পরে Shrinkage দিয়ে এই ফিট করা সংশোধনটিকে স্কেল করা হয়; এটি কোনো বৈশ্বিক সর্বোত্তম (Global Optimum) পাওয়ার দাবি করে না।"
+        },
+        {
+          "type": "math",
+          "title": "Split Gain-এর সমীকরণ",
+          "body": "Gain=\\frac12\\left[\\frac{G_L^2}{H_L+\\lambda}+\\frac{G_R^2}{H_R+\\lambda}-\\frac{(G_L+G_R)^2}{H_L+H_R+\\lambda}\\right]-\\gamma"
+        },
+        {
+          "type": "code",
+          "title": "কোডে Regularized Leaf Weight ও Split Gain যাচাই",
+          "body": "import math\n\n\ndef leaf_weight(G, H, lam):\n    if (\n        not all(math.isfinite(x) for x in (G, H, lam))\n        or H < 0\n        or lam < 0\n        or H + lam <= 0\n    ):\n        raise ValueError(\"Positive curvature denominator\")\n    return -G / (H + lam)\n\n\nassert leaf_weight(-3, 2, 1) == 1\nGL, HL, GR, HR, lam, gamma = -2.0, 1.0, 1.0, 1.0, 1.0, 0.1\ngain = (\n    0.5\n    * (GL * GL / (HL + lam) + GR * GR / (HR + lam) - (GL + GR) ** 2 / (HL + HR + lam))\n    - gamma\n)\nassert math.isclose(gain, 59 / 60)\nprint(gain)\n"
+        },
+        {
+          "type": "text",
+          "title": "প্রচলিত Hyperparameter-গুলোর প্রকৃত গাণিতিক অর্থ",
+          "body": "ওপরের সমীকরণ ও কোড দেখার পর প্যারামিটারগুলোর প্রকৃত ভূমিকা একদম পরিষ্কার হয়ে যায়:\n- gamma (γ): নতুন একটি Split করে একটি বাড়তি Leaf তৈরির জটিলতার মাশুল (Complexity Cost)।\n- lambda (λ): Leaf ওজনের ওপর প্রযুক্ত L2 Regularization (আর L1 বিস্তারের জন্য ব্যবহৃত alpha আলাদাভাবে কাজ করে)।\n- min_child_weight: এটি কিন্তু কাঁচা Row-এর সংখ্যা নয়, বরং একটি Child Leaf-এ ন্যূনতম কতটুকু মোট Hessian ভর (Hessian Mass) থাকতে হবে তার সীমা!\n- এর পাশাপাশি subsample, Column Sampling, সর্বোচ্চ গভীরতা বা Leaf সংখ্যা এবং η মিলে ধারণক্ষমতা ও বৈচিত্র্য নিয়ন্ত্রণ করে। খেয়াল রাখবেন, কোনো লাইব্রেরিতে G ও H মোট যোগফলের বদলে গড় (Mean) স্কেলে হিসাব করা হলে একই সংখ্যার Regularization প্যারামিটার কিন্তু সরাসরি তুলনীয় থাকে না।"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব ইমপ্লিমেন্টেশনের প্রকৌশলগত দিক",
+          "body": "Histogram, Exact নাকি Approximate অনুসন্ধান চলবে, Missing Value কোন দিকে যাবে, Categorical ও Sparse ডেটা কীভাবে সামলানো হবে, CPU/GPU সমান্তরালতা এবং মডেল সিরিয়ালাইজেশন কেমন হবে—এসবই লাইব্রেরি ও সংস্করণের ওপর নির্ভরশীল। এমনকি 'অমুক প্যাকেজ কেবলই Depth-wise আর তমুক কেবলই Leaf-wise বাড়ে'—এমন বাঁধাধরা সার্বজনীন পরিচয়ও আজকের আধুনিক প্যাকেজগুলোতে আর খাটে না, কারণ অধিকাংশ লাইব্রেরিতেই উভয় কৌশল কনফিগার করা যায়। তাই ব্র্যান্ডের নামের বদলে সমস্যার শর্ত ও নিয়ন্ত্রিত বেঞ্চমার্ক দেখেই পছন্দ চূড়ান্ত করুন।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে উত্তর দেবেন",
+          "body": "Interview-এ তিনটি চমৎকার তাত্ত্বিক প্রশ্ন প্রায়ই একসাথে করা হয়:\n১. “λ বাড়ালে Leaf ওজনের পরম মান কমে কেন?”—উত্তরে w* = -G / (H + λ) দেখিয়ে বলুন, ধনাত্মক H-এর সাথে হরে বড় λ যোগ হলে ভগ্নাংশটির মান সরাসরি ছোট হয়ে শূন্যের দিকে সংকুচিত হয়।\n২. “Split Gain হিসাব করার সময় বিয়োগ করা Parent পদটি বাদ দিলে Feature Split বাছাইয়ে কেন ভুল হতে পারে?”—বুঝিয়ে বলুন, না-ভাঙা অবস্থার তুলনায় আদৌ কতটা উন্নতি হলো এবং ভিন্ন ভিন্ন Node-এর মধ্যে কোনটি ভাঙা বেশি লাভজনক তা বিচার করতে Parent বেসলাইন বাদ দেওয়া অপরিহার্য।\n৩. আর যদি জিজ্ঞেস করা হয় L1 Penalty যুক্ত করলে কী বদলাবে—জানান যে আমাদের বর্তমান কোডটি কেবল L2-ভিত্তিক; L1 যোগ করলে লবে G-এর ওপর Soft-thresholding প্রয়োজন হয় (অপরিচিত সূত্র আন্দাজ না করে কীভাবে সাবগ্রেডিয়েন্ট থেকে তা বের করতে হয় তার রূপরেখা দিন)।"
+        },
+        {
+          "type": "text",
+          "title": "ধাপে ধাপে সংযোগ: Taylor বিস্তার থেকে কীভাবে এল Split Gain?",
+          "body": "নিচের কোডটি চালানোর আগে চলুন পুরো প্রতিপাদনের সুতোটি আরেকবার এক নিঃশ্বাসে গেঁথে নিই। বর্তমান Raw Score F-এর সাথে নতুন সংশোধন f যোগ করলে দ্বিতীয় ক্রমের Taylor আসন্নীকরণ অনুযায়ী প্রতি Row-এর Loss দাঁড়ায় প্রায় ℓ(F) + g f + (1/2) h f²। একই Leaf-এর সব Row একই ওজন w পায় বলে তাদের g ও h যোগ করে G ও H নিলে পরিবর্তনশীল অংশটি দাঁড়ায় G w + (1/2)(H + λ) w²। Derivative শূন্য ধরে পাওয়া সেরা ওজন w* = -G / (H + λ) বসালে ওই Leaf-টির অবদান আসে -(1/2) G² / (H + λ)। এবার না-ভাঙা Parent এবং ভাঙার পর দুই Child-এর এই অবদানগুলো তুলনা করে একটি অতিরিক্ত Leaf তৈরির খরচ γ বাদ দিলেই সরাসরি বেরিয়ে আসে আমাদের Split Gain (যেমন কোডের উদাহরণে 59 / 60 ≈ 0.983333)!"
+        },
+        {
+          "type": "math",
+          "body": "\\mathrm{Gain}=\\frac12\\left(\\frac{G_L^2}{H_L+\\lambda}+\\frac{G_R^2}{H_R+\\lambda}-\\frac{(G_L+G_R)^2}{H_L+H_R+\\lambda}\\right)-\\gamma",
+          "title": "Parent বনাম দুই Child-এর পার্থক্য থেকে Split Gain"
+        },
+        {
+          "type": "code",
+          "title": "Parent ও দুই Child-এর Objective সরাসরি বিয়োগ করে যাচাই",
+          "body": "left_g, left_h, right_g, right_h = -2.0, 1.0, 1.0, 1.0\npenalty, leaf_cost = 1.0, 0.1\ndef leaf_objective(gradient, hessian):\n    denominator = hessian + penalty\n    if denominator <= 0:\n        raise ValueError(\"Positive curvature plus penalty required\")\n    weight = -gradient / denominator\n    # Include the per-leaf complexity cost in the objective.\n    value = gradient * weight + 0.5 * denominator * weight ** 2 + leaf_cost\n    return weight, value\nparent_weight, parent = leaf_objective(left_g + right_g, left_h + right_h)\nleft_weight, left = leaf_objective(left_g, left_h)\nright_weight, right = leaf_objective(right_g, right_h)\nprint(round(parent_weight, 6), left_weight, right_weight, round(parent - left - right, 6))\n"
+        },
+        {
+          "type": "text",
+          "title": "ধনাত্মক Gain পেলেই আমাদের কী কী সিদ্ধান্ত ও সতর্কতা বাকি থাকে?",
+          "body": "ধনাত্মক Gain পাওয়ার অর্থ হলো—ঘোষিত দ্বিতীয় ক্রমের Surrogate Objective ও বর্তমান Regularization অনুযায়ী এই Split-টি লাভজনক। তবে মনে রাখবেন, দ্বিঘাত নয় এমন সাধারণ Loss-এ Taylor আসন্নীকরণের নিজস্ব সীমা আছে, এবং পরে Learning-rate Shrinkage দিয়ে ফিট করা Leaf সংশোধন প্রয়োগ করলে প্রকৃত পদক্ষেপের আকার বদলে যায়। এছাড়া গঠনগত সীমাবদ্ধতা, ন্যূনতম Hessian ভর এবং বাইরের Validation পর্যবেক্ষণের দায়িত্ব তখনও বহাল থাকে—আর ভুলেও বক্রতার যোগফল H-কে কাঁচা Row সংখ্যার সমান মনে করবেন না, নইলে ওই সীমাবদ্ধতাগুলোর অর্থই পাল্টে যাবে!"
+        },
+        {
+          "type": "checkpoint",
+          "title": "আগে নিজে ভেবে দেখুন",
+          "body": "Split Gain হিসাব করার সময় না-ভাঙা Parent Leaf-এর অবদানটুকু বাদ দিয়ে কেবল দুই Child-এর স্কোর দেখলে তুলনাটি কেন অসম্পূর্ণ থেকে যায়?",
+          "solution": "কারণ Node-টিকে Split না করে একটি ফিট করা একক Parent Leaf হিসেবে রেখে দেওয়াটাও আমাদের হাতে থাকা একটি বৈধ বিকল্প (Baseline)! কেবল দুই Child-এর স্কোর দেখলে সেই না-ভাঙা বেসলাইন এবং একটি অতিরিক্ত Leaf যোগ করার জটিলতার মাশুলের (γ) সাপেক্ষে প্রকৃত লাভ কতটা হলো তা যাচাই করা হয় না।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch10_lightgbm",
+      "title": "LightGBM-এর স্থাপত্য ও ডিজাইন দর্শন",
+      "subtitle": "Leaf-wise Growth, GOSS, EFB এবং Categorical Partition-এর প্রকৌশল",
+      "duration": "34 min",
+      "icon": "hub",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Depth-wise বনাম Leaf-wise (Best-first) বৃদ্ধির কৌশল",
+          "body": "ঐতিহ্যবাহী অনেক Tree অ্যালগরিদম সমানতালে স্তর ধরে বাড়ে (Depth-wise)—অর্থাৎ একটি গভীরতার সব Node ভাঙার পর পরের স্তরে যায়। কিন্তু LightGBM জনপ্রিয় করেছে Leaf-wise বৃদ্ধির নীতি: বর্তমানে পুরো Tree-তে যতগুলো খোলা Leaf আছে, তাদের মধ্যে ঠিক যে Leaf-টিকে ভাঙলে আনুমানিক Loss সবচেয়ে বেশি কমবে, প্রতি ধাপে কেবল সেই একটি Leaf-কেই Split করা হয়!\n\nসমান মোট Leaf বাজেটে (num_leaves) এই কৌশলটি প্রায়ই Depth-wise পদ্ধতির চেয়ে ভিন্ন আকৃতি ও কম Training Loss অর্জন করে। কিন্তু এর একটি স্বাভাবিক ঝুঁকিও আছে: অসুষমভাবে একদিকে গভীর পথ (Unbalanced Deep Path) তৈরি হয়ে অল্প উদাহরণের ওপর সহজেই Overfit করতে পারে! তাই বাস্তবে num_leaves, max_depth এবং ন্যূনতম উদাহরণ বা Hessian সীমা (min_data_in_leaf / Hessian constraints) সবসময় একসঙ্গে ভেবে টিউন করতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Leaf সংখ্যা মানেই কিন্তু সুষম গভীরতা নয়",
+          "body": "একটি সাধারণ গাণিতিক ভুল অনেকেই করেন: ভাবেন num_leaves = L দিলেই বুঝি Tree-টির গভীরতা সবসময় সুষম log2(L)-এর ভেতরেই থাকবে! আসল হিসাবটি খেয়াল করুন: একটি পূর্ণ সুষম depth-d বাইনারি Tree-তে সর্বোচ্চ 2^d-টি Leaf থাকতে পারে ঠিকই, কিন্তু শুধু Leaf বাজেট বেঁধে দিলে কোনো গভীরতার সীমা না থাকায় একটি লম্বা একপেশে শাখা অনেক গভীরে চলে যেতে পারে (এবং max_depth দিয়ে সীমা বেঁধে দিলেও ভেতরের বৃদ্ধির ক্রমটি কিন্তু Leaf-wise-ই থাকতে পারে)। সার্ভিংয়ের Path Latency এবং মডেলের Generalization দুটোই Tree-এর এই প্রকৃত আকৃতির ওপর নির্ভর করে।"
+        },
+        {
+          "type": "text",
+          "title": "GOSS (Gradient-based One-Side Sampling)-এর মূল ধারণা",
+          "body": "বড় Dataset-এ যে উদাহরণগুলোর বর্তমান Gradient খুব ছোট, মডেল সেগুলোকে ইতোমধ্যে ভালোভাবেই শিখেছে; আসল ভুল রয়ে গেছে বড় মানের Gradient-যুক্ত উদাহরণগুলোতে। এই অন্তর্দৃষ্টি থেকেই এসেছে GOSS: এটি বড় মানের Gradient-যুক্ত উদাহরণগুলোকে পুরোপুরি রেখে দেয় এবং ছোট Gradient-যুক্ত অংশটি থেকে দৈবচয়নে নমুনা নিয়ে মোট অবদানের ভারসাম্য ঠিক রাখতে সেগুলোকে উপযুক্ত গুণিতকে Reweight করে।\n\nমনে রাখবেন, এটি সাধারণ সুষম Bootstrap নয়। তাছাড়া এটি একটি কনফিগারযোগ্য Sampling কৌশল—LightGBM তার প্রতিটি রানেই ডিফল্টভাবে GOSS চালায় এমন দাবি করবেন না। যেকোনো আনুমানিক Sampling-এর মতো এখানেও গতি ও তথ্যের সামান্য Variance-এর মধ্যে বিনিময় কাজ করে।"
+        },
+        {
+          "type": "text",
+          "title": "EFB (Exclusive Feature Bundling)-এর মূল ধারণা",
+          "body": "উচ্চ-মাত্রার স্পার্স (Sparse) ডেটায় দেখা যায় অনেকগুলো Feature খুব কম ক্ষেত্রেই একই সাথে অশূন্য (Non-zero) মান নেয়। EFB কৌশলটি এমন পরস্পর প্রায়-বর্জনশীল স্পার্স Feature-গুলোকে নিরাপদে সংক্ষিপ্ত Bundle বা একীভূত রূপে বেঁধে ফেলতে পারে, যাতে Histogram তৈরির কাজ অনেক হালকা হয়ে যায়!\n\nতবে সতর্ক থাকুন: যেকোনো সাধারণ ঘন (Dense) ও সম্পর্কযুক্ত (Correlated) Feature-দের একত্র করে বিনা ক্ষতিতে একই তথ্য রেখে দেওয়ার গ্যারান্টি কিন্তু এটি নয়! সামান্য অশূন্য সংঘর্ষ (Conflict) অনুমোদনের মাত্রা ও কনফিগারেশন মেমোরি, গতি ও আসন্নীকরণের মধ্যে একটি প্রকৌশলগত বিনিময় তৈরি করে।"
+        },
+        {
+          "type": "text",
+          "title": "Histogram ও Native Categorical Partition",
+          "body": "LightGBM ভেতরে Histogram একত্রীকরণ, বিয়োগ এবং অপটিমাইজড Categorical Partition ব্যবহার করতে পারে। এলোমেলো Category ID-এর ওপর সাধারণ সংখ্যার মতো অর্থহীন ছোট-বড় Threshold বসানোর বদলে, এটি Split খোঁজার মুহূর্তের Objective পরিসংখ্যান অনুযায়ী Category-গুলোকে সাজিয়ে নিয়ে কার্যকর উপসেট বিভাজন তৈরি করতে পারে! তবে প্রোডাকশন সার্ভিংয়ে নামানোর সময় Missing Value, অচেনা (Unknown) মান এবং Category কোডের ম্যাপিং চুক্তি যেন হুবহু অক্ষুণ্ণ থাকে তা নিশ্চিত করতে হবে।"
+        },
+        {
+          "type": "code",
+          "title": "গভীরতা বনাম Leaf সংখ্যার গাণিতিক সীমা যাচাই",
+          "body": "depth, leaves = 3, 7\nassert leaves <= 2**depth\n# Seven leaves can fit depth3, but a general seven-leaf binary tree\n# can also have a deeper unbalanced path. Leaf count alone is not depth.\nchain_max_depth = leaves - 1\nassert chain_max_depth == 6\nprint(2**depth, chain_max_depth)\n"
+        },
+        {
+          "type": "text",
+          "title": "কোনো একক লাইব্রেরিই জাদুকরীভাবে সবার সেরা নয়",
+          "body": "“LightGBM সব Dataset-এই XGBoost বা CatBoost-এর চেয়ে দ্রুত ও নির্ভুল”—এমন কোনো চিরন্তন র‍্যাঙ্কিং বাস্তবে নেই! ন্যায্য তুলনা করতে হলে একই Feature সেট, একই Split, সমান টিউনিং বাজেট, নির্দিষ্ট হার্ডওয়্যার ও Thread সংখ্যা এবং অভিন্ন Metric দিয়ে পরীক্ষা চালাতে হবে। পাশাপাশি প্রতিটি লাইব্রেরির নিজস্ব ডিফল্ট মান ও Native Categorical প্রক্রিয়াকরণের পার্থক্য রিপোর্টে স্পষ্টভাবে উল্লেখ করুন (মনে রাখবেন, আমাদের বর্তমান পাঠটি মূল স্থাপত্যিক ধারণা শেখায়—কোনো প্যাকেজের বেঞ্চমার্ক নয়)।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে উত্তর দেবেন",
+          "body": "Interview-এ একটি দুর্দান্ত সমন্বিত প্রশ্ন করা হতে পারে: “ধরুন একটি বিরল ক্লাসের (Rare-class) Dataset-এ কিছু গোলমেলে উদাহরণ আছে। সেখানে Leaf-wise গভীর শাখা, ন্যূনতম Hessian সীমা এবং উচ্চ Gradient-যুক্ত গোলমেলে পর্যবেক্ষণগুলো কীভাবে একে অপরের সাথে ক্রিয়া করতে পারে?”\n\nউত্তরে চমৎকারভাবে যোগসূত্র স্থাপন করুন: গোলমেলে উদাহরণগুলোর ভুল বড় হওয়ায় তাদের Gradient অনেক বড় হয়; এখন যদি ন্যূনতম Hessian বা উদাহরণের সীমা খুব ছোট রাখা হয়, তবে আগ্রাসী Leaf-wise বৃদ্ধি বারবার ওই বড় ভুলের দিকেই শাখা পাঠিয়ে খুব গভীর ও সংকীর্ণ পথ তৈরি করে Noise মুখস্থ করে ফেলতে পারে! সবশেষে GOSS, সাধারণ সুষম Row Subsampling এবং class_weight—এই তিনটির স্বতন্ত্র অর্থ আলাদা করে বুঝিয়ে দিন।"
+        }
+      ]
+    },
+    {
+      "id": "ch10_catboost",
+      "title": "CatBoost ও Categorical Target Leakage প্রতিরোধ",
+      "subtitle": "Ordered Target Statistics, Ordered Boosting ও Symmetric Tree-এর ধারণা",
+      "duration": "38 min",
+      "icon": "hub",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "উচ্চ Cardinality-যুক্ত Category ও সূক্ষ্ম Target Leakage",
+          "body": "বাস্তব টেবুলার ডেটায় যখন হাজার হাজার ভিন্ন মানের Categorical কলাম (High Cardinality) থাকে, তখন অনেকেই প্রতিটি Category-এর গড় Target Label বের করে সরাসরি সেটিকে সংখ্যাসূচক Feature হিসেবে বসিয়ে দেন (সাধারণ Target Encoding)। কিন্তু এতে একটি মারাত্মক সূক্ষ্ম বিপদ ঘটে: গড় বের করার সময় বর্তমান Row-টির নিজস্ব আসল Label-ও ওই গড়ের ভেতরে ঢুকে পড়ে! বিশেষ করে কোনো বিরল বা অনন্য (Unique) Category হলে তার গড় তো প্রায় সরাসরি আসল Label-এরই নকল হয়ে যায়!\n\nফলে ট্রেনিং ও সার্ভিংয়ের বণ্টনের মধ্যে বড় ফারাক (Prediction Shift) তৈরি হয়। Cross-fitting বা ক্রম-ভিত্তিক (Ordered) কৌশলগুলো এই সমস্যা অনেকখানি কমিয়ে আনে; তবে মনে রাখবেন, এতেও কিন্তু ঐতিহাসিক টার্গেট প্রাপ্যতা এবং সঠিক Group/Time সীমানা মানার প্রয়োজন ফুরিয়ে যায় না।"
+        },
+        {
+          "type": "math",
+          "title": "Ordered Target Statistic-এর সমীকরণ",
+          "body": "TS_i=\\frac{\\sum_{j\\prec i,\\,c_j=c_i}y_j+a\\mu_0}{\\#\\{j\\prec i:c_j=c_i\\}+a}"
+        },
+        {
+          "type": "text",
+          "title": "কৃত্রিম ক্রম (Permutation) ও Prior-এর সতর্কতা",
+          "body": "ওপরের সমীকরণটি লক্ষ্য করুন: ডেটার ওপর একটি নির্দিষ্ট বিন্যাস বা Permutation (≺) ধরে নিয়ে বর্তমান i-তম Row-টির মান হিসাব করার সময় কেবল তার আগে আসা (j ≺ i) একই Category-এর পর্যবেক্ষণগুলোর Label যোগ করা হচ্ছে—নিজের Label একদমই নয়! আর শুরুর দিককার অস্থিরতা সামলাতে যোগ করা হয়েছে একটি প্রারম্ভিক Prior μ_0 এবং ধনাত্মক মসৃণকরণ শক্তি (Smoothing Strength) a > 0।\n\nএখানে দুটি গুরুত্বপূর্ণ সতর্কতা মনে রাখুন:\n১. আপনি যদি পুরো Dataset-এর গড় Target বের করে সেটিকে Prior μ_0 হিসেবে বসিয়ে দেন, তবে কিন্তু ঘুরপথে নিজের Label-এর প্রভাব ঢুকেই পড়ল—তখন আর নিখুঁত 'No-self-label' দাবি করা যাবে না; Prior আসতে হবে বৈধ ট্রেনিং পরিধি বা পূর্বনির্ধারিত মান থেকে।\n২. সময়-নির্ভর কাজে (Temporal Task) এলোমেলো বিন্যাস নিলে ভবিষ্যতের ঘটনা বর্তমান Row-এর 'আগে' চলে আসতে পারে—সেখানে অবশ্যই আসল কালানুক্রমিক (Chronology-aware) ডিজাইন প্রয়োজন।"
+        },
+        {
+          "type": "code",
+          "title": "হাতে-কলমে Ordered Target Encoding-এর স্বচ্ছ উদাহরণ",
+          "body": "import numpy as np\n\ncategories = [\"a\", \"a\", \"b\", \"a\"]\ny = np.array([1.0, 0.0, 1.0, 1.0])\nprior, strength = 0.5, 2.0  # fixed mathematical prior, not full-data target mean\nsums = {}\ncounts = {}\nencoded = []\nfor category, target in zip(categories, y):\n    encoded.append(\n        (sums.get(category, 0.0) + strength * prior)\n        / (counts.get(category, 0) + strength)\n    )\n    sums[category] = sums.get(category, 0.0) + target\n    counts[category] = counts.get(category, 0) + 1\nassert np.allclose(encoded, [0.5, 2 / 3, 0.5, 0.5])\nprint(encoded)  # teaching illustration, not a reimplementation of CatBoost\n"
+        },
+        {
+          "type": "text",
+          "title": "Ordered Target Statistics আর Ordered Boosting কিন্তু এক জিনিস নয়",
+          "body": "অনেকেই CatBoost-এর দুটি স্বতন্ত্র ধারণাকে এক করে ফেলেন, তাই পার্থক্যটি স্পষ্ট থাকা জরুরি:\n- Ordered Target Statistics কাজ করে Categorical Feature-গুলোকে নিরাপদে সংখ্যায় রূপান্তর করা নিয়ে।\n- অন্যদিকে Ordered Boosting কাজ করে খোদ Boosting প্রক্রিয়ার ভেতরের Prediction Shift কমানো নিয়ে—যেখানে ক্রমভিত্তিক উপসর্গ (Prefix-dependent) মডেলের সাহায্যে নিরপেক্ষভাবে Prediction ও Gradient প্রাক্কলন করা হয়।\n\nদুটি কৌশলের পেছনের প্রেরণা সম্পর্কিত হলেও এরা অভিন্ন নয়। তাছাড়া বাস্তব CatBoost লাইব্রেরিতে Plain এবং Ordered উভয় মোডই রয়েছে এবং হার্ডওয়্যার, ডেটার আকার, Objective ও সংস্করণ ভেদে ডিফল্ট মোড বদলায়—তাই সব রানেই স্বয়ংক্রিয়ভাবে Ordered Boosting চলছে, এমন দাবি করবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "Symmetric (Oblivious) Tree-এর গঠন ও বৈশিষ্ট্য",
+          "body": "CatBoost-এর একটি বহুল ব্যবহৃত কনফিগারেশন হলো Symmetric বা Oblivious Tree, যেখানে একটি নির্দিষ্ট গভীরতার (Depth) সব কয়টি Node-এ হুবহু একই Feature এবং একই Split শর্ত প্রয়োগ করা হয়! এই সুশৃঙ্খল ও নিয়মিত কাঠামোর কারণে সার্ভিংয়ের সময় অত্যন্ত দ্রুত মূল্যায়ন করা যায় এবং এটি একধরনের স্বাভাবিক Regularization-ও দেয়, যদিও এর প্রকাশক্ষমতায় (Representational Capacity) নির্দিষ্ট গঠনগত সীমাবদ্ধতা রয়েছে। পাশাপাশি মনে রাখবেন, আধুনিক লাইব্রেরিতে অন্যান্য Growth Policy-ও কনফিগার করা যায়—তাই “CatBoost কেবলই Symmetric Tree তৈরি করে” এমন সার্বজনীন দাবি সঠিক নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Native Categorical প্রক্রিয়াকরণ ও প্রোডাকশন চুক্তি",
+          "body": "অফিসিয়াল Categorical প্রক্রিয়াকরণ সরাসরি String বা Category Identifier থেকে সংখ্যাসূচক পরিসংখ্যান ও একাধিক কলামের সংমিশ্রণ (Combinations) তৈরি করে নিতে পারে, এবং অল্প মানের (Small-cardinality) কলামে মোড অনুযায়ী নিজস্ব One-hot নীতি প্রয়োগ করে। তাই নির্বিচারে সব কলামকে আগেভাগে হাতে One-hot করে দেওয়ার ঢালাও পরামর্শ অফিসিয়াল নির্দেশনার সাথে মেলে না। প্রোডাকশনে নামানোর আগে কলামের Schema, Missing Sentinel এবং নতুন অচেনা (Unknown) Category এলে মডেল কী আচরণ করে তা সুস্পষ্ট টেস্ট দিয়ে যাচাই করুন—এবং মনে রাখবেন, এটি কোনো স্বয়ংক্রিয় Leakage বা Fairness দায়মুক্তির সনদ নয়!"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে উত্তর দেবেন",
+          "body": "Interview-এ একটি দারুণ বাস্তব প্রশ্ন করা হয়: “প্রতিটি অনন্য userID-কে Target Encode করে আপনি Validation-এ নিখুঁত স্কোর পেলেন—কোন কোন জায়গা অডিট করবেন?”\n\nউত্তরে একটি সুশৃঙ্খল অডিট তালিকা দিন: (১) বর্তমান Row-এর নিজের Label গড়ের ভেতরে ঢুকে পড়েছে কি না, (২) একই ইউজারের রেকর্ড Train ও Validation উভয় ভাগে ছড়িয়ে আছে কি না (Group Overlap), (৩) পুরো ডেটার গড়কে Global Prior হিসেবে বসানো হয়েছে কি না, (৪) Timestamp বা সময়ের ক্রম লঙ্ঘিত হয়েছে কি না এবং (৫) একই Validation সেট বারবার ব্যবহৃত হয়েছে কি না। স্পষ্ট করে বলুন: শুধু কোনো বিখ্যাত অ্যালগরিদমের নাম উচ্চারণ করলেই পাইপলাইনের Leakage সমস্যা আপনাআপনি মিটে যায় না!"
+        }
+      ]
+    },
+    {
+      "id": "ch10_evaluation",
+      "title": "মূল্যায়ন থেকে প্রোডাকশন Serving: পূর্ণাঙ্গ প্রকৌশল",
+      "subtitle": "ন্যায্য তুলনা, Probability Calibration, ব্যাখ্যাযোগ্যতার সীমা ও রিসোর্স বাজেট",
+      "duration": "34 min",
+      "icon": "hub",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ভিন্ন ঘরানার Model তুলনার অভিন্ন প্রোটোকল",
+          "body": "বিভিন্ন পরিবারের Ensemble মডেলকে ন্যায্যভাবে তুলনা করতে হলে সবার জন্য শর্তগুলো অভিন্ন হতে হবে: একই উৎস ডেটা ও Feature সেট, একই Group বা সময়-সচেতন ডেটা বিভাজন, অভিন্ন Selection Metric, সমান অনুসন্ধান বাজেট এবং সুনির্দিষ্ট Random Seed। মনে রাখবেন, পুরো ঐতিহাসিক ডেটা উৎসটি যদি আগেই ঘাঁটাঘাঁটি করে অন্বেষণ করা হয়ে থাকে, তবে পরে তার ওপর নতুন একটি Random Split টানলেই তা আনকোরা নিরপেক্ষ প্রমাণ তৈরি করে না! যেমন আমাদের প্রজেক্ট ওয়ার্কফ্লোটি কেবল মূল adult.data অংশ ব্যবহার করে—আলাদা adult.test ফাইলটিকে স্পর্শ করে না।"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের ওয়ার্কফ্লোর ভেতরের ন্যায্য বাছাই (Inner Selection)",
+          "body": "আমাদের ওয়ার্কফ্লোর মূল বাছাই পর্বে মোট 4-টি স্পষ্ট Candidate পরখ করা হয়: দুটি ভিন্ন Feature ভগ্নাংশের Random Forest এবং দুটি ভিন্ন Learning Rate-এর HistGradientBoostingClassifier, যাদেরকে মূল ট্রেনিং অংশের ভেতরে 3-টি Group-সচেতন Fold-এ মূল্যায়ন করা হয়। গড় Inner Average Precision (AP)-এ যে জয়ী হয় তাকেই সেরা ঘোষণা করা হয় (নিখুঁত সমতা বা Tie হলে পূর্বঘোষিত ক্রমে প্রথমটি নেওয়া হয়)। খেয়াল করুন, বাইরের Development Validation সেটটি এই বাছাইয়ে একদমই প্রবেশ করে না; আর ভেতরের এলোমেলো Row Split এড়াতে HistGB-এর নিজস্ব Early Stopping বন্ধ রেখে নির্দিষ্ট 60 iterations বাজেট ব্যবহৃত হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "সহায়ক শিক্ষণীয় পরীক্ষাগুলোর ভূমিকা ও সীমা",
+          "body": "মূল প্রতিযোগিতার পাশাপাশি ধারণাগুলো হাতে-কলমে বোঝানোর জন্য ওয়ার্কফ্লোতে তিনটি স্থির পার্শ্ব-পরীক্ষা (Side Specifications) রয়েছে: 24 trees-এর Bagging, 30 rounds-এর AdaBoost এবং কর্মঘণ্টার ওপর 16 rounds-এর Squared-loss Regression। এদের Validation স্কোরগুলো মূলত শিক্ষণীয় ও অনুসন্ধানী ডায়াগনস্টিক। যেমন মনে রাখবেন, এখানে Bagging-এর OOB হিসাবটি সাধারণ Row-ভিত্তিক, তাই একই প্রোফাইলের অন্য অনুরূপ রেকর্ড ট্রেনিংয়ে থাকতে পারে; আবার Interactive Lab-এর রেখা দেখে বেছে নেওয়া কোনো η-কে সরাসরি চূড়ান্ত ডিপ্লয়মেন্ট সুপারিশ হিসেবে উপস্থাপন করবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "কেবল র‍্যাঙ্কিং নয়, Probability-এর গুণগত মানও যাচাই করুন",
+          "body": "একটি Classifier-এর পারফরম্যান্স পুরোপুরি বুঝতে আমাদের রিপোর্টে র‍্যাঙ্কিংয়ের জন্য Average Precision (AP), সম্ভাব্যতার নিখুঁততার জন্য Brier Score এবং নির্দিষ্ট কাট-অফ সিদ্ধান্তের জন্য Accuracy একসাথে দেখানো হয়। একটি মেট্রিকের উন্নতি অন্যটির উন্নতির গ্যারান্টি দেয় না! তাছাড়া ট্রেনিংয়ে class_weight ব্যবহার করলে, বাস্তবে ক্লাস অনুপাত বদলে গেলে (Prior Shift) কিংবা Calibration পদ্ধতি প্রয়োগ করলে স্কোরের সম্ভাব্যতাগত অর্থ বদলে যায়। কোনো Calibrator ফিট করতে হলে তা অবশ্যই স্বতন্ত্র বা Cross-fitted Prediction-এর ওপর ফিট করতে হবে এবং তার চূড়ান্ত মূল্যায়নও হতে হবে আলাদা সেটে।"
+        },
+        {
+          "type": "text",
+          "title": "ব্যাখ্যাযোগ্যতা (Interpretability) ও ন্যায্যতার বাস্তব সীমা",
+          "body": "Random Forest বা Boosting-এর MDI কিংবা মোট Split Gain কখনোই কোনো Feature-এর কার্যকারণ প্রভাব (Causal Effect) প্রমাণ করে না! পরস্পর সম্পর্কযুক্ত (Correlated) Feature-এর মধ্যে কৃতিত্ব ভাগাভাগি, উচ্চ Cardinality পক্ষপাত এবং গোপন Leakage আছে কি না তা খুঁটিয়ে দেখুন। এমনকি Permutation বা Attribution পদ্ধতিও নির্দিষ্ট মডেল, ডেটা ও মেট্রিকের সাপেক্ষেই অর্থবহ—সেখানে Group সীমাবদ্ধতা এবং কৃত্রিম পরিবর্তনের বাস্তবসম্মততা (Perturbation Plausibility) যাচাই করতে হয়। আর মনে রাখবেন: কেবল সংবেদনশীল কলামগুলো বাদ দিলেই মডেল বৈষম্যমুক্ত হয়ে গেছে—এমন কোনো Fairness সনদ পাওয়া যায় না!"
+        },
+        {
+          "type": "text",
+          "title": "প্রোডাকশনে Serving খরচের বাস্তব হিসাব",
+          "body": "সার্ভিংয়ের মোট কাজের একটি আনুমানিক উপাদান হলো Trees × গড় Path Length (এবং Multiclass ক্ষেত্রে প্রতি রাউন্ডের আলাদা Tree সংখ্যাও এতে গুণ হয়)। কিন্তু খাতার হিসাবের বাইরে বাস্তব পরিবেশে Batch Size, Categorical রূপান্তর, মেমোরি, Thread সংখ্যা, সিরিয়ালাইজেশন ফরম্যাট ও নির্দিষ্ট হার্ডওয়্যারে প্রকৃত খরচ মেপে দেখতে হবে। উল্লেখ্য, আমাদের এই অফলাইন মোবাইল অ্যাপটি কেবল পাঠ্যবই ও প্রাক-গণনাকৃত Lab ক্যালকুলেটর হিসেবে কাজ করে—সরাসরি ফোনের ভেতরে পূর্ণ Python মডেল এক্সিকিউট করে না।"
+        },
+        {
+          "type": "text",
+          "title": "পুনরুৎপাদনযোগ্যতা (Reproducibility) ও নিরাপত্তা",
+          "body": "নির্ভরযোগ্য প্রকৌশলের জন্য মূল ডেটার Source Hash, ব্যবহৃত প্যাকেজের সংস্করণ, Random Seed, Thread সীমা, সঠিক Feature তালিকা, প্রতিটি Fold-এর আকার, পরখ করা সব Candidate, বাছাইয়ের নিয়ম এবং মডেল এক্সপোর্ট ফরম্যাট সংরক্ষণ করুন। নিরাপত্তার স্বার্থে কখনোই অবিশ্বস্ত বা অপরিচিত উৎস থেকে আসা Python pickle ফাইল লোড করবেন না! পাশাপাশি মনে রাখবেন, নির্দিষ্ট Seed দিয়ে ফলাফল মেলানো (Determinism) আর এক সংস্করণে সেভ করা মডেল অন্য সংস্করণে লোড হওয়ার সামঞ্জস্য—দুটো এক গ্যারান্টি নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে উত্তর দেবেন",
+          "body": "Interview-এ প্রায়ই এই বাস্তব ট্রেড-অফ প্রশ্নটি আসে: “নতুন Boosted মডেলটি Average Precision +0.01 বাড়িয়েছে, কিন্তু Serving Latency 3× বেড়ে গেছে—আপনি কীভাবে সিদ্ধান্ত নেবেন?”\n\nউত্তরে একটি সুগঠিত Decision Memo-এর কাঠামো তুলে ধরুন: পণ্যের মূল লক্ষ্য ও SLA সীমা, বর্তমান সার্ভার ধারণক্ষমতা, Probability Calibration, গুরুত্বপূর্ণ Error Slice-গুলোতে আচরণ, উন্নতির পরিসংখ্যানগত আস্থা (Confidence) এবং বাড়তি পরিচালন খরচ—সব কয়টি একসঙ্গে বিচার করব। স্পষ্ট করে বলুন: মডেল বড় বা মেট্রিক সামান্য বেশি বলেই স্বয়ংক্রিয় রোলআউট নয়; নথিবদ্ধ প্রমাণের ভিত্তিতে এই বিনিময়টি যৌক্তিক হলেই কেবল তা গ্রহণ করা উচিত!"
+        }
+      ]
+    },
+    {
+      "id": "ch10_book_ensemble_variance",
+      "title": "Ensemble Diversity: Correlation থেকে Variance হ্রাসের গাণিতিক বিশ্লেষণ",
+      "subtitle": "ধারণার স্বচ্ছতা থেকে সমীকরণ, খাতা-কলমের উদাহরণ ও Python যাচাই",
+      "duration": "26 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন কেবল গড় করলেই জয়ের গ্যারান্টি নেই?",
+          "body": "অনেকেই শুরুতে ভাবেন, অনেকগুলো Model বানিয়ে তাদের ফলাফল গড় করলেই বুঝি পারফরম্যান্স আপনাআপনি ভালো হয়ে যাবে! কিন্তু বাস্তবে তা নিশ্চিত নয়—সব কয়টি Model যদি একই জায়গায় একই ধরনের ভুল করে, তবে তাদের সম্মিলিত Ensemble-ও ঠিক সেই একই ভুলই করবে। এখানে Diversity বা বৈচিত্র্য মানে কেবল ভিন্ন ভিন্ন অ্যালগরিদমের নাম বসানো নয়; আসল কথা হলো Model-গুলোর Prediction Error পরস্পরের সাথে কতটা সম্পর্কযুক্ত (Correlated)। Bagging-এ ব্যবহৃত Bootstrap নমুনায়ন এবং Random Forest-এ ব্যবহৃত প্রতি Split-এর Feature Subsampling মূলত এই পারস্পরিক নির্ভরশীলতা কমানোর জন্যই কাজ করে।"
+        },
+        {
+          "type": "text",
+          "title": "ধাপে ধাপে সমীকরণের গঠন বোঝা",
+          "body": "ধরা যাক, আমাদের হাতে m-টি Estimator আছে, যাদের প্রত্যেকের নিজস্ব Variance সমান (σ²) এবং যেকোনো দুটি ভিন্ন Estimator-এর মধ্যকার Pairwise Covariance হলো ρσ²। এখন এদের যোগফলের Variance বের করতে গেলে m × m আকারের Covariance ছকে মোট m-টি কর্ণ পদ (Diagonal Term, প্রতিটির মান σ²) এবং m(m - 1)-টি অ-কর্ণ পদ (Off-diagonal Term, প্রতিটির মান ρσ²) যোগ হয়। গড় করার কারণে পুরো যোগফলটিকে m² দিয়ে ভাগ করলেই আমরা পেয়ে যাই σ²[ρ + (1 - ρ) / m]। মনে রাখবেন, এটি সমান Variance ও সমান Correlation ধরে নেওয়া একটি পরিষ্কার শিক্ষণীয় মডেল; বাস্তব অসম Tree Ensemble-এ নিখুঁত হিসাবের জন্য পূর্ণ Covariance Matrix প্রয়োজন হতে পারে।"
+        },
+        {
+          "type": "math",
+          "title": "সমান Correlation-এ গড়ের Variance সমীকরণ",
+          "body": "\\mathrm{Var}\\left(\\frac{1}{m}\\sum_{j=1}^m Z_j\\right)=\\sigma^2\\left[\\rho+\\frac{1-\\rho}{m}\\right]"
+        },
+        {
+          "type": "text",
+          "title": "খাতা-কলমে একটি সংখ্যার উদাহরণ",
+          "body": "চলুন সরাসরি সংখ্যা বসিয়ে দেখি। ধরা যাক, প্রতিটি একক মডেলের Variance σ² = 4, তাদের পারস্পরিক Correlation ρ = 0.5 এবং মডেলের সংখ্যা m = 10। তাহলে আমাদের Ensemble-এর Variance দাঁড়াবে 4 × (0.5 + 0.5 / 10) = 2.2। খেয়াল করুন, আমরা যদি মডেলের সংখ্যা বাড়িয়ে অসীমও করে দিই (m → ∞), তবুও কিন্তু Variance 4 × 0.5 = 2.0-এর নিচে কখনোই নামবে না! অথচ মডেলগুলো যদি পরস্পর সম্পূর্ণ স্বাধীন (ρ = 0) হতো, তবে মাত্র 10-টি মডেলেই Variance নেমে আসত 4 / 10 = 0.4-এ! এখান থেকেই স্পষ্ট বোঝা যায় কেন শুধু Tree-এর সংখ্যা 100 থেকে বাড়িয়ে 1000 করলেই উচ্চ Correlation-এর বাধা দূর হয় না।"
+        },
+        {
+          "type": "code",
+          "title": "Python কোডে সরাসরি হিসাব ও সীমা যাচাই",
+          "body": "variance, correlation, count = 4.0, 0.5, 10\nensemble_variance = variance * (correlation + (1 - correlation) / count)\nindependent_variance = variance / count\n# The nonzero limit is caused by shared error, not finite tree count.\nlimit = variance * correlation\nprint(ensemble_variance, independent_variance, limit)\n"
+        },
+        {
+          "type": "text",
+          "title": "কোডের আউটপুট আমাদের কী শেখাচ্ছে?",
+          "body": "ওপরের কোডটি চালালে আউটপুট আসে যথাক্রমে 2.2, 0.4 এবং 2.0। প্রথম সংখ্যাটি আমাদের বর্তমান 10-টি মডেলের প্রকৃত গড় Variance, দ্বিতীয়টি স্বাধীন হলে কত হতো তার আদর্শ মান, আর তৃতীয়টি হলো অসীম সংখ্যক মডেল যোগ করলেও অতিক্রম না করতে পারা নিম্নসীমা (limit)। খেয়াল রাখবেন, এই হিসাবটি একটি তাত্ত্বিক গাণিতিক উদাহরণ—কোনো ফিট করা বাস্তব Forest-এর সরাসরি মাপা Variance নয়। বাস্তব প্রজেক্টে দুটি কৌশলের তুলনা করতে হলে একই ডেটা Split, অভিন্ন Feature চুক্তি ও একই মেট্রিক ঠিক রেখে পুনরাবৃত্ত বা জোড়াবদ্ধ (Paired) প্রমাণ সংগ্রহ করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "কখন এই সমীকরণটি সরাসরি খাটে না?",
+          "body": "এই সুন্দর সূত্রটি প্রয়োগ করার সময় দুটি বড় সীমা সবসময় মাথায় রাখবেন। প্রথমত, কেবল Correlation (ρ) কমানোর লোভে আপনি যদি প্রতিটি একক Tree-কে অতিরিক্ত দুর্বল করে ফেলেন, তবে Variance কমলেও মডেলের Bias এত বেড়ে যাবে যে মোট Error উল্টো খারাপ হবে! দ্বিতীয়ত, Gradient Boosting-এর রাউন্ডগুলো কিন্তু পরস্পর বিনিময়যোগ্য (Exchangeable) স্বাধীন ফিট নয়—পরের Tree আগের ভুলের ওপর নির্ভরশীল—তাই এই সমান্তরাল গড়ের সূত্রটি দিয়ে কখনোই Gradient Boosting-এর ট্রেনিং গতিপথ ব্যাখ্যা করতে যাবেন না।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে যাচাই করুন",
+          "body": "যদি সব Model হুবহু একই রকম আচরণ করে অর্থাৎ ρ = 1 হয়, তবে হাজারো Tree বাড়িয়ে কী লাভ হবে? আর m = 1 বসালে সূত্রটি কি আবার একক মডেলের মূল Variance ফিরিয়ে দেয়?",
+          "solution": "ρ = 1 বসালে (1 - ρ) / m অংশটি শূন্য হয়ে যায়, ফলে যত Tree-ই বাড়ানো হোক না কেন Variance সবসময় মূল σ²-ই থেকে যায়—কোনোই লাভ হয় না! আবার m = 1 বসালেও σ²[ρ + 1 - ρ] = σ² ফিরে আসে। Interview-এ উত্তর দেওয়ার সময় একক মডেলের নিজস্ব শক্তি ও ভুলের পারস্পরিক নির্ভরশীলতা—দুটোই একসাথে বলবেন, এবং শেষে অতিরিক্ত মডেলের Compute ও Latency খরচের কথা যোগ করবেন।",
+          "reference": "https://www.statlearning.com/"
+        },
+        {
+          "type": "text",
+          "title": "কেন হরে B² আসে: কর্ণ ও অ-কর্ণ পদগুলোর পূর্ণাঙ্গ হিসাব",
+          "body": "নিচের সমীকরণটির প্রতিপাদন নিজের হাতে নিখুঁতভাবে করতে চাইলে B²-এর হিসাবটি একবার ছবির মতো দেখে নিন। একটি নির্দিষ্ট ইনপুটে B-টি Predictor-এর গড় নেওয়া হচ্ছে (আগে সুনির্দিষ্ট করে নিন কোন ট্রেনিং বা রিস্যাম্পলিং Randomness-এর সাপেক্ষে আমরা এই Variance মাপছি)। প্রতিটির নিজস্ব Variance σ² এবং যেকোনো দুটি ভিন্ন Predictor-এর Correlation ρ ধরা হলে, যোগফলের মোট B²-টি পদের মধ্যে B-টি কর্ণ পদ দেয় Bσ² এবং বাকি B(B - 1)-টি ক্রমযুক্ত অ-কর্ণ পদ দেয় B(B - 1)ρσ²। সবশেষে গড়ের গুণিতক 1/B-এর বর্গ অর্থাৎ B² দিয়ে পুরো রাশিটিকে ভাগ করতে হয়।"
+        },
+        {
+          "type": "math",
+          "body": "\\mathrm{Var}(\\bar f)=\\frac{B\\sigma^2+B(B-1)\\rho\\sigma^2}{B^2}=\\frac{\\sigma^2}{B}+\\frac{B-1}{B}\\rho\\sigma^2",
+          "title": "কর্ণ ও অ-কর্ণ পদের যোগফল থেকে চূড়ান্ত ভগ্নাংশ"
+        },
+        {
+          "type": "text",
+          "title": "ক্রমহ্রাসমান সুফল (Diminishing Returns)-এর বাস্তব উদাহরণ",
+          "body": "ওপরের সমীকরণে σ² = 4 এবং ρ = 0.25 বসিয়ে দেখুন: B = 10 নিলে Variance নামে 1.3-এ, আর দশগুণ বাড়িয়ে B = 100 নিলে তা নামে মাত্র 1.03-এ—কারণ এই ধনাত্মক Correlation মডেলে নিম্নসীমা ρσ² = 1.0 প্রাচীর হয়ে দাঁড়িয়ে আছে! এ কারণেই একটা পর্যায়ের পর শুধু Tree সংখ্যা না বাড়িয়ে Learner-গুলোর মধ্যকার Correlation কমানোর যুক্তিটি এত জোরালো। অবশ্যই বাস্তব ডেটায় প্রতিটি Tree-এর Variance ও জোড়ায় জোড়ায় Correlation হুবহু সমান নাও হতে পারে, এবং গড় Prediction-এর Bias ও প্রকৃত Validation Error-ও আলাদাভাবে যাচাই করতে হবে।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "দুই প্রান্তের সীমা হিসাব করুন",
+          "body": "এই সমীকরণ অনুযায়ী ρ = 1 হলে B বাড়ানোর ফলে Variance কত হবে? আর ρ = 0 হলে কী ঘটবে?",
+          "solution": "ঘোষিত সমান-Variance ও সমান-Covariance শর্তের অধীনে, ρ = 1 হলে B যতই বাড়ানো হোক Variance অপরিবর্তিত থেকে σ²-ই হবে; আর ρ = 0 হলে তা B-এর ব্যস্তানুপাতে কমে σ² / B হবে।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch10_workflow",
+      "title": "বাস্তব ডেটায় পূর্ণাঙ্গ Ensemble Audit Workflow",
+      "subtitle": "Grouped Selection, OOB Membership ও পুনরুৎপাদনযোগ্য প্রকৌশল পাইপলাইন",
+      "duration": "60 min",
+      "icon": "hub",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কমান্ড চালানোর নিয়ম ও রানটাইম চুক্তি",
+          "body": "তত্ত্ব ও খণ্ড খণ্ড উদাহরণের পর এবার আমরা একটি পূর্ণাঙ্গ, প্রোডাকশন-মানের অডিট স্ক্রিপ্টের আদ্যোপান্ত দেখব। রিপোজিটরির মূল ফোল্ডার (Root) থেকে নির্ধারিত Python পরিবেশে python assets/datasets/adult/ensemble_workflow.py --output build/chapter-10-report.json কমান্ডটি চালালেই পুরো বিশ্লেষণটি সম্পন্ন হবে (মনে রাখবেন, এই মোবাইল অ্যাপটি সরাসরি Python কোড এক্সিকিউট করে না)। নিচের চারটি কোড অংশ একই লোকাল সেশনে ধারাবাহিকভাবে চালানো যায় এবং এগুলো রিপোজিটরি-আপেক্ষিক DATA পাথ ব্যবহার করে।"
+        },
+        {
+          "type": "text",
+          "title": "ডেটার উৎস, শুদ্ধতা যাচাই ও সমস্যার পরিধি",
+          "body": "স্ক্রিপ্টটি শুরুতেই মূল UCI Adult (adult.data) ফাইলের SHA256 হ্যাশ মিলিয়ে দেখে। এখানে 5-টি সংখ্যাসূচক Feature দিয়ে আয়ের দ্বিমুখী Classification এবং আলাদাভাবে age ও education_num দিয়ে সাপ্তাহিক কর্মঘণ্টার (hours_per_week) Regression দেখানো হয়েছে। খেয়াল করুন, প্রোফাইল গ্রুপের চাবি (Profile Key) বানানোর সময় উভয় ফলাফল কলাম (income ও hours_per_week) সচেতনভাবে বাদ রাখা হয়েছে। এখানে সেন্সাস ওজন fnlwgt অব্যবহৃত রাখা হয়েছে—এবং যেহেতু এটি বহুবার ব্যবহৃত একটি ঐতিহাসিক উৎস, তাই এখান থেকে বর্তমান জনসংখ্যার প্রতিনিধিত্ব, কার্যকারণ সম্পর্ক বা আনকোরা নিশ্চিতকরণের কোনো দাবি করা হচ্ছে না।"
+        },
+        {
+          "type": "code",
+          "title": "উৎস যাচাই, যৌথ Group Split ও নিয়ন্ত্রিত কম্পিউট সেটআপ",
+          "body": "from pathlib import Path\nimport argparse\nimport hashlib\nimport json\nimport platform\nimport numpy as np\nimport pandas as pd\nimport sklearn\nfrom scipy.special import expit\nfrom threadpoolctl import threadpool_limits\nfrom sklearn.model_selection import GroupShuffleSplit, StratifiedGroupKFold\nfrom sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor\nfrom sklearn.ensemble import (\n    BaggingClassifier,\n    RandomForestClassifier,\n    HistGradientBoostingClassifier,\n    AdaBoostClassifier,\n    GradientBoostingRegressor,\n)\nfrom sklearn.dummy import DummyClassifier\nfrom sklearn.metrics import (\n    accuracy_score,\n    average_precision_score,\n    brier_score_loss,\n    mean_squared_error,\n)\n\nDATA = Path(\"assets/datasets/adult\")\nSOURCE_HASH = \"5b00264637dbfec36bdeaab5676b0b309ff9eb788d63554ca0a249491c86603d\"\nCOLUMNS = [\n    \"age\",\n    \"workclass\",\n    \"fnlwgt\",\n    \"education\",\n    \"education_num\",\n    \"marital_status\",\n    \"occupation\",\n    \"relationship\",\n    \"race\",\n    \"sex\",\n    \"capital_gain\",\n    \"capital_loss\",\n    \"hours_per_week\",\n    \"native_country\",\n    \"income\",\n]\nFEATURES = [\"age\", \"education_num\", \"capital_gain\", \"capital_loss\", \"hours_per_week\"]\n\n\ndef load_source(path):\n    digest = hashlib.sha256(path.read_bytes()).hexdigest()\n    if digest != SOURCE_HASH:\n        raise ValueError(\"Expected original adult.data\")\n    frame = pd.read_csv(path, names=COLUMNS, skipinitialspace=True, na_values=\"?\")\n    label = frame[\"income\"].astype(\"string\").str.strip()\n    if not label.isin([\"<=50K\", \">50K\"]).all():\n        raise ValueError(\"Binary label contract\")\n    X = frame[FEATURES].to_numpy(dtype=float, copy=True)\n    if not np.isfinite(X).all():\n        raise ValueError(\"Finite numeric features required\")\n    y = (label == \">50K\").to_numpy(dtype=int)\n    keys = (\n        frame[[c for c in COLUMNS if c not in (\"income\", \"hours_per_week\")]]\n        .astype(\"string\")\n        .fillna(\"__MISSING__\")\n    )\n    groups = pd.util.hash_pandas_object(keys, index=False).to_numpy()\n    return frame, X, y, groups, digest\n"
+        },
+        {
+          "type": "text",
+          "title": "কোড পরিক্রমা ১: নিরাপদ লোডিং ও গ্রুপ বিভাজন",
+          "body": "প্রথম কোড অংশটিতে সসীম সংখ্যাসূচক ম্যাট্রিক্স, বৈধ দ্বিমুখী Label এবং মূল ফাইলের SHA256 হ্যাশ কঠোরভাবে পরীক্ষা করা হয়েছে। এরপর GroupShuffleSplit (seed = 42) ব্যবহার করে মোট ডেটাকে 26050 train এবং 6511 validation Row-তে ভাগ করা হয়েছে। মনে রাখবেন, কাঁচা প্রোফাইল দিয়ে তৈরি এই Group পরিচয়টি প্রকৃত স্বতন্ত্র ব্যক্তির নিখুঁত প্রমাণ নয়, বরং অভিন্ন প্রোফাইলের পুনরাবৃত্তি ঠেকানোর একটি সতর্ক প্রক্সি। এছাড়া সিপিইউ কম্পিউট Oversubscription কমাতে threadpool_limits(1) এবং n_jobs=1 ব্যবহার করা হয়েছে।"
+        },
+        {
+          "type": "code",
+          "title": "স্বচ্ছ Binary AdaBoost ও Squared-Loss Gradient Boosting ইমপ্লিমেন্টেশন",
+          "body": "def adaboost_step(y, prediction, weights):\n    y, prediction, weights = (\n        np.asarray(y),\n        np.asarray(prediction),\n        np.asarray(weights, dtype=float),\n    )\n    if (\n        y.ndim != 1\n        or len(y) == 0\n        or prediction.shape != y.shape\n        or weights.shape != y.shape\n        or not np.isin(y, [-1, 1]).all()\n        or not np.isin(prediction, [-1, 1]).all()\n        or not np.isfinite(weights).all()\n        or np.any(weights < 0)\n        or not np.isfinite(weights.sum())\n        or weights.sum() <= 0\n    ):\n        raise ValueError(\n            \"Aligned signed labels/predictions and finite nonnegative weights\"\n        )\n    normalized = weights / weights.sum()\n    wrong = y != prediction\n    error = float(normalized[wrong].sum())\n    if error == 0:\n        return {\n            \"error\": 0.0,\n            \"alpha\": None,\n            \"weights\": normalized.copy(),\n            \"status\": \"perfect_stop\",\n        }\n    if error >= 0.5:\n        return {\n            \"error\": error,\n            \"alpha\": None,\n            \"weights\": normalized.copy(),\n            \"status\": \"reject_weak_learner\",\n        }\n    alpha = 0.5 * (np.log1p(-error) - np.log(error))\n    log_weight = np.full(len(y), -np.inf)\n    positive = normalized > 0\n    log_weight[positive] = (\n        np.log(normalized[positive]) - alpha * y[positive] * prediction[positive]\n    )\n    updated = np.exp(log_weight - np.max(log_weight))\n    updated /= updated.sum()\n    return {\n        \"error\": error,\n        \"alpha\": float(alpha),\n        \"weights\": updated,\n        \"status\": \"updated\",\n    }\n\n\ndef fit_squared_boost(X, y, *, rounds=16, rate=0.1, min_leaf=100):\n    X, y = np.asarray(X, dtype=float), np.asarray(y, dtype=float)\n    if (\n        X.ndim != 2\n        or min(X.shape) < 1\n        or y.shape != (len(X),)\n        or not np.isfinite(X).all()\n        or not np.isfinite(y).all()\n        or not isinstance(rounds, int)\n        or isinstance(rounds, bool)\n        or not 0 <= rounds <= 100\n        or not np.isfinite(rate)\n        or not 0 < rate <= 1\n        or not isinstance(min_leaf, int)\n        or isinstance(min_leaf, bool)\n        or min_leaf < 1\n    ):\n        raise ValueError(\n            \"Finite aligned data, bounded rounds/rate and positive min_leaf\"\n        )\n    base = float(y.mean())\n    fitted = np.full(len(y), base)\n    trees = []\n    training_rmse = [float(np.sqrt(np.mean((y - fitted) ** 2)))]\n    for stage in range(rounds):\n        residual = y - fitted  # Negative gradient of (y-F)^2/2.\n        tree = DecisionTreeRegressor(\n            max_depth=2, min_samples_leaf=min_leaf, random_state=42\n        ).fit(X, residual)\n        fitted += rate * tree.predict(X)\n        trees.append(tree)\n        training_rmse.append(float(np.sqrt(np.mean((y - fitted) ** 2))))\n    return {\n        \"base\": base,\n        \"rate\": rate,\n        \"trees\": trees,\n        \"features\": X.shape[1],\n        \"training_rmse\": training_rmse,\n    }\n\n\ndef staged_squared_predict(model, X):\n    X = np.asarray(X, dtype=float)\n    if X.ndim != 2 or X.shape[1] != model[\"features\"] or not np.isfinite(X).all():\n        raise ValueError(\"Prediction schema\")\n    if len(X) == 0:\n        return np.empty((len(model[\"trees\"]) + 1, 0))\n    current = np.full(len(X), model[\"base\"])\n    stages = [current.copy()]\n    for tree in model[\"trees\"]:\n        current += model[\"rate\"] * tree.predict(X)\n        stages.append(current.copy())\n    return np.asarray(stages)\n\n\ndef metrics(estimator, X, y):\n    p = estimator.predict_proba(X)[:, 1]\n    return {\n        \"ap\": float(average_precision_score(y, p)),\n        \"accuracy\": float(accuracy_score(y, estimator.predict(X))),\n        \"brier\": float(brier_score_loss(y, p)),\n    }\n"
+        },
+        {
+          "type": "text",
+          "title": "কোড পরিক্রমা ২: স্ক্র্যাচ ইমপ্লিমেন্টেশনের নিরাপত্তা বেষ্টনী",
+          "body": "দ্বিতীয় অংশে আমাদের নিজস্ব দুটি স্বচ্ছ শিক্ষণীয় ফাংশন রয়েছে। adaboost_step ফাংশনটি সুস্পষ্ট চিহ্নযুক্ত বাইনারি রীতি (-1, +1) মেনে চলে এবং সীমান্তবর্তী অবস্থার জন্য আলাদা স্ট্যাটাস ফেরত দেয়। অন্যদিকে fit_squared_boost ট্রেনিং গড় থেকে শুরু করে প্রতি রাউন্ডে Residual Tree ফিট করে এবং staged_squared_predict সংরক্ষিত Tree-গুলোর আউটপুট ধাপে ধাপে যোগ করে। এমনকি খালি (Empty) ব্যাচ দিলেও সঠিক আউটপুট Shape বজায় থাকে ও সব ফাইনাইট/স্কিমা পরীক্ষা চলে—এবং লক্ষ্য করুন, এখানে কোনোভাবেই Logistic Loss-এর ওপর কাঁচা Residual-এর ভুল অনুমান প্রয়োগ করা হয়নি!"
+        },
+        {
+          "type": "code",
+          "title": "ভেতরের Group-সচেতন মডেল বাছাই ও স্বতন্ত্র শিক্ষণীয় পরীক্ষা",
+          "body": "def analyse_source(path):\n    frame, X, y, groups, digest = load_source(path)\n    train, valid = next(\n        GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=42).split(\n            X, y, groups\n        )\n    )\n    if not set(groups[train]).isdisjoint(groups[valid]):\n        raise ValueError(\"Group overlap\")\n    folds = list(\n        StratifiedGroupKFold(n_splits=3, shuffle=True, random_state=42).split(\n            X[train], y[train], groups[train]\n        )\n    )\n    specifications = [\n        (\"rf_half\", \"rf\", 0.5),\n        (\"rf_all\", \"rf\", 1.0),\n        (\"hist_slow\", \"hist\", 0.05),\n        (\"hist_fast\", \"hist\", 0.1),\n    ]\n\n    def build(kind, value):\n        if kind == \"rf\":\n            return RandomForestClassifier(\n                n_estimators=32,\n                max_depth=8,\n                min_samples_leaf=30,\n                max_features=value,\n                random_state=42,\n                n_jobs=1,\n            )\n        return HistGradientBoostingClassifier(\n            max_iter=60,\n            max_leaf_nodes=7,\n            min_samples_leaf=50,\n            learning_rate=value,\n            early_stopping=False,\n            random_state=42,\n        )\n\n    rows = []\n    for name, kind, value in specifications:\n        scores = []\n        for fit, check in folds:\n            fit, check = train[fit], train[check]\n            if not set(groups[fit]).isdisjoint(groups[check]):\n                raise ValueError(\"Inner group overlap\")\n            estimator = build(kind, value).fit(X[fit], y[fit])\n            scores.append(\n                average_precision_score(\n                    y[check], estimator.predict_proba(X[check])[:, 1]\n                )\n            )\n        rows.append(\n            {\n                \"name\": name,\n                \"family\": kind,\n                \"value\": value,\n                \"inner_ap\": float(np.mean(scores)),\n            }\n        )\n    # Exact score ties keep the declared candidate order; never consult outer validation.\n    chosen = max(rows, key=lambda row: row[\"inner_ap\"])\n    winner = build(chosen[\"family\"], chosen[\"value\"]).fit(X[train], y[train])\n    baseline = DummyClassifier(strategy=\"prior\").fit(X[train], y[train])\n    bag = BaggingClassifier(\n        estimator=DecisionTreeClassifier(max_depth=4, min_samples_leaf=20),\n        n_estimators=24,\n        bootstrap=True,\n        max_samples=1.0,\n        random_state=42,\n        n_jobs=1,\n    ).fit(X[train], y[train])\n    ada = AdaBoostClassifier(\n        estimator=DecisionTreeClassifier(max_depth=1),\n        n_estimators=30,\n        learning_rate=0.5,\n        random_state=42,\n    ).fit(X[train], y[train])\n    # OOB membership is row-level; repeated-profile peers may still be in bag.\n    member_probs = np.column_stack(\n        [\n            est.predict_proba(X[train][:, features])[:, 1]\n            for est, features in zip(bag.estimators_, bag.estimators_features_)\n        ]\n    )\n    in_bag = np.zeros_like(member_probs, dtype=bool)\n    for j, indices in enumerate(bag.estimators_samples_):\n        in_bag[np.unique(indices), j] = True\n    oob_count = (~in_bag).sum(axis=1)\n    supported = oob_count > 0\n    oob = np.zeros(len(train))\n    oob[supported] = (member_probs * (~in_bag)).sum(axis=1)[supported] / oob_count[\n        supported\n    ]\n    selected_points = []\n    # First row intentionally in the first tree's bag, so stage1/OOB has no vote.\n    first = int(np.flatnonzero(in_bag[:, 0])[0])\n    positions = [first] + [i for i in range(12) if i != first]\n    for i in positions:\n        selected_points.append(\n            {\n                \"source_row_1based\": int(train[i] + 1),\n                \"positive\": int(y[train[i]]),\n                \"probabilities\": member_probs[i].tolist(),\n                \"in_bag\": in_bag[i].tolist(),\n            }\n        )\n    bag_asset = {\n        \"source\": \"UCI Adult, Becker & Kohavi (1996), CC BY 4.0\",\n        \"sha256\": digest,\n        \"scope\": \"24 fixed bootstrap depth4 trees, min_leaf20; real training rows. Row-OOB is not group-held-out evidence.\",\n        \"members\": 24,\n        \"points\": selected_points,\n    }\n    hours = frame[\"hours_per_week\"].to_numpy(dtype=float)\n    regression_X = X[:, :2]\n    probe_indices = valid[:8]\n    runs = []\n    for rate in [0.1, 0.5, 1.0]:\n        model = fit_squared_boost(\n            regression_X[train], hours[train], rounds=16, rate=rate\n        )\n        predictions = staged_squared_predict(model, regression_X[valid])\n        valid_rmse = np.sqrt(np.mean((predictions - hours[valid]) ** 2, axis=1))\n        # Independent library check on the SAME loss, rate, depth, support and seed.\n        reference = GradientBoostingRegressor(\n            loss=\"squared_error\",\n            n_estimators=16,\n            learning_rate=rate,\n            max_depth=2,\n            min_samples_leaf=100,\n            random_state=42,\n        ).fit(regression_X[train], hours[train])\n        np.testing.assert_allclose(\n            predictions[-1],\n            reference.predict(regression_X[valid]),\n            rtol=1e-10,\n            atol=1e-9,\n        )\n        runs.append(\n            {\n                \"rate\": rate,\n                \"train_rmse\": model[\"training_rmse\"],\n                \"valid_rmse\": valid_rmse.tolist(),\n                \"probe_predictions\": predictions[:, :8].T.tolist(),\n                \"probe_tree_outputs\": np.array(\n                    [\n                        tree.predict(regression_X[probe_indices])\n                        for tree in model[\"trees\"]\n                    ]\n                ).T.tolist(),\n            }\n        )\n    boost_asset = {\n        \"source\": bag_asset[\"source\"],\n        \"sha256\": digest,\n        \"scope\": \"Fixed depth2 squared-loss teaching runs; age/education_num -> hours_per_week; no early stopping selection.\",\n        \"base\": float(hours[train].mean()),\n        \"rounds\": 16,\n        \"train_rows\": len(train),\n        \"valid_rows\": len(valid),\n        \"probes\": [\n            {\"source_row_1based\": int(i + 1), \"target\": float(hours[i])}\n            for i in probe_indices\n        ],\n        \"runs\": runs,\n    }\n    report = {\n        \"source\": bag_asset[\"source\"],\n        \"sha256\": digest,\n        \"versions\": {\n            \"python\": platform.python_version(),\n            \"numpy\": np.__version__,\n            \"pandas\": pd.__version__,\n            \"sklearn\": sklearn.__version__,\n        },\n        \"scope\": \"Reused historical development source, no external test, fresh confirmation, causal or deployment claim\",\n        \"features\": FEATURES,\n        \"seed\": 42,\n        \"train_rows\": len(train),\n        \"valid_rows\": len(valid),\n        \"inner_folds\": 3,\n        \"candidates\": rows,\n        \"selected\": chosen,\n        \"winner_train\": metrics(winner, X[train], y[train]),\n        \"winner_validation\": metrics(winner, X[valid], y[valid]),\n        \"baseline_validation\": metrics(baseline, X[valid], y[valid]),\n        \"fixed_bagging_validation\": metrics(bag, X[valid], y[valid]),\n        \"fixed_adaboost_samme_validation\": metrics(ada, X[valid], y[valid]),\n        \"row_oob\": {\n            \"covered_rows\": int(supported.sum()),\n            \"total_rows\": len(train),\n            \"average_member_count\": float(oob_count.mean()),\n            \"ap_on_supported\": float(\n                average_precision_score(y[train][supported], oob[supported])\n            ),\n        },\n        \"regression_runs\": [\n            {\n                \"rate\": r[\"rate\"],\n                \"round16_train_rmse\": r[\"train_rmse\"][-1],\n                \"round16_valid_rmse\": r[\"valid_rmse\"][-1],\n            }\n            for r in runs\n        ],\n        \"assumptions\": [\n            \"Raw-profile groups exclude both outcomes; proxy groups are not verified independent persons.\",\n            \"fnlwgt weights unused; all metrics are unweighted rows.\",\n            \"Inner grouped selection uses no outer-validation labels; internal HistGB early stopping explicitly disabled.\",\n            \"Row-OOB may contain related profile peers in training; it is not group/time-safe evaluation.\",\n            \"Lab curves are independent fixed teaching runs; viewing validation to choose rounds is development selection.\",\n            \"XGBoost/LightGBM/CatBoost comparisons are conceptual; those packages are not installed or benchmarked here.\",\n        ],\n    }\n    return report, bag_asset, boost_asset\n\n\ndef run_analysis(path):\n    with threadpool_limits(limits=1):\n        return analyse_source(path)\n"
+        },
+        {
+          "type": "text",
+          "title": "কোড পরিক্রমা ৩: ন্যায্য নির্বাচন, আসল OOB ও লাইব্রেরি ক্রস-চেক",
+          "body": "তৃতীয় অংশে ঘোষিত 4-টি Candidate-কে ট্রেনিং সেটের ভেতরের 3-টি Group Fold-এ Average Precision (AP) দিয়ে র‍্যাঙ্ক করা হয় এবং বিজয়ীকে পুরো ট্রেনিং সেটে Refit করা হয়। পাশাপাশি 24 সদস্যের Bagging মডেলের আসল Sample Draw থেকে Membership তালিকা তৈরি করে কাভারেজ-সচেতন OOB সম্ভাব্যতা বের করা হয়েছে। আর কর্মঘণ্টা Regression-এ তিনটি ভিন্ন Learning Rate-এর জন্য আলাদাভাবে ফিট করা আমাদের স্ক্র্যাচ বুস্টারের ফলাফলকে হুবহু অভিন্ন শর্তের scikit-learn GradientBoostingRegressor-এর সাথে মিলিয়ে যাচাই করা হয়েছে!"
+        },
+        {
+          "type": "code",
+          "title": "Import-safe CLI ও ডিরাইভড Lab Asset তৈরি",
+          "body": "def main(argv=None):\n    parser = argparse.ArgumentParser(description=__doc__)\n    parser.add_argument(\"--output\", type=Path)\n    parser.add_argument(\"--write-labs\", action=\"store_true\")\n    args = parser.parse_args(argv)\n    report, bag, boost = run_analysis(DATA / \"adult.data\")\n    if args.write_labs:\n        for name, asset in [\n            (\"ensemble_bagging_lab.json\", bag),\n            (\"ensemble_boosting_lab.json\", boost),\n        ]:\n            (DATA / name).write_text(\n                json.dumps(asset, indent=2, allow_nan=False) + \"\\n\", encoding=\"utf-8\"\n            )\n    rendered = json.dumps(report, indent=2, allow_nan=False)\n    if args.output:\n        args.output.parent.mkdir(parents=True, exist_ok=True)\n        temporary = args.output.with_name(args.output.name + \".tmp\")\n        temporary.write_text(rendered + \"\\n\", encoding=\"utf-8\")\n        temporary.replace(args.output)\n    print(rendered)\n    return report\n\n\nreport, bag_asset, boost_asset = run_analysis(DATA / \"adult.data\")\nprint(json.dumps(report, indent=2, allow_nan=False))\n"
+        },
+        {
+          "type": "text",
+          "title": "কোড পরিক্রমা ৪: নিরাপদ ফাইল লিখন ও পুনরুৎপাদনযোগ্যতা",
+          "body": "চতুর্থ অংশটি এমনভাবে লেখা যাতে ফাইলটি শুধু import করলে স্বয়ংক্রিয়ভাবে ট্রেনিং বা ফাইল লেখার কাজ শুরু না হয়। কমান্ড লাইনে --output দিলে আগে একটি অস্থায়ী .tmp ফাইলে লিখে তারপর চূড়ান্ত ফাইলে প্রতিস্থাপন করা হয়, আর --write-labs দিলে দুটি ডিরাইভড JSON Lab অ্যাসেট নতুন করে তৈরি হয়। ডেটার উৎস হ্যাশ, সিড, লাইব্রেরি সংস্করণ, মেট্রিক এবং সব অনুমান একসাথে যুক্ত থাকায় একই পরিবেশে রিপোর্টগুলো শতভাগ পুনরুৎপাদনযোগ্য।"
+        },
+        {
+          "type": "text",
+          "title": "যাচাইকৃত Classification ফলাফলগুলোর বিশ্লেষণ",
+          "body": "নির্ধারিত পরিবেশের রানে বিজয়ী হয় hist_fast (η = 0.1, 60 iterations, max_leaf_nodes = 7), যার গড় Inner AP আসে প্রায় 0.722701। এরপর Development Validation সেটে এর ফলাফল দাঁড়ায়: AP ≈ 0.733975, Accuracy ≈ 0.832437 এবং Brier ≈ 0.119282—যেখানে সাধারণ Prior Baseline-এর AP ছিল প্রায় 0.252957। খেয়াল রাখবেন, এগুলো কেবল এই প্রোটোকলের ডায়াগনস্টিক ফলাফল; আগের অধ্যায়ের স্কোরগুলোতে ভিন্ন বাছাই বাজেট ছিল, তাই শর্ত সমান না করে ঢালাও শ্রেষ্ঠত্ব দাবি করা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "যাচাইকৃত OOB ও Regression ফলাফলগুলোর বিশ্লেষণ",
+          "body": "Bagging পরীক্ষায় 24 সদস্যের কারণে সব কয়টি অর্থাৎ 26050 training rows-এরই বৈধ OOB সমর্থন ছিল এবং গড়ে প্রতিটি Row পেয়েছে 8.843 members। এখানে Row-OOB AP এসেছে প্রায় 0.674517, তবে মনে রাখবেন এটি Group-held-out প্রমাণ নয়। অন্যদিকে 16 রাউন্ডের কর্মঘণ্টা Regression-এ Validation RMSE এসেছে যথাক্রমে η = 0.1-এ প্রায় 11.36884, η = 0.5-এ প্রায় 11.21297 এবং η = 1.0-এ প্রায় 11.22088 ঘণ্টা। Validation দেখে সেরা Rate বেছে নিলে তা অনুসন্ধানী নির্বাচন হয়ে যাবে—এখানে উদ্দেশ্য কেবল স্থির রানগুলোতে বিভিন্ন Rate-এর আচরণ তুলনা করতে শেখা।"
+        },
+        {
+          "type": "callout",
+          "title": "প্যাকেজ তুলনার পরিধি ও সীমা",
+          "body": "এই অধ্যায়ে XGBoost, LightGBM এবং CatBoost-এর মূল গাণিতিক প্রতিপাদন ও স্থাপত্যিক বিনিময়গুলো ধারণাগতভাবে শেখানো হয়েছে; আমাদের অফলাইন ওয়ার্কফ্লোতে ওই বাহ্যিক প্যাকেজগুলো ইনস্টল বা বেঞ্চমার্ক করা হয়নি। একইভাবে HistGradientBoosting-কে হুবহু LightGBM কিংবা স্ক্র্যাচ Newton সূত্রটিকে সম্পূর্ণ XGBoost ইঞ্জিন বলে দাবি করা হচ্ছে না। পাঠের সব আবশ্যিক উদাহরণ নির্ধারিত লোকাল পরিবেশে সম্পূর্ণ অফলাইনেই চালানো যায়।"
+        }
+      ]
+    },
+    {
+      "id": "ch10_project",
+      "title": "স্বতন্ত্র কোডিং প্রজেক্ট: নিজে তৈরি, পরীক্ষা ও প্রতিরক্ষা",
+      "subtitle": "স্ক্র্যাচ ইমপ্লিমেন্টেশন, কঠোর Unit Test, প্রোফাইলিং ও প্রকৌশল মেমো",
+      "duration": "34 min",
+      "icon": "hub",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "প্রদেয় কাজ ১ (Deliverable 1): Soft Averaging ও নিখুঁত OOB ফাংশন",
+          "body": "নিজের হাতে Soft Average এবং OOB যোগ্যতা নির্ণয়ের ফাংশন লিখুন; সেখানে Class কলামের সামঞ্জস্য, ইনপুটের আকার, সম্ভাব্যতার বৈধ পরিসর, শূন্য সমর্থন (Empty Support) এবং সদস্য সংখ্যা কঠোরভাবে যাচাই করুন। কোনো OOB ভোট না থাকলে ভুলেও তাকে Probability 0 বানাবেন না! সবশেষে বান্ডেল করা আসল ডেটার Membership তালিকার সাথে মিলিয়ে পরীক্ষা করুন।"
+        },
+        {
+          "type": "text",
+          "title": "প্রদেয় কাজ ২ (Deliverable 2): স্থিতিশীল AdaBoost ধাপ ও SAMME তুলনা",
+          "body": "ধ্রুপদী Binary AdaBoost-এর এক ধাপের প্রতিপাদন ও সংখ্যাগতভাবে স্থিতিশীল ওজন হালনাগাদ লিখুন। সীমান্তবর্তী ভুল (ε = 0 ও ε ≥ 0.5), শূন্য ওজন, ঋণাত্মক বা অসীম ইনপুট এবং Normalization পরীক্ষা করুন। ধ্রুপদী ও SAMME গুণিতকের পার্থক্য ব্যাখ্যা করুন; আর পূর্ণ Ensemble-এ প্রসারিত করলে নিখুঁত ফিটের উপস্থাপনা এবং চূড়ান্ত Class/Probability নির্ধারণের নিয়মটি নথিবদ্ধ করুন।"
+        },
+        {
+          "type": "text",
+          "title": "প্রদেয় কাজ ৩ (Deliverable 3): স্ক্র্যাচ Squared-Loss Gradient Booster",
+          "body": "ট্রেনিং টার্গেটের গড় (mean) থেকে শুরু করে একটি Squared-loss Booster ফিট করুন। ধারাবাহিক ধাপের (Staged) Prediction সংরক্ষণ করুন, প্রতিষ্ঠিত রেফারেন্স লাইব্রেরির সাথে মিলিয়ে দেখুন, মূল ট্রেনিং ইনপুট অপরিবর্তিত থাকছে কি না পরীক্ষা করুন এবং ব্যবহৃত η, রাউন্ড সংখ্যা, গভীরতা ও ন্যূনতম সমর্থন রেকর্ড করুন। বিশেষভাবে নিশ্চিত করুন যেন Prediction ফাংশনে কখনোই Validation টার্গেট প্রবেশ না করে!"
+        },
+        {
+          "type": "text",
+          "title": "প্রদেয় কাজ ৪ (Deliverable 4): Group-সচেতন তুলনামূলক রিপোর্ট",
+          "body": "একটি পূর্ণাঙ্গ Group-সচেতন পরীক্ষার রিপোর্ট তৈরি করুন, যেখানে ভেতরের সব Candidate, Baseline, তিনটি মেট্রিক (AP, Brier, Accuracy), নির্বাচিত কনফিগারেশন, ব্যবহৃত Seed, প্যাকেজ সংস্করণ, Thread বাজেট এবং ডেটা পুনর্ব্যবহারের সীমাবদ্ধতা লেখা থাকবে। সাধারণ Row-OOB, সৎ Group Validation এবং স্থির পার্শ্ব-পরীক্ষাগুলোর পরিধি স্পষ্টভাবে আলাদা রাখুন।"
+        },
+        {
+          "type": "text",
+          "title": "অধ্যায়ের ১০টি কোডিং অনুশীলনের সাথে সংযোগ",
+          "body": "এই অধ্যায়ের অনুশীলনী অংশে আপনি ১০টি সুনির্দিষ্ট কোডিং সমস্যার সমাধান করবেন: Soft Average, সম-সম্পর্কযুক্ত Variance, OOB হর নির্ণয়, AdaBoost গুণিতক ও ওজন, সংযোজনশীল সংশোধন, Logistic Gradient ও Hessian, Regularized Leaf ওজন, Split Gain, Ordered Target Statistics এবং চূড়ান্ত Signed Margin। মনে রাখবেন, সংখ্যাগত উত্তর মেলানো কেবল প্রথম চেকপয়েন্ট—প্রকৃত দক্ষতার জন্য পূর্ণ কোড, টেস্ট এবং লিখিত ব্যাখ্যা তৈরি করুন।"
+        },
+        {
+          "type": "text",
+          "title": "অর্থবহ Unit Test লেখার কৌশল",
+          "body": "ভালো টেস্ট মানে কেবল নিজের ইমপ্লিমেন্টেশনের সূত্রটিই টেস্ট ফাইলে কপি করে প্রত্যাশিত মান মেলানো নয়—তাতে স্বাধীন প্রমাণ তৈরি হয় না! অর্থবহ পরীক্ষার জন্য লাইব্রেরি রেফারেন্স, গাণিতিক অপরিবর্তনীয় শর্ত (Invariants), প্রান্তিক ক্ষেত্র (Edge Cases) এবং ইচ্ছাকৃতভাবে ভুল বিকল্প ব্যবহার করুন। ভুল হর (মোট B দিয়ে ভাগ), OOB Leakage, SAMME ফ্যাক্টরের অমিল, Logistic Loss-এ কাঁচা Residual বসানো এবং Split Gain থেকে Parent পদ বাদ পড়ার মতো সূক্ষ্ম ভুল ধরার টেস্ট অবশ্যই রাখুন।"
+        },
+        {
+          "type": "text",
+          "title": "কম্পিউট বাজেট ও প্রোফাইলিং শৃঙ্খলা",
+          "body": "প্রথমে ছোট নিয়ন্ত্রিত ক্ষেত্রে লজিক যাচাই করুন, তারপর আসল ওয়ার্কফ্লো চালান। মডেলের মেমোরি দখল, ফিট ও প্রেডিকশনের প্রকৃত সময় (Wall Time) এবং Thread সংখ্যা মেপে দেখুন। এক রানের অতি সামান্য গতির পার্থক্য দেখে সার্বজনীন পারফরম্যান্সের দাবি করবেন না; আর GPU বা বাহ্যিক প্যাকেজ-নির্ভর পরীক্ষার জন্য এই প্রোটোটাইপের বাইরে আলাদা বেঞ্চমার্ক প্রয়োজন।"
+        },
+        {
+          "type": "text",
+          "title": "চূড়ান্ত রিভিউ মেমো ও না-দেখে উপস্থাপনা",
+          "body": "প্রজেক্ট শেষে একটি প্রকৌশলগত Review Memo লিখুন: কেন এই নির্দিষ্ট Ensemble বেছে নেওয়া হলো? ডেটা ও টাস্কের সীমাবদ্ধতা কী? ব্যর্থতার উদাহরণ ও পরিচালন খরচ কত? গোলমেলে Label, বিরল Class, Prior Shift, পরস্পর সম্পর্কযুক্ত Feature এবং পুরোনো উৎস পুনর্ব্যবহারের প্রভাবগুলোও উল্লেখ করুন। সবশেষে কোনো নোট না দেখে নিজের মুখে পুরো ব্যাখ্যাটি পুনরায় বলার অভ্যাস করুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch10_readiness",
+      "title": "Interview প্রস্তুতি ও মৌলিক রেফারেন্স পাঠ",
+      "subtitle": "সমীকরণ, কোড ও অনুমানের নিখুঁত মৌখিক উপস্থাপনা",
+      "duration": "28 min",
+      "icon": "hub",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "উত্তর সাজানোর আদর্শ কাঠামো (Answer Framework)",
+          "body": "Interview-এ কেবল মডেলের নামের তালিকা বলেই থেমে যাবেন না। একটি পরিণত উত্তরের ধারাবাহিক কাঠামো হবে এরকম: সমস্যা ও একক স্পষ্ট করা → গাণিতিক Objective ও মূল অনুমান (Assumptions) → সংক্ষিপ্ত প্রতিপাদন → চিহ্নিত ছোট গাণিতিক উদাহরণ → কোড বাস্তবায়ন ও জটিলতা → ব্যর্থতার ক্ষেত্র (Failure Case) → সৎ মূল্যায়ন পদ্ধতি → এবং প্রোডাকশন ডিপ্লয়মেন্টের বিনিময় (Tradeoff)।"
+        },
+        {
+          "type": "text",
+          "title": "চূড়ান্ত চেকপয়েন্ট ১: Variance ও OOB",
+          "body": "নিজেকে যাচাই করুন: গড়ের Variance সমীকরণটি Covariance পদসহ প্রতিপাদন করতে পারেন কি? কেন 36.8% সীমাটি প্রতিটি রানের বাঁধাধরা সংখ্যা নয়? সাধারণ Row-OOB কীভাবে একই ইউজারের পুনরাবৃত্তিতে Leakage ঘটায়? Soft Vote বনাম Hard Vote-এর একটি বিপরীত ফলাফলের উদাহরণ দিন; এবং OOB কাভারেজ 0 হলে ফাংশন কী ফেরত দেবে তা স্পষ্টভাবে বলুন।"
+        },
+        {
+          "type": "text",
+          "title": "চূড়ান্ত চেকপয়েন্ট ২: Boosting ও দ্বিতীয় ক্রমের গণিত",
+          "body": "না দেখে প্রতিপাদন করুন: AdaBoost-এর Exponential Loss থেকে অর্ধ-লগ (Half-log) গুণিতক ও SAMME রীতির সম্পর্ক; Squared ও Logistic Loss-এর Negative Gradient; এবং দ্বিতীয় ক্রমের Newton Leaf Regularization ও Split Gain। পাশাপাশি Gradient ও Hessian-এর একক ব্যবহার করে বুঝিয়ে বলুন কেন Learning Rate বদলালে শুরু থেকে নতুন করে ফিট (Refit) করা দরকার।"
+        },
+        {
+          "type": "text",
+          "title": "চূড়ান্ত চেকপয়েন্ট ৩: সিস্টেম, Leakage ও প্রোডাকশন",
+          "body": "সিস্টেম পর্যায়ে ব্যাখ্যা করুন: Random Forest বনাম ধারাবাহিক Booster-এর সমান্তরালতা, Group ও সময়-সচেতন Early Stopping ডিজাইন, OOF Stacking-এর সূক্ষ্ম Leakage, Native Categorical ও Ordered Target Statistics-এর পরিধি, Probability Calibration, Feature Importance-এর সীমা এবং প্রোডাকশন Serving বাজেট। মনে রাখবেন, যেকোনো লাইব্রেরির ডিফল্ট আচরণ সবসময় নির্দিষ্ট সংস্করণ যাচাই করে বলতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "অ্যাপের ১০টি মৌলিক Interview অনুশীলন",
+          "body": "অনুশীলন ট্যাবে 10-টি মৌলিক FAANG-ধাঁচের Interview কেস স্টাডি দেওয়া আছে (এগুলো কোনো কোম্পানির ফাঁস হওয়া প্রকৃত প্রশ্ন নয়)। রেফারেন্স সমাধান দেখার আগে নিজের উত্তর সাজান, তারপর অনুমান ও প্রান্তিক শর্তগুলো মিলিয়ে দেখুন। মনে রাখবেন, কেবল Quiz-এ পূর্ণ নম্বর পাওয়াই এককভাবে পূর্ণাঙ্গ Interview প্রস্তুতির প্রমাণ নয়!"
+        },
+        {
+          "type": "text",
+          "title": "প্রাথমিক ডকুমেন্টেশন ও গবেষণাপত্র (Primary Reading)",
+          "body": "আবশ্যিক পাঠ্য বিষয়বস্তু অফলাইনেই যুক্ত আছে; তবে ইন্টারনেট সংযোগ থাকলে নিচের ঐচ্ছিক মূল রেফারেন্স লিংকগুলো থেকে সরাসরি পড়ার অভ্যাস গড়ে তুলুন:\nScikit-learn ensembles: https://scikit-learn.org/stable/modules/ensemble.html\nAdaBoost API: https://scikit-learn.org/stable/modules/generated/sklearn.ensemble.AdaBoostClassifier.html\nXGBoost objective: https://xgboost.readthedocs.io/en/stable/tutorials/model.html\nLightGBM features: https://lightgbm.readthedocs.io/en/stable/Features.html\nCatBoost categorical features: https://catboost.ai/docs/en/features/categorical-features\nCatBoost ordered boosting paper: https://arxiv.org/abs/1706.09516"
+        },
+        {
+          "type": "text",
+          "title": "নিজের প্রস্তুতির চূড়ান্ত অডিট",
+          "body": "অধ্যায় শেষে নিজের অডিট সম্পন্ন করুন: তিনটি ভুল বা দ্বিধাগ্রস্ত Quiz থেকে নিজের ভ্রান্ত ধারণাগুলো লিখে সংশোধন করুন; একটি ইমপ্লিমেন্টেশন বাগ নিজের লেখা টেস্ট দিয়ে ধরুন; মূল সোর্স রিপোর্ট ও Lab অ্যাসেট লোকালি পুনরুৎপাদন করুন; এবং বিকল্প গ্রুপিং বা সার্ভিং সীমাবদ্ধতা দিলে ডিজাইন কীভাবে বদলাবে তার মৌখিক ব্যাখ্যা দিন।"
+        },
+        {
+          "type": "text",
+          "title": "পরবর্তী অধ্যায়ে যাওয়ার ছাড়পত্র (Review Gate)",
+          "body": "Ensemble-এর মধ্যকার Correlation, নিশ্ছিদ্র Out-of-Fold (OOF) Feature তৈরি এবং Loss-অনুযায়ী Boosting হালনাগাদের প্রক্রিয়া নিজের ভাষায় স্পষ্টভাবে ব্যাখ্যা করুন। এই তিনটি স্তম্ভে আত্মবিশ্বাসী হলেই পরের ধাপে Book 2, Chapter 6 (SVM, kNN & Naive Bayes) পড়া শুরু করুন!"
+        }
+      ]
+    }
+  ],
+  "quizzes": [
+    {
+      "id": "ch10_q1",
+      "question": "সমান Variance (σ²) ও সমান Pairwise Correlation (ρ) বিশিষ্ট B-টি Learner-এর গড় Prediction-এর সামগ্রিক Variance কত?",
+      "options": [
+        "σ²[ρ + (1 - ρ) / B]",
+        "সবসময়ই σ² / B",
+        "Bσ²",
+        "ρ / B"
+      ],
+      "answer": 0,
+      "explanation": "সবগুলো জোড়ার Covariance পদ অক্ষুণ্ণ রেখে প্রতিপাদন করলেই এই সমীকরণটি পাওয়া যায়। তবে মনে রাখবেন, এর জন্য প্রতিটি মডেলের সমান Variance ও অভিন্ন জোড়াবদ্ধ Correlation থাকার শর্ত প্রযোজ্য।"
+    },
+    {
+      "id": "ch10_q2",
+      "question": "Base Model-গুলোর মধ্যে ধনাত্মক Correlation (ρ > 0) থাকলে B → ∞ সীমায় গড় Prediction-এর Variance কোথায় গিয়ে ঠেকে?",
+      "options": [
+        "সবসময় 0 হয়ে যায়",
+        "ρσ² নিম্নসীমায় এসে ঠেকে",
+        "σ² / B",
+        "অসীম (Infinity) হয়ে যায়"
+      ],
+      "answer": 1,
+      "explanation": "মডেলগুলোর যৌথ বা সম্পর্কযুক্ত ভুলের অংশটুকু (ρσ²) কেবল গড় করে অদৃশ্য করা যায় না; পাশাপাশি মূল মডেলের Bias-ও স্রেফ সংখ্যা বাড়িয়ে আপনাআপনি দূর হয় না।"
+    },
+    {
+      "id": "ch10_q3",
+      "question": "মোট n-টি Training Row থেকে প্রতিস্থাপনসহ (With Replacement) n বার Draw করলে নির্দিষ্ট একটি Row একবারও না আসার (Omission) সম্ভাবনা কত?",
+      "options": [
+        "1 / n",
+        "0.632",
+        "(1 - 1/n)^n",
+        "1 - 1/B"
+      ],
+      "answer": 2,
+      "explanation": "প্রতিবার বাদ পড়ার সম্ভাবনা (1 - 1/n), তাই n বারে তা হয় (1 - 1/n)^n। বড় n-এর সীমায় এর মান e⁻¹ ≈ 0.368-এর কাছে যায়, তবে প্রতিটি একক Draw-এ প্রকৃত সংখ্যা দৈবভাবে কম-বেশি হতে পারে।"
+    },
+    {
+      "id": "ch10_q4",
+      "question": "কোনো নির্দিষ্ট Training Row-এর Out-of-Bag (OOB) Prediction গড় করার সময় সঠিক হর (Denominator) কোনটি হওয়া উচিত?",
+      "options": [
+        "মোট Training Row-এর সংখ্যা",
+        "Ensemble-এর মোট Tree সংখ্যা B",
+        "যতগুলো Tree-তে Row-টি In-Bag ছিল তার সংখ্যা",
+        "ওই নির্দিষ্ট Row-টির জন্য যোগ্য (Eligible) OOB Member-এর সংখ্যা"
+      ],
+      "answer": 3,
+      "explanation": "কেবল যেসব Tree ট্রেনিংয়ে ওই Row-টি দেখেনি তাদের গড় নিতে হয়। যোগ্য OOB সংখ্যা শূন্য হলে মানটি অসংজ্ঞায়িত (Undefined) রাখতে হবে—জোর করে Probability 0 বসানো মারাত্মক ভুল।"
+    },
+    {
+      "id": "ch10_q5",
+      "question": "একই User-এর একাধিক রেকর্ড থাকা Dataset-এ কোনো একটি নির্দিষ্ট Row যদি OOB থাকে, তবে কি মূল্যায়নটিকে স্বয়ংক্রিয়ভাবে Group-safe বলা যাবে?",
+      "options": [
+        "না; কারণ ওই একই User-এর অন্যান্য Peer Row তখনও In-Bag ট্রেনিংয়ে থাকতে পারে",
+        "হ্যাঁ, সবসময়ই Group-safe",
+        "কেবল Random Forest ব্যবহার করলেই Group-safe হবে",
+        "কেবল B = 100 বা তার বেশি নিলেই Group-safe হবে"
+      ],
+      "answer": 0,
+      "explanation": "একটি একক Row বাদ পড়া মানেই পুরো ব্যবহারকারীর সব রেকর্ড কিংবা ভবিষ্যতের তথ্য ট্রেনিং থেকে বাদ পড়া নয়—তাই এতে তথ্য ফাঁস (Information Overlap) রয়ে যেতে পারে।"
+    },
+    {
+      "id": "ch10_q6",
+      "question": "Classification Ensemble-এ Soft Probability Averaging এবং Hard Majority Voting সম্পর্কে কোন বক্তব্যটি সঠিক?",
+      "options": [
+        "দুটি পদ্ধতি সবসময় হুবহু একই সিদ্ধান্ত দেয়",
+        "একই Probability তালিকা থেকে দুটি পদ্ধতি ভিন্ন চূড়ান্ত সিদ্ধান্ত দিতে পারে",
+        "কেবল সবকটি Label অভিন্ন হলেই এরা ভিন্ন ফল দেয়",
+        "দুটি পদ্ধতিই সরাসরি Raw Logit যোগ করে"
+      ],
+      "answer": 1,
+      "explanation": "যেমন [0.49, 0.49, 0.99] তালিকায় Soft Average পজিটিভ (> 0.5) সিদ্ধান্ত দেয়, কিন্তু Hard Majority নেগেটিভ ([0, 0, 1]) সিদ্ধান্ত দেয়।"
+    },
+    {
+      "id": "ch10_q7",
+      "question": "সাধারণ Bagging-এর তুলনায় Random Forest-এর সবচেয়ে স্বতন্ত্র বৈচিত্র্য (Characteristic Randomness) কোনটি?",
+      "options": [
+        "কেবল Optimizer-এর Learning Rate এলোমেলো করা",
+        "প্রতিটি ধারাবাহিক ধাপে আগের Residual ফিট করা",
+        "প্রতিটি আলাদা Split খোঁজার সময় দৈবচয়নে Candidate Feature-এর উপসেট বেছে নেওয়া",
+        "ট্রেনিংয়ের সব Target Label এলোমেলো করে দেওয়া"
+      ],
+      "answer": 2,
+      "explanation": "Bootstrap নমুনায়নের পাশাপাশি প্রতিটি Split-এ নতুন করে Feature উপসেট বাছাই করার ফলে দাপুটে Feature-এর একচেটিয়া প্রভাব কমে এবং Tree-গুলোর পারস্পরিক Correlation হ্রাস পায়।"
+    },
+    {
+      "id": "ch10_q8",
+      "question": "Stacking-এ Meta Learner ট্রেনিং করার জন্য সৎ Out-of-Fold (OOF) Meta-Feature কীভাবে তৈরি করতে হয়?",
+      "options": [
+        "পুরো Training Set-এ ফিট করা Base Model-এর সাধারণ In-Sample Prediction নিয়ে",
+        "সরাসরি আসল Target Label কপি করে",
+        "পুরো Dataset-এর গড় Target বসিয়ে",
+        "প্রতিটি Row-এর জন্য ওই নির্দিষ্ট Fold-টি বাদ দিয়ে বাকি অংশে ফিট করা Base Model-এর Prediction নিয়ে"
+      ],
+      "answer": 3,
+      "explanation": "Meta Learner ট্রেনিংয়ে সাধারণ In-Sample Prediction ব্যবহার করলে Overfitted Base Model-গুলোর কারণে তীব্র Data Leakage ও মিথ্যা আশাবাদ তৈরি হয়।"
+    },
+    {
+      "id": "ch10_q9",
+      "question": "ধ্রুপদী চিহ্নযুক্ত (Signed) Binary AdaBoost-এ কোনো রাউন্ডের Weighted Error ε = 0.25 হলে Stage Coefficient α কত হবে?",
+      "options": [
+        "0.5 log(3)",
+        "log(3)",
+        "0",
+        "0.25"
+      ],
+      "answer": 0,
+      "explanation": "Exponential Loss-এর অন্তরজ শূন্য ধরলে অর্ধ-লগ সূত্র α = 0.5 log((1 - ε) / ε) = 0.5 log(3) পাওয়া যায়। উল্লেখ্য, SAMME রীতির গুণিতক সংজ্ঞা এর থেকে আলাদা।"
+    },
+    {
+      "id": "ch10_q10",
+      "question": "ধ্রুপদী AdaBoost-এ কোনো ধাপে Weighted Error শূন্য (ε = 0) হয়ে গেলে কোডে কী করা উচিত?",
+      "options": [
+        "অন্ধভাবে log(0) হিসাব করতে দেওয়া",
+        "সুস্পষ্টভাবে Perfect-fit Stop অবস্থা ও তার আলাদা উপস্থাপনা ব্যবহার করা",
+        "সরাসরি Probability 0 ফেরত দেওয়া",
+        "ট্রেনিংয়ের সব Row ফেলে দেওয়া"
+      ],
+      "answer": 1,
+      "explanation": "ε = 0 বিন্দুতে সাধারণ গুণিতক সূত্রটি অসীমে চলে যায়; তাই কলকারী কোডের জন্য নিখুঁত ফিট থামানো ও চূড়ান্ত Prediction দেওয়ার নীতি সুস্পষ্ট হতে হবে।"
+    },
+    {
+      "id": "ch10_q11",
+      "question": "ধ্রুপদী Binary AdaBoost-এ একটি কার্যকর (Useful) Weak Learner হওয়ার জন্য তার Weighted Error ε-এর শর্ত কী?",
+      "options": [
+        "যেকোনো মানের ε চলবে",
+        "ε > 0.5",
+        "ε < 0.5",
+        "কেবল ε = 1"
+      ],
+      "answer": 2,
+      "explanation": "দ্বিমুখী ক্ষেত্রে অন্ধ আন্দাজের সমান বা তার চেয়ে খারাপ (ε ≥ 0.5) দিকনির্দেশনা বাতিল বা চিহ্ন পরিবর্তনের নীতিতে পড়ে; তবে Multiclass SAMME-তে এই সীমাটি আলাদা (1 - 1/K)।"
+    },
+    {
+      "id": "ch10_q12",
+      "question": "Binary Classification (K = 2)-এর ক্ষেত্রে SAMME Coefficient এবং ধ্রুপদী অর্ধ-লগ (Half-log) Coefficient-এর সম্পর্ক কী?",
+      "options": [
+        "SAMME গুণিতকটি ধ্রুপদী মানের অর্ধেক",
+        "দুটি মান সবসময় হুবহু সমান",
+        "দুটির মধ্যে কোনো গাণিতিক সম্পর্ক নেই",
+        "সামঞ্জস্যপূর্ণ Binary ক্ষেত্রে SAMME গুণিতকটি ধ্রুপদী মানের ঠিক দ্বিগুণ"
+      ],
+      "answer": 3,
+      "explanation": "SAMME-এর Indicator আপডেটকে Normalize করলে ভুল ও সঠিক উদাহরণের আপেক্ষিক ওজন অনুপাত ধ্রুপদী পদ্ধতির সমতুল্য হতে পারে, যদিও কাঁচা স্কোর ও সম্ভাব্যতার রীতি এক নয়।"
+    },
+    {
+      "id": "ch10_q13",
+      "question": "অর্ধ-বর্গ ক্ষতি বা Half Squared-Loss ℓ(y, F) = (1/2)(y - F)²-এর ক্ষেত্রে F-এর সাপেক্ষে Negative Gradient কত?",
+      "options": [
+        "y - F",
+        "F - y",
+        "সবসময় y - sigmoid(F)",
+        "1"
+      ],
+      "answer": 0,
+      "explanation": "F-এর সাপেক্ষে প্রথম অন্তরজ হলো F - y, তাই এর ঋণাত্মক মান বা Negative Gradient হয় সরাসরি Residual y - F। তবে Loss বদলালে এই Pseudo-response-ও বদলে যায়।"
+    },
+    {
+      "id": "ch10_q14",
+      "question": "Binary Log-Loss ℓ(y, F) = log(1 + e^F) - yF-এর ক্ষেত্রে Raw Logit স্কোর F-এর সাপেক্ষে প্রথম অন্তরজ বা Gradient (g) কত?",
+      "options": [
+        "y - F",
+        "p - y",
+        "F - p",
+        "p + y"
+      ],
+      "answer": 1,
+      "explanation": "এখানে p = sigmoid(F) ধরলে প্রথম অন্তরজ g = p - y (অর্থাৎ Negative Gradient হলো y - p) এবং দ্বিতীয় অন্তরজ বা Hessian হলো h = p(1 - p)।"
+    },
+    {
+      "id": "ch10_q15",
+      "question": "Gradient Boosting-এ Learning Rate (η) বদলে দিলে কি আগের ফিট করা Tree-গুলোর পথকেই শুধু স্কেল করে নতুন গতিপথ পাওয়া যায়?",
+      "options": [
+        "হ্যাঁ, সবসময়ই পাওয়া যায়",
+        "কেবল η কমানোর ক্ষেত্রে পাওয়া যায়",
+        "সাধারণভাবে না; কারণ প্রথম ধাপের পরই Residual বদলে যায়, তাই পরের Tree-গুলো নতুন করে ফিট করতে হয়",
+        "এমনকি প্রথম রাউন্ডের সংশোধনও স্কেল করা যায় না"
+      ],
+      "answer": 2,
+      "explanation": "কেবল প্রথম রাউন্ডের ধাপটি সরাসরি স্কেল হয়, কিন্তু তার ফলাফল বদলে যাওয়ায় দ্বিতীয় রাউন্ড থেকেই সব Residual ও পরবর্তী ফিট করা Tree-গুলো Learning Rate-এর ওপর নির্ভরশীল হয়ে পড়ে।"
+    },
+    {
+      "id": "ch10_q16",
+      "question": "একই User-এর পুনরাবৃত্তি থাকা (Repeated-user) সমস্যায় স্বয়ংক্রিয় অভ্যন্তরীণ Random Validation Split দিয়ে Early Stopping চালালে কী ঝুঁকি থাকে?",
+      "options": [
+        "কোনো ঝুঁকি নেই, সবসময়ই বৈধ",
+        "Group সীমাবদ্ধতা মানার আর প্রয়োজন থাকে না",
+        "কেবল আরও বেশি রাউন্ড চালালেই সব ঠিক হয়ে যায়",
+        "লুকানো Row-level Leakage ঘটতে পারে, তাই আলাদা Group বা Time-safe Stopping ডিজাইন প্রয়োজন হতে পারে"
+      ],
+      "answer": 3,
+      "explanation": "ভেতরের এলোমেলো Row বিভাজন একই ইউজারকে ট্রেনিং ও স্টপিং উভয় ভাগেই ফেলে দিয়ে মিথ্যা আশাবাদী স্টপিং ঘটাতে পারে।"
+    },
+    {
+      "id": "ch10_q17",
+      "question": "দ্বিতীয় ক্রমের Newton Leaf সমীকরণে G = -3, H = 2 এবং λ = 1 হলে সেরা Leaf Weight w* কত হবে?",
+      "options": [
+        "1",
+        "-1",
+        "3",
+        "0.5"
+      ],
+      "answer": 0,
+      "explanation": "সূত্র অনুযায়ী w* = -G / (H + λ) = -(-3) / (2 + 1) = 3 / 3 = 1 (অবশ্যই হরটিকে সসীম ও ধনাত্মক হতে হবে)।"
+    },
+    {
+      "id": "ch10_q18",
+      "question": "দ্বিতীয় ক্রমের Boosting-এ পরিচিত min_child_weight প্যারামিটারটির প্রকৃত গাণিতিক অর্থ কী?",
+      "options": [
+        "অবশ্যই কেবল কাঁচা Row-এর সংখ্যা",
+        "একটি Child Node-এ ন্যূনতম মোট Hessian ভর (Curvature Mass)-এর সীমা",
+        "মোট Class-এর সংখ্যা",
+        "মডেলের Learning Rate"
+      ],
+      "answer": 1,
+      "explanation": "কাঁচা উদাহরণের সংখ্যা, সাধারণ Leaf Support এবং বক্রতার যোগফল (Hessian Mass) পরস্পর বিনিময়যোগ্য বা অভিন্ন রাশি নয়।"
+    },
+    {
+      "id": "ch10_q19",
+      "question": "Histogram-ভিত্তিক Split অনুসন্ধানের মূল প্রকৌশলগত সুবিধা কোনটি?",
+      "options": [
+        "এটি ডেটার সব ভুল চিরতরে দূর করে দেয়",
+        "এতে আর কোনো ধরনের ডেটা যাচাই বা Preprocessing লাগে না",
+        "অবিচ্ছিন্ন মানগুলোকে সীমিত সংখ্যক Bin-এ একত্রিত করে Aggregate Statistics দিয়ে Candidate Split অনুসন্ধান অনেক কমিয়ে আনে",
+        "এতে ট্রেনিং করার জন্য কোনো Row-ই স্পর্শ করতে হয় না"
+      ],
+      "answer": 2,
+      "explanation": "Binning ও যোগফল জমা করার প্রাথমিক খরচ থাকলেও হাজারো কাঁচা Threshold স্ক্যান করতে হয় না; এখানে মেমোরি, গতি ও সূক্ষ্মতার একটি নিয়ন্ত্রিত বিনিময় কাজ করে।"
+    },
+    {
+      "id": "ch10_q20",
+      "question": "Leaf-wise বৃদ্ধির কৌশলে মোট Leaf সংখ্যা L বেঁধে দিলেই কি Tree-টির গভীরতা সবসময় log2(L)-এর ভেতরে থাকার গ্যারান্টি পাওয়া যায়?",
+      "options": [
+        "হ্যাঁ, সবসময় সুষম থাকে",
+        "কেবল Categorical ডেটা হলে গ্যারান্টি থাকে",
+        "কেবল GPU-তে চালালে গ্যারান্টি থাকে",
+        "না; অসুষমভাবে একদিকে লম্বা ও গভীর পথ তৈরি হতে পারে"
+      ],
+      "answer": 3,
+      "explanation": "মোট L-টি Leaf দিয়ে একপেশে চেইন তৈরি হলে গভীরতা সর্বোচ্চ L - 1 পর্যন্ত চলে যেতে পারে; তাই সর্বোচ্চ গভীরতার সীমা (max_depth) একটি আলাদা নিয়ন্ত্রণ।"
+    },
+    {
+      "id": "ch10_q21",
+      "question": "LightGBM-এ আলোচিত GOSS (Gradient-based One-Side Sampling) কৌশলটি আসলে কী?",
+      "options": [
+        "বড় মানের Gradient-যুক্ত উদাহরণগুলো রেখে ছোট Gradient-এর অংশ থেকে নমুনা নেওয়া ও ওজন সংশোধনের একটি কৌশল",
+        "সবসময় সুষম (Uniform) Bootstrap করার নামান্তর",
+        "সম্ভাব্যতা Calibration করার একটি পদ্ধতি",
+        "সব LightGBM রানে বাধ্যতামূলকভাবে চালু থাকা একমাত্র ডিফল্ট মোড"
+      ],
+      "answer": 0,
+      "explanation": "এটি একটি কনফিগারযোগ্য Gradient-ভিত্তিক Sampling কৌশল—সব রানেই স্বয়ংক্রিয়ভাবে চালু থাকে এমন সার্বজনীন দাবি সঠিক নয়।"
+    },
+    {
+      "id": "ch10_q22",
+      "question": "Ordered Target Statistic বর্তমান Row-টির এনকোডিং হিসাব করার সময় কোন তথ্যটি সচেতনভাবে বাদ রাখে?",
+      "options": [
+        "ক্রম অনুযায়ী আগে আসা সবগুলো Row",
+        "বর্তমান Row-টির নিজস্ব Target Label ও পরের উদাহরণগুলোর অবদান",
+        "Dataset-এর সব ধরনের Category",
+        "যেকোনো প্রারম্ভিক Prior মান"
+      ],
+      "answer": 1,
+      "explanation": "নিজের Label বাদ দিয়ে কেবল পূর্ববর্তী ইতিহাস ব্যবহার করা হয়; তবে ব্যবহৃত Prior-এর পরিধি এবং ডেটার Group বা সময়ের নির্ভরশীলতা তখনও সমান গুরুত্বপূর্ণ থাকে।"
+    },
+    {
+      "id": "ch10_q23",
+      "question": "Ordered Target Statistics এবং Ordered Boosting—এই দুটি ধারণার পারস্পরিক সম্পর্ক কী?",
+      "options": [
+        "দুটি হুবহু একই গাণিতিক অপারেশনের দুটি নাম",
+        "দুটিই আসলে সাধারণ One-hot Encoding",
+        "দুটি স্বতন্ত্র কৌশল, তবে উভয়ের পেছনেই Prediction Shift কমানোর অভিন্ন প্রেরণা কাজ করে",
+        "দুটিই কেবল Tree-এর গভীরতা মাপার একক"
+      ],
+      "answer": 2,
+      "explanation": "প্রথমটি কাজ করে Categorical Feature রূপান্তর নিয়ে, আর দ্বিতীয়টি কাজ করে ক্রমভিত্তিক উপসর্গ মডেল দিয়ে নিরপেক্ষ Gradient বা Prediction প্রাক্কলন নিয়ে।"
+    },
+    {
+      "id": "ch10_q24",
+      "question": "এই অ্যাপে XGBoost, LightGBM এবং CatBoost কীভাবে কভার করা হয়েছে?",
+      "options": [
+        "ক্লাউডে লাইভ API কল করে ট্রেনিং চালানো হয়েছে",
+        "ফোনের GPU-তে তিনটি প্যাকেজের গতির বেঞ্চমার্ক করা হয়েছে",
+        "তিনটি বাহ্যিক প্যাকেজ ইনস্টল করে পূর্ণ তুলনামূলক রান রাখা হয়েছে",
+        "এদের মূল গাণিতিক প্রতিপাদন ও স্থাপত্যিক বিনিময় শেখানো হয়েছে, আর বাস্তব ওয়ার্কফ্লোতে নির্ধারিত scikit-learn ব্যবহৃত হয়েছে"
+      ],
+      "answer": 3,
+      "explanation": "বাহ্যিক প্যাকেজগুলো ইনস্টল বা বেঞ্চমার্ক করা হয়নি; অফলাইন পাঠে এদের মূল গণিত, কোড এবং লাইব্রেরির পরিধি স্বচ্ছভাবে তুলে ধরা হয়েছে।"
+    }
+  ],
+  "exercises": [
+    {
+      "id": "ch10_ex_average",
+      "title": "Soft Ensemble Average নির্ণয়",
+      "prompt": "তিনটি Base Model-এর দেওয়া Predicted Probability তালিকা [0.49, 0.49, 0.99]-এর বৈধতা যাচাই করে তাদের Soft Average মানটি answer ভেরিয়েবলে রাখুন। পাশাপাশি 0.5 Threshold ধরে Hard Majority ভোটের সিদ্ধান্তের সাথে এর তুলনা করুন।",
+      "starter": "p = [0.49, 0.49, 0.99]\n# TODO validate and average\nanswer = None\n",
+      "solution": "import math\n\np = [0.49, 0.49, 0.99]\nif not p or any(not math.isfinite(x) or not 0 <= x <= 1 for x in p):\n    raise ValueError(\"Probability contract\")\nanswer = sum(p) / len(p)\nassert answer > 0.5 and sum(x > 0.5 for x in p) < len(p) / 2\nprint(answer)\n",
+      "expected": 0.6566666666666666,
+      "explanation": "তিনটি সংখ্যার Soft Average হলো (0.49 + 0.49 + 0.99) / 3 ≈ 0.6566667, যা 0.5-এর চেয়ে বড় হওয়ায় চূড়ান্ত সিদ্ধান্ত পজিটিভ হয়। অথচ আগে 0.5 Threshold বসালে Hard Label দাঁড়ায় [0, 0, 1], যেখানে সংখ্যাগরিষ্ঠের ভোট নেগেটিভ! অর্থাৎ সম্ভাব্যতার প্রকৃত মান (Magnitude) কাজে লাগানোর কারণে Soft Aggregation ভিন্ন সিদ্ধান্ত দিতে পারে।"
+    },
+    {
+      "id": "ch10_ex_variance",
+      "title": "Correlated Ensemble-এর Variance হিসাব",
+      "prompt": "সমান Variance ও সমান Pairwise Correlation মডেলে σ² = 4, ρ = 0.25 এবং B = 10 দেওয়া আছে। গড় Predictor-এর সামগ্রিক Variance হিসাব করে answer ভেরিয়েবলে রাখুন।",
+      "starter": "sigma2, rho, B = 4.0, 0.25, 10\n# TODO covariance-aware formula\nanswer = None\n",
+      "solution": "import numpy as np\n\nsigma2, rho, B = 4.0, 0.25, 10\ncov = np.full((B, B), rho * sigma2)\nnp.fill_diagonal(cov, sigma2)\nanswer = float(cov.sum() / B**2)\nassert np.isclose(answer, sigma2 * (rho + (1 - rho) / B))\nprint(answer)\n",
+      "expected": 1.3,
+      "explanation": "সূত্র অনুযায়ী Variance = σ²[ρ + (1 - ρ) / B] = 4 × (0.25 + 0.75 / 10) = 1.3। একই সেটআপে ভুলবশত মডেলগুলোকে স্বাধীন ধরে 4 / 10 = 0.4 বসালে জোড়ায় জোড়ায় থাকা ধনাত্মক Covariance পদগুলো বাদ পড়ে যায়।"
+    },
+    {
+      "id": "ch10_ex_oob",
+      "title": "OOB Prediction-এর সঠিক হর নির্ণয়",
+      "prompt": "কোনো একটি Row-এর জন্য তিনটি Tree-এর Predicted Probability হলো [0.2, 0.9, 0.4] এবং উপস্থিতি নির্দেশক তালিকা in_bag = [True, False, False]। কেবল যোগ্য (Eligible) OOB Prediction-গুলোর গড় বের করে answer ভেরিয়েবলে রাখুন; একটিও যোগ্য OOB না থাকলে None দিন।",
+      "starter": "p = [0.2, 0.9, 0.4]\nin_bag = [True, False, False]\n# TODO eligible-only average\nanswer = None\n",
+      "solution": "def oob_average(p, in_bag):\n    if len(p) != len(in_bag):\n        raise ValueError(\"Alignment\")\n    eligible = [v for v, inside in zip(p, in_bag) if not inside]\n    return None if not eligible else sum(eligible) / len(eligible)\n\n\nassert oob_average([0.2], [True]) is None\nanswer = oob_average([0.2, 0.9, 0.4], [True, False, False])\nprint(answer)\n",
+      "expected": 0.65,
+      "explanation": "এখানে প্রথম Tree-তে Row-টি In-Bag ছিল (True), তাই কেবল দ্বিতীয় ও তৃতীয় Tree দুটিই যোগ্য OOB (0.9 ও 0.4)। সুতরাং সঠিক গড় হবে (0.9 + 0.4) / 2 = 1.3 / 2 = 0.65। ভুল করে মোট 3-টি Tree দিয়ে ভাগ করলে OOB যোগ্যতার অর্থই পাল্টে যায়।"
+    },
+    {
+      "id": "ch10_ex_ada",
+      "title": "AdaBoost-এর এক ধাপের Stage Coefficient",
+      "prompt": "ধ্রুপদী চিহ্নযুক্ত (Signed) Binary AdaBoost-এ কোনো ধাপের Weighted Error ε = 0.25 হলে Stage Coefficient alpha-এর মান নির্ণয় করে answer ভেরিয়েবলে রাখুন। পাশাপাশি শুরুতে চারটি সমান ওজনের মধ্যে একটি ভুল হলে নতুন Normalized ওজনগুলোও যাচাই করুন।",
+      "starter": "import numpy as np\n\nerror = 0.25\n# TODO half-log alpha and weights\nanswer = None\n",
+      "solution": "import numpy as np\n\nerror = 0.25\nanswer = float(0.5 * (np.log1p(-error) - np.log(error)))\ny = np.array([1, 1, -1, -1])\nh = np.array([1, -1, -1, -1])\nw = np.ones(4) / 4 * np.exp(-answer * y * h)\nw /= w.sum()\nassert np.allclose(w, [1 / 6, 0.5, 1 / 6, 1 / 6])\nprint(answer)\n",
+      "expected": 0.5493061443340549,
+      "explanation": "ধ্রুপদী সূত্রে alpha = (1/2) log((1 - 0.25) / 0.25) = (1/2) log(3) ≈ 0.5493061। ওজন পুনর্বিন্যাসের পর ভুল হওয়া Row-টির নতুন ওজন হয় 0.5 এবং সঠিক হওয়া বাকি তিনটি Row-এর প্রতিটির ওজন দাঁড়ায় 1/6 করে। SAMME রীতির গুণিতক পড়ার সময় তার নিজস্ব হালনাগাদ সূত্রটিও মিলিয়ে নিতে ভুলবেন না।"
+    },
+    {
+      "id": "ch10_ex_update",
+      "title": "সংযোজনশীল (Additive) Regression সংশোধন",
+      "prompt": "কোনো উদাহরণে আগের ধাপের স্কোর F = 4, নতুন ফিট করা Tree-এর আউটপুট 1 এবং Learning Rate 0.1 হলে হালনাগাদ করা নতুন Prediction-টি answer ভেরিয়েবলে রাখুন। আসল Target 6 হলে নতুন Residual কত থাকে তাও যাচাই করুন।",
+      "starter": "F, tree_output, eta, target = 4.0, 1.0, 0.1, 6.0\n# TODO additive update\nanswer = None\n",
+      "solution": "import math\n\nF, tree_output, eta, target = 4.0, 1.0, 0.1, 6.0\nanswer = F + eta * tree_output\nassert math.isclose(target - answer, 1.9)\nprint(answer)\n",
+      "expected": 4.1,
+      "explanation": "সংযোজনশীল নিয়মে নতুন Prediction দাঁড়ায় 4 + 0.1 × 1 = 4.1। আর আসল Target 6 থেকে নতুন মান বিয়োগ করলে অবশিষ্ট Residual থাকে 6 - 4.1 = 1.9। প্রতিটি রাউন্ডেই এভাবে নির্বাচিত Loss অনুযায়ী নতুন সংশোধন শেখা হয়।"
+    },
+    {
+      "id": "ch10_ex_gradient",
+      "title": "Logistic Loss-এর Gradient ও Hessian",
+      "prompt": "একটি উদাহরণের বর্তমান অনুমিত সম্ভাবনা p = 0.8 এবং আসল Label y = 1। Binary Log Loss-এ Raw Logit স্কোরের সাপেক্ষে প্রথম অন্তরজ বা Gradient নির্ণয় করে answer ভেরিয়েবলে রাখুন এবং Hessian-এর মান 0.16 হচ্ছে কি না যাচাই করুন।",
+      "starter": "p, y = 0.8, 1.0\n# TODO g and h\nanswer = None\n",
+      "solution": "import math\n\np, y = 0.8, 1.0\nanswer = p - y\nhessian = p * (1 - p)\nassert math.isclose(hessian, 0.16)\nassert answer < 0\nprint(answer)\n",
+      "expected": -0.2,
+      "explanation": "এখানে প্রথম অন্তরজ Gradient = p - y = 0.8 - 1 = -0.2 এবং দ্বিতীয় অন্তরজ Hessian = p(1 - p) = 0.8 × 0.2 = 0.16। যেহেতু Negative Gradient (y - p = +0.2) ধনাত্মক, তাই পরের ধাপের সংশোধন যৌক্তিকভাবেই Logit স্কোর F বাড়ানোর দিকে কাজ করবে (যেখান থেকে Sigmoid চালিয়ে p পাওয়া যায়)।"
+    },
+    {
+      "id": "ch10_ex_leaf",
+      "title": "Regularized Newton Leaf Weight নির্ণয়",
+      "prompt": "একটি Leaf-এ মোট প্রথম অন্তরজ G = -3, মোট দ্বিতীয় অন্তরজ H = 2 এবং L2 Regularization λ = 1 দেওয়া আছে। হরটি ধনাত্মক কি না তা যাচাই করে অপটিমাল Leaf Weight হিসাব করে answer ভেরিয়েবলে রাখুন।",
+      "starter": "G, H, lam = -3.0, 2.0, 1.0\n# TODO Newton leaf optimum\nanswer = None\n",
+      "solution": "import math\n\n\ndef weight(G, H, lam):\n    if (\n        not all(math.isfinite(x) for x in (G, H, lam))\n        or H < 0\n        or lam < 0\n        or H + lam <= 0\n    ):\n        raise ValueError(\"Curvature contract\")\n    return -G / (H + lam)\n\n\nanswer = weight(-3, 2, 1)\nassert -3 + (2 + 1) * answer == 0\nprint(answer)\n",
+      "expected": 1,
+      "explanation": "ন্যূনতম বিন্দুতে Derivative শূন্য ধরার সমীকরণটি হলো G + (H + λ)w = 0, তাই সেরা ওজন দাঁড়ায় w* = -G / (H + λ) = 3 / 3 = 1। খেয়াল করুন, একই G ও H বজায় রেখে λ বাড়ালে ফিট করা Leaf ওজনের পরম মান ছোট হয়ে আসে।"
+    },
+    {
+      "id": "ch10_ex_gain",
+      "title": "দ্বিতীয় ক্রমের Split Gain হিসাব",
+      "prompt": "একটি প্রস্তাবিত Split-এ GL = -2, HL = 1, GR = 1, HR = 1, λ = 1 এবং জটিলতার খরচ γ = 0.1 দেওয়া আছে। না-ভাঙা Parent পদের অবদানসহ সম্পূর্ণ দ্বিতীয় ক্রমের Split Gain হিসাব করে answer ভেরিয়েবলে রাখুন।",
+      "starter": "GL, HL, GR, HR, lam, gamma = -2.0, 1.0, 1.0, 1.0, 1.0, 0.1\n# TODO child scores minus parent and gamma\nanswer = None\n",
+      "solution": "GL, HL, GR, HR, lam, gamma = -2.0, 1.0, 1.0, 1.0, 1.0, 0.1\nscore = lambda G, H: G * G / (H + lam)\nanswer = 0.5 * (score(GL, HL) + score(GR, HR) - score(GL + GR, HL + HR)) - gamma\nassert abs(answer - 59 / 60) < 1e-12\nprint(answer)\n",
+      "expected": 0.9833333333333333,
+      "explanation": "সূত্র অনুযায়ী Gain = (1/2) [4/2 + 1/2 - 1/3] - 0.1 = 59/60 ≈ 0.9833333। সব অংশে অভিন্ন Objective Normalization এবং ধনাত্মক Leaf হর ব্যবহার করা অপরিহার্য।"
+    },
+    {
+      "id": "ch10_ex_ordered",
+      "title": "Ordered Category Statistic নির্ণয়",
+      "prompt": "ক্রম অনুযায়ী চারটি উদাহরণের Category তালিকা [a, a, b, a], আসল Label [1, 0, 1, 1], পূর্বনির্ধারিত Prior 0.5 এবং মসৃণকরণ শক্তি (strength) 2 দেওয়া আছে। বর্তমান Row-এর নিজস্ব Label বাদ রেখে দ্বিতীয় Row-টির (ইনডেক্স 1) Ordered Encoding হিসাব করে answer ভেরিয়েবলে রাখুন।",
+      "starter": "categories = [\"a\", \"a\", \"b\", \"a\"]\ny = [1.0, 0.0, 1.0, 1.0]\n# TODO prefix-only encoding\nanswer = None\n",
+      "solution": "categories = [\"a\", \"a\", \"b\", \"a\"]\ny = [1.0, 0.0, 1.0, 1.0]\nprior, strength = 0.5, 2.0\nsums = {}\ncounts = {}\nencoded = []\nfor c, target in zip(categories, y):\n    encoded.append((sums.get(c, 0) + strength * prior) / (counts.get(c, 0) + strength))\n    sums[c] = sums.get(c, 0) + target\n    counts[c] = counts.get(c, 0) + 1\nanswer = encoded[1]\nassert encoded[0] == 0.5 and encoded[3] == 0.5\nprint(answer)\n",
+      "expected": 0.6666666666666666,
+      "explanation": "দ্বিতীয় Row-টির আগে একই Category a-এর কেবল একটি উদাহরণ জানা আছে যার Label ছিল 1। সুতরাং Encoding = (1 + 2 × 0.5) / (1 + 2) = 2 / 3 ≈ 0.6666667। মনে রাখবেন, নিখুঁতভাবে Leakage এড়াতে ব্যবহৃত Prior মানটিও বর্তমান Row-এর Target ছাড়া নির্ধারিত হতে হবে।"
+    },
+    {
+      "id": "ch10_ex_margin",
+      "title": "Signed Ensemble Margin হিসাব",
+      "prompt": "দুটি ধাপের গুণিতক α = [0.7, 0.3], তাদের চিহ্নযুক্ত Prediction h = [-1, +1] এবং আসল Label y = +1 দেওয়া আছে। চূড়ান্ত চিহ্নযুক্ত Margin y ∑ αh নির্ণয় করে answer ভেরিয়েবলে রাখুন।",
+      "starter": "alpha = [0.7, 0.3]\nh = [-1, 1]\ny = 1\n# TODO score and signed margin\nanswer = None\n",
+      "solution": "import math\n\nalpha = [0.7, 0.3]\nh = [-1, 1]\ny = 1\nscore = sum(a * p for a, p in zip(alpha, h))\nanswer = y * score\nassert answer < 0 and math.isclose(score, -0.4)\nprint(answer)\n",
+      "expected": -0.4,
+      "explanation": "এখানে সম্মিলিত Raw Score হলো 0.7 × (-1) + 0.3 × (+1) = -0.4। আসল Label +1 দিয়ে গুণ করার পরও Margin দাঁড়ায় -0.4। ঋণাত্মক Margin এই উদাহরণটিকে Decision Boundary-এর ভুল পাশে রাখে; আর একে Calibrated Probability হিসেবে পড়তে হলে আলাদা মূল্যায়ন প্রয়োজন।"
+    }
+  ],
+  "interviews": [
+    {
+      "title": "হাজারটি পরস্পর-সম্পর্কযুক্ত Tree গড় করার সীমা",
+      "tag": "Math · 20 min",
+      "prompt": "দলের একজন সদস্য দাবি করলেন যে, একই ধরনের Biased Base Model হাজারখানেক বানিয়ে গড় করলেই সব Error দূর হয়ে যাবে। গড়ের Variance প্রতিপাদন করে এই দাবির গাণিতিক সীমাগুলো বুঝিয়ে বলুন।",
+      "answer": "গড় Prediction-এর সাধারণ Variance সূত্রটি হলো B⁻² ∑∑ Cov(f_b, f_c)। এখন প্রতিটি মডেলের সমান সসীম Variance σ² এবং যেকোনো দুটির অভিন্ন Correlation ρ ধরলে সমীকরণটি দাঁড়ায় σ²[ρ + (1 - ρ) / B]। শুরুতেই স্পষ্ট করতে হবে কোন পুনরাবৃত্ত ট্রেনিং বা রিস্যাম্পলিং প্রক্রিয়ার সাপেক্ষে আমরা এই Variance মাপছি; প্রমাণ ছাড়া অন্ধভাবে মডেলগুলোকে স্বাধীন ভেবে σ² / B বলা যাবে না।\n\nএখানে ρ > 0 হলে B অসীমের দিকে গেলেও ρσ² মানের একটি অলঙ্ঘনীয় নিম্নসীমা (Floor) থেকে যায়—অর্থাৎ সম্পর্কযুক্ত ভুল এবং মডেলের নিজস্ব Bias কখনোই স্রেফ গড় করে দূর হয় না! তাছাড়া সসীম Validation মেট্রিকে বেশি Tree মানেই একমুখী উন্নতি নিশ্চিত নয়, অথচ কম্পিউট খরচ, মেমোরি ও সার্ভিং Latency ঠিকই বাড়ে। তাই একক মডেলের সক্ষমতা, অর্থবহ বৈচিত্র্য এবং অভিন্ন মূল্যায়ন প্রোটোকল দিয়েই সিদ্ধান্ত নিতে হবে।",
+      "prerequisiteLessons": [
+        "ch10_book_ensemble_variance"
+      ]
+    },
+    {
+      "title": "কেন সাধারণ Row-OOB ইউজার-ভিত্তিক Holdout নয়",
+      "tag": "Data · 20 min",
+      "prompt": "একটি ক্লিক-প্রেডিকশন ডেটায় একই ইউজারের বহু Row রয়েছে। সেখানে Random Forest-এর OOB স্কোর চমৎকার এলেও সম্পূর্ণ নতুন ইউজারদের (Held-out Users) ওপর স্কোর খুব খারাপ এসেছে—কেন? পাশাপাশি একটি নির্ভুল OOB ফাংশন ও কাভারেজ রিপোর্টের ডিজাইন দিন।",
+      "answer": "সাধারণ Row-ভিত্তিক Bootstrap-এ কোনো একটি নির্দিষ্ট ক্লিক Row হয়তো কোনো Tree-তে বাদ (OOB) পড়েছে, কিন্তু ওই একই ইউজারের অন্যান্য ক্লিক ঠিকই সেই Tree-এর In-Bag ট্রেনিংয়ে উপস্থিত থাকতে পারে; পাশাপাশি সময়ের ক্রম ভেঙে ভবিষ্যতের তথ্যও ঢুকে পড়তে পারে। আর কোডে সঠিক OOB গড় বের করার সময় কেবল ওই Row-টির যোগ্য (Eligible) OOB সদস্য সংখ্যা দিয়ে ভাগ করতে হবে—মোট B দিয়ে নয়! যদি যোগ্য সদস্য শূন্য হয় (Zero Support), তবে 0 না বসিয়ে None ফেরত দিতে হবে এবং Coverage Mask ও সমর্থিত Row-এর সংখ্যা রিপোর্ট করতে হবে।\n\nসঠিক মূল্যায়নের জন্য তাই আলাদা Group বা Time Holdout অপরিহার্য। পুরো ইউজার ধরে Bootstrap করলে অসমান ক্লিক সংখ্যার কারণে User-weighted বনাম Request-weighted গড়ের পার্থক্য খেয়াল রাখতে হবে। এছাড়া পুরো ডেটায় আগেভাগে ফিট করা Preprocessing-ও OOB সীমানা ভেঙে দেয়, এবং OOB দেখে বারবার টিউন করা স্কোর কখনোই আনকোরা টেস্টের সমতুল্য নয়।"
+    },
+    {
+      "title": "Random Forest বনাম ধারাবাহিক Gradient Booster",
+      "tag": "Algorithms · 20 min",
+      "prompt": "Random Forest এবং Gradient Boosting মৌলিকভাবে কীভাবে আলাদা? উভয়ের ধারণক্ষমতা নিয়ন্ত্রণ (Capacity Controls) এবং সমান্তরালকরণের (Parallelism) পার্থক্যসহ ব্যাখ্যা করুন।",
+      "answer": "Random Forest মূল Target Label-এর ভিন্ন ভিন্ন Bootstrap Sample-এর ওপর প্রতিটি Split-এ দৈবচয়নে Candidate Feature বেছে নিয়ে সমান্তরালভাবে Tree ফিট করে এবং শেষে গড় নেয়। বিপরীতে, Gradient Boosting চলে ধারাবাহিকভাবে—যেখানে প্রতিটি নতুন ছোট Tree আগের সব ধাপের সম্মিলিত Loss Gradient বা সংশোধনের ওপর ফিট হয়। Forest-এ max_features, max_depth ও min_samples_leaf মূলত একক Tree-এর শক্তি ও পারস্পরিক Correlation নিয়ন্ত্রণ করে; আর Boosting-এ Learning Rate (η), রাউন্ড সংখ্যা, একক Tree-এর ধারণক্ষমতা, Subsampling ও L1/L2 Penalty যৌথভাবে কাজ করে।\n\nপ্রকৌশলগত দিক থেকে Random Forest-এর প্রতিটি Tree পরস্পর স্বাধীন হওয়ায় পুরো ট্রেনিং সহজেই সমান্তরাল (Parallel) করা যায়; অন্যদিকে Boosting-এর একটি রাউন্ড আগের রাউন্ডের ওপর নির্ভরশীল হওয়ায় রাউন্ডগুলো ধারাবাহিক, যদিও প্রতিটি রাউন্ডের ভেতরে Histogram ও Split খোঁজার কাজ সমান্তরাল হতে পারে। কোনো পরিবারই সব ডেটায় চিরন্তন বিজয়ী নয়—একই Feature, Split ও বাজেটে Error, Latency ও খরচ মেপেই তুলনা করতে হয়।"
+    },
+    {
+      "title": "AdaBoost-এ ২-গুণ গুণিতকের রহস্য ও হাতে-কলমে হিসাব",
+      "tag": "Derivation · 25 min",
+      "prompt": "Weighted Error 0.25 হলে আপনার কোডে alpha এসেছে 0.5493, অথচ একটি লাইব্রেরিতে ওজন দেখাচ্ছে 1.0986—এটি কি বাগ? সীমান্তবর্তী শর্ত ও ভুল Label-এর সংবেদনশীলতা ব্যাখ্যা করুন এবং চারটি সমান ওজনের মধ্যে একটি ভুল ধরে Normalization হাতে করে দেখান।",
+      "answer": "এটি কোনো বাগ নাও হতে পারে—এর পেছনে রয়েছে রীতির পার্থক্য! ধ্রুপদী চিহ্নযুক্ত Exponential Loss থেকে প্রতিপাদন করলে α = 0.5 log((1 - ε) / ε) ≈ 0.5493 পাওয়া যায়; অথচ দ্বিমুখী SAMME রীতিতে গুণিতক হয় পূর্ণ log((1 - ε) / ε) ≈ 1.0986। SAMME-তে কেবল ভুল উদাহরণকে exp(α_SAMME) দিয়ে গুণ করে Normalize করা হয় বলে সঠিক ও ভুলের আপেক্ষিক অনুপাত ধ্রুপদী পদ্ধতির সাথে মিলে যায়। তবু তুলনার আগে Label Encoding, learning_rate এবং স্কোর থেকে সম্ভাব্যতায় রূপান্তরের নিয়ম মিলিয়ে নিতে হবে।\n\nসীমান্তবর্তী ক্ষেত্রে ε = 0 হলে নিখুঁত ফিটের আলাদা স্টপিং উপস্থাপনা এবং ε ≥ 0.5 হলে প্রত্যাখ্যান বা ফ্লিপ নীতি থাকতে হবে; শূন্য বা অসীম ওজনের বিরুদ্ধেও টেস্ট জরুরি। আর Exponential Loss বড় ঋণাত্মক Margin-এ সূচকীয় হারে ওজন বাড়ায় বলে ভুল Label (Label Noise)-এর প্রতি এটি ভীষণ সংবেদনশীল—যার জন্য ডেটা অডিট ও Regularization প্রয়োজন।\n\nহাতে হিসাব: শুরুতে ৪টি ওজন 0.25 এবং ১টি ভুল হলে ε = 0.25 ও ধ্রুপদী α = (1/2) log(3)। অ-সুষমকৃত ওজনগুলোর যোগফল আসে প্রায় 0.866025। ভাগ করে Normalize করলে ভুল Row-টির নতুন ওজন হয় 0.5 এবং সঠিক তিনটি Row প্রত্যেকে পায় 1/6 করে।",
+      "prerequisiteLessons": [
+        "ch10_adaboost",
+        "ch10_ada_code"
+      ]
+    },
+    {
+      "title": "কেন সব Boosting স্রেফ (y - F) ফিট করে না",
+      "tag": "Coding · 25 min",
+      "prompt": "“সব ধরনের Gradient Boosting আসলে কাঁচা Residual (y - F) ফিট করে”—এই বক্তব্যটি সংশোধন করুন। Squared ও Logistic Loss-এর অন্তরজ দেখিয়ে সংখ্যাগতভাবে স্থিতিশীল কোড ও টেস্ট পরিকল্পনা দিন।",
+      "answer": "কেবল অর্ধ-বর্গ ক্ষতি বা Half Squared Loss-এর ক্ষেত্রেই Negative Gradient সরাসরি সাধারণ Residual (y - F)-এর সমান হয় এবং শূন্যতম ধাপের প্রারম্ভিক ধ্রুবক হয় ট্রেনিং গড়। কিন্তু Binary Logistic Loss-এ আমরা কাজ করি Raw Logit স্কোর F-এ, যেখানে p = sigmoid(F), স্থিতিশীল Loss হলো logaddexp(0, F) - yF, প্রথম অন্তরজ g = p - y এবং Hessian h = p(1 - p)। এখানে Negative Gradient হলো y - p (সম্ভাব্যতার পার্থক্য), মোটেও কাঁচা y - F নয়—এবং সম্ভাব্যতা ও Logit-এর এককও এক নয়!\n\nকোড যাচাইয়ের জন্য আমরা স্ক্র্যাচ Squared Booster-এর ধারাবাহিক ধাপের Prediction-গুলোকে প্রতিষ্ঠিত লাইব্রেরির সাথে মেলাব এবং আউটপুট Shape, সসীম মান, শূন্য রাউন্ড ও ইনপুট অপরিবর্তনীয়তা টেস্ট করব। Logistic ক্ষেত্রে চরম বড় বা ঋণাত্মক Logit-এ Overflow হচ্ছে কি না এবং Finite Difference দিয়ে Gradient ও Hessian মিলছে কি না পরীক্ষা করব। সবশেষে মনে রাখতে হবে, Learning Rate বদলালে পরবর্তী রাউন্ডের Residual বদলে যায় বলে Tree-গুলো নতুন করে ফিট করতে হয়।"
+    },
+    {
+      "title": "স্বয়ংক্রিয় Early Stopping-এ লুকানো Data Leakage",
+      "tag": "Evaluation · 20 min",
+      "prompt": "একই ইউজারের পুনরাবৃত্তি থাকা একটি পাইপলাইনে স্বয়ংক্রিয় Early Stopping-এর জন্য ভেতরে এলোমেলো ১০% Row আলাদা রাখা হচ্ছে। বাইরের মূল Validation সেটটি অস্পৃষ্ট থাকলেই কি পুরো প্রক্রিয়াটি বৈধ?",
+      "answer": "না, কেবল বাইরের Validation অস্পৃষ্ট থাকলেই ভেতরের প্রক্রিয়াটি ত্রুটিমুক্ত হয়ে যায় না! ভেতরের এই লুকানো এলোমেলো ১০% বিভাজন Group ও সময়ের সীমাবদ্ধতা ভেঙে একই ইউজারকে ট্রেনিং ও স্টপিং উভয় সেটেই ফেলে দেবে, ফলে মডেলটি অতিরিক্ত রাউন্ড ধরে Overfit করার সুযোগ পাবে। আমাদের পুরো পাইপলাইনে Imputer, Encoder, Base Learner এবং Early-stopping বাছাই—প্রতিটির ফিট পরিধি অডিট করতে হবে এবং সুস্পষ্ট Group-safe Stopping বিভাজন অথবা নির্দিষ্ট রাউন্ডের Inner Grouped CV ব্যবহার করতে হবে।\n\nএর পাশাপাশি Patience শর্ত, সেরা ধাপ নির্বাচন এবং সার্ভিংয়ে best_iteration নাকি last_iteration সেভ হচ্ছে তা পরীক্ষা করতে হবে। চূড়ান্ত রিপোর্টের জন্য সম্পূর্ণ আলাদা অস্পৃষ্ট সেট চাই—এবং ডেটা উৎসটি আগে ঘাঁটাঘাঁটি করা হয়ে থাকলে নতুন কোনো Split টানলেও তাকে আনকোরা নিশ্চিতকরণ বলা যাবে না।"
+    },
+    {
+      "title": "দ্বিতীয় ক্রমের Newton Leaf, Split Gain ও Hessian ভর",
+      "tag": "Math · 30 min",
+      "prompt": "দ্বিতীয় ক্রমের Regularized Objective থেকে সেরা Leaf ওজন এবং Split Gain প্রতিপাদন করুন। পাশাপাশি ব্যাখ্যা করুন কেন min_child_weight কাঁচা Row-এর সংখ্যা নয়।",
+      "answer": "একটি নির্দিষ্ট Leaf-এ Gradient যোগফল G এবং Hessian যোগফল H নিলে L2 পেনাল্টিসহ পরিবর্তনশীল Objective দাঁড়ায় G w + 0.5(H + λ)w²। সসীম ধনাত্মক হর (H + λ > 0) সাপেক্ষে অন্তরজ শূন্য ধরলে অপটিমাল ওজন আসে w* = -G / (H + λ)। এই মান বসালে পুরো কাঠামোর অপটিমাইজড স্কোর দাঁড়ায় -0.5 ∑ G² / (H + λ) + γT; ফলে না-ভাঙা Parent স্কোর থেকে দুই Child-এর স্কোরের পার্থক্য ও অতিরিক্ত Leaf খরচ γ বাদ দিলেই পাওয়া যায় Split Gain (এখানে কেবল L2 দেখানো হয়েছে, L1 বিস্তার নয়)।\n\nএখানে H হলো বক্রতার ভর (Curvature Mass)। যেমন Logistic Classification-এ মডেল খুব নিশ্চিত হয়ে গেলে (p প্রায় 0 বা 1 হলে) প্রতিটি উদাহরণের h = p(1 - p) অতি ক্ষুদ্র হয়ে যায়—তখন একটি Leaf-এ শত শত কাঁচা Row থাকা সত্ত্বেও মোট H অনেক ছোট হতে পারে! তাই কাঁচা Row সংখ্যা, ন্যূনতম Hessian, λ, γ এবং Learning Rate—প্রতিটিই আলাদা নিয়ন্ত্রণ; আর যোগফল বনাম গড় Objective স্কেলিং বদলালে Regularization-এর সংখ্যার প্রভাবও বদলে যায়।",
+      "prerequisiteLessons": [
+        "ch10_xgboost"
+      ]
+    },
+    {
+      "title": "Categorical Leakage এবং CatBoost-এর প্রকৃত পরিধি",
+      "tag": "Categories · 25 min",
+      "prompt": "প্রতিটি অনন্য user_id-কে Target Encode করে Validation-এ নিখুঁত স্কোর পাওয়া গেছে। সেখানে শুধু Ordered Target Statistics বসালেই কি সব সমস্যার সমাধান হয়ে যাবে?",
+      "answer": "প্রথমে আমাদের পুরো পাইপলাইন অডিট করতে হবে: বর্তমান Row-এর নিজের Target গড়ের ভেতরে ঢুকেছিল কি না, ব্যবহৃত Prior পুরো ডেটা থেকে নেওয়া কি না, ট্রেনিং ও ভ্যালিডেশনে একই ইউজারের উপস্থিতি (Group Overlap) আছে কি না, সময়ের ক্রম (Timestamp) এবং OOF সীমানা মানা হয়েছে কি না। Ordered Target Statistics কোনো নির্দিষ্ট বিন্যাসে কেবল আগের আসা একই Category-এর ইতিহাস ও মসৃণকরণ ব্যবহার করে; কিন্তু সেখানেও যদি পুরো ডেটার গড়কে Prior হিসেবে বসানো হয়, তবে কঠোর 'No-self-target' দাবিটি ভেঙে যেতে পারে!\n\nতাছাড়া মনে রাখতে হবে যে Ordered Boosting একটি আলাদা Prediction/Gradient প্রাক্কলন কৌশল, এবং বাস্তব CatBoost-এ Plain ও Ordered মোডের ডিফল্ট আচরণ সংস্করণ ও কনফিগারেশনের ওপর নির্ভরশীল। সর্বোপরি, Native Categorical সমর্থন থাকা মানেই কিন্তু ভুল সময় বা গ্রুপ বিভাজনের Leakage কিংবা Fairness সমস্যার বিরুদ্ধে স্বয়ংক্রিয় দায়মুক্তি নয়—বাইরের মূল্যায়ন ডিজাইন স্বতন্ত্রভাবেই বৈধ হতে হবে।"
+    },
+    {
+      "title": "প্রোডাকশনে Stacking-এর পতন ও তার প্রতিকার",
+      "tag": "Systems · 25 min",
+      "prompt": "একটি Stacked সিস্টেমে Meta Learner ট্রেনিংয়ে দারুণ স্কোর দিলেও প্রোডাকশনে নেমে খুবই খারাপ করছে। খোঁজ নিয়ে দেখা গেল, Base Prediction-গুলো একই ট্রেনিং Row-তে ফিট করা মডেল থেকে নেওয়া হয়েছিল। এর সঠিক সমাধান ও পূর্ণ Serving পরিকল্পনা দিন।",
+      "answer": "মূল সমস্যাটি হলো তীব্র In-sample Data Leakage! সমাধানের প্রথম কাজ হলো নিশ্ছিদ্র Out-of-Fold (OOF) Meta-feature তৈরি করা—যাতে প্রতিটি Held-out Row-এর Prediction আসে এমন Base Model থেকে যে ট্রেনিংয়ের সময় ওই Row-এর Label কখনোই দেখেনি। এই Fold বিভাজনে অবশ্যই ডেটার Group ও সময়ের শর্ত মানতে হবে এবং প্রতিটি Fold-এর ভেতরে স্থানীয়ভাবে Preprocessing ফিট করাতে হবে; পাশাপাশি Hyperparameter বাছাইয়ের জন্য Nested মূল্যায়ন দরকার কি না তাও যাচাই করতে হবে।\n\nMeta Learner ফিট হওয়ার পর সার্ভিংয়ের জন্য সব Base Model-কে পুরো ট্রেনিং ডেটায় নতুন করে ফিট (Refit) করে কলামের ক্রম ও Class Order কঠোরভাবে সারিবদ্ধ (Align) করতে হবে। প্রোডাকশনে নামানোর আগে সব Base Model যোগ Meta Model চালানোর সম্মিলিত Latency, মেমোরি, লাইব্রেরি সংস্করণ, সিরিয়ালাইজেশন ও Calibration মেপে দেখতে হবে—এবং সামান্য মেট্রিক উন্নতি এই বিশাল পরিচালন খরচকে যৌক্তিক করে কি না তা বিচার করতে হবে।",
+      "prerequisiteLessons": [
+        "ch10_stacking"
+      ]
+    },
+    {
+      "title": "আমাদের Ensemble রিপোর্টের দাবি ও তার বৈজ্ঞানিক প্রতিরক্ষা",
+      "tag": "Project · 25 min",
+      "prompt": "আমাদের ওয়ার্কফ্লোর AP ≈ 0.734 ফলাফল দেখে কেউ দাবি করলেন যে, এই মডেলটি XGBoost, LightGBM ও CatBoost সবার চেয়ে সেরা প্রমাণিত হয়েছে! আমাদের রিপোর্ট আসলে ঠিক কতটুকু দাবি সমর্থন করে?",
+      "answer": "ওই ঢালাও দাবিটি মোটেও সমর্থিত নয়! আমাদের রিপোর্টটি কেবল নির্ধারিত scikit-learn পরিবেশের ৪টি সুনির্দিষ্ট Candidate-এর মধ্যে ৩টি Inner Grouped Fold ও নির্দিষ্ট 60 রাউন্ডের প্রতিযোগিতায় বিজয়ী HistGradientBoosting মডেলের ফলাফল দেখায় (যার Development Validation AP ≈ 0.733975 এবং Brier ≈ 0.119282)। এখানে XGBoost, LightGBM বা CatBoost প্যাকেজ ইনস্টল কিংবা বেঞ্চমার্ক কোনোটাই করা হয়নি—তাই ব্র্যান্ডের শ্রেষ্ঠত্বের তুলনা সম্পূর্ণ ভিত্তিহীন।\n\nসত্যিকারের ন্যায্য তুলনার জন্য অভিন্ন Feature, একই ডেটা বিভাজন, সমান অনুসন্ধান বাজেট ও অভিন্ন হার্ডওয়্যার প্রোটোকল প্রয়োজন। তাছাড়া আমাদের উৎসটি বহুবার ব্যবহৃত একটি ঐতিহাসিক Dataset, প্রোফাইল গ্রুপগুলো প্রক্সি মাত্র, fnlwgt ওজন অব্যবহৃত এবং Row-OOB হিসাবটি Group-safe নয়। তাই যথাযথ Calibration, Fairness যাচাই, সার্ভিং Latency পরিমাপ এবং নতুনভাবে সংগৃহীত প্রাসঙ্গিক ডেটার মূল্যায়ন ছাড়া সরাসরি প্রোডাকশন ডিপ্লয়মেন্টের প্রস্তুতি দাবি করা যাবে না।"
+    }
+  ],
+  "book": {
+    "order": 10,
+    "part": "Book 2 · Classical Machine Learning",
+    "prerequisites": [
+      "chapter_09"
+    ],
+    "purpose": "আগের অধ্যায়ে (Book 2, Chapter 4: Decision Trees) আমরা দেখেছি কীভাবে একটি একক Decision Tree কাজ করে এবং কোথায় তার সীমাবদ্ধতা। এই অধ্যায়ে সেই ভিত্তির ওপর দাঁড়িয়ে আমরা শিখব কীভাবে Bagging, Random Forest, Stacking এবং Gradient Boosting ব্যবহার করে একাধিক Model-এর সমন্বয়ে অনেক বেশি স্থিতিশীল ও শক্তিশালী Ensemble তৈরি ও মূল্যায়ন করতে হয়।",
+    "outcomes": [
+      "Bagging-এর মাধ্যমে Variance কমানো, Boosting-এর ধাপে ধাপে Residual বা Gradient সংশোধন এবং Data Leakage এড়িয়ে সঠিক Out-of-Fold (OOF) Stacking প্রক্রিয়া স্পষ্টভাবে ব্যাখ্যা ও প্রয়োগ করতে পারা।",
+      "হাতে-কলমে গাণিতিক উদাহরণ, সমীকরণ এবং Python কোডের সাহায্যে Ensemble Diversity ও Pairwise Correlation (ρ) থেকে কীভাবে Variance কমে এবং কোথায় তার সীমা তৈরি হয় তা নিখুঁতভাবে বিশ্লেষণ করতে পারা।"
+    ],
+    "recall": [
+      "Stacking-এ Meta Learner ট্রেনিং করার সময় সাধারণ In-Sample Prediction-এর বদলে Out-of-Fold (OOF) Prediction ব্যবহার করা কেন বাধ্যতামূলক?",
+      "দুটি Model-এর মধ্যে Correlation ρ = 1 হলে শত শত Tree যোগ করেও কেন কোনো বাড়তি সুফল মেলে না? আর B = 1 বা m = 1 বসালে গড় Prediction-এর Variance সূত্রটি কি পুনরায় একক Model-এর মূল Variance ফিরিয়ে দেয়?"
+    ],
+    "bridge": "পরের অধ্যায়: Book 2 · Chapter 6 (SVM, kNN & Naive Bayes)। জ্যামিতিক Margin, দূরত্বভিত্তিক প্রতিবেশী এবং সম্ভাব্যতার জগতে পা রাখার আগে এই অধ্যায়ের Quiz, Coding Exercise ও না-দেখে গাণিতিক ব্যাখ্যার অনুশীলনগুলো যাচাই করে নিন।",
+    "bookId": "classical",
+    "bookChapter": 5
+  }
+}

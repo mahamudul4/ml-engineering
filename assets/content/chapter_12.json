@@ -1,0 +1,1572 @@
+{
+  "id": "chapter_12",
+  "number": 12,
+  "title": "Clustering & Dimensionality Reduction",
+  "shortTitle": "Clustering & PCA",
+  "displayTitle": "Clustering\n& Dimensionality Reduction",
+  "subtitle": "ডেটার ভেতরের গঠন খুঁজি, Geometry-র শর্ত বুঝি এবং উপযুক্ত প্রমাণ দিয়ে ফলাফল যাচাই করি।",
+  "description": "From distance and density to useful representations.\nDerive the objective. Inspect the partition. Measure what is lost.",
+  "difficulty": "Intermediate · geometry & evaluation",
+  "lab": "unsupervised",
+  "lessons": [
+    {
+      "id": "ch12_questions",
+      "title": "Unsupervised Learning: প্রশ্ন আগে, Partition পরে",
+      "subtitle": "Label ছাড়া ডেটার ভেতরের গঠন খোঁজার আসল উদ্দেশ্য, সম্ভাবনা ও সীমাবদ্ধতা",
+      "duration": "24 min",
+      "icon": "scatter_plot",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "শুরুতে নিজেকে কোন প্রশ্নটি করবেন?",
+          "body": "আগের অধ্যায়ে (Book 2 · Chapter 6: SVM, kNN & Naive Bayes) আমরা দেখেছি, Supervised Learning-এ প্রতিটি Sample-এর সাথে একটি সুনির্দিষ্ট Label দেওয়া থাকে—যা সরাসরি বলে দেয় কোন ভুলটি আমাদের কমাতে হবে। কিন্তু Unsupervised Learning-এ আমাদের হাতে শুধু Feature-গুলো থাকে, কোনো পূর্বনির্ধারিত Target বা একটিমাত্র ‘সঠিক’ দলবিন্যাস থাকে না। তাই কোনো Algorithm চালানোর আগেই নিজের আসল উদ্দেশ্যটি স্পষ্ট করে লিখে নেওয়া জরুরি: আপনি কি কাছাকাছি বৈশিষ্ট্যের Sample-গুলোকে একসাথে জড়ো করে দেখতে চান, অনেকগুলো Feature-কে সংকুচিত করে কম মাত্রায় প্রকাশ করতে চান, নাকি দ্রুত খোঁজার জন্য একটি Retrieval সূচি বানাতে চান?\n\nমজার ব্যাপার হলো, হুবহু একই Dataset-এ শুধু কাজের উদ্দেশ্য বদলে গেলেই আপনার প্রয়োজনীয় Representation এবং Distance Metric আমূল বদলে যেতে পারে। এই পুরো অধ্যায়ে আমরা সেই ব্যবহারিক প্রশ্নটিকে সামনে রেখেই Clustering এবং Dimensionality Reduction-এর পদ্ধতিগুলো ধাপে ধাপে তুলনা করব।"
+        },
+        {
+          "type": "text",
+          "title": "Clustering বনাম Dimensionality Reduction",
+          "body": "শুরুতেই দুটি ধারণার পার্থক্য পরিষ্কার করে নেওয়া ভালো। Clustering প্রতিটি Row-কে একটি বিচ্ছিন্ন Cluster ID (অথবা সম্ভাব্যতার অনুপাত) দেয়; অন্যদিকে PCA-এর মতো Dimensionality Reduction পদ্ধতিগুলো মূল ডেটাকে অপেক্ষাকৃত কম সংখ্যক অবিচ্ছিন্ন Coordinate-এ প্রকাশ করে। প্রয়োজনে PCA করার পর সেই নতুন স্থানাঙ্কের ওপর k-Means চালানো যেতেই পারে, কিন্তু মনে রাখতে হবে PCA নিজে কখনোই Cluster খুঁজে বের করার Algorithm নয়।\n\nতেমনি একটি অবিচ্ছিন্ন বয়সের Distribution-এর ওপর k = 3 দিয়ে k-Means চালালে Model ঠিকই ডেটাকে তিন ভাগে কেটে দেখাবে। কিন্তু তার মানে মোটেও এই নয় যে আপনি সমাজে তিনটি ‘প্রাকৃতিক’ জনগোষ্ঠী আবিষ্কার করে ফেলেছেন! এটুকুই কেবল নিশ্চিত যে আপনি নিজেই Algorithm-কে তিনটি Centroid বসাতে নির্দেশ দিয়েছেন।"
+        },
+        {
+          "type": "math",
+          "title": "গাণিতিক কাঠামো: আমরা ঠিক কোন Object শিখছি?",
+          "body": "X\\in\\mathbb{R}^{n\\times d},\\quad c_i\\in\\{0,\\ldots,k-1\\},\\quad Z\\in\\mathbb{R}^{n\\times q},\\quad q<d"
+        },
+        {
+          "type": "text",
+          "title": "এই অধ্যায়ের বাস্তব Dataset ও কাজের পরিধি",
+          "body": "সমীকরণের পাশাপাশি বাস্তব অভিজ্ঞতার জন্য এই অধ্যায়ে আমরা পরিচিত UCI Adult (adult.data) ডেটাসেট থেকে তিনটি সংখ্যাবাচক Feature—age, education_num এবং hours_per_week—নিয়ে Exploratory বিশ্লেষণ করব। এখানে একটি কঠোর Engineering নিয়ম আমরা শুরু থেকে শেষ পর্যন্ত মেনে চলব: ডেটার income Label কখনোই Model Fitting, Scoring, প্লটের রঙ নির্বাচন কিংবা Hyperparameter বাছাইয়ের কাজে ব্যবহার করা হবে না, এবং জরিপের ওজন সূচক fnlwgt-ও আমরা এখানে রাখছি না। যেহেতু পূর্ববর্তী অধ্যায়গুলোতেও এই ঐতিহাসিক ডেটা উৎসটি আমরা দেখেছি, তাই এই কাজকে আমরা কেবল কাঠামোগত অনুসন্ধান হিসেবেই দেখব, কোনো নতুন Confirmatory Benchmark হিসেবে দাবি করব না।"
+        },
+        {
+          "type": "text",
+          "title": "Label না থাকলেও কেন Validation অপরিহার্য?",
+          "body": "মনে প্রশ্ন জাগতে পারে, যেখানে কোনো Target Label-ই নেই, সেখানে আবার Overfitting বা Validation-এর চিন্তা কেন? একটু ভাবলেই উত্তরটা পরিষ্কার হয়ে যাবে: আপনি যদি কেবল Training ডেটার অভ্যন্তরীণ দূরত্ব কমাতে চান, তবে প্রতিটি Sample-কে আলাদা একেকটি নিজস্ব Cluster-এ বসিয়ে দিলেই তো Inertia একেবারে শূন্য হয়ে যায়! সেটি নিছকই মুখস্থ করা, কোনো অর্থবহ প্যাটার্ন শেখা নয়।\n\nএ কারণেই আমাদের পরীক্ষা করে দেখতে হয়—Random Seed, ডেটার Sample, Scaling পদ্ধতি বা সময়ের পরিবর্তন হলে আমাদের পাওয়া Partition-টি টিকে থাকে কি না, এবং বাস্তবে ব্যবহারকারীর Downstream কাজে এটি কোনো উপকার আনে কি না। কোনো জ্যামিতিক Internal Score একা কখনোই বাস্তব কার্যকারিতা বা জনমিতিক সত্যতার বিকল্প হতে পারে না।"
+        },
+        {
+          "type": "code",
+          "title": "Cluster ID কেবলই নামমাত্র: একটি ছোট উদাহরণ",
+          "body": "import numpy as np\nfrom sklearn.metrics import adjusted_rand_score\n\na = np.array([0, 0, 1, 1])\nb = np.array([7, 7, 3, 3])\nprint(adjusted_rand_score(a, b))  # 1.0: same partition, renamed IDs\n"
+        },
+        {
+          "type": "text",
+          "title": "চারটি সম্পূর্ণ আলাদা দাবি ও নৈতিক সতর্কতা",
+          "body": "উপরের কোডটিতে খেয়াল করুন, [0, 0, 1, 1] এবং [7, 7, 3, 3] দেখতে আলাদা সংখ্যার মনে হলেও Adjusted Rand Score দিচ্ছে ঠিক 1.0—কারণ সংখ্যার নাম বদলালেও দলবিন্যাসটি হুবহু এক। বাস্তবে যেকোনো Clustering ফলাফল মূল্যায়নের সময় চারটি দাবিকে সবসময় আলাদা রাখবেন: (১) Partition-টি কি Reproducible, (২) জ্যামিতিক Distance Objective কি ভালো, (৩) Downstream কাজে কি প্রকৃত উন্নতি হচ্ছে, এবং (৪) মানুষকে এভাবে ভাগ করা নৈতিকভাবে সংগত কি না। প্রথম দাবিটি সত্য হলেই বাকি তিনটি আপনাআপনি সত্য হয়ে যায় না। এমনকি সংবেদনশীল বা Protected Column বাদ দিলেও অন্যান্য সহসম্পর্কিত Feature (Correlated Proxies) সেই সংবেদনশীল তথ্য বহন করতে পারে; তাই নিছক জ্যামিতিক বিশ্লেষণকে কখনোই পূর্ণাঙ্গ Fairness Audit ভেবে ভুল করবেন না।"
+        },
+        {
+          "type": "callout",
+          "title": "নিজে ভেবে দেখুন",
+          "body": "ধরুন কোনো প্রোডাক্ট টিম Customer Segmentation করতে চেয়ে প্রথমেই আপনাকে প্রশ্ন করল, “আমাদের গ্রাহকদের মধ্যে কয়টি ধরন আছে?” সরাসরি কোনো সংখ্যা বলার আগে খাতায় লিখে ফেলুন—এই দলবিন্যাস দিয়ে ঠিক কী পদক্ষেপ নেওয়া হবে, কোন Feature ও Distance Metric ব্যবহৃত হবে, এবং Stability ও Evaluation Budget কেমন হবে। মনে রাখবেন, অ্যাপের ভেতরের Python Scratchpad মূলত সংখ্যাগত উত্তর যাচাই করার জন্য; বড় কোড বা পূর্ণাঙ্গ পরীক্ষা চালানোর জন্য নিজের লোকাল Python পরিবেশ ব্যবহার করাই সবচেয়ে সুবিধাজনক।"
+        }
+      ]
+    },
+    {
+      "id": "ch12_distance",
+      "title": "Representation, Distance ও Feature Scaling",
+      "subtitle": "ডেটার Geometry বেছে নেওয়া কোনো সাধারণ সাজসজ্জা নয়, এটি সরাসরি একটি Modeling সিদ্ধান্ত",
+      "duration": "28 min",
+      "icon": "scatter_plot",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "একই ডেটা Row, কিন্তু ভিন্ন Geometry",
+          "body": "ধরুন আমাদের ডেটায় একজন মানুষের age দেওয়া আছে বছরে, আর hours_per_week দেওয়া আছে সপ্তাহে ঘণ্টার হিসাবে। এখানে কিন্তু কোনো Label নেই—এই কাঁচা সংখ্যাগুলোর এককই সরাসরি বলে দিচ্ছে দুটি মানুষের মধ্যকার জ্যামিতিক দূরত্ব কতটা বড়! এখন কেউ যদি হুট করে বয়সের একক বছর থেকে বদলে মাসে লিখে ফেলেন, তবে মানুষ দুজন হুবহু এক থাকা সত্ত্বেও শুধু বয়সের অক্ষে কাঁচা Euclidean Distance বারো গুণ বেড়ে যাবে।\n\nএ কারণেই Unsupervised Learning-এ Preprocessing বা Scaling-কে নিছক ডেটা পরিষ্কার করার আনুষ্ঠানিকতা ভাবলে চলবে না। Training ডেটার ওপর আপনি কীভাবে Scale নির্ধারণ করছেন, সেটি আসলে সরাসরি ঠিক করে দিচ্ছে কোন Feature-এর পার্থক্যকে আপনার Model কতটা গুরুত্ব দেবে।"
+        },
+        {
+          "type": "math",
+          "title": "Squared Euclidean ও Standardized Distance",
+          "body": "d^2(x,z)=\\sum_j(x_j-z_j)^2,\\qquad d_s^2(x,z)=\\sum_j\\frac{(x_j-z_j)^2}{s_j^2}"
+        },
+        {
+          "type": "text",
+          "title": "StandardScaler আসলে ভেতরে কী করে?",
+          "body": "উপরের সমীকরণের দ্বিতীয় অংশটিই মূলত StandardScaler বাস্তবায়ন করে: প্রতিটি Feature থেকে তার Training Mean বিয়োগ করে Training Standard Deviation (s_j) দিয়ে ভাগ করা হয়। এখানে একটি সূক্ষ্ম গাণিতিক খুঁটিনাটি খেয়াল রাখা ভালো—scikit-learn-এর StandardScaler Variance হিসাব করার সময় হরে n ব্যবহার করে, অথচ একটু পরেই PCA পড়ার সময় আমরা দেখব Sample Covariance-এ হরে n - 1 ব্যবহার করার রীতি রয়েছে।\n\nআরেকটি দারুণ জ্যামিতিক সত্য হলো, শুধু Mean বিয়োগ করলে (Centering) পুরো ডেটা মেঘটি একসাথে সরে যায় মাত্র, কিন্তু বিন্দুগুলোর পারস্পরিক Euclidean Distance একচুলও বদলায় না; দূরত্বের আসল পরিবর্তনটা ঘটায় s_j দিয়ে ভাগ করার (Scaling) ধাপটি। আর Book 1 · Chapter 5 (Data Preparation & Feature Engineering)-এর সেই Golden Rule ভুলে যাবেন না: কখনোই Held-out বা Validation ডেটা মিলিয়ে Scaler Fit করবেন না, নইলে ভবিষ্যতের Distribution-এর তথ্য শুরুতেই Model-এর সিদ্ধান্তে ঢুকে Data Leakage ঘটাবে।"
+        },
+        {
+          "type": "text",
+          "title": "Outlier ও একই তথ্যের পুনরাবৃত্তি (Feature Duplication)",
+          "body": "StandardScaler ব্যবহার করলেই কি সব সমস্যার সমাধান হয়ে যায়? মোটেও না। প্রথমত, Standard Deviation নিজেই চরম মান বা Outlier-এর প্রতি ভীষণ সংবেদনশীল; ডেটায় বড় Outlier থাকলে RobustScaler বা ডোমেইন-উপযোগী Transform ভেবে দেখা যেতে পারে, তবে সেগুলোরও Fit Scope এবং অনুমানগুলো যাচাই করে নিতে হবে।\n\nদ্বিতীয়ত, ধরুন একই অন্তর্নিহিত সংকেত বহন করে এমন দশটি ঘনিষ্ঠভাবে সম্পর্কিত (Correlated) Column আপনি ডেটায় রেখে দিয়েছেন। প্রতিটি Column আলাদাভাবে Scale করলেও সমষ্টিগত দূরত্বের হিসাবে সেই একটি সংকেত প্রায় দশ গুণ বেশি ওজন পেয়ে যাবে! অর্থাৎ সাধারণ Scaling কেবল প্রতিটি কলামের নিজস্ব বিস্তার সমান করে, কিন্তু তথ্যের পুনরাবৃত্তি বা Redundancy দূর করতে পারে না।"
+        },
+        {
+          "type": "code",
+          "title": "একক বদলালেই কীভাবে Unscaled Distance পাল্টে যায়",
+          "body": "import numpy as np\n\nx = np.array([30.0, 40.0])\nz = np.array([40.0, 45.0])\nraw = np.sum((x - z) ** 2)\nmonths = np.sum(((x - z) * [12.0, 1.0]) ** 2)\nprint(raw, months)  # 125, 14425\n"
+        },
+        {
+          "type": "text",
+          "title": "Categorical ও Missing Value নিয়ে সতর্কতা",
+          "body": "উপরের কোডে দেখলেন তো, বয়সকে বছরে রাখলে যেখানে Squared Distance ছিল 125, মাসে রূপান্তর করতেই তা লাফিয়ে 14425 হয়ে গেল! সংখ্যার বাইরে Categorical ও অনুপস্থিত মানের ক্ষেত্রে এই জ্যামিতিক ঝুঁকি আরও সূক্ষ্ম। যেমন আমাদের ডেটার education_num একটি ক্রমানুসারে সাজানো কোড বটে, কিন্তু এর প্রতি এক ধাপের ব্যবধান বাস্তব জীবনে সমান দক্ষতার ব্যবধান বোঝায়—এমন দাবি করা যায় না। আর যদি ক্রমহীন কোনো Nominal Category-কে ইচ্ছেমতো 0, 1, 2 বসিয়ে Euclidean Distance মাপেন, তবে আপনি নিজ হাতে একটি কৃত্রিম ক্রম তৈরি করে ফেলছেন! এমনকি One-Hot Encoding বা মিশ্র Metric ব্যবহার করলেও কোন Feature কত ওজন পাবে সেই প্রশ্নটি থেকেই যায়। একইভাবে, কোনো Missing Value-কে চুপচাপ শূন্য বসিয়ে দেওয়ার অর্থ হলো শূন্যকে একটি বাস্তব অবস্থান বলে ধরে নেওয়া; তাই সুনির্দিষ্ট Imputation এবং Missingness Indicator সবসময় কেবল Training অংশেই Fit করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "উচ্চ মাত্রা (High Dimension) ও Cosine Similarity",
+          "body": "ডেটায় যখন অসংখ্য দুর্বল বা অপ্রাসঙ্গিক Feature যুক্ত হতে থাকে, তখন উচ্চ মাত্রার জ্যামিতিতে এক অদ্ভুত ঘটনা ঘটে: প্রায় সব জোড়া বিন্দুর দূরত্বই কাছাকাছি মানে ঘনীভূত হতে শুরু করে, ফলে সবচেয়ে কাছের প্রতিবেশী আর দূরের বিন্দুর মধ্যকার পার্থক্য (Contrast) ফিকে হয়ে যায়। টেক্সট বা Neural Embedding-এর মতো যেসব ক্ষেত্রে ভেক্টরের মানের চেয়ে তার দিকটি (Direction) বেশি অর্থবহ, সেখানে Cosine ভিত্তিক দূরত্ব অনেক বেশি কার্যকর।\n\nগাণিতিকভাবে একক দৈর্ঘ্যের (Unit-normalized) ভেক্টরের ক্ষেত্রে Squared Euclidean Distance হয় ঠিক 2(1 - cosine)। তবে Interview-এর জন্য একটি পার্থক্য খুব স্পষ্ট রাখবেন: সাধারণ k-Means প্রতি ধাপে গাণিতিক গড় (Mean) নেয়, যার দৈর্ঘ্য আর 1 থাকে না; তাই প্রকৃত Spherical k-Means এবং সাধারণ k-Means এক Algorithm নয়।"
+        },
+        {
+          "type": "callout",
+          "title": "ব্যবহারিক Debugging Checklist",
+          "body": "যেকোনো Clustering চালানোর আগে প্রতিটি Feature-এর একক, বিস্তার (Spread), ডুপ্লিকেট সংকেত, Missing Value-র ধরন এবং জোড়ায় জোড়ায় দূরত্বের Histogram একবার দেখে নিন। Raw ডেটা এবং Standardized ডেটার ওপর পাওয়া ফলাফলকে সবসময় দুটি সম্পূর্ণ পৃথক Experiment হিসেবে রিপোর্ট করবেন। আমাদের মূল ওয়ার্কফ্লোতেও দেখবেন, Scaler শুধুমাত্র 6,013টি Budget-training Row-এর ওপর Fit করা হয়েছে, আর বাকি 6,511টি Validation Row-কে কেবল Transform করা হয়েছে।"
+        }
+      ]
+    },
+    {
+      "id": "ch12_objective",
+      "title": "k-Means Objective ও Centroid সমীকরণের প্রমাণ",
+      "subtitle": "কেন Squared Euclidean Error কমাতে গেলে গাণিতিক গড় (Arithmetic Mean)-ই সেরা Centroid হয়",
+      "duration": "30 min",
+      "icon": "scatter_plot",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Objective Function থেকে Algorithm-এর জন্ম",
+          "body": "সঠিক Feature ও Scaling ঠিক করার পর এবার দেখা যাক k-Means ভেতরে ঠিক কোন গাণিতিক লক্ষ্যটি পূরণ করতে চায়। এখানে আমরা প্রতিটি ডেটা Row-কে ঠিক একটি Cluster Center বা Centroid-এর অধীনে বরাদ্দ (Assign) করি। আমাদের মূল উদ্দেশ্য হলো প্রতিটি বিন্দু থেকে তার নিজস্ব Centroid-এর Squared Euclidean Distance-এর মোট যোগফল—যাকে Distortion বা Inertia বলা হয়—যতটা সম্ভব কমিয়ে আনা। দূরত্বের বর্গ নেওয়ার কারণে যেসব বিন্দু কেন্দ্র থেকে অনেক দূরে পড়ে থাকে, সেগুলো Loss-এ অনেক বড় জরিমানা যোগ করে। আর মনে রাখতে হবে, Cluster-এর সংখ্যা k আমাদের শুরুতেই বাইরে থেকে বলে দিতে হয়; এটি ডেটার ভেতর থেকে স্বয়ংক্রিয়ভাবে আবিষ্কৃত কোনো জনসংখ্যা নয়।"
+        },
+        {
+          "type": "math",
+          "title": "k-Means Distortion বা Inertia Objective",
+          "body": "J(c,\\mu)=\\sum_{i=1}^{n}\\|x_i-\\mu_{c_i}\\|_2^2"
+        },
+        {
+          "type": "math",
+          "title": "স্থির Assignment-এ সেরা Centroid নির্ণয়",
+          "body": "\\nabla_{\\mu_j}J=2\\left(n_j\\mu_j-\\sum_{i:c_i=j}x_i\\right)=0\\quad\\Rightarrow\\quad\\mu_j=\\frac{1}{n_j}\\sum_{i:c_i=j}x_i"
+        },
+        {
+          "type": "text",
+          "title": "সমীকরণটি কখন খাটে, আর কখন বদলে যায়?",
+          "body": "উপরের ক্যালকুলাসটুকু একটু খেয়াল করলেই দেখবেন, কোন বিন্দু কোন দলে আছে (Assignment c) তা স্থির ধরে এবং দলটি খালি নয় (n_j > 0) ধরে Centroid-এর সাপেক্ষে Gradient শূন্য বসালেই সরাসরি গাণিতিক গড় (Arithmetic Mean) বেরিয়ে আসে! তবে এখানে দুটি গুরুত্বপূর্ণ শর্ত লুকিয়ে আছে। প্রথমত, কোনো Cluster যদি খালি হয়ে যায় (n_j = 0), তবে শূন্য দিয়ে ভাগের কারণে Mean অসংজ্ঞায়িত হয়ে পড়ে—তখন আলাদা একটি Empty-cluster নীতি প্রয়োজন হয়।\n\nদ্বিতীয়ত, গাণিতিক গড় কেবল তখনই সেরা যখন আমাদের Objective হলো সাধারণ ওজনহীন Squared L2 দূরত্ব। আপনি যদি L1 (Manhattan) দূরত্ব কমাতে চান, তবে সেরা কেন্দ্র হবে প্রতিটি অক্ষের Median (k-Medians); আর বর্গ ছাড়া সরাসরি Euclidean দূরত্বের যোগফল কমাতে চাইলে প্রয়োজন হবে Geometric Median। তাই যেকোনো ইচ্ছেমতো Distance Metric বসিয়ে চোখ বন্ধ করে গড় নিলেই যে সঠিক অপ্টিমাইজেশন হবে, এমন ধারণা পুরোপুরি ভুল।"
+        },
+        {
+          "type": "code",
+          "title": "Centroid-এ কেন Gradient শূন্য হয়: কোডে যাচাই",
+          "body": "import numpy as np\n\nX = np.array([[1.0, 0.0], [3.0, 2.0], [8.0, 4.0]])\nmu = X.mean(axis=0)\ngradient = 2 * (len(X) * mu - X.sum(axis=0))\nprint(mu, gradient, np.sum((X - mu) ** 2))\n"
+        },
+        {
+          "type": "text",
+          "title": "Voronoi Geometry ও অন্তর্নিহিত অনুমান",
+          "body": "যখন সব Centroid স্থির থাকে, তখন প্রতিটি বিন্দুকে তার সবচেয়ে কাছের কেন্দ্রে পাঠানোর নিয়মটি পুরো Feature Space-কে কতগুলো উত্তল বা Convex অঞ্চলে ভাগ করে দেয়—যাকে জ্যামিতির ভাষায় Voronoi Cell বলা হয়। যেকোনো দুটি কেন্দ্রের মাঝখানের সীমানা এখানে একটি সরল সমতল বা Hyperplane। ঠিক এই রৈখিক সীমানার কারণেই আংটির মতো বলয়াকার (Non-convex rings), অসম ঘনত্বের কিংবা কোণাকুণি লম্বাটে আকৃতির Cluster-গুলোকে সাধারণ k-Means ঠিকমতো আলাদা করতে পারে না। যদিও k-Means সরাসরি কোনো সম্ভাব্যতাভিত্তিক Generative Model ফিট করে না, তবুও সমান ও গোলাকার (Isotropic) Variance-বিশিষ্ট অনুমানের সাথে এর গভীর গাণিতিক মিল রয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "Centroid কি বাস্তব কোনো পর্যবেক্ষণ হতে বাধ্য?",
+          "body": "আরেকটি বাস্তব দিক খেয়াল রাখুন: যেহেতু Centroid হলো অনেকগুলো সংখ্যার গড়, তাই এর মানে ভগ্নাংশ বয়স বা ভগ্নাংশ education_num চলে আসা খুবই স্বাভাবিক। অর্থাৎ Centroid হলো একটি গাণিতিক প্রতিনিধি মাত্র, রক্ত-মাংসের কোনো বাস্তব মানুষ বা আসল ডেটা Row নয়! আপনার কাজের প্রয়োজনে যদি প্রতিটি দলের প্রতিনিধি হিসেবে ডেটাসেটের ভেতরকারই একটি আসল Row বেছে নিতে হয়, তবে Medoid-ভিত্তিক পদ্ধতি (যেমন k-Medoids) বিবেচনা করতে হবে—যার Objective এবং হিসাবের খরচ দুটোই আলাদা। একইভাবে, জাতীয় জনমিতির ওজনযুক্ত অনুমানের প্রয়োজন হলে জরিপের ওজন (যেমন fnlwgt) উপেক্ষা করে সাধারণ k-Means-এর কেন্দ্রগুলোকে জনসংখ্যার গড় হিসেবে চালিয়ে দেওয়া যাবে না।"
+        },
+        {
+          "type": "callout",
+          "title": "Interview-এ যেভাবে গুছিয়ে ব্যাখ্যা করবেন",
+          "body": "Interview-এ k-Means নিয়ে প্রশ্ন এলে প্রথমেই J(c, μ) সমীকরণটি লিখুন। এরপর দেখান কেন c স্থির রাখলে Gradient শূন্য করে Mean পাওয়া যায়, এবং μ স্থির রাখলে কেন প্রতিটি Row-কে তার নিকটতম কেন্দ্রে পাঠানোই যোগফলের প্রতিটি পদকে আলাদাভাবে সর্বনিম্ন করে। সবশেষে ব্যাখ্যা করুন কেন বিচ্ছিন্ন c ও অবিচ্ছিন্ন μ একসাথে মেলানোর যৌথ সমস্যাটি Non-convex, এবং দূরত্বের বর্গ নেওয়ার কারণেই কেন Outlier-এর টানে Centroid সহজেই সরে যায়।"
+        }
+      ]
+    },
+    {
+      "id": "ch12_lloyd",
+      "title": "Lloyd’s Algorithm: হাতে-কলমে ও Interactive Lab-এ",
+      "subtitle": "Assignment এবং Mean Update ধাপ দুটিকে আলাদা করে ধাপে ধাপে বোঝা",
+      "duration": "32 min",
+      "icon": "scatter_plot",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "দুটি পর্যায়ক্রমিক ধাপ (Alternating Steps)",
+          "body": "একই সাথে সেরা দলবিন্যাস এবং সেরা কেন্দ্র খুঁজে বের করা গাণিতিকভাবে অত্যন্ত কঠিন হওয়ায় Lloyd’s Algorithm কাজটিকে দুটি সহজ পর্যায়ক্রমিক ধাপে ভাগ করে নেয়। প্রথমে শুরু করার মতো কয়েকটি প্রাথমিক Center দেওয়া হয়। প্রথম ধাপে প্রতিটি Sample তার সবচেয়ে কাছের Center-এর দলে চলে যায়। দ্বিতীয় ধাপে প্রতিটি দলের বর্তমান সদস্যদের গড় (Mean) হিসাব করে Center-গুলোকে নতুন জায়গায় সরানো হয়, এবং সেই নতুন কেন্দ্রের সাপেক্ষে আবার Assignment চলে। নিচের Interactive Lab-এ step 0 হলো শুরুর প্রাথমিক Assignment, আর তার পরের প্রতিটি ধাপে একবার করে Mean Update ও পুনঃবরাদ্দ সম্পন্ন হওয়ার চিত্র দেখানো হয়েছে।"
+        },
+        {
+          "type": "math",
+          "title": "Alternating Minimization-এর সূত্র",
+          "body": "c_i^{(t)}=\\arg\\min_j\\|x_i-\\mu_j^{(t)}\\|^2,\\qquad \\mu_j^{(t+1)}=\\operatorname{mean}\\{x_i:c_i^{(t)}=j\\}"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে একটি ছোট গাণিতিক উদাহরণ",
+          "body": "মূল ডেটাসেটে যাওয়ার আগে চলুন এক মাত্রার একটি ছোট্ট উদাহরণ দিয়ে হিসাবটা হাতের মুঠোয় নিয়ে আসি। ধরুন X = [0, 1, 9, 10] এবং শুরুর কেন্দ্র দুটি দেওয়া হলো [0, 10]। প্রথম Assignment-এ 0 ও 1 যাবে প্রথম কেন্দ্রে আর 9 ও 10 যাবে দ্বিতীয় কেন্দ্রে—ফলে দলবিন্যাস দাঁড়াবে [0, 0, 1, 1] এবং শুরুর Inertia হবে (0 - 0)² + (1 - 0)² + (9 - 10)² + (10 - 10)² = 2।\n\nএবার দল দুটির গড় নিলে নতুন কেন্দ্র দাঁড়ায় [0.5, 9.5]। পুনরায় দূরত্ব মাপলে দলবিন্যাস [0, 0, 1, 1]-ই থাকে, কিন্তু এবার Inertia কমে হয়ে যায় 0.25 + 0.25 + 0.25 + 0.25 = 1! কীভাবে প্রতিটি ধাপে কেন্দ্র সরে গিয়ে মোট বর্গ দূরত্ব কমিয়ে আনে, এই ছোট উদাহরণটিতে তা স্পষ্ট দেখা যাচ্ছে।"
+        },
+        {
+          "type": "code",
+          "title": "কোনো Library Fit ছাড়াই NumPy-তে একটি পূর্ণ Iteration",
+          "body": "import numpy as np\n\nX = np.array([[0.0], [1.0], [9.0], [10.0]])\ncenters = np.array([[0.0], [10.0]])\nlabels = ((X[:, None] - centers[None, :]) ** 2).sum(axis=2).argmin(axis=1)\nupdated = np.array([X[labels == j].mean(axis=0) for j in range(2)])\nprint(labels.tolist(), updated.ravel().tolist())\n"
+        },
+        {
+          "type": "kmeans_lab",
+          "title": "বাস্তব ডেটায় Interactive Lloyd Lab",
+          "body": "এখানে k, Random Seed এবং Iteration বদলে সরাসরি দেখুন বাস্তব পর্যবেক্ষণের ওপর কীভাবে Cluster Assignment ও Inertia ধাপে ধাপে পরিবর্তিত হয়। চারটি সুনির্দিষ্ট শুরুর গতিপথ এখানে যুক্ত করা আছে—একই স্থানাঙ্ক ব্যবস্থায় কেন্দ্রগুলো সরে যাওয়ার সাথে সাথে Inertia কীভাবে কমে আসে তা মিলিয়ে দেখুন।"
+        },
+        {
+          "type": "text",
+          "title": "প্রতি ধাপে Loss কমা মানেই কি Global Optimum?",
+          "body": "একটি চমৎকার গাণিতিক বৈশিষ্ট্য খেয়াল করুন: সঠিক নিকটতম কেন্দ্রে Assignment করলে Objective কখনোই বাড়ে না, আবার খালি নয় এমন দলের সঠিক Mean বসালেও Objective কখনোই বাড়তে পারে না। যেহেতু সম্ভাব্য দলবিন্যাসের সংখ্যা সসীম এবং Inertia কখনো ঋণাত্মক হতে পারে না, তাই এই প্রক্রিয়াটি একসময় থামতে বাধ্য! কিন্তু থামা মানেই যে আপনি বিশ্বের সেরা দলবিন্যাস বা Global Optimum পেয়ে গেছেন তা কিন্তু নয়—অ্যালগরিদমটি একটি Local Minimum বা স্থিতিশীল দশায় আটকে যেতে পারে। একাধিক ভিন্ন শুরুর বিন্দু (Multiple Restarts) ব্যবহার করলে ভালো সমাধান পাওয়ার সম্ভাবনা বাড়ে বটে, তবে Global Optimality-র কোনো শতভাগ গ্যারান্টি মেলে না।"
+        },
+        {
+          "type": "text",
+          "title": "Tie-breaking, Empty Cluster ও থামার চুক্তি (Stopping Contract)",
+          "body": "নিজে কোড লেখার সময় প্রান্তিক পরিস্থিতিগুলোর নিয়ম বা Contract একদম পরিষ্কার রাখতে হয়। যেমন কোনো বিন্দু যদি দুটি কেন্দ্র থেকে সমান দূরত্বে থাকে (Tie), তবে আমরা নিয়ম হিসেবে সবচেয়ে ছোট Cluster ID-টি বেছে নিই। কোনো Cluster খালি হয়ে গেলে আমরা তার পুরোনো কেন্দ্রটিই অপরিবর্তিত রাখছি—যদিও scikit-learn সেক্ষেত্রে দূরের কোনো বিন্দুতে কেন্দ্রটি সরিয়ে নিতে পারে। আমাদের ট্রেসটি তখনই থামে যখন পরপর দুই ধাপে Label আর বদলায় না, অথবা সর্বোচ্চ 20টি আপডেটের সীমা পূর্ণ হয়। অনেক লাইব্রেরিতে কেন্দ্রের সরণ খুব সামান্য হলেই (Tolerance) লুপ থামিয়ে দেওয়া হয়, যার ফলে শেষের কেন্দ্র ও লেবেলের মধ্যে সূক্ষ্ম অমিল থাকতে পারে; তাই নিজের ইমপ্লিমেন্টেশনের নিয়ম সবসময় সুনির্দিষ্ট রাখুন।"
+        },
+        {
+          "type": "callout",
+          "title": "নিজে যাচাই করুন",
+          "body": "কোনো মান মুখস্থ না করে প্রতি ধাপের বিন্দু ও কেন্দ্র থেকে নিজেই Inertia হিসাব করে মিলিয়ে দেখুন। Lab-এ k = 3 রেখে seed = 42 এবং seed = 7-এর চূড়ান্ত Objective ও সদস্য তালিকা তুলনা করুন—আর খেয়াল রাখুন, স্থিতিশীল লেবেল পাওয়া মানেই কিন্তু বাস্তব জনমিতিক শ্রেণি আবিষ্কার করে ফেলা নয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch12_initialization",
+      "title": "Initialization, Restarts ও Computational Complexity",
+      "subtitle": "k-Means++ ঠিক কোথায় সাহায্য করে, আর কোন নিশ্চয়তা কখনোই দেয় না",
+      "duration": "28 min",
+      "icon": "scatter_plot",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "সাধারণ Random Initialization কেন ঝুঁকিপূর্ণ?",
+          "body": "আগের পাঠের Lab-এ ভিন্ন ভিন্ন Seed ব্যবহার করে নিশ্চয়ই দেখেছেন শুরুর কেন্দ্রগুলো কোথায় পড়ছে তার ওপর শেষের ফলাফল কতটা নির্ভর করে! যদি পুরোপুরি এলোমেলোভাবে কেন্দ্র বাছতে গিয়ে সব কটি শুরুর কেন্দ্র ডেটার একটি ঘন অঞ্চলেই পড়ে যায়, তবে দূরের অঞ্চলগুলো শুরুতে কোনো প্রতিনিধি পায় না এবং অ্যালগরিদমটি একটি দুর্বল Local Minimum-এ আটকে যেতে পারে। এখানে একটি পার্থক্য মনে রাখা দরকার: শেখার সুবিধার্থে আমাদের Lab ট্রেসে স্বতন্ত্র স্থানাঙ্কের বাস্তব Row থেকে Seeded Start নেওয়া হয়েছে, কিন্তু আমাদের মূল scikit-learn ওয়ার্কফ্লোতে আমরা সুনির্দিষ্টভাবে n_init = 10 দিয়ে k-means++ পদ্ধতি ব্যবহার করব।"
+        },
+        {
+          "type": "math",
+          "title": "k-Means++ Sampling-এর মূল সূত্র",
+          "body": "P(x\\text{ as next center})\\propto D(x)^2,\\qquad D(x)=\\min_{\\mu\\in C}\\|x-\\mu\\|_2"
+        },
+        {
+          "type": "text",
+          "title": "k-Means++ কীভাবে শুরুতেই ভালো বিস্তার নিশ্চিত করে?",
+          "body": "উপরের সমীকরণটির সৌন্দর্য দেখুন: প্রথম কেন্দ্রটি বেছে নেওয়ার পর পরবর্তী কেন্দ্র হওয়ার দৌড়ে প্রতিটি বিন্দুর সম্ভাব্যতা তার নিকটতম বিদ্যমান কেন্দ্র থেকে দূরত্বের বর্গের (D(x)²) সমানুপাতিক! এর ফলে আগে বাছাই হওয়া কেন্দ্রগুলো থেকে যেসব পর্যবেক্ষণ অনেক দূরে অবস্থিত, তাদের পরবর্তী কেন্দ্র হিসেবে নির্বাচিত হওয়ার সুযোগ বহুগুণ বেড়ে যায় এবং শুরুতেই পুরো ডেটা জুড়ে ভালো Coverage পাওয়া যায়।\n\nতাত্ত্বিকভাবে নির্দিষ্ট অনুমানের অধীনে আদর্শ k-means++ গড় বা Expected Objective-এর ওপর একটি গাণিতিক সীমা দেয় বটে, কিন্তু এর কোনো একক রান কখনোই Global Optimum-এর নিশ্চয়তা দেয় না। পাশাপাশি একটি ব্যবহারিক তথ্য জেনে রাখুন: scikit-learn ভেতরে ‘Greedy k-means++’ ব্যবহার করে প্রতি ধাপে কয়েকটি স্থানীয় ট্রায়াল পরখ করে নেয়, তাই বইয়ের সাধারণ সম্ভাব্যতাভিত্তিক স্যাম্পলিংয়ের সাথে এর র‍্যান্ডম ট্রেস হুবহু নাও মিলতে পারে।"
+        },
+        {
+          "type": "code",
+          "title": "সুনির্দিষ্ট Initialization ও একাধিক Restart-এর কোড উদাহরণ",
+          "body": "import numpy as np\nfrom sklearn.cluster import KMeans\nfrom threadpoolctl import threadpool_limits\n\nX = np.array([[0.0, 0.0], [0.0, 1.0], [8.0, 8.0], [9.0, 8.0]])\nwith threadpool_limits(limits=1):\n    m = KMeans(n_clusters=2, init=\"k-means++\", n_init=10, random_state=42).fit(X)\nprint(m.inertia_)\n"
+        },
+        {
+          "type": "text",
+          "title": "সময় ও মেমরির হিসাব (Complexity Budget)",
+          "body": "বড় সিস্টেমে কাজ করার সময় k-Means-এর হিসাবের খরচটি মাথায় রাখা খুব জরুরি। একটি সাধারণ Lloyd Iteration-এ n সংখ্যক Sample থেকে d মাত্রার k সংখ্যক কেন্দ্রের দূরত্ব মাপতে সাধারণত O(nkd) পরিমাণ কাজ লাগে; ফলে T সংখ্যক Iteration এবং R সংখ্যক Restart (n_init) মিলিয়ে মোট সময়ের হিসাব দাঁড়ায় O(RTnkd)। মেমরির দিক থেকে n × k আকারের বিশাল দূরত্বের Matrix একবারে মেমরিতে না বানিয়ে ছোট ছোট Chunk-এ হিসাব করলে Peak Memory অনেক কমে আসে। অবশ্য বাস্তব লাইব্রেরিতে ত্রিভুজ অসমতাভিত্তিক ত্বরণ (যেমন Elkan পদ্ধতি) বা প্যারালাল থ্রেডিংয়ের কারণে প্রকৃত সময় কিছুটা কমবেশি হতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "বিশাল ডেটার জন্য MiniBatchKMeans",
+          "body": "ডেটাসেট যখন এতটাই বিশাল হয় যে প্রতি ধাপে সব ডেটা পড়া ব্যয়বহুল হয়ে পড়ে, তখন MiniBatchKMeans ছোট ছোট র‍্যান্ডম Mini-batch ব্যবহার করে কেন্দ্রগুলোর আনুমানিক আপডেট চালায়। এতে কাজের গতি বা Throughput নাটকীয়ভাবে বাড়ে; তবে মনে রাখতে হবে, আংশিক ব্যাচের কারণে পুরো ডেটার আসল Inertia প্রতি ধাপে একটানা কমতেই থাকবে—এমন কোনো গ্যারান্টি এখানে থাকে না। তাই প্রোডাকশন রিপোর্টে Batch Size, Initialization Subset, কম সদস্যের ক্লাস্টার পুনর্বিন্যাস নীতি এবং র‍্যান্ডম তারতম্য অবশ্যই উল্লেখ করবেন, এবং একই সময়ের বাজেটে গুণমান ও গতির তুলনা করবেন।"
+        },
+        {
+          "type": "text",
+          "title": "Empty Cluster, Duplicate Row ও সূক্ষ্ম Edge Case",
+          "body": "বাস্তব ডেটায় এমন কিছু প্রান্তিক পরিস্থিতি আসে যা Coding Interview-এ প্রায়ই পরীক্ষা করা হয়। যেমন ডেটায় যদি স্বতন্ত্র স্থানাঙ্কই k-এর চেয়ে কম থাকে, তবে কখনোই k সংখ্যক অশূন্য (Non-empty) Cluster পাওয়া সম্ভব নয়। আবার লগ বা ট্যাবুলার ডেটায় হুবহু একই মানের Duplicate Row থাকা খুবই স্বাভাবিক; না বুঝে সেগুলো মুছে ফেললে (Deduplicate করলে) কিন্তু প্রতিটি স্থানাঙ্কের ওজন বদলে গিয়ে মূল Objective-ই পাল্টে যায়! তাছাড়া সংখ্যার সীমা ছাড়িয়ে Overflow হওয়া বা NaN দূরত্ব পুরো তুলনা নষ্ট করে দিতে পারে—তাই ইনপুটে সসীম মান, মাত্রা d-এর সামঞ্জস্য এবং ধনাত্মক k যাচাই করা দক্ষ ইঞ্জিনিয়ারিংয়ের অপরিহার্য অংশ।"
+        },
+        {
+          "type": "callout",
+          "title": "হাতে-কলমে ইমপ্লিমেন্টেশন অনুশীলন",
+          "body": "মূল ইনপুট অ্যারে পরিবর্তন (Mutate) না করে নিকটতম কেন্দ্র খোঁজা, গড় আপডেট, সমান দূরত্বে সবচেয়ে ছোট ID বেছে নেওয়া এবং খালি ক্লাস্টারের পুরোনো কেন্দ্র ধরে রাখার নিয়ম মিলিয়ে এক ধাপের একটি পরিষ্কার ফাংশন লিখে ফেলুন। এরপর শূন্য দূরত্বের Tie, সব বিন্দু অভিন্ন হওয়া, অকার্যকর k এবং max_steps = 0 দিয়ে কোডটি পরীক্ষা করে দেখুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch12_selection",
+      "title": "k নির্বাচন ও Internal Validation",
+      "subtitle": "Inertia, Silhouette এবং Stability-কে বিচ্ছিন্নভাবে না দেখে একসঙ্গে বিচার করার নিয়ম",
+      "duration": "47 min",
+      "icon": "scatter_plot",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "শুধু Training Objective দেখে কেন k বেছে নেওয়া যায় না?",
+          "body": "আগের পাঠগুলোতে আমরা দেখেছি একটি নির্দিষ্ট k-এর জন্য k-Means কীভাবে Training SSE (বা Inertia) কমায়। কিন্তু প্রশ্ন হলো, আসল ডেটায় k-এর মান কত হওয়া উচিত, তা কি শুধু কম Inertia দেখেই ঠিক করা যায়? একটু ভাবলেই উত্তরটি ধরা পড়বে—একেবারেই না! তাত্ত্বিকভাবে Global Minimum হিসাব করলে k বাড়ানোর সাথে সাথে Training SSE কখনোই বাড়ে না, কারণ আগের সমাধানটি হুবহু রেখে বাড়তি Centroid-টিকে একটি বিন্দুর ওপর বসিয়ে দিলেই খরচ আরও কমে বা সমান থাকে (যদিও সসীম সংখ্যক Random Restart দিয়ে পাওয়া Local Fit-গুলোর ক্রম সবসময় নিখুঁতভাবে একমুখী নাও হতে পারে)। চরম অবস্থায় যদি স্বতন্ত্র বিন্দুর ডেটায় k = n বসিয়ে দেন, তবে প্রতিটি বিন্দু নিজেই একটি Centroid হয়ে Inertia শূন্য করে দেবে—যা বাস্তবে পুরোপুরি অর্থহীন! তাই সবচেয়ে কম Inertia দেওয়া k-কে স্বয়ংক্রিয়ভাবে সেরা মডেল বলা মস্ত বড় ভুল।"
+        },
+        {
+          "type": "math",
+          "title": "Observation পর্যায়ে Silhouette-এর গাণিতিক সংজ্ঞা",
+          "body": "s_i=\\frac{b_i-a_i}{\\max(a_i,b_i)},\\quad a_i=\\text{mean own-cluster distance},\\quad b_i=\\min_{j\\ne c_i}\\text{mean distance to cluster }j"
+        },
+        {
+          "type": "text",
+          "title": "Silhouette Score পড়ার শর্ত ও সীমাবদ্ধতা",
+          "body": "শুধু ভেতরের ঘনত্ব না দেখে প্রতিটি Cluster অন্যদের থেকে কতটা আলাদা, তা একসাথে মাপতেই Silhouette Score ব্যবহৃত হয়। উপরের সমীকরণে কোনো Observation i-এর জন্য নিজের Cluster-এর অন্য সদস্যদের গড় দূরত্ব a_i যত ছোট হবে এবং নিকটতম ভিন্ন Cluster-এর গড় দূরত্ব b_i যত বড় হবে, s_i ততই +1-এর কাছাকাছি যাবে। উল্টোদিকে s_i ঋণাত্মক হওয়ার মানে হলো বিন্দুটি নিজের দলের চেয়ে অন্য একটি দলের গড়পড়তা বেশি কাছে রয়েছে!\n\nব্যবহারের সময় কয়েকটি গুরুত্বপূর্ণ শর্ত মনে রাখবেন: scikit-learn-এ কোনো একক সদস্যের (Singleton) Cluster হলে তার Silhouette ধারা অনুযায়ী 0 ধরা হয়, এবং সামগ্রিক Score বের করতে ডেটায় অন্তত 2 থেকে n - 1টি ভিন্ন Label থাকতে হয়। খেয়াল করবেন, এই হিসাবটি নিকটতম Centroid-এর দূরত্ব নয়, বরং বিন্দু থেকে বিন্দুর (Pairwise) দূরত্ব দিয়ে করা হয়—তাই বড় ডেটায় Sample বা Subset বদলালে এর মানও বদলে যায় এবং গড় Silhouette স্বভাবগতভাবেই গোলাকার ও আঁটসাঁট (Compact Convex) Partition-কে বেশি প্রাধান্য দেয়।"
+        },
+        {
+          "type": "code",
+          "title": "Silhouette ও Label অদলবদলের গাণিতিক উদাহরণ",
+          "body": "import numpy as np\nfrom sklearn.metrics import silhouette_score\n\nX = np.array([[0.0], [1.0], [8.0], [9.0]])\nprint(silhouette_score(X, [0, 0, 1, 1]))\na, b = 2.0, 5.0\nprint((b - a) / max(a, b))  # 0.6, illustrative one-row calculation\n"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব Adult ডেটার Diagnostics কীভাবে পড়বেন?",
+          "body": "আমাদের মূল Adult ডেটাসেটের ওয়ার্কফ্লোতে আমরা k = 2 থেকে 5 পর্যন্ত পরখ করি এবং তুলনার স্বচ্ছতার জন্য ঠিক একই নির্ধারিত 1,200টি Training Observation-এর ওপর Silhouette মাপি। সেখানে দেখা যায়, Training Mean SSE প্রায় 2.2815 থেকে কমে 1.2504 হয় এবং Sample Silhouette 0.2350 থেকে বেড়ে 0.3070-এ পৌঁছায়। কিন্তু এই ছোট গ্রিডে সংখ্যা বাড়তে দেখেই হুট করে “ডেটায় সত্যিই পাঁচটি প্রাকৃতিক দল আছে” বলে সিদ্ধান্ত টানা যাবে না! বরং কোনো যান্ত্রিক বিজয়ী ঘোষণা না করে আমরা সুনির্দিষ্টভাবে k = 3 ধরে একটি Fit-এর Held-out দূরত্ব এবং Seed Sensitivity পাশাপাশি বিশ্লেষণ করে দেখাব।"
+        },
+        {
+          "type": "text",
+          "title": "Held-out Distortion ও বারবার টিউনিংয়ের ফাঁদ",
+          "body": "শুধু Training ডেটার ওপর ভরসা না করে আমরা Training সেটে Fit করা Scaler ও Centroid ব্যবহার করে Validation Row-গুলোর নিকটতম কেন্দ্র থেকে বর্গ দূরত্ব (Nearest-center Squared Distance) মাপতে পারি। এটি আসলে নতুন ডেটায় জ্যামিতিক বিচ্যুতি বা Out-of-sample Distortion নির্দেশ করে—কোনো Supervised Accuracy নয়। তবে এখানেও একটি সূক্ষ্ম সতর্কতা আছে: Validation স্কোর দেখে যদি বারবার k বা Feature পাল্টাতে থাকেন, তবে সেই Validation সেটটিও কার্যত আপনার টিউনিং বা Development সেটে পরিণত হয়। ভবিষ্যতে কোনো চূড়ান্ত দাবি প্রতিষ্ঠা করতে হলে সম্পূর্ণ অস্পৃশ্য নতুন Source বা Time Split এবং কাজের উদ্দেশ্যভিত্তিক সুনির্দিষ্ট Acceptance Test প্রয়োজন হবে।"
+        },
+        {
+          "type": "text",
+          "title": "Partition-এর Stability বা স্থায়িত্ব কীভাবে যাচাই করবেন?",
+          "body": "ভালো Clustering-এর আরেকটি বড় পরীক্ষা হলো তার স্থায়িত্ব (Stability)। একই Observation সেটের ওপর ভিন্ন ভিন্ন Random Seed চালিয়ে পাওয়া Partition-গুলোর মধ্যে Adjusted Rand Index (ARI) তুলনা করলে বোঝা যায় ফলাফল কতটা স্থিতিশীল—এবং আনন্দের বিষয় হলো, Cluster ID-গুলোর নাম বদলে গেলেও (Label Permutation) ARI অপরিবর্তিত থাকে। আর যদি Subsample বা Bootstrap করে বারবার Refit করেন, তবে দুটি রানের অভিন্ন (Shared) Observation বা একটি সাধারণ Query Set-এর ওপর সদস্যপদ তুলনা করবেন।\n\nঅবশ্য মনে রাখবেন, কেবল স্থিতিশীল হওয়া মানেই কিন্তু কাজের জিনিস নয়! ভুল k, সবাইকে এক দলে ফেলা নিষ্ক্রিয় Partition কিংবা উচ্চ মাত্রার Sparse Noise-এর মধ্যেও যান্ত্রিকভাবে স্থিতিশীল Partition পাওয়া যেতে পারে; তাছাড়া মাত্র এক জোড়া Seed-এর তুলনাকে কখনোই পূর্ণাঙ্গ Confidence Interval ভাববেন না।"
+        },
+        {
+          "type": "callout",
+          "title": "রিপোর্ট লেখার বাস্তব পরামর্শ",
+          "body": "অনেক সময় বাস্তব ডেটার Inertia লেখচিত্রে কোনো স্পষ্ট ভাঁজ বা Elbow পাওয়া যায় না—তখন জোর করে কাল্পনিক Knee বানানোর চেষ্টা করবেন না। তার চেয়ে প্রতিটি Cluster-এর আকার, Centroid Profile, Seed Sensitivity, Runtime এবং এই বিভাজন দিয়ে বাস্তবে কী সিদ্ধান্ত নেওয়া হবে তা পরিষ্কারভাবে তুলে ধরুন। আরেকটি জরুরি নিয়ম: DBSCAN-এ Noise বিন্দুগুলো বাদ দেওয়ার পর যে Silhouette পাওয়া যায়, সেটিকে কখনোই পুরো ডেটার ওপর হিসাব করা k-Means-এর Silhouette স্কোরের সাথে সরাসরি র‍্যাঙ্কিংয়ে তুলনা করবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে Silhouette-এর গড় হিসাব দেখি",
+          "body": "সমীকরণটি ভেতর থেকে বোঝার জন্য চারটি এক-মাত্রিক বিন্দু [0, 2, 8, 10] এবং তাদের Cluster Label [0, 0, 1, 1] ধরা যাক। বিন্দু 0-এর ক্ষেত্রে নিজের Cluster-এর একমাত্র অন্য বিন্দু 2 পর্যন্ত দূরত্ব হলো a = 2, আর অপর Cluster-এর দুটি বিন্দুর গড় দূরত্ব b = (8 + 10) / 2 = 9; সুতরাং এর স্কোর দাঁড়ায় s = (9 - 2) / 9 = 7/9। একইভাবে বিন্দু 2-এর জন্য a = 2 এবং b = (6 + 8) / 2 = 7 হওয়ায় স্কোর হয় s = 5/7। প্রতিসাম্যের কারণে ডান পাশের বিন্দু 8 ও 10-এর স্কোরও যথাক্রমে 5/7 ও 7/9 হবে। এই চারটি ব্যক্তিগত স্কোরের গড় নিলেই সামগ্রিক Silhouette পাওয়া যায়, যা প্রায় 0.746032।"
+        },
+        {
+          "type": "code",
+          "title": "Pairwise Distance থেকে সরাসরি Silhouette হিসাব",
+          "body": "import numpy as np\nfrom sklearn.metrics import silhouette_samples\n\npoints = np.array([0., 2., 8., 10.])\nlabels = np.array([0, 0, 1, 1])\ndistances = np.abs(points[:, None] - points[None, :])\nown_mean = np.array([2., 2., 2., 2.])\nother_mean = np.array([distances[i, labels != labels[i]].mean() for i in range(4)])\nscores = (other_mean - own_mean) / np.maximum(own_mean, other_mean)\nnp.testing.assert_allclose(scores, silhouette_samples(points[:, None], labels))\nprint(*np.round(scores, 6), round(scores.mean(), 6))\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে হিসাব করুন",
+          "body": "নিজের Cluster-এর গড় দূরত্ব (a_i) বের করার সময় যদি ভুল করে বিন্দুটি নিজেকেও গণনায় ধরে ফেলে, তবে ফলাফলে কী ধরনের ত্রুটি ঘটবে?",
+          "solution": "নিজের থেকে নিজের শূন্য দূরত্ব (Self-distance = 0) যোগ করে হর বা Denominator বাড়িয়ে দিলে গড় দূরত্ব a_i কৃত্রিমভাবে কমে যাবে, যার ফলে Silhouette স্কোর অযৌক্তিকভাবে বেশি দেখাবে। অন্যদিকে একক সদস্যের (Singleton) ক্ষেত্রে শূন্য দিয়ে ভাগ হওয়া এড়াতেই লাইব্রেরিগুলোতে প্রচলিত নিয়ম হিসেবে s = 0 ধরা হয়; আর পুরো Dataset-এ মাত্র একটি Cluster থাকলে কিংবা প্রতিটি Row আলাদা আলাদা Cluster হলে সাধারণ Silhouette সংজ্ঞায়িতই হয় না।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch12_book_mixture_em",
+      "title": "Soft Clustering: Gaussian Mixtures ও EM Algorithm",
+      "subtitle": "সীমানার অনিশ্চয়তাকে সম্ভাব্যতায় প্রকাশ করা, Responsibility হিসাব এবং ধাপে ধাপে Parameter আপডেট",
+      "duration": "33 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কঠোর সীমানার বদলে Soft Clustering কেন দরকার?",
+          "body": "k-Means প্রতিটি Observation-কে শতভাগ নিশ্চিত ধরে কেবল একটিমাত্র Cluster-এ ঠেলে দেয় (Hard Assignment)। কিন্তু বাস্তব ডেটায় বিভিন্ন গোষ্ঠী যখন একে অপরের ওপর আংশিক সমাপতিত (Overlapping) থাকে বা ভিন্ন ভিন্ন বিস্তৃতি দেখায়, তখন কোনো বিন্দু কোন দলের কতটা কাছাকাছি—সেই অনিশ্চয়তাটুকু জানা খুব জরুরি হয়ে ওঠে। Gaussian Mixture Model (GMM) এই কাজটিই করে একটি প্রজননমূলক (Generative) ধারণার সাহায্যে: ধরা হয় প্রথমে একটি অদৃশ্য বা Latent Component z বেছে নেওয়া হয়েছে, এবং তারপর সেই Component-এর নিজস্ব Gaussian Distribution থেকে পর্যবেক্ষণ x তৈরি হয়েছে। তবে এখানেও মনে রাখা চাই, গাণিতিকভাবে পাওয়া একটি Component ID মানেই কিন্তু প্রকৃতিগত সত্য বা স্বয়ংসম্পূর্ণ ব্যবসায়িক শ্রেণি প্রমাণিত হয়ে যাওয়া নয়।"
+        },
+        {
+          "type": "text",
+          "title": "EM Algorithm-এর দুটি ধাপ: E-step ও M-step",
+          "body": "লুকানো Component জানা নেই, আবার Gaussian-গুলোর Parameter-ও অজানা—এই দ্বিমুখী সমস্যা সমাধান করতেই ব্যবহৃত হয় Expectation-Maximization (EM) Algorithm। এর প্রথম ধাপ বা E-step-এ বর্তমান Parameter স্থির রেখে প্রতিটি বিন্দুর জন্য প্রতিটি Component-এর Posterior সম্ভাব্যতা বা Responsibility r_ik = P(z = k | x_i) হিসাব করা হয়। পরের ধাপ বা M-step-এ প্রতিটি দলের মোট কার্যকর সদস্যসংখ্যা (Effective Count) N_k = Σ_i r_ik বের করে নতুন Mixing Weight = N_k / n, ওজনযুক্ত নতুন Mean = (Σ_i r_ik x_i) / N_k এবং ওজনযুক্ত Residual Outer Product-কে N_k দিয়ে ভাগ করে নতুন Covariance আপডেট করা হয়। নিখুঁত EM কখনোই ডেটার সামগ্রিক Likelihood কমায় না, তবে Local Optimum এবং Singular Covariance-এর ঝুঁকি এড়াতে সতর্ক থাকতে হয় এবং সংখ্যার Underflow ঠেকাতে সবসময় স্থিতিশীল Log-sum-exp কৌশল ব্যবহার করতে হয়।"
+        },
+        {
+          "type": "math",
+          "title": "Responsibility ও নতুন Mean আপডেটের মূল সমীকরণ",
+          "body": "r_{ik}=\\frac{\\pi_k\\mathcal N(x_i;\\mu_k,\\Sigma_k)}{\\sum_j\\pi_j\\mathcal N(x_i;\\mu_j,\\Sigma_j)},\\quad \\mu_k^{new}=\\frac{\\sum_i r_{ik}x_i}{\\sum_i r_{ik}}"
+        },
+        {
+          "type": "text",
+          "title": "খাতা-কলমে একটি সহজ উদাহরণ",
+          "body": "সূত্রটি সরাসরি অনুভব করার জন্য একটি এক-মাত্রিক উদাহরণ নেওয়া যাক, যেখানে দুটি Component-এর Mixing Weight সমান (0.5 করে), তাদের Mean যথাক্রমে 0 ও 2, এবং উভয়েরই Variance = 1। এখন যদি একটি পর্যবেক্ষণ ঠিক মাঝখানে অর্থাৎ x = 1 বিন্দুতে থাকে, তবে দুই Gaussian-এর ঘনত্ব সমান হওয়ায় এর Responsibility হবে ঠিক আধাআধি: 0.5 এবং 0.5। কিন্তু বিন্দুটি যদি x = 0-তে সরে আসে, তবে Component 0-এর Responsibility দাঁড়াবে 1 / (1 + exp(-2)) ≈ 0.880797 (এবং অন্যটির প্রায় 0.119203)। লক্ষ্য করুন, k-Means-এর মতো Hard Assignment ব্যবহার করলে এই প্রায় 12% অনিশ্চয়তার তথ্যটুকু পুরোপুরি হারিয়ে যেত!"
+        },
+        {
+          "type": "code",
+          "title": "Log-space ব্যবহার করে স্থিতিশীলভাবে Responsibility হিসাব",
+          "body": "import math\n\nx = 0.0\nmeans, priors = [0.0, 2.0], [0.5, 0.5]\nlog_scores = [\n    math.log(prior) - 0.5 * (x - mean) ** 2 for prior, mean in zip(priors, means)\n]\nmaximum = max(log_scores)  # Subtracting the maximum avoids underflow.\nweights = [math.exp(score - maximum) for score in log_scores]\nresponsibility = weights[0] / sum(weights)\nprint(round(responsibility, 6))\n"
+        },
+        {
+          "type": "text",
+          "title": "কোডের ভেতরে কী ঘটছে?",
+          "body": "উপরের কোডটি চালিয়ে আমরা ঠিক 0.880797 আউটপুট পাই। এখানে একটি সূক্ষ্ম গাণিতিক সুবিধা নেওয়া হয়েছে: যেহেতু উভয় Component-এর Variance সমান (Variance = 1), তাই অনুপাত বের করার সময় Gaussian-এর সামনের ধ্রুবক অংশটি (1 / √(2π)) লব ও হর থেকে কাটাকাটি চলে গেছে। তবে মনে রাখবেন, পূর্ণাঙ্গ GMM-এ যখন বিভিন্ন Component-এর Variance বা Covariance অসমান হবে, তখন কিন্তু Log Determinant এবং পূর্ণ Inverse-quadratic পদগুলো প্রতিটি দলের জন্য আলাদা মান দেবে—তখন সেগুলোকে কখনোই বাদ দেওয়া যাবে না!"
+        },
+        {
+          "type": "text",
+          "title": "কখন এই পদ্ধতি বিপদে পড়তে পারে?",
+          "body": "মুক্তভাবে Covariance শেখার সময় একটি বড় বিপদ হলো Degeneracy বা Single-point Collapse: যদি কোনো একটি Component একা একটিমাত্র বিন্দুর ওপর বসে পড়ে এবং তার Variance শূন্যের (0) দিকে সংকুচিত হতে থাকে, তবে ওই বিন্দুতে ঘনত্ব অসীম হয়ে সামগ্রিক Likelihood সীমাহীনভাবে (Unbounded) বেড়ে যেতে পারে! বাস্তবে এই সমস্যা ঠেকাতে সবসময় Covariance Regularization (যেমন কর্ণ বরাবর ছোট ধনাত্মক মান যোগ করা), একাধিক Random Restart এবং সুস্পষ্ট Component নির্বাচন নীতি ব্যবহার করবেন। আর সংখ্যার বিচারে BIC একটি নির্দিষ্ট অনুমাননির্ভর মানদণ্ড মাত্র—এটিকে কখনোই প্রকৃত Cluster সংখ্যার অভ্রান্ত জ্যোতিষী ভাববেন না।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে চেষ্টা করুন",
+          "body": "ধরুন দুটি পর্যবেক্ষণ x = [0, 4]-এর জন্য কোনো একটি Component-এর Responsibility পাওয়া গেল r = [0.75, 0.25]। M-step শেষে ওই Component-এর আপডেট হওয়া নতুন Mean কত হবে? এবং প্রতি ধাপে Likelihood না কমলেও EM কেন Global Optimum-এর নিশ্চয়তা দিতে পারে না?",
+          "solution": "এখানে মোট Effective Count হলো 0.75 + 0.25 = 1, তাই ওজনযুক্ত নতুন Mean হবে (0.75 × 0 + 0.25 × 4) / 1 = 1। অন্যদিকে Latent দায়িত্ব বণ্টন এবং Parameter নির্ণয়ের সম্মিলিত Objective ফাংশনটি Non-convex হওয়ায় এর গতিপথ শুরুর মানের (Initialization) ওপর নির্ভর করে; ফলে প্রতি ধাপে Likelihood একমুখীভাবে বাড়লেও অ্যালগরিদমটি কোনো একটি Local Optimum বা Stationary বিন্দুতেই স্থির হতে পারে, সবসময় Global Optimum-এ নয়।",
+          "reference": "https://scikit-learn.org/stable/modules/mixture.html"
+        },
+        {
+          "type": "text",
+          "title": "শুরু থেকে শেষ পর্যন্ত একটি পূর্ণাঙ্গ EM Iteration",
+          "body": "এবার x = [0, 2] ডেটার ওপর শুরুর Mean [0, 2], উভয় Variance = 1 এবং সমান Weight = 0.5 ধরে একটি সম্পূর্ণ ধাপ মিলিয়ে দেখা যাক। E-step শেষে Responsibility Matrix-এর প্রথম সারিটি আসে প্রায় [0.880797, 0.119203], এবং প্রতিসাম্যের কারণে দ্বিতীয় সারিটি হয় ঠিক এর উল্টো [0.119203, 0.880797]—ফলে দুটি Component-এরই Effective Count দাঁড়ায় ঠিক 1। এরপর M-step-এ আপডেট করলে দুটি নতুন Mean সামান্য ভেতরের দিকে সরে এসে হয় প্রায় [0.238406, 1.761594], এবং উভয় নতুন Variance দাঁড়ায় প্রায় 0.419974। কোড লেখার সময় দুটি নিয়ম খুব খেয়াল রাখবেন: নতুন Variance হিসাব করার সময় অবশ্যই সদ্য পাওয়া নতুন Mean বিয়োগ করবেন, এবং পুরো M-step শেষ না হওয়া পর্যন্ত E-step-এর একই Responsibility Matrix অপরিবর্তিত রাখবেন।"
+        },
+        {
+          "type": "code",
+          "title": "Log-space E-step থেকে সম্পূর্ণ Mean ও Variance আপডেট",
+          "body": "import numpy as np\nfrom scipy.special import logsumexp\n\nobservations = np.array([0.0, 2.0])\n\ndef log_joint(means, variances, weights):\n    residual = observations[:, None] - means[None, :]\n    return (np.log(weights) - 0.5 * np.log(2 * np.pi * variances)\n            - 0.5 * residual**2 / variances)\n\ninitial = log_joint(np.array([0.0, 2.0]), np.ones(2), np.full(2, 0.5))\nresponsibilities = np.exp(initial - logsumexp(initial, axis=1, keepdims=True))\ncounts = responsibilities.sum(axis=0)\nmeans = (responsibilities * observations[:, None]).sum(axis=0) / counts\nvariances = (responsibilities * (observations[:, None] - means)**2).sum(axis=0) / counts\nupdated = log_joint(means, variances, counts / len(observations))\nbefore = logsumexp(initial, axis=1).sum()\nafter = logsumexp(updated, axis=1).sum()\nassert after >= before - 1e-12\nnp.testing.assert_allclose(responsibilities.sum(axis=1), 1)\nprint(round(responsibilities[0, 0], 6), *counts)\nprint(*np.round(means, 6), *np.round(variances, 6), int(after >= before))\n"
+        },
+        {
+          "type": "text",
+          "title": "EM-এ কেন প্রতি ধাপে Likelihood কমে না?",
+          "body": "এর পেছনের গাণিতিক যুক্তিটি খুবই মার্জিত। বর্তমান পুরোনো Parameter θ_old-এর সাপেক্ষে Posterior বিতরণকে q(z) = P(z | x, θ_old) ধরলে যেকোনো θ-এর জন্য লেখা যায়: log p_θ(x) = ELBO(q, θ) + KL(q || p_θ(z | x))। E-step-এ ঠিক θ_old বিন্দুতে KL Divergence শূন্য হয়ে যায়, ফলে নিচের সীমা বা ELBO পুরোপুরি মূল Log-likelihood-কে স্পর্শ করে (Tight Bound)। এরপর নিখুঁত M-step ওই স্থির q-এর জন্য ELBO-কে বাড়ায় বা অন্তত সমান রাখে। যেহেতু নতুন θ-তেও KL Divergence কখনোই ঋণাত্মক হতে পারে না, তাই নতুন Log-likelihood অন্তত ওই বর্ধিত ELBO-এর সমান বা বেশি হতে বাধ্য—অর্থাৎ আগের চেয়ে কমতে পারে না! তবে এই প্রমাণের জন্য সুসংজ্ঞায়িত সসীম ঘনত্ব ও নিখুঁত অপ্টিমাইজেশন প্রয়োজন; বাইরে থেকে কৃত্রিম Covariance Floor বা আনুমানিক আপডেট যোগ করলে আসলে কোন পরিবর্তিত Objective অপ্টিমাইজ হচ্ছে তা আলাদা করে খেয়াল রাখতে হবে।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে হিসাব করুন",
+          "body": "কোনো একটি Component-এর Effective Count যদি প্রায় শূন্যের (0) কাছাকাছি নেমে আসে, তবে উপরের কোডের কোন ভাগের অংশটি সংখ্যার দিক থেকে নড়বড়ে হয়ে পড়বে?",
+          "solution": "নতুন Mean এবং নতুন Variance—উভয় সূত্রের হরেই রয়েছে Effective Count বা N_k (`counts`), যা শূন্যের কাছাকাছি গেলে ভাগফল অস্থিতিশীল হয়ে পড়বে। তাই বাস্তব কাজের সাধারণ GMM ইমপ্লিমেন্টেশনে এমন অবস্থায় Component Reinitialization, ন্যূনতম Weight সীমা বা Covariance Regularization-এর মতো সুস্পষ্ট নীতি রাখা জরুরি, নতুবা একক বিন্দুতে সংকুচিত হয়ে Unregularized Likelihood অসীমের দিকে ছুটে যেতে পারে।",
+          "reference": "https://scikit-learn.org/stable/modules/mixture.html"
+        }
+      ]
+    },
+    {
+      "id": "ch12_hierarchy",
+      "title": "Agglomerative Hierarchy ও Linkage",
+      "subtitle": "কেবল একটি স্থির Partition নয়, বরং ধাপে ধাপে গোষ্ঠী মেলানোর সম্পূর্ণ ইতিহাস",
+      "duration": "30 min",
+      "icon": "scatter_plot",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "নিচ থেকে উপরে গড়ে ওঠা Bottom-up Tree",
+          "body": "শুরুতেই k বেঁধে দেওয়ার বদলে আমরা যদি দেখতে চাই ডেটার বিন্দুগুলো ছোট থেকে বড় দলে কীভাবে ধাপে ধাপে একত্রিত হয়, তখন আমাদের ভরসা হলো Agglomerative Hierarchical Clustering। এর শুরুতে প্রতিটি Observation নিজেই একটি একক (Singleton) Cluster হিসেবে থাকে। এরপর প্রতি ধাপে সবচেয়ে কাছের দুটি Cluster-কে মিলিয়ে (Merge) একটি নতুন দল বানানো হয়, এবং এভাবে ঠিক n - 1 বার Merge চলার পর সব বিন্দু মিলে একটি একক Root তৈরি করে। এখানে দুটি দলের ‘নৈকট্য’ আমরা কীভাবে সংজ্ঞায়িত করছি, সেটাই হলো Linkage। তবে এর একটি মৌলিক সীমাবদ্ধতা মনে রাখবেন: এটি একটি Greedy প্রক্রিয়া—আগের ধাপে হয়ে যাওয়া কোনো Merge পরে আর কখনোই বাতিল (Undo) করা যায় না, তাই শুরুর কোনো ভুল সংযোগ পুরো Hierarchy জুড়েই থেকে যায়।"
+        },
+        {
+          "type": "math",
+          "title": "Single, Complete ও Average Linkage-এর দূরত্বের সূত্র",
+          "body": "d_{\\rm single}(A,B)=\\min_{a\\in A,b\\in B}d(a,b),\\quad d_{\\rm complete}(A,B)=\\max_{a\\in A,b\\in B}d(a,b),\\quad d_{\\rm avg}(A,B)=\\frac{\\sum_{a,b}d(a,b)}{|A||B|}"
+        },
+        {
+          "type": "text",
+          "title": "Cluster-এর জ্যামিতিক আকৃতি ও Chaining সমস্যা",
+          "body": "কোন Linkage বেছে নিচ্ছেন তার ওপর ফলাফলের চেহারা নাটকীয়ভাবে নির্ভর করে। Single Linkage দুই দলের সবচেয়ে কাছের এক জোড়া বিন্দুর দূরত্ব দেখে; ফলে মাঝখানে অল্প কয়েকটি সেতুবন্ধনকারী বিন্দু (Bridge Points) থাকলেই দুটি দূরের বড় দল লম্বা শিকলের মতো একসাথে জুড়ে যেতে পারে—যাকে বলা হয় Chaining। বিপরীতে Complete Linkage দুই দলের সবচেয়ে দূরের জোড়ার দূরত্ব দেখে, তাই এটি আঁটসাঁট ও গোলাকার দল পছন্দ করে কিন্তু Outlier-এর প্রতি বেশ সংবেদনশীল। আর Average Linkage দুই দলের সব জোড়া দূরত্বের গড় নিয়ে একটি মাঝামাঝি ভারসাম্য বজায় রাখে। একই ডেটা Matrix-এর ওপর এই তিনটি Linkage তিনটি সম্পূর্ণ ভিন্ন Tree তৈরি করতে পারে—তাই কেবল ছবির Tree দেখেই ডেটায় ‘প্রাকৃতিক স্তরবিন্যাস আছে’ বলে দাবি করা চলে না।"
+        },
+        {
+          "type": "math",
+          "title": "Ward Linkage: Within-cluster SSE বৃদ্ধির পরিমাণ",
+          "body": "\\Delta J(A,B)=\\frac{n_A n_B}{n_A+n_B}\\|\\mu_A-\\mu_B\\|^2"
+        },
+        {
+          "type": "text",
+          "title": "Ward Linkage ও Dendrogram-এর উচ্চতার সূক্ষ্ম পার্থক্য",
+          "body": "চতুর্থ জনপ্রিয় পদ্ধতি হলো Ward Linkage, যা প্রতি ধাপে এমন দুটি দলকে একত্রিত করে যাতে সম্মিলিত Within-cluster SSE-এর বৃদ্ধি (ΔJ) সবচেয়ে কম হয়; স্বভাবতই এর জন্য Euclidean জ্যামিতি অপরিহার্য। তবে SciPy ব্যবহারের সময় একটি অত্যন্ত গুরুত্বপূর্ণ গাণিতিক খুঁটিনাটি মনে রাখবেন: SciPy-এর `ward` ফাংশন যে Merge Height সংরক্ষণ করে, সেটি কিন্তু সরাসরি এই ΔJ নয়! Euclidean Ward প্রথা অনুযায়ী সেখানে `(height² / 2) = ΔJ` সম্পর্কটি বজায় থাকে। তাই ভুলেও Dendrogram-এর উচ্চতাকে সরাসরি মোট Inertia বলে লিখে দেবেন না; এবং মনে রাখবেন, আগে Feature Scaling করা হয়ে থাকলে এই SSE হিসাবটিও সেই পরিবর্তিত স্কেলের জগতেই ঘটছে।"
+        },
+        {
+          "type": "code",
+          "title": "SciPy-এ Ward Merge Height-এর গাণিতিক সম্পর্ক যাচাই",
+          "body": "import numpy as np\nfrom scipy.cluster.hierarchy import linkage\n\nX = np.array([[0.0], [4.0]])\ntree = linkage(X, method=\"ward\", metric=\"euclidean\")\ndelta = (1 * 1 / (1 + 1)) * 16\nassert np.isclose(tree[0, 2] ** 2 / 2, delta)\nprint(tree)\n"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের মূল Workflow-এ সীমিত পরিসরের Hierarchy",
+          "body": "হিসাবের স্বচ্ছতা ও মেমরি সীমার কথা মাথায় রেখে আমাদের মূল ওয়ার্কফ্লোতে আমরা শুধুমাত্র একই 96টি বাস্তব `age`/`hours` স্থানাঙ্কের (যা আমরা Density ও k-Means Lab-এও ব্যবহার করি) ওপর `single`, `complete` এবং `ward`—এই তিন ধরনের Linkage গণনা করি। প্রতিটির 95টি করে Merge ধাপ রিপোর্টে সংরক্ষিত থাকে এবং শেষের তিনটি বড় Merge আলাদাভাবে তুলে ধরা হয়। খেয়াল রাখবেন, আমরা পুরো 6,013টি Row-এর ওপর পূর্ণাঙ্গ Hierarchy চালানোর কোনো ভ্রান্ত দাবি করছি না, এবং এই দ্বিমাত্রিক পুলটিকে মূল তিন-Feature-এর পরীক্ষা থেকে সুস্পষ্টভাবে আলাদা রাখছি।"
+        },
+        {
+          "type": "callout",
+          "title": "Interview-এর জন্য দারুণ একটি প্রশ্ন",
+          "body": "ইন্টার্ভিউতে প্রায়ই জিজ্ঞেস করা হয়: দুটি Cluster-এর ভেতরের সব বিন্দুর পূর্ণ দূরত্বের তালিকা ছাড়া শুধু দল দুটির Centroid আর সদস্যসংখ্যা জানলেই কি তাদের মধ্যে Single Linkage দূরত্ব বের করা সম্ভব? উত্তর হলো, সাধারণত না! কারণ Ward Linkage-এ সদস্যসংখ্যা n এবং গড় μ-ই Sufficient Statistics হিসেবে ΔJ বের করার জন্য যথেষ্ট হলেও, Single বা Complete Linkage নির্ভর করে দুই দলের প্রান্তিক বিন্দুগুলোর প্রত্যক্ষ দূরত্বের ওপর।"
+        }
+      ]
+    },
+    {
+      "id": "ch12_dendrogram",
+      "title": "Dendrogram Cut, Tie ও Deployment সীমাবদ্ধতা",
+      "subtitle": "Tree থেকে Flat Label তৈরি করা এবং প্রোডাকশনে নতুন Row আসার বাস্তব চ্যালেঞ্জ",
+      "duration": "26 min",
+      "icon": "scatter_plot",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "সঠিকভাবে Dendrogram পড়ার নিয়ম",
+          "body": "একটি Dendrogram চিত্রের একদম নিচের সারির প্রতিটি Leaf হলো একেকটি মূল Observation, আর ভেতরের প্রতিটি সংযোগস্থল বা Internal Node নির্দেশ করে একেকটি Merge ঘটনাকে। ছবিটি পড়ার সময় একটি সাধারণ ভ্রান্তি এড়িয়ে চলুন: নিচের সারিতে বাম থেকে ডানে Leaf-গুলোর ক্রম কিন্তু অনন্য (Unique) নয়—যেকোনো সংযোগস্থল ঘুরিয়ে আঁকলেও মূল Tree-এর গঠন একই থাকে, তাই কাগজে পাশাপাশি আঁকা দুটি Leaf মানেই যে তারা মূল Feature জগতে সবচেয়ে কাছের বিন্দু, তা মোটেও নয়! আসল তথ্য লুকিয়ে থাকে উল্লম্ব অক্ষের Merge Height-এ, যা আপনার বেছে নেওয়া Metric ও Linkage নিয়ম মেনে চলে এবং Feature-এর একক বা রূপান্তর বদলালে সেই উচ্চতাও বদলে যায়। এই উচ্চতা বরাবর একটি অনুভূমিক রেখা (Horizontal Cut) টানলেই আলাদা হওয়া শাখাগুলো থেকে Flat Cluster পাওয়া যায়।"
+        },
+        {
+          "type": "text",
+          "title": "নির্দিষ্ট সংখ্যক Cluster বনাম উচ্চতার Threshold",
+          "body": "তাত্ত্বিকভাবে n সংখ্যক Singleton থেকে প্রতি ধাপে যদি ভিন্ন ভিন্ন উচ্চতায় একটি করে Merge ঘটে, তবে মাঝপথের যেকোনো ধাপে কাটলে ঠিক কাঙ্ক্ষিত k সংখ্যক Cluster পাওয়া সহজ। কিন্তু বাস্তব ডেটায় যদি হুবহু সমান উচ্চতায় একাধিক Merge ঘটে (Tie) এবং সেগুলো একই সাথে আপনার নির্ধারিত Threshold-এর নিচে পড়ে যায়, তবে প্রাপ্ত দলের সংখ্যা কাঙ্ক্ষিত k-এর চেয়ে কমে যেতে পারে! এমনকি SciPy-এর `fcluster`-এ `criterion=\"maxclust\"` ব্যবহার করলেও সমান উচ্চতার Tie থাকলে তা সর্বোচ্চ k সংখ্যক দল দেয়—সবসময় ঠিক k সংখ্যক দল দেওয়ার গ্যারান্টি থাকে না। তাই রিপোর্টে আপনার Cut নেওয়ার নীতি এবং Tie সামলানোর আচরণ স্পষ্টভাবে উল্লেখ করা জরুরি।"
+        },
+        {
+          "type": "math",
+          "title": "Merge ধাপ ও অবশিষ্ট Node সংখ্যার হিসাব",
+          "body": "\\text{initial nodes}=n,\\qquad \\text{merges}=n-1,\\qquad \\text{nodes after }m\\text{ merges}=n-m"
+        },
+        {
+          "type": "code",
+          "title": "সমান উচ্চতার Merge Tie থাকলে প্রকৃত Cluster সংখ্যা যাচাই",
+          "body": "import numpy as np\nfrom scipy.cluster.hierarchy import linkage, fcluster\n\nX = np.array([[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]])\ntree = linkage(X, method=\"single\")\nlabels = fcluster(tree, 3, criterion=\"maxclust\")\nprint(\"requested maximum:\", 3, \"actual:\", len(np.unique(labels)))\n"
+        },
+        {
+          "type": "text",
+          "title": "মেমরি Bottleneck ও Condensed Distance Matrix",
+          "body": "বড় ডেটায় সাধারণ Agglomerative পদ্ধতিগুলোর প্রধান বাধা হলো মেমরি: সব জোড়া বিন্দুর দূরত্ব ধরে রাখতে গেলে O(n²) মেমরি লেগে যায়, যা লক্ষ লক্ষ Row-এর ক্ষেত্রে দ্রুত অসম্ভব হয়ে পড়ে। কোডিংয়ের একটি কাজের তথ্য জেনে রাখুন: SciPy তার Condensed Distance ভেক্টরে পূর্ণ n × n ছকের বদলে কেবল উপরের ত্রিভুজের n(n - 1) / 2 সংখ্যক মান সংরক্ষণ করে মেমরি কিছুটা বাঁচায়। অন্যদিকে রানটাইম নির্ভর করে নির্দিষ্ট Linkage ও অ্যালগরিদমের ওপর—তাই ঢালাওভাবে সব পদ্ধতির সময়কেই O(n²) বলে দেবেন না। মূলত এই বর্গাকার মেমরি খরচের কারণেই আমাদের মূল ওয়ার্কফ্লোতে Hierarchical বিশ্লেষণ 96টি Row-এর মধ্যে সীমাবদ্ধ রাখা হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "প্রোডাকশনে নতুন অদেখা Row এলে তার Cluster কী হবে?",
+          "body": "মডেল ডিপ্লয়মেন্টের দৃষ্টিকোণ থেকে এটি অত্যন্ত গুরুত্বপূর্ণ প্রশ্ন। সাধারণ `AgglomerativeClustering`-এর `.fit()` কেবল ট্রেনিং বিন্দুগুলোর Flat Label দেয়; k-Means-এর মতো নতুন বিন্দুর জন্য কোনো সর্বজনীন `.predict()` নিয়ম এখানে নেই! আপনি যদি পরবর্তীতে প্রতিটি দলের গড় বের করে নিকটতম Centroid-এ নতুন Row পাঠান, তবে সেটি হবে আপনার বানানো একটি আলাদা Serving নিয়ম—মূল Dendrogram অ্যালগরিদমের নিখুঁত গাণিতিক সম্প্রসারণ নয়। আবার নতুন ডেটা মিশিয়ে পুরো মডেল পুনরায় Fit (Full Refit) করলে পুরোনো বিন্দুগুলোর দলও বদলে যেতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব সিস্টেমের নির্ভরযোগ্য ডিজাইন",
+          "body": "ভবিষ্যতে বিভ্রান্তি এড়াতে প্রোডাকশনে সবসময় ভার্সনসহ Preprocessing, ব্যবহৃত Linkage, Cut নেওয়ার নিয়ম, ডেটার Snapshot এবং পরবর্তী ধাপের Mapping একসাথে সংরক্ষণ করুন। কখনোই ধরে নেবেন না যে পরের বার Refit করার পরও ‘Cluster 0’ ঠিক আগের অর্থই বহন করবে—এই ধারণার ওপর ভিত্তি করে কোনো UI বা ব্যবসায়িক নীতি বানাবেন না! বরং অভিন্ন প্রতিনিধি বিন্দু (Common Rows) মিলিয়ে পুরোনো ও নতুন দলের সামঞ্জস্য (Alignment) নির্ণয় করুন এবং কোন দল ভেঙে গেছে বা একীভূত হয়েছে তা স্পষ্টভাবে লগ করুন।"
+        },
+        {
+          "type": "callout",
+          "title": "নিজে পরীক্ষা করে দেখুন",
+          "body": "ডেটায় হুবহু একই স্থানাঙ্কের একটি Duplicate বিন্দু যোগ করলে শূন্য উচ্চতার (Zero-height) Merge ঠিক কোথায় তৈরি হয় তা চালিয়ে দেখুন। পাশাপাশি Feature-এর একক পরিবর্তন এবং Linkage পরিবর্তন আলাদা আলাদাভাবে পরীক্ষা করুন; এবং মনে রাখবেন, Dendrogram-এ চোখে পড়া ফাঁকা জায়গা আর বাস্তব কাজে দলের স্থায়িত্ব—দুটি সম্পূর্ণ আলাদা প্রমাণ, তাই দুটোকে গুলিয়ে ফেলবেন না।"
+        }
+      ]
+    },
+    {
+      "id": "ch12_density",
+      "title": "DBSCAN: Core, Border ও Noise",
+      "subtitle": "Density Reachability-তে কেন শুধুমাত্র Core বিন্দুই Cluster সম্প্রসারণ করতে পারে",
+      "duration": "49 min",
+      "icon": "scatter_plot",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "নিকটতম কেন্দ্রের বদলে স্থানীয় ঘনত্বের হিসাব",
+          "body": "k-Means যেখানে প্রতিটি বিন্দুকে কোনো না কোনো কেন্দ্রের দিকে টেনে নেয়, DBSCAN সেখানে প্রশ্নটিই পাল্টে দেয়: একটি বিন্দুর চারপাশে নির্ধারিত `eps` (ϵ) ব্যাসার্ধের ভেতরে যথেষ্ট সংখ্যক প্রতিবেশী আছে কি না? এখানে আগে থেকে Cluster সংখ্যা k বলে দিতে হয় না; বদলে দিতে হয় ব্যাসার্ধ `eps` এবং ন্যূনতম বিন্দুর সীমা `min_samples`। এই স্থানীয় ঘনত্বের সংযোগ ধরে এগোয় বলেই DBSCAN যেকোনো বাঁকানো বা অদ্ভুত আকৃতির (Arbitrary-shaped) ঘন অঞ্চল নিখুঁতভাবে খুঁজে বের করতে পারে এবং বিচ্ছিন্ন বিন্দুগুলোকে জোর করে দলে না ঢুকিয়ে Noise হিসেবে চিহ্নিত করে। তবে এর উল্টো দিকটিও মনে রাখতে হবে—একটিমাত্র স্থির ঘনত্বের মাপকাঠি দিয়ে ডেটার হালকা ও প্রচণ্ড ঘন অঞ্চলকে একসাথে সবসময় আলাদা করা যায় না।"
+        },
+        {
+          "type": "math",
+          "title": "Closed Neighborhood ও Core Point হওয়ার শর্ত",
+          "body": "N_\\epsilon(x)=\\{z:\\|z-x\\|_2\\le\\epsilon\\},\\qquad x\\text{ core}\\iff |N_\\epsilon(x)|\\ge m"
+        },
+        {
+          "type": "text",
+          "title": "প্রতিবেশী গণনায় নিজেকে ধরা ও সীমানার নিয়ম",
+          "body": "সমীকরণটি কোডে লেখার সময় ছোট কিন্তু জরুরি কয়েকটি নিয়ম খেয়াল রাখতে হয়। scikit-learn ঘরানার সাধারণ (Unweighted) `min_samples` গণনায় প্রতিটি বিন্দু নিজেই নিজের Neighborhood-এর অন্তর্ভুক্ত থাকে, এবং ঠিক সীমানার ওপরে থাকা বিন্দুও (`||z - x||_2 <= eps`, অর্থাৎ সমান চিহ্নসহ) প্রতিবেশী হিসেবে গণ্য হয়। ডেটায় যদি একই স্থানাঙ্কে একাধিক আলাদা Observation Row (Duplicates) থাকে, তবে তার প্রতিটিই এই গণনা বাড়িয়ে দেয়। প্রসঙ্গত, গাণিতিক বিশ্লেষণের জন্য লেখা আমাদের কাস্টম Helper ফাংশনে `eps = 0` দিয়েও হুবহু অভিন্ন বিন্দু পরীক্ষা করা যায়, যদিও scikit-learn-এর পাবলিক `DBSCAN` ক্লাসে `eps`-এর মান ধনাত্মক হওয়া বাধ্যতামূলক।"
+        },
+        {
+          "type": "text",
+          "title": "আগে Core Component, তারপর Border ও Noise",
+          "body": "DBSCAN-এর পুরো প্রক্রিয়াটিকে সবচেয়ে পরিষ্কারভাবে বোঝা যায় দুই ধাপে। প্রথমে শুধু Core বিন্দুগুলোর মধ্যে যারা পরস্পরের `eps` দূরত্বের ভেতরে আছে, তাদের সংযোগ রেখা দিয়ে Connected Component তৈরি করা হয়—এগুলোই হলো প্রতিটি Cluster-এর মূল মেরুদণ্ড। এরপর যেসব বিন্দু নিজে Core নয়, কিন্তু অন্তত একটি Core বিন্দুর `eps` দূরত্বের ভেতরে আছে, তারা ওই দলে Border বিন্দু হিসেবে যুক্ত হয়। আর যে বিন্দু কোনো Core বিন্দুরই নাগালে নেই, সে পায় Noise Label `-1`। এখানে সবচেয়ে গুরুত্বপূর্ণ নিয়মটি হলো: একটি Border বিন্দুর গা ঘেঁষে আরেকটি বিন্দু থাকলেই কিন্তু দলের বিস্তার সামনে এগোয় না—ঘনত্বের সম্প্রসারণ ঘটে শুধুমাত্র Core বিন্দু থেকেই!"
+        },
+        {
+          "type": "density_lab",
+          "title": "Interactive Density Lab: eps ও min_samples পরীক্ষা",
+          "body": "নিচের Lab-এ `eps` এবং `min_samples`-এর মান বদলে দেখুন নির্বাচিত বাস্তব Row-টির Neighborhood Count কীভাবে পরিবর্তিত হয়। পাশাপাশি “Try all noise” বিকল্পটি চালিয়ে যাচাই করুন 96টি Row-এর ডেটায় `min_samples = 97` বসালে কেন প্রতিটি বিন্দুই Noise হয়ে যায়।"
+        },
+        {
+          "type": "code",
+          "title": "Core, Border ও Noise নির্ণয়ের গাণিতিক উদাহরণ",
+          "body": "import numpy as np\nfrom sklearn.cluster import DBSCAN\nfrom threadpoolctl import threadpool_limits\n\nX = np.array([[0.0], [0.1], [0.2], [0.4], [2.0]])\nwith threadpool_limits(limits=1):\n    m = DBSCAN(eps=0.21, min_samples=3, algorithm=\"brute\").fit(X)\nprint(m.labels_, m.core_sample_indices_)\n"
+        },
+        {
+          "type": "text",
+          "title": "দ্ব্যর্থবোধক Border বিন্দু ও ফলাফল মেলানোর সতর্কতা",
+          "body": "একটি মজার প্রান্তিক পরিস্থিতি ভাবুন: যদি একটি Non-core বিন্দু একই সাথে দুটি ভিন্ন Core Component-এর `eps` ব্যাসার্ধের ভেতরে পড়ে যায়, তখন কী হবে? সুখবর হলো, ওই Border বিন্দুর কারণে আলাদা দুটি Core Component কখনোই একীভূত (Merge) হয়ে যাবে না; কিন্তু ওই একক Border বিন্দুটি শেষ পর্যন্ত কোন দলটির টিকিট পাবে, তা নির্ভর করতে পারে বিন্দু পরিভ্রমণের ক্রমের (Traversal Order) ওপর! যেমন আমাদের নির্ধারিত Helper ফাংশনটি আগে ক্রমানুসারে Core Component তৈরি করে এবং দ্ব্যর্থবোধক ক্ষেত্রে সবচেয়ে ছোট সংলগ্ন Component ID বেছে নেয়। তাই যেকোনো সাধারণ ডেটাসেটে নিজের কোডের সাথে লাইব্রেরির ফলাফল মেলানোর সময় হুবহু এক Label নম্বর আশা না করে আগে Core Partition এবং Noise Mask দুটি অভিন্ন আছে কি না তা যাচাই করবেন।"
+        },
+        {
+          "type": "callout",
+          "title": "দুটি প্রান্তিক শর্ত নিজেই মিলিয়ে নিন",
+          "body": "নিজের ইমপ্লিমেন্টেশন সঠিক হয়েছে কি না তা পরখ করার দারুণ দুটি Boundary পরীক্ষা আছে: সসীম ডেটায় `min_samples = 1` দিলে প্রতিটি বিন্দুই নিজে নিজেকে নিয়ে Core হয়ে যায়, ফলে `eps`-গ্রাফের সাধারণ Connected Component-গুলোই সরাসরি Cluster হয়ে ওঠে। উল্টোদিকে `min_samples > n` দিলে কেউই Core হতে পারে না, তাই সবাই Noise (`-1`) হয়। আপনার কোডে এই দুটি প্রান্ত অবশ্যই পরীক্ষা করবেন—এবং কখনোই কম Noise পাওয়াকে মডেলের ‘Accuracy’ বলে ভুল ব্যাখ্যা দেবেন না!"
+        },
+        {
+          "type": "text",
+          "title": "কেন Border বিন্দু দিয়ে সম্প্রসারণ এগোয় না: সংখ্যার উদাহরণ",
+          "body": "বিষয়টি হাতেনাতে দেখার জন্য পাঁচটি এক-মাত্রিক স্থানাঙ্ক `[0, 0.1, 0.2, 0.4, 0.6]` নেওয়া যাক, যেখানে `eps = 0.21` এবং `min_samples = 4`। নিজেকেসহ প্রতিটি বিন্দুর Closed-neighborhood গণনা করলে পাওয়া যায় যথাক্রমে `[3, 3, 4, 3, 2]`। লক্ষ্য করুন, কেবল `0.2` বিন্দুটিই শর্ত পূরণ করে একমাত্র Core হতে পেরেছে! এখন `0`, `0.1` এবং `0.4` সরাসরি `0.2`-এর `0.21` দূরত্বের ভেতরে থাকায় তার দলের Border সদস্য হয়ে যাবে। কিন্তু `0.6`-এর দিকে তাকান: সে `0.4`-এর খুব কাছে (`0.20 <= 0.21`) থাকা সত্ত্বেও মূল Core `0.2` থেকে দূরে, তাই `0.6` শেষ পর্যন্ত Noise হিসেবেই থেকে যাবে! এই উদাহরণটিই পরিষ্কার দেখিয়ে দেয় কীভাবে Core-ভিত্তিক সম্প্রসারণ আলগা সেতুর ভেতর দিয়ে অবাঞ্ছিত Chaining আটকে দেয়।"
+        },
+        {
+          "type": "code",
+          "title": "Neighborhood Count, Core ও Noise Mask নির্ণয়",
+          "body": "import numpy as np\n\npoints = np.array([0., 0.1, 0.2, 0.4, 0.6])\nadjacency = np.abs(points[:, None] - points[None, :]) <= 0.21\ncounts = adjacency.sum(axis=1)\ncore = counts >= 4\ntouches_core = adjacency[:, core].any(axis=1)\nnoise = ~core & ~touches_core\nprint(*counts, int(core.sum()), *noise.astype(int))\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে হিসাব করুন",
+          "body": "উপরের উদাহরণে `0.4` এবং `0.6`-এর মধ্যকার দূরত্ব `eps`-এর চেয়ে কম হওয়া সত্ত্বেও `0.4` কেন Border হলো আর `0.6` কেন Noise রয়ে গেল?",
+          "solution": "কারণ `0.4` বিন্দুটি সরাসরি একমাত্র Core বিন্দু `0.2`-এর `eps`-প্রতিবেশী হওয়ায় তার দলে যুক্ত হতে পেরেছে; কিন্তু `0.6` সরাসরি কোনো Core বিন্দুরই `eps` ব্যাসার্ধের ভেতরে নেই। DBSCAN-এর নিয়মে কেবল Core বিন্দু থেকেই আশেপাশে দলের বিস্তার ঘটে, কোনো Border বিন্দু নিজে থেকে নতুন সম্প্রসারণ ঘটাতে পারে না।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch12_density_limits",
+      "title": "Density Tuning ও ব্যর্থতার জায়গাগুলো",
+      "subtitle": "কত শতাংশ ডেটা বাদ পড়ল (Coverage) তা না জানালে যেকোনো Density Score অসম্পূর্ণ",
+      "duration": "28 min",
+      "icon": "scatter_plot",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Parameter ও স্কেল বদলালে অর্থ কীভাবে পাল্টে যায়?",
+          "body": "আগের পাঠে আমরা দেখেছি DBSCAN কীভাবে `eps` ও `min_samples` দিয়ে ঘন অঞ্চল চেনে। এবার ভাবুন এর মানগুলো একটু এদিক-সেদিক হলে কী ঘটে: `eps` খুব ছোট করলে বা `min_samples` খুব বাড়িয়ে দিলে ডেটার বড় একটি অংশই বিচ্ছিন্ন Noise হয়ে পড়বে; আবার `eps` বেশি বড় করে ফেললে আলাদা দলগুলো সব মিলেমিশে একটিই দানবীয় Connected Component তৈরি করবে! এখানে একটি মারাত্মক ভুল প্রায়ই ঘটে: কাঁচা (Raw) ডেটা আর Standardized ডেটায় সংখ্যার একক কিন্তু এক নয়। তাই Feature Scaling পরিবর্তন করার পরও যদি আগের সংখ্যার `eps` মানটিই অন্ধভাবে রেখে দেন, তবে অজান্তেই পুরো পরীক্ষার জ্যামিতিক অর্থই বদলে যাবে।"
+        },
+        {
+          "type": "text",
+          "title": "eps অনুমানের সহায়ক: k-distance লেখচিত্র",
+          "body": "একেবারে আন্দাজে `eps` না খুঁজে একটি কার্যকরী কৌশল হলো k-distance Diagnostic দেখা: প্রতিটি Observation থেকে তার `min_samples`-তম নিকটতম প্রতিবেশীর দূরত্ব বের করে মানগুলো ছোট থেকে বড় ক্রমে সাজিয়ে আঁকুন (এক্ষেত্রে বিন্দু নিজেকে গণনায় ধরছে কি না সেই নিয়মটি স্পষ্ট রাখবেন)। লেখচিত্রটি যেখানে হঠাৎ খাড়াভাবে উপরে উঠতে শুরু করে, সেই ভাঁজ বা Knee অঞ্চলটি ঘন দল থেকে হালকা Noise-এ যাওয়ার একটি সম্ভাব্য সীমানা নির্দেশ করে। তবে ভাঁজটি অস্পষ্ট হলে জোর করে একটি সংখ্যা না বলে একাধিক যৌক্তিক পরিসর রিপোর্ট করুন; আর মনে রাখবেন, উচ্চ মাত্রায় (High Dimension) সব দূরত্ব কাছাকাছি চলে আসার কারণে (Distance Concentration) এই লেখচিত্রের কার্যকারিতা অনেকটাই কমে যেতে পারে।"
+        },
+        {
+          "type": "math",
+          "title": "Coverage এবং শর্তসাপেক্ষ Silhouette একসাথে দেখার সূত্র",
+          "body": "\\operatorname{coverage}=\\frac{\\#\\{i:c_i\\ne -1\\}}{n},\\qquad \\text{assigned-only silhouette}=S(X_{c\\ne-1},c_{c\\ne-1})"
+        },
+        {
+          "type": "text",
+          "title": "Noise Label (-1)-কে কি আলাদা Cluster ধরা চলে?",
+          "body": "DBSCAN-এর মূল্যায়ন করার সময় এটি সবচেয়ে বড় ফাঁদগুলোর একটি! আপনি যদি সরাসরি সব Label নিয়ে Silhouette হিসাব করেন, তবে ফাংশনটি `-1` পাওয়া সব Noise বিন্দুকেও একটি সাধারণ Cluster ভেবে বসবে—অথচ ছড়িয়ে-ছিটিয়ে থাকা প্রান্তিক Noise বিন্দুগুলো মোটেও কোনো একক গোষ্ঠী নয়! আবার উল্টোদিকে Noise বাদ দিয়ে শুধু দলভুক্ত (`c_i != -1`) বিন্দুগুলোর ওপর Silhouette মাপলে অবশ্যই তার সাথে কত শতাংশ ডেটা দলে জায়গা পেল (`Coverage`) এবং বাদ পড়া অংশের বৈশিষ্ট্য কী, তা পাশাপাশি জানাতে হবে। খেয়াল রাখবেন, দলভুক্ত অংশে যদি মাত্র একটিই Cluster তৈরি হয়, তবে সেখানে Silhouette সংজ্ঞাহীন (Undefined)—তখন ভুলেও তার জায়গায় `0` বসিয়ে দেবেন না, কারণ `-1` থেকে `+1` স্কেলে শূন্য একটি বৈধ মাঝারি মান এবং এতে মডেলগুলোর ক্রম (Ranking) পুরোপুরি ভুল হয়ে যেতে পারে!"
+        },
+        {
+          "type": "code",
+          "title": "সংজ্ঞাহীন Silhouette স্কোরকে শূন্য না ধরার নিরাপদ কোড",
+          "body": "import numpy as np\nfrom sklearn.metrics import silhouette_score\n\nlabels = np.array([0, 0, -1, -1])\nX = np.array([[0.0], [0.1], [3.0], [9.0]])\nkeep = labels >= 0\ncount = len(np.unique(labels[keep]))\nscore = silhouette_score(X[keep], labels[keep]) if 2 <= count < keep.sum() else None\nprint(\"coverage\", keep.mean(), \"conditional score\", score)\n"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব 96টি Row-এর ওপর সংবেদনশীলতা পরীক্ষা",
+          "body": "আমাদের বাস্তব 96টি Row-এর ডেটায় বিষয়টি মিলিয়ে দেখলে ছবিটি একদম পরিষ্কার হয়ে যায়। সেখানে `eps = 0.15` এবং `min_samples = 5` ধরলে Coverage পাওয়া যায় প্রায় `48.96%`, চারটি আলাদা Cluster তৈরি হয় এবং দলভুক্ত অংশের শর্তসাপেক্ষ Silhouette আসে প্রায় `0.5333`। কিন্তু `eps` বাড়িয়ে `0.35` করলেই Coverage বেড়ে `62.5%` হয় ঠিকই, তবে দলভুক্ত সব Row মিলে একটিমাত্র Cluster হয়ে যাওয়ায় Silhouette তখন সংজ্ঞাহীন (`None` / `null`) হয়ে পড়ে! এবং সবচেয়ে জরুরি কথা: এখানে প্রাপ্ত `0.5333` স্কোর দেখে কখনোই বলা যাবে না যে এটি পুরো ডেটার ওপর চালানো k-Means-এর `0.2783`-এর চেয়ে ‘ভালো’—কারণ দুটির মাত্রা, Row সংখ্যা, গাণিতিক লক্ষ্য এবং Coverage সম্পূর্ণ আলাদা।"
+        },
+        {
+          "type": "text",
+          "title": "অসম ঘনত্বের সংকট ও মেমরির হিসাব",
+          "body": "সাধারণ DBSCAN-এর আরেকটি সীমাবদ্ধতা হলো ডেটায় ভিন্ন ভিন্ন ঘনত্বের দল থাকলে একটিমাত্র `eps` দিয়ে সব দলকে একসাথে ধরা কঠিন—ঘন দলটিকে ঠিকমতো ধরতে গেলে হালকা অথচ বৈধ আরেকটি দল পুরোপুরি Noise হয়ে হারিয়ে যেতে পারে। এমন পরিস্থিতিতে বিভিন্ন ব্যাসার্ধ জুড়ে ঘনত্বের ক্রম বোঝার জন্য OPTICS কিংবা ঘনত্বের স্তরবিন্যাস ও স্থায়িত্ব ব্যবহারকারী HDBSCAN বেশ সহায়ক হতে পারে, যদিও এগুলোর কোনোটিই জাদুকরী স্বয়ংক্রিয় সমাধান নয়। কম্পিউটেশনের দিক থেকেও সতর্ক থাকুন: খুব বড় `eps` ও ছোট `min_samples` দিলে প্রতিবেশীদের তালিকা মেমরিতে বানাতে গিয়ে scikit-learn-এর DBSCAN-ও O(n²) মেমরি খেয়ে ফেলতে পারে (আর স্বচ্ছতার স্বার্থে আমাদের 96-Row-এর Dart Helper-টি ইচ্ছাকৃতভাবেই সরল O(n²) পদ্ধতিতে লেখা হয়েছে)।"
+        },
+        {
+          "type": "callout",
+          "title": "সিস্টেম ডিজাইনের জরুরি প্রশ্ন",
+          "body": "প্রোডাকশনে নতুন কোনো লাইভ Request এলে DBSCAN দিয়ে কীভাবে Cluster নির্ধারণ করবেন? মনে রাখবেন, সাধারণ DBSCAN Estimator-এ কোনো বিল্ট-ইন `.predict()` নেই! আপনি চাইলে ট্রেনিংয়ে পাওয়া নিকটতম Core বিন্দুর `eps` দূরত্বের ভেতরে পড়লে সেই দলে যুক্ত করার একটি নিজস্ব Serving নিয়ম বানাতে পারেন, কিন্তু নতুন বিন্দুসহ পুরো ডেটা আবার Refit করলে যে ফলাফল আসত, এই নিয়মটি তার হুবহু সমান নয়। তাই সিস্টেম ডকুমেন্টেশনে Noise সামলানোর নীতি, মডেল রিফ্রেশের সময়সূচি এবং সীমানার দ্ব্যর্থতা মেটানোর নিয়ম স্পষ্টভাবে লিখে রাখুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch12_pca",
+      "title": "PCA: Variance থেকে Eigenvectors",
+      "subtitle": "ডেটা Centering, Covariance এবং Rayleigh Quotient থেকে প্রধান অক্ষ নির্ণয়",
+      "duration": "34 min",
+      "icon": "scatter_plot",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "তথ্য সংক্ষেপণ বা Compression-এর মূল লক্ষ্য কী?",
+          "body": "এতক্ষণ আমরা বিন্দুগুলোকে বিভিন্ন দলে ভাগ করার কৌশল দেখেছি; এবার আমরা দেখব অসংখ্য Feature-এর জটিল ডেটাকে কীভাবে কম মাত্রায় (Low Dimension) সংকুচিত করে আনা যায় যাতে মূল গঠনটি যথাসম্ভব অক্ষত থাকে। ধরা যাক, গড় বিয়োগ করা (Centered) ডেটাকে আমরা একক দৈর্ঘ্যের (`||v||_2 = 1`) একটি দিক ভেক্টর `v`-এর ওপর অভিক্ষেপ (Project) করছি, যার ফলে প্রতিটি বিন্দুর জন্য একটি স্কেলার Score পাওয়া যাচ্ছে `z = (x - mean) · v`। Principal Component Analysis (PCA)-এর লক্ষ্য হলো সব সম্ভাব্য একক দিকের ভিড়ে এমন দিক খুঁজে বের করা, যেদিকে এই অভিক্ষিপ্ত Score-গুলোর Variance বা ছড়িয়ে থাকার পরিমাণ সর্বোচ্চ হয়! ধ্রুবক স্থানান্তরের (Constant Shift) কারণে যেন দিক পাল্টে না যায়, তাই শুরুতেই Training গড় বিয়োগ করে ডেটা Center করা অপরিহার্য। তবে মনে রাখবেন: scikit-learn-এর `PCA` নিজে থেকে গড় বিয়োগ করলেও Feature Scaling বা Variance সমান করার কাজটি কিন্তু একা করে না!"
+        },
+        {
+          "type": "math",
+          "title": "Centered Sample Covariance ও অভিক্ষেপের Variance",
+          "body": "X_c=X-\\mathbf{1}\\bar{x}^{\\top},\\qquad C=\\frac{X_c^{\\top}X_c}{n-1},\\qquad \\operatorname{Var}(X_cv)=v^{\\top}Cv"
+        },
+        {
+          "type": "math",
+          "title": "শর্তযুক্ত Maximization থেকে Eigenvector সমীকরণ",
+          "body": "\\max_{v^{\\top}v=1}v^{\\top}Cv\\quad\\Rightarrow\\quad Cv=\\lambda v"
+        },
+        {
+          "type": "text",
+          "title": "Lagrange Multiplier দিয়ে সহজ গাণিতিক প্রমাণ",
+          "body": "কেন সর্বোচ্চ Variance-এর দিকটি ঠিক Covariance Matrix `C`-এর Eigenvector হয়? শর্তযুক্ত অপ্টিমাইজেশনের জন্য আমরা লিখতে পারি `L(v, λ) = vᵀCv - λ(vᵀv - 1)`। যেহেতু `C` একটি প্রতিসম (Symmetric) Matrix, তাই `v`-এর সাপেক্ষে অন্তরীকরণ করে শূন্য ধরলে সরাসরি পাওয়া যায় `2Cv - 2λv = 0`, অর্থাৎ `Cv = λv`! সমীকরণটির উভয় পাশে `vᵀ` গুণ করলেই দেখা যায় অভিক্ষিপ্ত Variance `vᵀCv` আসলে ঠিক Eigenvalue `λ`-এর সমান। সুতরাং সবচেয়ে বড় Eigenvalue-এর দিকটিই দেয় সর্বোচ্চ Variance! পরবর্তী প্রতিটি দিক আগের দিকগুলোর সাথে লম্ব (Orthogonal) থাকার শর্ত মেনে অবশিষ্ট সর্বোচ্চ Variance খুঁজে নেয়, এবং আমরা বড় থেকে ছোট Eigenvalue ক্রমে Component-গুলো সাজিয়ে রাখি। ট্রেনিং ডেটায় এই নতুন অক্ষগুলোর Score পরস্পরের সাথে রৈখিকভাবে Uncorrelated হয়—তবে ডেটা যুগপৎ Gaussian না হলে শুধু Uncorrelated হওয়া মানেই পরিসংখ্যানগত Independence নয়।"
+        },
+        {
+          "type": "code",
+          "title": "Covariance Matrix-এর Eigenvalue ও সর্বোচ্চ Variance যাচাই",
+          "body": "import numpy as np\n\nX = np.array([[-2.0, 0.0], [0.0, -1.0], [0.0, 1.0], [2.0, 0.0]])\nC = np.cov(X, rowvar=False, ddof=1)\nvalues, vectors = np.linalg.eigh(C)\nv = vectors[:, -1]\nprint(values[::-1], v @ C @ v)\n"
+        },
+        {
+          "type": "text",
+          "title": "সতর্কতা: PCA মানেই কিন্তু Feature Importance নয়!",
+          "body": "মেশিন লার্নিংয়ে একটি খুব প্রচলিত ভুল ধারণা হলো PCA-র প্রথম দিকগুলোই বুঝি ভবিষ্যদ্বাণীর জন্য সবচেয়ে দরকারি Feature! ভুলে যাবেন না, PCA সম্পূর্ণ Unsupervised উপায়ে কেবল ডেটার বিস্তৃতি বা Variance বাড়ায়—সে কখনোই আপনার Target `y`-এর দিকে তাকায় না। এমনটি হামেশাই হতে পারে যে একটি কম-Variance-এর অক্ষের ভেতরেই লুকিয়ে আছে Downstream Classification-এর আসল বিভাজন সংকেত! একইভাবে কোনো Component-এ বড় Loading থাকা মানেই তার কার্যকারণগত (Causal) গুরুত্ব প্রমাণ করে না; স্কেলিং এবং পারস্পরিক Correlation মাথায় রেখে তবেই এর অর্থ পড়তে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "কাঁচা (Raw) বনাম Standardized ডেটায় PCA",
+          "body": "কেন স্কেলিং এত গুরুত্বপূর্ণ? কাঁচা `age` আর `hours-per-week` বা আয়ের কলাম একসাথে রাখলে যেটির সংখ্যার বিস্তার নিছক এককের কারণে বেশি, সেটিই একচেটিয়াভাবে প্রথম Principal Component দখল করে নেবে। Standardization সব কলামকে তুলনাযোগ্য একক Variance-এ নিয়ে আসে বটে, কিন্তু এর উল্টো ঝুঁকিও আছে—কম বিস্তারের কোনো নিছক এলোমেলো (Noisy) কলামও তখন সমান গুরুত্ব পেয়ে বড় হয়ে উঠতে পারে! আরেকটি কাঠামোগত পার্থক্য পরিষ্কার রাখুন: আমাদের মূল তিন-Feature ওয়ার্কফ্লোতে Scaler কঠোরভাবে শুধু Training সেটে Fit করা হয়, আর পাঠের ইন্টারেক্টিভ Lab-এ দুটি দ্বিমাত্রিক PCA সরাসরি প্রদর্শিত 96টি Row-এর ওপরেই Center ও Fit করা হয়েছে—এই দুটি পরিধি কখনোই গুলিয়ে ফেলবেন না।"
+        },
+        {
+          "type": "callout",
+          "title": "Interview-এ যেভাবে পার্থক্যটি বুঝিয়ে বলবেন",
+          "body": "ইন্টার্ভিউতে যদি প্রশ্ন করে: ডেটা থেকে গড় (Mean) বিয়োগ না করে সরাসরি `XᵀX / n`-এর ওপর বিশ্লেষণ চালালে কী হবে? স্পষ্টভাবে দেখিয়ে দিন যে তখন সেটি প্রকৃত Centered Covariance না মেপে অকেন্দ্রীভূত Second Moment মাপে, যেখানে আসল Covariance-এর সাথে গড় ভেক্টরের Outer Product (`x̄x̄ᵀ`) মিশে থাকে এবং প্রথম অক্ষটি ডেটার বিস্তৃতির বদলে গড়ের দিকে ঝুঁকে পড়ে! ঠিক এই কারণেই Sparse ডেটায় মেমরি বাঁচাতে ব্যবহৃত কেন্দ্রবিহীন `TruncatedSVD` সাধারণ Centered PCA-এর হুবহু সমান নয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch12_svd",
+      "title": "SVD, Projection ও Reconstruction",
+      "subtitle": "কীভাবে সর্বোচ্চ Variance রাখা এবং সর্বনিম্ন Reconstruction Loss একই বিন্দুতে মেলে",
+      "duration": "51 min",
+      "icon": "scatter_plot",
+      "blocks": [
+        {
+          "type": "math",
+          "title": "Centered ডেটার SVD থেকে PCA-এর সম্পর্ক",
+          "body": "X_c=U\\Sigma V^{\\top},\\qquad \\lambda_j=\\frac{\\sigma_j^2}{n-1},\\qquad Z=X_cV_q"
+        },
+        {
+          "type": "text",
+          "title": "অ্যারের দিকবিন্যাস (Row বনাম Column প্রথা)",
+          "body": "বাস্তবে বড় বা Ill-conditioned ডেটায় সরাসরি `X_cᵀX_c` গুণ না করে সংখ্যার স্থিতিশীলতার জন্য Centered ডেটার ওপর সরাসরি Singular Value Decomposition (SVD) চালানো হয়। কোড লেখার সময় শুধু অ্যারের দিকবিন্যাসটুকু খেয়াল রাখবেন: scikit-learn এবং আমাদের Python/Dart কোডে `components`-এর প্রতিটি Row হলো একেকটি Principal Direction, তাই অভিক্ষেপের হিসাব লেখা হয় `scores = (X - mean) @ components[:q].T`। বইয়ের সূত্রে সাধারণত `V`-এর Column-গুলোকে দিক ধরা হয় (`X_c V_q`)—লেখার ধরন আলাদা হলেও জ্যামিতি শতভাগ এক! আর যখন সারির সংখ্যা মাত্রার চেয়ে কম (`n < d`), তখন `full_matrices=False` দিলে `min(n, d)` সংখ্যক দিক আসে এবং গড় বিয়োগ করার কারণে Centered Matrix-এর প্রকৃত Rank হয় সর্বোচ্চ `min(n - 1, d)`।"
+        },
+        {
+          "type": "math",
+          "title": "Orthogonal Reconstruction ও বাদ পড়া Singular Energy",
+          "body": "\\widehat{X}=X_cV_qV_q^{\\top}+\\mathbf{1}\\bar{x}^{\\top},\\qquad \\|X-\\widehat{X}\\|_F^2=\\sum_{j>q}\\sigma_j^2"
+        },
+        {
+          "type": "text",
+          "title": "দুটি ভিন্ন গাণিতিক লক্ষ্য যেখানে এক বিন্দুতে মেলে",
+          "body": "উপরের সমীকরণটিতে রৈখিক বীজগণিতের চমৎকার একটি ঐক্য লুকিয়ে আছে! নির্দিষ্ট Rank `q`-এর যেকোনো লম্ব রৈখিক পুনর্গঠনের (Orthogonal Linear Reconstruction) ত্রুটি বা Frobenius বর্গ দূরত্ব হলো ঠিক বাদ দেওয়া দিকগুলোর Singular Value-র বর্গের যোগফল (`Σ_{j > q} σ_j²`)। যেহেতু ডেটার মোট কেন্দ্রীভূত শক্তি স্থির, তাই বাদ পড়া ত্রুটি কমানো আর রাখা অক্ষগুলোর Variance সর্বোচ্চ করা আসলে একই মুদ্রার এপিঠ-ওপিঠ! তবে মনে রাখবেন, এটি কেবল ট্রেনিং ডেটার বর্গ Euclidean রৈখিক পুনর্গঠনের সেরা সমাধান—যেকোনো বক্র (Nonlinear) সংকোচন বা Label অনুমানের সর্বজনীন সেরা পথ নয়। পাশাপাশি আমাদের Lab-এ দেখানো Coordinate MSE বের করা হয় মোট SSE-কে `n × d` দিয়ে ভাগ করে, যা Sample Variance-এর `n - 1` হর থেকে আলাদা।"
+        },
+        {
+          "type": "pca_lab",
+          "title": "বাস্তব ডেটায় Interactive PCA Reconstruction Lab",
+          "body": "নিচের Lab-এ `q = 0, 1, 2` বেছে নিয়ে মূল বিন্দুগুলোর সাথে পুনর্গঠিত (Reconstructed) বিন্দুগুলোর অবস্থান তুলনা করুন। সব কটি অক্ষ রাখলে (`q = 2`) ভাসমান দশমিকের অতি ক্ষুদ্র আসন্নীকরণ ছাড়া ত্রুটি পুরোপুরি শূন্য হয়ে যায়; আর Raw এবং Standardized জগতের মধ্যে অদলবদল করলে কীভাবে শেখা অক্ষ ও ক্ষতির একক বদলে যায় তাও লক্ষ্য করুন।"
+        },
+        {
+          "type": "code",
+          "title": "SVD দিয়ে সরাসরি Reconstruction ও হারানো শক্তি যাচাই",
+          "body": "import numpy as np\n\nX = np.array([[0.0, 0.0], [1.0, 2.0], [2.0, 1.0], [4.0, 3.0]])\nmean = X.mean(axis=0)\nXc = X - mean\nU, s, Vt = np.linalg.svd(Xc, full_matrices=False)\nq = 1\nrestored = (Xc @ Vt[:q].T) @ Vt[:q] + mean\nassert np.isclose(np.sum((X - restored) ** 2), np.sum(s[q:] ** 2))\nprint(\"coordinate MSE\", np.mean((X - restored) ** 2))\n"
+        },
+        {
+          "type": "text",
+          "title": "q = 0 এবং পূর্ণ Rank-এর প্রান্তিক আচরণ",
+          "body": "দুই প্রান্তের আচরণ মিলিয়ে নিলে ধারণাটি আরও পোক্ত হবে। যদি কোনো দিকই না রাখেন (`q = 0`), তবে প্রতিটি পুনর্গঠিত Row সরাসরি শেখা Training গড় বিন্দুতে ফিরে আসে। অন্যদিকে উপলব্ধ সব কটি দিক রেখে দিলে ট্রেনিং ডেটা তার নিজস্ব Subspace-এ নিখুঁতভাবে পুনর্গঠিত হয়। কিন্তু এখানে একটি দারুণ সূক্ষ্ম বিষয় আছে: ট্রেনিং ডেটা যদি Rank-deficient হয় (যেমন `n - 1 < d`), তবে নতুন কোনো অদেখা বিন্দুর যদি সেই শেখা Subspace-এর লম্ব দিকে বাড়তি উপাদান থাকে, তাহলে শেখা সব কটি দিক রাখার পরেও কিন্তু নতুন বিন্দুটি শতভাগ নিখুঁতভাবে ফিরে আসবে না! (অবশ্য আমাদের দ্বিমাত্রিক Lab-এ `2 × 2` লম্ব Basis পুরো সমতলটিকেই আচ্ছাদিত করে।)"
+        },
+        {
+          "type": "callout",
+          "title": "নির্ভুল কোড লেখার চুক্তি (Coding Contract)",
+          "body": "নিজে PCA/SVD ফাংশন লেখার সময় শুরুতেই যাচাই করে নিন ইনপুট Matrix-এর সব মান সসীম কি না, অন্তত দুটি Row আছে কি না, মাত্রা সামঞ্জস্যপূর্ণ কি না এবং `q` একটি বৈধ পূর্ণসংখ্যা কি না। ডেটার সব Row অভিন্ন হলে মোট Variance শূন্য হওয়ায় অনুপাত অসংজ্ঞায়িত হয়ে পড়ে (আমাদের Helper তখন সুস্পষ্ট Error দেয়)। আর সবচেয়ে জরুরি নিয়ম: নতুন কোনো Query রূপান্তরের সময় কখনোই Query থেকে নতুন করে গড় হিসাব করবেন না—সবসময় ট্রেনিংয়ে শেখা স্থির গড়ই ব্যবহার করবেন!"
+        },
+        {
+          "type": "text",
+          "title": "স্থির রাখা Training গড় দিয়েই নতুন Row পুনর্গঠন",
+          "body": "হাতে-কলমে হিসাবটি দেখার আগে একটি ছোট্ট সতর্কতা: আমরা যদি `[[0, 0], [2, 0], [0, 2], [2, 2]]` বর্গক্ষেত্রটি নিতাম, তবে তার দুই অক্ষের বিস্তার সমান হওয়ায় দুটি Eigenvalue সমান হয়ে যেত এবং একক কোনো প্রধান দিক থাকত না। সেই Tie এড়াতে আয়তাকার ডেটা `[[0, 0], [4, 0], [0, 2], [4, 2]]` নেওয়া যাক। এর Training Mean হলো `[2, 1]` এবং অনুভূমিক বিস্তার বেশি হওয়ায় প্রধান একক দিকটি হলো সরাসরি x-অক্ষ (`[1, 0]`)। এবার নতুন একটি Query `[5, 3]` এলে আগে Training গড় বিয়োগ করে পাই `[3, 2]`, প্রধান অক্ষে এর Score হয় `3`, এবং পুনরায় গড় যোগ করে পুনর্গঠিত বিন্দু দাঁড়ায় `[5, 1]`—ফলে বর্গ ত্রুটি হয় `(5 - 5)² + (3 - 1)² = 4`! লক্ষ্য করুন, ভুল করে যদি Query-র নিজস্ব গড় দিয়ে বিয়োগ করতেন, তবে স্থানাঙ্কের পুরো কাঠামোটিই নষ্ট হয়ে যেত।"
+        },
+        {
+          "type": "code",
+          "title": "স্থির রাখা Training Mean ও Basis দিয়ে নতুন Query Reconstruction",
+          "body": "import numpy as np\n\ntraining = np.array([[0., 0.], [4., 0.], [0., 2.], [4., 2.]])\nmean = training.mean(axis=0)\ncentered = training - mean\n_, singular_values, right = np.linalg.svd(centered, full_matrices=False)\nbasis = right[:1].T\nquery = np.array([[5., 3.]])\nscores = (query - mean) @ basis\nreconstruction = scores @ basis.T + mean\ntraining_error = np.sum((centered - (centered @ basis) @ basis.T)**2)\nnp.testing.assert_allclose(training_error, np.sum(singular_values[1:]**2))\nprint(*mean, *reconstruction.ravel(), training_error)\nprint(float(np.sum((query - reconstruction)**2)))\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে হিসাব করুন",
+          "body": "নতুন আসা এই Query বিন্দুটির পুনর্গঠন ত্রুটি কি সরাসরি ট্রেনিং ডেটার Singular Value-গুলো যোগ করেই বলে দেওয়া সম্ভব?",
+          "solution": "না! বাদ দেওয়া Singular Value-গুলোর বর্গের যোগফল (`Σ_{j > q} σ_j²`) কেবল যে ট্রেনিং Matrix-এর ওপর মডেল Fit করা হয়েছে, তার মোট পুনর্গঠন ত্রুটি দেয়। যেকোনো নতুন অদেখা Query-র ত্রুটি জানতে হলে স্থির রাখা Training Mean ও Basis ব্যবহার করে তার নিজস্ব Residual আলাদাভাবে হিসাব করতে হবে। প্রসঙ্গত, অক্ষের চিহ্ন `v` থেকে `-v` হয়ে গেলে মধ্যবর্তী Score-এর চিহ্ন উল্টে গেলেও চূড়ান্ত পুনর্গঠিত বিন্দুটি হুবহু একই থাকে।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch12_components",
+      "title": "Component নির্বাচন, Sign Ambiguity ও Whitening",
+      "subtitle": "Explained Variance Ratio-র সঠিক ব্যবহার এবং অভিক্ষেপের সূক্ষ্ম গাণিতিক বৈশিষ্ট্য",
+      "duration": "30 min",
+      "icon": "scatter_plot",
+      "blocks": [
+        {
+          "type": "math",
+          "title": "Explained Variance Ratio ও ক্রমযোজিত অনুপাত",
+          "body": "r_j=\\frac{\\sigma_j^2}{\\sum_l\\sigma_l^2},\\qquad R_q=\\sum_{j=1}^{q}r_j"
+        },
+        {
+          "type": "text",
+          "title": "95% Variance Threshold রাখার আসল অর্থ কী?",
+          "body": "অনেকেই অভ্যাসবশত বলে থাকেন, “আমরা 95% Variance রেখে বাকিগুলো ফেলে দিয়েছি।” কিন্তু মনে রাখতে হবে, ট্রেনিং ডেটার 95% Variance ধরে রাখা নিছক একটি রৈখিক সংকোচন নীতি (Compression Policy)—এর মানে মোটেও ‘95% ভবিষ্যদ্বাণীমূলক Accuracy টিকে থাকা’ নয়! আমাদের মূল Standardized তিন-Feature-এর Adult পরীক্ষাতেই দেখুন: তিনটি অক্ষের Explained Variance Ratio আসে যথাক্রমে প্রায় `0.3882`, `0.3245` এবং `0.2873`। অর্থাৎ প্রথম দুটি অক্ষ মিলে ধরে রাখে প্রায় `71.27%`, আর আপনি যদি 95% সীমা দাবি করেন তবে তিনটি অক্ষের একটিও কমানো সম্ভব নয়! সব মাত্রায় তথ্য সমানভাবে ছড়িয়ে থাকলে জোর করে Component কমিয়ে কখনোই জাদুকরী সংকোচন পাওয়া যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "অক্ষের চিহ্নের দ্ব্যর্থতা (Sign Ambiguity)",
+          "body": "PCA চালানোর পর ভিন্ন ভিন্ন কম্পিউটারে বা লাইব্রেরির সংস্করণে হুবহু উল্টো চিহ্নের (`+` এর বদলে `-`) Component দেখে নতুনরা প্রায়ই ঘাবড়ে যান। আসলে ভয়ের কিছুই নেই: একক ভেক্টর `v` এবং `-v` হুবহু একই সরলরেখা বা Principal Axis নির্দেশ করে! অক্ষের চিহ্ন উল্টে গেলে অভিক্ষিপ্ত Score-এর চিহ্নও একসাথে উল্টে যায়, ফলে দুটো গুণ করে পুনর্গঠিত বিন্দু বের করলে তা চুল পরিমাণও বদলায় না। ফলাফল সবসময় সুনির্দিষ্ট (Deterministic) রাখার জন্য আমাদের পাইপলাইনে প্রতিটি অক্ষের সবচেয়ে বড় পরম মানের Loading-টিকে ধনাত্মক রাখার নিয়ম অনুসরণ করা হয়েছে। তাই বিভিন্ন সলভারের চিহ্ন আলাদা দেখলে সেটিকে বাগ না ভেবে তাদের Reconstruction বা Projector (`V_q V_qᵀ`) তুলনা করে দেখুন।"
+        },
+        {
+          "type": "code",
+          "title": "দিকের চিহ্ন উল্টে গেলেও অভিক্ষেপ অপরিবর্তিত থাকার প্রমাণ",
+          "body": "import numpy as np\n\nx = np.array([3.0, 4.0])\nv = np.array([0.6, 0.8])\na = (x @ v) * v\nb = (x @ (-v)) * (-v)\nassert np.allclose(a, b)\nprint(a)\n"
+        },
+        {
+          "type": "text",
+          "title": "সমান বা কাছাকাছি Eigenvalue থাকলে কী হয়?",
+          "body": "আরেকটি সূক্ষ্ম জ্যামিতিক পরিস্থিতি তৈরি হয় যখন একাধিক Eigenvalue পরস্পর সমান হয়ে যায়। তখন সেই সমান মানের Subspace-এর ভেতরে যেকোনো লম্ব ঘূর্ণন (Orthogonal Rotation) দিলেই হুবহু একই Variance পাওয়া যায়! ফলে আলাদা আলাদাভাবে একেকটি অক্ষের Loading তুলনা করা তখন অর্থহীন হয়ে পড়ে—তুলনা করতে হয় সম্মিলিত Projector `V_q V_qᵀ` এবং পুনর্গঠিত মান। এমনকি আপনার বেছে নেওয়া কাটঅফ `q` যদি এমন সমান Eigenvalue-এর ব্লকের ঠিক মাঝখানে পড়ে, তবে নির্বাচিত Rank-`q` Subspace-টিও অনন্য (Unique) থাকে না! আর মানগুলো পুরোপুরি সমান না হয়ে খুব কাছাকাছি হলে ডেটার সামান্য পরিবর্তনেই Loading ভেক্টরগুলো বড়সড় ঘূর্ণন দেখাতে পারে।"
+        },
+        {
+          "type": "math",
+          "title": "অশূন্য Eigenvalue-এর ক্ষেত্রে Whitening-এর সূত্র",
+          "body": "z_j=\\frac{(x-\\bar{x})^{\\top}v_j}{\\sqrt{\\lambda_j}}"
+        },
+        {
+          "type": "text",
+          "title": "Whitening কৌশলের সুবিধা ও ঝুঁকি",
+          "body": "কখনো কখনো PCA করার পর প্রতিটি নির্বাচিত অক্ষের Score-কে তার `√λ_j` দিয়ে ভাগ করে নেওয়া হয়, যাকে বলে Whitening। আমাদের Sample Covariance প্রথায় এর ফলে ট্রেনিং Score-গুলোর প্রতিটির Sample Variance সমান হয়ে `1` দাঁড়ায় (ভিন্ন লাইব্রেরিতে `n` বনাম `n - 1` স্কেলিংয়ের খুঁটিনাটি সংস্করণ ভেদে দেখে নেবেন)। এটি গোলকাকার প্রতিসাম্য তৈরি করলেও এর দুটি বড় ঝুঁকি রয়েছে: প্রথমত, এটি শক্তিশালী ও দুর্বল অক্ষের মধ্যকার প্রাকৃতিক বিস্তারের পার্থক্য মুছে দেয়; দ্বিতীয়ত, অতি ক্ষুদ্র Eigenvalue দিয়ে ভাগ করার সময় সেই দিকের সূক্ষ্ম Noise প্রচণ্ডভাবে বিবর্ধিত (Amplified) হয়ে যেতে পারে! তাছাড়া মনে রাখবেন, Whitening করলেও অক্ষগুলো কেবল Uncorrelated হয়, পরিসংখ্যানগতভাবে Independent হয়ে যায় না; আর আমাদের UI-এর Lab কোনো Whitening ছাড়াই সরাসরি মূল PCA Projection দেখায়।"
+        },
+        {
+          "type": "callout",
+          "title": "বাস্তবে কয়টি Component রাখবেন তা বাছার নিয়ম",
+          "body": "সঠিক `q` বেছে নেওয়ার সময় কেবল ট্রেনিং বক্ররেখা না দেখে Held-out ডেটার পুনর্গঠন ত্রুটি, পরবর্তী মডেলের Validation ফলাফল এবং সিস্টেমের Latency ও মেমরি বাজেট একসঙ্গে বিবেচনা করুন। যদি পরবর্তী কোনো Classifier-এর ফলাফল দেখে PCA-এর মাত্রা ঠিক করেন, তবে Data Leakage ঠেকাতে অবশ্যই প্রতিটি Inner Cross-validation Fold-এর ভেতরে আলাদা করে Scaler ও PCA Fit করবেন; এবং একই Validation সেটে বারবার বিভিন্ন সীমা পরখ করার পর সেই স্কোরটিকেই চূড়ান্ত নিরপেক্ষ ফলাফল হিসেবে দাবি করবেন না।"
+        }
+      ]
+    },
+    {
+      "id": "ch12_nonlinear",
+      "title": "t-SNE, UMAP ও Visualization-এর সাধারণ ফাঁদ",
+      "subtitle": "সুন্দর একটি Scatter Plot প্রমাণের শেষ নয়, বরং নতুন প্রশ্ন করার সূচনা মাত্র",
+      "duration": "28 min",
+      "icon": "scatter_plot",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "সরলরৈখিক সীমাবদ্ধতার বাইরে কেন যেতে হয়?",
+          "body": "PCA-র পুরো জগতটি দাঁড়িয়ে আছে একটি বৈশ্বিক সমতল বা রৈখিক Subspace-এর ওপর। কিন্তু উচ্চ মাত্রার ডেটা যদি কোনো মোড়ানো কাগজের মতো বাঁকানো তলে (Curved Manifold) অবস্থান করে, তবে দুই বা তিন মাত্রার রৈখিক অভিক্ষেপ দূরের ভাঁজগুলোকে একে অপরের গায়ের ওপর ফেলে দিতে পারে। ঠিক এই জায়গায় স্থানীয় প্রতিবেশীদের সম্পর্ক অক্ষুণ্ণ রেখে দ্বিমাত্রিক ছবি আঁকতে এগিয়ে আসে t-SNE এবং UMAP-এর মতো Nonlinear Embedding পদ্ধতি। বলে রাখা ভালো, এই অধ্যায়ে আমরা ধারণাগত স্বচ্ছতা ও ইন্টার্ভিউ প্রস্তুতির জন্য এদের কার্যপ্রণালি ও সীমাবদ্ধতা তুলনা করছি—আমাদের লোকাল রানটাইমে বাহ্যিক `umap-learn` প্যাকেজ চালানো বা বেঞ্চমার্ক করার দাবি করছি না।"
+        },
+        {
+          "type": "text",
+          "title": "t-SNE কীভাবে কাজ করে?",
+          "body": "t-SNE প্রথমে উচ্চ মাত্রার ডেটায় কাছাকাছি বিন্দুগুলোর পারস্পরিক সাদৃশ্যকে একটি সম্ভাব্যতা বিতরণ `P` দিয়ে প্রকাশ করে, এবং দ্বিমাত্রিক পর্দায় আরেকটি বিতরণ `Q` বানিয়ে দুটির অমিল (KL Divergence) কমানোর চেষ্টা করে। এখানে একটি চমৎকার গাণিতিক কৌশল কাজে লাগানো হয়: উচ্চ মাত্রার ঘন প্রতিবেশীদের ছোট পর্দায় গাদাগাদি হয়ে পড়া (Crowding Problem) ঠেকাতে নিম্ন মাত্রায় মোটা লেজের (Heavy-tailed) Student-t বণ্টন ব্যবহার করা হয়। তবে এর অপ্টিমাইজেশন সম্পূর্ণ Non-convex হওয়ায় শুরুর অবস্থান, `perplexity`, `learning_rate` এবং Random Seed বদলালে ছবির চেহারাও বদলে যায়—তাই একটিমাত্র ছবি দেখেই ডেটার প্রকৃত দলসংখ্যা আবিষ্কার হয়ে গেছে ভাবা চলবে না।"
+        },
+        {
+          "type": "math",
+          "title": "t-SNE-এর KL Divergence Objective-এর মূল ধারণা",
+          "body": "\\operatorname{KL}(P\\|Q)=\\sum_{i\\ne j}p_{ij}\\log\\frac{p_{ij}}{q_{ij}}"
+        },
+        {
+          "type": "text",
+          "title": "UMAP-এর মূল ধারণা ও Hyperparameter",
+          "body": "অন্যদিকে UMAP উচ্চ মাত্রার স্থানীয় প্রতিবেশীদের নিয়ে একটি ওজনযুক্ত গ্রাফ তৈরি করে এবং নিম্ন মাত্রায় এমন একটি বিন্যাস খোঁজে যার Fuzzy গ্রাফ কাঠামো মূল গ্রাফের সবচেয়ে কাছাকাছি থাকে। এখানে `n_neighbors` প্যারামিটারটি ঠিক করে আপনি একদম ক্ষুদ্র স্থানীয় খুঁটিনাটি দেখবেন নাকি একটু বৃহত্তর কাঠামোর ভারসাম্য রাখবেন, আর `min_dist` নিয়ন্ত্রণ করে পর্দার বিন্দুগুলো কতটা গায়ে গায়ে লেগে থাকবে। উল্লেখ্য, লাইব্রেরি হিসেবে UMAP নতুন বিন্দু `.transform()` করার সুবিধা দিলেও প্রশিক্ষণ ডেটার বাইরের (Out-of-distribution) নতুন বিন্দুতে সেই রূপান্তর কতটা নির্ভরযোগ্য, তা আলাদাভাবে যাচাই না করে প্রোডাকশনে ভরসা করা উচিত নয়।"
+        },
+        {
+          "type": "text",
+          "title": "ছবি দেখে কোন কোন দাবি করা মারাত্মক ভুল?",
+          "body": "t-SNE বা UMAP-এর রঙিন Scatter Plot দেখে মানুষ অহরহ তিনটি বড় ভুল সিদ্ধান্ত টানে: প্রথমত, পর্দায় দুটি দ্বীপের মতো গুচ্ছ অনেক দূরে আঁকা হয়েছে মানেই কিন্তু মূল উচ্চ-মাত্রিক জগতেও তারা একই অনুপাতে দূরে নয়! দ্বিতীয়ত, পর্দায় কোনো গুচ্ছ কতটা বড় জায়গা জুড়ে ছড়িয়ে আছে তা দেখে মূল ডেটায় সেই দলের প্রকৃত ঘনত্ব (Population Density) বা বিস্তার মাপা নিরাপদ নয়। তৃতীয়ত, দশ রকম Seed বা Hyperparameter ঘুরিয়ে যে ছবিটিতে দলগুলো সবচেয়ে সুন্দর আলাদা দেখায় শুধু সেটিই বেছে রিপোর্টে বসানো স্পষ্ট Selection Bias! এছাড়া ছবির Legend-এর রঙগুলো কি বাইরের কোনো স্বতন্ত্র Label থেকে এসেছে, নাকি একই ডেটার ওপর চালানো Clustering থেকে এসেছে—তা সবসময় পরিষ্কারভাবে উল্লেখ করবেন।"
+        },
+        {
+          "type": "code",
+          "title": "ছবি আঁকার আগে Local Neighborhood সংরক্ষণ যাচাই (Trustworthiness)",
+          "body": "import numpy as np\nfrom sklearn.manifold import trustworthiness\n\nX = np.array([[i, i * i / 10] for i in range(10)], dtype=float)\nlinear_view = X[:, :1]\nprint(trustworthiness(X, linear_view, n_neighbors=2))\n"
+        },
+        {
+          "type": "text",
+          "title": "Trustworthiness স্কোরের পরিধি ও সীমা",
+          "body": "নিছক চোখের দেখার ওপর ভরসা না করে নিম্ন মাত্রার Embedding-এ অবাঞ্ছিত নকল প্রতিবেশী (False Neighbors) ঢুকে পড়ল কি না, তা সংখ্যার মাধ্যমে মাপতে scikit-learn-এর `trustworthiness` স্কোর ব্যবহার করা যায় (ডেটার আকার অনুযায়ী বৈধ `n_neighbors` মেনে)। কিন্তু মনে রাখবেন, উচ্চ Trustworthiness কেবল স্থানীয় প্রতিবেশী সংরক্ষণের মানদণ্ড—এটি মোটেও বৈশ্বিক দূরত্ব, প্রকৃত ঘনত্ব, কার্যকারণগত গোষ্ঠী কিংবা পরবর্তী মডেলের সাফল্যের সনদ দেয় না! তাই আসল সিদ্ধান্ত সবসময় মূল Representation-এর পরিমাপ ও একাধিক সেটিংসের সংবেদনশীলতা দেখেই নিতে হবে।"
+        },
+        {
+          "type": "callout",
+          "title": "Interview-এ গুছিয়ে উত্তর দেওয়ার কাঠামো",
+          "body": "ইন্টার্ভিউতে যখন PCA, t-SNE এবং UMAP-এর তুলনা করতে বলা হবে, তখন পাঁচটি সুনির্দিষ্ট মাপকাঠিতে উত্তর সাজান: (১) গাণিতিক Objective, (২) নতুন ডেটায় Transform বা Serving আচরণ, (৩) ফলাফলের Reproducibility, (৪) বড় ডেটায় রানটাইম স্কেলিং এবং (৫) ছবির কোন দূরত্ব বা অক্ষ আসলে অর্থবহ। সাথে অবশ্যই যোগ করবেন যে PCA-র মতো t-SNE-র অনুভূমিক বা উল্লম্ব অক্ষকে কখনোই মূল Feature-এর রৈখিক Loading হিসেবে পড়া যায় না!"
+        }
+      ]
+    },
+    {
+      "id": "ch12_evaluation",
+      "title": "Evaluation Design ও Data Leakage-এর সীমানা",
+      "subtitle": "Unsupervised মানেই যে ডেটায় Split লাগবে না—এই প্রচলিত ভ্রান্তি দূর করা এবং সঠিক মূল্যায়ন কাঠামো গড়া",
+      "duration": "32 min",
+      "icon": "scatter_plot",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "শুরুতেই Fit Scope সুনির্দিষ্ট করা জরুরি কেন?",
+          "body": "আগের পাঠে আমরা দেখেছি, নিছক সুন্দর একটি দ্বিমাত্রিক ছবি দেখেই কোনো চূড়ান্ত সিদ্ধান্ত টানা কতটা ঝুঁকিপূর্ণ। তাহলে Unsupervised Model-এর প্রকৃত মূল্যায়ন আমরা কীভাবে করব? অনেকের মনেই একটি প্রচলিত ভুল ধারণা কাজ করে যে, যেহেতু এখানে কোনো Target `y` ব্যবহার করা হচ্ছে না, তাই ডেটা Split না করে পুরো Dataset-এর ওপরই নির্দ্বিধায় কাজ করা যায়! কিন্তু একটু ভেবে দেখুন—ডেটার `Mean`, `Scaler`, `PCA Basis`, Cluster-এর `Center`, `Feature Selection` কিংবা `k` এবং `eps`-এর মান নির্বাচন—এসবের প্রতিটিই কিন্তু ডেটা দেখে শেখা বা বেছে নেওয়া একেকটি Artifact। কেবল \"`y` ব্যবহার করিনি\" এই যুক্তিতে পুরো ডেটার ওপর Preprocessing Fit করে ভবিষ্যতের অদেখা ডেটায় (Future Generalization) ভালো ফলাফলের দাবি করা সরাসরি Data Leakage!\n\nতাই কাজ শুরুর আগেই আপনার আসল প্রশ্নটি পরিষ্কার করে লিখে নিন: আপনি কি একটি নির্দিষ্ট ও স্থির Dataset-এর ভেতরের গঠন ঘেঁটে দেখছেন (Transductive Exploration), নাকি ভবিষ্যতে আসা নতুন Row-এর ওপর Model কেমন কাজ করবে তা যাচাই করছেন (Inductive Evaluation)? দুটি সম্পূর্ণ ভিন্ন প্রশ্ন, এবং এদের মূল্যায়নের নিয়মও আলাদা।"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের বাস্তব Workflow-এর ডেটা Split কাঠামো",
+          "body": "এই অধ্যায়ের বাস্তব পরীক্ষায় আমরা কীভাবে ডেটা ভাগ করেছি, তা ধাপে ধাপে দেখা যাক। মূল `adult.data` ফাইলে মোট `32,561`টি Row রয়েছে। প্রথমে আমরা প্রতিটি Row-এর কাঁচা প্রোফাইল থেকে `income` এবং `hours_per_week` বাদ দিয়ে বাকি কলামগুলোর সমন্বয়ে প্রোফাইল গ্রুপ তৈরি করি। এরপর `seed 42` ব্যবহার করে `GroupShuffleSplit`-এর মাধ্যমে ডেটাকে `26,050`টি Outer Training Row এবং `6,511`টি Validation Row-তে ভাগ করা হয়।\n\nপরের ধাপে হিসাবের নির্দিষ্ট বাজেট বজায় রাখতে Outer Training অংশ থেকে Label-নিরপেক্ষভাবে নির্দিষ্ট Seed দিয়ে `6,000`টি প্রোফাইল গ্রুপ বেছে নেওয়া হয়, যেখানে মোট `6,013`টি Budget Training Row থাকে। তবে একটি বাস্তব সীমাবদ্ধতা মনে রাখা দরকার: এই প্রোফাইল গ্রুপগুলো কোনো যাচাইকৃত স্বতন্ত্র ব্যক্তির পরিচয়পত্র নয়, বরং মিল থাকা বৈশিষ্ট্যের একটি প্রক্সি মাত্র—তাই গ্রুপগুলোর মধ্যে পুরোপুরি স্বাধীনতার (Independence) সামান্য ঝুঁকি থেকেই যায়।"
+        },
+        {
+          "type": "math",
+          "title": "Frozen Training Artifact দিয়ে Held-out ডেটায় গড় Distortion হিসাব",
+          "body": "\\frac{1}{n_{val}}\\sum_{x\\in val}\\min_j\\|\\operatorname{scale}_{train}(x)-\\mu_{j,train}\\|^2"
+        },
+        {
+          "type": "text",
+          "title": "Group Key থেকেও কেন income এবং hours_per_week বাদ দেওয়া হলো?",
+          "body": "উপরের সমীকরণে যেমন Held-out ডেটা মাপার সময় ট্রেনিংয়ের Scaler ও Centroid হুবহু অপরিবর্তিত (Frozen) রাখা হয়েছে, তেমনি ডেটা ভাগের সময়েও আমাদের বাড়তি সতর্কতা নিতে হয়েছে। প্রশ্ন জাগতে পারে, গ্রুপ তৈরির Key থেকেও কেন আমরা `income` বাদ রাখলাম? কারণ Target Label কোনোভাবে Grouping প্রক্রিয়ায় ঢুকে পড়লে ট্রেনিং ও ভ্যালিডেশন ভাগের মধ্যে সূক্ষ্ম ও অদৃশ্য নির্ভরশীলতা তৈরি হতে পারে; তাই এই Unsupervised পরীক্ষায় `income` কলামটিকে আমরা শুরু থেকে শেষ পর্যন্ত সম্পূর্ণ অব্যবহৃত রেখেছি।\n\nএকইভাবে আগের অধ্যায়গুলোর (যেমন Book 2 · Chapter 3: Model Evaluation & Experiment Design) Grouping নীতির সাথে সামঞ্জস্য রেখে `hours_per_week`-ও বাদ দেওয়া হয়েছে, যাতে কেবল আয় বা কাজের ঘণ্টা আলাদা কিন্তু বাকি সব জনমিতিক তথ্য অভিন্ন—এমন প্রোফাইলগুলো একই গ্রুপে থাকে এবং দুই ভাগে ছড়িয়ে না পড়ে। উল্লেখ্য, এখানে ব্যবহৃত Pandas-এর Group Hash কেবল দ্রুত গ্রুপিংয়ের একটি কারিগরি উপায়; এটি অনিচ্ছাকৃত Hash Collision ঠেকানোর কোনো Cryptographic পরিচয়-সুরক্ষা দেয় না।"
+        },
+        {
+          "type": "code",
+          "title": "Adjusted Rand Index (ARI) যে ইচ্ছেমতো দেওয়া Cluster ID-র ওপর নির্ভর করে না, তার প্রমাণ",
+          "body": "from sklearn.metrics import adjusted_rand_score\n\nfirst = [0, 0, 1, 1, 2, 2]\nrenamed = [9, 9, 7, 7, 4, 4]\nchanged = [0, 1, 0, 1, 2, 2]\nprint(adjusted_rand_score(first, renamed), adjusted_rand_score(first, changed))\n"
+        },
+        {
+          "type": "text",
+          "title": "স্থিতিশীলতা (Stability) যাচাইয়ের তিনটি ভিন্ন স্তর",
+          "body": "কোডের উদাহরণে আমরা দেখলাম, দুটি দলবিন্যাসের মধ্যে প্রকৃত মিল কতটুকু তা মাপার জন্য Adjusted Rand Index (ARI) দারুণ কার্যকর, কারণ Cluster-গুলোর নাম `0, 1, 2` বদলে `9, 7, 4` রাখলেও এর মান বদলায় না। এই ARI দিয়ে স্থিতিশীলতা মাপার সময় তিনটি ভিন্ন স্তরকে গুলিয়ে ফেললে চলবে না: (১) Seed Stability দেখায় একই ডেটার ওপর ভিন্ন Random Seed দিলে অপ্টিমাইজেশন কতটা সংবেদনশীল; (২) Sampling Stability দেখায় বারবার গ্রুপ-ভিত্তিক Resampling করলে ডেটার পরিবর্তনে দলবিন্যাস কতটা বদলায়; এবং (৩) Temporal Stability দেখায় সময়ের সাথে নতুন সময়ের ডেটা এলে কোনো Drift ঘটছে কি না। আমাদের মূল রিপোর্টে স্থির `k = 3`-এর জন্য `seed 42` বনাম `seed 43` তুলনা করে ARI পাওয়া গেছে প্রায় `0.9934`। মনে রাখবেন, এটি কেবল প্রথম স্তরের একটি একক সংবেদনশীলতা পরীক্ষা—একে পুরো মডেলিং প্রক্রিয়ার সামগ্রিক অনিশ্চয়তার (Total Uncertainty) পরিমাপ বলে দাবি করা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "বাইরের পরিচিত Label থাকলে কীভাবে তুলনা করবেন?",
+          "body": "কখনো কখনো মূল্যায়নের সময় আমাদের হাতে বাইরের কোনো পরিচিত Label থাকে। যদি সেই Label আপনার বাস্তব কাজের উদ্দেশ্যের সাথে সত্যিই প্রাসঙ্গিক হয়, তবে ARI বা Normalized Mutual Information (NMI) দিয়ে তুলনা করা যেতে পারে—যদিও মাথায় রাখতে হবে যে মানুষের তৈরি সেই বাহ্যিক Label-ও সবসময় নিখুঁত না হতে পারে। তবে কখনোই সরাসরি Classification Accuracy দিয়ে Cluster ID আর Class Label মেলানোর চেষ্টা করবেন না, কারণ Unsupervised Cluster-এর সংখ্যাবাচক নামের নিজস্ব কোনো অর্থ নেই! আমাদের এই অধ্যায়ে আমরা বাহ্যিক স্কোরিংয়ের জন্যও `income` Label ব্যবহার করিনি। বাস্তবে কোনো Clustering মানুষের চোখে কতটা অর্থবহ (Human Assessment) বা ব্যবসায়িক সিদ্ধান্তে কতটা কার্যকর (Actionable Utility), তা যাচাই করতে আলাদা ও সুনির্দিষ্ট মূল্যায়ন প্রোটোকল প্রয়োজন।"
+        },
+        {
+          "type": "callout",
+          "title": "পরীক্ষা চালানোর আগেই Acceptance Test ঠিক করে রাখুন",
+          "body": "একটি সুশৃঙ্খল Unsupervised পরীক্ষার নকশায় শুরুতেই চারটি জিনিস স্থির থাকা চাই: ট্রেনিংয়ে শেখা Frozen Preprocessing, নির্দিষ্ট Compute Budget, গ্রুপ-ভিত্তিক আলাদা Validation ডেটা এবং আগে থেকেই ঘোষণা করা Downstream Metric। আমাদের বর্তমান কাজটি যেহেতু একটি পুরোনো ঐতিহাসিক Dataset-এর পুনর্ব্যবহার করে তৈরি অনুসন্ধানমূলক (Exploratory) বিশ্লেষণ, তাই একে সেভাবেই রিপোর্ট করতে হবে—বাস্তব প্রোডাকশনে মোতায়েনের দাবি করতে হলে অবশ্যই নতুন ও প্রাসঙ্গিক ডেটার প্রমাণ লাগবে।"
+        }
+      ]
+    },
+    {
+      "id": "ch12_workflow",
+      "title": "বাস্তব Adult Workflow: ডেটা লোড, Split ও Reproducibility",
+      "subtitle": "নিজের মেশিনে চালানোর উপযোগী একটি সম্পূর্ণ ও যাচাইযোগ্য স্থানীয় পরীক্ষার প্রথম ধাপ",
+      "duration": "38 min",
+      "icon": "scatter_plot",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "নিজের কম্পিউটারে কোডটি চালানোর প্রস্তুতি",
+          "body": "আগের পাঠে যে মূল্যায়ন নীতিগুলো আমরা সাজিয়েছি, এবার সেগুলোকে একটি বাস্তব ও চালানোর উপযোগী Python স্ক্রিপ্টে রূপ দেওয়ার পালা। কাজটি নিজের মেশিনে চালাতে প্রজেক্টের মূল ফোল্ডার (Repository Root) থেকে আপনার লোকাল Python পরিবেশে প্রথমে `tool/requirements-python-qa.txt` ফাইলের প্যাকেজগুলো ইনস্টল করে নিন। এরপর টার্মিনালে `python assets/datasets/adult/unsupervised_workflow.py --output build/chapter-12-workflow-report.json` কমান্ডটি চালান। এখানে প্রজেক্টের ভেতরে থাকা ফাইলই ব্যবহৃত হয়, তাই আলাদা কোনো ডাউনলোড, অ্যাকাউন্ট বা বাইরের API-এর প্রয়োজন নেই। উল্লেখ্য, আমাদের এই অ্যাপটি নিজে সরাসরি Python কোড চালায় না; অ্যাপের ভেতরে আপনি এই স্থানীয় স্ক্রিপ্ট থেকেই তৈরি ও যাচাই করা ফলাফলগুলো দেখতে পান।"
+        },
+        {
+          "type": "text",
+          "title": "ডেটার উৎস ও অখণ্ডতা যাচাই (Source Provenance)",
+          "body": "আমাদের ব্যবহৃত Dataset-টি হলো সুপরিচিত UCI Adult (Becker & Kohavi, 1996; CC BY 4.0 লাইসেন্সের আওতায়)। ডেটা লোড করার শুরুতেই আমরা মূল `adult.data` ফাইলের SHA-256 হ্যাশ (`5b00264637dbfec36bdeaab5676b0b309ff9eb788d63554ca0a249491c86603d`) মিলিয়ে নিই, যাতে ফাইলের একটি বাইটও বদলে গেলে সাথে সাথে ধরা পড়ে। এখানে `adult.test` ফাইলটি সম্পূর্ণ অক্ষত ও অব্যবহৃত রাখা হয়েছে; আমাদের এই অধ্যায়ের অনুসন্ধানমূলক Validation পুরোটাই করা হয়েছে `adult.data`-র ভেতরকার Group Split দিয়ে। কাজেই একে প্রচলিত Supervised Adult Benchmark-এর ফলাফলের সাথে গুলিয়ে ফেলা যাবে না।"
+        },
+        {
+          "type": "code",
+          "title": "পর্ব ১ / ৪: স্থানীয় ডেটা লোড এবং Label-নিরপেক্ষ বাজেট Split",
+          "body": "from pathlib import Path\nimport argparse\nimport hashlib\nimport json\nimport platform\nimport numpy as np\nimport pandas as pd\nimport sklearn\nfrom scipy.cluster.hierarchy import linkage, fcluster\nfrom threadpoolctl import threadpool_limits\nfrom sklearn.model_selection import GroupShuffleSplit\nfrom sklearn.preprocessing import StandardScaler\nfrom sklearn.cluster import KMeans, DBSCAN\nfrom sklearn.decomposition import PCA\nfrom sklearn.metrics import silhouette_score, adjusted_rand_score\n\nDATA = Path(\"assets/datasets/adult\").resolve()\nSOURCE_HASH = \"5b00264637dbfec36bdeaab5676b0b309ff9eb788d63554ca0a249491c86603d\"\nCOLUMNS = [\n    \"age\",\n    \"workclass\",\n    \"fnlwgt\",\n    \"education\",\n    \"education_num\",\n    \"marital_status\",\n    \"occupation\",\n    \"relationship\",\n    \"race\",\n    \"sex\",\n    \"capital_gain\",\n    \"capital_loss\",\n    \"hours_per_week\",\n    \"native_country\",\n    \"income\",\n]\nFEATURES = [\"age\", \"education_num\", \"hours_per_week\"]\n\n\ndef load_source(path):\n    digest = hashlib.sha256(path.read_bytes()).hexdigest()\n    if digest != SOURCE_HASH:\n        raise ValueError(\"Expected original adult.data\")\n    frame = pd.read_csv(path, names=COLUMNS, skipinitialspace=True, na_values=\"?\")\n    X = frame[FEATURES].to_numpy(dtype=float, copy=True)\n    if not np.isfinite(X).all():\n        raise ValueError(\"Finite numeric clustering features required\")\n    keys = (\n        frame[[c for c in COLUMNS if c not in (\"income\", \"hours_per_week\")]]\n        .astype(\"string\")\n        .fillna(\"__MISSING__\")\n    )\n    groups = pd.util.hash_pandas_object(keys, index=False).to_numpy()\n    return frame, X, groups, digest\n\n\ndef split_budget(X, groups):\n    outer, valid = next(\n        GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=42).split(\n            X, groups=groups\n        )\n    )\n    chosen = np.random.default_rng(42).permutation(np.unique(groups[outer]))[:6000]\n    train = outer[np.isin(groups[outer], chosen)]\n    if not set(groups[train]).isdisjoint(groups[valid]):\n        raise ValueError(\"Group overlap\")\n    return outer, train, valid\n"
+        },
+        {
+          "type": "text",
+          "title": "ডেটা লোড ও প্রস্তুতির ধাপগুলোর ব্যাখ্যা",
+          "body": "উপরের কোডটি খেয়াল করলে দেখবেন, `COLUMNS` তালিকায় মূল ফাইলের সব কটি কলামের কাঁচা Schema রাখা হলেও `FEATURES` হিসেবে আমরা বেছে নিয়েছি কেবল তিনটি সসীম সংখ্যাবাচক কলাম (`age`, `education_num` এবং `hours_per_week`)। ক্যাটেগরিক্যাল কলামগুলোতে কোনো মান অনুপস্থিত থাকলে (`?`) গ্রুপিংয়ের সুবিধার্থে সেখানে সুনির্দিষ্ট `\"__MISSING__\"` টোকেন বসানো হয়েছে, কিন্তু Clustering-এর Feature হিসেবে কোনো ক্যাটেগরিক্যাল Encoding যোগ করা হয়নি। আর শুরুতেই ফাইলের SHA-256 হ্যাশ না মিললে কোডটি সাথে সাথে `ValueError` তুলে থেমে যাবে—যাতে ভবিষ্যতে সোর্স ফাইল অজান্তে বদলে গেলে তার ওপর পুরোনো সংখ্যার হিসাব নীরবে চলতে না পারে।"
+        },
+        {
+          "type": "code",
+          "title": "পর্ব ২ / ৪: সহজে যাচাইযোগ্য গাণিতিক Helper Function-সমূহ",
+          "body": "def finite_matrix(X):\n    X = np.asarray(X, dtype=float)\n    if X.ndim != 2 or min(X.shape) < 1 or not np.isfinite(X).all():\n        raise ValueError(\"Nonempty finite matrix\")\n    return X\n\n\ndef lloyd_steps(X, initial, *, max_steps=12):\n    X, centers = finite_matrix(X), finite_matrix(initial).copy()\n    if (\n        centers.shape[1] != X.shape[1]\n        or len(centers) > len(X)\n        or not isinstance(max_steps, int)\n        or isinstance(max_steps, bool)\n        or not 0 <= max_steps <= 100\n    ):\n        raise ValueError(\"Aligned centers and bounded step count\")\n\n    def state(step, centers, empty):\n        squared = np.sum((X[:, None, :] - centers[None, :, :]) ** 2, axis=2)\n        labels = squared.argmin(axis=1)  # Smallest center index on ties.\n        return {\n            \"step\": step,\n            \"centers\": centers.tolist(),\n            \"labels\": labels.tolist(),\n            \"inertia\": float(squared[np.arange(len(X)), labels].sum()),\n            \"empty_before_update\": empty,\n        }\n\n    states = [state(0, centers, [])]\n    for step in range(1, max_steps + 1):\n        labels = np.asarray(states[-1][\"labels\"])\n        new = centers.copy()\n        empty = []\n        for c in range(len(centers)):\n            selected = X[labels == c]\n            if len(selected):\n                new[c] = selected.mean(axis=0)\n            else:\n                empty.append(c)  # Explicit policy: retain previous empty center.\n        following = state(step, new, empty)\n        states.append(following)\n        centers = new\n        if following[\"labels\"] == states[-2][\"labels\"]:\n            break\n    return states\n\n\ndef density_partition(X, eps, min_samples):\n    X = finite_matrix(X)\n    if (\n        not np.isfinite(eps)\n        or eps < 0\n        or not isinstance(min_samples, int)\n        or isinstance(min_samples, bool)\n        or min_samples < 1\n    ):\n        raise ValueError(\"Finite eps>=0 and positive integer min_samples\")\n    adjacency = np.sum((X[:, None, :] - X[None, :, :]) ** 2, axis=2) <= eps * eps\n    core = adjacency.sum(axis=1) >= min_samples  # Includes the observation itself.\n    labels = np.full(len(X), -1, dtype=int)\n    cluster = 0\n    for start in np.flatnonzero(core):\n        if labels[start] >= 0:\n            continue\n        labels[start] = cluster\n        queue = [int(start)]\n        for current in queue:\n            for neighbor in np.flatnonzero(adjacency[current] & core):\n                if labels[neighbor] < 0:\n                    labels[neighbor] = cluster\n                    queue.append(int(neighbor))\n        cluster += 1\n    # Non-core border points never connect core components. Ambiguous borders\n    # attach to the lowest adjacent component ID for this explicit ordering.\n    for i in np.flatnonzero(~core):\n        adjacent = labels[adjacency[i] & core]\n        if len(adjacent):\n            labels[i] = int(adjacent.min())\n    return labels, core, adjacency.sum(axis=1)\n\n\ndef fit_pca(X):\n    X = finite_matrix(X)\n    if len(X) < 2:\n        raise ValueError(\"At least two observations for sample variance\")\n    mean = X.mean(axis=0)\n    centered = X - mean\n    _, singular, components = np.linalg.svd(centered, full_matrices=False)\n    for i in range(len(components)):\n        anchor = np.argmax(np.abs(components[i]))\n        if components[i, anchor] < 0:\n            components[i] *= -1\n    variance = singular**2 / (len(X) - 1)\n    total = variance.sum()\n    if total <= 0:\n        raise ValueError(\"Explained-variance ratio undefined for zero total variance\")\n    return {\n        \"mean\": mean,\n        \"components\": components,\n        \"singular\": singular,\n        \"variance\": variance,\n        \"ratio\": variance / total,\n    }\n\n\ndef reconstruct(model, X, q):\n    X = finite_matrix(X)\n    if (\n        X.shape[1] != len(model[\"mean\"])\n        or not isinstance(q, int)\n        or isinstance(q, bool)\n        or not 0 <= q <= len(model[\"components\"])\n    ):\n        raise ValueError(\"Aligned PCA query and retained component count\")\n    V = model[\"components\"][:q]\n    return (X - model[\"mean\"]) @ V.T @ V + model[\"mean\"]\n\n\ndef safe_silhouette(X, labels):\n    labels = np.asarray(labels)\n    count = len(np.unique(labels))\n    return None if not 2 <= count < len(labels) else float(silhouette_score(X, labels))\n"
+        },
+        {
+          "type": "text",
+          "title": "গাণিতিক Helper Function-গুলো ঠিক কী কাজ করছে?",
+          "body": "দ্বিতীয় পর্বের এই ছোট ও স্বচ্ছ ফাংশনগুলো আমরা নিজের হাতে লিখেছি যাতে প্রতিটি গাণিতিক ধাপ সহজে পরীক্ষা (Audit) করা যায়। এখানে `lloyd_steps` প্রতি ধাপের Centroid, Label, Inertia এবং কোনো Cluster খালি হয়ে গেল কি না তার পূর্ণ বিবরণ ধরে রাখে। `density_partition` প্রথমে শুধুমাত্র Core বিন্দুগুলোর গ্রাফ ধরে সংযুক্ত উপাদান বের করে এবং তারপর Border বিন্দুগুলোকে নিকটবর্তী দলে যুক্ত করে। `fit_pca` ডেটাকে Center করার পর SVD চালায় এবং চিহ্নের দ্ব্যর্থতা (Sign Ambiguity) দূর করতে সুনির্দিষ্ট নিয়ম মেনে চলে; আর `reconstruct` ফাংশনটি শুধুমাত্র ট্রেনিংয়ের গড় ও নির্বাচিত `q` সংখ্যক Component ব্যবহার করেই ডেটা পুনর্গঠন করে। প্রতিটি ফাংশনই ইনপুটের সসীমতা ও Parameter-এর বৈধ সীমা কঠোরভাবে পরীক্ষা করে নেয়—তবে মনে রাখবেন, এগুলো ধারণাগত স্বচ্ছতার জন্য লেখা ম্যাট্রিক্স কোড, কোটি কোটি ডেটার উপযোগী প্রোডাকশন Neighbor Index নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Reproducibility-র বাস্তব সীমানা",
+          "body": "পরীক্ষাটি যাতে অন্য যেকোনো জায়গায় নির্ভরযোগ্যভাবে পুনরুত্পাদন করা যায়, সেজন্য আমরা Python ও সংশ্লিষ্ট লাইব্রেরির সংস্করণ, ব্যবহৃত Random Seed, সোর্স ফাইলের হ্যাশ এবং সুনির্দিষ্ট `n_init` মান রিপোর্টে সংরক্ষণ করি। তবু ভিন্ন অপারেটিং সিস্টেম বা CPU আর্কিটেকচারে Floating-point গাণিতিক সূক্ষ্মতার কারণে একদম শেষের দশমিক ঘরে সামান্য পার্থক্য দেখা দিতেই পারে। ঠিক এ কারণেই আমাদের কোড যখন scikit-learn-এর মতো স্ট্যান্ডার্ড লাইব্রেরির সাথে নিজের ফলাফল মিলিয়ে দেখে, তখন ইচ্ছেমতো বদলে যাওয়া Cluster ID বা Eigenvector-এর প্লাস-মাইনাস চিহ্ন না মিলিয়ে বরং মূল গাণিতিক বস্তু—অর্থাৎ Objective মান, Projector বা প্রকৃত Partition-এর সমতুল্যতা যাচাই করে।"
+        },
+        {
+          "type": "callout",
+          "title": "পরের পাঠে পূর্ণাঙ্গ পরীক্ষার দিকে এগিয়ে যাই",
+          "body": "আপনি চাইলে এই পাঠের কোড ব্লকগুলো একই Python সেশনে পরপর চালিয়ে দেখতে পারেন। আর পরের পাঠেই আমরা প্রথম থেকে চতুর্থ পর্বের পুরো কোড একত্র করে পূর্ণাঙ্গ ও সরাসরি চালানোর উপযোগী সংস্করণটি দেখব এবং তার সংখ্যাত্মক ফলাফল বিশ্লেষণ করব। উল্লেখ্য, মূল স্ক্রিপ্ট ফাইলটি অন্য কোথাও কেবল `import` করলে বিশ্লেষণ নিজে থেকে শুরু হয় না, ফলে ফাংশনগুলো আলাদাভাবেও নিরাপদে পরীক্ষা করা যায়।"
+        }
+      ]
+    },
+    {
+      "id": "ch12_experiment",
+      "title": "পূর্ণাঙ্গ Experiment, Diagnostics ও সংরক্ষিত রিপোর্ট বিশ্লেষণ",
+      "subtitle": "মূল 3D বিশ্লেষণ এবং 2D ভিজ্যুয়াল Lab-এর Fit Scope আলাদা রেখে ফলাফল পড়ার সঠিক নিয়ম",
+      "duration": "42 min",
+      "icon": "scatter_plot",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "একটি রিপোর্টের ভেতর চারটি সুনির্দিষ্ট পরীক্ষা",
+          "body": "আগের পাঠের প্রস্তুতি ও Helper Function-গুলোর ওপর দাঁড়িয়ে এবার আমরা আমাদের মূল বিশ্লেষণটি চালাব, যা একটিমাত্র JSON রিপোর্টে চারটি সুনির্দিষ্ট পরীক্ষার ফলাফল তুলে আনে। প্রথমত, মূল তিন-Feature-এর Standardized ট্রেনিং ডেটায় `k = 2` থেকে `5` পর্যন্ত k-Means Diagnostics এবং স্থির `k = 3`-এর জন্য Seed সংবেদনশীলতা মাপা হয়। দ্বিতীয়ত, সেই একই ট্রেনিং ডেটায় PCA Fit করে Validation ডেটার ওপর Reconstruction ত্রুটি হিসাব করা হয়। তৃতীয়ত, অ্যাপের ইন্টারেক্টিভ শিক্ষামূলক অংশের জন্য আলাদাভাবে নেওয়া `96`টি Row-এর দ্বিমাত্রিক পুলে Lloyd-এর ধাপসমূহ, Density রেফারেন্স এবং Hierarchical Linkage তৈরি করা হয়। চতুর্থত, ভিজ্যুয়াল Lab-এর কাঁচা ও Standardized PCA শুধুমাত্র পর্দায় দেখানো ওই `96`টি পর্যবেক্ষণের ওপরেই আলাদাভাবে Fit করা হয়—যাতে ছবির সাথে গণিতের কোনো অমিল না থাকে।"
+        },
+        {
+          "type": "text",
+          "title": "শুরু থেকে শেষ পর্যন্ত স্বয়ংসম্পূর্ণ কোড",
+          "body": "নিচের কোড ব্লকটি সম্পূর্ণ স্বয়ংসম্পূর্ণ—ডেটা লোড করা থেকে শুরু করে চূড়ান্ত রিপোর্ট প্রিন্ট করা পর্যন্ত সব সংজ্ঞাই এখানে একসাথে দেওয়া আছে। মূল কমান্ডলাইন স্ক্রিপ্টে সাধারণভাবে রিপোর্ট তৈরি করলে প্রজেক্টের ভেতরের কোনো ফাইল বদলায় না; কেবল সুনির্দিষ্টভাবে `--write-labs` ফ্ল্যাগ দিলেই অ্যাপের জন্য ব্যবহৃত Derived JSON ফাইলগুলো নতুন করে লেখা হয়। কারণ ব্যবহারকারীর ডিভাইসে অ্যাপ চলার সময় কোনো Clustering নতুন করে গণনা করা হয় না, বরং আগে থেকে যাচাই করে রিপোজিটরিতে রাখা এই ফাইলগুলোই সরাসরি লোড হয়।"
+        },
+        {
+          "type": "code",
+          "title": "পূর্ণাঙ্গ স্থানীয় Unsupervised Workflow (শুরু থেকে রিপোর্ট পর্যন্ত)",
+          "body": "from pathlib import Path\nimport argparse\nimport hashlib\nimport json\nimport platform\nimport numpy as np\nimport pandas as pd\nimport sklearn\nfrom scipy.cluster.hierarchy import linkage, fcluster\nfrom threadpoolctl import threadpool_limits\nfrom sklearn.model_selection import GroupShuffleSplit\nfrom sklearn.preprocessing import StandardScaler\nfrom sklearn.cluster import KMeans, DBSCAN\nfrom sklearn.decomposition import PCA\nfrom sklearn.metrics import silhouette_score, adjusted_rand_score\n\nDATA = Path(\"assets/datasets/adult\").resolve()\nSOURCE_HASH = \"5b00264637dbfec36bdeaab5676b0b309ff9eb788d63554ca0a249491c86603d\"\nCOLUMNS = [\n    \"age\",\n    \"workclass\",\n    \"fnlwgt\",\n    \"education\",\n    \"education_num\",\n    \"marital_status\",\n    \"occupation\",\n    \"relationship\",\n    \"race\",\n    \"sex\",\n    \"capital_gain\",\n    \"capital_loss\",\n    \"hours_per_week\",\n    \"native_country\",\n    \"income\",\n]\nFEATURES = [\"age\", \"education_num\", \"hours_per_week\"]\n\n\ndef load_source(path):\n    digest = hashlib.sha256(path.read_bytes()).hexdigest()\n    if digest != SOURCE_HASH:\n        raise ValueError(\"Expected original adult.data\")\n    frame = pd.read_csv(path, names=COLUMNS, skipinitialspace=True, na_values=\"?\")\n    X = frame[FEATURES].to_numpy(dtype=float, copy=True)\n    if not np.isfinite(X).all():\n        raise ValueError(\"Finite numeric clustering features required\")\n    keys = (\n        frame[[c for c in COLUMNS if c not in (\"income\", \"hours_per_week\")]]\n        .astype(\"string\")\n        .fillna(\"__MISSING__\")\n    )\n    groups = pd.util.hash_pandas_object(keys, index=False).to_numpy()\n    return frame, X, groups, digest\n\n\ndef split_budget(X, groups):\n    outer, valid = next(\n        GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=42).split(\n            X, groups=groups\n        )\n    )\n    chosen = np.random.default_rng(42).permutation(np.unique(groups[outer]))[:6000]\n    train = outer[np.isin(groups[outer], chosen)]\n    if not set(groups[train]).isdisjoint(groups[valid]):\n        raise ValueError(\"Group overlap\")\n    return outer, train, valid\n\n\ndef finite_matrix(X):\n    X = np.asarray(X, dtype=float)\n    if X.ndim != 2 or min(X.shape) < 1 or not np.isfinite(X).all():\n        raise ValueError(\"Nonempty finite matrix\")\n    return X\n\n\ndef lloyd_steps(X, initial, *, max_steps=12):\n    X, centers = finite_matrix(X), finite_matrix(initial).copy()\n    if (\n        centers.shape[1] != X.shape[1]\n        or len(centers) > len(X)\n        or not isinstance(max_steps, int)\n        or isinstance(max_steps, bool)\n        or not 0 <= max_steps <= 100\n    ):\n        raise ValueError(\"Aligned centers and bounded step count\")\n\n    def state(step, centers, empty):\n        squared = np.sum((X[:, None, :] - centers[None, :, :]) ** 2, axis=2)\n        labels = squared.argmin(axis=1)  # Smallest center index on ties.\n        return {\n            \"step\": step,\n            \"centers\": centers.tolist(),\n            \"labels\": labels.tolist(),\n            \"inertia\": float(squared[np.arange(len(X)), labels].sum()),\n            \"empty_before_update\": empty,\n        }\n\n    states = [state(0, centers, [])]\n    for step in range(1, max_steps + 1):\n        labels = np.asarray(states[-1][\"labels\"])\n        new = centers.copy()\n        empty = []\n        for c in range(len(centers)):\n            selected = X[labels == c]\n            if len(selected):\n                new[c] = selected.mean(axis=0)\n            else:\n                empty.append(c)  # Explicit policy: retain previous empty center.\n        following = state(step, new, empty)\n        states.append(following)\n        centers = new\n        if following[\"labels\"] == states[-2][\"labels\"]:\n            break\n    return states\n\n\ndef density_partition(X, eps, min_samples):\n    X = finite_matrix(X)\n    if (\n        not np.isfinite(eps)\n        or eps < 0\n        or not isinstance(min_samples, int)\n        or isinstance(min_samples, bool)\n        or min_samples < 1\n    ):\n        raise ValueError(\"Finite eps>=0 and positive integer min_samples\")\n    adjacency = np.sum((X[:, None, :] - X[None, :, :]) ** 2, axis=2) <= eps * eps\n    core = adjacency.sum(axis=1) >= min_samples  # Includes the observation itself.\n    labels = np.full(len(X), -1, dtype=int)\n    cluster = 0\n    for start in np.flatnonzero(core):\n        if labels[start] >= 0:\n            continue\n        labels[start] = cluster\n        queue = [int(start)]\n        for current in queue:\n            for neighbor in np.flatnonzero(adjacency[current] & core):\n                if labels[neighbor] < 0:\n                    labels[neighbor] = cluster\n                    queue.append(int(neighbor))\n        cluster += 1\n    # Non-core border points never connect core components. Ambiguous borders\n    # attach to the lowest adjacent component ID for this explicit ordering.\n    for i in np.flatnonzero(~core):\n        adjacent = labels[adjacency[i] & core]\n        if len(adjacent):\n            labels[i] = int(adjacent.min())\n    return labels, core, adjacency.sum(axis=1)\n\n\ndef fit_pca(X):\n    X = finite_matrix(X)\n    if len(X) < 2:\n        raise ValueError(\"At least two observations for sample variance\")\n    mean = X.mean(axis=0)\n    centered = X - mean\n    _, singular, components = np.linalg.svd(centered, full_matrices=False)\n    for i in range(len(components)):\n        anchor = np.argmax(np.abs(components[i]))\n        if components[i, anchor] < 0:\n            components[i] *= -1\n    variance = singular**2 / (len(X) - 1)\n    total = variance.sum()\n    if total <= 0:\n        raise ValueError(\"Explained-variance ratio undefined for zero total variance\")\n    return {\n        \"mean\": mean,\n        \"components\": components,\n        \"singular\": singular,\n        \"variance\": variance,\n        \"ratio\": variance / total,\n    }\n\n\ndef reconstruct(model, X, q):\n    X = finite_matrix(X)\n    if (\n        X.shape[1] != len(model[\"mean\"])\n        or not isinstance(q, int)\n        or isinstance(q, bool)\n        or not 0 <= q <= len(model[\"components\"])\n    ):\n        raise ValueError(\"Aligned PCA query and retained component count\")\n    V = model[\"components\"][:q]\n    return (X - model[\"mean\"]) @ V.T @ V + model[\"mean\"]\n\n\ndef safe_silhouette(X, labels):\n    labels = np.asarray(labels)\n    count = len(np.unique(labels))\n    return None if not 2 <= count < len(labels) else float(silhouette_score(X, labels))\n\n\ndef analyse_source(path):\n    frame, X, groups, digest = load_source(path)\n    outer, train, valid = split_budget(X, groups)\n    scaler = StandardScaler().fit(X[train])\n    Z = scaler.transform(X[train])\n    Z_valid = scaler.transform(X[valid])\n    sample = np.random.default_rng(42).choice(len(Z), size=1200, replace=False)\n    diagnostics = []\n    for k in [2, 3, 4, 5]:\n        model = KMeans(n_clusters=k, n_init=10, random_state=42, algorithm=\"lloyd\").fit(\n            Z\n        )\n        diagnostics.append(\n            {\n                \"k\": k,\n                \"train_mean_sse\": float(model.inertia_ / len(Z)),\n                \"validation_mean_sse\": float(\n                    np.min(model.transform(Z_valid) ** 2, axis=1).mean()\n                ),\n                \"sample_train_silhouette\": safe_silhouette(\n                    Z[sample], model.labels_[sample]\n                ),\n                \"sizes\": np.bincount(model.labels_, minlength=k).tolist(),\n            }\n        )\n    fixed = KMeans(n_clusters=3, n_init=10, random_state=42).fit(Z)\n    alternative = KMeans(n_clusters=3, n_init=10, random_state=43).fit(Z)\n    stability = float(adjusted_rand_score(fixed.labels_, alternative.labels_))\n    pca = fit_pca(Z)\n    reference = PCA(svd_solver=\"full\").fit(Z)\n    np.testing.assert_allclose(\n        pca[\"variance\"], reference.explained_variance_, atol=1e-10\n    )\n    compression = []\n    for q in range(4):\n        restored = reconstruct(pca, Z_valid, q)\n        compression.append(\n            {\n                \"q\": q,\n                \"training_variance_kept\": float(pca[\"ratio\"][:q].sum()),\n                \"validation_coordinate_mse\": float(np.mean((Z_valid - restored) ** 2)),\n            }\n        )\n    # Separate, bounded 2-D teaching pool; income never enters coordinates/colors.\n    indices = train[:96]\n    raw = X[indices][:, [0, 2]]\n    coordinates = (raw - scaler.mean_[[0, 2]]) / scaler.scale_[[0, 2]]\n    points = [\n        {\n            \"source_row_1based\": int(i + 1),\n            \"values\": v.tolist(),\n            \"coordinates\": z.tolist(),\n        }\n        for i, v, z in zip(indices, raw, coordinates)\n    ]\n    source = {\"source\": \"UCI Adult, Becker & Kohavi (1996), CC BY4.0\", \"sha256\": digest}\n    runs = []\n    _, unique_indices = np.unique(coordinates, axis=0, return_index=True)\n    unique_indices = np.sort(unique_indices)\n    for k, seed in [(2, 42), (3, 42), (4, 42), (3, 7)]:\n        chosen = np.random.default_rng(seed).choice(unique_indices, k, replace=False)\n        initial = coordinates[chosen]\n        states = lloyd_steps(coordinates, initial, max_steps=20)\n        final = np.asarray(states[-1][\"centers\"])\n        # Library empty-cluster policy differs, so compare only nonempty stable cases.\n        labels = np.asarray(states[-1][\"labels\"])\n        if len(np.unique(labels)) == k and len(states) < 21:\n            ref = KMeans(\n                n_clusters=k,\n                init=initial,\n                n_init=1,\n                tol=1e-10,\n                max_iter=300,\n                algorithm=\"lloyd\",\n            ).fit(coordinates)\n            self_objective = float(\n                np.min(\n                    np.sum((coordinates[:, None, :] - final[None, :, :]) ** 2, axis=2),\n                    axis=1,\n                ).sum()\n            )\n            np.testing.assert_allclose(self_objective, ref.inertia_, atol=1e-8)\n        if np.any(np.diff([s[\"inertia\"] for s in states]) > 1e-8):\n            raise ValueError(\"Unexpected Lloyd objective increase\")\n        runs.append(\n            {\n                \"k\": k,\n                \"seed\": seed,\n                \"initial_source_rows\": [int(indices[i] + 1) for i in chosen],\n                \"states\": states,\n            }\n        )\n    kmeans_asset = {\n        **source,\n        \"scope\": \"First96 budget-training observations, age/hours only; fixed starts, keep empty centers; no target labels.\",\n        \"points\": points,\n        \"runs\": runs,\n    }\n    density_refs = []\n    for eps in [0.15, 0.35, 0.75]:\n        own, core, counts = density_partition(coordinates, eps, 5)\n        ref = DBSCAN(eps=eps, min_samples=5, algorithm=\"brute\").fit(coordinates)\n        ref_core = np.zeros(len(coordinates), dtype=bool)\n        ref_core[ref.core_sample_indices_] = True\n        np.testing.assert_array_equal(core, ref_core)\n        if (\n            not np.array_equal(own < 0, ref.labels_ < 0)\n            or adjusted_rand_score(own, ref.labels_) < 1 - 1e-12\n        ):\n            raise ValueError(\"DBSCAN reference mismatch\")\n        density_refs.append(\n            {\n                \"eps\": eps,\n                \"min_samples\": 5,\n                \"labels\": own.tolist(),\n                \"core\": core.tolist(),\n                \"counts\": counts.tolist(),\n            }\n        )\n    density_asset = {\n        **source,\n        \"scope\": \"Same96 real coordinates; deterministic core components then border assignment; eps-neighborhood includes self.\",\n        \"points\": points,\n        \"references\": density_refs,\n    }\n    pca_runs = []\n    for name, values in [(\"raw\", raw), (\"standardized\", coordinates)]:\n        model = fit_pca(values)\n        ref = PCA(svd_solver=\"full\").fit(values)\n        np.testing.assert_allclose(\n            model[\"ratio\"], ref.explained_variance_ratio_, atol=1e-10\n        )\n        np.testing.assert_allclose(\n            reconstruct(model, values, 1),\n            ref.inverse_transform(ref.transform(values)[:, :1] @ np.eye(1, 2)),\n            atol=1e-9,\n        )\n        pca_runs.append(\n            {\n                \"space\": name,\n                \"data\": values.tolist(),\n                \"mean\": model[\"mean\"].tolist(),\n                \"components\": model[\"components\"].tolist(),\n                \"singular\": model[\"singular\"].tolist(),\n                \"variance_ratio\": model[\"ratio\"].tolist(),\n                \"reconstruction_mse\": [\n                    float(np.mean((values - reconstruct(model, values, q)) ** 2))\n                    for q in range(3)\n                ],\n            }\n        )\n    pca_asset = {\n        **source,\n        \"scope\": \"PCA fit on same96 displayed rows separately per raw/standardized space; centering after scaling; q0 mean-only.\",\n        \"source_rows\": [p[\"source_row_1based\"] for p in points],\n        \"runs\": pca_runs,\n    }\n    hierarchy = []\n    for method in [\"single\", \"complete\", \"ward\"]:\n        tree = linkage(coordinates, method=method, metric=\"euclidean\")\n        labels = fcluster(tree, 3, criterion=\"maxclust\")\n        hierarchy.append(\n            {\n                \"method\": method,\n                \"merge_rows\": len(tree),\n                \"cut_unique_clusters\": int(len(np.unique(labels))),\n                \"last_three_merges\": tree[-3:].tolist(),\n            }\n        )\n    dbscan_diagnostics = []\n    for row in density_refs:\n        labels = np.asarray(row[\"labels\"])\n        assigned = labels >= 0\n        dbscan_diagnostics.append(\n            {\n                \"eps\": row[\"eps\"],\n                \"coverage\": float(assigned.mean()),\n                \"clusters\": int(len(np.unique(labels[assigned]))),\n                \"assigned_only_silhouette\": (\n                    safe_silhouette(coordinates[assigned], labels[assigned])\n                    if assigned.any()\n                    else None\n                ),\n            }\n        )\n    report = {\n        **source,\n        \"versions\": {\n            \"python\": platform.python_version(),\n            \"numpy\": np.__version__,\n            \"pandas\": pd.__version__,\n            \"sklearn\": sklearn.__version__,\n        },\n        \"scope\": \"Exploratory reused historical source, no income labels used, no semantic/fairness/causal/deployment claim\",\n        \"features\": FEATURES,\n        \"outer_train_rows\": len(outer),\n        \"budget_groups\": int(len(np.unique(groups[train]))),\n        \"budget_rows\": len(train),\n        \"validation_rows\": len(valid),\n        \"seed\": 42,\n        \"kmeans_diagnostics\": diagnostics,\n        \"fixed_k\": 3,\n        \"seed_stability_ari\": stability,\n        \"pca_training_variance_ratio\": pca[\"ratio\"].tolist(),\n        \"pca_compression\": compression,\n        \"density_subset_diagnostics\": dbscan_diagnostics,\n        \"hierarchy_subset\": hierarchy,\n        \"assumptions\": [\n            \"Raw profiles are grouping proxies, not verified independent persons; income/hours excluded from group keys.\",\n            \"Scaling fit only on budget training. Income is not used for training, color assignment or hyperparameter choice.\",\n            \"Silhouette uses the same fixed1200 training subsample for k diagnostics; no automatic best-k claim.\",\n            \"DBSCAN noise coverage reported; assigned-only silhouette is conditional and not comparable to full-data scores.\",\n            \"Seed ARI is one same-data sensitivity check, not confidence over the full data/search process.\",\n            \"fnlwgt weights unused; unweighted historical rows. Reused source is not fresh confirmation.\",\n            \"The2D lab pool/PCA fits differ from the3D main experiment; visual separation is not ground truth.\",\n        ],\n    }\n    return report, kmeans_asset, density_asset, pca_asset\n\n\ndef run_analysis(path):\n    with threadpool_limits(limits=1):\n        return analyse_source(path)\n\n\nreport, kmeans_asset, density_asset, pca_asset = run_analysis(DATA / \"adult.data\")\nprint(json.dumps(report, indent=2, allow_nan=False))\n"
+        },
+        {
+          "type": "text",
+          "title": "k = 3-এর সংখ্যাত্মক ফলাফলগুলো কীভাবে পড়বেন?",
+          "body": "কোডটি চালালে `k = 3`-এর জন্য দেখা যাবে, ট্রেনিং ডেটায় গড় SSE এসেছে প্রায় `1.7464` এবং আলাদা রাখা Validation ডেটায় গড় SSE এসেছে প্রায় `1.7200`। এখানে Validation ত্রুটি ট্রেনিংয়ের চেয়ে সামান্য কম দেখে চমকে যাবেন না—এটি নিজে থেকে Data Leakage-এর প্রমাণ নয়; গ্রুপ-ভিত্তিক ভাগে দুই অংশের ডেটার গঠনে স্বাভাবিক পার্থক্যের কারণে প্রান্তিক বা চরম মানের কিছু Row ট্রেনিংয়ে বেশি পড়লে এমনটি হতেই পারে।\n\nঅন্যদিকে `1,200`টি Row-এর নির্দিষ্ট ট্রেনিং উপ-নমুনায় Silhouette স্কোর আসে প্রায় `0.2783`, যা ইঙ্গিত দেয় যে দলগুলো খুব তীক্ষ্ণভাবে বিচ্ছিন্ন নয় বরং অবিচ্ছিন্ন ডেটার ওপর একটি ব্যবহারিক বিভাজন। আর একই ডেটায় দুটি ভিন্ন Seed-এর মধ্যে ARI প্রায় `0.9934` হলেও মনে রাখবেন, এটি দলগুলোর বাস্তব অর্থবহতা বা ভবিষ্যতের ডেটায় স্থায়িত্বের কোনো নিশ্চয়তা দেয় না।"
+        },
+        {
+          "type": "text",
+          "title": "PCA Reconstruction-এর ফলাফল বিশ্লেষণ",
+          "body": "এবার মূল তিন-মাত্রিক PCA পরীক্ষার দিকে তাকানো যাক। Validation ডেটায় স্থানাঙ্ক-পিছু গড় বর্গত্রুটি (Coordinate MSE) `q = 0` (অর্থাৎ কেবল ট্রেনিং গড় দিয়ে অনুমান)-এর ক্ষেত্রে প্রায় `0.9830`; এরপর একটি অক্ষ রাখলে (`q = 1`) তা কমে দাঁড়ায় প্রায় `0.5921`, দুটি অক্ষ রাখলে (`q = 2`) প্রায় `0.2811`, এবং সব কটি অক্ষ রাখলে (`q = 3`) তা Floating-point শূন্যে নেমে আসে। এখানে একটি সূক্ষ্ম গাণিতিক পার্থক্য খেয়াল রাখবেন: সংরক্ষিত Variance-এর অনুপাত হিসাব করা হয়েছে ট্রেনিং ডেটা থেকে, আর Coordinate MSE মাপা হয়েছে Validation ডেটার ওপর। তাই বাদ পড়া Singular Value-র শক্তির সাথে Reconstruction ত্রুটির যে নিখুঁত বীজগাণিতিক সমতা আমরা তত্ত্বে পড়েছি, তা কেবল যে ম্যাট্রিক্সে PCA Fit করা হয়েছে তার জন্যই হুবহু খাটে—ভিন্ন Validation ভাগে কাছাকাছি আচরণ দেখা গেলেও নিখুঁত সমতা আশা করা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "স্ট্যান্ডার্ড লাইব্রেরির সাথে স্বয়ংক্রিয় যাচাই (Reference Checks)",
+          "body": "আমাদের নিজেদের লেখা ফাংশনগুলো আসলেই সঠিক কি না, তা নিশ্চিত করতে কোডের ভেতরেই বেশ কিছু স্বয়ংক্রিয় যাচাই শর্ত বসানো আছে। যেমন, কোনো Cluster খালি না হয়ে স্থির হওয়া Lloyd রানগুলোর চূড়ান্ত Inertia আমরা হুবহু একই প্রারম্ভিক কেন্দ্র দেওয়া scikit-learn-এর `KMeans`-এর সাথে মিলিয়ে দেখি। DBSCAN-এর নির্দিষ্ট উদাহরণগুলোতে Core ও Noise বিন্দুর তালিকা এবং সামগ্রিক দলবিন্যাসের ARI সরাসরি `sklearn.cluster.DBSCAN`-এর সাথে যাচাই করা হয় (দ্ব্যর্থক Border বিন্দু থাকা যেকোনো কাল্পনিক ডেটায় কাঁচা সংখ্যার হুবহু মিল আমরা দাবি করি না, কারণ সেখানে ক্রমের ওপর নির্ভরতা থাকে)। একইভাবে আমাদের PCA-র Variance অনুপাত এবং `q = 1` পুনর্গঠনও scikit-learn-এর পূর্ণ SVD সমাধানের সাথে সূক্ষ্ম সহনশীলতার ভেতরে মিলিয়ে নেওয়া হয়।"
+        },
+        {
+          "type": "math",
+          "title": "Coordinate MSE হিসাবের হর (Denominator) ও গড় সূত্র",
+          "body": "\\operatorname{MSE}_{coord}=\\frac{1}{nd}\\sum_{i=1}^{n}\\sum_{j=1}^{d}(x_{ij}-\\widehat{x}_{ij})^2"
+        },
+        {
+          "type": "callout",
+          "title": "নিজেকে যাচাই করার অনুশীলন: রিপোর্টের সমালোচনামূলক সারসংক্ষেপ",
+          "body": "উপরের Coordinate MSE সূত্রের `nd` হরটি খেয়াল রেখে পুরো রিপোর্টটি আরেকবার পড়ুন এবং নিজের ভাষায় এক অনুচ্ছেদের একটি সমালোচনামূলক নোট লিখুন: কেন এই ডেটাকে পুনর্ব্যবহৃত ঐতিহাসিক উৎস বলা হচ্ছে, ট্রেনিং বাজেট ঠিক কত ছিল, `income` কলামটিকে কীভাবে সম্পূর্ণ বাইরে রাখা হয়েছে, দ্বিমাত্রিক Lab-এর ছবির সাথে মূল ত্রিমাত্রিক স্কোরের পার্থক্য কোথায়, এবং এই ফলাফলের ওপর ভিত্তি করে কোন কোন প্রোডাকশন দাবি কখনোই করা যাবে না। মনে রাখবেন, ইন্টার্ভিউ বা প্রকৌশল পর্যালোচনায় \"দেখতে সুন্দর Cluster পাওয়া গেছে\" কখনোই কোনো গ্রহণযোগ্য মানদণ্ড নয়!"
+        }
+      ]
+    },
+    {
+      "id": "ch12_systems",
+      "title": "প্রোডাকশনে Serving, Drift ও Downstream সিস্টেম ডিজাইন",
+      "subtitle": "একবার মডেল Fit করার পর তাকে নির্ভরযোগ্যভাবে সার্ভ করা, পর্যবেক্ষণ করা এবং পরবর্তী ধাপে যুক্ত করার প্রকৌশল",
+      "duration": "30 min",
+      "icon": "scatter_plot",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "প্রোডাকশন Artifact Bundle-এ কী কী একসাথে সংরক্ষণ করবেন?",
+          "body": "স্থানীয় পরীক্ষায় রিপোর্ট তৈরি করা এক কথা, আর বাস্তব প্রোডাকশন সিস্টেমে প্রতিদিন আসা নতুন ডেটার ওপর সেই মডেল চালানো আরেক কথা। প্রোডাকশনে কখনোই শুধু Centroid বা PCA ম্যাট্রিক্স একা সংরক্ষণ করবেন না! বরং Feature-এর নাম ও সুনির্দিষ্ট ক্রম (Schema ও Order), অনুপস্থিত মান সামলানোর নিয়ম, Scaler-এর `mean` ও `scale`, শেখা Centroid বা PCA Component ও তার গড়, ব্যবহৃত Algorithm ও লাইব্রেরির সংস্করণ, ট্রেনিং ডেটার Snapshot, Random Seed এবং Cut নেওয়ার নিয়ম—সবকিছু একটি একক একীভূত Artifact Bundle হিসেবে একসাথে Version করুন। ভাবুন তো, Serving-এর সময় যদি ভুলক্রমে `age` আর `hours_per_week`-এর কলামের জায়গা অদলবদল হয়ে যায়, তবে কোনো ক্র্যাশ ছাড়াই বৈধ সংখ্যা বেরোবে বটে, কিন্তু প্রতিটি সিদ্ধান্ত হবে সম্পূর্ণ ভুল! তাই কাঁচা ইনপুট Row পাওয়ার সাথে সাথে কঠোর Schema Validation বাধ্যতামূলক।"
+        },
+        {
+          "type": "math",
+          "title": "Frozen k-Means-এ নতুন Query-র দল নির্ধারণ ও হিসাবের খরচ",
+          "body": "\\widehat{c}(x)=\\arg\\min_j\\|\\operatorname{scale}_{train}(x)-\\mu_j\\|^2,\\qquad \\operatorname{cost/query}=O(kd)"
+        },
+        {
+          "type": "text",
+          "title": "PCA Query-র খরচ এবং প্রোডাকশন Monitoring",
+          "body": "উপরের সমীকরণের মতোই প্রোডাকশনে নতুন একটি বিন্দুর দল নির্ধারণে খরচ পড়ে মাত্র `O(kd)`। একইভাবে `d` মাত্রার একটি নতুন Query-কে Rank-`q` PCA দিয়ে রূপান্তর করতে বা পুনর্গঠন করতে খরচ পড়ে আনুমানিক `O(dq)`। এখানে একটি মারাত্মক ভুল কখনোই করবেন না: নতুন আসা Query ব্যাচের নিজস্ব গড় দিয়ে তাকে Center করবেন না, সবসময় ট্রেনিং থেকে জমানো Frozen গড় বিয়োগ করবেন!\n\nপ্রোডাকশনে মডেল ঠিকঠাক কাজ করছে কি না তা দেখতে সময়ের সাথে নতুন ডেটার নিকটতম Centroid দূরত্ব এবং PCA Reconstruction Residual-এর Distribution নিয়মিত পর্যবেক্ষণ (Monitor) করা যায়। তবে হঠাৎ এই দূরত্ব বেড়ে যাওয়া মানেই কিন্তু সাইবার আক্রমণ বা দুষ্ট কোনো Anomaly নয়—আগে শান্তভাবে পরীক্ষা করে দেখুন কোনো কলামের একক বদলে যাওয়া (Schema Error), হঠাৎ বেড়ে যাওয়া Missing Value, মৌসুমি পরিবর্তন (Seasonal Shift), নাকি জনসংখ্যার প্রকৃত আচরণগত পরিবর্তন (Population Drift)-এর কোনটি আসলে এর পেছনে দায়ী।"
+        },
+        {
+          "type": "code",
+          "title": "নতুন Query-র ওপর Frozen Scaler ও Centroid প্রয়োগের উদাহরণ",
+          "body": "import numpy as np\n\nmean = np.array([10.0, 20.0])\nscale = np.array([2.0, 5.0])\ncenters = np.array([[0.0, 0.0], [2.0, 1.0]])\nquery = np.array([14.0, 25.0])\nz = (query - mean) / scale\ncluster = np.sum((z - centers) ** 2, axis=1).argmin()\nprint(z, cluster)\n"
+        },
+        {
+          "type": "text",
+          "title": "মডেল নতুন করে Fit (Refit) করলে Cluster ID গোলমাল সামলাবেন কীভাবে?",
+          "body": "Supervised মডেলের চেয়ে Clustering প্রোডাকশনে একটি জায়গায় ভীষণ আলাদা: কদিন পর নতুন ডেটায় k-Means আবার Fit করলে আগের `cluster 0` এবার অনায়াসে `cluster 2` নাম পেয়ে যেতে পারে (Label Permutation), এমনকি পুরোনো একটি দল ভেঙে দুটি হয়ে যাওয়া বা দুটি দল মিলে এক হয়ে যাওয়াও অস্বাভাবিক নয়! কাজেই পুরোনো `cluster 0`-এর জন্য লেখা ব্যবসায়িক নিয়ম বা ড্যাশবোর্ডের নাম অন্ধভাবে নতুন মডেলের `cluster 0`-এর গায়ে বসিয়ে দেবেন না। নতুন মডেল নামানোর আগে একটি স্থির Validation সেটের ওপর পুরোনো ও নতুন মডেলের সদস্যদের মিল (Overlap) অথবা Centroid Matching দিয়ে দলগুলোর মধ্যে সামঞ্জস্য তৈরি করুন। আর যদি দেখা যায় কোনো দল ভেঙে যাওয়ায় এক-থেকে-এক (One-to-one) মেলানো সম্ভব হচ্ছে না, সেজন্য স্পষ্ট সতর্কবার্তা ও পুরোনো মডেলে ফিরে যাওয়ার (Rollback) ব্যবস্থা আগে থেকেই তৈরি রাখুন।"
+        },
+        {
+          "type": "text",
+          "title": "পরবর্তী Supervised Classifier-এর ইনপুট হিসেবে PCA ব্যবহারের শর্ত",
+          "body": "অনেক সময় আমরা মাত্রা কমানোর জন্য আগে PCA বা Clustering করে সেই নতুন বৈশিষ্ট্যগুলো পরবর্তী কোনো Supervised Classifier-এ ইনপুট হিসেবে দিই। এমন ক্ষেত্রে মনে রাখবেন, প্রতিটি Cross-validation Fold-এর শুধুমাত্র ট্রেনিং অংশের ওপরই Scaler এবং PCA Fit করতে হবে! ধাপটি Unsupervised বলে পুরো ডেটার ওপর আগেভাগে PCA চালিয়ে নিলে Validation অংশের Variance ও দিকনির্দেশনা লুকিয়ে ট্রেনিংয়ে ঢুকে পড়ে—যা সুস্পষ্ট Data Leakage। এই ভুল ঠেকানোর সবচেয়ে নিরাপদ উপায় হলো scikit-learn-এর `Pipeline` ব্যবহার করে পুরো প্রক্রিয়াকে বেঁধে ফেলা, এবং Hyperparameter বাছাইয়ের (Model Selection) ধাপ থেকে চূড়ান্ত মূল্যায়নের সেটকে সম্পূর্ণ আলাদা রাখা।"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব সিদ্ধান্তে প্রয়োগের সীমাবদ্ধতা ও দায়িত্বশীলতা",
+          "body": "বাস্তব প্রোডাক্ট বা সেবায় Cluster-এর ওপর ভিত্তি করে যদি ব্যবহারকারীদের নোটিফিকেশন পাঠানো বা কোনো সুবিধা বণ্টনের সিদ্ধান্ত নেওয়া হয়, তবে সুষ্ঠু A/B Test (Randomized Evaluation) কিংবা উপযুক্ত কার্যকারণগত নকশা ছাড়া \"আমাদের Clustering ব্যবসার লাভ বাড়িয়েছে\" বলে দাবি করা যায় না। পাশাপাশি আপনার নির্দিষ্ট প্রয়োগক্ষেত্রে কোনো জনগোষ্ঠী Noise হিসেবে বাদ পড়ে যাচ্ছে কি না (Coverage), ব্যক্তিগত গোপনীয়তা, সংবেদনশীল বৈশিষ্ট্যের পরোক্ষ প্রভাব (Proxy Effects) এবং ব্যবহারকারীর সম্ভাব্য ক্ষতির দিকগুলো গভীরভাবে পর্যালোচনা করা অপরিহার্য। বলাই বাহুল্য, এই অধ্যায়ে আমাদের তৈরি Adult Dataset-এর অনুসন্ধানমূলক Cluster দিয়ে বাস্তব কোনো মানুষের সেবা বা যোগ্যতার সিদ্ধান্ত নেওয়ার সুযোগ নেই।"
+        },
+        {
+          "type": "callout",
+          "title": "System Design ইন্টার্ভিউয়ের মহড়া",
+          "body": "ধরা যাক, ইন্টার্ভিউতে আপনাকে `10 million` উচ্চ-মাত্রিক Embedding নিয়ে ক্লাস্টারিং সিস্টেম ডিজাইন করতে বলা হলো। শুরুতেই ঝাঁপিয়ে না পড়ে আগে মেমরি সীমা, আপডেট করার বিরতি এবং অনলাইন Latency বাজেট সম্পর্কে প্রশ্ন করুন। এরপর ধাপে ধাপে সমাধান সাজান: সাবধানে বাছাই করা উপ-নমুনার ওপর ডায়াগনস্টিকস ও Mini-batch পদ্ধতি দিয়ে শুরু করা, মূল্যায়নের জন্য একটি স্থির Held-out Query সেট আলাদা রাখা, Version করা একীভূত Artifact Bundle সংরক্ষণ এবং সুনির্দিষ্ট Drift ও Retraining শর্ত নির্ধারণ। আর ভুলেও চটজলদি \"এখানে DBSCAN চালিয়ে দেব\" বলে বসবেন না—কারণ কোটি বিন্দুর ঘন প্রতিবেশী খোঁজার মেমরি ও সময়ের হিসাব না দিলে সেই উত্তর উল্টো দুর্বলতা প্রকাশ করবে!"
+        }
+      ]
+    },
+    {
+      "id": "ch12_readiness",
+      "title": "অনুশীলন, Interview প্রস্তুতি ও পরবর্তী পাঠ-নির্দেশিকা",
+      "subtitle": "গাণিতিক সমীকরণ থেকে নির্ভুল কোড এবং তথ্যপ্রমাণ দিয়ে নিজের সিদ্ধান্ত প্রতিষ্ঠা করার চূড়ান্ত প্রস্তুতি",
+      "duration": "24 min",
+      "icon": "scatter_plot",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "প্রথম ধাপ: বই না দেখে নিজের ভাষায় গাণিতিক ব্যাখ্যা",
+          "body": "পুরো অধ্যায়টি পড়ার পর প্রস্তুতি ঝালিয়ে নেওয়ার প্রথম ধাপ হলো খাতা-কলম নিয়ে বসা। নোট না দেখে নিজে নিজেই k-Means-এর Objective সমীকরণ থেকে প্রমাণ করে ফেলুন কেন গাণিতিক গড়ই সেরা Centroid হয়। ছোট কয়েকটি বিন্দু এঁকে DBSCAN-এর Core বিন্দুর গ্রাফ তৈরি করুন এবং পরিষ্কারভাবে ব্যাখ্যা করুন কেন একটি Border বিন্দু কখনোই দুটি ভিন্ন Cluster-এর মাঝখানে সেতু (Bridge) হতে পারে না। এরপর দেখান কেন PCA-তে সর্বোচ্চ Variance ধরে রাখা আর সর্বনিম্ন Reconstruction Loss পাওয়া আসলে একই জ্যামিতিক সমাধানের দুই পিঠ। সবশেষে তুলনা করুন—শুরুতে কেবল Feature Scaling বদলে দিলে এই তিনটি Algorithm-এর ফলাফলই কীভাবে আমূল পাল্টে যায়।"
+        },
+        {
+          "type": "text",
+          "title": "দ্বিতীয় ধাপ: নিজের হাতে কোডিং ও প্রান্তিক পরিস্থিতি যাচাই",
+          "body": "ধারণা পরিষ্কার হওয়ার পর চলে যান Practice অংশের `10`টি Coding Exercise-এ এবং প্রতিটি সমাধান নিজের স্থানীয় Python পরিবেশে লিখে চালান। কেবল প্রদত্ত উদাহরণের উত্তর মেলানোতেই থেমে থাকবেন না—ইনপুটের মান বদলে খালি Cluster, সমান দূরত্বের Tie, বা একদম ক্ষুদ্র ডেটার মতো প্রান্তিক পরিস্থিতি (Boundary ও Edge Cases) দিয়ে নিজের কোডকে পরীক্ষা করুন। প্রতিটির Time ও Space Complexity খাতায় লিখে তারপর আমাদের দেওয়া Reference Solution-এর সাথে নিজের যুক্তি ও কোডের গঠন মিলিয়ে দেখুন।"
+        },
+        {
+          "type": "text",
+          "title": "তৃতীয় ধাপ: বাস্তব Workflow-এ নিয়ন্ত্রিত পরীক্ষা",
+          "body": "এবার আমাদের দেওয়া স্বয়ংসম্পূর্ণ Adult Workflow স্ক্রিপ্টটি চালিয়ে মূল রিপোর্টটি সংরক্ষণ করুন। এরপর একজন দক্ষ প্রকৌশলীর মতো একবারে শুধুমাত্র একটি করে পরিবর্তন এনে ফলাফলের পার্থক্য দেখুন: কখনো `k`-এর তালিকা বদলান, কখনো Feature Scaling বন্ধ করে কাঁচা এককে চালান, কখনো শুরুর Initialization পাল্টান, আবার কখনো DBSCAN-এর ব্যাসার্ধ (`eps`) বাড়িয়ে-কমিয়ে দেখুন। প্রতিটি পরিবর্তিত রানকে নতুন অনুসন্ধানমূলক পরীক্ষা হিসেবে আলাদা ফাইলে চিহ্নিত করুন, যাতে প্রজেক্টের মূল যাচাইকৃত ফাইলগুলোর সাথে নতুন ফলাফলের পার্থক্য পরিষ্কারভাবে তুলনা করা যায়।"
+        },
+        {
+          "type": "code",
+          "title": "লম্ব অভিক্ষেপ (Orthogonal Projection) ও Residual-এর সম্পর্ক যাচাই",
+          "body": "import numpy as np\n\nx = np.array([3.0, 4.0])\nv = np.array([1.0, 0.0])\nprojection = (x @ v) * v\nresidual = x - projection\nassert np.isclose(projection @ residual, 0)\nprint(np.sum(residual**2))  # 16\n"
+        },
+        {
+          "type": "text",
+          "title": "ইন্টার্ভিউতে পূর্ণ নম্বর পাওয়ার উত্তর কাঠামো",
+          "body": "যেকোনো ভালো ML Engineering উত্তরের ভেতরে সাতটি স্তম্ভ থাকা চাই: সমস্যার সংজ্ঞা ও অনুমান (Assumptions), গাণিতিক Objective ও তার ব্যুৎপত্তি, কোডে বাস্তবায়নের কৌশল, Edge Case সামলানো, রানটাইম ও মেমরি Complexity, সঠিক Validation পদ্ধতি এবং পদ্ধতির সীমাবদ্ধতা। ইন্টার্ভিউয়ার যদি কখনো সাধারণভাবে প্রশ্ন করেন \"এখানে সেরা Clustering কোনটি?\", তবে সাথে সাথে বিনীতভাবে কাজের আসল উদ্দেশ্য এবং কোন Distance বা সাদৃশ্য সেখানে অর্থবহ তা পরিষ্কার করে নিন। মনে রাখবেন, কোনো একটি সেটিং কেন ব্যর্থ হলো তা তথ্যপ্রমাণসহ ব্যাখ্যা করতে পারা নিছক একটি রঙিন Scatter Plot দেখানোর চেয়ে অনেক বেশি শক্তিশালী দক্ষতার পরিচয় দেয়!"
+        },
+        {
+          "type": "text",
+          "title": "আরও গভীরভাবে পড়ার মূল উৎস: Clustering",
+          "body": "অফিশিয়াল ডকুমেন্টেশন থেকে বিভিন্ন পদ্ধতির বাস্তবায়ন ও সূক্ষ্ম কারিগরি খুঁটিনাটি জানার জন্য নিচের তিনটি উৎস অত্যন্ত কার্যকর: scikit-learn-এর সামগ্রিক Clustering নির্দেশিকা https://scikit-learn.org/stable/modules/clustering.html , DBSCAN-এর Core/Border/Noise সংজ্ঞা ও মেমরি ব্যবহারের নোট https://scikit-learn.org/stable/modules/generated/sklearn.cluster.DBSCAN.html এবং SciPy-এর Hierarchical Linkage ও Merge উচ্চতার নিয়মাবলি https://docs.scipy.org/doc/scipy/reference/generated/scipy.cluster.hierarchy.linkage.html ।"
+        },
+        {
+          "type": "text",
+          "title": "আরও গভীরভাবে পড়ার মূল উৎস: Representation ও Dataset",
+          "body": "মাত্রা সংকোচন ও আমাদের ব্যবহৃত ডেটাসেটের মূল প্রামাণ্য দলিল হিসেবে দেখে নিতে পারেন: scikit-learn-এর PCA API, ডেটা Centering ও Solver নির্বাচন নির্দেশিকা https://scikit-learn.org/stable/modules/generated/sklearn.decomposition.PCA.html , Manifold Learning ও t-SNE ব্যবহারের সতর্কবার্তা https://scikit-learn.org/stable/modules/manifold.html , UMAP-এর মূল গবেষণাপত্র https://arxiv.org/abs/1802.03426 এবং এই অধ্যায়ে ব্যবহৃত মূল UCI Adult ডেটাসেটের নথি https://archive.ics.uci.edu/dataset/2/adult ।"
+        },
+        {
+          "type": "callout",
+          "title": "পরের অধ্যায়ে যাওয়ার প্রস্তুতি যাচাই",
+          "body": "পরের অধ্যায়ে পা রাখার আগে এই অধ্যায়ের হাতে-কলমে উদাহরণ, কোডিং অনুশীলন এবং আত্মমূল্যায়ন প্রশ্নগুলো একবার সম্পূর্ণ করে নিন। এখানে আমরা শিখেছি কীভাবে Label ছাড়া ডেটার গঠন খুঁজতে হয় এবং Fit Scope সুরক্ষিত রাখতে হয়; ঠিক এর পরের অধ্যায়ে—অর্থাৎ Book 2 · Chapter 8 (Anomaly Detection & Time Series Foundations)-এ—আমরা দেখব বিরল ব্যতিক্রম (Anomaly) শনাক্তকরণ এবং সময়ের সাথে পরিবর্তিত ডেটায় (Time Series) ভবিষ্যতের তথ্য চুইয়ে পড়া ঠেকানোর কঠোর নিয়মাবলি।"
+        }
+      ]
+    }
+  ],
+  "quizzes": [
+    {
+      "id": "ch12_q1",
+      "question": "`k = 3` সেট করে দেখতে সুন্দর একটি Partition পাওয়া গেলে শুধুমাত্র কোন দাবিটি যৌক্তিকভাবে সমর্থন করা যায়?",
+      "options": [
+        "সমাজে তিনটি প্রাকৃতিক জনমিতিক Class থাকার বিষয়টি প্রমাণিত হয়েছে",
+        "নির্বাচিত Representation-এ Algorithm ডেটাকে তিনটি Cluster-এ ভাগ করেছে",
+        "ভবিষ্যতে `income` অনুমানের উচ্চ Accuracy নিশ্চিত হয়েছে",
+        "Feature-গুলোর মধ্যে একটি কার্যকারণগত সম্পর্ক (Causal Effect) পাওয়া গেছে"
+      ],
+      "answer": 1,
+      "explanation": "`k`-এর মান একান্তই আমাদের নেওয়া একটি Modeling সিদ্ধান্ত। গাণিতিক Objective কমানো মানেই বাস্তব জগতের প্রাকৃতিক শ্রেণি আবিষ্কার বা কোনো Supervised কাজের সাফল্য নয়—স্থিতিশীলতা, বাস্তব উপযোগিতা ও ডোমেইন অর্থবহতা প্রমাণের জন্য আলাদা যাচাই প্রয়োজন।"
+    },
+    {
+      "id": "ch12_q2",
+      "question": "বয়সের কাঁচা একক বছর (Years) থেকে মাসে (Months) রূপান্তর করলে সাধারণ Euclidean Clustering-এর ফলাফল কেন বদলে যেতে পারে?",
+      "options": [
+        "এতে Dataset-এর মোট Row সংখ্যা কমে যায়",
+        "ডেটায় নতুন Supervised Label তৈরি হয়",
+        "দূরত্বের হিসাবে বয়সের পার্থক্যের সংখ্যাত্মক গুরুত্ব (Numerical Weight) অনেক বেড়ে যায়",
+        "ডেটা Centering করলে সব জোড়া বিন্দুর দূরত্ব শূন্য হয়ে যায়"
+      ],
+      "answer": 2,
+      "explanation": "বছরকে মাসে নিলে বয়সের পার্থক্য `12` গুণ হয়, ফলে Squared Euclidean Distance-এ তার অবদান একলাফে `12² = 144` গুণ বেড়ে যায়! তাই Feature-এর একক ও Scaling সরাসরি দূরত্বের জ্যামিতি নির্ধারণ করে।"
+    },
+    {
+      "id": "ch12_q3",
+      "question": "কোনো অশূন্য (Nonempty) Cluster-এর সদস্যদের তালিকা স্থির রাখলে, কোন ধরনের Center তার ভেতরের Squared Euclidean SSE-কে সর্বনিম্ন করে?",
+      "options": [
+        "সদস্য বিন্দুগুলোর গাণিতিক গড় (Arithmetic Mean)",
+        "প্রতিটি অক্ষের সর্বোচ্চ মান (Coordinate Maximum)",
+        "সবসময় ডেটার ভেতরে থাকা কোনো পর্যবেক্ষিত Medoid বিন্দু",
+        "যেকোনো দৈবচয়িত (Random) বিন্দু"
+      ],
+      "answer": 0,
+      "explanation": "SSE-কে কেন্দ্রের সাপেক্ষে অন্তরীকরণ করে `2(n_j μ_j − ∑ x) = 0` ধরলে সরাসরি গাণিতিক গড় (Mean) পাওয়া যায়। তবে কোনো Cluster খালি (Empty) হয়ে গেলে `n_j = 0` হওয়ায় এই সমীকরণ প্রযোজ্য থাকে না—তখন আলাদা নীতির প্রয়োজন হয়।"
+    },
+    {
+      "id": "ch12_q4",
+      "question": "সাধারণ k-Means-এ Lloyd-এর পর্যায়ক্রমিক Assignment এবং নিখুঁত Mean Update সম্পর্কে কোন বক্তব্যটি সঠিক?",
+      "options": [
+        "যেকোনো Random Seed থেকেই সবসময় হুবহু একই Partition পাওয়া যায়",
+        "প্রক্রিয়াটি থামলেই Global Optimum পাওয়ার শতভাগ নিশ্চয়তা থাকে",
+        "কোনো Label ছাড়াই সরাসরি Supervised Classification Accuracy পাওয়া যায়",
+        "প্রতি ধাপে Objective না বাড়লেও চূড়ান্ত সমাধানটি একটি Local Optimum হতে পারে"
+      ],
+      "answer": 3,
+      "explanation": "নিকটতম কেন্দ্রে পাঠানো এবং গড় দিয়ে কেন্দ্র সরানো—কোনো ধাপই কখনো মোট SSE বাড়ায় না। কিন্তু সামগ্রিক অপ্টিমাইজেশন সমস্যাটি Non-convex হওয়ায় শুরুর অবস্থানের ওপর নির্ভর করে অ্যালগরিদমটি কোনো Local Optimum বা স্থির বিন্দুতে থেমে যেতে পারে।"
+    },
+    {
+      "id": "ch12_q5",
+      "question": "ধরি `X = [0, 1, 9, 10]` এবং প্রারম্ভিক কেন্দ্র `[0, 10]`। প্রথমবার নিকটতম কেন্দ্রে ভাগ করার পর Mean Update করলে নতুন কেন্দ্র দুটি কী হবে?",
+      "options": [
+        "[0, 10]",
+        "[0.5, 9.5]",
+        "[1, 9]",
+        "[5, 5]"
+      ],
+      "answer": 1,
+      "explanation": "নিকটতম কেন্দ্র অনুযায়ী প্রথম দুটি বিন্দু (`0` ও `1`) যায় প্রথম দলে এবং শেষ দুটি বিন্দু (`9` ও `10`) যায় দ্বিতীয় দলে। ফলে নতুন গড় দাঁড়ায় `0.5` এবং `9.5`, এবং মোট SSE `2` থেকে কমে `1`-এ নেমে আসে।"
+    },
+    {
+      "id": "ch12_q6",
+      "question": "এই অধ্যায়ে আমাদের লেখা নিজস্ব Lloyd Helper ফাংশনটি কোনো ধাপে একটি খালি (Empty) Cluster পেলে কী করে?",
+      "options": [
+        "ওই কেন্দ্রের স্থানাঙ্কে `NaN` বসিয়ে দেয়",
+        "সবসময় সাথে সাথে ক্র্যাশ করে থেমে যায়",
+        "ওই খালি দলের আগের ধাপের Center-টিই অপরিবর্তিত রাখে",
+        "স্বয়ংক্রিয়ভাবে মোট Cluster সংখ্যা `k` বাড়িয়ে দেয়"
+      ],
+      "answer": 2,
+      "explanation": "ধারণাগত স্বচ্ছতার জন্য আমরা খালি হয়ে যাওয়া কেন্দ্রকে আগের জায়গায় স্থির রাখার একটি সুনির্দিষ্ট নীতি নিয়েছি। তবে মনে রাখবেন, স্ট্যান্ডার্ড লাইব্রেরিগুলো (যেমন scikit-learn) সাধারণত খালি কেন্দ্রকে দূরের কোনো বিন্দুতে সরিয়ে নেয়।"
+    },
+    {
+      "id": "ch12_q7",
+      "question": "`k-means++` পদ্ধতিতে প্রারম্ভিক কেন্দ্র বাছাই এবং একাধিকবার Restart (`n_init`) আমাদের ঠিক কী দেয়?",
+      "options": [
+        "প্রতিটি রানেই নিখুঁত Global Optimum পাওয়ার গ্যারান্টি",
+        "ডেটার ভেতরের সব অর্থবহ প্রাকৃতিক গোষ্ঠী খুঁজে পাওয়ার নিশ্চয়তা",
+        "ডেটা থেকে সব Outlier স্বয়ংক্রিয়ভাবে ছেঁটে ফেলার ক্ষমতা",
+        "ছড়িয়ে থাকা ভালো প্রারম্ভিক কেন্দ্র পাওয়ার সম্ভাবনা বাড়ায়, তবে Global Optimum-এর সনদ দেয় না"
+      ],
+      "answer": 3,
+      "explanation": "দূরত্বের বর্গের সমানুপাতিক সম্ভাব্যতায় কেন্দ্র ছড়িয়ে নিলে এবং একাধিকবার শুরু করলে খুব খারাপ Local Optimum-এ আটকে যাওয়ার ঝুঁকি অনেক কমে, কিন্তু Non-convex সমস্যার কারণে সর্বনিম্ন বৈশ্বিক সমাধানের শতভাগ নিশ্চয়তা তবু থাকে না।"
+    },
+    {
+      "id": "ch12_q8",
+      "question": "`n`টি Row, `d`টি মাত্রা ও `k`টি কেন্দ্রের ওপর `R`টি Restart এবং প্রতিটিতে `T`টি Iteration চালালে সাধারণ Lloyd পদ্ধতির দূরত্ব হিসাবের মোট কাজের পরিমাণ আনুমানিক কত?",
+      "options": [
+        "O(RTnkd)",
+        "O(log n)",
+        "যেকোনো মাত্রা ও ডেটার আকারে O(k)",
+        "প্রতি ধাপে O(n!)"
+      ],
+      "answer": 0,
+      "explanation": "প্রতিটি Assignment ধাপে `n`টি বিন্দুর সাথে `k`টি কেন্দ্রের `d`-মাত্রিক দূরত্ব মাপতে `O(nkd)` কাজ লাগে; এটি `T` ধাপ ও `R` বার পুনরাবৃত্তি হলে মোট খরচ দাঁড়ায় `O(RTnkd)` (বিশেষ ত্বরণ বা মেমরি কৌশল বাদে)।"
+    },
+    {
+      "id": "ch12_q9",
+      "question": "কোনো একটি বিন্দুর নিজ Cluster-এর অন্য সদস্যদের সাথে গড় দূরত্ব `a = 2` এবং সবচেয়ে কাছের ভিন্ন Cluster-এর সদস্যদের সাথে গড় দূরত্ব `b = 5` হলে তার Silhouette মান কত?",
+      "options": [
+        "2.5",
+        "−0.6",
+        "0.6",
+        "0.4"
+      ],
+      "answer": 2,
+      "explanation": "সূত্র অনুযায়ী `(b − a) / max(a, b) = (5 − 2) / 5 = 3 / 5 = 0.6`। খেয়াল রাখবেন, এখানে `a` ও `b` হলো সদস্য বিন্দুদের পারস্পরিক গড় দূরত্ব—শুধু Centroid থেকে দূরত্বের বিয়োগফল নয়।"
+    },
+    {
+      "id": "ch12_q10",
+      "question": "শুধুমাত্র সর্বনিম্ন Training Inertia (বা SSE) দেখে সেরা `k` নির্বাচন করার মূল গাণিতিক সমস্যাটি কী?",
+      "options": [
+        "k-Means আসলে কোনো দূরত্বের হিসাবই ব্যবহার করে না",
+        "`k` বাড়ালে অর্থহীনভাবে আরও ছোট SSE পাওয়া যায়, এমনকি প্রতিটি ভিন্ন বিন্দুতে কেন্দ্র বসালে SSE শূন্য হয়ে যায়",
+        "Inertia-র মান সবসময় ঋণাত্মক (Negative) হয়",
+        "তাত্ত্বিকভাবে `k = n` ধরা কখনোই সম্ভব নয়"
+      ],
+      "answer": 1,
+      "explanation": "কেন্দ্রের সংখ্যা বাড়ালে বিন্দুগুলো আরও কাছের কেন্দ্র পায়, ফলে সর্বোত্তম SSE ক্রমশ কমতে থাকে এবং প্রতিটি স্বতন্ত্র বিন্দু নিজস্ব কেন্দ্র পেলে SSE শূন্যে নেমে আসে। তাই স্থিতিশীলতা, মডেলের জটিলতা ও বাস্তব উপযোগিতা ছাড়া শুধু কম Inertia দিয়ে `k` বাছা যায় না।"
+    },
+    {
+      "id": "ch12_q11",
+      "question": "Hierarchical Clustering-এ Single Linkage পদ্ধতির সবচেয়ে সুপরিচিত দুর্বলতা কোনটি?",
+      "options": [
+        "এটি কেবল নিখুঁত গোলকাকার (Spherical) দল খুঁজে পায়",
+        "এটি PCA-এর সব অক্ষকে উল্টে দেয়",
+        "সমান দূরত্বের Tie থাকলেও এটি সবসময় ঠিক `k`টি দল দেয়",
+        "মাঝখানের কয়েকটি সেতুবন্ধনকারী বিন্দু (Bridge Points) ধরে আলাদা দুটি বড় দলকে লম্বা শিকলের মতো জুড়ে দেওয়া (Chaining)"
+      ],
+      "answer": 3,
+      "explanation": "Single Linkage যেহেতু দুই দলের মধ্যে কেবল সবচেয়ে কাছের এক জোড়া বিন্দুর দূরত্ব দেখে, তাই মাঝখানে সামান্য কয়েকটি Noise বা সেতু বিন্দু থাকলেই দুটি স্বতন্ত্র গোষ্ঠী অকালে এক হয়ে যেতে পারে।"
+    },
+    {
+      "id": "ch12_q12",
+      "question": "Agglomerative Clustering-এ Ward Linkage প্রতি ধাপে কোন রাশিটির বৃদ্ধি সর্বনিম্ন রাখতে চায়?",
+      "options": [
+        "Cluster-এর ভেতরকার মোট বর্গত্রুটির বৃদ্ধি (Within-cluster SSE Increase)",
+        "`income` শ্রেণিবিন্যাসের সর্বোচ্চ Accuracy",
+        "DBSCAN-এর মতো মোট Noise বিন্দুর সংখ্যা",
+        "শুধুমাত্র মূলবিন্দু থেকে Centroid-এর কাঁচা দূরত্ব (Norm)"
+      ],
+      "answer": 0,
+      "explanation": "দুটি দল `A` ও `B` মেলালে SSE বৃদ্ধির পরিমাণ হয় `ΔJ = (n_A n_B / (n_A + n_B)) ||μ_A − μ_B||²`, এবং Ward প্রতি ধাপে এই বৃদ্ধিই সর্বনিম্ন রাখে। এর জন্য Euclidean জ্যামিতি অপরিহার্য, আর SciPy-এর সংরক্ষিত উচ্চতার বর্গের অর্ধেক ঠিক এই `ΔJ`-এর সমান।"
+    },
+    {
+      "id": "ch12_q13",
+      "question": "Dendrogram কাটার সময় সমান উচ্চতায় একাধিক Merge (Tie) থাকলে SciPy-এর `fcluster(..., 3, criterion=\"maxclust\")` কী ফলাফল দিতে পারে?",
+      "options": [
+        "সবসময় বাধ্যতামূলকভাবে ঠিক `3`টি ভিন্ন Cluster দেবে",
+        "সর্বোচ্চ `3`টি Cluster দেবে, তবে সমান উচ্চতার Tie একসাথে মিশে গেলে `3`-এর কমও হতে পারে",
+        "সবসময় `4`টি Cluster তৈরি করবে",
+        "সব বিন্দুর Label শূন্য করে দেবে"
+      ],
+      "answer": 1,
+      "explanation": "সমান উচ্চতায় থাকা একাধিক Merge কোনো নির্দিষ্ট Cut সীমার নিচে একই সাথে একত্রিত হয়ে যেতে পারে। তাই কোডে শুধু অনুরোধ করা সংখ্যা না লিখে প্রাপ্ত প্রকৃত অনন্য Label সংখ্যা রিপোর্ট করা জরুরি।"
+    },
+    {
+      "id": "ch12_q14",
+      "question": "DBSCAN-এ কোনো বিন্দু Core কি না তা মাপার জন্য `min_samples` প্রতিবেশী গণনার সময় ওই বিন্দুটি নিজের ক্ষেত্রে কোন নিয়ম প্রযোজ্য?",
+      "options": [
+        "বিন্দুটি নিজেকে সবসময় গণনা থেকে বাদ দেওয়া হয়",
+        "কেবল বিন্দুটি Noise হলেই নিজেকে গণনা করা হয়",
+        "শূন্য দূরত্বে থাকায় বিন্দুটি নিজেও নিজের প্রতিবেশী গণনায় অন্তর্ভুক্ত থাকে (Includes Self)",
+        "শুধুমাত্র আগে PCA করা থাকলেই নিজেকে ধরা হয়"
+      ],
+      "answer": 2,
+      "explanation": "বদ্ধ `eps`-প্রতিবেশী (`distance <= eps`) অঞ্চলে কোনো বিন্দুর নিজের থেকে নিজের দূরত্ব `0`, তাই সে নিজে সবসময় গণনায় থাকে। পাশাপাশি একই স্থানাঙ্কে একাধিক আলাদা Row থাকলে সেগুলোও পৃথক প্রতিবেশী হিসেবে গণনায় আসে।"
+    },
+    {
+      "id": "ch12_q15",
+      "question": "DBSCAN-এ একটি Non-core Border বিন্দু যদি দুটি ভিন্ন Core Component-এর `eps` দূরত্বের ভেতরে পড়ে, তবে কী ঘটবে?",
+      "options": [
+        "ওই বিন্দুর মাধ্যমে দুটি Core Component সবসময় একীভূত (Merge) হয়ে যাবে",
+        "সেখানে নতুন দুটি Core দল তৈরি হবে",
+        "পুরো Dataset-এর সব বিন্দু Noise হয়ে যাবে",
+        "দুটি Core Component আলাদা থাকবে, তবে ওই Border বিন্দুটি কোন দলে যাবে তা ক্রমভেদে দ্ব্যর্থক (Ambiguous) হতে পারে"
+      ],
+      "answer": 3,
+      "explanation": "যেহেতু Border বিন্দুর নিজের চারপাশে `min_samples` সংখ্যক বিন্দু নেই, তাই সে ঘনত্বের শিকল সামনে বাড়াতে পারে না এবং দুই Core দলকে জোড়াও দেয় না। কেবল ওই একক প্রান্তিক বিন্দুটি কোন দলের টিকিট পাবে তা অ্যালগরিদমের পরিভ্রমণ ক্রম বা Tie নীতির ওপর নির্ভর করতে পারে।"
+    },
+    {
+      "id": "ch12_q16",
+      "question": "মোট `96`টি পর্যবেক্ষণের একটি Dataset-এ যদি `min_samples = 97` দিয়ে DBSCAN চালানো হয়, তবে ফলাফল কী হবে?",
+      "options": [
+        "সব কটি বিন্দুই Noise (`-1`) হিসেবে চিহ্নিত হবে",
+        "সব কটি বিন্দুই Core হিসেবে গণ্য হবে",
+        "ঠিক `97`টি আলাদা Cluster তৈরি হবে",
+        "স্বয়ংক্রিয়ভাবে PCA চালু হয়ে মাত্রা কমে যাবে"
+      ],
+      "answer": 0,
+      "explanation": "মোট বিন্দুই যেখানে `96`টি, সেখানে কোনো বিন্দুর প্রতিবেশী সংখ্যা কখনোই `97` হতে পারে না। ফলে একটিও Core বিন্দু তৈরি হবে না, আর Core না থাকলে কোনো Border বিন্দুও থাকতে পারে না—সবাই Noise হবে।"
+    },
+    {
+      "id": "ch12_q17",
+      "question": "DBSCAN-এ Noise বাদ দিয়ে শুধুমাত্র দলভুক্ত বিন্দুগুলোর (Assigned-only) ওপর Silhouette স্কোর দেখালে সাথে আর কোন তথ্যটি জানানো অত্যাবশ্যক?",
+      "options": [
+        "কেবল ব্যবহৃত Random Seed-এর নাম",
+        "মোট কত শতাংশ ডেটা দলে জায়গা পেয়েছে (Coverage) এবং স্কোরটি আদৌ সংজ্ঞায়িত কি না",
+        "স্কোরটিকে সরাসরি Supervised Accuracy নাম দিয়ে প্রকাশ করা",
+        "বাদ পড়া Noise বিন্দুগুলোকে গোপনে Dataset থেকে মুছে ফেলা"
+      ],
+      "answer": 1,
+      "explanation": "মাঝখানের সব কঠিন ও অস্পষ্ট বিন্দুকে Noise বানিয়ে ফেলে দিলে অল্প কিছু বিন্দুর ওপর কৃত্রিমভাবে খুব উঁচু Silhouette পাওয়া সম্ভব! তাছাড়া দলভুক্ত Cluster সংখ্যা `1` হলে Silhouette সংজ্ঞায়িতই থাকে না—তাই Coverage জানানো বাধ্যতামূলক।"
+    },
+    {
+      "id": "ch12_q18",
+      "question": "scikit-learn-এর `PCA` ডিফল্ট অবস্থায় ইনপুট ডেটার ওপর কোন Preprocessing কাজটি নিজে থেকে করে?",
+      "options": [
+        "প্রতিটি Feature-কে ভাগ করে Unit Variance বানিয়ে নেয়",
+        "গোপনে `income` Label ব্যবহার করে অক্ষ ঠিক করে",
+        "প্রতিটি Feature থেকে তার গড় বিয়োগ করে Center করে, কিন্তু নিজে থেকে Scale করে না",
+        "ডেটায় থাকা সব Missing Value নিজে থেকেই গড় দিয়ে পূরণ করে দেয়"
+      ],
+      "answer": 2,
+      "explanation": "`PCA` স্বয়ংক্রিয়ভাবে কেবল গড় বিয়োগ করে (`centering`), কিন্তু এককের ভিন্নতা দূর করতে চাইলে তার আগে আলাদাভাবে `StandardScaler` ব্যবহার করতে হয়—এবং দুটিরই Fit Scope শুধুমাত্র ট্রেনিং ডেটায় সীমাবদ্ধ রাখতে হয়।"
+    },
+    {
+      "id": "ch12_q19",
+      "question": "গড় বিয়োগ করা (Centered) ট্রেনিং ম্যাট্রিক্স `X_c`-এর `j`-তম Singular Value যদি `σ_j` হয় এবং মোট নমুনা সংখ্যা `n` হয়, তবে Sample Covariance ম্যাট্রিক্সের সংশ্লিষ্ট Eigenvalue কত?",
+      "options": [
+        "σ_j / n",
+        "σ_j²",
+        "n σ_j²",
+        "σ_j² / (n − 1)"
+      ],
+      "answer": 3,
+      "explanation": "যেহেতু Sample Covariance ম্যাট্রিক্স হলো `C = X_cᵀ X_c / (n − 1)`, তাই `X_c = U Σ Vᵀ` বসালে প্রতিটি প্রধান অক্ষের Sample Variance বা Eigenvalue দাঁড়ায় `σ_j² / (n − 1)`।"
+    },
+    {
+      "id": "ch12_q20",
+      "question": "PCA-এর কোনো একটি Component ভেক্টরের চিহ্ন উল্টে `v` থেকে `-v` হয়ে গেলে (এবং সে অনুযায়ী Score-এর চিহ্নও উল্টে গেলে) পুনর্গঠিত (Reconstructed) ডেটার কী পরিবর্তন হবে?",
+      "options": [
+        "পুনর্গঠিত মান হুবহু একই থাকবে",
+        "পুনর্গঠিত সব সংখ্যা ঋণাত্মক হয়ে যাবে",
+        "সব বিন্দু সরাসরি গড় বিন্দুতে মিলে যাবে",
+        "Explained Variance Ratio দ্বিগুণ হয়ে যাবে"
+      ],
+      "answer": 0,
+      "explanation": "অভিক্ষেপের সূত্রে `(x · (−v))(−v) = (x · v)v`—দুইবার মাইনাস গুণ হয়ে কেটে যায়! একক Eigenvector-এর দিক প্লাস বা মাইনাস যেকোনো দিকে হতে পারে, কিন্তু তার তৈরি এক-মাত্রিক রেখা ও অভিক্ষেপ অভিন্ন থাকে।"
+    },
+    {
+      "id": "ch12_q21",
+      "question": "কোনো মডেলে \"PCA প্রথম দুটি অক্ষে `95%` Variance ধরে রেখেছে\"—এই কথাটির প্রকৃত অর্থ কী?",
+      "options": [
+        "পরবর্তী Classifier-এ `95%` Classification Accuracy নিশ্চিতভাবে পাওয়া যাবে",
+        "যে ট্রেনিং ডেটায় PCA Fit করা হয়েছে, তার মোট বিস্তারের (Variance) `95%` ওই দুই অক্ষে সংরক্ষিত আছে",
+        "মূল Dataset-এর `95%` Row রেখে বাকি `5%` ফেলে দেওয়া হয়েছে",
+        "বাস্তব ঘটনার `95%` কার্যকারণগত ব্যাখ্যা পাওয়া গেছে"
+      ],
+      "answer": 1,
+      "explanation": "PCA সম্পূর্ণভাবে Target Label-নিরপেক্ষ উপায়ে জ্যামিতিক বিস্তার মাপে। কখনো কখনো বাকি থাকা `5%` কম বিস্তারের অক্ষেই আসল শ্রেণিবিন্যাসের সংকেত লুকিয়ে থাকতে পারে!"
+    },
+    {
+      "id": "ch12_q22",
+      "question": "আমাদের PCA পুনর্গঠন সূত্রে একটিও প্রধান অক্ষ না রেখে `q = 0` ধরলে যেকোনো বিন্দুর পুনর্গঠিত রূপ (Reconstruction) কী হবে?",
+      "options": [
+        "বিন্দুটির মূল অবিকৃত স্থানাঙ্ক",
+        "সবসময় মূলবিন্দুর শূন্য ভেক্টর (Zero Vector)",
+        "ট্রেনিং ডেটা থেকে শেখা গড় ভেক্টর (Fitted Training Mean)",
+        "k-Means-এর নিকটতম Cluster Center"
+      ],
+      "answer": 2,
+      "explanation": "`q = 0` হলে Centered অংশের অভিক্ষেপ শূন্য হয়ে যায় এবং শেষে ট্রেনিং থেকে শেখা গড় যোগ হয়ে সেটাই Baseline অনুমান হিসেবে ফিরে আসে।"
+    },
+    {
+      "id": "ch12_q23",
+      "question": "একটি দ্বিমাত্রিক t-SNE চিত্রে দুটি বিন্দুপুঞ্জকে (Islands) পরস্পর থেকে বেশ দূরে আঁকা দেখা গেলে কীভাবে তা ব্যাখ্যা করা উচিত?",
+      "options": [
+        "মূল উচ্চ-মাত্রিক জগতেও দল দুটির দূরত্বের অনুপাত হুবহু ছবির সমান",
+        "ডেটায় দুটি স্বতন্ত্র কার্যকারণগত Class থাকার বিষয়টি নিশ্চিত প্রমাণিত",
+        "ছবির অনুভূমিক ও উল্লম্ব অক্ষ দুটি মূল Feature-এর সরাসরি রৈখিক Loading নির্দেশ করে",
+        "বৈশ্বিক দূরত্ব ও দলের আপেক্ষিক ঘনত্বের বিষয়ে কোনো চূড়ান্ত দাবি না করে মূল ডেটা ও একাধিক সেটিংসে যাচাই করতে হবে"
+      ],
+      "answer": 3,
+      "explanation": "t-SNE মূলত স্থানীয় প্রতিবেশীদের সম্ভাব্যতা সংরক্ষণের চেষ্টা করে; পর্দার মধ্যকার ফাঁকা দূরত্ব বা গুচ্ছের আকার সবসময় মূল জ্যামিতিক দূরত্ব বা প্রকৃত জনঘনত্বের নিখুঁত প্রতিচ্ছবি দেয় না।"
+    },
+    {
+      "id": "ch12_q24",
+      "question": "একই ট্রেনিং ডেটার ওপর `seed 42` এবং `seed 43` দিয়ে চালানো দুটি k-Means রানের মধ্যে উচ্চ ARI (`0.9934`) পাওয়া গেলে তা ঠিক কী প্রমাণ করে?",
+      "options": [
+        "নির্দিষ্ট এই ডেটা ও `k`-এর জন্য এই দুটি Seed-এর মধ্যে অপ্টিমাইজেশন ফলাফল স্থিতিশীল",
+        "ভবিষ্যতের নতুন ডেটায় মডেলের সাফল্য শতভাগ নিশ্চিত",
+        "মডেলের ন্যায্যতা (Fairness Audit) সম্পূর্ণভাবে যাচাই হয়ে গেছে",
+        "ডেটা সংগ্রহের সামগ্রিক অনিশ্চয়তা (Sampling Uncertainty) শূন্যে নেমে এসেছে"
+      ],
+      "answer": 0,
+      "explanation": "এটি কেবল স্থির ডেটায় প্রারম্ভিক Seed পরিবর্তনের সংবেদনশীলতা (Seed Stability) দেখায়; ভিন্ন নমুনায় স্থায়িত্ব, সময়ের সাথে Drift কিংবা বাস্তব কাজের উপযোগিতা যাচাই করতে আলাদা পরীক্ষা দরকার।"
+    },
+    {
+      "id": "ch12_q_em_revision",
+      "question": "দুটি বিন্দুর একটি GMM উদাহরণে Responsibility ম্যাট্রিক্স যদি `[[0.880797, 0.119203], [0.119203, 0.880797]]` হয়, তবে প্রথম Component-এর কার্যকর সদস্যসংখ্যা (Effective Count) কত?",
+      "options": [
+        "0.880797",
+        "1",
+        "1.761594",
+        "2"
+      ],
+      "answer": 1,
+      "explanation": "কোনো Component-এর Effective Count হলো সংশ্লিষ্ট কলামের সব বিন্দুর Responsibility-র যোগফল: `0.880797 + 0.119203 = 1`। M-step-এ ওজনযুক্ত গড় ও Covariance আপডেটের হর হিসেবে এই মানটিই ব্যবহৃত হয়, আর প্রতিটি Row-এর যোগফল `1` হওয়া নিশ্চিত করে বিন্দুটির মোট সদস্যপদ সম্ভাব্যতা।"
+    },
+    {
+      "id": "ch12_q_em_variance_revision",
+      "question": "EM Algorithm-এর একটি M-step চলাকালে কোনো Component-এর Covariance আপডেট করার সময় প্রতিটি বিন্দুর বিচ্যুতি (Residual) কোন গড় থেকে বিয়োগ করে হিসাব করতে হয়?",
+      "options": [
+        "আগের ধাপের পুরোনো গড় (Old Mean) থেকে",
+        "বর্তমান M-step-এই সদ্য হিসাব করা নতুন ওজনযুক্ত গড় (Updated Weighted Mean) থেকে",
+        "সব Component মিলিয়ে পুরো ডেটার বৈশ্বিক গড় থেকে",
+        "সবচেয়ে কাছের পর্যবেক্ষিত কোনো ডেটা Row থেকে"
+      ],
+      "answer": 1,
+      "explanation": "E-step-এর Responsibility স্থির রেখে M-step-এ প্রথমে নতুন ওজনযুক্ত গড় বের করা হয়, এবং ঠিক সেই নতুন গড়ের সাপেক্ষেই বিচ্যুতির Outer Product নিয়ে প্রত্যাশিত Log-likelihood সর্বোচ্চকারী Covariance গণনা করা হয়। তবে কোনো দলের Effective Count শূন্যের কাছাকাছি নেমে গেলে আলাদা সুরক্ষা নীতির প্রয়োজন হয়।"
+    }
+  ],
+  "exercises": [
+    {
+      "id": "ch12_ex_centroid",
+      "title": "SSE থেকে সর্বোত্তম Centroid নির্ণয়",
+      "prompt": "তিনটি শিক্ষামূলক বিন্দু `points = [1.0, 3.0, 8.0]` দেওয়া আছে। এদের সমান ওজনের বর্গত্রুটি (Unweighted Squared Error) সর্বনিম্ন করে এমন কেন্দ্রের মান হিসাব করে স্কেলার চলক `answer`-এ সংরক্ষণ করুন।",
+      "starter": "points = [1.0, 3.0, 8.0]\n# TODO: derive and compute mean\nanswer = 0.0\n",
+      "solution": "points = [1.0, 3.0, 8.0]\nanswer = sum(points) / len(points)\nprint(answer)\n",
+      "expected": 4,
+      "explanation": "বর্গত্রুটির অন্তরজ `2(nμ − Σx) = 0` ধরলে গাণিতিক গড় `(1.0 + 3.0 + 8.0) / 3 = 4.0` পাওয়া যায়। সাধারণ ফাংশন লেখার সময় খালি তালিকা এলে কী হবে তার সুনির্দিষ্ট নিয়ম রাখা জরুরি।"
+    },
+    {
+      "id": "ch12_ex_inertia",
+      "title": "নিকটতম কেন্দ্রের সাপেক্ষে Inertia হিসাব",
+      "prompt": "ধরা যাক `X = [0.0, 1.0, 9.0, 10.0]` এবং কেন্দ্রের তালিকা `centers = [0.0, 10.0]`। প্রতিটি বিন্দুর জন্য তার নিকটতম কেন্দ্র থেকে দূরত্বের বর্গ (Minimum Squared Distance) বের করে তাদের মোট যোগফল `answer`-এ রাখুন।",
+      "starter": "X = [0.0, 1.0, 9.0, 10.0]\ncenters = [0.0, 10.0]\nanswer = 0.0\n",
+      "solution": "X = [0.0, 1.0, 9.0, 10.0]\ncenters = [0.0, 10.0]\nanswer = sum(min((x - c) ** 2 for c in centers) for x in X)\nprint(answer)\n",
+      "expected": 2,
+      "explanation": "চারটি বিন্দুর নিকটতম কেন্দ্র থেকে বর্গদূরত্ব যথাক্রমে `0`, `1`, `1` এবং `0`; তাই মোট Inertia বা SSE হলো `2.0`। বাস্তব ফাংশনে ইনপুট সংখ্যাগুলো সসীম কি না এবং কেন্দ্রের তালিকা অশূন্য কি না তা আগে যাচাই করে নেওয়া ভালো।"
+    },
+    {
+      "id": "ch12_ex_lloyd",
+      "title": "Lloyd Algorithm-এর এক ধাপ আপডেট",
+      "prompt": "প্রদত্ত `X = [0.0, 1.0, 9.0, 10.0]` এবং প্রারম্ভিক `centers = [0.0, 10.0]` ব্যবহার করে প্রথমে নিকটতম কেন্দ্রে Assignment এবং এরপর একবার Mean Update সম্পন্ন করুন। আপডেটের পর প্রথম কেন্দ্রটির (`updated[0]`) নতুন মান `answer`-এ রাখুন। সমান দূরত্বের Tie হলে ক্ষুদ্রতম সূচকের কেন্দ্রটি বেছে নিন এবং কোনো দল খালি থাকলে পুরোনো কেন্দ্র অপরিবর্তিত রাখুন।",
+      "starter": "X = [0.0, 1.0, 9.0, 10.0]\ncenters = [0.0, 10.0]\n# TODO: assign then mean; retain empty centers\nanswer = 0.0\n",
+      "solution": "X = [0.0, 1.0, 9.0, 10.0]\ncenters = [0.0, 10.0]\nlabels = [min(range(len(centers)), key=lambda j: (x - centers[j]) ** 2) for x in X]\nupdated = centers.copy()\nfor j in range(len(centers)):\n    members = [x for x, c in zip(X, labels) if c == j]\n    if members:\n        updated[j] = sum(members) / len(members)\nanswer = updated[0]\nprint(answer)\n",
+      "expected": 0.5,
+      "explanation": "প্রথম দলে পড়ে `0.0` ও `1.0`, যাদের গড় `0.5`; আর দ্বিতীয় দলে পড়ে `9.0` ও `10.0`, যাদের গড় `9.5`। তাই প্রথম আপডেটকৃত কেন্দ্রের মান `0.5`।"
+    },
+    {
+      "id": "ch12_ex_silhouette",
+      "title": "Silhouette স্কোরের গাণিতিক হিসাব",
+      "prompt": "কোনো একটি বিন্দুর নিজ Cluster-এর সদস্যদের সাথে গড় দূরত্ব `a = 2.0` এবং অন্য Cluster-গুলোর মধ্যে ক্ষুদ্রতম গড় দূরত্ব `b = 5.0` দেওয়া আছে। বিন্দুটির Silhouette মান হিসাব করে `answer`-এ রাখুন।",
+      "starter": "a, b = 2.0, 5.0\nanswer = 0.0\n",
+      "solution": "a, b = 2.0, 5.0\nanswer = (b - a) / max(a, b)\nprint(answer)\n",
+      "expected": 0.6,
+      "explanation": "সূত্র অনুযায়ী `s = (b − a) / max(a, b) = (5.0 − 2.0) / 5.0 = 0.6`। বাস্তবে `a` বের করার সময় বিন্দুটির নিজের থেকে নিজের শূন্য দূরত্ব বাদ দিতে হয়, এবং একক সদস্যের দল (Singleton) ও `a = b = 0` পরিস্থিতির জন্য আলাদা শর্ত রাখতে হয়।"
+    },
+    {
+      "id": "ch12_ex_ward",
+      "title": "Ward Linkage-এ Merge খরচের হিসাব",
+      "prompt": "দুটি একমাত্রিক Cluster-এর সদস্যসংখ্যা যথাক্রমে `n_a = 2` ও `n_b = 3` এবং তাদের গড় `mu_a = 0.0` ও `mu_b = 4.0`। Ward পদ্ধতিতে দল দুটিকে একত্রিত করলে Within-cluster SSE কতটুকু বাড়বে তা হিসাব করে `answer`-এ রাখুন।",
+      "starter": "n_a, n_b = 2, 3\nmu_a, mu_b = 0.0, 4.0\nanswer = 0.0\n",
+      "solution": "n_a, n_b = 2, 3\nmu_a, mu_b = 0.0, 4.0\nanswer = n_a * n_b / (n_a + n_b) * (mu_a - mu_b) ** 2\nprint(answer)\n",
+      "expected": 19.2,
+      "explanation": "সূত্র অনুযায়ী SSE বৃদ্ধির পরিমাণ `(2 × 3 / (2 + 3)) × (0.0 − 4.0)² = (6 / 5) × 16 = 19.2`। উল্লেখ্য, SciPy-এর Ward Dendrogram-এ সংরক্ষিত উচ্চতার বর্গের অর্ধেক (`height² / 2`) ঠিক এই মানের সমান।"
+    },
+    {
+      "id": "ch12_ex_density",
+      "title": "বদ্ধ ব্যাসার্ধে DBSCAN Core ও Noise গণনা",
+      "prompt": "বিন্দুগুলোর তালিকা `X = [0.0, 0.1, 1.0]`, ব্যাসার্ধ `eps = 0.2` এবং সর্বনিম্ন প্রতিবেশী সংখ্যা `minimum = 2` দেওয়া আছে। বদ্ধ প্রতিবেশী শর্ত (`|x − y| <= eps`, নিজেকে অন্তর্ভুক্ত রেখে) ব্যবহার করে Core বিন্দুগুলো চিহ্নিত করুন এবং কোনো Core বিন্দুর প্রতিবেশী অঞ্চলেই পড়ে না এমন মোট Noise বিন্দুর সংখ্যা `answer`-এ রাখুন।",
+      "starter": "X = [0.0, 0.1, 1.0]\neps, minimum = 0.2, 2\nanswer = 0.0\n",
+      "solution": "X = [0.0, 0.1, 1.0]\neps, minimum = 0.2, 2\nneighbors = [[j for j, y in enumerate(X) if abs(x - y) <= eps] for x in X]\ncore = [len(n) >= minimum for n in neighbors]\nnoise = [not core[i] and not any(core[j] for j in neighbors[i]) for i in range(len(X))]\nanswer = sum(noise)\nprint(answer)\n",
+      "expected": 1,
+      "explanation": "`0.0` এবং `0.1` উভয়েই নিজেকেসহ `2`টি করে প্রতিবেশী পাওয়ায় তারা Core বিন্দু। কিন্তু `1.0` বিন্দুটি নিজেও Core নয় এবং কোনো Core বিন্দুর `0.2` দূরত্বের ভেতরেও নেই, তাই মোট Noise সংখ্যা `1`। মনে রাখবেন, কোনো বিন্দু নিজে Core না হলেও কোনো Core-এর কাছে থাকলে সে Noise না হয়ে Border হতে পারে।"
+    },
+    {
+      "id": "ch12_ex_projection",
+      "title": "PCA অভিক্ষেপের Residual বর্গত্রুটি (SSE)",
+      "prompt": "ইতিমধ্যে গড় বিয়োগ করা (Centered) বিন্দু `x = [3.0, 4.0]` এবং একক ভেক্টর `v = [1.0, 0.0]` (প্রথম প্রধান অক্ষ) দেওয়া আছে। `v` বরাবর Rank-1 পুনর্গঠনের পর অবশিষ্ট ভেক্টরের বর্গত্রুটির যোগফল (Squared Residual Error) হিসাব করে `answer`-এ রাখুন।",
+      "starter": "x, v = [3.0, 4.0], [1.0, 0.0]\nanswer = 0.0\n",
+      "solution": "x, v = [3.0, 4.0], [1.0, 0.0]\nscore = sum(a * b for a, b in zip(x, v))\nrestored = [score * c for c in v]\nanswer = sum((a - b) ** 2 for a, b in zip(x, restored))\nprint(answer)\n",
+      "expected": 16,
+      "explanation": "অভিক্ষেপের Score হলো `3.0`, ফলে পুনর্গঠিত ভেক্টর হয় `[3.0, 0.0]` এবং Residual দাঁড়ায় `[0.0, 4.0]`, যার বর্গত্রুটির যোগফল `0² + 4² = 16.0`। কাঁচা ইনপুট দেওয়া থাকলে শুরুতে ট্রেনিং গড় বিয়োগ এবং শেষে আবার তা যোগ করতে হতো।"
+    },
+    {
+      "id": "ch12_ex_eigenvalue",
+      "title": "Singular Value থেকে Sample Variance নির্ণয়",
+      "prompt": "একটি Centered ট্রেনিং ম্যাট্রিক্সের `singular = [3.0, 1.0]` এবং মোট নমুনা সংখ্যা `n = 5` দেওয়া আছে। প্রথম প্রধান অক্ষের Sample Covariance Eigenvalue হিসাব করে `answer`-এ রাখুন।",
+      "starter": "singular = [3.0, 1.0]\nn = 5\nanswer = 0.0\n",
+      "solution": "singular = [3.0, 1.0]\nn = 5\nanswer = singular[0] ** 2 / (n - 1)\nprint(answer)\n",
+      "expected": 2.25,
+      "explanation": "Sample Covariance প্রথা অনুযায়ী প্রথম অক্ষের Eigenvalue বা Sample Variance হলো `3.0² / (5 − 1) = 9.0 / 4 = 2.25`। খেয়াল রাখবেন, Population Variance-এ হর `n` হলেও স্ট্যান্ডার্ড PCA-তে `n − 1` ব্যবহৃত হয়।"
+    },
+    {
+      "id": "ch12_ex_ratio",
+      "title": "সংরক্ষিত Variance-এর অনুপাত (Explained Variance Ratio)",
+      "prompt": "একটি Centered ম্যাট্রিক্সের Singular Value তালিকা `singular = [3.0, 1.0]` দেওয়া আছে। প্রথম Component-টির Explained Variance Ratio হিসাব করে `answer`-এ রাখুন।",
+      "starter": "singular = [3.0, 1.0]\nanswer = 0.0\n",
+      "solution": "singular = [3.0, 1.0]\nenergy = [s * s for s in singular]\nanswer = energy[0] / sum(energy)\nprint(answer)\n",
+      "expected": 0.9,
+      "explanation": "Singular Value-গুলোর বর্গশক্তি যথাক্রমে `9.0` ও `1.0`। অনুপাত নেওয়ার সময় লব ও হরের `(n − 1)` কাটাকাটি চলে যায়, ফলে প্রথম অক্ষের অনুপাত দাঁড়ায় `9.0 / (9.0 + 1.0) = 0.9`।"
+    },
+    {
+      "id": "ch12_ex_energy",
+      "title": "বাদ পড়া Singular Energy থেকে Coordinate MSE",
+      "prompt": "একটি `n = 4, d = 3` আকারের Centered ট্রেনিং ম্যাট্রিক্সের Singular Value তালিকা `singular = [4.0, 2.0, 1.0]` এবং সংরক্ষিত অক্ষের সংখ্যা `q = 1` দেওয়া আছে। ওই ফিট করা ডেটার ওপর Rank-1 পুনর্গঠনের স্থানাঙ্ক-পিছু গড় বর্গত্রুটি (Coordinate MSE) হিসাব করে `answer`-এ রাখুন।",
+      "starter": "singular = [4.0, 2.0, 1.0]\nn, d, q = 4, 3, 1\nanswer = 0.0\n",
+      "solution": "singular = [4.0, 2.0, 1.0]\nn, d, q = 4, 3, 1\nsse = sum(s * s for s in singular[q:])\nanswer = sse / (n * d)\nprint(answer)\n",
+      "expected": 0.4166666666666667,
+      "explanation": "প্রথম অক্ষটি রাখার পর বাদ পড়া অক্ষগুলোর বর্গশক্তির যোগফল হলো `2.0² + 1.0² = 5.0`। একে মোট স্থানাঙ্ক সংখ্যা `n × d = 4 × 3 = 12` দিয়ে ভাগ করলে Coordinate MSE পাওয়া যায় `5.0 / 12 ≈ 0.4166667`। তবে ভিন্ন কোনো Held-out সেটের ত্রুটি মাপতে হলে সরাসরি তার Frozen পুনর্গঠন বিচ্যুতি থেকেই হিসাব করতে হবে।"
+    }
+  ],
+  "interviews": [
+    {
+      "title": "শুরু থেকে (From Scratch) k-Means বাস্তবায়ন",
+      "tag": "ML CODING · 35 MIN",
+      "prompt": "কোনো লাইব্রেরি ছাড়া k-Means-এর নিকটতম কেন্দ্র নির্ধারণ (Assignment), গড় আপডেট এবং থামার শর্ত (Stopping Logic) কীভাবে লিখবেন তা ব্যাখ্যা করুন। সমান দূরত্বের Tie, হুবহু অভিন্ন (Duplicate) Row এবং খালি হয়ে যাওয়া Cluster কীভাবে সামলাবেন? প্রতি ধাপের Time ও Space Complexity উল্লেখ করুন।",
+      "answer": "শুরুতেই ইনপুট যাচাই করে নিশ্চিত করব যে `X` একটি সসীম `n × d` ম্যাট্রিক্স, `1 <= k <= n`, এবং প্রারম্ভিক কেন্দ্রগুলোর আকার `k × d`। অপ্রয়োজনীয় বর্গমূল এড়িয়ে সরাসরি Squared Euclidean Distance হিসাব করে প্রতিটি বিন্দুকে নিকটতম কেন্দ্রে পাঠাব; দূরত্ব সমান হলে ক্ষুদ্রতম সূচকের কেন্দ্রটি বেছে নেওয়ার (`argmin`) সুনির্দিষ্ট নিয়ম রাখব। এরপর প্রতিটি অশূন্য দলের গাণিতিক গড় দিয়ে কেন্দ্র আপডেট করব, আর কোনো দল খালি হয়ে গেলে সুস্পষ্ট নীতি হিসেবে আগের কেন্দ্রটিই অপরিবর্তিত রাখব অথবা সবচেয়ে বেশি ত্রুটির বিন্দুতে সরিয়ে নেব—এবং ব্যাখ্যা করব কেন এই দুই ধাপের কোনোটিই কখনো মোট SSE বাড়ায় না।\n\nথামার শর্ত হিসেবে পরপর দুই ধাপে সব বিন্দুর Label অপরিবর্তিত থাকা, কেন্দ্র সরার পরিমাণ নির্দিষ্ট `tol`-এর নিচে নামা কিংবা `max_iter` পূর্ণ হওয়া ব্যবহার করব (`tol` দিয়ে থামলে শেষ কেন্দ্রের সাথে চূড়ান্ত Label-এর সামঞ্জস্য একবার মিলিয়ে নেওয়া নিরাপদ)। প্রতি ধাপে দূরত্ব হিসাবের সময় খরচ `O(nkd)` এবং পুরো দূরত্ব ম্যাট্রিক্স একসাথে বানালে মেমরি লাগে `O(nk)`, যা বড় ডেটায় Chunk ভাগ করে কমানো যায়। সব বিন্দু অভিন্ন হওয়া, সমদূরবর্তী Tie, `k = 1`, `k = n`, খালি Cluster, `NaN` ইনপুট এবং মূল অ্যারে অপরিবর্তিত থাকার শর্তগুলো আলাদাভাবে টেস্ট করব; আর মনে রাখব যে একাধিক Restart ভালো সমাধানের সুযোগ বাড়ায়, কিন্তু Global Optimum-এর সনদ দেয় না।",
+      "prerequisiteLessons": [
+        "ch12_lloyd"
+      ]
+    },
+    {
+      "title": "সমকেন্দ্রিক বলয়াকার (Concentric Rings) ডেটায় k-Means কেন ব্যর্থ হয়?",
+      "tag": "MODEL CHOICE · 15 MIN",
+      "prompt": "ধরুন ডেটায় পরস্পরকে ঘিরে থাকা দুটি ঘন সমকেন্দ্রিক বলয় (Concentric Rings) রয়েছে। এখানে `k = 2` দিয়ে সাধারণ k-Means চালালে কেন অস্বাভাবিক ও ভুল বিভাজন পাওয়া যায়?",
+      "answer": "সাধারণ k-Means প্রতিটি বিন্দুকে তার নিকটতম Euclidean Centroid-এ পাঠায়, যার ফলে প্রতিটি দলের সীমানা হয় উত্তল (Convex) Voronoi অঞ্চল এবং দুটি কেন্দ্রের মাঝখানের বিভাজনরেখা হয় একটি সরলরৈখিক Hyperplane। কিন্তু ভেতরের ছোট বৃত্ত আর বাইরের বড় বলয়কে কোনো সরলরেখা দিয়ে আলাদা করা জ্যামিতিকভাবে অসম্ভব—ফলে k-Means বলয় দুটিকে মাঝখান দিয়ে কেটে দুটি অর্ধচন্দ্রাকার ভাগে ফেলে দেয়! এছাড়া চরম Outlier, অসম ঘনত্ব এবং লম্বাটে বিস্তারও (Anisotropy) এই বর্গদূরত্বের Objective-কে বিভ্রান্ত করতে পারে।\n\nএমন ঘনত্ব-সংযুক্ত Non-convex গঠনের জন্য DBSCAN বা Graph/Spectral পদ্ধতি বিবেচনা করা যায়, তবে চূড়ান্ত প্রস্তাব দেওয়ার আগে ডেটার মাত্রা, Feature Scaling, উপযুক্ত `eps` নির্বাচনের উপায় এবং মেমরি ও রানটাইম বাজেট জেনে নিতে হবে। পাশাপাশি নিশ্চিত হতে হবে যে পর্দায় দেখা বলয়াকার আকৃতিটি কেবল কোনো 2D ভিজ্যুয়াল Embedding-এর বিভ্রম নয়, বরং মূল Feature জগতেও সত্যিই বিদ্যমান (উল্লেখ্য, এটি একটি তাত্ত্বিক জ্যামিতিক উদাহরণ—আমাদের Adult ডেটায় এমন বলয়াকার গঠন থাকার দাবি করা হচ্ছে না)।"
+    },
+    {
+      "title": "স্পষ্ট Elbow না থাকলে বাস্তবে কীভাবে k বেছে নেবেন?",
+      "tag": "EVALUATION · 20 MIN",
+      "prompt": "ধরুন `k` বাড়ানোর সাথে সাথে Inertia মসৃণভাবে কমছে, Silhouette সামান্য বাড়ছে, আর বিজনেস টিম ঠিক পাঁচটি দল চাইছে। একজন ML Engineer হিসেবে আপনি কীভাবে সিদ্ধান্ত নেবেন?",
+      "answer": "প্রথমেই আমি বুঝে নেব এই বিভাজন দিয়ে বাস্তবে ঠিক কী সিদ্ধান্ত নেওয়া হবে (Intended Action) এবং প্রতিটি দল কার্যকর হতে হলে ন্যূনতম কতজন সদস্য থাকা দরকার। যেহেতু `k` বাড়ালে গাণিতিকভাবে সর্বোত্তম SSE কমতেই পারে, তাই সর্বনিম্ন SSE দেখে কখনোই `k` বাছা চলে না। এর বদলে একই নির্দিষ্ট ডেটা ও দূরত্বের মাপকাঠিতে আমি একসঙ্গে Silhouette স্কোর, দলগুলোর আকারের ভারসাম্যহীনতা, ভিন্ন Seed ও গ্রুপ-ভিত্তিক Resampling-এ দলবিন্যাসের স্থিতিশীলতা (ARI) এবং প্রতিটি দলের প্রতিনিধিত্বমূলক প্রোফাইল পরীক্ষা করব।\n\nবিজনেস টিমের \"পাঁচটি দল চাই\" শর্তটিকে আমি ডেটার ভেতরের কোনো প্রাকৃতিক সত্য হিসেবে নয়, বরং একটি ব্যবহারিক পরিচালনাগত শর্ত (Operational Constraint) হিসেবে মূল্যায়ন করব। বক্ররেখায় স্পষ্ট কোনো Elbow না থাকলে পরিষ্কারভাবে জানাব যে ডেটাটি সম্ভবত অবিচ্ছিন্নভাবে বিস্তৃত—তীক্ষ্ণভাবে বিচ্ছিন্ন নয়—এবং আগে থেকে নির্ধারিত প্রার্থী তালিকার মধ্য থেকে Held-out Distortion ও পরবর্তী কাজের উপযোগিতা দেখে সিদ্ধান্ত নেব। আর একই Validation সেটে বারবার ঘাঁটাঘাঁটি করে সেরা সেটিং বাছলে নতুন নিরপেক্ষ ডেটা ছাড়া চূড়ান্ত Generalization দাবি করব না।",
+      "prerequisiteLessons": [
+        "ch12_selection"
+      ]
+    },
+    {
+      "title": "DBSCAN-এ Core, Border এবং দ্ব্যর্থক সীমানার মালিকানা",
+      "tag": "ALGORITHM · 25 MIN",
+      "prompt": "দুটি আলাদা Core Component-এর ঠিক মাঝখানে একটি Non-core Border বিন্দু রয়েছে। নিজে হাতে BFS দিয়ে DBSCAN লেখার সময় কোন সূক্ষ্ম ভুলটি করলে দল দুটি ভুলভাবে জোড়া লেগে যেতে পারে?",
+      "answer": "DBSCAN-এ বদ্ধ `eps` ব্যাসার্ধের ভেতরে নিজেকেসহ প্রতিবেশীর সংখ্যা অন্তত `min_samples` হলে তবেই বিন্দুটি Core হয়। BFS বা Queue দিয়ে দল সম্প্রসারণের সময় শুধুমাত্র Core প্রতিবেশীদেরই Queue-তে ঢুকিয়ে সামনে বাড়ানো যাবে! কেউ যদি ভুলক্রমে কোনো Non-core Border বিন্দুকেও Queue থেকে প্রতিবেশী খোঁজার উৎস বানিয়ে ফেলে, তবে সেই একটিমাত্র প্রান্তিক বিন্দুই সেতু হয়ে দুটি সম্পূর্ণ আলাদা Core Component-কে ভুলভাবে একীভূত (Merge) করে দেবে।\n\nসঠিক নকশায় প্রথমে শুধুমাত্র Core বিন্দুগুলোর গ্রাফে সংযুক্ত উপাদানগুলো (Connected Components) বের করে নিতে হয় এবং পরের ধাপে অবশিষ্ট Non-core বিন্দুগুলোর পাশে কোনো Core থাকলে তাকে সেই দলে যুক্ত করতে হয়। মাঝখানের কোনো দ্ব্যর্থক Border বিন্দু একাধারে একাধিক Core দলের নাগালে থাকলে সুনির্দিষ্ট নিয়ম হিসেবে ক্ষুদ্রতম দল-সূচক দেওয়া যেতে পারে, যদিও স্ট্যান্ডার্ড লাইব্রেরিতে পরিভ্রমণ ক্রমানুযায়ী ভিন্ন দল মিলতে পারে। তাই যাচাইয়ের সময় কাঁচা সংখ্যার বদলে Core/Noise মাস্ক ও সার্বিক বিভাজন মেলানো উচিত, সাথে সব বিন্দু Noise হওয়া ও `min_samples = 1` প্রান্তিক কেস পরীক্ষা করা এবং বড় ডেটায় `O(n²)` ঘন দূরত্ব ম্যাট্রিক্সের মেমরি সীমা মাথায় রাখা জরুরি।",
+      "prerequisiteLessons": [
+        "ch12_density"
+      ]
+    },
+    {
+      "title": "৫০% ডেটা Noise হওয়ার পরেও উঁচু Silhouette স্কোর: কোনটি ভালো?",
+      "tag": "METRICS · 15 MIN",
+      "prompt": "দুটি DBSCAN সেটিংসের মধ্যে Candidate A-তে শুধু দলভুক্ত বিন্দুর (Assigned-only) Silhouette স্কোর `0.7` কিন্তু Coverage `50%`; আর Candidate B-তে স্কোর `0.4` কিন্তু Coverage `95%`। আপনি কি Candidate A-কে সেরা বলবেন?",
+      "answer": "শুধু এই দুটি সংখ্যা দেখে কখনোই Candidate A-কে সেরা বলা যাবে না! কারণ দুটি স্কোর হিসাব করা হয়েছে ভিন্ন আকারের শর্তসাপেক্ষ উপ-সেটের ওপর। Candidate A মাঝখানের অর্ধেক কঠিন ও সীমান্তবর্তী Row-কে Noise হিসেবে ছেঁটে ফেলায় বাকি অল্প কিছু ঘন বিন্দুর ওপর খুব সহজেই `0.7` স্কোর তুলতে পেরেছে।\n\nন্যায্য তুলনার জন্য আমি একই Representation ও দূরত্বের মাপকাঠিতে Coverage, প্রতিটি দলের সদস্যসংখ্যা, বাদ পড়া `50%` ডেটার মধ্যে কোনো গুরুত্বপূর্ণ জনগোষ্ঠী একচেটিয়াভাবে বাদ পড়ল কি না এবং প্রোডাক্টের প্রকৃত Noise নীতি কী—তা খতিয়ে দেখব। পাশাপাশি খেয়াল রাখব যে মাত্র একটি দল তৈরি হলে Silhouette অসংজ্ঞায়িত থাকে, আর সব `-1` Noise বিন্দুকে একটি সাধারণ দল ধরে নিলে প্রশ্নের অর্থই পাল্টে যায়। সবশেষে মনে রাখতে হবে, DBSCAN-এ Noise হওয়া মানেই প্রতারণা বা প্রকৃত Anomaly প্রমাণিত হওয়া নয়—সেই দাবির জন্য আলাদা Label ও মূল্যায়ন কাঠামো প্রয়োজন।"
+    },
+    {
+      "title": "PCA-র গাণিতিক প্রমাণ এবং Rank-q Reconstruction নির্ণয়",
+      "tag": "LINEAR ALGEBRA · 35 MIN",
+      "prompt": "সর্বোচ্চ Variance ধরে রাখার শর্ত থেকে কীভাবে Covariance ম্যাট্রিক্সের Eigenvector পাওয়া যায় তা প্রমাণ করুন, এবং Centered SVD ব্যবহার করে Projection ও Reconstruction-এর সমীকরণ লিখুন।\n\nউদাহরণ: ট্রেনিং ডেটার গড় `[2, 1]` এবং প্রথম প্রধান অক্ষ (`PC1`) অনুভূমিক x-axis বরাবর একক ভেক্টর `[1, 0]` হলে, নতুন একটি Query `[5, 3]`-এর Rank-1 Reconstruction এবং বর্গত্রুটি (Squared Residual Error) কত হবে?",
+      "answer": "গড় বিয়োগ করা ট্রেনিং ম্যাট্রিক্স `X_c` হলে Sample Covariance হয় `C = X_cᵀ X_c / (n − 1)`। যেকোনো একক ভেক্টর `v` (`||v|| = 1`) বরাবর অভিক্ষেপের Sample Variance হলো `vᵀ C v`। Lagrange Multiplier দিয়ে `vᵀ C v − λ(vᵀ v − 1)`-এর অন্তরজ শূন্য ধরলে সরাসরি পাওয়া যায় `C v = λ v`—অর্থাৎ বৃহত্তম Eigenvalue-গুলোর লম্ব Eigenvector-ই সর্বোচ্চ Variance ধরে রাখে। সংখ্যাত্মক স্থিতিশীলতার জন্য `X_c = U Σ Vᵀ` SVD ব্যবহার করলে `Vᵀ`-এর প্রথম `q`টি সারি (`Vt[:q]`) হয় প্রধান অক্ষ, `scores = X_c @ Vt[:q].T` এবং পুনর্গঠন হয় `scores @ Vt[:q] + mean`। ট্রেনিং ডেটায় মোট বর্গত্রুটি (SSE) হয় বাদ পড়া `σ_j²`-গুলোর যোগফল এবং Coordinate MSE হয় `SSE / (nd)`। এখানে `q = 0` মানে গড় দিয়ে অনুমান, পূর্ণ র‍্যাঙ্কে ত্রুটি শূন্য, আর কম র‍্যাঙ্কের ট্রেনিংয়ে নতুন দিকের Query এলে তা স্প্যানের বাইরে পড়তে পারে; কোডে আমরা চিহ্ন-নিরপেক্ষ Projector, লম্বত্ব, শূন্য Variance ও scikit-learn-এর পূর্ণ SVD রেফারেন্স টেস্ট করব।\n\nপ্রদত্ত উদাহরণে Frozen ট্রেনিং গড় বিয়োগ করলে Centered Query দাঁড়ায় `[5, 3] − [2, 1] = [3, 2]`। x-axis `[1, 0]` বরাবর অভিক্ষেপের স্থানাঙ্ক `3`, তাই Centered পুনর্গঠন `[3, 0]` এবং শেষে ট্রেনিং গড় যোগ করলে চূড়ান্ত Rank-1 Reconstruction হয় `[5, 1]`। অবশিষ্ট বিচ্যুতি `[0, 2]`, ফলে বর্গত্রুটি (Squared Residual Error) হলো `4`। Serving-এর সময় ট্রেনিং গড় ও প্রধান অক্ষ অবশ্যই Frozen রাখতে হবে।",
+      "prerequisiteLessons": [
+        "ch12_pca",
+        "ch12_svd"
+      ]
+    },
+    {
+      "title": "PCA ৯৯% Variance ধরে রাখার পরেও Classifier-এর ফল খারাপ হলো কেন?",
+      "tag": "DEBUGGING · 20 MIN",
+      "prompt": "ধরুন কোনো কোডিং বাগ ছাড়াই PCA দিয়ে `99%` Variance ধরে রাখার পর দেখা গেল পরবর্তী Supervised Classifier-এর ফলাফল আগের চেয়ে খারাপ হয়ে গেছে! এমনটি কেন ঘটতে পারে এবং আপনি কীভাবে তা নির্ণয় (Diagnose) করবেন?",
+      "answer": "PCA সম্পূর্ণভাবে Target Label-নিরপেক্ষ একটি পদ্ধতি—তার একমাত্র লক্ষ্য যেদিকে ডেটার জ্যামিতিক বিস্তার বেশি সেদিকটি ধরে রাখা। কিন্তু বাস্তব সমস্যায় অনেক সময় দেখা যায়, বৃহৎ বিস্তারের দিকগুলো আসলে পটভূমির Noise বা অপ্রাসঙ্গিক পরিবর্তন, অথচ Class আলাদা করার আসল সংকেত লুকিয়ে আছে বাদ পড়ে যাওয়া `1%` ক্ষুদ্র বিস্তারের অক্ষে! পাশাপাশি অনুপযুক্ত Feature Scaling-ও কোলাহলপূর্ণ কলামের গুরুত্ব বাড়িয়ে দরকারি সংকেতকে চাপা দিতে পারে। মনে রাখতে হবে, `99%` অনুপাতটি কেবল ট্রেনিং Variance-এর হিসাব—`99%` Classification Accuracy নয়।\n\nনির্ণয়ের জন্য প্রথমে কোনো PCA ছাড়া মূল বৈশিষ্ট্যের ওপর একটি Baseline Classifier চালাব, তারপর প্রতিটি Cross-validation Fold-এর ভেতরে স্থানীয়ভাবে Scaler ও PCA রেখে `Pipeline` বানিয়ে বিভিন্ন `q`-এর জন্য Downstream Metric পরীক্ষা করব। প্রকৃত বাগ হিসেবে কলামের ক্রম ওলটপালট হওয়া বা ভুল গড় বিয়োগ হওয়া যাচাই করব (তবে নিছক অক্ষের প্লাস-মাইনাস চিহ্ন উল্টে যাওয়া কোনো বাগ নয়)। আর Label দেখে সেরা `q` বাছাই করলে তার Tuning বাজেট থেকে চূড়ান্ত Holdout সেটকে অবশ্যই আলাদা রাখব।"
+    },
+    {
+      "title": "দুটি সঠিক PCA কোডের Loading ভেক্টর আলাদা দেখাচ্ছে কেন?",
+      "tag": "NUMERICS · 15 MIN",
+      "prompt": "দুটি ভিন্ন লাইব্রেরিতে PCA চালানোর পর দেখা গেল প্রথম অক্ষে একটি দিচ্ছে `v` তো অন্যটি `-v`, আর কাছাকাছি মানের দুটি Eigenvalue-এর ক্ষেত্রে অক্ষগুলো কিছুটা ঘুরে গেছে। এখানে ঠিক কী তুলনা করে নিশ্চিত হবেন যে দুটি কোডই সঠিক?",
+      "answer": "সবার আগে দুই জায়গার ডেটা Centering, Scaling, হরের নিয়ম (`ddof`: `n − 1` বনাম `n`) এবং Solver-এর ধরন এক কি না তা মিলিয়ে নেব। প্রথম অক্ষের ক্ষেত্রে `v` আর `-v` আসলে হুবহু একই এক-মাত্রিক রেখা; চিহ্ন উল্টে গেলে Score-এর চিহ্নও উল্টে যায়, ফলে অভিক্ষেপ ম্যাট্রিক্স এবং পুনর্গঠিত মান বিন্দুমাত্র বদলায় না।\n\nঅন্যদিকে একাধিক Eigenvalue সমান বা খুব কাছাকাছি হলে তাদের সম্মিলিত Subspace-এর ভেতরে যেকোনো লম্ব ঘূর্ণন (Orthogonal Rotation) গাণিতিকভাবে সমান বৈধ! তাই সেখানে আলাদা আলাদা একক Loading ভেক্টর না মিলিয়ে সম্মিলিত Subspace Projector, Principal Angles, সংরক্ষিত মোট Variance এবং চূড়ান্ত Reconstruction ত্রুটি তুলনা করতে হয়। খেয়াল রাখব, সমান Eigenvalue-র ব্লকের মাঝখানে `q` কাটলে সর্বোত্তম Subspace অনন্য থাকে না; আর অতি ক্ষুদ্র Eigenvalue দিয়ে Whitening করলে সংখ্যাত্মক Noise প্রচণ্ড বিবর্ধিত হতে পারে এবং শূন্য মোট Variance-এর ক্ষেত্রে অনুপাত হিসাবের সুস্পষ্ট নিয়ম রাখা জরুরি।"
+    },
+    {
+      "title": "t-SNE-এর ছবির ওপর কি সরাসরি Clustering চালানো উচিত?",
+      "tag": "REPRESENTATION · 15 MIN",
+      "prompt": "দ্বিমাত্রিক একটি t-SNE চিত্রে পাঁচটি সুন্দর আলাদা দ্বীপের মতো গুচ্ছ দেখে প্রোডাক্ট টিম বলছে—আমাদের গ্রাহকদের মধ্যে পাঁচটি প্রাকৃতিক Persona পাওয়া গেছে, এখন এই 2D ছবির ওপরেই Clustering করা হোক! আপনি কী উত্তর দেবেন?",
+      "answer": "আমি স্পষ্টভাবে বোঝাব যে দ্বিমাত্রিক t-SNE ছবির ওপর সরাসরি Clustering চালিয়ে প্রাকৃতিক Persona দাবি করা নিরাপদ নয়। কারণ t-SNE কেবল স্থানীয় প্রতিবেশীদের সম্ভাব্যতা কাছাকাছি রাখার জন্য Non-convex অপ্টিমাইজেশন করে; ছবির দ্বীপগুলোর মধ্যকার দূরত্ব, আপেক্ষিক আকার বা ঘনত্ব মূল উচ্চ-মাত্রিক ডেটার প্রকৃত জ্যামিতিকে অবিকৃত রাখার কোনো নিশ্চয়তা দেয় না।\n\nএর বদলে আমাদের উচিত মূল অর্থবহ Representation-এ উপযুক্ত Clustering ডায়াগনস্টিকস চালানো, ভিন্ন ভিন্ন Seed, `perplexity` ও Initialization-এ ফলাফলের সংবেদনশীলতা পরীক্ষা করা এবং মূল বৈশিষ্ট্যে প্রতিবেশীদের মিল যাচাই করা। UMAP ব্যবহার করলেও একইভাবে Hyperparameter সংবেদনশীলতা দেখতে হবে, আর মনে রাখতে হবে যে উচ্চ Trustworthiness কেবল স্থানীয় প্রতিবেশী ঠিক থাকার লক্ষণ—ডোমেইনের চূড়ান্ত সত্য নয়। বাস্তব গ্রাহক Persona হিসেবে নামকরণ করতে হলে অবশ্যই ডোমেইন বিশেষজ্ঞের যাচাই ও উদ্দিষ্ট কাজে তার কার্যকারিতার আলাদা প্রমাণ লাগবে—একটি দৃষ্টিনন্দন ছবি কখনোই যথেষ্ট প্রমাণ নয়।"
+    },
+    {
+      "title": "লক্ষ লক্ষ রিকোয়েস্টের জন্য Clustering ও PCA সার্ভ করার সিস্টেম ডিজাইন",
+      "tag": "ML SYSTEM DESIGN · 35 MIN",
+      "prompt": "প্রতিদিন লক্ষ লক্ষ নতুন Query-র ওপর Frozen k-Means ও PCA সার্ভ করতে হবে এবং কয়েক সপ্তাহ পরপর মডেল নতুন করে Fit (Refit) করতে হবে। ডেটা চুক্তি (Contracts), Latency, Drift এবং Cluster ID বদলে যাওয়ার সমস্যাগুলো কীভাবে সামলাবেন?",
+      "answer": "প্রথমেই Feature-এর নাম ও ক্রম (Schema), Missing Value নীতি, ট্রেনিং Scaler, ট্রেনিং গড়, PCA Component এবং Centroid—সবকিছু একটি একক অবিভাজ্য (Atomic) Versioned Artifact Bundle হিসেবে সংরক্ষণ করব। অনলাইন Serving-এ প্রতিটি নতুন Query-র জন্য Frozen k-Means-এ খরচ মাত্র `O(kd)` এবং Rank-`q` PCA রূপান্তরে `O(dq)`, আর বড় ব্যাচ প্রসেসিংয়ে মেমরি বাজেটের ভেতরে থাকতে ডেটা Chunk করে চালাব; কখনোই নতুন আসা Query দিয়ে Scaler বা PCA নতুন করে Fit করব না।\n\nপ্রোডাকশনে ইনপুট Schema, Missingness, নিকটতম Centroid দূরত্ব, PCA Reconstruction Residual, দলভুক্তির হার (Coverage) এবং পরবর্তী ব্যবসায়িক মেট্রিক নিয়মিত Monitor করব—এবং কোনো চ্যুতি দেখলেই ঢালাওভাবে Anomaly না ভেবে পাইপলাইন ত্রুটি ও প্রকৃত Drift আলাদাভাবে নির্ণয় করব। কয়েক সপ্তাহ পর মডেল Refit করলে Cluster ID ওলটপালট হওয়া বা দল ভাঙা-গড়া (Split/Merge) সামলাতে একটি স্থির রেফারেন্স ডেটাসেটের ওপর সদস্যদের Overlap বা Centroid Matching ব্যবহার করব এবং অমীমাংসিত ক্ষেত্র ও তাৎক্ষণিক Rollback-এর নীতি রাখব। পাশাপাশি মনে রাখব যে সাধারণ DBSCAN বা Hierarchical পদ্ধতিতে সর্বজনীন `.predict()` নেই—সেখানে নিকটতম Core বা Centroid ভিত্তিক সম্প্রসারণ আনলে তাকে নতুন একটি সুস্পষ্ট Serving নিয়ম হিসেবে মূল্যায়ন করতে হবে এবং প্রয়োগক্ষেত্র অনুযায়ী গোপনীয়তা, পরোক্ষ বৈষম্য ও নতুন সময়ের প্রমাণ যাচাই করতে হবে।"
+    }
+  ],
+  "book": {
+    "order": 12,
+    "part": "Book 2 · Classical Machine Learning",
+    "prerequisites": [
+      "chapter_07",
+      "chapter_08",
+      "chapter_11"
+    ],
+    "purpose": "Label ছাড়া ডেটায় Distance, Density, Probabilistic Mixture ও Low-dimensional Representation-এর অন্তর্নিহিত অনুমানগুলো তুলনা করে কীভাবে নির্ভরযোগ্য Unsupervised বিশ্লেষণ করতে হয়, তা হাতে-কলমে আয়ত্ত করা।",
+    "outcomes": [
+      "k-Means, Gaussian Mixture Models (GMM) ও EM Algorithm, Agglomerative Clustering এবং DBSCAN-এর গাণিতিক ভিত্তি, শর্ত ও সীমাবদ্ধতা তুলনা করে কোডে প্রয়োগ করতে পারা।",
+      "PCA ও SVD-এর মাধ্যমে Variance Maximization ও Reconstruction Loss-এর সম্পর্ক বিশ্লেষণ করা এবং t-SNE/UMAP চিত্রায়নের সাধারণ ভুলগুলো এড়িয়ে চলা।",
+      "Unsupervised Pipeline-এও কেন Train/Validation Split ও Fit-scope সুরক্ষা অপরিহার্য, তা বুঝে বাস্তব ডেটায় Reproducible Experiment ডিজাইন করতে পারা।"
+    ],
+    "recall": [
+      "PCA-এর Explained Variance বা Reconstruction কম হওয়া মানেই কেন ভালো Cluster পাওয়া গেছে বলা যায় না?",
+      "যদি একটি Component-এর জন্য Responsibility r = [0.75, 0.25] এবং পর্যবেক্ষণ x = [0, 4] হয়, তবে আপডেট হওয়া নতুন Mean কত হবে? আর EM Algorithm কেন কখনোই Global Optimum-এর নিশ্চয়তা দিতে পারে না?",
+      "সাধারণ k-Means কেন অসম ঘনত্বের বা বলয়াকার (Non-convex) ডেটায় ব্যর্থ হয়, এবং DBSCAN সেই সীমাবদ্ধতা কীভাবে কাটিয়ে ওঠে?"
+    ],
+    "bridge": "পরবর্তী ধাপ: Book 2 · Chapter 8 (Anomaly Detection & Time Series Foundations)। পরের অধ্যায়ে যাওয়ার আগে এই অধ্যায়ের Quiz, হাতে-কলমে Coding Exercise এবং না দেখে Interview প্রশ্নগুলোর উত্তর নিজে ব্যাখ্যা করে প্রস্তুতি যাচাই করে নিন।",
+    "bookId": "classical",
+    "bookChapter": 7
+  }
+}

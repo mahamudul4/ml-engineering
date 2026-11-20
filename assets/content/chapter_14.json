@@ -1,0 +1,1630 @@
+{
+  "id": "chapter_14",
+  "number": 14,
+  "title": "Classical ML Capstone",
+  "shortTitle": "Classical ML Capstone",
+  "displayTitle": "Classical ML\nCapstone",
+  "subtitle": "একটি সম্পূর্ণ Classical ML প্রজেক্ট গড়ে তুলুন এবং প্রতিটি সিদ্ধান্তকে নিরেট Evidence দিয়ে প্রতিষ্ঠিত করুন।",
+  "description": "From a real dataset to a reviewable model.\nAudit the data. Lock the policy. Defend the evidence.",
+  "difficulty": "Capstone · practical ML engineering",
+  "lab": "capstone",
+  "lessons": [
+    {
+      "id": "ch14_brief",
+      "title": "Capstone Brief: সমস্যা নির্ধারণ থেকে প্রমাণের চুক্তি",
+      "subtitle": "একটি পূর্ণাঙ্গ Classical ML প্রজেক্টের রূপরেখা ও কর্মপরিকল্পনা",
+      "duration": "30 min",
+      "icon": "science",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন এই Capstone প্রজেক্ট?",
+          "body": "Book 2 জুড়ে আমরা Linear Model, Decision Tree, Ensemble, Clustering কিংবা Anomaly Detection—সবকিছু আলাদা আলাদা অধ্যায়ে শিখেছি। কিন্তু বাস্তব জীবনে একজন ML Engineer-এর কাজ স্রেফ `fit` আর `predict` চালিয়ে একটি বড় স্কোর বের করাতেই শেষ হয়ে যায় না। একটি প্রজেক্ট তখনই পূর্ণতা পায়, যখন Problem Framing থেকে শুরু করে Data Audit, Split Design, Baseline তুলনা, Model Selection, Decision Policy এবং Error Analysis—প্রতিটি ধাপ একে অপরের সাথে যুক্তি ও প্রমাণের বাঁধনে বাঁধা থাকে।\n\nএই সমাপনী Capstone অধ্যায়ে আমরা UCI Wine Quality Dataset ব্যবহার করে শুরু থেকে শেষ পর্যন্ত একটি স্বচ্ছ Binary Classification Workflow তৈরি করব। আমাদের মূল লক্ষ্য হলো: কোন ধাপে কেন কোন সিদ্ধান্ত নিয়েছি, প্রতিটি ফলাফল ঠিক কোন Evidence থেকে এসেছে, এবং বাস্তবে কোন সীমার বাইরে এই ফলাফল আর প্রযোজ্য হবে না—তা নিজের ভাষায় স্পষ্টভাবে ব্যাখ্যা করতে শেখা।"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব Dataset ও সুনির্দিষ্ট প্রশ্নের গণ্ডি",
+          "body": "আমাদের কাজ শুরু হচ্ছে UCI Red Wine Quality Dataset-এর মূল 1599টি Observation নিয়ে। এখানে ওয়াইনের 11টি ভৌত-রাসায়নিক পরিমাপ (Physicochemical Features) থেকে আমাদের Prediction করতে হবে এর Sensory `quality >= 6` কি না। শুরুতেই প্রজেক্টের গণ্ডি পরিষ্কার করে নেওয়া জরুরি: আমরা এখানে Red এবং White ওয়াইনের ফাইল একসাথে মেশাচ্ছি না। তা ছাড়া এই Dataset-এ কোনো ব্র্যান্ডের নাম, বোতলের পরিচয়, উৎপাদনের Batch ID কিংবা সময়ের হিসাব (Timestamp) দেওয়া নেই। কাজেই নতুন কোনো ভৌগোলিক অঞ্চল, ভবিষ্যতের উৎপাদন-ব্যাচ বা বাণিজ্যিক মান নির্ধারণের ক্ষেত্রে আমাদের এই Model সমানভাবে কাজ করবে—এমন কোনো দাবি আমরা এই ডেটা থেকে করছি না।"
+        },
+        {
+          "type": "math",
+          "title": "Prediction থেকে চূড়ান্ত Decision-এর সমীকরণ",
+          "body": "X\\in\\mathbb{R}^{n\\times11},\\quad y_i=\\mathbf1\\{quality_i\\ge6\\},\\quad \\widehat y_i=\\mathbf1\\{p_i\\ge\\tau\\}"
+        },
+        {
+          "type": "text",
+          "title": "কোড লেখার আগেই সাফল্যের মাপকাঠি নির্ধারণ",
+          "body": "উপরের সমীকরণে খেয়াল করুন, কাঁচা Feature Matrix থেকে প্রথমে আসে সম্ভাবনার হিসাব, আর তারপর একটি নির্দিষ্ট Threshold পার হলে নেওয়া হয় চূড়ান্ত Decision। ফলাফল দেখার পর সুবিধামতো নিয়ম পাল্টালে যেকোনো সাধারণ Model-কেও কাগজে-কলমে দারুণ দেখানো যায়; তাই কাজ শুরুর আগেই আমরা সাফল্যের নিয়ম বেঁধে নিচ্ছি। কেবল Fit অংশের ওপর Grouped Cross-Validation চালিয়ে Average Precision (AP) দেখে সেরা Candidate Model নির্বাচন করা হবে। এরপর সম্পূর্ণ আলাদা Decision Validation অংশে পূর্বঘোষিত খরচ (`FP = 1` এবং `FN = 4` ধরে একটি উদাহরণমূলক Cost কাঠামো) এবং নির্দিষ্ট Threshold Grid ব্যবহার করে চূড়ান্ত Decision Policy স্থির করা হবে। সবশেষে হিমঘরে তুলে রাখা (Locked) Final Test অংশে কেবল ওই একটি নির্বাচিত Model ও Policy মূল্যায়ন করা হবে। এখানে অধিক জটিল কোনো Model-কে জিততেই হবে—এমন কোনো শর্ত নেই; সরল ও জটিল সব Candidate-কেই একই মানদণ্ডে পরীক্ষা দিতে হবে।"
+        },
+        {
+          "type": "code",
+          "title": "কোডের ভাষায় পর্যালোচনযোগ্য Project Contract",
+          "body": "contract = {\n    \"target\": \"quality >= 6\",\n    \"model_selection\": \"fit-only grouped CV AP\",\n    \"policy_selection\": \"decision validation only\",\n    \"test\": \"locked final evaluation\",\n}\nassert contract[\"policy_selection\"] != contract[\"model_selection\"]\nprint(contract)\n"
+        },
+        {
+          "type": "text",
+          "title": "প্রজেক্ট শেষে আমাদের হাতে কী কী Artifact থাকবে?",
+          "body": "উপরের কোডের মতো এই স্পষ্ট চুক্তি মেনে এগোলে প্রজেক্ট শেষে তৈরি হবে একগুচ্ছ যাচাইযোগ্য প্রমাণ বা Deliverable: স্থানীয়ভাবে চালানো যায় এমন একটি পূর্ণাঙ্গ Workflow, মূল ফাইলের Cryptographic Hash, প্রতিটি Split Role-এর সঠিক হিসাব, সব Candidate Model-এর তুলনামূলক Evidence, নির্বাচিত Threshold-এর রেকর্ড, নির্দিষ্ট Error Case-গুলোর বিশ্লেষণ, শর্তসাপেক্ষ Uncertainty-র হিসাব, ট্রেনিংপ্রাপ্ত Python Artifact, সুনির্দিষ্ট Feature Schema, একটি স্বচ্ছ Model Card এবং মিলিয়ে দেখার জন্য Reference Prediction। এই অ্যাপের ভেতরে আপনি তিনটি ইন্টারঅ্যাকটিভ ল্যাব ও অনুশীলনের সুযোগ পাবেন, আর মূল ট্রেনিংয়ের কাজটি থাকবে আলাদা Python পরিবেশে।"
+        },
+        {
+          "type": "text",
+          "title": "দাবির সীমা ও প্রকৌশলগত সততা",
+          "body": "যেকোনো ভালো প্রজেক্টে কী পাওয়া গেছে তার চেয়েও গুরুত্বপূর্ণ হলো ফলাফলকে অতিরঞ্জিত না করা। মানুষের স্বাদ ও ঘ্রাণের ভিত্তিতে দেওয়া Sensory Rating স্বভাবতই কিছুটা ব্যক্তিনিষ্ঠ, আর `quality >= 6` ধরে নেওয়াটা আমাদের শেখার সুবিধার্থে তৈরি একটি Binary সংজ্ঞা মাত্র। কোনো Model ভালোভাবে দুই Class আলাদা করতে পারছে (Good Discrimination)—তার মানেই এই নয় যে তার দেওয়া Probability নিখুঁতভাবে Calibrated, কিংবা কোনো রাসায়নিক উপাদান বাড়ালে সরাসরি ওয়াইনের মান উন্নত হবে (Causal সম্পর্ক), অথবা কালই এটি সরাসরি কোনো বাস্তব ব্যবসায়িক সিদ্ধান্তে বসিয়ে দেওয়া যাবে। একইভাবে, অভিন্ন Feature দেখে আমরা যে Duplicate Group তৈরি করব, তা কেবল একটি Proxy—প্রকৃত বোতল বা Batch ID নয়। আর একবার Final Test-এর ফলাফল প্রকাশ পাওয়ার পর যদি আবার নতুন করে টিউনিং করতে হয়, তবে তার জন্য সম্পূর্ণ নতুন ও অদেখা ডেটার প্রয়োজন হবে।"
+        },
+        {
+          "type": "callout",
+          "title": "নিজের প্রজেক্ট নোটবুকের প্রথম পাতা",
+          "body": "বাস্তবে যেকোনো নতুন ML প্রজেক্ট শুরু করার দিন নোটবুকের প্রথম পাতায় লিখে রাখুন: প্রজেক্টটির উদ্দিষ্ট ব্যবহার (Intended Use), Target-এর নিখুঁত সংজ্ঞা, Prediction-এর মুহূর্তে কোন কোন Input আসলে পাওয়া যাবে, কোন ধরনের Data Leakage কোনোভাবেই গ্রহণযোগ্য নয়, মূল্যায়নের Metric, ভুলের আনুমানিক খরচ (Cost Assumptions) এবং কখন থামবেন তার নিয়ম (Stop Rule)। ভবিষ্যতে প্রয়োজনের তাগিদে যদি এই রূপরেখা বদলাতেই হয়, তবে সেটিকে নতুন Version হিসেবে নথিভুক্ত করুন—কারণ পুরোনো Objective-এর বিপরীতে পাওয়া স্কোর কখনোই নতুন Objective-এর প্রমাণ হতে পারে না।"
+        }
+      ]
+    },
+    {
+      "id": "ch14_audit",
+      "title": "Data Audit, Provenance ও Duplicate Profile",
+      "subtitle": "ডেটার উৎস যাচাই করে নিরাপদ Split তৈরির প্রস্তুতি",
+      "duration": "34 min",
+      "icon": "science",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ডেটার উৎস ও অখণ্ডতা যাচাই (Source Verification)",
+          "body": "প্রজেক্টের চুক্তি ঠিক হওয়ার পর প্রথম প্রশ্ন হলো: যে ডেটার ওপর ভিত্তি করে পুরো কাজ দাঁড়াবে, সেই ফাইলটি আসলেই অবিকৃত আছে তো? আমাদের সাথে মূল `winequality-red.csv` এবং এর বিবরণী ফাইল `winequality.names` যথাযথ CC BY 4.0 ক্রেডিটসহ যুক্ত করা আছে। খেয়াল করবেন, এই CSV ফাইলটি সাধারণ কমা নয়, বরং সেমিকোলন (`;`) দিয়ে আলাদা করা, এবং মূল ফাইলটির SHA-256 Hash হলো `4a402cf041b025d4566d954c3b9ba8635a3a8a01e039005d97d6a710278cf05e`। শুরুতেই এই Hash মিলিয়ে নেওয়ার অর্থ হলো ফাইলটির মূল পরিচয় নিশ্চিত হওয়া; তবে মনে রাখা ভালো, File Hash মিলে যাওয়া কেবল ফাইলের অখণ্ডতা প্রমাণ করে—ভেতরের প্রতিটি Label বৈজ্ঞানিকভাবে নির্ভুল বা ডেটা সংগ্রহের প্রক্রিয়ায় কোনো Sampling Bias নেই, এমন গ্যারান্টি দেয় না।"
+        },
+        {
+          "type": "text",
+          "title": "Schema ও মানের প্রাথমিক পরীক্ষা",
+          "body": "ফাইলের পরিচয় নিশ্চিত করার পরের কাজ হলো ভেতরের কাঠামো বা Schema পরীক্ষা করা। আমরা যাচাই করি যে 11টি Feature-এর নাম ও ক্রম ঠিক আছে কি না, মোট 1599টি Row পাওয়া যাচ্ছে কি না, সব রাসায়নিক মান সসীম সংখ্যায় (Finite Numeric) আছে কি না এবং Sensory `quality`-র মান প্রত্যাশিত সীমার ভেতরে আছে কি না (প্রতিটি একক ও উৎস-বিবরণ মূল `names` ফাইলে সংরক্ষিত আছে)। যদিও এই মূল Dataset-এ কোনো Missing Value নেই, তবু ভবিষ্যতের জন্য আমাদের একটি স্পষ্ট Serving Policy রাখতে হবে: কোনো অসম্পূর্ণ বা অসীম (`NaN`/`inf`) Input এলে আমাদের এই চুক্তি সেটিকে সরাসরি প্রত্যাখ্যান করে। ট্রেনিংয়ে না শেখানো সত্ত্বেও নীরবে শূন্য বসিয়ে Imputation চালিয়ে যাওয়া আমাদের এই প্রজেক্টের আচরণ নয়।"
+        },
+        {
+          "type": "code",
+          "title": "অভিন্ন Chemistry Profile থেকে Group তৈরির গাণিতিক উদাহরণ",
+          "body": "import pandas as pd\n\nframe = pd.DataFrame({\"chemistry\": [1.0, 1.0, 2.0], \"quality\": [5, 6, 6]})\ngroups = pd.util.hash_pandas_object(frame[[\"chemistry\"]], index=False)\nassert groups.iloc[0] == groups.iloc[1]\nprint(groups.nunique())  # labels excluded, two profiles\n"
+        },
+        {
+          "type": "text",
+          "title": "Target বাদ দিয়ে কেন Group Hash তৈরি করব?",
+          "body": "উপরের ছোট কোডটির কৌশলটি আমাদের মূল Dataset-এ কেন এত জরুরি তা ভেবে দেখুন। সাধারণ র‍্যান্ডম Split করলে হুবহু একই রাসায়নিক গঠনের দুটি ওয়াইনের একটি Training-এ এবং অন্যটি Validation বা Test-এ চলে যেতে পারে! তাই আমরা `quality` কলামটিকে সম্পূর্ণ বাইরে রেখে কেবল 11টি Chemistry Feature একসাথে Hash করে Group তৈরি করি। এতে কোনো দুটি Row-এর রাসায়নিক মান হুবহু এক হলে—এমনকি তাদের Sensory `quality` ভিন্ন হলেও—তারা একই Split Role-এ অবস্থান করবে। হিসাব করলে দেখা যায়, 1599টি Row-এর মধ্যে স্বতন্ত্র (Unique) Chemistry Profile আছে 1359টি; বাকি `1599 - 1359` বা 240টি হলো পুনরাবৃত্ত Profile-এর অতিরিক্ত Row। এই Hash Grouping হুবহু একই মানের পুনরাবৃত্তিজনিত Data Leakage কমায়, তবে সামান্য হেরফের থাকা Near-duplicate কিংবা অজানা উৎপাদন-ব্যাচের পরোক্ষ নির্ভরশীলতা একাই পুরোপুরি সামলাতে পারে না।"
+        },
+        {
+          "type": "math",
+          "title": "পুনরাবৃত্ত Chemistry Profile-এর অতিরিক্ত Row সংখ্যা",
+          "body": "n-\\#\\{\\text{unique chemistry profiles}\\}=1599-1359=240"
+        },
+        {
+          "type": "text",
+          "title": "পুরো Dataset-এর Audit বনাম Training-এর সীমানা",
+          "body": "এখানে একটি সূক্ষ্ম প্রশ্ন জাগতে পারে: পুরো 1599টি Row জুড়ে এই যে আমরা Duplicate গুনলাম বা Schema পরীক্ষা করলাম, এতে কি Data Leakage হলো? না, কারণ ফাইলের কাঠামো ও অখণ্ডতা যাচাই করার বর্ণনামূলক Audit আর ডেটা থেকে Model বা রূপান্তর শেখানো—দুটি সম্পূর্ণ আলাদা কাজ। তবে সতর্ক থাকতে হবে যেন পুরো Dataset-এর Label Distribution খুঁটিয়ে দেখে আমরা আবার Candidate Model বা Threshold আগেভাগে বদলে না ফেলি; তাহলে Held-out মূল্যায়নের নকশা কলুষিত হয়ে পড়বে। আমাদের প্রজেক্টে Split Role-গুলো কেবল Group Key-র র‍্যান্ডম বণ্টন থেকে নির্ধারিত হয়েছে, আর Cross-Validation ও Model নির্বাচনের যাবতীয় সিদ্ধান্ত কঠোরভাবে Fit অংশের ফলাফলেই সীমাবদ্ধ রাখা হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "Outlier দেখলেই মুছে ফেলার প্রলোভন সামলান",
+          "body": "ডেটা ঘাঁটতে গিয়ে হয়তো দেখবেন কোনো একটি ওয়াইনের Acidity অস্বাভাবিক বেশি বা রাসায়নিক অনুপাত বেশ বিরল। আগের অধ্যায়ে (Book 2 · Chapter 8: Anomaly Detection & Time Series Foundations) শেখা কোনো Anomaly Detector-এর নিশানা দেখেই যদি চোখ বুজে এসব Row মুছে ফেলেন, তবে আপনি অজান্তেই আপনার মূল Target Population বদলে ফেলবেন! কারণ একটি প্রান্তিক মান যেমন যন্ত্রের ত্রুটি হতে পারে, তেমনি হতে পারে সম্পূর্ণ বৈধ কোনো নমুনা বা ভিন্ন কোনো Subpopulation-এর অংশ। তাই ডেটার উৎস (Provenance), পরিমাপের বৈধতা এবং পূর্বঘোষিত বর্জন-নীতি (Exclusion Policy) ছাড়া কেবল অস্বস্তিকর বলে কোনো Row বাদ দেবেন না।"
+        },
+        {
+          "type": "callout",
+          "title": "একনজরে আপনার Data Audit Checklist",
+          "body": "যেকোনো প্রজেক্টের শুরুতে নথিবদ্ধ করে রাখুন: ফাইলের Cryptographic Hash, Delimiter, Feature-এর সুনির্দিষ্ট ক্রম, Label-এর পরিসর, Missing Value-র উপস্থিতি, হুবহু মিলে যাওয়া Duplicate Group, পরিচয় ফাঁস হওয়ার ঝুঁকি (Identity Leakage), কোন কোন গুরুত্বপূর্ণ Metadata অনুপস্থিত এবং ডেটার লাইসেন্স। যেমন এখানে আমাদের হাতে প্রকৃত Batch ID নেই—এই অনিশ্চয়তাটুকু গোপন না করে স্পষ্টভাবে রিপোর্টে উল্লেখ করাই প্রকৌশলগত সততা।"
+        }
+      ]
+    },
+    {
+      "id": "ch14_target",
+      "title": "Target গঠন, Label Noise ও সিদ্ধান্তের সীমানা",
+      "subtitle": "Quality Cutoff এবং Probability Cutoff কেন এক জিনিস নয়",
+      "duration": "32 min",
+      "icon": "science",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "দুটি সম্পূর্ণ ভিন্ন ধরনের Cutoff",
+          "body": "ডেটা যাচাইয়ের পর এবার স্পষ্টভাবে বুঝতে হবে আমরা ঠিক কী Prediction করছি আর কীভাবে চূড়ান্ত সিদ্ধান্ত নিচ্ছি। এই প্রজেক্টে দুটি আলাদা জায়গায় Cutoff ব্যবহৃত হচ্ছে, এবং এ দুটিকে গুলিয়ে ফেলা চলবে না। প্রথমটি হলো মূল ডেটার Sensory `quality >= 6` শর্ত, যা দিয়ে আমরা Binary Target `y` তৈরি করছি। আর দ্বিতীয়টি হলো Model-এর দেওয়া Predicted Probability অন্তত `tau` কি না, যা দিয়ে আমরা Action Label বা সিদ্ধান্ত তৈরি করছি। প্রথম Cutoff বদলানো মানে সমস্যার মূল অর্থই (Target Semantics) বদলে ফেলা; আর দ্বিতীয়টি বদলানো মানে একই নির্দিষ্ট সমস্যার ভেতরে Operating Policy সমন্বয় করা। তাই `quality` Cutoff 5 থেকে 6-এ নেওয়া কখনোই স্রেফ Probability Threshold টিউন করার সমান নয়।"
+        },
+        {
+          "type": "math",
+          "title": "Target সংজ্ঞা বনাম Action Policy",
+          "body": "y=\\mathbf1\\{q\\ge6\\},\\qquad d=\\mathbf1\\{\\widehat P(y=1\\mid x)\\ge\\tau\\}"
+        },
+        {
+          "type": "text",
+          "title": "Binary রূপান্তরে যে ক্রমিক তথ্য হারিয়ে যায়",
+          "body": "মূল Dataset-এ `quality` স্কোরগুলো ক্রমানুসারে সাজানো (Ordinal)। যখনই আমরা সেটিকে Binary রূপ দিচ্ছি, তখন স্কোর 6 এবং 8 পাওয়া দুটি ওয়াইনই সমানভাবে Positive হয়ে যাচ্ছে, আবার 3 এবং 5 পাওয়া দুটি ওয়াইনই হয়ে যাচ্ছে সমানভাবে Negative। প্রজেক্টের সিদ্ধান্তকে সুস্পষ্ট করার জন্য এই সরলীকরণ দারুণ কাজে আসে, কিন্তু এতে মূল Ordinal বা Regression সমস্যার সব সূক্ষ্ম তথ্য ধরে রাখা যায় না। ভবিষ্যতে কেউ যদি ভিন্ন কোনো Target নিয়ে কাজ করতে চান, তবে তার জন্য নতুন Objective, মানানসই Metric এবং নতুন মূল্যায়ন-চুক্তি লিখে এগোতে হবে।"
+        },
+        {
+          "type": "code",
+          "title": "কাঁচা Quality স্কোর থেকে Binary Target তৈরির উদাহরণ",
+          "body": "quality = [4, 5, 6, 7, 8]\npositive = [int(q >= 6) for q in quality]\nprint(positive)\n"
+        },
+        {
+          "type": "text",
+          "title": "সীমান্তবর্তী Label ও মানুষের অনুভূতির অনিশ্চয়তা",
+          "body": "কোডের উদাহরণে দেখুন, স্কোর 5 পাচ্ছে 0 আর স্কোর 6 পাচ্ছে 1। বাস্তবে মানুষের স্বাদ-বিচারে 5 এবং 6-এর এই সীমানার পার্থক্য খুবই সূক্ষ্ম! ফলে এই সীমান্তের কাছাকাছি কোনো নমুনায় Model ও আসল Label-এর অমিলকে প্রথম দেখায় বিশাল Prediction Error মনে হতে পারে, অথচ এর পেছনে খোদ পরীক্ষকদের স্বাদ-বিচারের স্বাভাবিক অনিশ্চয়তা (Sensory Uncertainty) থাকতে পারে। আমাদের এই উৎস ফাইলে একক পরীক্ষকদের আলাদা স্কোর বা বারবার পরিমাপের কোনো Metadata নেই। তাই আমরা মনগড়া কোনো Label Noise-এর পরিমাণ বানিয়ে বলছি না; বরং এই তথ্যের ঘাটতিকে আমাদের উপলব্ধ প্রমাণের একটি সীমাবদ্ধতা হিসেবে ধরে রাখছি।"
+        },
+        {
+          "type": "text",
+          "title": "Prediction-এর মুহূর্তে Label-এর অনুপস্থিতি ও সতর্কতা",
+          "body": "মনে রাখতে হবে, Sensory `quality` আমাদের অনুমানের ফলাফল (Outcome)—এটি কখনোই Input নয়। বড় ডেটা পাইপলাইনে অসাবধানতাবশত ভুল Merge, সারাংশ তৈরি বা Grouping Key বানানোর সময় একই Row-এর Target থেকে উদ্ভূত তথ্য Feature-এর ভেতর ঢুকে পড়তে পারে। সেজন্যই আমাদের Group Hash থেকে `quality` সচেতনভাবে বাদ দেওয়া হয়েছে। একইভাবে মূল ফাইলের Row Number-ও কোনো Model Feature নয়; Row ID কেবল Audit এবং নির্দিষ্ট নমুনার হিসাব মেলানোর (Tracing) কাজে ব্যবহৃত হয়, এটি স্বাদের মান বা বোতলের পরিচয় বহন করে না।"
+        },
+        {
+          "type": "text",
+          "title": "Split ভেদে Class Distribution ও ফলাফল ব্যাখ্যা",
+          "body": "Group ধরে ডেটা ভাগ করার কারণে প্রতিটি অংশে Positive Class-এর অনুপাত (Prevalence) হুবহু এক থাকে না। যেমন আমাদের প্রজেক্টে Final Test অংশে Positive অনুপাত প্রায় 0.5969, আর Decision Validation অংশে তা প্রায় 0.5208। ভিন্ন ভিন্ন Group Sample-এ এই Prevalence বদলে যাওয়া স্বাভাবিক। তাই Accuracy, Average Precision বা Brier Score ব্যাখ্যা করার সময় অবশ্যই সংশ্লিষ্ট Split-এর Baseline Prevalence পাশে রেখে বিচার করতে হবে। কেবল দুটি Split-এ বণ্টনের এই পার্থক্য দেখেই সেটিকে হুট করে Causal Drift বা Data Leakage-এর প্রমাণ ধরে নেওয়া ঠিক নয়।"
+        },
+        {
+          "type": "callout",
+          "title": "Interview-এ যেভাবে নিজের অবস্থান ব্যাখ্যা করবেন",
+          "body": "ইন্টারভিউতে প্রশ্ন হতে পারে: '`quality >= 7` ধরলে এটি একটি Rare-positive সমস্যায় পরিণত হতে পারে—আপনি কি পুরোনো ফলাফল দেখে পেছনে ফিরে ওই সংজ্ঞাটি বেছে নেবেন?' আপনার উত্তর হওয়া উচিত স্পষ্ট: না। কেন কাজের শুরুতেই Label Rule স্থির (Lock) করতে হয় এবং কেন নতুন প্রশ্নের জন্য অস্পর্শিত (Untouched) মূল্যায়ন বাজেট আলাদা রাখতে হয়—সেই যুক্তিটি গুছিয়ে তুলে ধরুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch14_roles",
+      "title": "Split Roles: Fit/CV, Decision ও Final Test",
+      "subtitle": "একই ডেটা থেকে Model বাছাই, নীতি নির্ধারণ ও চূড়ান্ত পরীক্ষা নেবেন না",
+      "duration": "36 min",
+      "icon": "science",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন দুই ভাগের বদলে তিন স্তরের Split নকশা?",
+          "body": "একটি প্রজেক্টে যখন সেরা Candidate Model বেছে নেওয়ার পাশাপাশি একটি Cost-sensitive Threshold-ও ডেটা থেকে শিখতে হয়, তখন সাধারণ Train/Test দুই ভাগ যথেষ্ট নয়। তাই আমরা তিন স্তরের (Three-role) নকশা ব্যবহার করছি। প্রথমে `seed = 42` দিয়ে `GroupShuffleSplit` চালিয়ে পুরো ডেটাকে Development এবং Final Test—এই দুই ভাগে আলাদা করা হয়। এরপর Development অংশের Group-গুলোকে আবার `seed = 43` দিয়ে ভাগ করে পাওয়া যায় Fit এবং Decision Validation অংশ। চূড়ান্ত হিসাবে Fit অংশে থাকে 966টি Row (815টি Group), Decision অংশে 313টি Row (272টি Group), এবং Final Test অংশে 320টি Row (272টি Group)। যেহেতু প্রতিটি Chemistry Group-এর আকার সমান নয়, তাই এটি নিখুঁত ভগ্নাংশ না হয়ে আনুমানিক 60/20/20 অনুপাতে Row বণ্টন করে।"
+        },
+        {
+          "type": "math",
+          "title": "তিনটি Role-এর মধ্যে শূন্য Group Overlap",
+          "body": "G_{fit}\\cap G_{decision}=G_{fit}\\cap G_{test}=G_{decision}\\cap G_{test}=\\varnothing"
+        },
+        {
+          "type": "text",
+          "title": "প্রথম ভূমিকা: Fit ও Grouped Cross-Validation",
+          "body": "Candidate Model-গুলোর Hyperparameter মূল্যায়ন এবং `StandardScaler`-এর প্যারামিটার কেবল এই Fit Role-এর ভেতরের Grouped CV Fold থেকেই শেখা হয়। এখানে `seed = 44` দিয়ে 3-Fold `StratifiedGroupKFold` ব্যবহার করা হয়েছে, যা প্রতিটি Fold-এ Label-এর অনুপাত মোটামুটি সুষম রাখে এবং নিশ্চিত করে যে একই Chemistry Group কখনোই Fold-এর সীমানা পেরিয়ে দুই দিকে যাবে না। অবশ্য Group-এর সীমাবদ্ধতা অক্ষুণ্ণ রেখে শতভাগ নিখুঁত Stratification সব ক্ষেত্রে গাণিতিকভাবে সম্ভব হয় না।"
+        },
+        {
+          "type": "code",
+          "title": "Role Leakage প্রতিরোধের গাণিতিক উদাহরণ",
+          "body": "fit, decision, test = {\"A\", \"B\"}, {\"C\"}, {\"D\", \"E\"}\nassert fit.isdisjoint(decision) and fit.isdisjoint(test) and decision.isdisjoint(test)\nprint(len(fit | decision | test))\n"
+        },
+        {
+          "type": "text",
+          "title": "দ্বিতীয় ভূমিকা: Decision Validation",
+          "body": "Fit Role থেকে নির্বাচিত Model-এর দেওয়া Probability ব্যবহার করে আমরা এই Decision অংশে সেরা Threshold বেছে নিই। খেয়াল করুন, এই Threshold নির্বাচনও কিন্তু ডেটা থেকে শেখা একটি বাড়তি নিয়ম; তাই যে ডেটা দেখে নিয়মটি শেখা হলো, সেটিকে আর খাঁটি Final Test বলা চলে না। আবার উল্টো দিকেও কড়া শৃঙ্খলা বজায় রাখা হয়েছে: এই Decision অংশের স্কোর দেখে আমরা কখনোই বিজয়ী Candidate Model পাল্টে ফেলি না। পাশাপাশি এই অংশে করা যাবতীয় Error Analysis ও What-if পরীক্ষা-নিরীক্ষাকে আমরা অনুসন্ধানমূলক (Exploratory) ভূমিকা হিসেবেই রিপোর্ট করি।"
+        },
+        {
+          "type": "text",
+          "title": "তৃতীয় ভূমিকা: হিমঘরে রাখা Final Test",
+          "body": "নির্বাচিত Model, পূর্ণাঙ্গ Feature Contract এবং Operating Threshold চূড়ান্তভাবে স্থির (Freeze) হওয়ার পরেই কেবল Final Test মূল্যায়ন করা হয়। এই স্থির Prediction-গুলোর ওপর পূর্বঘোষিত একাধিক Metric এবং শর্তসাপেক্ষ Bootstrap হিসাব করা চলে; কিন্তু Test-এর ফলাফল দেখে নতুন করে Model বা Threshold নির্বাচন করার কোনো সুযোগ নেই। আর একবার রিপোর্ট প্রকাশিত হয়ে গেলে এই Final Test ভবিষ্যতের কোনো টিউনিংয়ের জন্য আর অস্পর্শিত প্রমাণ হিসেবে গণ্য হবে না।"
+        },
+        {
+          "type": "text",
+          "title": "এখানে কেন সময়ভিত্তিক (Chronological) Split করা হয়নি?",
+          "body": "আগের অধ্যায়ে (Book 2 · Chapter 8: Anomaly Detection & Time Series Foundations) আমরা দেখেছি সময়ের ধারা থাকলে Temporal Split কতটা জরুরি। কিন্তু আমাদের এই মূল Dataset-এ কোনো নির্ভরযোগ্য Timestamp বা Batch ID নেই; ফলে সব Dataset-এ যান্ত্রিকভাবে সেই নিয়ম প্রয়োগ করার মতো তথ্যই এখানে অনুপস্থিত। তবে মনে রাখতে হবে, র‍্যান্ডম Exact-profile Group Split ভবিষ্যতের নতুন সময় বা ভিন্ন ডোমেইনে Model কতটা নির্ভরযোগ্য থাকবে তা মাপতে পারে না। বাস্তবে উদ্দিষ্ট Deployment Population ভিন্ন হলে তার জন্য উপযুক্ত তাজা ডেটা সংগ্রহ করতে হবে।"
+        },
+        {
+          "type": "callout",
+          "title": "নিজের প্রজেক্ট যাচাইয়ের অনুশীলন",
+          "body": "আপনার প্রজেক্টের Split Diagram-এ প্রতিটি Artifact ঠিক কোন ডেটায় `fit` হচ্ছে বা নির্বাচিত হচ্ছে তা স্পষ্ট করে লিখুন। কেবল নোটবুকের কোন Cell কোনটির পরে চলেছে তা দেখেই নিশ্চিন্ত থাকবেন না; সরাসরি ডেটা Array এবং Group-গুলোর পারস্পরিক ছেদ (Intersection) শূন্য কি না তা কোডে পরীক্ষা করে দেখুন।"
+        },
+        {
+          "type": "text",
+          "title": "প্রতিটি Artifact-এর পাশে তার শেখার Row-গুলো চিহ্নিত করুন",
+          "body": "চলুন আমাদের এই Capstone-এর পুরো প্রবাহটি মিলিয়ে নিই: Scaler ও Model Hyperparameter আসছে Fit Role-এর Grouped CV থেকে, আর নির্বাচিত চূড়ান্ত Model-টিও `fit` হচ্ছে এই Fit Role-এ। এরপর Decision Role-এর Probability থেকে শেখা হচ্ছে আমাদের Threshold। আর সব স্থির হওয়ার পর Test Role-এর ফলাফল দিয়ে তৈরি হচ্ছে চূড়ান্ত রিপোর্ট। ভবিষ্যতে আপনি যদি একটি নতুন Calibrator যোগ করতে চান, তবে তার Training Prediction কীভাবে Held-out থাকবে এবং Threshold শেখার জন্য কোন Row-গুলো বরাদ্দ থাকবে—তা কোড লেখার আগেই ডায়াগ্রামে নির্ধারণ করে নিন। মনে রাখবেন, Model নতুন করে Refit করলে তার Probability Mapping-ও নতুন করে যাচাই করতে হয়।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে হিসাব করুন",
+          "body": "Decision অংশে দেখে Threshold স্থির (Freeze) করার পর আপনি যদি নির্বাচিত Model-টিকে Fit ও Decision—দুই অংশ একসাথে মিলিয়ে আবার Refit করেন, তবে কী নতুন প্রশ্ন বা ঝুঁকি তৈরি হবে?",
+          "solution": "নতুন ডেটায় পুনরায় ফিট করলে নতুন Scaler এবং পরিবর্তিত Weight থেকে উৎপন্ন Probability-গুলোও বদলে যেতে পারে। ফলে আগে যে Threshold বেছে নেওয়া হয়েছিল, নতুন Model-এর জন্য তার প্রকৃত Validation Operating Point আর মাপা রইল না। এমনটি করতে চাইলে Refit প্রক্রিয়া এবং Policy নির্বাচনকে শুরু থেকেই একসাথে নকশা করতে হবে এবং তা যাচাইয়ের জন্য আলাদা Held-out ডেটা রাখতে হবে।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch14_pipeline",
+      "title": "Feature Contract ও Fold-local Preprocessing",
+      "subtitle": "Training থেকে Inference—সর্বত্র অবিকল একই রূপান্তর নিশ্চিত করা",
+      "duration": "34 min",
+      "icon": "science",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "প্রামাণ্য Feature Contract",
+          "body": "একটি Model কলামের নাম বোঝে না, বোঝে সংখ্যার অবস্থান। তাই আমাদের `FEATURES` তালিকার নাম এবং তাদের ক্রমই হলো প্রজেক্টের প্রামাণ্য চুক্তি (Authoritative Contract)। হুবহু একই সসীম মান যদি ভুল ক্রমে পাঠানো হয়, তবে গাণিতিক হিসাব নির্বিঘ্নে চললেও উৎপন্ন স্কোরটি হবে সম্পূর্ণ ভুল! এজন্যই ট্রেনিং থেকে পাওয়া `mean` ও `scale`, Feature-এর নাম ও ক্রম, `dtype`, Missing ডেটার নীতি, Target Rule এবং মূল ডেটার সংস্করণ—সবকিছু একসাথে Model Artifact-এর ভেতরেই সংরক্ষণ করতে হয়। আমাদের Python Model সবসময় এই নির্দিষ্ট ক্রমে পূর্ণ 11টি কাঁচা Input আশা করে।"
+        },
+        {
+          "type": "math",
+          "title": "Training ডেটা থেকে শেখা প্রমিত রূপান্তর",
+          "body": "z_j=\\frac{x_j-\\mu_{j,train}}{s_{j,train}},\\qquad f(x)=b+\\sum_jw_jz_j"
+        },
+        {
+          "type": "text",
+          "title": "Fold-local Scaling ও পরিসংখ্যানের রীতি",
+          "body": "আমাদের Logistic Pipeline-এর `StandardScaler` প্রতিটি Cross-Validation-এর কেবল Training Fold-এ `fit` হয়, আর Validation Fold-এ চলে শুধুমাত্র `transform`। পরে চূড়ান্ত নির্বাচিত Model তৈরির সময় পুরো Fit Role-এর সব Row-এর ওপর Scaler-টি আবার `fit` করে স্থির করে নেওয়া হয়। ভুল করেও Decision বা Final Test ডেটার গড় দিয়ে Standardize করলে Model যে গাণিতিক কাঠামোয় শিখেছিল সেই Learned Representation বদলে যাবে। পাশাপাশি খেয়াল রাখবেন, `StandardScaler` হিসাবের সময় Population Variance-এর রীতি অনুসরণ করে, যা সাধারণ Sample Covariance-এর রীতি থেকে সামান্য আলাদা।"
+        },
+        {
+          "type": "code",
+          "title": "স্থির (Frozen) রূপান্তরের কোড উদাহরণ",
+          "body": "x, mean, scale = [12.0, 2.0], [10.0, 1.0], [2.0, 1.0]\nz = [(v - m) / s for v, m, s in zip(x, mean, scale)]\nprint(z)  # [1,1]; never fit mean from a single query\n"
+        },
+        {
+          "type": "text",
+          "title": "ভিন্ন পরিবারের Candidate, মানানসই Pipeline",
+          "body": "Decision Tree, Random Forest এবং Histogram Gradient Boosting সরাসরি কাঁচা Chemistry Feature নিয়ে কাজ করে, আর Logistic Model-গুলো পায় Scaled Feature। সব পরিবারের Model-এর ওপর একই Preprocessing চাপিয়ে দেওয়া বাধ্যতামূলক নয়; তবে ডেটা থেকে শেখা যেকোনো রূপান্তরকেই একই CV Fit সীমানা মেনে চলতে হবে। একইভাবে কেউ যদি Class Weighting, Calibration বা Feature Selection যোগ করেন, তবে সেগুলোকেও অবশ্যই এই Pipeline ও Search Contract-এর আওতায় আনতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "ভবিষ্যতের Missing Input সামলানোর নীতি",
+          "body": "আমাদের মূল Dataset-টি পরিষ্কার হলেও ভবিষ্যতে ব্যবহারের সময় অসম্পূর্ণ (Missing) ডেটা আসতেই পারে। আমাদের বর্তমান প্রোটোটাইপ চুক্তি যেকোনো Missing বা অসীম (Non-finite) Query সরাসরি প্রত্যাখ্যান করে। ভবিষ্যতে যদি নতুন কোনো Imputer যোগ করতে চান, তবে সেটিকে কেবল Training ডেটায় `fit` করা, প্রয়োজনে Missingness Indicator নেওয়ার সিদ্ধান্ত, নতুন করে Retraining এবং সামঞ্জস্যপূর্ণ Feature Schema তৈরি করা অপরিহার্য—পুরোনো Model-এর সামনে ইচ্ছেমতো শূন্য (`0`) বসিয়ে কাজ চালাবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "Sparse ও Categorical ডেটায় সম্প্রসারণ",
+          "body": "আমাদের এই 11-Feature-এর Dataset-টি সম্পূর্ণ সংখ্যাসূচক (Numeric)। অন্য কোনো প্রজেক্টে সংখ্যার পাশাপাশি ক্যাটাগরি থাকলে `ColumnTransformer` ব্যবহার করে Numeric ও Categorical শাখা আলাদা করা যায়, যেখানে পরিচিত ক্যাটাগরি কিংবা বিরল ক্যাটাগরির বিন (Rare Bins) কেবল Training সীমানার ভেতরেই `fit` হয়। স্বচ্ছতার খাতিরে উল্লেখ্য, আমাদের বর্তমান Capstone প্রজেক্টে আলাদা কোনো Categorical Encoding Benchmark চালানো হয়েছে—এমন দাবি করা হচ্ছে না।"
+        },
+        {
+          "type": "callout",
+          "title": "প্ল্যাটফর্ম জুড়ে মিলিয়ে দেখার Contract Test",
+          "body": "কয়েকটি Reference কাঁচা Row সংরক্ষণ করে Python এবং Dart উভয় পরিবেশে উৎপন্ন Probability মিলিয়ে দেখুন। পাশাপাশি পরীক্ষা করুন: Feature-এর সংখ্যা কমবেশি হলে, ভুল Scale থাকলে, `NaN` এলে কিংবা পরিবর্তিত Weight দিলে সিস্টেম তা সঠিকভাবে প্রত্যাখ্যান করছে কি না। কারণ কপি-পেস্ট করা রূপান্তরের সূত্র একদম সঠিক হলেও স্রেফ Feature-এর ক্রম উল্টে গিয়ে নীরবে ভুল ফলাফল তৈরি হতে পারে।"
+        }
+      ]
+    },
+    {
+      "id": "ch14_baseline",
+      "title": "Baseline ও পূর্বঘোষিত Candidate Budget",
+      "subtitle": "জটিলতা বাড়ানোর আগে স্বচ্ছ ও পুনরুৎপাদনযোগ্য তুলনার মঞ্চ",
+      "duration": "34 min",
+      "icon": "science",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "তুলনার ভিত্তিভূমি: Prior Baseline",
+          "body": "জটিল কোনো Model কতটা ভালো করছে তা বোঝার জন্য শুরুতেই দরকার একটি সরল মাপকাঠি। `DummyClassifier(strategy='prior')` কোনো Feature না দেখেই কেবল Training ডেটার Positive অনুপাতকে Probability হিসেবে রিটার্ন করে। সব নমুনায় একই ধ্রুবক স্কোর দেয় বলে এই Baseline-এ Average Precision (AP) মূলত Validation অংশের Positive Prevalence-এর সমান দাঁড়ায় (অন্যদিকে Accuracy মাপলে সংখ্যাগরিষ্ঠ Class বেছে নেওয়ার আচরণটি আলাদাভাবে প্রকাশ পায়)। এই প্রাথমিক Baseline-ই যদি ঠিকমতো কাজ না করে, তবে জটিল Model-এর উন্নতি আসলে কীসের সাপেক্ষে হচ্ছে তা আর বোঝা যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের ছয়টি শেখা Candidate ও নির্দিষ্ট বাজেট",
+          "body": "Baseline-এর বিপরীতে আমরা ছয়টি সুনির্দিষ্ট Candidate পরীক্ষায় নামিয়েছি: দুটি Logistic Regression (`C = 0.1` এবং `C = 1`), একটি `depth 4` Decision Tree, একটি `depth 6` Random Forest, একটি গভীরতার সীমাহীন (Unrestricted-depth) Random Forest, এবং 100 রাউন্ডের Histogram Gradient Boosting। Prior Baseline-সহ মোট 7টি Candidate, যাদের প্রত্যেককে হুবহু একই 3টি Grouped Fold-এ যাচাই করা হচ্ছে। প্রতিটি Hyperparameter, Seed এবং কোনো Early-stopping না রাখার নীতি আমরা আগেই লিখে স্থির করেছি। উল্লেখ্য, আমাদের অ্যাপের ইন্টারফেস (GUI) নিজে নতুন কোনো Model ট্রেন করে না; বরং পূর্বনির্ধারিত এই পরীক্ষার প্রমাণগুলো প্রদর্শন করে।"
+        },
+        {
+          "type": "math",
+          "title": "নির্ধারিত পরীক্ষার মোট বাজেট",
+          "body": "7\\text{ candidates}\\times3\\text{ folds}=21\\text{ CV fits}"
+        },
+        {
+          "type": "code",
+          "title": "সুস্পষ্ট Artifact হিসেবে পরীক্ষার বাজেট",
+          "body": "candidates = [\n    \"prior\",\n    \"logistic_01\",\n    \"logistic_1\",\n    \"tree_4\",\n    \"forest_6\",\n    \"forest_full\",\n    \"hist_100\",\n]\ncv_fits = len(candidates) * 3\nassert cv_fits == 21\nprint(cv_fits)\n"
+        },
+        {
+          "type": "text",
+          "title": "যথেষ্ট ন্যায্য তুলনা, কিন্তু সার্বজনীন চূড়ান্ত রায় নয়",
+          "body": "সবাইকে একই Fold এবং একই Metric দিয়ে মাপার কারণে আমাদের এই তুলনা নিঃসন্দেহে ন্যায্য; কিন্তু মনে রাখতে হবে এটি প্রতিটি Model পরিবারের সম্ভাব্য সেরা টিউনিং বাজেট নয়। মাত্র দুটি Logistic কনফিগারেশনের সাথে একটি একক Boosting কনফিগারেশনের তুলনা করে কখনোই পরিবার-ভিত্তিক সার্বজনীন র‍্যাঙ্কিং ঘোষণা করা যায় না। তাই রিপোর্টে সবসময় আপনার বেছে নেওয়া Search Space এবং কম্পিউটেশনের সীমা স্পষ্টভাবে উল্লেখ করুন।"
+        },
+        {
+          "type": "text",
+          "title": "Seed, Thread এবং Reproducibility-র বাস্তবতা",
+          "body": "ফলাফল পুনরুৎপাদনযোগ্য রাখতে প্রতিটি Forest-এ 100টি Tree ও `n_jobs = 1` দেওয়া হয়েছে এবং সব র‍্যান্ডম Seed সুস্পষ্টভাবে নির্ধারণ করা হয়েছে। পাশাপাশি সংখ্যাসূচক হিসাবকে নিয়ন্ত্রিত রাখতে Threadpool-এর সীমা 1-এ বাঁধা হয়েছে। তবে মনে রাখা দরকার, শুধু `seed = 42` দিলেই পৃথিবীর প্রতিটি প্ল্যাটফর্ম ও লাইব্রেরি সংস্করণে বিট-বাই-বিট (Bitwise) অভিন্ন ফলাফলের গ্যারান্টি মেলে না; সেজন্যই নির্দিষ্ট প্যাকেজ সংস্করণ (Pinned Environment) এবং সংরক্ষিত Reference Check রাখা জরুরি।"
+        },
+        {
+          "type": "text",
+          "title": "Training Objective বনাম Selection Metric",
+          "body": "খেয়াল করুন, ট্রেনিংয়ের সময় Logistic Regression ভেতরে ভেতরে Log Loss কমায়, অথচ বাইরে আমরা সেরা Candidate নির্বাচন করছি Average Precision (AP) দেখে। এই দুটির ভূমিকা সম্পূর্ণ আলাদা। ভেতরের Solver-এ ট্রেনিং Objective কমলেই যে Validation অংশের AP বাড়তে বাধ্য—এমন কোনো নিয়ম নেই। তাই আগে ট্রেনিংয়ের সঠিক Convergence এবং উৎপন্ন Probability-গুলো সসীম কি না তা যাচাই করে নিন, এবং তারপর Validation-এর তুলনামূলক প্রমাণ পড়ুন।"
+        },
+        {
+          "type": "callout",
+          "title": "Interview-এ পরের ধাপের প্রশ্ন",
+          "body": "ইন্টারভিউতে প্রায়ই জানতে চাওয়া হয়: 'আপনার পরীক্ষার বাজেট দ্বিগুণ হলে কোন Experiment-গুলো সবার আগে করবেন, এবং নতুন টিউনিংয়ের প্রমাণকে কীভাবে চূড়ান্ত মূল্যায়ন থেকে আলাদা রাখবেন?' উত্তর দেওয়ার সময় সতর্ক থাকবেন—একবার প্রকাশিত হয়ে যাওয়া Final Test-এর ওপর কখনোই পুনরায় টিউন বা Optimize করার প্রস্তাব দেবেন না।"
+        }
+      ]
+    },
+    {
+      "id": "ch14_metrics",
+      "title": "AP, ROC-AUC, Brier Score ও Operating Metrics",
+      "subtitle": "র‍্যাঙ্কিং, সম্ভাবনার মান ও চূড়ান্ত সিদ্ধান্ত—তিন স্তরের জন্য কেন আলাদা মাপকাঠি প্রয়োজন",
+      "duration": "36 min",
+      "icon": "science",
+      "blocks": [
+        {
+          "type": "math",
+          "title": "Non-interpolated Average Precision-এর সমীকরণ",
+          "body": "AP=\\sum_k(R_k-R_{k-1})P_k"
+        },
+        {
+          "type": "text",
+          "title": "কেন একটি মাত্র স্কোর যথেষ্ট নয়: AP বনাম PR Trapezoid",
+          "body": "আগের পাঠে আমরা দেখেছি, Candidate বাছাইয়ের প্রধান মাপকাঠি হিসেবে আমরা বেছে নিয়েছি Average Precision (AP)। কিন্তু একটি পূর্ণাঙ্গ প্রজেক্টে কেবল একটি সংখ্যাই সব প্রশ্নের উত্তর দিতে পারে না। উপরের সমীকরণটি লক্ষ্য করুন: Non-interpolated AP স্কোরের ক্রমানুসারে নিচে নামার সময় প্রতিটি ধাপে Recall যতটুকু বাড়ে (`R_k - R_{k-1}`), সেই বৃদ্ধিকে ওই অবস্থানের অর্জিত Precision (`P_k`) দিয়ে গুণ করে যোগফল বের করে। খেয়াল রাখবেন, এই হিসাবটি Precision-Recall Curve-এর নিচে সরলরেখা টেনে বের করা Trapezoidal Area-র সমান নয় (কারণ রৈখিক Interpolation অনেক সময় বাস্তবের চেয়ে বেশি আশাবাদী ফল দেখাতে পারে), আর একাধিক নমুনার স্কোর সমান (Tied Scores) হলে লাইব্রেরির Aggregation নিয়ম অনুযায়ী ফলাফল নির্ধারিত হয়। রিপোর্টে AP লেখার পাশাপাশি অবশ্যই Positive Class-এর সুনির্দিষ্ট সংজ্ঞা এবং ডেটার Prevalence উল্লেখ করবেন; কারণ AP কেবল সামগ্রিক র‍্যাঙ্কিংয়ের সক্ষমতা প্রমাণ করে—কোনো নির্দিষ্ট Threshold-এর Confusion Matrix দেখায় না।"
+        },
+        {
+          "type": "code",
+          "title": "Non-interpolated AP গণনার গাণিতিক উদাহরণ",
+          "body": "labels = [1, 0, 1, 0]  # sorted descending score, no ties\nseen_positive = 0\nap = 0.0\nfor rank, y in enumerate(labels, 1):\n    seen_positive += y\n    if y:\n        ap += (seen_positive / rank) / sum(labels)\nprint(ap)  # 5/6\n"
+        },
+        {
+          "type": "math",
+          "title": "Brier Score-এর সমীকরণ",
+          "body": "BS=\\frac1n\\sum_i(p_i-y_i)^2"
+        },
+        {
+          "type": "text",
+          "title": "সম্ভাবনার মান যাচাই: Brier Score ও Calibration-এর সীমা",
+          "body": "র‍্যাঙ্কিং ঠিক থাকলেও Model-এর দেওয়া সংখ্যাগুলো আসল Probability হিসেবে কতটা নির্ভরযোগ্য, তা জানার জন্য দরকার পরের স্তরের পরীক্ষা। উপরের সমীকরণের Brier Score সরাসরি Probability স্কেলে Prediction Error মাপে (`(p_i - y_i)^2`-এর গড়), তাই এর মান কম হওয়া ভালো লক্ষণ। তবে একটি একক সংখ্যা হিসেবে Brier Score কখনোই আলাদা করে বলে দেয় না যে উন্নতিটা Calibration থেকে আসছে নাকি দুই Class আলাদা করার ক্ষমতা (Discrimination) থেকে আসছে; সেজন্য Reliability Bin-গুলোর পাশাপাশি প্রতিটি বিনের Sample Support ও Uncertainty দেখাও জরুরি। স্বচ্ছতার খাতিরে মনে করিয়ে দিই, আমাদের এই Capstone প্রজেক্টে আলাদা কোনো Probability Calibration Model ফিট করা হয়নি—আর কোডে `predict_proba` মেথড থাকলেই যে উৎপন্ন সংখ্যাগুলো নিখুঁতভাবে Calibrated হবে, এমন কোনো নিশ্চয়তা নেই।"
+        },
+        {
+          "type": "text",
+          "title": "নির্দিষ্ট Threshold-এ Operating Point-এর হিসাব",
+          "body": "সম্ভাবনার হিসাব পেরিয়ে যখন আমরা একটি সুনির্দিষ্ট Threshold Policy প্রয়োগ করে বাস্তব সিদ্ধান্তে যাই, তখন আমরা একসাথে রিপোর্ট করি `TP`, `FP`, `FN`, `TN`, `Precision`, `Recall`, `Specificity` এবং আমাদের উদাহরণমূলক গড় খরচ (Mean Cost)। এখানে প্রান্তিক পরিস্থিতিগুলোর দিকে বিশেষ নজর রাখতে হয়: Model যদি একটিও Positive Prediction না দেয় (`TP + FP = 0`), তবে `Precision` গাণিতিকভাবে অসংজ্ঞায়িত (Undefined) হয়ে পড়ে; একইভাবে কোনো অংশে আসল Positive বা Negative নমুনার সংখ্যা শূন্য হলে `Recall` বা `Specificity` অসংজ্ঞায়িত হয়। বিভ্রান্তিকরভাবে সেখানে জোর করে শূন্য (`0.0`) বসানোর বদলে আমাদের Helper ফাংশনগুলো স্পষ্টভাবে `null` রিটার্ন করে।"
+        },
+        {
+          "type": "text",
+          "title": "চূড়ান্ত ফলাফলের সবকটি Metric একসাথে পড়ুন",
+          "body": "এই তিনটি স্তরকে একসাথে রাখলে আমাদের হিমঘরে রাখা (Locked) Final Test-এর পূর্ণ ছবিটি পরিষ্কার ফুটে ওঠে: র‍্যাঙ্কিং ও সম্ভাবনার মাপকাঠিতে `AP ≈ 0.8195`, `ROC-AUC ≈ 0.7786` এবং `Brier Score ≈ 0.1917`; অন্যদিকে আমাদের স্থির করা `Threshold = 0.30`-এ পাওয়া যাচ্ছে `Accuracy ≈ 0.7094` এবং `Recall ≈ 0.8901`। খেয়াল করুন, হুবহু একই র‍্যাঙ্কিং Model হওয়া সত্ত্বেও বাস্তব সিদ্ধান্তের কার্যকারিতা (Decision Utility) পুরোপুরি নির্ভর করছে আমাদের ধরে নেওয়া খরচের অনুমানের ওপর। শুধু একটি `ROC Curve` বা `Accuracy` দেখিয়ে কখনোই কোনো নির্দিষ্ট Operating Threshold-কে যৌক্তিক প্রমাণ করা যায় না।"
+        },
+        {
+          "type": "callout",
+          "title": "সমস্যা বুঝে সঠিক Metric নির্বাচনের অনুশীলন",
+          "body": "বাস্তব প্রজেক্টে সমস্যার ধরন বুঝে মাপকাঠি সাজান: যদি Positive Class বেশ বিরল হয় তবে `AP` ও `Precision-Recall Curve` সবচেয়ে কার্যকর; মানুষের হাতে রিভিউ করার সক্ষমতা সীমিত হলে `Precision@Budget` বেশি অর্থবহ; আর ভুলের আপেক্ষিক ক্ষতি জানা থাকলে Cost-sensitive `Threshold Policy` সরাসরি সিদ্ধান্তে সাহায্য করে। মনে রাখবেন, আমাদের এই ওয়াইন প্রজেক্টে ব্যবহৃত খরচের এককগুলো নিছক শেখানোর উদাহরণ—কোনো বাস্তব বাণিজ্যিক বা সংবেদী উপযোগিতা (Utility) মেপে আনা সংখ্যা নয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch14_selection",
+      "title": "Model Selection Board ও Fold Variability",
+      "subtitle": "ক্ষুদ্র স্কোরের পার্থক্যের পেছনের অনিশ্চয়তা ও বিজয়ী নির্বাচনের নিয়ম",
+      "duration": "34 min",
+      "icon": "science",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "বিজয়ী Candidate নির্বাচনের সুনির্দিষ্ট নিয়ম",
+          "body": "মাপকাঠি নির্ধারণের পর এবার দেখার পালা আমাদের ৭টি Candidate-এর মধ্যে কে কেমন ফল করল। আমাদের পূর্বঘোষিত নিয়ম ছিল সরল: কেবল Fit অংশের 3-Fold Grouped CV-তে যার গড় `AP` সবচেয়ে বেশি, সেই বিজয়ী হবে; আর স্কোর হুবহু সমান হলে পূর্বনির্ধারিত ক্রম অনুসরণ করা হবে। ফলাফলে দেখা যাচ্ছে, `Logistic (C = 1)` সর্বোচ্চ গড় `AP ≈ 0.8386` পেয়ে নির্বাচিত হয়েছে; ঠিক পেছনেই আছে `Logistic (C = 0.1)` (`≈ 0.8374`) ও `depth 6` Random Forest (`≈ 0.8329`), আর তলানিতে `Prior Baseline` (`≈ 0.5186`)। একজন অভিজ্ঞ প্রকৌশলী হিসেবে এই সূক্ষ্ম ব্যবধানগুলোর (`0.8386` বনাম `0.8374` বা `0.8329`) অর্থ ঠিকমতো বোঝা জরুরি: এটি কোনো সার্বজনীন শ্রেষ্ঠত্বের সনদ নয়, বরং আমাদের এই নির্দিষ্ট Dataset, Grouping Split এবং নির্দিষ্ট Candidate Budget-এর অধীনে পাওয়া একটি শর্তসাপেক্ষ ফলাফল।"
+        },
+        {
+          "type": "experiment_lab",
+          "title": "ইন্টারঅ্যাকটিভ Evidence Board",
+          "body": "নিচের বোর্ডে প্রতিটি Candidate-এ ক্লিক করে তার প্রতিটি Fold-এর `AP` এবং গড় মান মিলিয়ে দেখুন। `Prior` বোতামে চাপলে সরাসরি Baseline-এর ফলাফলে যেতে পারবেন, আর `Return to winner` বোতাম আপনাকে ফিরিয়ে আনবে আনুষ্ঠানিকভাবে নির্বাচিত বিজয়ী Candidate-এ। এই বোর্ডে বিভিন্ন Model ঘুরিয়ে দেখা কেবল প্রমাণের পর্যবেক্ষণ—এতে চূড়ান্ত নির্বাচন বা ভেতরের Model Fitting কোনোভাবেই বদলায় না।"
+        },
+        {
+          "type": "math",
+          "title": "Fold-গুলোর গড় ও বিস্তারের (Sample Spread) সমীকরণ",
+          "body": "\\bar a=\\frac1K\\sum_ka_k,\\qquad s=\\sqrt{\\frac{\\sum_k(a_k-\\bar a)^2}{K-1}}"
+        },
+        {
+          "type": "code",
+          "title": "Fold ভেদে স্কোরের তারতম্য গণনার উদাহরণ",
+          "body": "from statistics import mean, stdev\n\nfolds = [0.7, 0.8, 0.9]\nprint(mean(folds), stdev(folds))\n"
+        },
+        {
+          "type": "text",
+          "title": "Fold-এর Standard Deviation কেন সরল Confidence Interval নয়?",
+          "body": "উপরের সমীকরণ ও কোডের মতো প্রতিটি Fold-এর স্কোর থেকে গড় এবং `Standard Deviation (SD)` বের করা খুবই সহজ, কিন্তু এখান থেকে চট করে `SD / √K` বসিয়ে স্বাধীন নমুনার `Confidence Interval` দাবি করে বসবেন না! কারণ Cross-Validation-এর বিভিন্ন Fold-এর Training সেটগুলো একে অপরের সাথে ব্যাপকভাবে Overlap করে এবং একই উৎস Group বারবার ব্যবহৃত হয়। তার ওপর একাধিক Candidate থেকে সেরাটিকে বেছে নেওয়ার কারণে বাড়তি কিছুটা Selection Optimism যুক্ত হয়। পুরো বাছাই-প্রক্রিয়াটির নিরপেক্ষ মূল্যায়ন চাইলে সম্পূর্ণ নির্বাচন পদ্ধতিটিকে বাইরের আরেক স্তরের Fold-এর ভেতরে রেখে `Nested Cross-Validation` চালাতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "প্রায় সমান স্কোরে সরল Model বেছে নেওয়ার নিয়ম (Complexity Tie Policy)",
+          "body": "আমাদের বর্তমান চুক্তিতে কেবল গড় স্কোর হুবহু সমান হলে পূর্বঘোষিত তালিকা অনুযায়ী ফলাফল নির্ধারিত হয়। বাস্তবে অনেক টিম চায়, জটিল কোনো Ensemble-এর চেয়ে সরল Linear Model যদি সামান্য ব্যবধানে পিছিয়েও থাকে, তবু রক্ষণাবেক্ষণের সুবিধার্থে সরল Model-টিকেই বেছে নিতে। এটি অত্যন্ত ভালো প্রকৌশলগত অভ্যাস—তবে শর্ত একটাই: কতটুকু ব্যবধানকে সমান ধরা হবে (Tolerance) এবং সরলতার নিয়ম কী হবে, তা অবশ্যই ফলাফল দেখার আগেই ঘোষণা করতে হবে! টেবিলের সংখ্যা দেখার পর নিজের সুবিধামতো একটি ব্যবধান বানিয়ে বিজয়ী পাল্টে ফেলা প্রচ্ছন্ন Selection Bias-এরই নামান্তর।"
+        },
+        {
+          "type": "text",
+          "title": "ভবিষ্যতের অনুসন্ধান: ডেটার পরিমাণ বনাম Model Capacity",
+          "body": "একাধিক ভিন্ন ঘরানার Model যখন `0.83–0.84` `AP`-র আশেপাশেই থেমে যাচ্ছে, তখন প্রশ্ন জাগা স্বাভাবিক—আমাদের কি আরও বেশি ডেটা দরকার, নাকি আরও বেশি `Model Capacity`? এই প্রশ্নের উত্তর খুঁজতে Fit অংশের ভেতরেই Grouped `Learning Curve` পরীক্ষা করা দারুণ কাজে আসে। স্বচ্ছতার খাতিরে জানিয়ে রাখি, আমাদের এই রিলিজে কোনো `Learning Curve` বেঞ্চমার্ক চালানো হয়নি; আপনি নিজের নোটবুকে পরবর্তী ধাপের অনুসন্ধান হিসেবে এর পরিকল্পনা করতে পারেন। শুধু মনে রাখবেন, বর্তমান Final Test-এর ফলাফল যেহেতু প্রকাশিত হয়ে গেছে, তাই পরের যেকোনো উন্নতির চূড়ান্ত প্রমাণের জন্য নতুন ও অদেখা ডেটা প্রয়োজন হবে।"
+        },
+        {
+          "type": "callout",
+          "title": "Interview ও রিভিউতে নিজের নির্বাচন যেভাবে যুক্তি দিয়ে তুলে ধরবেন",
+          "body": "ইন্টারভিউ বা প্রজেক্ট রিভিউতে যখন বলবেন 'এই পরীক্ষায় Logistic Regression জিতেছে', তখন সাথে সাথে এর সুনির্দিষ্ট গণ্ডিও জুড়ে দিন: এই ফলাফলটি এসেছে `quality >= 6` Target, Exact-profile Grouping, ৬টি শেখা Candidate-এর বাজেট, 3টি Fold এবং `AP` মাপকাঠির অধীনে। এখান থেকে ভুলেও এমন ঢালাও মন্তব্য করবেন না যে 'সাধারণভাবে Linear Model-এর চেয়ে Decision Tree বা Forest খারাপ কাজ করে'।"
+        }
+      ]
+    },
+    {
+      "id": "ch14_probabilities",
+      "title": "Out-of-Fold Prediction ও Calibration-এর সীমানা",
+      "subtitle": "র‍্যাঙ্কিং, সম্ভাবনার পরিমার্জন ও Threshold—প্রতিটি ধাপের শেখার ডেটা কেন আলাদা থাকে",
+      "duration": "34 min",
+      "icon": "science",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Out-of-Fold (OOF) Prediction-এর মূল উদ্দেশ্য",
+          "body": "ধরুন, Fit অংশের নমুনাগুলোর ওপরেই আমাদের নির্ভরযোগ্য Prediction দরকার—হয়তো `Calibration` পরীক্ষা করার জন্য কিংবা `Stacking` ডায়াগনস্টিকসের কাজে। কিন্তু যে Model ওই Row দেখে ট্রেনিং নিয়েছে, তার কাছেই আবার সেই Row-এর ফলাফল চাইলে অতি-আত্মবিশ্বাসী ও পক্ষপাতদুষ্ট স্কোর পাওয়া যাবে। তাই Out-of-Fold (OOF) পদ্ধতিতে প্রতিটি Row `i`-এর জন্য Prediction নেওয়া হয় এমন একটি Fold Model থেকে, যেটি ট্রেনিংয়ের সময় ওই Row বা তার পুরো Chemistry Group-টিকে কখনোই দেখেনি। তবে একটি সূক্ষ্ম সীমা মনে রাখা চাই: যদি একই Fold-গুলোর ফলাফল দেখে সেরা `Hyperparameter` বা বিজয়ী `Candidate` বেছে নেওয়া হয়ে থাকে, তবে সেই OOF Prediction-এর মান আর সম্পূর্ণ অস্পর্শিত Final Test-এর মান এক কথা নয়। মূল্যায়নের সময় পুরো ট্রেনিং ও অনুসন্ধান প্রক্রিয়াকে একসাথে বিবেচনায় নিতে হবে।"
+        },
+        {
+          "type": "math",
+          "title": "Out-of-Fold Prediction-এর গাণিতিক রূপ",
+          "body": "\\widehat p_i=f_{-fold(i)}(x_i)"
+        },
+        {
+          "type": "text",
+          "title": "Probability Calibration শেখানোর নিরাপদ ডেটা সীমানা",
+          "body": "`Platt Scaling` বা `Isotonic Regression` কোনো স্থির সূত্র নয়; এগুলো ডেটা থেকে শেখা আলাদা রূপান্তর (Learned Transformations)। আপনি যদি নির্বাচিত Model-এর নিজের Training Prediction-গুলোর ওপরেই Calibrator ফিট করেন, তবে সেটি বাস্তবের চেয়ে বেশি আশাবাদী ও ত্রুটিপূর্ণ ম্যাপিং শিখবে। সঠিক নিয়মে Calibration শেখাতে হলে দরকার আলাদা একটি Group-সচেতন (বা সময়ের ক্ষেত্রে Time-সচেতন) `Calibration Split`, অথবা সুপরিকল্পিত `Nested Cross-fitting`। আর Calibration-এর পর যদি আবার Cost-sensitive `Threshold` শিখতে হয়, তবে কোন ডেটায় Calibration হবে আর কোন ডেটায় Threshold স্থির হবে—সেই সীমানাও পরিষ্কারভাবে আলাদা রাখতে হবে।"
+        },
+        {
+          "type": "code",
+          "title": "প্রতিটি Row ঠিক একবার Held-out থাকার পরীক্ষা",
+          "body": "fold_valid_rows = [[0, 1], [2, 3], [4, 5]]\nassigned = [i for fold in fold_valid_rows for i in fold]\nassert sorted(assigned) == list(range(6)) and len(set(assigned)) == 6\nprint(\"Every row is held out exactly once\")\n"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের এই Capstone প্রজেক্টে ঠিক কোন পথটি নেওয়া হয়েছে?",
+          "body": "আমাদের প্রজেক্টের সিদ্ধান্তটি একদম স্বচ্ছ: এখানে আলাদা কোনো `Calibration Model` ফিট করা হয়নি। Fit অংশে ট্রেনিং পাওয়া বিজয়ী `Logistic (C = 1)` Model থেকে সরাসরি যে Probability পাওয়া গেছে, Decision অংশে সেগুলোর ওপর ভিত্তি করেই Empirical পদ্ধতিতে সেরা `Threshold` বেছে নেওয়া হয়েছে। পাশাপাশি সম্ভাবনার মান বোঝাতে আমরা `Brier Score` রিপোর্ট করেছি, কিন্তু তাত্ত্বিক Calibrated-cost উপপাদ্যটিকে অন্ধ গ্যারান্টি হিসেবে ধরে নিইনি। ভবিষ্যতে কেউ অতিরিক্ত Calibrator যোগ করতে চাইলে তার জন্য Split Role এবং ডেটার বাজেট নতুন করে নকশা করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "পুনরায় ট্রেনিংয়ের ফাঁদ (The Refit Trap)",
+          "body": "Split Role অধ্যায়ে আলোচিত সেই গুরুত্বপূর্ণ ফাঁদটির কথা আরেকবার ভাবুন। Decision অংশে সেরা `Threshold` পেয়ে যাওয়ার পর অনেকেরই ইচ্ছে হতে পারে—চূড়ান্ত পরীক্ষার আগে `Fit` এবং `Decision` অংশ একসাথে মিলিয়ে Model-টিকে আরও বেশি ডেটায় আবার ট্রেন করিয়ে নিই! কিন্তু এমনটা করলেই ভেতরের `StandardScaler`-এর গড় ও বিস্তার, Model-এর `Weights` এবং উৎপন্ন `Probability Distribution` বদলে যাবে। তখন আগে বেছে নেওয়া পুরোনো `Threshold` নতুন Model-এ ঠিক একই `Operating Point` দেবে—তার কোনো নিশ্চয়তা থাকে না। ঠিক এই কারণেই আমাদের নির্বাচিত Model-টি কেবল Fit অংশেই ট্রেনিংপ্রাপ্ত অবস্থায় স্থির থাকে, যাতে Policy নির্ধারণের ম্যাপিং অবিকৃত থাকে।"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব প্রয়োগে Distribution ও Prevalence বদলে যাওয়ার প্রভাব",
+          "body": "Model স্থির রাখলেও বাস্তব দুনিয়ায় ভবিষ্যতের ডেটা যদি ট্রেনিংয়ের `Feature Distribution` বা `Positive Prevalence` থেকে সরে যায় (Shift করে), তবে উৎপন্ন স্কোর এবং তার `Calibration` দুটোই বদলে যেতে পারে। আমাদের মূল UCI Wine ফাইলে বাস্তব Deployment পরিবেশ বা সময়ের কোনো Metadata দেওয়া নেই; তাই আমরা মনগড়া কোনো `Prior-shift` সংশোধনী বা কাল্পনিক বাজারের `Prevalence` অনুমান করে বসাচ্ছি না।"
+        },
+        {
+          "type": "callout",
+          "title": "Interview প্রস্তুতি: চার ধাপের Data Role ডায়াগ্রাম",
+          "body": "ইন্টারভিউয়ের একটি চমৎকার প্রশ্ন অনুশীলন করুন: (১) Cross-Validation Prediction তৈরি করা, (২) `Calibrator` ফিট করা, (৩) `Threshold` নির্বাচন করা এবং (৪) চূড়ান্ত মূল্যায়ন (`Final Evaluation`)—এই চারটি ধাপে আপনি ঠিক কোন কোন Row ব্যবহার করবেন? খাতায় একটি ডায়াগ্রাম এঁকে সেখানে `Group Isolation` এবং আপনার `Refit Policy` স্পষ্টভাবে দেখান।"
+        }
+      ]
+    },
+    {
+      "id": "ch14_costs",
+      "title": "Cost-sensitive Decision তত্ত্ব ও বাস্তব Policy",
+      "subtitle": "তাত্ত্বিক Calibrated Threshold থেকে বাস্তব ডেটায় Empirical Policy নির্ধারণ",
+      "duration": "36 min",
+      "icon": "science",
+      "blocks": [
+        {
+          "type": "math",
+          "title": "সঠিক সিদ্ধান্তে শূন্য খরচ ধরে দুটি Action-এর প্রত্যাশিত ক্ষতি",
+          "body": "L(d=1\\mid x)=C_{FP}(1-p),\\qquad L(d=0\\mid x)=C_{FN}p"
+        },
+        {
+          "type": "math",
+          "title": "আদর্শ (Ideal) Probability Threshold-এর শর্ত",
+          "body": "d=1\\iff p\\ge\\frac{C_{FP}}{C_{FP}+C_{FN}}"
+        },
+        {
+          "type": "text",
+          "title": "তাত্ত্বিক সমীকরণের অনুমান বনাম বাস্তব ডেটার পার্থক্য",
+          "body": "একটি Probability পাওয়ার পর ঠিক কোথায় দাগ টেনে Positive (`d = 1`) বলব, তার গাণিতিক ভিত্তিটি উপরের সমীকরণ দুটিতে দেখানো হয়েছে। আমরা যদি ধরে নিই যে `p` হলো নিখুঁত শর্তসাপেক্ষ সম্ভাবনা `P(y = 1 | x)`, সঠিক সিদ্ধান্তের (`TP` বা `TN`) খরচ শূন্য, এবং ভুলের খরচ `C_{FP}` ও `C_{FN}` সব নমুনার জন্য স্থির—তবে Positive অনুমান করার প্রত্যাশিত ক্ষতি `C_{FP}(1 - p)` যখনই Negative অনুমান করার ক্ষতি `C_{FN} p`-এর সমান বা কম হবে, তখনই `d = 1` নেওয়া উচিত। অসমতাটি সমাধান করলেই পাওয়া যায় সেই বিখ্যাত তাত্ত্বিক সীমা: `C_{FP} / (C_{FP} + C_{FN})`। আমাদের উদাহরণে `FP = 1` ও `FN = 4` বসালে এই আদর্শ `Threshold` দাঁড়ায় `1 / (1 + 4) = 0.2` (`0.20`)। অথচ আমাদের প্রজেক্টে বাস্তব ডেটা থেকে অনুসন্ধান করে পাওয়া গেছে `0.30`! এর মানে এই নয় যে উপপাদ্যটি ভুল; বরং বাস্তব Model-এর দেওয়া Probability নিখুঁত নয়, আমাদের Validation নমুনার আকার সসীম এবং আমরা বিচ্ছিন্ন (Discrete) একটি Grid-এ পরীক্ষা চালাচ্ছি বলেই তাত্ত্বিক ও বাস্তব মানের এই স্বাভাবিক পার্থক্য দেখা দেয়।"
+        },
+        {
+          "type": "code",
+          "title": "গড় খরচ ও তাত্ত্বিক Threshold গণনার উদাহরণ",
+          "body": "fp, fn, n = 3, 2, 10\ncost_fp, cost_fn = 1.0, 4.0\nmean_cost = (cost_fp * fp + cost_fn * fn) / n\nideal_threshold = cost_fp / (cost_fp + cost_fn)\nprint(mean_cost, ideal_threshold)  # 1.1,0.2\n"
+        },
+        {
+          "type": "text",
+          "title": "Decision অংশে Empirical Threshold অনুসন্ধান",
+          "body": "তাত্ত্বিক অনুমানের ওপর অন্ধভাবে নির্ভর না করে আমরা Decision Validation অংশের `313`টি Row ব্যবহার করে সরাসরি পরীক্ষা চালাই। সেখানে `0.05, 0.10, ..., 0.95`—এই `19`টি নির্দিষ্ট `Threshold` বিন্দুতে গড় খরচ `Mean Cost = (FP + 4 * FN) / n` হিসাব করে যেখানে খরচ সর্বনিম্ন, সেটিই বেছে নেওয়া হয়। যদি একাধিক বিন্দুতে গড় খরচ হুবহু সমান হয়ে যায়, তবে আমাদের পূর্বনির্ধারিত Tie-breaking নিয়ম হলো সবচেয়ে বড় `Threshold`-টি বেছে নেওয়া—যাতে রক্ষণশীলভাবে কম সংখ্যক নমুনাকে Positive ঘোষণা করা হয় এবং ফলাফল শতভাগ Reproducible থাকে। খেয়াল রাখবেন, এভাবে `Threshold` বদলালে `Confusion Matrix` ও গড় খরচ বদলায়, কিন্তু স্থির থাকা Model-এর র‍্যাঙ্কিং মাপকাঠি (`AP`) বিন্দুমাত্র বদলায় না।"
+        },
+        {
+          "type": "text",
+          "title": "খরচের এককগুলো শিক্ষামূলক উদাহরণ, বাস্তব ব্যবসায়িক পরিমাপ নয়",
+          "body": "এখানে একটি `False Negative`-কে `False Positive`-এর চেয়ে চার গুণ বেশি ব্যয়বহুল (`FN = 4`, `FP = 1`) ধরা হয়েছে কেবল অপ্রতিসম (Asymmetric) সিদ্ধান্তের কৌশল হাতে-কলমে শেখানোর জন্য; মূল UCI Dataset-এর নির্মাতারা এমন কোনো খরচ মেপে দেননি। এর পেছনে কোনো আর্থিক লাভ-ক্ষতি, বিপণন বা স্বাস্থ্যগত উপযোগিতার দাবি নেই। অ্যাপের ভেতরে আপনি যখন কন্ট্রোল ঘুরিয়ে `FN`-এর খরচ বদলাবেন, তখন সেটি কেবল Decision Validation অংশের ওপর একটি 'কী হতো যদি' (What-if) হিসাব দেখাবে—আমাদের আনুষ্ঠানিক ও লক করা Final Test কখনোই সেই নতুন নীতিতে পুনরায় টিউন হয় না।"
+        },
+        {
+          "type": "text",
+          "title": "প্রান্তিক বা চরম Policy-গুলোর আচরণ (`Threshold = 0` ও `1`)",
+          "body": "যেকোনো সিদ্ধান্তের নিয়ম তৈরির সময় এর দুই প্রান্তের আচরণও যাচাই করে নেওয়া উচিত। যেহেতু আমাদের শর্তটি `p >= tau`, তাই `Threshold = 0` ধরলে যেকোনো সসীম Probability (`p >= 0`) সব ঢালাওভাবে Positive হয়ে যাবে। আবার `Threshold = 1` ধরলেও যদি কোনো নমুনার স্কোর কাঁটায় কাঁটায় `1.0` হয়, তবে `>=` শর্তের কারণে সেটি Positive-ই থাকবে। আর যখন একটিও Positive Prediction অবশিষ্ট থাকে না, তখন `Precision` হয়ে যায় অসংজ্ঞায়িত; একইভাবে কোনো অংশে আসল Class Support শূন্য হলে `Recall` বা `Specificity` অসংজ্ঞায়িত হয়ে পড়ে। এই প্রান্তিক আচরণগুলো স্পষ্টভাবে রিপোর্ট করা স্বচ্ছ মূল্যায়নেরই অংশ।"
+        },
+        {
+          "type": "callout",
+          "title": "নিজের ভাষায় ব্যাখ্যা করার অনুশীলন: `0.2` বনাম `0.3`",
+          "body": "রিভিউয়ার যদি জিজ্ঞেস করেন—তাত্ত্বিক হিসাব দিল `0.2`, আর আপনার নির্বাচিত Policy নিল `0.3`, এই দুটি সংখ্যা ঠিক কোথা থেকে এল এবং কেন আলাদা হলো?—তা নিজের ভাষায় গুছিয়ে বলার চর্চা করুন। আর বাস্তব কর্মক্ষেত্রে আনুমানিক খরচের পার্থক্যের `Uncertainty`, মানুষের রিভিউ করার সক্ষমতা এবং `Probability Calibration` যাচাই না করে কোনো Threshold-কে হুট করে 'Optimal Business Policy' বলে দাবি করবেন না।"
+        }
+      ]
+    },
+    {
+      "id": "ch14_policy",
+      "title": "Decision Validation Lab: সংখ্যার হিসাব থেকে Policy নির্বাচন",
+      "subtitle": "Threshold ও Cost বদলে Confusion Matrix এবং গড় খরচের পরিবর্তন হাতে-কলমে পরীক্ষা",
+      "duration": "47 min",
+      "icon": "science",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "স্থির (Frozen) Probability ও রানটাইম হিসাবের স্বচ্ছতা",
+          "body": "আগের পাঠে দেখা সেই তাত্ত্বিক ও বাস্তব নীতির তফাত এবার সরাসরি হাতে-কলমে পরখ করার পালা। Fit অংশে ট্রেনিংপ্রাপ্ত আমাদের বিজয়ী `Logistic (C = 1)` Model থেকে পাওয়া `313`টি Decision Validation Probability এবং মূল ডেটার `quality >= 6` থেকে তৈরি আসল Binary Label অ্যাপের সাথেই সংযুক্ত করে দেওয়া হয়েছে। আপনি যখন নিচের কন্ট্রোল নাড়াচাড়া করবেন, তখন Dart রানটাইম তাৎক্ষণিকভাবে নতুন `Threshold` ও খরচের পাটিগণিত হিসাব করে দেখাবে। পুরো পরীক্ষাটি কেবল এই Validation অংশেই সীমাবদ্ধ রাখা হয়েছে, যাতে আনুষ্ঠানিক Final Test ভুলক্রমেও পুনরায় বাছাইয়ের উৎসে পরিণত না হয়।"
+        },
+        {
+          "type": "decision_lab",
+          "title": "ইন্টারঅ্যাকটিভ Policy Lab",
+          "body": "নিচের ল্যাবে `Threshold` (`0` সহ বিভিন্ন মানে), ভুলের আপেক্ষিক খরচ (`Cost Sensitivity`) এবং `Grid Minimum` বিকল্পগুলো ব্যবহার করে দেখুন। লক্ষ্য করুন কীভাবে একটি স্লাইডার সরালে `TP`, `FP`, `FN` ও `TN`-এর সংখ্যার সাথে সাথে `Precision`, `Recall` এবং গড় খরচ (`Mean Cost`) বদলে যায়। পরীক্ষা শেষে `Reset policy` বোতামে চাপলে ল্যাবটি আবার আমাদের স্থির করা `Threshold = 0.30` এবং `FN = 4` নীতিতে ফিরে আসবে।"
+        },
+        {
+          "type": "math",
+          "title": "গড় Validation খরচের সমীকরণ",
+          "body": "\\widehat R(\\tau)=\\frac{C_{FP}FP(\\tau)+C_{FN}FN(\\tau)}{n}"
+        },
+        {
+          "type": "code",
+          "title": "সমান মান (`p == threshold`) কেন Positive দিকে পড়ে",
+          "body": "y = [0, 1, 1, 0]\np = [0.2, 0.3, 0.9, 0.7]\nthreshold = 0.3\npredicted = [v >= threshold for v in p]\ntp = sum(a == 1 and b for a, b in zip(y, predicted))\nprint(predicted, tp)  # [False,True,True,True],2\n"
+        },
+        {
+          "type": "text",
+          "title": "নির্বাচিত `Threshold = 0.30`-এ সংরক্ষিত প্রমাণ",
+          "body": "আমাদের লক করা বিন্দুতে (`Threshold = 0.30`, যেখানে `FP = 1` এবং `FN = 4`) Validation অংশের `313`টি নমুনার হিসাব দাঁড়ায়: `TP = 148`, `FP = 67`, `FN = 15` এবং `TN = 83`। এখান থেকে মোট খরচ আসে `67 + 4 * 15 = 127`, অর্থাৎ গড় খরচ `127 / 313 ≈ 0.4058`; আর Positive শনাক্ত করার হার বা `Recall` পাওয়া যায় `148 / 163 ≈ 0.9080`। এই সংখ্যাগুলো আমাদের ধরে নেওয়া খরচের অগ্রাধিকারের সাপেক্ষে ভুলের ভারসাম্য (Trade-off) তুলে ধরে—এটি ওয়াইনের গুণগত মান সম্পর্কে কোনো চরম বৈজ্ঞানিক সত্যের সনদ দেয় না।"
+        },
+        {
+          "type": "text",
+          "title": "Empirical Cost রেখা কেন আসলে ধাপে ধাপে পরিবর্তনশীল (Piecewise)?",
+          "body": "ল্যাবে খরচের গ্রাফটি দেখলে আপাতদৃষ্টিতে বেশ মসৃণ মনে হতে পারে, কিন্তু এর ভেতরের গাণিতিক স্বরূপটি খেয়াল করুন। সসীম সংখ্যক নমুনার ক্ষেত্রে আপনি যখন ধীরে ধীরে `Threshold` সরান, তখন দুটি নমুনার স্কোরের মাঝখানের ফাঁকা জায়গায় কোনো সিদ্ধান্তই বদলায় না—কেবল কোনো একটি নমুনার নিজস্ব Probability পেরিয়ে যাওয়ার মুহূর্তেই `FP` বা `FN`-এর সংখ্যা লাফ দিয়ে বদলায়! অর্থাৎ বাস্তব ডেটায় এই খরচের অপেক্ষকটি ধাপে ধাপে পরিবর্তনশীল (Piecewise Constant), কোনো মসৃণ ও অন্তরীকরণযোগ্য (Differentiable) রেখা নয়। চার্টের রেখাটি মূলত নির্দিষ্ট কিছু Grid বিন্দুকে সরলরেখায় যুক্ত করে আঁকা একটি চিত্রায়ন মাত্র; তাই নির্দিষ্ট Grid-এর সেরা বিন্দুটিই যে সব বাস্তব সংখ্যার মধ্যে চূড়ান্ত সর্বনিম্ন মান দেবে, এমন কোনো বাঁধাধরা নিশ্চয়তা নেই।"
+        },
+        {
+          "type": "text",
+          "title": "Class Prevalence ও ভিন্ন অংশের হার তুলনার সতর্কতা",
+          "body": "দুটি আলাদা Split-এর ফলাফল পাশাপাশি রাখার সময় প্রতিটিতে Positive নমুনার উপস্থিতি বা Support খেয়াল করা জরুরি: আমাদের Validation অংশে Positive আছে `163 / 313`টি, আর Final Test-এ আছে `191 / 320`টি। যেহেতু `Precision` সরাসরি ডেটার `Prevalence`-এর ওপর নির্ভরশীল, তাই ভিন্ন ভিন্ন উৎসের হার তুলনা করার সময় অবশ্যই সংশ্লিষ্ট `Prevalence`, `Label Policy` এবং স্যাম্পলিংজনিত `Uncertainty` একসাথে উল্লেখ করবেন। পাশাপাশি মনে রাখবেন, ল্যাবের `Threshold` স্লাইডার ঘুরিয়ে কেবল সিদ্ধান্তের সীমানা বদলানো যায়—এখান থেকে কখনোই নিখুঁতভাবে Calibrated `Posterior` সম্ভাবনা শেখা যায় না।"
+        },
+        {
+          "type": "callout",
+          "title": "নিজের নোটবুকে যাচাই করার কাজ",
+          "body": "নিজে হাতে লেখা Confusion গণনার কোডটিকে সরাসরি `sklearn`-এর `confusion_matrix(labels=[0, 1])`-এর সাথে মিলিয়ে পরীক্ষা করুন। বিশেষ করে প্রান্তিক কেসগুলো—যেমন সব নমুনা Positive হওয়া, স্কোর কাঁটায় কাঁটায় `Threshold`-এর সমান হওয়া, একটিও Predicted Positive না থাকা এবং `[0, 1]` সীমার বাইরের বা অকার্যকর (`NaN`) Probability ইনপুট আসা—আপনার কোড ঠিকমতো সামলাতে পারছে কি না তা যাচাই করুন।"
+        },
+        {
+          "type": "text",
+          "title": "সসীম সংখ্যক স্কোরে সম্ভাব্য সব Decision Set খুঁজে বের করা",
+          "body": "ধাপে ধাপে খরচের পরিবর্তনের বিষয়টি ছোট একটি উদাহরণে হাতে-কলমে দেখা যাক। ধরুন আমাদের কাছে চারটি নমুনার আসল মান `y = [0, 1, 1, 0]` এবং তাদের সম্ভাবনা `p = [0.2, 0.3, 0.9, 0.7]`, যেখানে `FP` খরচ `1`, `FN` খরচ `4` এবং নিয়ম হলো `p >= tau`। সম্ভাব্য সব ভিন্ন ভিন্ন ফলাফল দেখতে কি অসীম সংখ্যক `tau` পরীক্ষা করতে হবে? মোটেই না! কেবল `p`-এর প্রতিটি স্বতন্ত্র (Unique) মানে এবং সর্বোচ্চ মানের ঠিক পরের ক্ষুদ্রাতিক্ষুদ্র সংখ্যাটিতে (`np.nextafter`) পরীক্ষা চালালেই সম্ভাব্য সবকটি স্বতন্ত্র Prediction Set পাওয়া যায়। যেমন `tau = 0.3` ধরলে পাওয়া যায় `FP = 1, FN = 0` এবং গড় খরচ `0.25`; আবার `tau = 0.9` ধরলে দাঁড়ায় `FP = 0, FN = 1` এবং গড় খরচ `1`। কাজেই দুটি স্কোরের মাঝের ফাঁকা ব্যবধানে `Threshold` কোথায় নড়ছে তা নিয়ে মাথা না ঘামিয়ে, ঠিক কোন বিন্দুতে কোন Row-গুলোর সিদ্ধান্ত বদলে যাচ্ছে সেদিকে নজর দিন।"
+        },
+        {
+          "type": "code",
+          "title": "সম্ভাব্য সব Prediction Set ও Tie-breaking কোড",
+          "body": "import numpy as np\n\ntarget = np.array([0, 1, 1, 0])\nprobability = np.array([0.2, 0.3, 0.9, 0.7])\nthresholds = np.r_[np.unique(probability), np.nextafter(probability.max(), np.inf)]\ncandidates = []\nfor threshold in thresholds:\n    positive = probability >= threshold\n    fp = int(np.sum(positive & (target == 0)))\n    fn = int(np.sum(~positive & (target == 1)))\n    cost = (fp + 4 * fn) / len(target)\n    candidates.append((cost, float(threshold), fp, fn))\n# Ascending threshold breaks an exact cost tie deterministically.\ncost, threshold, fp, fn = min(candidates)\nprint(threshold, cost, fp, fn, len(candidates))\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে হিসাব করুন",
+          "body": "ধরুন দুটি ভিন্ন Row-এর Predicted Probability হুবহু সমান, কিন্তু তাদের আসল Label একটিতে Positive (`1`) এবং অন্যটিতে Negative (`0`)। কোনো এক-মাত্রিক Threshold Policy কি এই দুটি Row-কে আলাদা সিদ্ধান্তে ফেলতে পারবে?",
+          "solution": "না, পারবে না। যেহেতু দুটি Row-এরই Predicted Probability সমান এবং আমাদের সিদ্ধান্তের নিয়ম `p >= tau` সবার জন্য অভিন্ন, তাই যেকোনো `tau`-এর জন্য দুটি Row সবসময় একই সিদ্ধান্ত পাবে—পুরো Tie Group একসাথেই সীমানা পার হবে। এক-মাত্রিক এই Policy দিয়ে ওই দুটি Row-কে আলাদা করা অসম্ভব। পাশাপাশি মনে রাখবেন, উপরের কোডের নিখুঁত অনুসন্ধান (Exhaustive Search) কেবল বর্তমান Decision ডেটার গড় খরচ কমায়—ভবিষ্যতের অদেখা ডেটাতেও ঠিক একই খরচ থাকবে, এমন কোনো গ্যারান্টি দেয় না।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch14_trace",
+      "title": "Pipeline Trace: কাঁচা Row থেকে চূড়ান্ত Probability",
+      "subtitle": "Standardized রূপান্তর, প্রতিটির অবদান ও সংখ্যাসূচকভাবে স্থিতিশীল Sigmoid",
+      "duration": "36 min",
+      "icon": "science",
+      "blocks": [
+        {
+          "type": "math",
+          "title": "ট্রেনিংপ্রাপ্ত Logistic Pipeline-এর গাণিতিক ধাপ",
+          "body": "z_j=(x_j-\\mu_j)/s_j,\\quad \\ell=b+\\sum_jw_jz_j,\\quad p=\\frac{1}{1+e^{-\\ell}}"
+        },
+        {
+          "type": "text",
+          "title": "একটি বাস্তব Row-কে শুরু থেকে শেষ পর্যন্ত অনুসরণ করি",
+          "body": "আগের পাঠে আমরা ৩১৩টি প্রস্তুত Probability ব্যবহার করে সিদ্ধান্তের নীতি পরখ করেছি; কিন্তু একটি কাঁচা Row থেকে সেই সংখ্যাটি ঠিক কীভাবে তৈরি হচ্ছে? স্বচ্ছতার জন্য Decision অংশের `24`টি বাস্তব নমুনা এখানে সংযুক্ত করা আছে। সেখান থেকে যেকোনো একটি উৎস Row বেছে নিয়ে তার কাঁচা Chemistry মান (`x_j`), প্রমিত স্থানাঙ্ক বা Standardized Coordinate (`z_j`), প্রতিটি Feature-এর চিহ্নযুক্ত অবদান (`w_j z_j`), `Bias` (`b`) এবং চূড়ান্ত `Probability` (`p`) ধাপে ধাপে মিলিয়ে দেখুন। মনে রাখবেন, উৎস Row-এর নম্বরটি কেবল Audit মেলানোর রেফারেন্স—কোনো বোতল বা ব্যক্তির পরিচয় নয়; আর সমস্ত `Weights`, `Mean` ও `Scale` এসেছে Fit Role থেকে, কোনো নতুন Query দেখে সেগুলো কখনোই পুনরায় ফিট হয় না।"
+        },
+        {
+          "type": "pipeline_lab",
+          "title": "ইন্টারঅ্যাকটিভ Runtime Pipeline Trace",
+          "body": "নিচের ট্রেসার ল্যাবে `Display standardized features` সুইচটি অন-অফ করলে কেবল পর্দায় দেখানো স্থানাঙ্কের রূপ বদলায়, কিন্তু ভেতরের ট্রেনিংপ্রাপ্ত Pipeline-এর চূড়ান্ত `Probability` অপরিবর্তিত থাকে। কাঁচা মানগুলো থেকে প্রমিত ওজনযুক্ত পদগুলো (`w_j z_j`) এবং `Bias` যোগ করে নিজেই Reference `Probability`-টি পুনরুৎপাদন করে দেখুন।"
+        },
+        {
+          "type": "code",
+          "title": "Overflow এড়িয়ে সংখ্যাসূচকভাবে স্থিতিশীল (Stable) Sigmoid কোড",
+          "body": "from math import exp\n\n\ndef sigmoid(score):\n    if score >= 0:\n        return 1 / (1 + exp(-score))\n    z = exp(score)\n    return z / (1 + z)\n\n\nprint(sigmoid(-0.3), sigmoid(-1000), sigmoid(1000))\n"
+        },
+        {
+          "type": "text",
+          "title": "প্রতিটি Feature-এর অবদান (Contribution) কীভাবে ব্যাখ্যা করবেন?",
+          "body": "ট্রেসারের প্রতিটি বার নির্দেশ করে `Contribution = z * weight`; অর্থাৎ কোনো Feature-এর অবদান শূন্য হওয়ার অর্থ হলো নমুনাটির ওই রাসায়নিক মানটি ঠিক ট্রেনিং ডেটার গড় (`Mean`) বরাবর অবস্থান করছে। তবে ব্যাখ্যার সময় সতর্ক থাকবেন: ওয়াইনের বিভিন্ন রাসায়নিক উপাদান পরস্পর সম্পর্কযুক্ত (Correlated) হওয়ায় কেবল গুণাঙ্কের আকার (Coefficient Magnitude) কিংবা একটি নির্দিষ্ট Row-এর অবদান দেখেই সেটিকে কার্যকরী বা Causal গুরুত্ব বলা যায় না। পরিমাপের একক, কাঁচা ডেটার বিস্তার, `Regularization`-এর মাত্রা এবং Training `Distribution` বদলে গেলে এই গুণাঙ্কগুলোর মানও বদলে যায়।"
+        },
+        {
+          "type": "text",
+          "title": "Bias যোগ করা ও Feature-এর ক্রম রক্ষার গুরুত্ব",
+          "body": "হাতে বা কোডে হিসাব মেলানোর সময় দুটি সূক্ষ্ম ভুলের ব্যাপারে সজাগ থাকতে হয়। প্রথমত, ১১টি বারের যোগফলের সাথে `Bias` (`b`) যোগ করতে ভুলে গেলে `Logit` (`ℓ`) এবং চূড়ান্ত সম্ভাবনা পুরোটাই ভুল আসবে। দ্বিতীয়ত, সবকটি Feature-এর সংখ্যার মান সঠিক থাকলেও যদি দুটির নাম বা ক্রম অদলবদল হয়ে যায়, তবু `Matrix` গুণফল নির্বিঘ্নে চলে আপাতদৃষ্টিতে বিশ্বাসযোগ্য কিন্তু সম্পূর্ণ ভুল একটি সংখ্যা তৈরি করবে! এজন্যই আমাদের Contract Test সংরক্ষিত Feature-এর নাম, সঠিক ক্রম, ভেক্টরের মাত্রা এবং ধনাত্মক `Scale` কঠোরভাবে যাচাই করে।"
+        },
+        {
+          "type": "text",
+          "title": "বিজয়ী Model বনাম Reference Model-এর স্বচ্ছতা",
+          "body": "আমাদের এই নির্দিষ্ট পরীক্ষায় যেহেতু `Logistic (C = 1)` আনুষ্ঠানিকভাবে বিজয়ী হয়েছে, তাই এই ট্রেসারটি সরাসরি আমাদের নির্বাচিত মূল Pipeline-কেই দেখাচ্ছে। ভবিষ্যতে অন্য কোনো পরীক্ষায় যদি Tree বা Boosting ঘরানার কোনো Model বিজয়ী হয়, তবে এই রৈখিক Logistic ট্রেসারটি থাকবে কেবল তুলনামূলক বোঝাপড়ার গৌণ রেফারেন্স হিসেবে, আর বিজয়ী Artifact-এর জন্য থাকবে তার নিজস্ব আলাদা Reference Query। ইন্টারফেসের Metadata-য় Model-এর পরিচয় স্পষ্ট রাখলে পাঠক বা ব্যবহারকারী কখনোই বিভ্রান্ত হন না।"
+        },
+        {
+          "type": "callout",
+          "title": "ভিন্ন রানটাইমের হিসাব মেলানো (Cross-runtime Check)",
+          "body": "সংযুক্ত `24`টি Query-র প্রতিটি `Probability` Python-এর `sklearn.predict_proba` এবং Dart-এর `Stable Sigmoid` হিসাবের সাথে সূক্ষ্ম সংখ্যাসূচক সীমার (Numerical Tolerance) ভেতর হুবহু মিলে যায়। তবে মনে রাখবেন, এই পরীক্ষাটি প্রমাণ করে দুই প্ল্যাটফর্মের পাটিগণিতিক সামঞ্জস্য (Arithmetic Consistency)—এটি Model-এর ভবিষ্যৎ নির্ভুলতা বা নিখুঁত `Calibration`-এর সনদ নয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch14_errors",
+      "title": "Error Analysis: ভুল Row থেকে কার্যকর প্রকৌশলগত প্রশ্ন",
+      "subtitle": "কেবল Decision অংশে ত্রুটি পর্যবেক্ষণ এবং Slice বিশ্লেষণের শৃঙ্খলা",
+      "duration": "34 min",
+      "icon": "science",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "অতি-আত্মবিশ্বাসী ভুলগুলো (High-confidence Mistakes) আগে দেখুন",
+          "body": "একক Row-এর হিসাব কীভাবে কাজ করে তা বোঝার পর, এবার দেখার পালা আমাদের Model ঠিক কোথায় এবং কীভাবে ভুল করছে। এজন্য আমরা কেবল Decision Validation অংশে সবচেয়ে বেশি সম্ভাবনাসম্পন্ন `False Positive` এবং সবচেয়ে কম সম্ভাবনাসম্পন্ন `False Negative` নমুনাগুলো খুঁটিয়ে দেখি। রিপোর্টে প্রতিটি ভুলের উৎস Row নম্বর, আসল `quality` এবং প্রদত্ত `Probability` উল্লেখ করা আছে। এসব বাস্তব উদাহরণ দেখে পরিমাপের অসঙ্গতি, স্বাদ-বিচারের অস্পষ্টতা (Label Ambiguity) কিংবা অনুপস্থিত তথ্যের বিষয়ে দারুণ সব প্রকৌশলগত প্রশ্ন তোলা যায়—কিন্তু ডেটায় প্রমাণ নেই এমন কোনো মনগড়া কারণ বানিয়ে বলা চলে না।"
+        },
+        {
+          "type": "text",
+          "title": "সীমান্তবর্তী ভুল বনাম গুরুতর ভুলের পার্থক্য",
+          "body": "আমাদের Binary সংজ্ঞায় `quality = 5` হলো Negative আর `6` হলো Positive; ফলে `5` ও `6`-এর ঠিক সীমানায় ঘটা অমিলগুলো অনেক সময় মানুষের স্বাদ-বিচারের স্বাভাবিক দোলাচল থেকেই আসতে পারে। কিন্তু `quality = 3` এবং `quality = 8`-এর মতো চরম ব্যবধানের ভুল আমাদের বর্তমান Binary হিসাবে ঠিক একই শাস্তি (Penalty) পেলেও বাস্তব অর্থে এর গুরুত্ব বা তীব্রতা অনেক বেশি! আপনার বাস্তব সমস্যায় যদি মানের এই ক্রমিক দূরত্ব (Ordinal Distance) গুরুত্বপূর্ণ হয়, তবে শুরু থেকেই উপযুক্ত `Target`, `Loss` এবং মূল্যায়নের মাপকাঠি নতুন করে নকশা করতে হবে।"
+        },
+        {
+          "type": "code",
+          "title": "ভুল Prediction হওয়া Row আলাদা করার কোড উদাহরণ",
+          "body": "rows = [{\"quality\": 5, \"p\": 0.8}, {\"quality\": 6, \"p\": 0.2}, {\"quality\": 7, \"p\": 0.9}]\nthreshold = 0.3\nerrors = [r for r in rows if (r[\"p\"] >= threshold) != (r[\"quality\"] >= 6)]\nprint(errors)\n"
+        },
+        {
+          "type": "math",
+          "title": "নির্দিষ্ট Slice-এর Error Rate-এর সমীকরণ",
+          "body": "\\operatorname{ErrorRate}(S)=\\frac{\\sum_{i\\in S}\\mathbf1\\{\\widehat y_i\\ne y_i\\}}{|S|}"
+        },
+        {
+          "type": "text",
+          "title": "Slice-এর আকার (`|S|`) ও Multiple Comparison-এর সতর্কতা",
+          "body": "গড় ভুলের আড়ালে লুকিয়ে থাকা সমস্যা ধরতে ডেটাকে ছোট ছোট অংশে বা `Slice`-এ ভাগ করে দেখা বেশ কার্যকর—যেমন কম অ্যালকোহল বা উচ্চ অম্লতার ওয়াইনে ভুল বেশি হচ্ছে কি না। কিন্তু উপরের সমীকরণের হরে থাকা `|S|` বা নমুনার সংখ্যার দিকে খেয়াল রাখুন: কোনো `Slice`-এ যদি মাত্র হাতেগোনা কয়েকটি Row থাকে, তবে তার `Error Rate` সামান্য ঘটনাতেই প্রচণ্ড ওঠানামা করবে। তা ছাড়া অসংখ্য `Slice` ঘেঁটে সবচেয়ে খারাপ ফল করা অংশটিকে বেছে নিলে সেখানে অনিবার্যভাবে Selection Effect তৈরি হয়। তাই রিপোর্টে সবসময় প্রতিটি `Slice`-এর সুনির্দিষ্ট সংজ্ঞা, নমুনার সংখ্যা (`Support`), পরিসংখ্যানগত `Uncertainty` এবং বিশ্লেষণটি অনুসন্ধানমূলক (Discovery) নাকি পূর্বঘোষিত যাচাই (Confirmation)—তা স্পষ্টভাবে উল্লেখ করুন।"
+        },
+        {
+          "type": "text",
+          "title": "অস্বাভাবিক ভালো স্কোর দেখলে Target Leakage খুঁজুন",
+          "body": "ত্রুটি বিশ্লেষণ কেবল খারাপ স্কোরের জন্যই নয়; কখনো যদি অবিশ্বাস্য রকম নিখুঁত স্কোর দেখতে পান, তবে সবার আগে `Target Leakage` সন্দেহ করুন! ভুল CSV কলাম পড়া, `quality` মিশিয়ে Grouping বা Encoding তৈরি করা, Duplicate নমুনার ফাঁস, পুরো ডেটার ওপর একসাথে Preprocessing চালানো কিংবা ভুলবশত Training ডেটার ওপরেই মূল্যায়ন করে ফেলা—এসবই অতি-উচ্চ স্কোরের চেনা উৎস। আমাদের ফাইলের Hash, Schema এবং Group-disjoint পরীক্ষাগুলো এর অনেকগুলো পথ রোধ করে, তবে ডেটা সংগ্রহের পেছনের সব অজানা বাস্তব প্রেক্ষাপট একা কোড দিয়ে ধরা সম্ভব নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Final Test-এর ভুল দেখার পরের কঠোর নিয়ম",
+          "body": "চূড়ান্ত রিপোর্ট প্রকাশের পর হিমঘর থেকে বের করা Final Test-এর ভুলগুলোও বর্ণনামূলকভাবে দেখা যেতে পারে। কিন্তু মনে রাখবেন, ওই ভুলগুলো দেখে পাওয়া ধারণা দিয়ে আপনি যদি Model বা Feature সংশোধন করেন, তবে আগের সেই প্রকাশিত `320`-Row Test সেটটি নতুন Model-এর চূড়ান্ত প্রমাণ (Confirmatory Score) হিসেবে আর ব্যবহার করা যাবে না—কারণ ওই ডেটা এখন আপনার দেখা হয়ে গেছে! পরবর্তী যেকোনো সংস্কারকে অনুসন্ধানমূলক নতুন সংস্করণ হিসেবে নথিভুক্ত করুন এবং তার যাচাইয়ের জন্য তাজা মূল্যায়ন ডেটার প্রস্তাব দিন।"
+        },
+        {
+          "type": "callout",
+          "title": "আপনার প্রজেক্ট রিপোর্টের কাজ: তিনটি Error Hypothesis",
+          "body": "Decision অংশের ভুলগুলো পর্যবেক্ষণ করে অন্তত তিনটি সুনির্দিষ্ট Error Hypothesis লিখুন। প্রতিটির পাশে উল্লেখ করুন: কোন প্রমাণের ভিত্তিতে ধারণাটি এল, এর সম্ভাব্য প্রকৌশলগত সমাধান কী হতে পারে এবং কোনো Data Leakage ছাড়াই তা কীভাবে যাচাই করবেন। ভুলেও এমন ভাব করবেন না যে মূল Dataset-এ অনুপস্থিত Batch বা ব্র্যান্ডের তথ্য আপনার হাতে আছে!"
+        }
+      ]
+    },
+    {
+      "id": "ch14_ablation",
+      "title": "Ablation Study ও Permutation Importance",
+      "subtitle": "Feature-এর পরিসংখ্যানগত সংশ্লেষ (Association) থেকে কার্যকারণ (Causality) আলাদা রাখুন",
+      "duration": "36 min",
+      "icon": "science",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "দুটি সম্পূর্ণ ভিন্ন পরীক্ষা: Permutation বনাম Ablation",
+          "body": "কোন রাসায়নিক উপাদানটি Model-কে সবচেয়ে বেশি সাহায্য করছে—এই প্রশ্নের উত্তরে প্রকৌশলীরা প্রায়ই দুটি ভিন্ন পরীক্ষা চালান, যাদের অর্থ গুলিয়ে ফেলা ঠিক নয়। `Permutation Importance`-এ ইতিমধ্যে ট্রেনিংপ্রাপ্ত স্থির Model-টিতে হাত না দিয়ে কেবল মূল্যায়ন ডেটার একটি নির্দিষ্ট Feature কলাম এলোমেলোভাবে ওলটপালট (Shuffle) করে দেখা হয় স্কোর কতটা কমে। অন্যদিকে `Ablation` পরীক্ষায় ওই Feature কলামটি পুরোপুরি বাদ দিয়ে বাকি Feature-গুলোর ওপর নতুন করে Model ট্রেন করানো হয়! প্রথমটি মাপে বিকৃত ইনপুটের সাপেক্ষে স্থির Model-টির নির্ভরশীলতা, আর দ্বিতীয়টি দেখে ওই তথ্য ছাড়া শেখার অ্যালগরিদম বিকল্প উপায়ে কতটা মানিয়ে নিতে পারে। কাজেই দুটি পরীক্ষার ফলাফল হুবহু এক হতেই হবে—এমন কোনো কথা নেই।"
+        },
+        {
+          "type": "math",
+          "title": "Permutation-জনিত AP হ্রাসের সমীকরণ",
+          "body": "I_j=AP(X,y)-AP(\\operatorname{permute}_j(X),y)"
+        },
+        {
+          "type": "text",
+          "title": "Decision অংশে Permutation Diagnostic ও Correlated Feature-এর প্রভাব",
+          "body": "আমাদের নির্বাচিত Model-এর ওপর কেবল Decision Validation অংশে `seed = 45` ব্যবহার করে প্রতিটি Feature `5` বার করে ওলটপালট করিয়ে গড় `AP` হ্রাস রিপোর্ট করা হয়েছে। তবে ফলাফল পড়ার সময় দুটি সীমাবদ্ধতা মনে রাখা জরুরি: প্রথমত, পরস্পর সম্পর্কযুক্ত রাসায়নিক উপাদানের মধ্যে কেবল একটিকে এলোমেলো করলে বাস্তবে অসম্ভব এমন অবাস্তব রাসায়নিক সমন্বয় তৈরি হতে পারে; দ্বিতীয়ত, দুটি Feature একে অপরের পরিপূরক (Correlated Substitutes) হলে প্রতিটির একক গুরুত্ব আপাতদৃষ্টিতে কম দেখাতে পারে। আর এই `5` বার এলোমেলো করার `Standard Deviation` কেবল ওলটপালটের র‍্যান্ডমনেস বোঝায়—পুরো ডেটা স্যাম্পলিংয়ের মোট পরিসংখ্যানগত `Uncertainty` নয়।"
+        },
+        {
+          "type": "code",
+          "title": "AP হ্রাসের সহজ পাটিগণিত (এটি Causal প্রভাব নয়)",
+          "body": "original_ap, permuted_ap = 0.84, 0.79\nprint(original_ap - permuted_ap)  # 0.05; not a causal effect\n"
+        },
+        {
+          "type": "text",
+          "title": "পূর্বঘোষিত গৌণ পরীক্ষা: `alcohol` বাদ দিয়ে Ablation",
+          "body": "পাশাপাশি আমরা একটি পূর্বঘোষিত গৌণ `Ablation` পরীক্ষাও চালিয়েছি: `Logistic (C = 1)` থেকে `alcohol` কলামটি বাদ দিয়ে ঠিক আগের সেই `3`টি Fit Fold-এ Model ট্রেন করে দেখা গেছে গড় `AP` নেমে আসে `≈ 0.7945`-এ, যেখানে পূর্ণ ১১টি Feature নিয়ে তা ছিল `≈ 0.8386`। লক্ষ্য করুন, এটি কেবল নির্বাচিত Logistic কাঠামোর ওপর একটি গৌণ তুলনামূলক পরীক্ষা—এর জন্য পুরো বিজয়ী নির্বাচনের প্রক্রিয়া নতুন করে চালানো হয়নি। আর বাকি ১০টি Feature-এর জন্য যদি নতুন করে Hyperparameter টিউন করা হতো, তবে সেটিকে আলাদা তুলনামূলক বাজেটের আওতায় ধরতে হতো।"
+        },
+        {
+          "type": "text",
+          "title": "এই প্রমাণ থেকে ঠিক কতটুকু দাবি করা বৈধ?",
+          "body": "উপরের পরীক্ষা দুটি থেকে আমরা এতটুকু সংযত ও সুনির্দিষ্ট সিদ্ধান্ত টানতে পারি যে, আমাদের বর্তমান Feature কাঠামো এবং ট্রেনিং পদ্ধতিতে `alcohol` উপাদানটি `quality >= 6` অনুমানের জন্য কার্যকর পরিসংখ্যানগত সংকেত (Predictive Evidence) জোগাচ্ছে। কিন্তু এখান থেকে কখনোই এমন কার্যকারণ বা Causal সিদ্ধান্ত টানা যাবে না যে 'তৈরি ওয়াইনে বাইরে থেকে বাড়তি অ্যালকোহল মিশিয়ে দিলেই তার স্বাদের মান বেড়ে যাবে'! কারণ পর্যবেক্ষণমূলক উৎস ডেটায় আঙুরের পরিপক্বতা, গাঁজন প্রক্রিয়া বা উৎপাদনের পরিবেশের মতো অজানা Confounding উপাদান লুকিয়ে থাকতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "Diagnostic দেখে Feature বাদ দিলে মূল্যায়ন কীভাবে বদলাবে?",
+          "body": "ধরুন, Decision অংশের `Permutation Importance` দেখে আপনি ঠিক করলেন কম গুরুত্বপূর্ণ কয়েকটি কলাম ছেঁটে ফেলে নতুন একটি হালকা Model বানাবেন। খেয়াল করুন, যে মুহূর্তে আপনি কলাম বাদ দেওয়ার সিদ্ধান্তে Decision ডেটার ফলাফল ব্যবহার করলেন, সেই মুহূর্তেই আপনার `Feature Selection` প্রক্রিয়াটি Decision অংশকে খরচ করে ফেলল! ফলে নতুন Model-টির চূড়ান্ত নিরপেক্ষ মূল্যায়ন আর ওই একই Decision ডেটায় হতে পারে না। নিয়ম মেনে `Feature Selection` করতে হলে পুরো ছাঁটাই প্রক্রিয়াটিকে ভেতরের Training Fold-এ ফিরিয়ে নিয়ে বাইরে আলাদা মূল্যায়ন কাঠামো রাখতে হবে।"
+        },
+        {
+          "type": "callout",
+          "title": "Interview অনুশীলন: পরস্পর সম্পর্কযুক্ত `density` ও `alcohol`",
+          "body": "ইন্টারভিউতে প্রায়ই জিজ্ঞেস করা হয়: ওয়াইনের `density` এবং `alcohol`-এর মতো ঘনিষ্ঠভাবে সম্পর্কযুক্ত দুটি Feature-এর গুরুত্ব যদি খুব কম বা একপেশে দেখায়, তবে তার পেছনে কী কী বিকল্প ব্যাখ্যা থাকতে পারে? উত্তরে আপনি একসাথে ওলটপালট করা (Joint Permutation), দলগত `Ablation` কিংবা শর্তসাপেক্ষ (Conditional) পদ্ধতির তাত্ত্বিক ধারণা আলোচনা করতে পারেন—তবে স্পষ্টভাবে উল্লেখ রাখবেন যে আমাদের বর্তমান Capstone রিলিজে ওই বাড়তি বেঞ্চমার্কগুলো চালানো হয়নি।"
+        }
+      ]
+    },
+    {
+      "id": "ch14_uncertainty",
+      "title": "Grouped Bootstrap: আমরা ঠিক কোন Uncertainty মাপছি?",
+      "subtitle": "স্থির Prediction-এর মূল্যায়ন অনিশ্চয়তা বনাম পুরো Training প্রক্রিয়ার অনিশ্চয়তা",
+      "duration": "53 min",
+      "icon": "science",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Resampling-এর একক: Row নয়, পুরো Chemistry Group",
+          "body": "চূড়ান্ত পরীক্ষায় একটি নির্দিষ্ট স্কোর পাওয়ার পর অবধারিত প্রশ্ন আসে—স্যাম্পলিংয়ের তারতম্যের কারণে এই সংখ্যাটি কতটুকু নড়াচড়া করতে পারত? যেহেতু অভিন্ন Chemistry Profile-এর পুনরাবৃত্ত Row-গুলো পরস্পর স্বাধীন নয়, তাই একক Row ধরে Bootstrap করলে ডেটার দলগত কাঠামো ভেঙে যাবে। এজন্য আমরা Resampling করি পুরো `Group`-কে একক (Sampling Unit) ধরে—অর্থাৎ প্রতিবার প্রতিস্থাপনসহ (With Replacement) Group বেছে নিয়ে সেই নির্বাচিত Group-গুলোর ভেতরের সবকটি Row একত্রে জুড়ে দেওয়া হয়। তবে আমাদের লক্ষ্য বা `Estimand` কিন্তু আগের মতোই Row-weighted সামগ্রিক মাপকাঠি। প্রতিটি Group-এর আকার সমান না হওয়ায় সব Row একত্র করে অনুপাত বের করা আর প্রতিটি Group-এর গড়ের সাধারণ গড় নেওয়া এক কথা নয়—দ্বিতীয়টি সম্পূর্ণ ভিন্ন একটি `Estimand` মাপে!"
+        },
+        {
+          "type": "math",
+          "title": "Cluster Resampling-এ Row-weighted অনুপাতের সমীকরণ",
+          "body": "\\widehat R^{*}=\\frac{\\sum_{g\\in sample^*}\\operatorname{costSum}_g}{\\sum_{g\\in sample^*}n_g}"
+        },
+        {
+          "type": "code",
+          "title": "অসমান আকারের Group-এ Row-weighted হিসাবের উদাহরণ",
+          "body": "sizes, costs = [3, 1, 2], [4.0, 1.0, 2.0]\nsampled = [0, 0, 2]\nratio = sum(costs[g] for g in sampled) / sum(sizes[g] for g in sampled)\nprint(ratio)  # 10/8=1.25, not unweighted mean of group means\n"
+        },
+        {
+          "type": "text",
+          "title": "শর্তসাপেক্ষ গণ্ডি (Conditional Scope): এখানে কী স্থির থাকছে?",
+          "body": "আমাদের রিপোর্ট করা ব্যবধানটি ঠিক কী মাপছে তা একদম পরিষ্কার থাকা দরকার। এখানে হিমঘরে রাখা Final Test-এর Prediction এবং নির্বাচিত `Threshold = 0.30` সম্পূর্ণ স্থির (Fixed) রাখা হয়েছে। কেবল মূল্যায়ন অংশের Group-গুলোকে `seed = 42` দিয়ে `300` বার Resample করে `AP` এবং গড় খরচের Percentile Interval বের করা হয়েছে। লক্ষ্য করুন, এই `300` বারের ভেতরে নতুন করে ডেটা ভাগ করা, CV চালিয়ে Candidate খোঁজা, Model-এর Weight ফিট করা কিংবা নতুন `Threshold` বেছে নেওয়ার কাজটি কিন্তু ঘটছে না। কাজেই এই ব্যবধানগুলো একটি স্থির Model-এর মূল্যায়ন-নমুনার তারতম্য দেখায়—পুরো ML প্রক্রিয়ার আগাগোড়া সামগ্রিক `Uncertainty` নয়।"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের প্রজেক্টের প্রকৃত Bootstrap Interval ফলাফল",
+          "body": "স্থির Prediction-এর ওপর এই Group Bootstrap চালিয়ে আমরা Final Test-এ `AP`-এর `95%` Percentile Interval পেয়েছি `≈ [0.7593, 0.8892]` এবং গড় খরচের ব্যবধান পেয়েছি `≈ [0.3622, 0.6222]`। রিপোর্টে এই সংখ্যার পাশে অবশ্যই Percentile পদ্ধতি, `300` Resample-এর বাজেট এবং একই উৎস থেকে ডেটা আসার অনুমানটি লিখে রাখুন। এ ছাড়া কোনো বিরল Resample-এ যদি কেবল একটিমাত্র Class চলে আসে (যখন `AP` অসংজ্ঞায়িত হয়ে পড়ে), তবে কয়টি ধাপ বাদ দিতে হয়েছে তাও রিপোর্ট করতে হয়—আমাদের এই রানে পূর্ণ `300`টি Resample-ই বৈধ ও সংজ্ঞায়িত ছিল।"
+        },
+        {
+          "type": "text",
+          "title": "Group Bootstrap করলেই কি সব নির্ভরশীলতা মিটে যায়?",
+          "body": "Data Audit পাঠের কথা মনে করুন: আমাদের তৈরি করা Exact-profile Group-গুলো কিন্তু প্রকৃত উৎপাদনের যাচাইকৃত স্বাধীন ব্যাচ নয়, বরং রাসায়নিক মিলের একটি Proxy মাত্র। যদি ভিন্ন ভিন্ন রাসায়নিক মানের আড়ালেও একই উৎপাদন-ব্যাচ বা সামান্য এদিক-সেদিক হওয়া Near-duplicate ছড়িয়ে থাকে, তবে Group-গুলোর পারস্পরিক স্বাধীনতা ও বিনিময়যোগ্যতার (Exchangeability) অনুমানটি দুর্বল হয়ে পড়ে। তাই কেবল 'Group Bootstrap' শব্দটি ব্যবহার করলেই যে নিখুঁত বাস্তব স্যাম্পলিং অনিশ্চয়তা ধরা পড়বে—এমন দাবি করা চলে না।"
+        },
+        {
+          "type": "text",
+          "title": "পুরো বাছাই প্রক্রিয়ার (Selection Procedure) অনিশ্চয়তা মাপতে কী লাগত?",
+          "body": "কেউ যদি Model নির্বাচন ও Policy নির্ধারণসহ পুরো প্রক্রিয়ার অনিশ্চয়তা মাপতে চান, তবে বাইরের স্তরের Grouped Resampling লুপের ভেতরেই সম্পূর্ণ Training, Candidate Search এবং Threshold নির্বাচন বারবার চালিয়ে দেখতে হবে—যার জন্য যথেষ্ট কম্পিউট বাজেট ও নিখুঁত Role Isolation প্রয়োজন। আমরা সচেতনভাবেই আমাদের বর্তমান ব্যবধানের এই সীমিত ও শর্তসাপেক্ষ গণ্ডিটি স্বচ্ছভাবে রিপোর্ট করছি। আর মনে রাখবেন, একই পুরোনো উৎস ডেটার ওপর যত উন্নত Bootstrap-ই চালানো হোক না কেন, তা ভবিষ্যতের নতুন বাজার বা Domain Shift-এর অনিশ্চয়তা কখনোই ধরতে পারবে না।"
+        },
+        {
+          "type": "callout",
+          "title": "Model Card ও Interview-এ যেভাবে Interval ব্যাখ্যা করবেন",
+          "body": "আপনার Model Card-এ যেকোনো ব্যবধান লেখার সময় পাঁচটি তথ্য স্পষ্ট করুন: (১) প্রকৃত `Estimand`, (২) `Resampling Unit`, (৩) কোন Artifact-গুলো স্থির ছিল, (৪) বৈধ Resample-এর সংখ্যা এবং (৫) কোন ধরনের `Uncertainty` এই হিসাবের বাইরে রয়ে গেছে। 'ভবিষ্যতের বাস্তব Accuracy এই ব্যবধানের ভেতরে থাকার সম্ভাবনা ৯৫%'—এমন ঢালাও বাক্য বলার আগে এর পরিসংখ্যানগত অর্থ ভালোভাবে যাচাই করে নিন।"
+        },
+        {
+          "type": "text",
+          "title": "দুটি স্থির Model তুলনায় Paired Group Resample-এর গুরুত্ব",
+          "body": "ধরুন দুটি স্থির Model `A` এবং `B`-এর মধ্যে কোনটির খরচ কম তা আমরা Group Bootstrap দিয়ে তুলনা করতে চাই। একটি ছোট উদাহরণে ধরা যাক, তিনটি Group-এর আকার `[3, 1, 2]`, যেখানে Model `A`-এর গ্রুপভিত্তিক মোট খরচ `[4, 1, 2]` এবং Model `B`-এর মোট খরচ `[2, 2, 1]`। যদি কোনো ধাপে নির্বাচিত Group ID হয় `[0, 0, 2]`, তবে ন্যায্য তুলনার জন্য দুটি Model-কেই অবশ্যই হুবহু একই নির্বাচিত ID-গুলোর ওপর মাপতে হবে! এখানে `B - A` মোট খরচের পার্থক্য দাঁড়ায় `(2 - 4) + (2 - 4) + (1 - 2) = -5`, আর মোট Row সংখ্যা `3 + 3 + 2 = 8`; ফলে Row-weighted গড় পার্থক্য হয় `-5 / 8 = -0.625`। অন্যদিকে প্রতিটি Group-এর নিজস্ব গড় পার্থক্যের সাধারণ (Unweighted) গড় নিলে মান আসে প্রায় `-0.611111`—যা আসলে ভিন্ন একটি `Estimand`।"
+        },
+        {
+          "type": "code",
+          "title": "একই Resample ব্যবহার করে Paired তুলনার কোড",
+          "body": "import numpy as np\n\nsizes = np.array([3., 1., 2.])\ncosts_a = np.array([4., 1., 2.])\ncosts_b = np.array([2., 2., 1.])\nsampled = np.array([0, 0, 2])\ndifferences = costs_b[sampled] - costs_a[sampled]\nrow_weighted = differences.sum() / sizes[sampled].sum()\ngroup_weighted = np.mean(differences / sizes[sampled])\nprint(row_weighted, round(group_weighted, 6))\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে হিসাব করুন",
+          "body": "উপরের এই Paired Replicate হিসাবটি কি আমাদের পুরো Model-Selection প্রক্রিয়ার সামগ্রিক Uncertainty মাপছে?",
+          "solution": "না। যেহেতু এখানে দুটি Model-এর Prediction-ই আগে থেকে স্থির (Frozen) রাখা হয়েছে, তাই এটি কেবল মূল্যায়নের Group-গুলো পুনঃনমুনায়ন (Resample) করার শর্তসাপেক্ষ তুলনা দেখায়। Training ডেটার পরিবর্তন, Hyperparameter বাছাই কিংবা Threshold ফিটিংয়ের কারণে যে তারতম্য হতে পারত, তা এই হিসাবে আসে না। পুরো প্রক্রিয়ার অনিশ্চয়তা মাপতে হলে বাইরের Resampling লুপের ভেতরেই প্রয়োজনীয় Training ও Selection ধাপগুলো বারবার চালিয়ে দেখতে হয়।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch14_final",
+      "title": "Locked Final Test ও স্বচ্ছ Model Card",
+      "subtitle": "চূড়ান্ত ফলাফল প্রকাশের ক্রম এবং মূল্যায়ন বাজেট ফুরিয়ে যাওয়ার অর্থ",
+      "duration": "36 min",
+      "icon": "science",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "চূড়ান্ত পরীক্ষার আগে সিদ্ধান্ত স্থির করার কঠোর ক্রম (Lock Order)",
+          "body": "চূড়ান্ত পরীক্ষার দরজা খোলার আগে আমাদের প্রতিটি সিদ্ধান্ত স্থির করার ক্রমটি আরেকবার মিলিয়ে দেখুন: প্রথমে কেবল Fit অংশের সর্বোচ্চ গড় CV `AP` দেখে নির্বাচিত হলো `Logistic (C = 1)`; এরপর Decision অংশে `FP = 1` ও `FN = 4` খরচের Grid থেকে স্থির হলো `Threshold = 0.30`; আর আমাদের নির্বাচিত Model-টি কেবল Fit অংশেই ট্রেনিংপ্রাপ্ত অবস্থায় অপরিবর্তিত রইল। মাঝপথে পুরো Development ডেটা মিলিয়ে কোনো নীরব Refit করা হয়নি, বা Test ডেটা উঁকি মেরে কোনো `Threshold` পছন্দ করা হয়নি। সবকিছু স্থির হওয়ার পরেই কেবল চূড়ান্ত `320`টি Row-এর ওপর Prediction চালানো হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "হিমঘর খুলে পাওয়া প্রকৃত Final Test ফলাফল",
+          "body": "লক করা Final Test-এ আমাদের অর্জিত প্রমাণগুলো হলো: `AP ≈ 0.8195`, `ROC-AUC ≈ 0.7786` এবং `Brier Score ≈ 0.1917`। আর `Threshold = 0.30` নীতিতে `320`টি নমুনার ফলাফল দাঁড়িয়েছে `TP = 170`, `FP = 72`, `FN = 21` ও `TN = 57`; যেখান থেকে উদাহরণমূলক গড় খরচ আসে `(72 + 4 * 21) / 320 = 0.4875`, এবং সাথে পাওয়া যায় `Recall ≈ 0.8901` ও `Precision ≈ 0.7025`। মনে রাখবেন, এটি একটি একক ঐতিহাসিক উৎস থেকে Group আলাদা করে পাওয়া ফলাফল—বর্তমান বাজারের বাণিজ্যিক ওয়াইন গ্রেডিংয়ের কোনো গ্যারান্টি নয়।"
+        },
+        {
+          "type": "math",
+          "title": "Locked Final Test-এর গড় খরচের হিসাব",
+          "body": "\\frac{72+4\\cdot21}{320}=0.4875"
+        },
+        {
+          "type": "code",
+          "title": "প্রকাশিত চূড়ান্ত সংখ্যার পাটিগণিত যাচাই",
+          "body": "tp, fp, fn, tn = 170, 72, 21, 57\nassert tp + fp + fn + tn == 320\nprint((fp + 4 * fn) / 320, tp / (tp + fn), tp / (tp + fp))\n"
+        },
+        {
+          "type": "text",
+          "title": "Validation বনাম Final Test: খরচের পার্থক্য কেন বাগ (Bug) নয়?",
+          "body": "খেয়াল করুন, Decision Validation অংশে আমাদের গড় খরচ ছিল `≈ 0.4058`, আর Final Test-এ তা বেড়ে হয়েছে `0.4875`। কেবল স্কোরের এই ওঠানামা দেখেই সেটিকে কোডের ত্রুটি বা Bug বলে ধরে নেওয়া ঠিক নয়। দুটি Split-এর নমুনার গঠনগত পার্থক্য, Decision ডেটা থেকে সর্বনিম্ন খরচের বিন্দু বেছে নেওয়ার স্বাভাবিক Selection প্রভাব, স্বাদ-বিচারের `Label` অনিশ্চয়তা এবং সসীম ডেটার সাধারণ `Generalization Variance`—এ সবকিছুই এই ব্যবধানের পেছনে ভূমিকা রাখতে পারে। উল্টো দিকে, কেউ যদি Test-এর এই `0.4875` দেখে আবার নতুন করে Test-এর ওপর `Threshold` ঘুরিয়ে সুন্দর একটি সংখ্যা ছাপাতেন, তবে 'Locked Evaluation'-এর পুরো দাবিটাই তাসের ঘরের মতো ভেঙে পড়ত!"
+        },
+        {
+          "type": "text",
+          "title": "একটি প্রকৃত Model Card-এ কী কী থাকা অপরিহার্য?",
+          "body": "প্রজেক্টের সমস্ত প্রমাণ আমরা গুছিয়ে নথিবদ্ধ করি একটি স্বচ্ছ `Model Card`-এ: প্রজেক্টের উদ্দিষ্ট শিক্ষামূলক ব্যবহার, কোন কোন বাস্তব Deployment কাজে এটি ব্যবহার করা নিষিদ্ধ, মূল ডেটার উৎস ও লাইসেন্স, সুনির্দিষ্ট `Feature Schema`, `Target`-এর সংজ্ঞা, তিন স্তরের `Split Roles`, `Candidate Budget`, নির্বাচিত Model, `Threshold` ও খরচের অনুমান, অর্জিত `Metrics` এবং সীমাবদ্ধতাসমূহ। মনে রাখবেন, `Model Card` কোনো বিজ্ঞাপনী প্রচারপত্র নয়; বরং আপনার প্রমাণের সীমানা ঠিক কোথায় গিয়ে শেষ হয়েছে, তারই প্রামাণ্য দলিল।"
+        },
+        {
+          "type": "text",
+          "title": "ফলাফল প্রকাশের পর: এই Final Test এখন 'দেখা হয়ে গেছে' (Observed)",
+          "body": "এই অধ্যায়ে চূড়ান্ত সংখ্যাগুলো প্রকাশিত হওয়ার সাথে সাথে একটি মৌলিক পরিবর্তন ঘটে গেছে—আমাদের এই `320`টি Row-এর Final Test এখন 'দেখা হয়ে যাওয়া' (Observed) ডেটা! আপনি যখন নিজের মেশিনে Audit স্ক্রিপ্ট চালিয়ে হুবহু এই সংখ্যাগুলো পুনরুৎপাদন করবেন, তখন সেটি গণনার ধারাবাহিকতা (Deterministic Consistency) প্রমাণ করবে, কিন্তু নতুন কোনো অদেখা প্রমাণ তৈরি করবে না। তাই ভবিষ্যতে আপনি নতুন কোনো সংস্কার করলে তার নিরপেক্ষ মূল্যায়নের জন্য চাই নতুন উপযুক্ত ডেটা অথবা আগে থেকে পরিকল্পিত নতুন কোনো বাইরের মূল্যায়ন পদ্ধতি। বেঞ্চমার্ক মুখস্থ করা আর প্রকৃত প্রকৌশলগত দক্ষতা কখনোই এক জিনিস নয়।"
+        },
+        {
+          "type": "callout",
+          "title": "৫ মিনিটে আপনার Capstone উপস্থাপনার কাঠামো",
+          "body": "নিজের কাজ উপস্থাপনার জন্য একটি চমৎকার ছক অনুশীলন করুন: প্রথম `1` মিনিটে মূল সমস্যা ও চূড়ান্ত ফলাফল বলুন, পরের `2` মিনিটে ব্যাখ্যা করুন `Split Roles` ও বাছাইয়ের নকশা, পরের `2` মিনিটে তুলে ধরুন `Error Analysis` ও সীমাবদ্ধতা, এবং সবশেষে সরাসরি কোড চালিয়ে একটি Reference `Prediction` মিলিয়ে দেখান। দুর্বলতা লুকিয়ে চকচকে স্কোর দেখানোর চেয়ে প্রমাণের স্পষ্ট সীমানা তুলে ধরাই একজন পরিপক্ব ML Engineer-এর পরিচয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch14_workflow",
+      "title": "Runnable Capstone: উৎস যাচাই, Split ও Audit Helper",
+      "subtitle": "নিজের লোকাল পরিবেশে পুরো Capstone পরীক্ষাটি হুবহু পুনরুৎপাদন করার প্রস্তুতি",
+      "duration": "42 min",
+      "icon": "science",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "স্থানীয় Python পরিবেশ প্রস্তুত করা",
+          "body": "চূড়ান্ত ফলাফল ও তাত্ত্বিক নকশা দেখার পর এবার পুরো পরীক্ষাটি নিজের কম্পিউটারে চালিয়ে যাচাই করার পালা। এজন্য প্রজেক্টের মূল ফোল্ডার (Repository Root) থেকে আপনার স্থানীয় Python পরিবেশে `python -m pip install -r tool/requirements-python-qa.txt` কমান্ডটি চালান। মনে রাখবেন, অ্যাপের ভেতরের ছোট Python Scratchpad কেবল গাণিতিক অনুশীলনীর সংখ্যাগুলো পরীক্ষা করে, আর মূল Dataset-এর পূর্ণাঙ্গ ট্রেনিং চলে আপনার স্থানীয় পরিবেশে। এখানে সাথে থাকা মূল ফাইলগুলোই অফলাইনে ব্যবহৃত হয়—রানটাইমে কোনো বাহ্যিক API বা লগইন অনুমোদনের প্রয়োজন নেই।"
+        },
+        {
+          "type": "text",
+          "title": "Workflow চালানোর কমান্ড ও আউটপুট নিয়ন্ত্রণ",
+          "body": "সম্পূর্ণ পরীক্ষাটি চালাতে কমান্ড দিন: `python assets/datasets/wine_quality/capstone_workflow.py --output build/chapter-14-workflow-report.json --artifact-dir build/chapter-14-artifacts`। সাধারণভাবে চালালে এটি মূল উৎস ফাইলগুলোতে কোনো হাত দেয় না, কেবল `build/` ফোল্ডারে রিপোর্ট তৈরি করে। শুধুমাত্র রক্ষণাবেক্ষণের সময় সুস্পষ্টভাবে `--write-labs` ফ্ল্যাগ দিলেই রিপোজিটরিতে সংরক্ষিত ল্যাব JSON ফাইলগুলো নতুন করে তৈরি হয়।"
+        },
+        {
+          "type": "code",
+          "title": "পর্ব ১ / ৪: উৎস যাচাইয়ের চুক্তি এবং তিন স্তরের Split",
+          "body": "from pathlib import Path\nimport argparse\nimport hashlib\nimport json\nimport platform\nimport joblib\nimport numpy as np\nimport pandas as pd\nimport sklearn\nfrom scipy.special import expit\nfrom sklearn.base import clone\nfrom sklearn.pipeline import make_pipeline\nfrom sklearn.preprocessing import StandardScaler\nfrom sklearn.linear_model import LogisticRegression\nfrom sklearn.tree import DecisionTreeClassifier\nfrom sklearn.ensemble import RandomForestClassifier, HistGradientBoostingClassifier\nfrom sklearn.dummy import DummyClassifier\nfrom sklearn.model_selection import GroupShuffleSplit, StratifiedGroupKFold\nfrom sklearn.metrics import (\n    average_precision_score,\n    roc_auc_score,\n    brier_score_loss,\n    confusion_matrix,\n)\nfrom sklearn.inspection import permutation_importance\nfrom threadpoolctl import threadpool_limits\n\nDATA = Path(\"assets/datasets/wine_quality\").resolve()\nSOURCE_HASH = \"4a402cf041b025d4566d954c3b9ba8635a3a8a01e039005d97d6a710278cf05e\"\nFEATURES = [\n    \"fixed acidity\",\n    \"volatile acidity\",\n    \"citric acid\",\n    \"residual sugar\",\n    \"chlorides\",\n    \"free sulfur dioxide\",\n    \"total sulfur dioxide\",\n    \"density\",\n    \"pH\",\n    \"sulphates\",\n    \"alcohol\",\n]\n\n\ndef load_source(path):\n    if hashlib.sha256(path.read_bytes()).hexdigest() != SOURCE_HASH:\n        raise ValueError(\"Expected original red wine source\")\n    frame = pd.read_csv(path, sep=\";\")\n    if frame.columns.tolist() != FEATURES + [\"quality\"] or len(frame) != 1599:\n        raise ValueError(\"Original 11-feature schema and 1599 rows required\")\n    X = frame[FEATURES].to_numpy(dtype=float, copy=True)\n    quality = frame.quality.to_numpy(dtype=int, copy=True)\n    if not np.isfinite(X).all() or not np.isin(quality, np.arange(0, 11)).all():\n        raise ValueError(\"Finite chemistry and valid source quality\")\n    y = (quality >= 6).astype(int)\n    # Target deliberately excluded: equal chemistry cannot straddle split roles.\n    groups = pd.util.hash_pandas_object(frame[FEATURES], index=False).to_numpy()\n    return frame, X, y, groups\n\n\ndef split_roles(X, y, groups):\n    development, test = next(\n        GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=42).split(\n            X, y, groups\n        )\n    )\n    fit_local, decision_local = next(\n        GroupShuffleSplit(n_splits=1, test_size=0.25, random_state=43).split(\n            X[development], y[development], groups[development]\n        )\n    )\n    fit, decision = development[fit_local], development[decision_local]\n    for left, right in [(fit, decision), (fit, test), (decision, test)]:\n        if not set(groups[left]).isdisjoint(groups[right]):\n            raise ValueError(\"Group overlap\")\n    for rows in [fit, decision, test]:\n        if len(np.unique(y[rows])) != 2:\n            raise ValueError(\"Both labels required in every split role\")\n    return fit, decision, test\n"
+        },
+        {
+          "type": "text",
+          "title": "উৎস ফাইল লোড ও Split তৈরির ধাপগুলোর ব্যাখ্যা",
+          "body": "উপরের কোডটি কীভাবে প্রতিটি চুক্তি পাহারা দিচ্ছে তা লক্ষ্য করুন: `FEATURES` তালিকাটি কাঁচা `11`টি কলামের নাম ও নিখুঁত ক্রম যাচাই করে। এরপর `quality >= 6` থেকে তৈরি হয় Binary `Target`, আর `Target` বাদ দিয়ে কেবল রাসায়নিক মানগুলো থেকে তৈরি হয় `Grouping Key`। দুটি ধাপে আলাদা Seed (`42` ও `43`) ব্যবহার করে `GroupShuffleSplit` তিনটি Role-এর Group আলাদা করে এবং নিশ্চিত করে যে প্রতিটি Role-এই দুটি Class (`0` ও `1`) উপস্থিত আছে। ফাইলের SHA-256 `Hash` না মিললে কোডটি শুরুতেই থেমে যায়, যাতে পরিবর্তিত কোনো ফাইলের ওপর পুরোনো বেঞ্চমার্কের দাবি নীরবে না চলে।"
+        },
+        {
+          "type": "code",
+          "title": "পর্ব ২ / ৪: Metric, Policy নির্বাচন ও ৭টি Candidate সংজ্ঞা",
+          "body": "def binary_inputs(y, p):\n    y = np.asarray(y)\n    p = np.asarray(p, dtype=float)\n    if (\n        y.ndim != 1\n        or p.shape != y.shape\n        or not len(y)\n        or not np.isin(y, [0, 1]).all()\n        or not np.isfinite(p).all()\n        or ((p < 0) | (p > 1)).any()\n    ):\n        raise ValueError(\"Aligned binary labels and finite probabilities in [0,1]\")\n    return y.astype(int), p\n\n\ndef policy_metrics(y, p, threshold, *, cost_fp=1.0, cost_fn=4.0):\n    y, p = binary_inputs(y, p)\n    if (\n        not np.isfinite(threshold)\n        or not 0 <= threshold <= 1\n        or not np.isfinite([cost_fp, cost_fn]).all()\n        or min(cost_fp, cost_fn) < 0\n    ):\n        raise ValueError(\"Valid probability threshold and nonnegative costs\")\n    tn, fp, fn, tp = confusion_matrix(y, p >= threshold, labels=[0, 1]).ravel()\n    return {\n        \"tn\": int(tn),\n        \"fp\": int(fp),\n        \"fn\": int(fn),\n        \"tp\": int(tp),\n        \"precision\": None if tp + fp == 0 else float(tp / (tp + fp)),\n        \"recall\": None if tp + fn == 0 else float(tp / (tp + fn)),\n        \"specificity\": None if tn + fp == 0 else float(tn / (tn + fp)),\n        \"accuracy\": float((tp + tn) / len(y)),\n        \"mean_cost\": float((cost_fp * fp + cost_fn * fn) / len(y)),\n    }\n\n\ndef probability_metrics(y, p):\n    y, p = binary_inputs(y, p)\n    return {\n        \"ap\": None if y.sum() == 0 else float(average_precision_score(y, p)),\n        \"roc_auc\": None if len(np.unique(y)) < 2 else float(roc_auc_score(y, p)),\n        \"brier\": float(brier_score_loss(y, p)),\n        \"prevalence\": float(y.mean()),\n    }\n\n\ndef choose_policy(y, p, *, cost_fp=1.0, cost_fn=4.0):\n    grid = [float(t) for t in np.arange(1, 20) / 20]\n    records = [\n        {\"threshold\": t, **policy_metrics(y, p, t, cost_fp=cost_fp, cost_fn=cost_fn)}\n        for t in grid\n    ]\n    # Fixed tie rule: lowest mean cost, then highest threshold (fewer positives).\n    selected = min(records, key=lambda row: (row[\"mean_cost\"], -row[\"threshold\"]))\n    return selected, records\n\n\ndef group_bootstrap(y, p, groups, threshold, *, repeats=300, seed=42):\n    y, p = binary_inputs(y, p)\n    groups = np.asarray(groups)\n    if (\n        groups.shape != y.shape\n        or not isinstance(repeats, int)\n        or isinstance(repeats, bool)\n        or repeats < 1\n    ):\n        raise ValueError(\"Aligned groups and positive bootstrap budget\")\n    unique = np.unique(groups)\n    members = [np.flatnonzero(groups == g) for g in unique]\n    rng = np.random.default_rng(seed)\n    ap = []\n    cost = []\n    for _ in range(repeats):\n        chosen = rng.integers(0, len(unique), size=len(unique))\n        rows = np.concatenate([members[i] for i in chosen])\n        if len(np.unique(y[rows])) == 2:\n            ap.append(float(average_precision_score(y[rows], p[rows])))\n        cost.append(policy_metrics(y[rows], p[rows], threshold)[\"mean_cost\"])\n\n    def interval(values):\n        return None if not values else np.quantile(values, [0.025, 0.975]).tolist()\n\n    return {\n        \"resamples\": repeats,\n        \"ap_defined_resamples\": len(ap),\n        \"ap_percentile95\": interval(ap),\n        \"mean_cost_percentile95\": interval(cost),\n        \"scope\": \"Fixed fitted predictions and locked policy; profile-group exchangeability assumed; not training/search uncertainty\",\n    }\n\n\ndef candidate_models():\n    return [\n        (\"prior\", \"Prior baseline\", DummyClassifier(strategy=\"prior\")),\n        (\n            \"logistic_01\",\n            \"Logistic C=0.1\",\n            make_pipeline(\n                StandardScaler(),\n                LogisticRegression(C=0.1, max_iter=2000, random_state=42),\n            ),\n        ),\n        (\n            \"logistic_1\",\n            \"Logistic C=1\",\n            make_pipeline(\n                StandardScaler(),\n                LogisticRegression(C=1, max_iter=2000, random_state=42),\n            ),\n        ),\n        (\n            \"tree_4\",\n            \"Decision Tree depth=4\",\n            DecisionTreeClassifier(max_depth=4, min_samples_leaf=10, random_state=42),\n        ),\n        (\n            \"forest_6\",\n            \"Random Forest depth=6\",\n            RandomForestClassifier(\n                n_estimators=100,\n                max_depth=6,\n                min_samples_leaf=3,\n                n_jobs=1,\n                random_state=42,\n            ),\n        ),\n        (\n            \"forest_full\",\n            \"Random Forest unrestricted depth\",\n            RandomForestClassifier(\n                n_estimators=100, min_samples_leaf=3, n_jobs=1, random_state=42\n            ),\n        ),\n        (\n            \"hist_100\",\n            \"Histogram Boosting 100 rounds\",\n            HistGradientBoostingClassifier(\n                max_iter=100,\n                max_leaf_nodes=15,\n                min_samples_leaf=20,\n                l2_regularization=1.0,\n                early_stopping=False,\n                random_state=42,\n            ),\n        ),\n    ]\n"
+        },
+        {
+          "type": "text",
+          "title": "Helper ফাংশনগুলোর প্রতিরক্ষামূলক চুক্তি (Defensive Contracts)",
+          "body": "দ্বিতীয় পর্বের Helper ফাংশনগুলো প্রতিটি গণনার সীমানা সুরক্ষিত রাখে: সমান দৈর্ঘ্যের Binary `Label`, `[0, 1]` সীমার ভেতর সসীম `Probability`, বৈধ `Threshold` ও অঋণাত্মক খরচ, `confusion_matrix`-এ সুস্পষ্ট `labels=[0, 1]` এবং হর শূন্য হলে বিভ্রান্তিকর সংখ্যার বদলে `None` (`null`) রিটার্ন করার নীতি। খরচের সমতা ভাঙতে `choose_policy` সবসময় বড় `Threshold`-টি বেছে নেয়, আর `group_bootstrap` স্থির Prediction নিয়ে নির্বাচিত Group-গুলোর সব Row একত্র করে পুনরায় মাপকাঠি হিসাব করে।"
+        },
+        {
+          "type": "text",
+          "title": "প্রকৌশলগত পরিচ্ছন্নতা ও সীমাবদ্ধতার বোধ",
+          "body": "উৎস ফাইলের Hash এবং স্বয়ংক্রিয় পরীক্ষাগুলো আমাদের গণনার `Reproducibility` বহুগুণ বাড়িয়ে দেয়, তবে মূল ডেটা সংগ্রহের পেছনে থাকা ঐতিহাসিক ঝোঁক (Sampling Bias) কোড দিয়ে মুছে ফেলা যায় না। নির্দিষ্ট Seed, লাইব্রেরির সংস্করণ এবং সংরক্ষিত Artifact আপনাকে প্রতিটি রান নিখুঁতভাবে Audit করতে সাহায্য করে—কিন্তু সেই সংখ্যাসূচক ফলাফল থেকে কখনোই সার্বজনীন কার্যকারণ (Causality) বা চরম মানের দাবি টানবেন না।"
+        },
+        {
+          "type": "callout",
+          "title": "পরের পাঠের প্রস্তুতি: পূর্ণাঙ্গ স্ক্রিপ্ট ও Artifact তৈরি",
+          "body": "চাইলে উপরের কোড ব্লকগুলো একই Python সেশনে পরপর চালিয়ে পরীক্ষা করতে পারেন। পরের পাঠে আমরা মূল বিশ্লেষণ ও Artifact সংরক্ষণের ফাংশনসহ সম্পূর্ণ একত্রিত কোড দেখব—যা এমনভাবে সাজানো যেন ফাইলটি অন্য কোথাও `import` করলে আপনাআপনি ট্রেনিং শুরু হয়ে না যায়।"
+        }
+      ]
+    },
+    {
+      "id": "ch14_artifacts",
+      "title": "End-to-End কোড ও পুনর্ব্যবহারযোগ্য Artifact",
+      "subtitle": "নির্বাচিত Model, Feature Schema এবং Reference Prediction একসাথে সংরক্ষণ",
+      "duration": "46 min",
+      "icon": "science",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "উৎস ফাইল থেকে চূড়ান্ত রিপোর্ট: সম্পূর্ণ লোকাল Workflow",
+          "body": "নিচের কোড ব্লকে উৎস ফাইল পড়া থেকে শুরু করে চূড়ান্ত রিপোর্ট তৈরি পর্যন্ত পুরো প্রবাহটি এক সুতোয় গাঁথা আছে। ৭টি Candidate তুলনা, Validation `Policy` নির্বাচন, `Permutation` ও গৌণ `Ablation` পরীক্ষা, শীর্ষ ভুলের তালিকা, হিমঘরে রাখা Final Test এবং শর্তসাপেক্ষ `Bootstrap`—সবকিছুই এই একটিমাত্র পুনরুৎপাদনযোগ্য পথে সম্পন্ন হয়। মূল CLI স্ক্রিপ্টে ফাইল লেখার কাজটি ঐচ্ছিক এবং সুস্পষ্ট আর্গুমেন্ট দিয়ে নিয়ন্ত্রিত।"
+        },
+        {
+          "type": "code",
+          "title": "সম্পূর্ণ লোকাল Capstone Workflow কোড",
+          "body": "from pathlib import Path\nimport argparse\nimport hashlib\nimport json\nimport platform\nimport joblib\nimport numpy as np\nimport pandas as pd\nimport sklearn\nfrom scipy.special import expit\nfrom sklearn.base import clone\nfrom sklearn.pipeline import make_pipeline\nfrom sklearn.preprocessing import StandardScaler\nfrom sklearn.linear_model import LogisticRegression\nfrom sklearn.tree import DecisionTreeClassifier\nfrom sklearn.ensemble import RandomForestClassifier, HistGradientBoostingClassifier\nfrom sklearn.dummy import DummyClassifier\nfrom sklearn.model_selection import GroupShuffleSplit, StratifiedGroupKFold\nfrom sklearn.metrics import (\n    average_precision_score,\n    roc_auc_score,\n    brier_score_loss,\n    confusion_matrix,\n)\nfrom sklearn.inspection import permutation_importance\nfrom threadpoolctl import threadpool_limits\n\nDATA = Path(\"assets/datasets/wine_quality\").resolve()\nSOURCE_HASH = \"4a402cf041b025d4566d954c3b9ba8635a3a8a01e039005d97d6a710278cf05e\"\nFEATURES = [\n    \"fixed acidity\",\n    \"volatile acidity\",\n    \"citric acid\",\n    \"residual sugar\",\n    \"chlorides\",\n    \"free sulfur dioxide\",\n    \"total sulfur dioxide\",\n    \"density\",\n    \"pH\",\n    \"sulphates\",\n    \"alcohol\",\n]\n\n\ndef load_source(path):\n    if hashlib.sha256(path.read_bytes()).hexdigest() != SOURCE_HASH:\n        raise ValueError(\"Expected original red wine source\")\n    frame = pd.read_csv(path, sep=\";\")\n    if frame.columns.tolist() != FEATURES + [\"quality\"] or len(frame) != 1599:\n        raise ValueError(\"Original 11-feature schema and 1599 rows required\")\n    X = frame[FEATURES].to_numpy(dtype=float, copy=True)\n    quality = frame.quality.to_numpy(dtype=int, copy=True)\n    if not np.isfinite(X).all() or not np.isin(quality, np.arange(0, 11)).all():\n        raise ValueError(\"Finite chemistry and valid source quality\")\n    y = (quality >= 6).astype(int)\n    # Target deliberately excluded: equal chemistry cannot straddle split roles.\n    groups = pd.util.hash_pandas_object(frame[FEATURES], index=False).to_numpy()\n    return frame, X, y, groups\n\n\ndef split_roles(X, y, groups):\n    development, test = next(\n        GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=42).split(\n            X, y, groups\n        )\n    )\n    fit_local, decision_local = next(\n        GroupShuffleSplit(n_splits=1, test_size=0.25, random_state=43).split(\n            X[development], y[development], groups[development]\n        )\n    )\n    fit, decision = development[fit_local], development[decision_local]\n    for left, right in [(fit, decision), (fit, test), (decision, test)]:\n        if not set(groups[left]).isdisjoint(groups[right]):\n            raise ValueError(\"Group overlap\")\n    for rows in [fit, decision, test]:\n        if len(np.unique(y[rows])) != 2:\n            raise ValueError(\"Both labels required in every split role\")\n    return fit, decision, test\n\n\ndef binary_inputs(y, p):\n    y = np.asarray(y)\n    p = np.asarray(p, dtype=float)\n    if (\n        y.ndim != 1\n        or p.shape != y.shape\n        or not len(y)\n        or not np.isin(y, [0, 1]).all()\n        or not np.isfinite(p).all()\n        or ((p < 0) | (p > 1)).any()\n    ):\n        raise ValueError(\"Aligned binary labels and finite probabilities in [0,1]\")\n    return y.astype(int), p\n\n\ndef policy_metrics(y, p, threshold, *, cost_fp=1.0, cost_fn=4.0):\n    y, p = binary_inputs(y, p)\n    if (\n        not np.isfinite(threshold)\n        or not 0 <= threshold <= 1\n        or not np.isfinite([cost_fp, cost_fn]).all()\n        or min(cost_fp, cost_fn) < 0\n    ):\n        raise ValueError(\"Valid probability threshold and nonnegative costs\")\n    tn, fp, fn, tp = confusion_matrix(y, p >= threshold, labels=[0, 1]).ravel()\n    return {\n        \"tn\": int(tn),\n        \"fp\": int(fp),\n        \"fn\": int(fn),\n        \"tp\": int(tp),\n        \"precision\": None if tp + fp == 0 else float(tp / (tp + fp)),\n        \"recall\": None if tp + fn == 0 else float(tp / (tp + fn)),\n        \"specificity\": None if tn + fp == 0 else float(tn / (tn + fp)),\n        \"accuracy\": float((tp + tn) / len(y)),\n        \"mean_cost\": float((cost_fp * fp + cost_fn * fn) / len(y)),\n    }\n\n\ndef probability_metrics(y, p):\n    y, p = binary_inputs(y, p)\n    return {\n        \"ap\": None if y.sum() == 0 else float(average_precision_score(y, p)),\n        \"roc_auc\": None if len(np.unique(y)) < 2 else float(roc_auc_score(y, p)),\n        \"brier\": float(brier_score_loss(y, p)),\n        \"prevalence\": float(y.mean()),\n    }\n\n\ndef choose_policy(y, p, *, cost_fp=1.0, cost_fn=4.0):\n    grid = [float(t) for t in np.arange(1, 20) / 20]\n    records = [\n        {\"threshold\": t, **policy_metrics(y, p, t, cost_fp=cost_fp, cost_fn=cost_fn)}\n        for t in grid\n    ]\n    # Fixed tie rule: lowest mean cost, then highest threshold (fewer positives).\n    selected = min(records, key=lambda row: (row[\"mean_cost\"], -row[\"threshold\"]))\n    return selected, records\n\n\ndef group_bootstrap(y, p, groups, threshold, *, repeats=300, seed=42):\n    y, p = binary_inputs(y, p)\n    groups = np.asarray(groups)\n    if (\n        groups.shape != y.shape\n        or not isinstance(repeats, int)\n        or isinstance(repeats, bool)\n        or repeats < 1\n    ):\n        raise ValueError(\"Aligned groups and positive bootstrap budget\")\n    unique = np.unique(groups)\n    members = [np.flatnonzero(groups == g) for g in unique]\n    rng = np.random.default_rng(seed)\n    ap = []\n    cost = []\n    for _ in range(repeats):\n        chosen = rng.integers(0, len(unique), size=len(unique))\n        rows = np.concatenate([members[i] for i in chosen])\n        if len(np.unique(y[rows])) == 2:\n            ap.append(float(average_precision_score(y[rows], p[rows])))\n        cost.append(policy_metrics(y[rows], p[rows], threshold)[\"mean_cost\"])\n\n    def interval(values):\n        return None if not values else np.quantile(values, [0.025, 0.975]).tolist()\n\n    return {\n        \"resamples\": repeats,\n        \"ap_defined_resamples\": len(ap),\n        \"ap_percentile95\": interval(ap),\n        \"mean_cost_percentile95\": interval(cost),\n        \"scope\": \"Fixed fitted predictions and locked policy; profile-group exchangeability assumed; not training/search uncertainty\",\n    }\n\n\ndef candidate_models():\n    return [\n        (\"prior\", \"Prior baseline\", DummyClassifier(strategy=\"prior\")),\n        (\n            \"logistic_01\",\n            \"Logistic C=0.1\",\n            make_pipeline(\n                StandardScaler(),\n                LogisticRegression(C=0.1, max_iter=2000, random_state=42),\n            ),\n        ),\n        (\n            \"logistic_1\",\n            \"Logistic C=1\",\n            make_pipeline(\n                StandardScaler(),\n                LogisticRegression(C=1, max_iter=2000, random_state=42),\n            ),\n        ),\n        (\n            \"tree_4\",\n            \"Decision Tree depth=4\",\n            DecisionTreeClassifier(max_depth=4, min_samples_leaf=10, random_state=42),\n        ),\n        (\n            \"forest_6\",\n            \"Random Forest depth=6\",\n            RandomForestClassifier(\n                n_estimators=100,\n                max_depth=6,\n                min_samples_leaf=3,\n                n_jobs=1,\n                random_state=42,\n            ),\n        ),\n        (\n            \"forest_full\",\n            \"Random Forest unrestricted depth\",\n            RandomForestClassifier(\n                n_estimators=100, min_samples_leaf=3, n_jobs=1, random_state=42\n            ),\n        ),\n        (\n            \"hist_100\",\n            \"Histogram Boosting 100 rounds\",\n            HistGradientBoostingClassifier(\n                max_iter=100,\n                max_leaf_nodes=15,\n                min_samples_leaf=20,\n                l2_regularization=1.0,\n                early_stopping=False,\n                random_state=42,\n            ),\n        ),\n    ]\n\n\ndef analyse_source(path):\n    frame, X, y, groups = load_source(path)\n    fit, decision, test = split_roles(X, y, groups)\n    folds = list(\n        StratifiedGroupKFold(n_splits=3, shuffle=True, random_state=44).split(\n            X[fit], y[fit], groups[fit]\n        )\n    )\n    candidates = []\n    models = {}\n    for order, (key, label, template) in enumerate(candidate_models()):\n        scores = []\n        for train_local, valid_local in folds:\n            fitted = clone(template).fit(X[fit][train_local], y[fit][train_local])\n            scores.append(\n                float(\n                    average_precision_score(\n                        y[fit][valid_local],\n                        fitted.predict_proba(X[fit][valid_local])[:, 1],\n                    )\n                )\n            )\n        models[key] = clone(template).fit(X[fit], y[fit])\n        candidates.append(\n            {\n                \"id\": key,\n                \"label\": label,\n                \"declared_order\": order,\n                \"fold_ap\": scores,\n                \"mean_ap\": float(np.mean(scores)),\n                \"fold_sd\": float(np.std(scores, ddof=1)),\n            }\n        )\n    # Winner uses FIT CV only. The declared order breaks exact score ties.\n    winner = min(candidates, key=lambda r: (-r[\"mean_ap\"], r[\"declared_order\"]))\n    model = models[winner[\"id\"]]\n    decision_p = model.predict_proba(X[decision])[:, 1]\n    policy, curve = choose_policy(y[decision], decision_p)\n    decision_summary = {\n        **probability_metrics(y[decision], decision_p),\n        **policy_metrics(y[decision], decision_p, policy[\"threshold\"]),\n    }\n    importance = permutation_importance(\n        model,\n        X[decision],\n        y[decision],\n        scoring=\"average_precision\",\n        n_repeats=5,\n        random_state=45,\n        n_jobs=1,\n    )\n    permutation = [\n        {\"feature\": name, \"mean_ap_drop\": float(v), \"repeat_sd\": float(s)}\n        for name, v, s in zip(\n            FEATURES, importance.importances_mean, importance.importances_std\n        )\n    ]\n    # A fixed secondary logistic ablation; it does not reselect the official winner.\n    no_alcohol = np.arange(10)\n    ablation = []\n    for train_local, valid_local in folds:\n        secondary = clone(candidate_models()[2][2]).fit(\n            X[fit][train_local][:, no_alcohol], y[fit][train_local]\n        )\n        ablation.append(\n            float(\n                average_precision_score(\n                    y[fit][valid_local],\n                    secondary.predict_proba(X[fit][valid_local][:, no_alcohol])[:, 1],\n                )\n            )\n        )\n    logistic = models[\"logistic_1\"]\n    scaler = logistic[0]\n    lr = logistic[1]\n    queries = []\n    for i in decision[:24]:\n        z = scaler.transform(X[i : i + 1])[0]\n        contributions = z * lr.coef_[0]\n        logit = float(lr.intercept_[0] + contributions.sum())\n        p = float(expit(logit))\n        np.testing.assert_allclose(\n            p, logistic.predict_proba(X[i : i + 1])[0, 1], atol=1e-12\n        )\n        queries.append(\n            {\n                \"source_row_1based\": int(i + 1),\n                \"quality\": int(frame.quality.iloc[i]),\n                \"positive\": int(y[i]),\n                \"values\": X[i].tolist(),\n                \"logit\": logit,\n                \"probability\": p,\n            }\n        )\n    error_rows = []\n    for label in [\"fp\", \"fn\"]:\n        predicted = decision_p >= policy[\"threshold\"]\n        mask = (\n            (predicted & (y[decision] == 0))\n            if label == \"fp\"\n            else (~predicted & (y[decision] == 1))\n        )\n        local = np.flatnonzero(mask)\n        local = sorted(\n            local, key=lambda i: -decision_p[i] if label == \"fp\" else decision_p[i]\n        )[:5]\n        error_rows += [\n            {\n                \"kind\": label,\n                \"source_row_1based\": int(decision[j] + 1),\n                \"quality\": int(frame.quality.iloc[decision[j]]),\n                \"probability\": float(decision_p[j]),\n            }\n            for j in local\n        ]\n    # No test outcomes were used above. Evaluate the locked model/policy now.\n    test_p = model.predict_proba(X[test])[:, 1]\n    final_test = {\n        **probability_metrics(y[test], test_p),\n        **policy_metrics(y[test], test_p, policy[\"threshold\"]),\n    }\n    bootstrap = group_bootstrap(y[test], test_p, groups[test], policy[\"threshold\"])\n    schema = {\n        \"feature_names\": FEATURES,\n        \"feature_count\": 11,\n        \"dtype\": \"finite float64\",\n        \"missing\": \"reject\",\n        \"target_rule\": \"quality >= 6; sensory label, not objective grading truth\",\n        \"source_sha256\": SOURCE_HASH,\n    }\n    provenance = {\n        \"source\": \"UCI Wine Quality, Cortez et al. (2009), CC BY 4.0\",\n        \"sha256\": SOURCE_HASH,\n    }\n    role_report = {\n        name: {\n            \"rows\": len(rows),\n            \"groups\": int(len(np.unique(groups[rows]))),\n            \"positive\": int(y[rows].sum()),\n        }\n        for name, rows in [(\"fit\", fit), (\"decision\", decision), (\"test\", test)]\n    }\n    asset = {\n        **provenance,\n        \"scope\": \"FIT-CV board and decision-validation predictions only; final-test rows excluded from labs\",\n        \"candidates\": candidates,\n        \"selected_id\": winner[\"id\"],\n        \"locked_threshold\": policy[\"threshold\"],\n        \"cost_fp\": 1.0,\n        \"cost_fn\": 4.0,\n        \"decision_predictions\": [\n            {\n                \"source_row_1based\": int(i + 1),\n                \"quality\": int(frame.quality.iloc[i]),\n                \"positive\": int(y[i]),\n                \"probability\": float(p),\n            }\n            for i, p in zip(decision, decision_p)\n        ],\n        \"policy_reference\": curve,\n        \"selected_reference\": {\n            \"model_id\": winner[\"id\"],\n            \"queries\": [\n                {\n                    \"source_row_1based\": q[\"source_row_1based\"],\n                    \"values\": q[\"values\"],\n                    \"probability\": float(p),\n                }\n                for q, p in zip(queries, model.predict_proba(X[decision[:24]])[:, 1])\n            ],\n        },\n        \"logistic_reference\": {\n            \"model_id\": \"logistic_1\",\n            \"feature_names\": FEATURES,\n            \"mean\": scaler.mean_.tolist(),\n            \"scale\": scaler.scale_.tolist(),\n            \"weights\": lr.coef_[0].tolist(),\n            \"bias\": float(lr.intercept_[0]),\n            \"queries\": queries,\n        },\n    }\n    report = {\n        **provenance,\n        \"versions\": {\n            \"python\": platform.python_version(),\n            \"numpy\": np.__version__,\n            \"pandas\": pd.__version__,\n            \"sklearn\": sklearn.__version__,\n        },\n        \"source_rows\": len(X),\n        \"unique_chemistry_groups\": int(len(np.unique(groups))),\n        \"roles\": role_report,\n        \"target\": \"quality >= 6\",\n        \"selection\": \"Highest mean FIT-only grouped CV AP; exact tie by declared order; no decision/test model selection\",\n        \"candidates\": candidates,\n        \"selected_id\": winner[\"id\"],\n        \"policy_selection\": policy,\n        \"decision_metrics\": decision_summary,\n        \"decision_permutation_importance\": permutation,\n        \"secondary_logistic_no_alcohol_cv_ap\": float(np.mean(ablation)),\n        \"decision_error_cases\": error_rows,\n        \"locked_final_test\": final_test,\n        \"fixed_prediction_group_bootstrap\": bootstrap,\n        \"assumptions\": [\n            \"Identical chemistry groups exclude quality; proxies are not verified bottle/batch/person identities.\",\n            \"All splits are group-separated random development roles, not chronological or external-domain validation.\",\n            \"Six learned candidates plus prior baseline; preprocessing fits within each training fold; fixed seeds and budget.\",\n            \"Illustrative FP1/FN4 costs and threshold grid0.05..0.95 are not measured business costs; probabilities not calibrated here.\",\n            \"Selected model stays fit-role trained after policy lock; no silent full-development refit shifts its probability mapping.\",\n            \"Test evaluated after locking; its published results are now observed and must not guide further tuning claims.\",\n            \"Conditional bootstrap omits training/search variability; correlated chemistry, subjective labels and domain shifts limit interpretation.\",\n        ],\n    }\n    return report, asset, model, schema\n\n\ndef run_analysis(path):\n    with threadpool_limits(limits=1):\n        return analyse_source(path)\n\n\ndef write_artifacts(folder, report, asset, model, schema):\n    folder.mkdir(parents=True, exist_ok=True)\n    card = {\n        \"intended_use\": \"Offline educational binary-classification capstone; no grading/deployment claim\",\n        \"source\": report[\"source\"],\n        \"roles\": report[\"roles\"],\n        \"selection\": report[\"selection\"],\n        \"selected_id\": report[\"selected_id\"],\n        \"locked_threshold\": asset[\"locked_threshold\"],\n        \"cost_fp\": 1.0,\n        \"cost_fn\": 4.0,\n        \"locked_final_test\": report[\"locked_final_test\"],\n        \"limitations\": report[\"assumptions\"],\n    }\n    manifest = {\n        \"source_sha256\": SOURCE_HASH,\n        \"versions\": report[\"versions\"],\n        \"candidates\": report[\"candidates\"],\n        \"threshold\": asset[\"locked_threshold\"],\n    }\n    for name, value in [\n        (\"model_card.json\", card),\n        (\"feature_schema.json\", schema),\n        (\"selection_manifest.json\", manifest),\n        (\"reference_queries.json\", asset[\"selected_reference\"]),\n    ]:\n        (folder / name).write_text(\n            json.dumps(value, indent=2, allow_nan=False) + \"\\n\", encoding=\"utf-8\"\n        )\n    # This locally generated trusted artifact is a Python environment deliverable,\n    # not a mobile runtime dependency. Do not load arbitrary external pickle files.\n    joblib.dump(model, folder / \"model.joblib\")\n    names = [\n        \"model_card.json\",\n        \"feature_schema.json\",\n        \"selection_manifest.json\",\n        \"reference_queries.json\",\n        \"model.joblib\",\n    ]\n    hashes = {\n        name: hashlib.sha256((folder / name).read_bytes()).hexdigest() for name in names\n    }\n    (folder / \"checksums.json\").write_text(\n        json.dumps(hashes, indent=2) + \"\\n\", encoding=\"utf-8\"\n    )\n    return hashes\n\n\nreport, asset, model, schema = run_analysis(DATA / \"winequality-red.csv\")\nprint(json.dumps(report, indent=2, allow_nan=False))\n"
+        },
+        {
+          "type": "text",
+          "title": "সংরক্ষিত Artifact ফোল্ডারে কী কী থাকে?",
+          "body": "`write_artifacts` চালালে নির্দিষ্ট ফোল্ডারে একসাথে তৈরি হয় ছয়টি ফাইল: `model.joblib`, `feature_schema.json`, `selection_manifest.json`, `model_card.json`, `reference_queries.json` এবং `checksums.json`। সংরক্ষিত পূর্ণাঙ্গ Pipeline-টি সরাসরি কাঁচা `11`টি রাসায়নিক ইনপুট গ্রহণ করে। এখানে `reference_queries.json`-এ থাকে খোদ নির্বাচিত Model-টিরই নিজস্ব Prediction; ভবিষ্যতে অন্য ঘরানার Model জিতলে রৈখিক Logistic ট্রেসের তথ্য আলাদা গৌণ Metadata হিসেবে সংরক্ষিত থাকে।"
+        },
+        {
+          "type": "text",
+          "title": "পুনরায় লোড করে মিলিয়ে দেখা (Round-trip Verification) ও নিরাপত্তা",
+          "body": "নিজের মেশিনে তৈরি বিশ্বস্ত `model.joblib` ফাইলটি পুনরায় মেমোরিতে লোড করে সংরক্ষিত কাঁচা Reference Query-গুলোর ওপর `predict_proba` চালিয়ে মিলিয়ে দেখুন—একেই বলে Round-trip যাচাই। সঠিকভাবে কাজ করার জন্য ইনপুটের `Shape`, কলামের ক্রম এবং লাইব্রেরির সংস্করণ এক থাকা চাই। তবে নিরাপত্তার একটি মৌলিক নিয়ম মনে রাখবেন: বাইরে থেকে পাওয়া অপরিচিত কোনো `pickle` বা `joblib` ফাইল কখনোই সরাসরি লোড করবেন না, কারণ এর মাধ্যমে ক্ষতিকর কোড চালু (Arbitrary Code Execution) হতে পারে! আমাদের স্বয়ংক্রিয় পরীক্ষা কেবল নিজের তৈরি করা অস্থায়ী বিশ্বস্ত Artifact-ই লোড করে।"
+        },
+        {
+          "type": "code",
+          "title": "উৎপন্ন Artifact ফোল্ডারের Checksum যাচাইয়ের কোড",
+          "body": "from pathlib import Path\nimport hashlib, json\n\nfolder = Path(\"build/chapter-14-artifacts\")\nif (folder / \"checksums.json\").exists():\n    hashes = json.loads((folder / \"checksums.json\").read_text())\n    assert all(\n        hashlib.sha256((folder / name).read_bytes()).hexdigest() == digest\n        for name, digest in hashes.items()\n    )\n    print(\"Artifact bytes match the recorded manifest\")\nelse:\n    print(\"Run the documented CLI with --artifact-dir to generate artifacts first\")\n"
+        },
+        {
+          "type": "text",
+          "title": "কঠোর JSON সিরিয়ালাইজেশন (`allow_nan=False`) ও ফাইল লেখার সতর্কতা",
+          "body": "লক্ষ্য করুন, JSON লেখার প্রতিটি জায়গায় `allow_nan=False` ব্যবহার করা হয়েছে, যাতে কোনো অসীম বা অকার্যকর সংখ্যা (`NaN`/`Infinity`) ভুলক্রমেও নীরবে রিপোর্টে ঢুকে না পড়ে; সংজ্ঞাহীন মাপকাঠিগুলো সেখানে সুস্পষ্ট `null` হিসেবে থাকে। এ ছাড়া মাঝপথে প্রোগ্রাম থেমে গিয়ে অসম্পূর্ণ ফাইল তৈরির ঝুঁকি কমাতে মূল রিপোর্টটি আগে একটি অস্থায়ী ফাইলে লিখে তারপর প্রতিস্থাপন করা হয়। তবে মনে রাখবেন, সাধারণ একটি লোকাল ফোল্ডার কখনোই পূর্ণাঙ্গ Transactional Deployment সিস্টেম নয়—বাস্তব প্রোডাকশনে সংস্করণযুক্ত Staging এবং Atomic Promotion ব্যবস্থা প্রয়োজন হয়।"
+        },
+        {
+          "type": "text",
+          "title": "ডেভেলপমেন্ট পরিবেশ বনাম মোবাইল অ্যাপ রানটাইমের পৃথকীকরণ",
+          "body": "আমাদের অ্যাপটি কেবল হালকা JSON প্রমাণ ও গাণিতিক প্যারামিটার লোড করে এবং প্রয়োজনীয় হিসাব সরাসরি Dart রানটাইমে সম্পন্ন করে; Python-এর `model.joblib` ফাইলটির ওপর মোবাইল অ্যাপের কোনো রানটাইম নির্ভরশীলতা নেই। পূর্ণাঙ্গ ট্রেনিং ও সিরিয়ালাইজেশন প্রজেক্টের স্থানীয় ডেভেলপমেন্ট পরিবেশের অংশ, আর ইনস্টল করা অ্যাপটি সব পাঠ ও ল্যাব সম্পূর্ণ অফলাইনে চালায়।"
+        },
+        {
+          "type": "callout",
+          "title": "প্রজেক্ট যাচাইয়ের চূড়ান্ত মিলকরণ",
+          "body": "আমাদের CLI স্ক্রিপ্টটি অন্য যেকোনো Working Directory থেকে চালালেও মূল Dataset ফাইলটিকে সঠিকভাবে খুঁজে নেয়। উৎপন্ন রিপোর্ট, ল্যাব ফাইল এবং Python ও Dart-এর সংরক্ষিত রেফারেন্স আউটপুটগুলো শতভাগ সামঞ্জস্যপূর্ণ থাকে; ভবিষ্যতে কোনো অধ্যায় পরিমার্জন করলেও এই স্থির ID ও ডেটা চুক্তি অক্ষুণ্ণ রাখতে হয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch14_book_fairness",
+      "title": "Responsible ML: Subgroup Metrics, সম্মতি ও Deployment-এর সীমা",
+      "subtitle": "গড় স্কোরের আড়ালে লুকানো বৈষম্য, Base Rate-এর প্রভাব এবং দায়িত্বশীল ব্যবহারের নীতি",
+      "duration": "33 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "সামগ্রিক স্কোরের বাইরে এই ধারণাটি কেন অপরিহার্য?",
+          "body": "একটি Model-এর সামগ্রিক গড় স্কোর (`AP` বা `Accuracy`) চমৎকার দেখালেও বাস্তবে কোনো একটি নির্দিষ্ট জনগোষ্ঠী বা `Subgroup` বারবার ভুলের শিকার ও ক্ষতিগ্রস্ত হতে পারে। তাই দায়িত্বশীল মূল্যায়নে সংখ্যার পাশাপাশি চারটি মৌলিক প্রশ্ন সামনে রাখতে হয়: ডেটাতে কারা অনুপস্থিত, `Label`-এর সংজ্ঞায় কার বিচারবোধ কাজ করেছে, সংবেদনশীল তথ্য সংগ্রহের নৈতিক ও আইনি সম্মতি আছে কি না, এবং ভুল হলে বাস্তব ক্ষতি কার ওপর গিয়ে পড়ছে। বলা বাহুল্য, আমাদের ওয়াইনের রাসায়নিক Dataset দিয়ে মানুষের সংরক্ষিত জনগোষ্ঠীর (Protected Group) ন্যায্যতা প্রমাণ করা যায় না—তাই নিচে আমরা সহজ গাণিতিক উদাহরণের সাহায্যে Subgroup বিশ্লেষণের মূল নিয়মগুলো বুঝে নেব।"
+        },
+        {
+          "type": "text",
+          "title": "ধাপে ধাপে Subgroup মূল্যায়ন ও অসম্ভবতার দ্বন্দ্ব (Impossibility Trade-off)",
+          "body": "দুটি আলাদা Subgroup-এর Confusion Count থেকে প্রতিটির নিজস্ব `Recall` (`TPR`) এবং `False Positive Rate` (`FPR`) হিসাব করার কথা ভাবুন। গ্রুপ ভেদে হরের আকার ভিন্ন হয় বলে রিপোর্টে অবশ্যই প্রতিটি গ্রুপের মোট আকার এবং Positive ও Negative `Support` উল্লেখ করতে হবে। আরও গভীর একটি গাণিতিক সত্য হলো: `Demographic Parity`, `Equalized Odds` এবং `Calibration`—এই তিনটি ন্যায্যতার লক্ষ্য সম্পূর্ণ আলাদা; এবং দুটি গ্রুপে আসল ঘটনার হার বা `Base Rate` ভিন্ন হলে এই সবকটি কাঙ্ক্ষিত শর্ত একই সাথে পূরণ করা সাধারণত গাণিতিকভাবে অসম্ভব! তাই কোন লক্ষ্যটি বেছে নেবেন, তা নির্ভর করে বাস্তব প্রেক্ষাপট ও সুস্পষ্ট নীতিমালার ওপর।"
+        },
+        {
+          "type": "math",
+          "title": "Subgroup ভেদে TPR এবং FPR-এর সমীকরণ",
+          "body": "\\mathrm{TPR}_g=\\frac{TP_g}{TP_g+FN_g},\\qquad \\mathrm{FPR}_g=\\frac{FP_g}{FP_g+TN_g}"
+        },
+        {
+          "type": "text",
+          "title": "খাতা-কলমে একটি উদাহরণ: কীভাবে গড় স্কোর বৈষম্য আড়াল করে",
+          "body": "চলুন ছোট একটি সংখ্যার উদাহরণ দেখি: ধরুন `A` গ্রুপে `TP = 8, FN = 2` (মোট `10`টি Positive) এবং `B` গ্রুপে `TP = 2, FN = 3` (মোট `5`টি Positive)। হিসাব করলে `A` গ্রুপের `TPR` আসে `0.8`, অথচ `B` গ্রুপের মাত্র `0.4`—মাঝখানে `0.4`-এর বিশাল ব্যবধান! খেয়াল করুন, `A` গ্রুপে যদি নমুনার সংখ্যা অনেক বেশি থাকে, তবে সব ডেটা মিলিয়ে বের করা গড় `Recall` এই বড় বৈষম্যটিকে সহজেই আড়াল করে ফেলতে পারে। আবার `B` গ্রুপে নমুনার সংখ্যা (`Support`) খুব কম হওয়ায় তার হিসাবের পরিসংখ্যানগত `Uncertainty`-ও অনেক বড় থাকে।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Subgroup Recall ও শূন্য Support সামলানো",
+          "body": "groups = {\"A\": {\"tp\": 8, \"fn\": 2}, \"B\": {\"tp\": 2, \"fn\": 3}}\nrecalls = {}\nfor group, counts in groups.items():\n    positives = counts[\"tp\"] + counts[\"fn\"]\n    # Missing positives means undefined recall, not evidence of zero performance.\n    recalls[group] = counts[\"tp\"] / positives if positives else None\nprint(recalls[\"A\"], recalls[\"B\"], recalls[\"A\"] - recalls[\"B\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "কোডের আউটপুট ও অনুসন্ধানমূলক (Exploratory) সীমানা",
+          "body": "উপরের কোডটি চালালে আউটপুট পাওয়া যায় `0.8`, `0.4` এবং ব্যবধান `0.4`। মনে রাখবেন, এটি কেবল মাপকাঠির পাটিগণিত শেখার উদাহরণ—বাস্তব কোনো জনগোষ্ঠীর ওপর চালানো ফলাফল নয়। আর বাস্তব প্রজেক্টে ডেটার ফলাফল দেখার পর নতুন কোনো Grouping বা মাপকাঠি বেছে নিলে সেটিকে অবশ্যই অনুসন্ধানমূলক (Exploratory) বিশ্লেষণ হিসেবে উল্লেখ করবেন।"
+        },
+        {
+          "type": "text",
+          "title": "শুধু সংবেদনশীল কলাম বাদ দিলেই কেন Fairness নিশ্চিত হয় না?",
+          "body": "অনেকেই ভাবেন ইনপুট থেকে জাতি, লিঙ্গ বা বয়সের মতো সংবেদনশীল কলামটি মুছে দিলেই বুঝি বৈষম্য মিটে গেল! বাস্তবে তা হয় না, কারণ অন্য সাধারণ কলামগুলোর ভেতর ওই পরিচয়ের পরোক্ষ ছাপ বা `Proxy` ঠিকই রয়ে যায়। আবার গোপনীয়তা ও ব্যবহারকারীর সম্মতি ছাড়া সংবেদনশীল তথ্য সংগ্রহ করাও অনুচিত। সর্বোপরি, কেবল একটি পরিসংখ্যানগত সমতার সূত্র মিললেই বাস্তব জীবনের ক্ষতি, আইনি বাধ্যবাধকতা কিংবা কার্যকারণগত বৈষম্য (Causal Discrimination) মিটে গেছে—এমন সনদ দেওয়া যায় না।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে চেষ্টা করুন",
+          "body": "কোনো একটি Subgroup-এ যদি আসল Positive নমুনার সংখ্যা শূন্য (`0`) হয়, তবে রিপোর্টে বিষয়টি কীভাবে উল্লেখ করবেন? এ ছাড়া একটি Model Card-এ দায়িত্বশীল ব্যবহারের তিনটি প্রধান সীমাবদ্ধতা লিখুন।",
+          "solution": "আসল Positive সংখ্যা `0` হলে হর শূন্য হওয়ায় ওই Subgroup-এর `Recall` অসংজ্ঞায়িত (`Undefined` বা `null`) হিসেবে রিপোর্ট করতে হবে এবং স্পষ্টভাবে `Support = 0` লিখতে হবে—শূন্য (`0.0`) বসিয়ে স্কোর র‍্যাঙ্কিং করা যাবে না। আর একটি Model Card-এ দায়িত্বশীল ব্যবহারের তিনটি প্রধান সীমাবদ্ধতা হলো: (১) ঐতিহাসিক ডেটার সাথে বাস্তব প্রয়োগক্ষেত্রের অমিল (Historical/Domain Mismatch), (২) ছোট Subgroup-এ স্বল্প Support-জনিত অনিশ্চয়তা, এবং (৩) উচ্চ-ঝুঁকির স্বয়ংক্রিয় সিদ্ধান্তে মানুষের পর্যালোচনার (Human Review Boundary) আবশ্যকতা।",
+          "reference": "https://www.statlearning.com/"
+        },
+        {
+          "type": "text",
+          "title": "একই TPR ও FPR থাকা সত্ত্বেও কেন Precision আলাদা হয়ে যায়?",
+          "body": "`Base Rate` বা মূল অনুপাতের প্রভাব বোঝার জন্য আরেকটি চমৎকার হিসাব দেখা যাক। ধরুন `A` এবং `B` উভয় গ্রুপেই `100`টি করে Row আছে, কিন্তু `A` গ্রুপে আসল Positive আছে `20`টি আর `B` গ্রুপে `80`টি। ধরা যাক, দুটি গ্রুপেই Model হুবহু একই হারে কাজ করছে: `TPR = 0.8` এবং `FPR = 0.2`। তাহলে `A` গ্রুপে পাওয়া যাবে `TP = 16` ও `FP = 16`, ফলে এর `Precision` দাঁড়াবে `16 / 32 = 0.5`! অথচ `B` গ্রুপে পাওয়া যাবে `TP = 64` ও `FP = 4`, যার `Precision` হলো `64 / 68 = 16 / 17` (`≈ 0.941176`)! অর্থাৎ দুই গ্রুপে ভুলের হার (`TPR` ও `FPR`) কাঁটায় কাঁটায় সমান হওয়া সত্ত্বেও স্রেফ `Base Rate` আলাদা হওয়ায় Predicted-positive সংখ্যা এবং `Precision` আকাশ-পাতাল আলাদা হয়ে গেল। কাজেই বাস্তব ক্ষেত্রে কোন মাপকাঠিটিকে অগ্রাধিকার দেওয়া হবে, তা ব্যবহারক্ষেত্রের প্রয়োজন বুঝেই ঠিক করতে হয়।"
+        },
+        {
+          "type": "code",
+          "title": "ভিন্ন Base Rate থেকে Confusion Count ও Precision গণনার কোড",
+          "body": "for positives in (20, 80):\n    negatives = 100 - positives\n    tp, fn = 0.8 * positives, 0.2 * positives\n    fp, tn = 0.2 * negatives, 0.8 * negatives\n    precision = tp / (tp + fp)\n    print(tp, fp, tp / (tp + fn), fp / (fp + tn), round(precision, 6))\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে হিসাব করুন",
+          "body": "উপরের এই Confusion Count উদাহরণটি কি Model-এর Score Calibration পরীক্ষা করেছে?",
+          "solution": "না। এখানে কেবল একটি নির্দিষ্ট Binary Operating Point-এ চূড়ান্ত সিদ্ধান্তের হারগুলো (`TPR`, `FPR`, `Precision`) দেখা হয়েছে। Score Calibration পরীক্ষা করতে হলে প্রদত্ত Predicted Probability এবং প্রকৃত পর্যবেক্ষিত হারের (Observed Frequency) মধ্যকার সম্পর্ক যাচাই করতে হয়। কেবল সমান `TPR` ও `FPR` দেখেই Calibration বা ডোমেইনের সার্বিক ন্যায্যতা সম্পর্কে চূড়ান্ত সিদ্ধান্ত পাওয়া যায় না।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch14_release",
+      "title": "Release Bundle, Drift পর্যবেক্ষণ ও Failure Recovery",
+      "subtitle": "একবার চালানো Capstone থেকে রক্ষণাবেক্ষণযোগ্য ML Workflow গড়ে তোলার নীতি",
+      "duration": "51 min",
+      "icon": "science",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "সমন্বিত Release Bundle: সব অংশ যেন একই সংস্করণের হয়",
+          "body": "প্রজেক্টকে রক্ষণাবেক্ষণযোগ্য করতে হলে `Feature Schema`, `Preprocessing`, ট্রেনিংপ্রাপ্ত `Model`, নির্বাচিত `Threshold` এবং সফটওয়্যারের সংস্করণ—সবকিছুকে একটি অভিন্ন ও সুসংগত `Release Bundle` হিসেবে একসাথে রাখতে হবে। ভাবুন তো, আপনি নতুন একটি `Model` আপডেট করলেন কিন্তু `Threshold` ফাইলটি আগের সংস্করণেরই রয়ে গেল—তাহলে বাস্তবে সিস্টেমের আচরণ নীরবে বদলে যাবে! মনে রাখবেন, ফাইলের `Checksum` কেবল বাইটের অখণ্ডতা নিশ্চিত করে, বৈজ্ঞানিক যথার্থতা নয়; আর ট্রেনিং ডেটার `Source Hash` আপনার প্রমাণের বংশপরিচয় (Lineage) ধরে রাখে।"
+        },
+        {
+          "type": "math",
+          "title": "Logistic Model-এ প্রতিটি Query-র Inference জটিলতা",
+          "body": "\\ell=b+w^{\\top}\\operatorname{scale}(x),\\qquad \\operatorname{work/query}=O(d),\\quad d=11"
+        },
+        {
+          "type": "text",
+          "title": "কঠোর Serving Contract: ইনপুট যাচাই ও ত্রুটি প্রতিরোধ",
+          "body": "উপরের সমীকরণ অনুযায়ী আমাদের রৈখিক Model-এ প্রতিটি Query-র গণনার খরচ মাত্র `O(d)` (`d = 11`)। কিন্তু এই দ্রুত গণনার আগে অবশ্যই কলামের নিখুঁত ক্রম, সসীম মান এবং Missing-value নীতি কঠোরভাবে প্রয়োগ করতে হবে। ব্যাচ ইনপুটের আকার হতে হবে `n × 11`; এমনকি একটি একক Row পাঠাতে হলেও Python Model-এ সেটিকে দ্বিমাত্রিক (`1 × 11`) আকারে দিতে হয়। প্রত্যাশিত `Schema` না মিললে সুস্পষ্ট ত্রুটিবার্তা (Clear Failure) অথবা পূর্বঘোষিত Fallback ব্যবস্থা থাকতে হবে—ভুলেও নতুন Query দিয়ে রানটাইমে `Scaler` পুনরায় ফিট করবেন না!"
+        },
+        {
+          "type": "code",
+          "title": "কলামের ক্রম যাচাইয়ের প্রতিরক্ষামূলক কোড (Order Guard)",
+          "body": "def validate_order(incoming, expected):\n    if incoming != expected:\n        raise ValueError(\"feature order mismatch\")\n\n\ntry:\n    validate_order([\"pH\", \"alcohol\"], [\"alcohol\", \"pH\"])\nexcept ValueError as error:\n    print(error)\n"
+        },
+        {
+          "type": "text",
+          "title": "রিলিজের পরে কী কী পর্যবেক্ষণ (Monitor) করবেন?",
+          "body": "সিস্টেম চালু থাকার সময় ইনপুটের পরিসর, অনুপস্থিত তথ্যের হার, উৎসের পরিবর্তন, Predicted-positive হার এবং পরবর্তীতে আসল `Label` পাওয়া সাপেক্ষে বিলম্বিত ত্রুটি (Delayed Labeled Errors) নিয়মিত পর্যবেক্ষণ করা যায়। তবে মনে রাখবেন, ইনপুটের বণ্টন বদলানো (`Data Drift`) মানেই যে সবসময় ক্ষতিকর `Concept Drift` ঘটেছে তা নয়; আসল `Label` ও খরচের প্রমাণ ছাড়া কেবল Drift দেখেই স্বয়ংক্রিয়ভাবে পুরোনো Model বদলে ফেলা যৌক্তিক নয়। আর আমাদের এই ঐতিহাসিক রাসায়নিক ডেটা ভবিষ্যতের কোনো নতুন ক্ষেত্রকে প্রতিনিধিত্ব করে কি না, তার জন্য সবসময় আলাদা প্রমাণ প্রয়োজন।"
+        },
+        {
+          "type": "text",
+          "title": "নিরাপদ আপডেট, Shadow Evaluation ও Rollback প্রস্তুতি",
+          "body": "নতুন কোনো Artifact রিলিজ করার আগে সংরক্ষিত `Reference Queries` চালিয়ে আগেরটির সাথে তুলনা করুন; বাস্তব সিস্টেমে পাশাপাশি চালিয়ে পরীক্ষা করা (`Shadow Evaluation`) এবং দ্রুত পুরোনো সংস্করণে ফিরে যাওয়ার (`Versioned Rollback`) ব্যবস্থা রাখা অত্যন্ত কার্যকর। কখনো যদি `Target`, `Feature Contract`, `Calibrator` কিংবা ডেভেলপমেন্ট ডেটার `Refit` নীতি বদলায়, তবে নতুন করে পূর্ণ মূল্যায়ন ও `Policy` যাচাই অপরিহার্য। স্বচ্ছতার জন্য উল্লেখ্য, আমাদের এই অফলাইন লার্নিং অ্যাপটি বাইরে কোনো সার্ভার বা নোটিফিকেশন সেবা পরিচালনা করে না।"
+        },
+        {
+          "type": "text",
+          "title": "এই লার্নিং অ্যাপে ডেটা সংরক্ষণ ও আপগ্রেড সুরক্ষা",
+          "body": "সফটওয়্যার রক্ষণাবেক্ষণের একই শৃঙ্খলা এই অ্যাপের ভেতরেও মানা হয়েছে: অধ্যায়ের কনটেন্ট ক্যাটালগে `Upsert` হয়, আর শিক্ষার্থীর নোট, বুকমার্ক, সম্পন্ন পাঠ, কুইজের উত্তর, কোডের খসড়া এবং পড়ার অবস্থান সম্পূর্ণ আলাদা `SQLite` টেবিলে সুরক্ষিত থাকে। পুরোনো ID-গুলো অপরিবর্তিত রাখা হয় এবং কোনো একটি অধ্যায় পুনরায় চেষ্টা করলে অন্য অধ্যায়ের উত্তর মুছে যায় না—স্বয়ংক্রিয় Upgrade Test এই সুরক্ষা যাচাই করে।"
+        },
+        {
+          "type": "callout",
+          "title": "বিপর্যয় মোকাবিলার মহড়া (Failure Drill)",
+          "body": "পাঁচটি বাস্তব সমস্যার জন্য আগেভাগেই প্রস্তুতি সাজিয়ে রাখুন: (১) ভুল ক্রমের Feature আসা, (২) ক্ষতিগ্রস্ত বা অসম্পূর্ণ Artifact ফাইল, (৩) উৎস ডেটা পাওয়া না যাওয়া, (৪) ধ্রুবক মানের কলামের কারণে শূন্য `Scale` তৈরি হওয়া এবং (৫) খালি বা শূন্য আকারের ব্যাচ ইনপুট আসা। প্রতিটির ক্ষেত্রে কী ত্রুটিবার্তা দেখানো হবে, কোন সংস্করণ লগ হবে এবং নিরাপদ Fallback আচরণ কী হবে—তা কোড লেখার আগেই নির্ধারণ করুন।"
+        },
+        {
+          "type": "text",
+          "title": "একটি ছোট স্বয়ংসম্পূর্ণ Inference Artifact তৈরি ও যাচাই",
+          "body": "বোঝার সুবিধার্থে নিচের কোডে আমরা একটি ছোট JSON `Artifact`-এর ভেতর Feature-এর নাম, ট্রেনিং থেকে পাওয়া `mean` ও `scale`, `weights`, `bias` এবং `threshold` একসাথে রেখেছি। নতুন কোনো Row এলে প্রথমে তার কলামের নাম ও ক্রম মিলিয়ে নেওয়া হয়, তারপর চলে রূপান্তর। লক্ষ্য করুন, JSON-এ রূপান্তর ও পুনরায় লোড করার (Round-trip) আগে ও পরে উৎপন্ন `Probability` এবং চূড়ান্ত সিদ্ধান্ত হুবহু এক থাকছে, আর ভুল ক্রমে কলাম পাঠালেই সিস্টেম তা প্রত্যাখ্যান করছে! বাস্তব প্রজেক্টের পূর্ণাঙ্গ Pipeline-এ এর পাশাপাশি ক্যাটাগরির শব্দভাণ্ডার, Missing-value নীতি, `dtype`, লাইব্রেরির সংস্করণ এবং পুরো Preprocessing কাঠামোও চুক্তির অংশ থাকে—কেবল একটি Weight ফাইল দিয়ে কখনোই সম্পূর্ণ Predictor প্রকাশ করা যায় না।"
+        },
+        {
+          "type": "code",
+          "title": "Schema যাচাই ও সংখ্যাসূচক Round-trip পরীক্ষার কোড",
+          "body": "import json\nimport numpy as np\nfrom scipy.special import expit\n\nartifact = dict(features=['a', 'b'], mean=[10., 1.], scale=[2., 1.],\n                weights=[0.5, -1.], bias=0.2, threshold=0.4)\n\ndef predict(bundle, names, row):\n    if names != bundle['features']:\n        raise ValueError('Feature order mismatch')\n    values = np.asarray(row, dtype=float)\n    scale = np.asarray(bundle['scale'])\n    if values.shape != (len(names),) or not np.isfinite(values).all() or np.any(scale <= 0):\n        raise ValueError('Invalid feature values or training scale')\n    standardized = (values - bundle['mean']) / scale\n    probability = float(expit(standardized @ bundle['weights'] + bundle['bias']))\n    return probability, int(probability >= bundle['threshold'])\n\nrestored = json.loads(json.dumps(artifact, allow_nan=False))\nexpected = predict(artifact, ['a', 'b'], [12., 2.])\nactual = predict(restored, ['a', 'b'], [12., 2.])\nnp.testing.assert_allclose(actual, expected)\nrejected = 0\ntry:\n    predict(restored, ['b', 'a'], [2., 12.])\nexcept ValueError:\n    rejected = 1\nprint(round(actual[0], 6), actual[1], rejected)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে হিসাব করুন",
+          "body": "কোনো সংরক্ষিত Model ফাইলের Checksum হুবহু মিলে গেলে কি Model-টির পরিসংখ্যানগত মানও (Statistical Quality) প্রমাণিত হয়ে যায়?",
+          "solution": "না। `Checksum` কেবল ফাইলটির পরিচয় ও বাইট-পর্যায়ের অখণ্ডতা (Integrity) যাচাই করতে সাহায্য করে। কিন্তু Model-টির প্রকৃত Predictive Quality নিশ্চিত করতে হলে যথাযথ মূল্যায়ন, `Schema` পরীক্ষা এবং সংখ্যাসূচক Round-trip প্রমাণ থাকা দরকার। এমনকি Artifact-টি কে তৈরি করেছে তা নিশ্চিত করার প্রশ্নটিও (`Authentication`) সাধারণ Checksum থেকে আলাদা।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch14_defense",
+      "title": "Capstone Defense, অনুশীলনী ও পরবর্তী পাঠের নির্দেশিকা",
+      "subtitle": "নিজের হাতে ফলাফল পুনরুৎপাদন করুন এবং প্রতিটি প্রকৌশলগত সিদ্ধান্ত যুক্তি দিয়ে প্রতিষ্ঠা করুন",
+      "duration": "30 min",
+      "icon": "science",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "আপনার পূর্ণাঙ্গ Capstone জমাদানের তালিকা",
+          "body": "একটি মানসম্পন্ন পোর্টফোলিও প্রজেক্ট হিসেবে জমা দেওয়ার জন্য প্রস্তুত করুন: একটি স্পষ্ট প্রজেক্ট `README`, ডেটার উৎস/লাইসেন্স/`Hash`, প্রাথমিক `Data Audit` সারাংশ, তিন স্তরের `Split Diagram`, পূর্বঘোষিত `Candidate Budget`, নির্বাচিত `Artifacts`, স্থির করা `Threshold`-এর রেকর্ড, `Error Analysis`, স্বচ্ছ `Model Card` এবং ফলাফল পুনরুৎপাদনের সুনির্দিষ্ট কমান্ড। মনে রাখবেন, নোটবুকের সংখ্যাসূচক আউটপুটের পাশাপাশি কেন কোন সিদ্ধান্ত নিয়েছেন এবং প্রমাণের সীমাবদ্ধতা কোথায়—তাও স্পষ্ট ভাষায় লিখতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "১০টি কোডিং অনুশীলনীর মাধ্যমে হাতে-কলমে দক্ষতা অর্জন",
+          "body": "এই অধ্যায়ের `10`টি কোডিং অনুশীলনী আপনার স্থানীয় Python পরিবেশে নিজে হাতে বাস্তবায়ন করুন। ভুলের খরচ, `Confusion Matrix`, `AP`, ট্রেনিংপ্রাপ্ত `StandardScaler` রূপান্তর এবং `Bootstrap` ওজন নির্ধারণের ইনপুট বদলে বদলে ফলাফলের পরিবর্তন পর্যবেক্ষণ করুন। প্রতিটি সংখ্যাসূচক উত্তরের সাথে সেখানে ঠিক কোন হর (Denominator) এবং কোন `Data Role` ব্যবহৃত হয়েছে, তা নিজের ভাষায় ব্যাখ্যা করার অভ্যাস গড়ে তুলুন।"
+        },
+        {
+          "type": "text",
+          "title": "তিনটি ইন্টারঅ্যাকটিভ ল্যাবের সমন্বিত পুনরালোচনা",
+          "body": "অধ্যায়ের তিনটি ল্যাব আরেকবার বিশ্লেষণী চোখে ঘুরে দেখুন: Evidence Board-এ `Prior` ও বিজয়ী Model তুলনা করুন; Policy Lab-এ `Threshold = 0`, লক করা `0.30` এবং `Grid Minimum` পাশাপাশি মিলিয়ে দেখুন; আর Pipeline Trace-এ বাস্তব উৎস Row-গুলোর কাঁচা মান ও প্রমিত `z` স্থানাঙ্কের দৃশ্য বদলে দেখুন। খাতায় সমীকরণ লিখে নিজেই প্রমাণ করুন কেন পর্দার স্থানাঙ্ক বদলালেও ভেতরের `Probability` অপরিবর্তিত থাকে; এবং ব্যাখ্যা করুন কেন Role শৃঙ্খলা রক্ষার খাতিরে ল্যাবের কোথাও Final Test-এর একটি Row-ও রাখা হয়নি।"
+        },
+        {
+          "type": "code",
+          "title": "Model Card-এর আবশ্যিক ক্ষেত্রগুলোর পূর্ণতা যাচাই",
+          "body": "required = {\n    \"intended_use\",\n    \"source\",\n    \"roles\",\n    \"selection\",\n    \"selected_id\",\n    \"locked_threshold\",\n    \"limitations\",\n}\ncard = dict.fromkeys(required, \"documented\")\nassert required <= card.keys()\nprint(sorted(required))\n"
+        },
+        {
+          "type": "text",
+          "title": "কারিগরি Interview-এ উত্তর সাজানোর আদর্শ কাঠামো",
+          "body": "যেকোনো ভালো উত্তরের প্রবাহ হওয়া উচিত সুশৃঙ্খল: `সমস্যা ও অনুমান` → `Objective ও Metric` → `Split Roles` → `বাস্তবায়ন ও প্রান্তিক কেস` → `Validation` → `বাস্তব প্রয়োগের সীমা`। ঘড়ি ধরে এই অধ্যায়ের `10`টি মৌলিক FAANG-ধাঁচের কেস অনুশীলন করুন (বলা বাহুল্য, এগুলো দক্ষতা যাচাইয়ের জন্য তৈরি মৌলিক শিক্ষামূলক প্রশ্ন—কোনো প্রতিষ্ঠানের অভ্যন্তরীণ বা ফাঁস হওয়া প্রশ্ন নয়)। উত্তর দেওয়ার সময় বাছাইজনিত চাপ (`Selection Pressure`) এবং পরিসংখ্যানগত `Uncertainty` অকপটে ব্যাখ্যা করুন।"
+        },
+        {
+          "type": "text",
+          "title": "প্রাথমিক উৎস ও প্রামাণ্য ডকুমেন্টেশন (পর্ব ১)",
+          "body": "UCI Wine Quality উৎস ও লাইসেন্স: https://archive.ics.uci.edu/dataset/186/wine+quality । Grouped Cross-Validation (`StratifiedGroupKFold`): https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.StratifiedGroupKFold.html । Data Leakage ও Pipeline সংক্রান্ত সতর্কতা: https://scikit-learn.org/stable/common_pitfalls.html ।"
+        },
+        {
+          "type": "text",
+          "title": "প্রাথমিক উৎস ও প্রামাণ্য ডকুমেন্টেশন (পর্ব ২: সিদ্ধান্ত ও সংরক্ষণ)",
+          "body": "Classification Threshold নির্দেশিকা: https://scikit-learn.org/stable/modules/classification_threshold.html । Probability Calibration ডকুমেন্টেশন: https://scikit-learn.org/stable/modules/calibration.html । Model Persistence ও সংরক্ষণ বিধি: https://scikit-learn.org/stable/model_persistence.html । এই লিংকগুলো ঐচ্ছিক বাড়তি পড়াশোনার জন্য; অধ্যায়ের প্রয়োজনীয় সমস্ত কনটেন্ট ও ডেটা অ্যাপের ভেতরেই স্থানীয়ভাবে সংযুক্ত আছে।"
+        },
+        {
+          "type": "callout",
+          "title": "সমাপনী যাচাই ও Book 3-এর পথে যাত্রা",
+          "body": "নতুন বইয়ে পা রাখার আগে নোট না দেখে নিজের ভাষায় এই Capstone-এর `Split Roles`, `Model Selection`, `Threshold`, সংরক্ষিত `Artifact` এবং সীমাবদ্ধতাগুলো একবার গুছিয়ে ব্যাখ্যা করে দেখুন। এরপর শুরু করুন Book 3 (Deep Learning & RL) · Chapter 1 (PyTorch Tensors & Autograd)—যেখানে `Tensor` Shape এবং `Autograd` আয়ত্ত করার মাধ্যমে আধুনিক Deep Learning বাস্তবায়নের শক্ত ভিত গড়ে উঠবে।"
+        }
+      ]
+    }
+  ],
+  "quizzes": [
+    {
+      "id": "ch14_q1",
+      "question": "এই Capstone প্রজেক্টে আনুষ্ঠানিকভাবে বিজয়ী Candidate Model কোন ফলাফল দেখে নির্বাচন করা হয়েছে?",
+      "options": [
+        "Final Test অংশের AP স্কোর দেখে",
+        "কেবল Fit অংশের Grouped CV-এর গড় AP দেখে",
+        "Decision অংশের সর্বনিম্ন খরচের রেখা দেখে",
+        "অ্যাপের ইন্টারফেসে সবচেয়ে আকর্ষণীয় চার্ট দেখে"
+      ],
+      "answer": 1,
+      "explanation": "কেবল Fit অংশের Grouped CV-তে সর্বোচ্চ গড় AP পাওয়া Candidate-ই বিজয়ী হয় (সমান স্কোরে পূর্বঘোষিত ক্রম অনুসারে)। Decision বা Final Test-এর কোনো ফলাফল Model বাছাইয়ে ব্যবহৃত হয় না।"
+    },
+    {
+      "id": "ch14_q2",
+      "question": "অভিন্ন রাসায়নিক গঠনের Grouping Key তৈরির সময় `quality` কলামটি বাদ রাখা হয়েছে কেন?",
+      "options": [
+        "`quality` সংখ্যাসূচক নয় বলে এর Hash তৈরি করা যায় না",
+        "সব ডেটাসেটেই Label সবসময় সম্পূর্ণ র‍্যান্ডম থাকে",
+        "হুবহু একই রাসায়নিক মানের কিন্তু ভিন্ন Label-এর Row যেন ভিন্ন Split-এ ছড়িয়ে না পড়ে",
+        "কৃত্রিমভাবে Cross-Validation-এর AP স্কোর বাড়িয়ে দেখানোর জন্য"
+      ],
+      "answer": 2,
+      "explanation": "Target বাদ দিয়ে কেবল রাসায়নিক মান দিয়ে Group তৈরি করলে অভিন্ন Feature-যুক্ত পুনরাবৃত্ত নমুনাগুলো কখনোই Split সীমানা পেরিয়ে দুই দিকে যেতে পারে না। তবে মনে রাখতে হবে এই Group-গুলো যাচাইকৃত প্রকৃত Batch ID নয়।"
+    },
+    {
+      "id": "ch14_q3",
+      "question": "তিনটি Split Role-এ Row সংখ্যা (`966 / 313 / 320`) কাঁটায় কাঁটায় `60% / 20% / 20%` হয়নি কেন?",
+      "options": [
+        "র‍্যান্ডম Seed সঠিকভাবে কাজ করেনি বলে",
+        "উৎস ডেটায় প্রচুর Missing Row থাকার কারণে",
+        "প্রতিটি অংশের Threshold আলাদা হওয়ার কারণে",
+        "গ্রুপ ধরে ভাগ করায় প্রতিটি Chemistry Group-এর আকার সমান নয় বলে"
+      ],
+      "answer": 3,
+      "explanation": "Group অক্ষুণ্ণ রেখে ডেটা ভাগ করলে Row-এর অনুপাত আনুমানিক ভগ্নাংশে আসে; এজন্যই রিপোর্টে প্রতিটি অংশের প্রকৃত Row এবং Group সংখ্যা স্পষ্টভাবে উল্লেখ করতে হয়।"
+    },
+    {
+      "id": "ch14_q4",
+      "question": "Cross-Validation চলাকালে `StandardScaler` ঠিক কোন ডেটার ওপর `fit` হওয়া উচিত?",
+      "options": [
+        "প্রতিটি ধাপের কেবল ভেতরের Training Fold-এর ওপর",
+        "পুরো 1599টি উৎস Row-এর ওপর একসাথে",
+        "সরাসরি আগত Test Query-র ওপর",
+        "Decision এবং Final Test অংশ একত্র করে তার ওপর"
+      ],
+      "answer": 0,
+      "explanation": "ডেটা থেকে শেখা যেকোনো Preprocessing রূপান্তর অবশ্যই ভেতরের Training Fold-এর সীমানার মধ্যেই `fit` হতে হবে, আর Held-out অংশে চলবে কেবল `transform`।"
+    },
+    {
+      "id": "ch14_q5",
+      "question": "সব নমুনায় একই ধ্রুবক স্কোর দেওয়া `Prior Baseline`-এর Average Precision (AP) মূলত কী নির্দেশ করে?",
+      "options": [
+        "সবসময় নিখুঁত 1.0 মান নির্দেশ করে",
+        "মূল্যায়ন অংশের Positive Class-এর অনুপাত বা Prevalence নির্দেশ করে",
+        "রাসায়নিক উপাদানের কার্যকারণ বা Causal প্রভাব নির্দেশ করে",
+        "কেবল Training ডেটার সংখ্যাগরিষ্ঠ Accuracy নির্দেশ করে"
+      ],
+      "answer": 1,
+      "explanation": "ধ্রুবক স্কোরের ক্ষেত্রে AP মূল্যায়ন অংশের Positive Prevalence-এর সমান দাঁড়ায়; তাই যেকোনো স্কোরের পাশে এই Baseline এবং Class Distribution উল্লেখ করা জরুরি।"
+    },
+    {
+      "id": "ch14_q6",
+      "question": "Non-interpolated Average Precision (AP) আসলে কোন গাণিতিক রাশিটি পরিমাপ করে?",
+      "options": [
+        "সবসময় Precision-Recall Curve-এর নিচের Trapezoidal ক্ষেত্রফল",
+        "একটি নির্দিষ্ট Threshold-এর সাধারণ Accuracy",
+        "প্রতিটি ধাপে Recall বৃদ্ধির সাপেক্ষে ওজনযুক্ত Precision-এর যোগফল",
+        "সম্ভাবনার গড় বর্গ ত্রুটি (Mean Squared Probability Error)"
+      ],
+      "answer": 2,
+      "explanation": "Non-interpolated AP হলো প্রতিটি ধাপে Recall বৃদ্ধির সাথে ওই অবস্থানের Precision গুণফলের যোগফল—যা ROC-AUC কিংবা Brier Score থেকে সম্পূর্ণ আলাদা মাপকাঠি।"
+    },
+    {
+      "id": "ch14_q7",
+      "question": "Cross-Validation-এর Fold-গুলোর Standard Deviation (SD) থেকে সরাসরি স্বাধীন নমুনার Confidence Interval দাবি করার মূল সমস্যা কী?",
+      "options": [
+        "সব Fold-এর SD গাণিতিকভাবে সবসময় শূন্য হয়",
+        "AP মাপকাঠির কোনো উর্ধ্বসীমা বা নিম্নসীমা নেই",
+        "প্রতিটি Fold সম্পূর্ণ ভিন্ন Dataset থেকে সংগৃহীত হয়",
+        "বিভিন্ন Training Fold-এর মধ্যে ব্যাপক Overlap এবং বাছাইজনিত প্রভাব (Selection Effect) থাকে"
+      ],
+      "answer": 3,
+      "explanation": "Fold ভেদে স্কোরের বিস্তার একটি কার্যকর ডায়াগনস্টিক সূচক, কিন্তু Training ডেটার পারস্পরিক Overlap ও Candidate বাছাইয়ের কারণে একে স্বাধীন নমুনার Confidence Interval হিসেবে সরাসরি ব্যাখ্যা করা যায় না।"
+    },
+    {
+      "id": "ch14_q8",
+      "question": "আমাদের পরীক্ষায় `Logistic (C = 1)` সর্বোচ্চ গড় AP পেয়ে জয়ী হওয়ার সঠিক অর্থ কী?",
+      "options": [
+        "এই নির্দিষ্ট উৎস, প্রোটোকল এবং ঘোষিত Candidate Budget-এর অধীনে এর প্রমাণ সবচেয়ে ভালো",
+        "পৃথিবীর সব Dataset-এই Decision Tree এবং Forest তুলনামূলক খারাপ কাজ করে",
+        "উৎপন্ন সব Probability স্বয়ংক্রিয়ভাবে শতভাগ Calibrated হয়ে গেছে",
+        "বাস্তব বাণিজ্যিক পরিবেশে এর সফল Deployment নিশ্চিত হয়ে গেছে"
+      ],
+      "answer": 0,
+      "explanation": "Model নির্বাচন সবসময় শর্তসাপেক্ষ; সীমিত বাজেটের একটি পরীক্ষা থেকে পুরো Model পরিবারের সার্বজনীন র‍্যাঙ্কিং বা নতুন ডোমেইনের নিশ্চয়তা ঘোষণা করা যায় না।"
+    },
+    {
+      "id": "ch14_q9",
+      "question": "কোনো Model থেকে `predict_proba` আউটপুট পাওয়ার প্রকৃত অর্থ কী?",
+      "options": [
+        "সংখ্যাগুলো নিখুঁতভাবে Calibrated হওয়ার শতভাগ গ্যারান্টি আছে",
+        "এটি Model-এর দেওয়া সম্ভাবনার প্রাক্কলন মাত্র; এর Calibration আলাদাভাবে যাচাই করতে হয়",
+        "এটি বাস্তব জগতের প্রকৃত কার্যকারণগত (Causal) সম্ভাবনা নির্দেশ করে",
+        "এই স্কোর ব্যবহার করলে যেকোনো সিদ্ধান্তের খরচ শূন্য হয়ে যায়"
+      ],
+      "answer": 1,
+      "explanation": "`predict_proba` কেবল সম্ভাবনার একটি আনুমানিক মান দেয়; প্রকৃত Calibration যাচাইয়ের জন্য Brier Score ও Reliability Bin ডায়াগনস্টিকস দরকার এবং প্রয়োজনে আলাদা ডেটায় Calibrator ফিট করতে হয়।"
+    },
+    {
+      "id": "ch14_q10",
+      "question": "সঠিক সিদ্ধান্তের খরচ শূন্য এবং ভুলের খরচ `FP = 1` ও `FN = 4` হলে নিখুঁতভাবে Calibrated সম্ভাবনার আদর্শ Threshold কত?",
+      "options": [
+        "0.5",
+        "0.8",
+        "0.2",
+        "4.0"
+      ],
+      "answer": 2,
+      "explanation": "যখন `1 * (1 - p) <= 4 * p` হয় তখনই Positive বেছে নেওয়া লাভজনক, অর্থাৎ `p >= 1/5 = 0.2`। তবে সসীম নমুনা ও বিচ্ছিন্ন Grid-এ বাস্তব Empirical Policy এর চেয়ে আলাদা হতে পারে।"
+    },
+    {
+      "id": "ch14_q11",
+      "question": "আমাদের এই Capstone প্রজেক্টে বাস্তব ডেটা থেকে স্থির করা (Locked) Threshold কোনটি?",
+      "options": [
+        "সরাসরি কাঁচা `quality = 6` মানটি",
+        "ডিফল্ট 0.50 সীমা",
+        "তাত্ত্বিক উপপাদ্য অনুযায়ী বাধ্যতামূলক 0.20",
+        "Decision Validation অংশের গড় খরচ কমিয়ে পাওয়া 0.30"
+      ],
+      "answer": 3,
+      "explanation": "Decision অংশের 313টি Row-এর ওপর `0.05..0.95` Grid এবং উদাহরণমূলক `FP = 1 / FN = 4` খরচ ব্যবহার করে সর্বনিম্ন গড় খরচের বিন্দু হিসেবে `0.30` স্থির করা হয়েছে।"
+    },
+    {
+      "id": "ch14_q12",
+      "question": "কোনো নমুনার Predicted Probability কাঁটায় কাঁটায় Threshold-এর সমান (`p = tau`) হলে আমাদের নিয়ম অনুযায়ী সিদ্ধান্ত কী হবে?",
+      "options": [
+        "Positive হিসেবে গণ্য হবে",
+        "Negative হিসেবে গণ্য হবে",
+        "লটারি করে র‍্যান্ডম সিদ্ধান্ত নেওয়া হবে",
+        "সিদ্ধান্ত অসংজ্ঞায়িত থাকবে"
+      ],
+      "answer": 0,
+      "explanation": "আমাদের প্রজেক্টের সুস্পষ্ট চুক্তি হলো `p >= tau`, এবং সমান মানের প্রান্তিক কেসগুলো স্বয়ংক্রিয় পরীক্ষার মাধ্যমে যাচাই করা হয়েছে।"
+    },
+    {
+      "id": "ch14_q13",
+      "question": "কোনো Threshold-এ যদি একটিও নমুনাকে Positive অনুমান করা না হয় (`TP + FP = 0`), তবে আমাদের চুক্তিতে Precision-এর মান কী হবে?",
+      "options": [
+        "নিশ্চিতভাবে 1.0 হবে",
+        "অসংজ্ঞায়িত (Undefined) থাকবে এবং সুস্পষ্ট `null` রিটার্ন করবে",
+        "সবসময় Recall-এর সমান হবে",
+        "ডেটার মূল Prevalence-এর সমান হবে"
+      ],
+      "answer": 1,
+      "explanation": "`TP + FP = 0` হলে ভগ্নাংশটির হর শূন্য হওয়ায় অনুপাতটি গাণিতিকভাবে অসংজ্ঞায়িত হয়ে পড়ে; সেখানে নীরবে `0.0` বসালে ফলাফলের ভুল ব্যাখ্যা তৈরি হয়।"
+    },
+    {
+      "id": "ch14_q14",
+      "question": "Decision অংশে Threshold লক করার পর আবার `Fit + Decision` ডেটা একত্র করে Model পুনরায় ট্রেন (Refit) করলে কী ঝুঁকি তৈরি হয়?",
+      "options": [
+        "সব নমুনার স্কোর আগের মতোই হুবহু অপরিবর্তিত থাকে",
+        "পুরোনো Threshold-এর Calibration আপনাআপনি আরও নিখুঁত হয়ে যায়",
+        "নতুন Model-এর Probability ম্যাপিং ও Operating Point বদলে যেতে পারে",
+        "চূড়ান্ত মূল্যায়নের জন্য আর কোনো Final Test ডেটার প্রয়োজন থাকে না"
+      ],
+      "answer": 2,
+      "explanation": "পুনরায় ট্রেনিং করলে নতুন একটি Artifact তৈরি হয় যার Scaler ও Weight বদলে যেতে পারে; তাই পুরোনো Threshold নতুন ম্যাপিংয়ে যাচাই করা ছাড়া ব্যবহার করা নিরাপদ নয়। এজন্যই আমাদের বিজয়ী Model কেবল Fit অংশেই ট্রেনিংপ্রাপ্ত রাখা হয়েছে।"
+    },
+    {
+      "id": "ch14_q15",
+      "question": "Pipeline Trace ল্যাবে কাঁচা মান এবং প্রমিত (`z`) স্থানাঙ্কের সুইচ বদলালে আসলে কী পরিবর্তন ঘটে?",
+      "options": [
+        "উৎস ডেটার আসল Label বদলে যায়",
+        "ভেতরের ট্রেনিংপ্রাপ্ত Model Weights বদলে যায়",
+        "আনুষ্ঠানিকভাবে নির্বাচিত বিজয়ী Model পাল্টে যায়",
+        "কেবল পর্দায় দেখানো স্থানাঙ্ক বদলায়; ট্রেনিংপ্রাপ্ত Pipeline-এর Probability একই থাকে"
+      ],
+      "answer": 3,
+      "explanation": "মূল গণনা সবসময় ট্রেনিং থেকে পাওয়া স্থির `mean` ও `scale` ব্যবহার করেই চলে; পর্দায় দেখার মোড বদলালে ভেতরের রূপান্তরের চুক্তি কখনোই ভাঙে না।"
+    },
+    {
+      "id": "ch14_q16",
+      "question": "একক কোনো Row-এ নির্দিষ্ট একটি Feature-এর চিহ্নযুক্ত অবদান (Signed Contribution) অনেক বড় দেখালে সেখান থেকে কী বোঝা যায়?",
+      "options": [
+        "এটি একাই ওই উপাদানের কার্যকারণগত (Causal) গুরুত্ব প্রমাণ করে না",
+        "বাইরে থেকে ওই উপাদান বাড়ালেই স্বাদের মান নিশ্চিতভাবে বাড়বে",
+        "ওই নমুনার মানুষের দেওয়া `quality` স্কোর শতভাগ নির্ভুল",
+        "পুরো Dataset-এর Variance অনুপাত সমান রয়েছে"
+      ],
+      "answer": 0,
+      "explanation": "প্রতিটি বার কেবল প্রমিত মান ও গুণাঙ্কের গুণফল (`z * weight`) দেখায়; Feature-গুলোর পারস্পরিক সংশ্লেষ, রেফারেন্স গড় এবং Regularization এর ব্যাখ্যাকে গভীরভাবে প্রভাবিত করে।"
+    },
+    {
+      "id": "ch14_q17",
+      "question": "আমাদের এই প্রজেক্টে Permutation Importance ঠিক কোন অংশে এবং কী উদ্দেশ্যে হিসাব করা হয়েছে?",
+      "options": [
+        "Final Test অংশে নতুন করে Hyperparameter টিউন করার জন্য",
+        "Decision Validation অংশে Model-এর আচরণ বোঝার ডায়াগনস্টিক হিসেবে",
+        "ভবিষ্যতের অজানা Label অনুমান করার বিকল্প সূত্র হিসেবে",
+        "Training ডেটায় বোতলের পরিচয় শনাক্ত করার জন্য"
+      ],
+      "answer": 1,
+      "explanation": "Decision অংশে ৫ বার পুনরাবৃত্তি করে গড় AP হ্রাস দেখা হয়েছে কেবল ডায়াগনস্টিক হিসেবে; এটি দেখে কলাম ছেঁটে ফেলতে চাইলে নতুন করে মূল্যায়ন কাঠামোর নকশা করতে হবে।"
+    },
+    {
+      "id": "ch14_q18",
+      "question": "Permutation Importance এবং Ablation পরীক্ষার মূল পার্থক্য কোনটি?",
+      "options": [
+        "দুটি পরীক্ষাই সবসময় হুবহু একই সংখ্যা রিটার্ন করে",
+        "কোনোটিতেই নতুন করে Model ট্রেন করার প্রয়োজন পড়ে না",
+        "Permutation স্থির Model-এ ইনপুট ওলটপালট করে দেখে, আর Ablation কলাম বাদ দিয়ে পুনরায় ট্রেন করে",
+        "দুটি পরীক্ষাই সরাসরি রাসায়নিক কার্যকারণ (Causality) প্রমাণ করে"
+      ],
+      "answer": 2,
+      "explanation": "পরস্পর সম্পর্কযুক্ত Feature থাকলে এই দুই পরীক্ষার ফলাফল বেশ আলাদা হতে পারে; আর আমাদের গৌণ Ablation পরীক্ষাটি আনুষ্ঠানিকভাবে নির্বাচিত বিজয়ী Model-কে পুনরায় র‍্যাঙ্ক করে না।"
+    },
+    {
+      "id": "ch14_q19",
+      "question": "অসমান আকারের Group নিয়ে Group Bootstrap করার সময় Row-weighted গড় খরচ কীভাবে হিসাব করতে হয়?",
+      "options": [
+        "সবসময় প্রতিটি Group-এর নিজস্ব গড়ের সাধারণ (Unweighted) গড় নিয়ে",
+        "কেবল সবচেয়ে ছোট আকারের Group-টি রেখে বাকিগুলো বাদ দিয়ে",
+        "প্রতিটি Group থেকে অতিরিক্ত Row কেটে সমান করে নিয়ে",
+        "নির্বাচিত Group-গুলোর মোট খরচের যোগফলকে তাদের মোট Row সংখ্যা দিয়ে ভাগ করে"
+      ],
+      "answer": 3,
+      "explanation": "Group Resampling-এ নির্বাচিত প্রতিটি Group-এর সব সদস্য Row রাখা হয়; অসমান আকারের ওজন ঠিক রাখতে প্রতি ধাপে মোট খরচের যোগফল ও মোট Row সংখ্যার অনুপাত পুনরায় হিসাব করতে হয়।"
+    },
+    {
+      "id": "ch14_q20",
+      "question": "স্থির Prediction-এর ওপর চালানো আমাদের Group Bootstrap হিসাবটি কোন অনিশ্চয়তাটুকু মাপার বাইরে রাখে?",
+      "options": [
+        "Training, Candidate অনুসন্ধান এবং Policy নির্বাচন প্রক্রিয়ার তারতম্যজনিত অনিশ্চয়তা",
+        "মূল্যায়ন অংশের নমুনার যেকোনো ধরনের পরিবর্তনশীলতা",
+        "উৎস ডেটার Chemistry Group-এর পরিচয়সূচক নম্বর",
+        "ব্যবহৃত মূল্যায়ন মাপকাঠিগুলোর গাণিতিক সংজ্ঞা"
+      ],
+      "answer": 0,
+      "explanation": "যেহেতু ট্রেনিংপ্রাপ্ত Model এবং Threshold এখানে স্থির রাখা হয়েছে, তাই এটি কেবল মূল্যায়ন অংশের Group পুনঃনমুনায়নের শর্তসাপেক্ষ ব্যবধান দেখায়।"
+    },
+    {
+      "id": "ch14_q21",
+      "question": "এই অধ্যায়ে Final Test-এর ফলাফল প্রকাশিত হয়ে যাওয়ার পর আপনি যদি নতুন কোনো Model টিউন করেন, তবে তার চূড়ান্ত মূল্যায়নে কী প্রয়োজন?",
+      "options": [
+        "একই প্রকাশিত Test সেটটি আজীবন অস্পর্শিত প্রমাণ হিসেবে কাজ করবে",
+        "নিরপেক্ষ প্রমাণের জন্য নতুন ও অদেখা মূল্যায়ন ডেটা বা পূর্বপরিকল্পিত নতুন কাঠামো দরকার",
+        "নতুন টিউনিং করলে স্কোর বাড়ার গাণিতিক নিশ্চয়তা তৈরি হবে",
+        "পরবর্তী ধাপে আর কোনো Split Role মানার প্রয়োজন থাকবে না"
+      ],
+      "answer": 1,
+      "explanation": "প্রকাশিত Final Test এখন 'দেখা হয়ে যাওয়া' (Observed) ডেটা। পুরোনো স্ক্রিপ্ট আবার চালালে গণনার ধারাবাহিকতা যাচাই হয়, কিন্তু নতুন কোনো স্বাধীন প্রমাণ তৈরি হয় না।"
+    },
+    {
+      "id": "ch14_q22",
+      "question": "সংরক্ষিত Artifact ফোল্ডারের `reference_queries.json` ফাইলে ঠিক কীসের আউটপুট রাখা হয়?",
+      "options": [
+        "যেকোনো গৌণ বা পরীক্ষামূলক তুলনামূলক Model-এর ফলাফল",
+        "কেবল মূল ডেটার আসল Binary Target তালিকা",
+        "সংরক্ষিত নির্বাচিত মূল Pipeline-টিরই Reference Prediction সমূহ",
+        "কেবল ট্রেনিং ডেটার ১১টি কলামের গড় (Mean) মান"
+      ],
+      "answer": 2,
+      "explanation": "নির্বাচিত Model-এর পরিচয় এবং কাঁচা Feature Query-সহ সংরক্ষিত এই Golden Probability-গুলোই পরবর্তীতে Artifact লোড করে Round-trip যাচাই করতে ব্যবহৃত হয়।"
+    },
+    {
+      "id": "ch14_q23",
+      "question": "ইনপুটের প্রতিটি সংখ্যার মান সঠিক রেখেও যদি কলামের ক্রম (Feature Order) উল্টেপাল্টে পাঠানো হয়, তবে কী ঘটবে?",
+      "options": [
+        "যেকোনো ক্রমেই সবসময় হুবহু একই স্কোর পাওয়া যাবে",
+        "ভেতরের `StandardScaler` নিজে থেকেই সঠিক কলাম চিনে ঠিক করে নেবে",
+        "Average Precision-এর গাণিতিক সংজ্ঞা স্বয়ংক্রিয়ভাবে বদলে যাবে",
+        "আপাতদৃষ্টিতে স্বাভাবিক কিন্তু সম্পূর্ণ ভুল স্কোর তৈরি হবে; তাই Schema ও ক্রম যাচাইয়ের সুরক্ষা আবশ্যক"
+      ],
+      "answer": 3,
+      "explanation": "সংখ্যাসূচক Model কলামের অবস্থানের ওপর নির্ভরশীল; তাই পরিবেশনের সময় কলামের নাম, সুনির্দিষ্ট ক্রম এবং ভেক্টরের মাত্রার চুক্তি কঠোরভাবে যাচাই করতে হবে।"
+    },
+    {
+      "id": "ch14_q24",
+      "question": "আমাদের এই Capstone-এর সংগৃহীত প্রমাণ নিচের কোন দাবিটিকে যৌক্তিকভাবে সমর্থন করে?",
+      "options": [
+        "একই উৎস থেকে Group আলাদা করে লক করা প্রোটোকলের অধীনে অর্জিত এই মাপকাঠিগুলো",
+        "বাজারে যেকোনো বাণিজ্যিক ওয়াইনের মান নির্ধারণের শতভাগ নিশ্চয়তা",
+        "অ্যালকোহল বাড়ালে ওয়াইনের স্বাদ বাড়ার প্রত্যক্ষ কার্যকারণ সম্পর্ক",
+        "ভবিষ্যতের যেকোনো নতুন পরিবেশে নিখুঁত Accuracy পাওয়ার গ্যারান্টি"
+      ],
+      "answer": 0,
+      "explanation": "ব্যক্তিনিষ্ঠ স্বাদ-বিচার, প্রক্সি গ্রুপ, অনুপস্থিত Batch Metadata এবং সীমিত পরীক্ষার বাজেটের কারণে আমাদের দাবি কঠোরভাবে এই প্রোটোকলের প্রমাণেই সীমাবদ্ধ রাখা হয়েছে।"
+    },
+    {
+      "id": "ch14_q_paired_revision",
+      "question": "স্থির (Frozen) দুটি Model `A` এবং `B` তুলনা করার সময় Group Bootstrap কীভাবে পরিচালনা করা উচিত?",
+      "options": [
+        "প্রতিটি ধাপে দুটি Model-এর জন্যই হুবহু একই নির্বাচিত Group ID ব্যবহার করে",
+        "দুটি Model-এর জন্য সম্পূর্ণ আলাদা র‍্যান্ডম Group নমুনা তুলে",
+        "ডেটা থেকে কেবল আসল Positive Row-গুলো রেখে বাকি সব বাদ দিয়ে",
+        "জোর করে ছোট-বড় সব Group-কে সমান সংখ্যক Row-এর ওজন দিয়ে"
+      ],
+      "answer": 0,
+      "explanation": "একই Resample-এর ওপর `B - A` পার্থক্য বের করলে ঠিক একই নমুনাগুলোর সাপেক্ষে ন্যায্য তুলনা বজায় থাকে। আর Row-weighted খরচ পেতে হলে নির্বাচিত গ্রুপগুলোর খরচের পার্থক্যের যোগফলকে মোট নির্বাচিত Row সংখ্যা দিয়ে ভাগ করতে হয়।"
+    },
+    {
+      "id": "ch14_q_fairness_revision",
+      "question": "দুটি গ্রুপেই `TPR = 0.8` এবং `FPR = 0.2`, কিন্তু তাদের Positive অনুপাত (`Prevalence`) যথাক্রমে `0.2` এবং `0.8` হলে গ্রুপ দুটির Precision কেমন হবে?",
+      "options": [
+        "দুটি গ্রুপেই সমান 0.8 হবে",
+        "দুটি গ্রুপেই সমান 0.2 হবে",
+        "প্রথম গ্রুপে 0.5 এবং দ্বিতীয় গ্রুপে প্রায় 0.941176 হবে",
+        "Prevalence থেকে Precision বের করার কোনো গাণিতিক উপায় নেই"
+      ],
+      "answer": 2,
+      "explanation": "`Precision = (TPR * π) / (TPR * π + FPR * (1 - π))` সূত্রানুযায়ী Base Rate (`π`) বদলালে সমান TPR ও FPR থাকা সত্ত্বেও Precision বদলে যায়। উল্লেখ্য, একটি নির্দিষ্ট Operating Point-এর এই হিসাব Score Calibration পরীক্ষা করে না।"
+    }
+  ],
+  "exercises": [
+    {
+      "id": "ch14_ex_cost",
+      "title": "গড় Decision খরচ নির্ণয়",
+      "prompt": "উদাহরণস্বরূপ Confusion গণনায় `fp = 3`, `fn = 2` এবং মোট নমুনা `n = 10` দেওয়া আছে। প্রতিটির খরচ `cost_fp = 1.0` এবং `cost_fn = 4.0` হলে গড় খরচ (Mean Cost) হিসাব করে `answer` চলকে রাখুন।",
+      "starter": "fp, fn, n = 3, 2, 10\ncost_fp, cost_fn = 1.0, 4.0\nanswer = 0.0\n",
+      "solution": "fp, fn, n = 3, 2, 10\ncost_fp, cost_fn = 1.0, 4.0\nanswer = (cost_fp * fp + cost_fn * fn) / n\nprint(answer)\n",
+      "expected": 1.1,
+      "explanation": "মোট খরচ `1.0 * 3 + 4.0 * 2 = 11.0`, যাকে `n = 10` দিয়ে ভাগ করলে গড় খরচ দাঁড়ায় `(3 + 4 * 2) / 10 = 1.1` (উদাহরণমূলক একক প্রতি Row)। বাস্তব প্রয়োগক্ষেত্রে প্রকৃত খরচ নির্ধারণের জন্য সংশ্লিষ্ট ডোমেইনের তথ্য প্রয়োজন হয়।"
+    },
+    {
+      "id": "ch14_ex_bayes",
+      "title": "আদর্শ Calibrated Threshold নির্ণয়",
+      "prompt": "ধরুন `cost_fp = 1.0`, `cost_fn = 4.0` এবং সঠিক সিদ্ধান্তের (`TP` ও `TN`) খরচ শূন্য। নিখুঁতভাবে Calibrated Posterior সম্ভাবনা `p`-এর জন্য তাত্ত্বিক আদর্শ Decision Threshold হিসাব করে `answer` চলকে রাখুন।",
+      "starter": "cost_fp, cost_fn = 1.0, 4.0\nanswer = 0.0\n",
+      "solution": "cost_fp, cost_fn = 1.0, 4.0\nanswer = cost_fp / (cost_fp + cost_fn)\nprint(answer)\n",
+      "expected": 0.2,
+      "explanation": "Positive সিদ্ধান্তের প্রত্যাশিত খরচ `1 - p` এবং Negative সিদ্ধান্তের খরচ `4p`। আমরা তখনই Positive বেছে নিই যখন `1 - p <= 4p`, অর্থাৎ `p >= 1/5`। তাই আদর্শ Threshold হলো `0.2`। মনে রাখবেন, নিখুঁত Calibration ও ধ্রুব খরচের অনুমান এই সূত্রের অংশ।"
+    },
+    {
+      "id": "ch14_ex_ties",
+      "title": "Confusion গণনায় সমান Threshold-এর নিয়ম",
+      "prompt": "আসল মান `y = [0, 1, 1, 0]`, প্রদত্ত সম্ভাবনা `p = [0.2, 0.3, 0.9, 0.7]` এবং `threshold = 0.3` দেওয়া আছে। আমাদের `p >= threshold` নিয়ম ব্যবহার করে মোট `TP` (True Positive) সংখ্যা হিসাব করে `answer` চলকে রাখুন।",
+      "starter": "y, p = [0, 1, 1, 0], [0.2, 0.3, 0.9, 0.7]\nthreshold = 0.3\nanswer = 0.0\n",
+      "solution": "y, p = [0, 1, 1, 0], [0.2, 0.3, 0.9, 0.7]\nthreshold = 0.3\nanswer = sum(label == 1 and prob >= threshold for label, prob in zip(y, p))\nprint(answer)\n",
+      "expected": 2,
+      "explanation": "স্কোর `0.3` কাঁটায় কাঁটায় `threshold = 0.3`-এর সমান হওয়ায় `p >= threshold` নিয়মে সেটি Positive গণ্য হবে। ফলে সম্পূর্ণ গণনায় পাওয়া যায় `TP = 2`, `FP = 1`, `FN = 0` এবং `TN = 1`।"
+    },
+    {
+      "id": "ch14_ex_brier",
+      "title": "Brier Score সম্ভাবনার ত্রুটি নির্ণয়",
+      "prompt": "আসল মান `y = [0, 1, 1, 0]` এবং প্রদত্ত সম্ভাবনা `p = [0.2, 0.3, 0.9, 0.7]` দেওয়া আছে। এদের `Brier Score` হিসাব করে `answer` চলকে রাখুন।",
+      "starter": "y, p = [0, 1, 1, 0], [0.2, 0.3, 0.9, 0.7]\nanswer = 0.0\n",
+      "solution": "y, p = [0, 1, 1, 0], [0.2, 0.3, 0.9, 0.7]\nanswer = sum((prob - label) ** 2 for label, prob in zip(y, p)) / len(y)\nprint(answer)\n",
+      "expected": 0.2575,
+      "explanation": "প্রতিটি নমুনার বর্গ ত্রুটি `(p_i - y_i)^2` যথাক্রমে `0.04`, `0.49`, `0.01` এবং `0.49`। এদের গড় নিলে পাওয়া যায় `1.03 / 4 = 0.2575`।"
+    },
+    {
+      "id": "ch14_ex_ap",
+      "title": "Non-interpolated Average Precision নির্ণয়",
+      "prompt": "স্কোরের বড় থেকে ছোট ক্রমে সাজানো নমুনার আসল মান `labels = [1, 0, 1, 0]` এবং কোনো সমান স্কোর (Tie) নেই। Recall-বৃদ্ধির সংজ্ঞা ব্যবহার করে এর `Average Precision` হিসাব করে `answer` চলকে রাখুন।",
+      "starter": "labels = [1, 0, 1, 0]\nanswer = 0.0\n",
+      "solution": "labels = [1, 0, 1, 0]\nseen = 0\nanswer = 0.0\nfor rank, label in enumerate(labels, 1):\n    seen += label\n    if label:\n        answer += (seen / rank) / sum(labels)\nprint(answer)\n",
+      "expected": 0.8333333333333334,
+      "explanation": "`1`ম এবং `3`য় অবস্থানে থাকা Positive নমুনার ক্ষেত্রে অর্জিত Precision যথাক্রমে `1` ও `2/3`। দুটি ধাপেই Recall বৃদ্ধি `1/2`, তাই `AP = (1/2) * 1 + (1/2) * (2/3) = 5/6`। সংখ্যাসূচক উত্তর হিসেবে `5/6` বা `0.8333333` দেওয়া যাবে।"
+    },
+    {
+      "id": "ch14_ex_pipeline",
+      "title": "Standardization থেকে Logistic Probability নির্ণয়",
+      "prompt": "কাঁচা ইনপুট `x = [12.0, 2.0]`, ট্রেনিংয়ের `mean = [10.0, 1.0]`, `scale = [2.0, 1.0]`, মডেল `weights = [0.5, -1.0]` এবং `bias = 0.2` দেওয়া আছে। প্রথমে ইনপুটকে Standardize করে চূড়ান্ত Logistic `Probability` হিসাব করে `answer` চলকে রাখুন।",
+      "starter": "from math import exp\n\nx, mean, scale = [12.0, 2.0], [10.0, 1.0], [2.0, 1.0]\nweights, bias = [0.5, -1.0], 0.2\nanswer = 0.0\n",
+      "solution": "from math import exp\n\nx, mean, scale = [12.0, 2.0], [10.0, 1.0], [2.0, 1.0]\nweights, bias = [0.5, -1.0], 0.2\nz = [(a - b) / s for a, b, s in zip(x, mean, scale)]\nscore = bias + sum(a * b for a, b in zip(z, weights))\nanswer = 1 / (1 + exp(-score))\nprint(answer)\n",
+      "expected": 0.425557483188341,
+      "explanation": "প্রমিতকরণের পর পাওয়া যায় `[1.0, 1.0]`, যেখান থেকে Logit আসে `0.5 * 1.0 - 1.0 * 1.0 + 0.2 = -0.3`। এর Sigmoid নিলে চূড়ান্ত Probability দাঁড়ায় প্রায় `0.4255575`। সাধারণ প্রোডাকশন কোডে সবসময় Stable Sigmoid এবং কলামের ক্রম যাচাইয়ের ব্যবস্থা রাখবেন।"
+    },
+    {
+      "id": "ch14_ex_ablation",
+      "title": "Permutation-জনিত AP হ্রাস নির্ণয়",
+      "prompt": "মূল স্কোর `base_ap = 0.84` এবং একটি নির্দিষ্ট Feature ওলটপালট (Permute) করার পরের স্কোর `permuted_ap = 0.79` দেওয়া আছে। স্কোরের হ্রাস (Drop) হিসাব করে `answer` চলকে রাখুন।",
+      "starter": "base_ap, permuted_ap = 0.84, 0.79\nanswer = 0.0\n",
+      "solution": "base_ap, permuted_ap = 0.84, 0.79\nanswer = base_ap - permuted_ap\nprint(answer)\n",
+      "expected": 0.05,
+      "explanation": "স্কোর হ্রাস পেয়েছে `0.84 - 0.79 = 0.05`। এটি ট্রেনিংপ্রাপ্ত স্থির Model ও মূল্যায়ন ডেটার ওপর ইনপুট পরিবর্তনের একটি ডায়াগনস্টিক হিসাব; বাস্তবে কোনো উপাদান পরিবর্তনের কার্যকারণ প্রভাব (Causal Effect) প্রমাণের জন্য বাড়তি অনুমান ও গবেষণা নকশা প্রয়োজন।"
+    },
+    {
+      "id": "ch14_ex_bootstrap",
+      "title": "Cluster Resampling-এ Row-weighted গড় খরচ",
+      "prompt": "তিনটি Group-এর আকার `sizes = [3, 1, 2]`, গ্রুপভিত্তিক মোট খরচ `costs = [4.0, 1.0, 2.0]` এবং নির্বাচিত সূচক `sampled = [0, 0, 2]` দেওয়া আছে। এদের Row-weighted গড় খরচ হিসাব করে `answer` চলকে রাখুন।",
+      "starter": "sizes, costs, sampled = [3, 1, 2], [4.0, 1.0, 2.0], [0, 0, 2]\nanswer = 0.0\n",
+      "solution": "sizes, costs, sampled = [3, 1, 2], [4.0, 1.0, 2.0], [0, 0, 2]\nanswer = sum(costs[g] for g in sampled) / sum(sizes[g] for g in sampled)\nprint(answer)\n",
+      "expected": 1.25,
+      "explanation": "নির্বাচিত Group-গুলোর মোট খরচের যোগফল `4.0 + 4.0 + 2.0 = 10.0` এবং মোট Row সংখ্যা `3 + 3 + 2 = 8`; ফলে গড় খরচ দাঁড়ায় `10.0 / 8 = 1.25`। একই Group দুবার নির্বাচিত হলে তার সব Row এবং খরচ দুবারই গণনা করা হয়।"
+    },
+    {
+      "id": "ch14_ex_spread",
+      "title": "Fold স্কোরের Sample Standard Deviation",
+      "prompt": "তিনটি Fold-এর AP মান `folds = [0.7, 0.8, 0.9]` দেওয়া আছে। `ddof = 1` রীতিতে এদের Sample `Standard Deviation` হিসাব করে `answer` চলকে রাখুন।",
+      "starter": "from statistics import stdev\n\nfolds = [0.7, 0.8, 0.9]\nanswer = 0.0\n",
+      "solution": "from statistics import stdev\n\nfolds = [0.7, 0.8, 0.9]\nanswer = stdev(folds)\nprint(answer)\n",
+      "expected": 0.1,
+      "explanation": "মানগুলোর গড় `0.8`, এবং গড় থেকে ব্যবধানের বর্গের যোগফল `0.02`। এটিকে `2` দিয়ে ভাগ করে বর্গমূল নিলে পাওয়া যায় `0.1`। মনে রাখবেন, পরস্পর Overlap থাকা CV Fold-এর এই বিস্তার সরাসরি স্বাধীন নমুনার Confidence Interval নয়।"
+    },
+    {
+      "id": "ch14_ex_schema",
+      "title": "ভুল ক্রমের Feature প্রত্যাখ্যান করা",
+      "prompt": "প্রত্যাশিত কলামের ক্রম `expected = [\"alcohol\", \"pH\"]` এবং আগত ক্রম `incoming = [\"pH\", \"alcohol\"]` দেওয়া আছে। ক্রম যাচাইয়ের ফাংশন `validate_order` লিখে অমিল ধরা পড়লে `answer` চলকে একক মান `1` রাখুন।",
+      "starter": "expected, incoming = [\"alcohol\", \"pH\"], [\"pH\", \"alcohol\"]\nanswer = 0.0\n",
+      "solution": "expected, incoming = [\"alcohol\", \"pH\"], [\"pH\", \"alcohol\"]\n\n\ndef validate_order(incoming, expected):\n    if incoming != expected:\n        raise ValueError(\"feature order mismatch\")\n\n\ntry:\n    validate_order(incoming, expected)\nexcept ValueError:\n    answer = 1.0\nelse:\n    answer = 0.0\nprint(answer)\n",
+      "expected": 1,
+      "explanation": "সঠিক সংখ্যাসূচক মান ভুল ক্রমে পাঠালেও আপাতদৃষ্টিতে স্বাভাবিক কিন্তু ভুল স্কোর তৈরি হতে পারে। কলামের নাম ও ক্রমের চুক্তি প্রয়োগ করলে এই অমিল ধরা পড়ে, তাই নির্ধারিত উত্তর `1`।"
+    }
+  ],
+  "interviews": [
+    {
+      "title": "পাঁচ মিনিটে সম্পূর্ণ Capstone প্রজেক্টের যুক্তিনির্ভর উপস্থাপনা",
+      "tag": "PROJECT DEFENSE · 30 MIN",
+      "prompt": "পাঁচ মিনিটের মধ্যে প্রজেক্টের মূল সমস্যা, উৎস ডেটা, Target, তিন স্তরের Split Role, Candidate Budget, Decision Policy এবং চূড়ান্ত ফলাফল গুছিয়ে ব্যাখ্যা করুন। এই কাজের সবচেয়ে বড় সীমাবদ্ধতাগুলো কী কী?",
+      "answer": "এই শিক্ষামূলক Binary Classification প্রজেক্টে ওয়াইনের `11`টি ভৌত-রাসায়নিক Feature থেকে তার সংবেদী মান `quality >= 6` কি না তা অনুমান করা হয়েছে। মূল UCI Red Wine ফাইলে মোট `1,599`টি Row এবং `1,359`টি স্বতন্ত্র Chemistry Profile রয়েছে। ডেটা ফাঁস রোধে `Target` বাদ দিয়ে কেবল রাসায়নিক মানের ভিত্তিতে Grouping করা হয়েছে, এবং কোনো Group Overlap না রেখে ডেটাকে `Fit` (`966`টি Row), `Decision` (`313`টি Row) ও `Final Test` (`320`টি Row)—এই তিন ভূমিকায় ভাগ করা হয়েছে। কেবল Fit অংশের একই `3`টি Grouped Fold-এ `Prior Baseline` ও `6`টি শেখা Candidate তুলনা করে সর্বোচ্চ গড় `AP`-তে বিজয়ী হয়েছে `Logistic (C = 1)`। এরপর Decision Validation অংশে উদাহরণমূলক `FP = 1` ও `FN = 4` খরচ ধরে `Threshold = 0.30` স্থির করা হয়েছে, আর নির্বাচিত Model-টি কেবল Fit অংশেই ট্রেনিংপ্রাপ্ত অবস্থায় অপরিবর্তিত রাখা হয়েছে। লক করা Final Test-এ অর্জিত হয়েছে `AP ≈ 0.8195` এবং গড় খরচ `0.4875`, আর স্থির Prediction-এর শর্তসাপেক্ষ অনিশ্চয়তা মাপা হয়েছে Group Bootstrap দিয়ে। এই কাজের সবচেয়ে গুরুত্বপূর্ণ সীমাবদ্ধতাগুলো হলো: ব্যক্তিনিষ্ঠ স্বাদ-বিচারের `Label`, অযাচাইকৃত বোতল বা উৎপাদন-ব্যাচের পরিচয়, সময়ের বা বাহ্যিক পরিবেশের তথ্যের অভাব এবং অনুমানভিত্তিক খরচের একক। এ ছাড়া চূড়ান্ত ফলাফল প্রকাশিত হয়ে যাওয়ায় ভবিষ্যতে নতুন কোনো টিউনিং যাচাইয়ের জন্য নতুন ও অদেখা প্রমাণ প্রয়োজন হবে।"
+    },
+    {
+      "title": "Data Leakage এড়িয়ে Model, Calibration ও Policy নির্বাচনের নকশা",
+      "tag": "EVALUATION · 30 MIN",
+      "prompt": "একটি প্রজেক্টে Hyperparameter বাছাই, Probability Calibration, Operating Threshold এবং চূড়ান্ত স্কোর—এই চারটি ধাপের জন্য ডেটার ভূমিকা (Data Roles) কীভাবে আলাদা করবেন?",
+      "answer": "সবার আগে Prediction চুক্তি, অনুমানের মুহূর্তে উপলব্ধ ইনপুট এবং ডেটার সঠিক `Sampling Unit` লিখিতভাবে স্থির করব। Candidate Model বাছাই এবং ডেটা থেকে শেখা যাবতীয় Preprocessing কেবল ভেতরের Training Fold-গুলোতেই সীমাবদ্ধ রাখব। যদি আলাদা কোনো `Calibrator` ফিট করতে হয়, তবে নিজের Training Prediction-এর ওপর অতি-আত্মবিশ্বাসী ম্যাপিং না শিখিয়ে আলাদা Group/Time-সচেতন Held-out অংশ অথবা সুপরিকল্পিত `Nested Cross-fitting` ব্যবহার করব। এরপর Operating `Threshold` শেখার ডেটাটিকেও চূড়ান্ত Final Test থেকে সম্পূর্ণ আলাদা রাখব। খেয়াল রাখতে হবে, নীতি লক করার পর আবার `Fit + Decision` ডেটা মিলিয়ে Model পুনরায় ফিট করলে সম্ভাবনার বণ্টন বদলে যেতে পারে—তাই নতুন ম্যাপিংয়ে পুরোনো `Threshold` যাচাই না করে ব্যবহার করা যাবে না। আমাদের বর্তমান Capstone প্রজেক্টে কোনো Calibrator ফিট করা হয়নি এবং বিজয়ী Model-টিকে কেবল Fit অংশেই ট্রেনিংপ্রাপ্ত রাখা হয়েছে। সবশেষে রিপোর্টে পুরো ট্রেনিং-অনুসন্ধান প্রক্রিয়ার অনিশ্চয়তা এবং স্থির Prediction-এর শর্তসাপেক্ষ অনিশ্চয়তা স্পষ্টভাবে আলাদা করে উল্লেখ করব।",
+      "prerequisiteLessons": [
+        "ch14_roles",
+        "ch14_probabilities"
+      ]
+    },
+    {
+      "title": "এই পরীক্ষায় Random Forest-এর চেয়ে Logistic Regression এগিয়ে থাকল কেন?",
+      "tag": "MODEL REASONING · 20 MIN",
+      "prompt": "আমাদের রানে দেখা গেছে Random Forest-এর চেয়ে `Logistic Regression` সামান্য ভালো গড় CV AP পেয়েছে। এখান থেকে আপনি কী সিদ্ধান্ত টানবেন এবং পরের ধাপে কোন পরীক্ষাটির প্রস্তাব দেবেন?",
+      "answer": "প্রথম কথা হলো, এটি আমাদের নির্দিষ্ট `Target`, উৎস ডেটা, `11`টি সংখ্যাসূচক Feature, Exact-profile Grouping, `3`টি Fold এবং পূর্বঘোষিত সীমিত Search Budget-এর অধীনে পাওয়া একটি শর্তসাপেক্ষ ফল। গড় `AP`-এর এই অতি সামান্য ব্যবধানের ভেতর Fold-এর স্বাভাবিক তারতম্য এবং বাছাইজনিত প্রভাব মিশে আছে—তাই এখান থেকে ভুলেও এমন ঢালাও সিদ্ধান্ত টানা যাবে না যে সব Dataset-এই Tree বা Forest-এর চেয়ে Linear Model ভালো! কারণ বিশ্লেষণের সময় আমরা `Regularization`, নমুনার পরিমিত আকার, সমস্যার রৈখিক গঠন, `Bias-Variance` ভারসাম্য এবং উভয় পরিবারের টিউনিং বাজেটের পার্থক্য বিবেচনা করব। পরবর্তী অনুসন্ধান হিসেবে Fit অংশের ভেতরেই Grouped `Learning Curve` পরীক্ষা কিংবা প্রসারিত Hyperparameter অনুসন্ধানের প্রস্তাব দেওয়া যেতে পারে—যেখানে রক্ষণাবেক্ষণের সরলতা, `Calibration`, Latency ও মেমোরির গ্রহণযোগ্যতার শর্তগুলো আগেই ঘোষণা করা থাকবে। তবে ইতিমধ্যে প্রকাশিত Final Test দেখে কোনো সেটিং টিউন করে সেই স্কোরকে নতুন প্রমাণ হিসেবে দাবি করা যাবে না।"
+    },
+    {
+      "title": "Cost-sensitive Threshold প্রতিপাদন ও বাস্তব Grid-এ বাস্তবায়ন",
+      "tag": "ML CODING · 30 MIN",
+      "prompt": "নিখুঁতভাবে Calibrated সম্ভাবনার জন্য আদর্শ Cost Threshold সমীকরণটি প্রতিপাদন করুন। এরপর সসীম Validation Grid-এ সেরা Policy নির্বাচনের কোড-নকশা ব্যাখ্যা করুন, যেখানে সমান মান (Ties) ও অসংজ্ঞায়িত মাপকাঠি নিরাপদে সামলানো হবে।\n\nপাশাপাশি `y = [0, 1, 1, 0]`, `p = [0.2, 0.3, 0.9, 0.7]`, `FP = 1 / FN = 4` খরচ এবং `p >= tau` নিয়মে সম্ভাব্য সব স্বতন্ত্র Decision Set পরীক্ষা করুন।",
+      "answer": "সঠিক সিদ্ধান্তের খরচ শূন্য ধরে Positive সিদ্ধান্ত নিলে প্রত্যাশিত ক্ষতি হয় `C_FP * (1 - p)` এবং Negative সিদ্ধান্ত নিলে ক্ষতি হয় `C_FN * p`। প্রকৃত শর্তসাপেক্ষ সম্ভাবনা জানা থাকলে আমরা তখনই Positive বেছে নেব যখন `C_FP * (1 - p) <= C_FN * p`, যা সমাধান করলে পাওয়া যায় আদর্শ শর্ত `p >= C_FP / (C_FP + C_FN)`। বাস্তব Validation ডেটার Grid-এ প্রতিটি বিন্দুর Confusion গণনা থেকে গড় খরচ `(C_FP * FP + C_FN * FN) / n` সর্বনিম্ন করার বিন্দুটি বেছে নেব; আর গড় খরচ হুবহু সমান হলে রক্ষণশীলভাবে সবচেয়ে বড় `Threshold`-টি নেওয়ার নিয়ম রাখব। ইনপুট যাচাইয়ে সমান দৈর্ঘ্যের Binary `Label`, `[0, 1]` সীমার সসীম সম্ভাবনা, বৈধ `Threshold` এবং অঋণাত্মক খরচ নিশ্চিত করব। প্রান্তিক চুক্তিতে স্পষ্ট থাকবে: `p == tau` হলে Positive, সব Positive বা শূন্য Predicted Positive হলে কিংবা কোনো Class অনুপস্থিত থাকলে বিভ্রান্তিকর সংখ্যার বদলে `null` রিটার্ন করা, এবং `Threshold` কমালে Predicted Positive সেট কখনোই সংকুচিত না হওয়া।\n\nপ্রদত্ত ছোট উদাহরণে চারটি স্বতন্ত্র স্কোর (`0.2, 0.3, 0.7, 0.9`) এবং সর্বোচ্চ মানের ঠিক পরের একটি প্রান্তিক মান (`> 0.9`) নিলে মোট পাঁচটি স্বতন্ত্র Prediction Set পাওয়া যায়। এর মধ্যে `tau = 0.3` বিন্দুতে পাওয়া যায় `FP = 1, FN = 0` এবং সর্বনিম্ন গড় খরচ `0.25`। মনে রাখতে হবে, Validation ডেটায় পাওয়া এই সর্বনিম্ন খরচে কিছুটা বাছাইজনিত আশাবাদ (Selection Optimism) থাকে, এবং এটি কখনোই Final Test টিউনিং নয়।",
+      "prerequisiteLessons": [
+        "ch14_policy"
+      ]
+    },
+    {
+      "title": "র‍্যাঙ্কিংয়ে AP বাড়ল, কিন্তু রিলিজ Threshold-এ Precision কমে গেল কেন?",
+      "tag": "METRICS · 20 MIN",
+      "prompt": "নতুন একটি Model-এ সামগ্রিক `AP` বাড়লেও আপনার নির্ধারিত রিলিজ `Threshold`-এ `Precision` কমে গেছে। এমনটি কেন ঘটতে পারে এবং কীভাবে সমস্যার মূলে পৌঁছাবেন?",
+      "answer": "মূল কারণ হলো `AP` একটি সামগ্রিক র‍্যাঙ্কিং মাপকাঠি—এটি কোনো নির্দিষ্ট একক Cutoff-এর `Precision` মাপে না! নতুন Model-এ সম্ভাবনার স্কেল, `Calibration`, ডেটার `Prevalence` কিংবা সিদ্ধান্তের সীমানা সরে গেলে সামগ্রিক ক্রম (Ranking) উন্নত হওয়া সত্ত্বেও নির্দিষ্ট একটি পুরোনো `Threshold`-এ অতিরিক্ত False Positive ঢুকে `Precision` পড়ে যেতে পারে। সমস্যার উৎস ধরতে আমরা একই মূল্যায়ন সময়কাল, অভিন্ন Positive Class সংজ্ঞা এবং একই ডেটা উৎসের ওপর পুরো `Precision-Recall Curve` ও Confusion গণনা পাশাপাশি মিলিয়ে দেখব। এরপর রিভিউ সক্ষমতা বা খরচের নীতি অনুযায়ী নতুন Model-এর জন্য উপযুক্ত `Threshold` আলাদাভাবে Validation ডেটায় যাচাই করব। পাশাপাশি `Brier Score` ও Reliability Bin পরীক্ষা করব (কারণ একটি একক সংখ্যা একা Calibration নিশ্চিত করে না), এবং মূল `quality >= 6` Target সংজ্ঞা নাকি Action `Threshold`—ঠিক কোন জায়গাটি বদলেছে তাও নিখুঁতভাবে মিলিয়ে দেখব।"
+    },
+    {
+      "title": "Training ও Serving-এর মধ্যে লুকানো Feature Bug খুঁজে বের করা",
+      "tag": "DEBUGGING · 25 MIN",
+      "prompt": "সার্ভিং পরিবেশে Model কোনো ক্র্যাশ ছাড়াই লোড হচ্ছে এবং সব ইনপুট সসীম সংখ্যায় আসছে, অথচ উৎপন্ন Prediction-গুলো অদ্ভুত ও ভুল মনে হচ্ছে। কীভাবে Feature-এর ক্রম এবং রূপান্তর Audit করবেন?",
+      "answer": "সবার আগে সংরক্ষিত প্রামাণ্য `Feature Names`-এর ক্রম, ইনপুটের দ্বিমাত্রিক `Shape`, `dtype`, অনুপস্থিত তথ্যের নীতি, ট্রেনিং থেকে পাওয়া `mean` ও `scale` এবং Model-এর সংস্করণ একে একে মিলিয়ে দেখব। নিশ্চিত করব যেন রানটাইমে আগত Query বা প্রোডাকশন ব্যাচের ওপর ভুলক্রমে নতুন করে `Scaler` ফিট না করা হয়ে থাকে! এরপর রৈখিক সমীকরণে `Bias` যোগ করা বাদ পড়েছে কি না, গুণাঙ্কের ক্রম উল্টে গেছে কি না এবং কাঁচা মানগুলো সঠিক প্রমিত রূপান্তর পাচ্ছে কি না তা পরীক্ষা করব। সবচেয়ে কার্যকর কৌশল হলো কয়েকটি সংরক্ষিত কাঁচা `Reference Query` এবং বিজয়ী Model-এর প্রত্যাশিত `Golden Probabilities` একসাথে রেখে Python Artifact-এর Round-trip আউটপুট ও অন্য রানটাইমের (যেমন Dart) পাটিগণিত সরাসরি তুলনা করা। পাশাপাশি কলামের ক্রম বা সংখ্যার অমিল, অ-ধনাত্মক `scale`, `NaN` এবং ক্ষতিগ্রস্ত প্যারামিটার আটকানোর স্বয়ংক্রিয় ব্যর্থতা পরীক্ষা (Failure Tests) চালু রাখব—কারণ ভুল ক্রমে সসীম সংখ্যা পাঠালেও নিঃশব্দে বিশ্বাসযোগ্য চেহারার ভুল স্কোর তৈরি হয়।",
+      "prerequisiteLessons": [
+        "ch14_release"
+      ]
+    },
+    {
+      "title": "কার্যকারণ (Causal) দাবি না করে Permutation Importance ব্যাখ্যা করা",
+      "tag": "INTERPRETATION · 25 MIN",
+      "prompt": "পরীক্ষায় দেখা গেল `alcohol` কলামটির Permutation AP হ্রাস বেশ বড়, আর ডেটায় এর সাথে সম্পর্কযুক্ত `density` কলামও রয়েছে। টিমের একজন সদস্য দাবি করছেন বাইরে থেকে অ্যালকোহল বাড়ালেই ওয়াইনের মান বাড়বে—আপনি কীভাবে এর উত্তর দেবেন?",
+      "answer": "আমি স্পষ্টভাবে ব্যাখ্যা করব যে `Permutation Importance` কেবল বিকৃত ইনপুটের সাপেক্ষে একটি স্থির ট্রেনিংপ্রাপ্ত Model-এর পরিসংখ্যানগত নির্ভরশীলতা মাপে—এটি কোনোভাবেই বাস্তব হস্তক্ষেপের কার্যকারণ প্রভাব (Causal Intervention Effect) নয়! পরস্পর সম্পর্কযুক্ত পরিপূরক উপাদান (যেমন `density` ও `alcohol`) থাকলে কখনো একক গুরুত্ব কম দেখাতে পারে, আবার একটি কলাম আলাদাভাবে এলোমেলো করলে বাস্তবে অসম্ভব রাসায়নিক সমন্বয় তৈরি হতে পারে। অন্যদিকে `Ablation` কলামটি পুরোপুরি বাদ দিয়ে নতুন করে Model ট্রেন করে ভিন্ন প্রশ্নের উত্তর খোঁজে—যেমন আমাদের গৌণ পরীক্ষায় একই Fold-এ `Logistic (C = 1)` থেকে `alcohol` বাদ দিলে গড় `AP` পূর্ণ `≈ 0.8386` থেকে কমে `≈ 0.7945` হয়েছে। সতর্ক করে দেব যে এই ডায়াগনস্টিক দেখে কলাম বাদ দিয়ে `Feature Selection` করতে চাইলে বাছাই প্রক্রিয়া ও মূল্যায়নের ভূমিকা নতুন করে সাজাতে হবে। সর্বোপরি, পর্যবেক্ষণমূলক স্বাদ-বিচারের ডেটা এবং অনুপস্থিত উৎপাদন-ব্যাচের তথ্যের কারণে এখান থেকে কোনো কার্যকারণগত দাবি সমর্থনযোগ্য নয়।"
+    },
+    {
+      "title": "অসমান Group-এ সঠিক Estimand ধরে Bootstrap ব্যবধান তৈরি",
+      "tag": "STATISTICS · 30 MIN",
+      "prompt": "ডেটায় অসমান আকারের পুনরাবৃত্ত Chemistry Profile Group রয়েছে। স্থির রাখা Test Prediction-এর ওপর Row-weighted গড় খরচের Bootstrap ব্যবধান কীভাবে তৈরি করবেন?",
+      "answer": "একক Row নয়, বরং পুরো `Group`-কে একক ধরে প্রতিস্থাপনসহ (With Replacement) Resample করব এবং নির্বাচিত প্রতিটি Group-এর ভেতরের সব সদস্য Row একত্রে রাখব—কোনো Group একাধিকবার উঠলে তার সব Row আবারও গণনায় আসবে। প্রতিটি Replicate-এ নির্বাচিত গ্রুপগুলোর মোট খরচের যোগফলকে তাদের মোট Row সংখ্যা দিয়ে ভাগ করে প্রকৃত Row-weighted `Estimand` বজায় রাখব; কারণ অসমান আকারের গ্রুপে প্রতিটি গ্রুপের গড়ের সাধারণ (Unweighted) গড় নিলে সেটি ভিন্ন রাশি মেপে ফেলবে। যদি কোনো বিরল ধাপে কেবল একটি Class আসায় `AP` অসংজ্ঞায়িত হয়, তবে বৈধ Replicate-এর সংখ্যা স্পষ্টভাবে রিপোর্ট করব। সাথে ব্যবহৃত Seed, মোট Resample বাজেট, Percentile নিয়ম এবং বিনিময়যোগ্যতার অনুমান নথিবদ্ধ করব। সবশেষে পরিষ্কারভাবে জানাব যে Model ও Policy স্থির থাকায় এই ব্যবধান ট্রেনিং বা বাছাইয়ের অনিশ্চয়তা মাপে না, এবং প্রক্সি Chemistry Group প্রকৃত স্বাধীন ব্যাচ না হওয়ায় প্রচ্ছন্ন নির্ভরশীলতা ও ভবিষ্যতের Domain Shift এই ব্যবধানের বাইরে থেকে যায়।",
+      "prerequisiteLessons": [
+        "ch14_uncertainty"
+      ]
+    },
+    {
+      "title": "ট্রেনিংপ্রাপ্ত Pipeline প্যাকেজিং ও পর্যালোচনযোগ্য রিলিজ হস্তান্তর",
+      "tag": "ML SYSTEM DESIGN · 30 MIN",
+      "prompt": "ট্রেনিংপ্রাপ্ত Pipeline, নির্বাচিত Threshold, Schema এবং Reference যাচাইসহ একটি পর্যালোচনযোগ্য স্থানীয় রিলিজ অন্য প্রকৌশলীর হাতে তুলে দিতে কী কী সুরক্ষা (Guards) রাখবেন?",
+      "answer": "নির্বাচিত সম্পূর্ণ Pipeline (`StandardScaler` + `Model`), সুনির্দিষ্ট ক্রমের `Feature Schema`, `Target` ও অনুপস্থিত তথ্যের নীতি, স্থির করা `Threshold` ও খরচের অনুমান, উৎস ফাইলের SHA-256 `Hash`, প্যাকেজের সংস্করণ, `Selection Manifest` এবং একটি স্বচ্ছ `Model Card`—সবকিছু একটি সমন্বিত ও সংস্করণযুক্ত বান্ডেলে এক্সপোর্ট করব। নিশ্চিত করব যেন `reference_queries.json`-এর আউটপুটগুলো খোদ সংরক্ষিত বিজয়ী Model থেকেই আসে, কোনো গৌণ ডায়াগনস্টিক Model-এর সাথে গুলিয়ে না যায়। নিজের বিশ্বস্ত Artifact সামঞ্জস্যপূর্ণ পরিবেশে পুনরায় লোড করে `Probabilities` মিলিয়ে Round-trip পরীক্ষা করব এবং `checksums.json` যাচাই করব—তবে নিরাপত্তার স্বার্থে বাইরে থেকে আসা অবিশ্বস্ত কোনো `pickle` বা `joblib` ফাইল লোড করব না। বাস্তব প্রোডাকশন রিলিজের জন্য Staged Promotion, দ্রুত Rollback, Schema ভাঙলে সুস্পষ্ট ব্যর্থতার নীতি এবং নিয়মিত Monitoring প্রয়োজন। আর আমাদের বর্তমান Flutter অ্যাপটি হালকা JSON প্যারামিটার ও প্রমাণ নিয়ে সরাসরি Dart-এ গণনা চালায়, তাই Python Artifact-এর ওপর মোবাইল অ্যাপের কোনো রানটাইম নির্ভরশীলতা নেই।"
+    },
+    {
+      "title": "Final Test-এর ফলাফল দেখে ফেলার পর বৈজ্ঞানিক মূল্যায়নে কী বদলে যায়?",
+      "tag": "SCIENTIFIC REASONING · 20 MIN",
+      "prompt": "প্রকাশিত Final Test-এর ভুলগুলো দেখে আপনি একটি Feature বাদ দিলেন এবং `Threshold` পরিবর্তন করলেন। একই Test সেটে পাওয়া নতুন স্কোরটিকে রিপোর্টে কীভাবে চিহ্নিত করবেন?",
+      "answer": "মূল লক করা Final Test সেটটি এখন 'দেখা হয়ে যাওয়া' (Observed) ডেটা! এর ফলাফল ও ভুল থেকে ধারণা নিয়ে নতুন Model বা নতুন `Threshold` বেছে নিলে একই পুরোনো Test সেটে পাওয়া তুলনামূলক স্কোরটি হয়ে পড়ে সম্পূর্ণ অনুসন্ধানমূলক (Exploratory)—একে কখনোই তাজা বা চূড়ান্ত প্রমাণ (Confirmatory Result) বলা যাবে না। তাই আমরা প্রতিটি পরিবর্তনের সংস্করণ, নতুন অনুসন্ধানের বাজেট এবং কেন পরিবর্তনটি করা হলো তা স্পষ্টভাবে নথিভুক্ত করব, আর চূড়ান্ত যাচাইয়ের জন্য উপযুক্ত নতুন অদেখা ডেটা অথবা আগে থেকে পরিকল্পিত নতুন বাইরের মূল্যায়ন কাঠামোর প্রস্তাব দেব। মনে রাখতে হবে, একই স্ক্রিপ্ট পুনরায় চালিয়ে সংখ্যা মেলানো কেবল গণনার ধারাবাহিকতা (Reproducibility) প্রমাণ করে, নতুন স্বাধীন পরিসংখ্যানগত প্রমাণ তৈরি করে না। তাই `Model Card`-এ শুরুর লক করা ফলাফল, পরবর্তী পরিবর্তন এবং প্রমাণের সীমাবদ্ধতা আলাদা করে স্পষ্ট রাখব।"
+    }
+  ],
+  "book": {
+    "order": 14,
+    "part": "Book 2 · Classical Machine Learning",
+    "prerequisites": [
+      "chapter_04",
+      "chapter_05",
+      "chapter_09",
+      "chapter_10",
+      "chapter_11",
+      "chapter_12",
+      "chapter_13"
+    ],
+    "purpose": "Book 2 (Classical Machine Learning)-এ শেখা প্রতিটি ধাপকে এক সুতোয় গেঁথে একটি Reproducible, ব্যাখ্যাযোগ্য এবং বাস্তব সীমাবদ্ধতা-সচেতন End-to-End ML প্রজেক্ট তৈরি করা।",
+    "outcomes": [
+      "Problem Framing, Data Audit, তিন স্তরের Split Role, Fold-local Pipeline এবং পূর্বঘোষিত Candidate Budget মেনে একটি সম্পূর্ণ Classical ML Workflow তৈরি ও যাচাই করতে পারা।",
+      "Calibration, Cost-sensitive Threshold নির্বাচন, Error Analysis, Subgroup Fairness এবং Uncertainty-র হিসাবসহ একটি স্বচ্ছ Model Card লিখে প্রজেক্টের প্রতিটি সিদ্ধান্ত যুক্তি দিয়ে উপস্থাপন করতে পারা।"
+    ],
+    "recall": [
+      "একটি প্রজেক্টে Model Selection, Threshold নির্ধারণ এবং চূড়ান্ত মূল্যায়নের জন্য আলাদা আলাদা Split Role রাখা কেন অপরিহার্য?",
+      "কোনো একটি Subgroup-এ যদি Positive Sample-এর সংখ্যা 0 হয়, তবে রিপোর্টে বিষয়টি কীভাবে উল্লেখ করবেন? এ ছাড়া একটি Model Card-এ দায়িত্বশীল ব্যবহারের তিনটি প্রধান সীমাবদ্ধতা লিখুন।"
+    ],
+    "bridge": "Book 2 (Classical Machine Learning)-এর যাত্রা এখানেই পূর্ণতা পাচ্ছে। পরের ধাপে আমরা শুরু করব Book 3 (Deep Learning & RL) · Chapter 1 (PyTorch Tensors & Autograd)—তবে নতুন বইয়ে পা রাখার আগে এই Capstone অধ্যায়ের Quiz, Coding Exercise এবং না দেখে উত্তর দেওয়ার Interview প্রশ্নগুলোর মাধ্যমে নিজের প্রস্তুতি যাচাই করে নিন।",
+    "bookId": "classical",
+    "bookChapter": 9
+  }
+}

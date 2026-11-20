@@ -1,0 +1,1627 @@
+{
+  "id": "chapter_37",
+  "number": 37,
+  "title": "Experimentation & Causal Reasoning",
+  "shortTitle": "Experiments & Causality",
+  "displayTitle": "Experiments & Causality\nAssign. Estimate. Question.",
+  "subtitle": "Randomization, Uncertainty এবং Causal Assumption-এর আলোকে যেকোনো Experiment-এর প্রমাণ নিখুঁতভাবে যাচাই করতে শিখুন।",
+  "description": "Define the question. Respect the unit.\nEstimate uncertainty. Audit the assumptions.",
+  "difficulty": "Advanced · experiments & causal inference",
+  "lab": "experimentation",
+  "lessons": [
+    {
+      "id": "ch37_contract",
+      "title": "Experiment Contract: Prediction থেকে Causal প্রশ্নের যাত্রা",
+      "subtitle": "কোন পরিবর্তন, কার জন্য, কোন Outcome এবং কত সময়ের মধ্যে—তা আগেভাগেই স্থির করা",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Prediction বনাম Causal প্রশ্ন",
+          "body": "আগের অধ্যায়ে (Book 6 · Chapter 2: Serving, Monitoring & MLOps) আমরা দেখেছি কীভাবে একটি Model-কে প্রোডাকশনে Serve করতে হয় এবং তার স্বাস্থ্য ও Drift নজরে রাখতে হয়। কিন্তু ধরুন আপনার নতুন Model-টি অফলাইনে দারুণ Prediction দিচ্ছে এবং সার্ভিং সিস্টেমও নির্ভুলভাবে চলছে—তবু একটি মৌলিক প্রশ্ন থেকেই যায়: এই Model-টি বাস্তবে চালু করলে ব্যবহারকারীদের আচরণ বা ব্যবসার মূল Outcome কি সত্যিই ভালো হবে? শুধু Prediction Error বা অফলাইন Accuracy দেখে এই প্রশ্নের উত্তর দেওয়া অসম্ভব। এর জন্য আমাদের জানতে হবে, একটি নির্দিষ্ট Population-এ নতুন পরিবর্তনটি (Treatment) প্রয়োগ করলে এবং না করলে (Control) ফলাফলের আসল পার্থক্য কত দাঁড়ায়।\n\nএই অধ্যায়ে আমরা Randomization, Observation Unit এবং Estimand-এর ধারণা থেকে যাত্রা শুরু করব। এরপর ধাপে ধাপে দেখব, যেখানে সরাসরি Experiment চালানো সম্ভব নয় তেমন Observational Data-তে কী কী Assumption মেনে Adjustment করতে হয় এবং কোন সূক্ষ্ম ভুলে পুরো Causal ব্যাখ্যাই ভেঙে পড়তে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "শুরুতেই Experiment Contract লিখে নেওয়া",
+          "body": "একটি নির্ভরযোগ্য Experiment চালানোর প্রথম শর্ত হলো ডেটা সংগ্রহ শুরুর আগেই তার নিয়মকানুন বা একটি স্পষ্ট Experiment Contract লিখে ফেলা। কারা এই পরীক্ষায় অংশ নেওয়ার যোগ্য (Eligibility), কোন এককে ভাগ করা হবে (Randomization Unit), Treatment ও Control-এর সংস্করণ কী, মূল লক্ষ্য বা Primary Outcome কোনটি, কত দিন ধরে ডেটা মাপা হবে (Measurement Window), নিরাপত্তার জন্য কোন Guardrail Metric-গুলো নজরে থাকবে এবং কীভাবে ট্রাফিক ভাগ ও পরীক্ষা থামানো হবে (Allocation ও Stopping Rule)—এই সবকিছু আগে থেকেই নির্দিষ্ট থাকা চাই। কারণ ফলাফল হাতে আসার পর যেই Metric বা Subgroup-এ সংখ্যাটা দেখতে ভালো লাগছে শুধু সেটি বেছে নিলে তা আর নিরেট প্রমাণ থাকে না, বরং নিছক Exploratory বিশ্লেষণে পরিণত হয়। একইভাবে, পুরোনো কোনো ঐতিহাসিক ডেটার ওপর নতুন করে বিশ্লেষণ চালালে সেটিকে কখনোই শুরু থেকে Preregistered পরীক্ষা বলে দাবি করা চলে না।"
+        },
+        {
+          "type": "math",
+          "title": "Causal প্রশ্নের গাণিতিক কাঠামো",
+          "body": "\\mathrm{question}=(population,intervention,comparison,outcome,horizon)"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ NSW Dataset ও Protocol যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/nsw/experiment_lab.json\").read_text(encoding=\"utf-8\")\n)\nassert lab[\"report\"][\"experimental_units\"] == 445\nassert lab[\"report\"][\"treated\"] == 185\nassert lab[\"report\"][\"external_psid_controls\"] == 2490\nprint(lab[\"report\"][\"protocol\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব Dataset-এর পরিচিতি: NSW ও PSID",
+          "body": "উপরের কোডটিতে আমরা যে Dataset-টি লোড করেছি, সেটি Causal Inference জগতের অত্যন্ত পরিচিত National Supported Work (NSW) জব-ট্রেনিং প্রোগ্রামের ডেটা (LaLonde এবং পরবর্তীকালে Dehejia ও Wahba-এর গবেষণা থেকে সংগৃহীত, CC BY-NC 2.0 শর্তাধীনে মূল পাবলিক ফাইল অপরিবর্তিত রেখে ব্যবহৃত)। এর Experimental অংশে রয়েছে 185 জন Treated এবং 260 জন Control অংশগ্রহণকারী (মোট 445 জন)। এর পাশাপাশি তুলনার জন্য আলাদাভাবে 2490 জন সাধারণ মানুষের একটি বাহ্যিক PSID Control দলও রাখা হয়েছে। কোনো লাইভ প্রোডাকশন ট্রাফিক নয়, বরং এই ঐতিহাসিক ডেটাসেটটির ওপর দাঁড়িয়েই আমরা পুরো অধ্যায়ে হাতে-কলমে দেখব—সত্যিকারের Randomized Control আর বাইরের Observational তুলনার মধ্যে আকাশ-পাতাল তফাত কোথায় তৈরি হয়।"
+        },
+        {
+          "type": "text",
+          "title": "ডেটা ও প্রমাণের সীমারেখা",
+          "body": "যেহেতু আমরা একটি ঐতিহাসিক পাবলিক ডেটাসেট নিয়ে কাজ করছি, তাই শুরুতেই এর সীমাবদ্ধতাগুলো পরিষ্কারভাবে জেনে রাখা একজন সচেতন ইঞ্জিনিয়ারের কাজ। এখানে কোনো অংশগ্রহণকারীর অদেখা Counterfactual ফলাফল আমাদের জানা নেই, আর মূল প্রোগ্রামের বিস্তারিত Assignment Log, Exposure রেকর্ড কিংবা কে কতটুকু ট্রেনিং শেষ করেছিলেন (Compliance ও Attrition Protocol)—সেসব তথ্যও এই ফাইলে সংরক্ষিত নেই। তাই আমরা ডেটাসেটের প্রদত্ত treat ফিল্ডটিকেই ভিত্তি ধরে এগোব এবং ট্রেনিংয়ে উপস্থিতির মাত্রা নিয়ে কোনো বাড়তি Causal দাবি করব না। পরের পাঠগুলোতে আমরা যেসব Conditional Randomization বা Logging প্রক্রিয়ার মহড়া দেখব, সেগুলো মূলত প্রোডাকশন সিস্টেমের ধারণা বোঝানোর জন্য আলাদাভাবে চিহ্নিত হিসাব।"
+        },
+        {
+          "type": "text",
+          "title": "Outcome-এর একক ও প্রকৃত অর্থ",
+          "body": "ডেটাসেটের মূল Outcome ভেরিয়েবল re78 দিয়ে ১৯৭৮ সালের প্রকৃত বার্ষিক আয় (Monetary Earnings) বোঝানো হয়েছে, এবং হিসাবের স্বচ্ছতার জন্য আমরা একে বর্তমান বাজারমূল্যে রূপান্তর করিনি। আবার যেখানে আমরা positive নামে একটি সূচক ব্যবহার করব, তার অর্থ স্রেফ re78 > 0—অর্থাৎ আয় শূন্যের চেয়ে বেশি কি না; এটি কিন্তু আলাদাভাবে জরিপ করা আনুষ্ঠানিক চাকরির তথ্য (Employment Status) নয়। একইভাবে প্রতিটি Row-এর স্থানীয় Key কেবল ফাইলের ক্রমিক নম্বর, অংশগ্রহণকারীদের আসল পরিচয়পত্র নয়। তাছাড়া তৎকালীন একটি বিশেষ প্রেক্ষাপটে নির্বাচিত পুরুষ অংশগ্রহণকারীদের এই ঐতিহাসিক ডেটা থেকে আজকের সামগ্রিক জনগোষ্ঠী বা আধুনিক শ্রমনীতির ওপর ঢালাও সিদ্ধান্ত টানা সমীচীন হবে না।"
+        },
+        {
+          "type": "text",
+          "title": "এই অধ্যায়ের মূল লক্ষ্য",
+          "body": "এই অধ্যায় শেষে আপনার লক্ষ্য হবে Randomized Contrast, পরিসংখ্যানিক Uncertainty, Sharp-null Randomization Test, আগেভাগে করা Power Planning এবং Observational Adjustment-এর শর্তগুলোকে একে অপরের থেকে স্পষ্টভাবে আলাদা করে ব্যাখ্যা করতে পারা। একই 185 জন Treated মানুষের ফলাফলকে যখন আমরা Experimental Control-এর বদলে বাহ্যিক PSID Control-এর সাথে তুলনা করি, তখন ফলাফলের ব্যবধান কেন নাটকীয়ভাবে পাল্টে যায়—তা আপনি সরাসরি ডেটা থেকেই প্রমাণ করে দেখাতে পারবেন। আর প্রমাণের এই নিরেট ভিত্তিই পরের অধ্যায়ে, অর্থাৎ Book 6 · Chapter 4 (ML System Design)-এ বড় প্রোডাকশন সিস্টেমের আর্কিটেকচার ও রোলআউট সিদ্ধান্ত নেওয়ার সময় আপনার সবচেয়ে বড় হাতিয়ার হয়ে উঠবে।"
+        }
+      ]
+    },
+    {
+      "id": "ch37_potential",
+      "title": "Potential Outcomes ও অদেখা Counterfactual",
+      "subtitle": "প্রতিটি Unit-এর দুটি সম্ভাব্য ভবিষ্যৎ থাকলেও বাস্তবে দেখা মেলে কেবল একটির",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "একই মানুষের দুটি সমান্তরাল জগৎ",
+          "body": "আগের পাঠে আমরা দেখেছি, কোনো পরিবর্তনের প্রকৃত প্রভাব জানতে হলে Treatment দিলে কী হতো এবং না দিলে কী হতো—এই দুয়ের তুলনা দরকার। Causal Inference-এর ভাষায় একে বলা হয় Potential Outcomes কাঠামো। ধরুন একজন নির্দিষ্ট ব্যক্তি জব-ট্রেনিং পেলে তার আয় হতো Y(1), আর ট্রেনিং না পেলে হতো Y(0)। সমস্যা হলো, বাস্তব জগতে মানুষটি হয় ট্রেনিং পাবেন, নয়তো পাবেন না—ফলে আমরা কেবল একটিমাত্র ফলাফলই চোখে দেখতে পাই। অন্য কোনো Control ব্যক্তির বাস্তব আয় কিন্তু এই Treated মানুষটির নিজস্ব অদেখা ফলাফল বা Missing Counterfactual নয়। অর্থাৎ একক ব্যক্তির ওপর প্রকৃত প্রভাব (Individual Treatment Effect) সরাসরি কখনোই দেখা যায় না; আমাদের বাধ্য হয়েই সঠিক Group Design ও যুক্তিসঙ্গত Assumption-এর সাহায্যে দলগত গড় পার্থক্য (Average Contrast) হিসাব করতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Causal Inference-এর মৌলিক সীমাবদ্ধতা",
+          "body": "আমাদের ডেটা টেবিলের দিকে তাকালে দেখবেন, সেখানে re78 নামে একটাই মাত্র বাস্তব Outcome Column রয়েছে। কেউ হয়তো ভাবতে পারেন, একটি শক্তিশালী Machine Learning Model দিয়ে অনুপস্থিত Y(0) বা Y(1)-এর মান তো সহজেই Predict করে নেওয়া যায়! মনে রাখতে হবে, Model দিয়ে অনুমান করা যায় ঠিকই, কিন্তু সেই Prediction কখনোই বাস্তব Ground Truth হয়ে ওঠে না। এজন্যই আমাদের ডেটাসেটে কোনো অংশগ্রহণকারীর জন্য কাল্পনিক y0 বা y1 তৈরি করে রাখা হয়নি। আপনার Model-এর সাধারণ Prediction Accuracy যত ভালোই হোক না কেন, না-ঘটা জগতে কে কেমন সাড়া দিত তা সরাসরি যাচাই করার কোনো শর্টকাট পথ নেই।"
+        },
+        {
+          "type": "math",
+          "title": "Observed Outcome ও Individual Effect-এর সমীকরণ",
+          "body": "Y_i=T_iY_i(1)+(1-T_i)Y_i(0),\\quad \\tau_i=Y_i(1)-Y_i(0)"
+        },
+        {
+          "type": "code",
+          "title": "ডেটাসেটে কেবল বাস্তব Outcome থাকার প্রমাণ",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/nsw/experiment_lab.json\").read_text(encoding=\"utf-8\")\n)\nrows = lab[\"cohorts\"][\"treated\"] + lab[\"cohorts\"][\"experimental\"]\nassert len(rows) == 445\nassert all((\"y0\" not in r and \"y1\" not in r for r in rows))\nprint(\"Observed outcomes only:\", sum((r[\"re78\"] for r in rows)))\n"
+        },
+        {
+          "type": "text",
+          "title": "Consistency: Treatment-এর সংজ্ঞা যেন দ্ব্যর্থহীন হয়",
+          "body": "উপরের সমীকরণে Y_i = T_i Y_i(1) + (1 - T_i) Y_i(0) লেখাটা তখনি অর্থবহ হয়, যখন T_i = 1 বলতে একটি সুনির্দিষ্ট ও সুসংজ্ঞায়িত Intervention বোঝায়—যাকে বলা হয় Consistency Assumption। ভেবে দেখুন, কাউকে ট্রেনিংয়ের আমন্ত্রণ জানানো, নাম তালিকাভুক্ত করা আর পুরো কোর্স শেষ করানো—এই তিনটি কিন্তু তিনটি ভিন্ন Intervention হতে পারে। তাই ডেটাতে শুধু treat ভেরিয়েবলটি দেখেই আমরা মনগড়াভাবে ধরে নিতে পারি না কে কত ঘণ্টা ক্লাস করেছে। একইভাবে অনলাইন প্রোডাক্টে কোনো বাগ বা ক্যাশিংয়ের কারণে Control গ্রুপের ব্যবহারকারী যদি ভুলবশত নতুন ফিচারের দেখা পেয়ে যান, তবে কার ভাগে কী পড়েছিল (Assignment) আর কে বাস্তবে কী দেখেছে (Delivered Exposure)—তা আলাদাভাবে হিসাব রাখা অপরিহার্য।"
+        },
+        {
+          "type": "text",
+          "title": "Interference: একজনের Treatment যখন অন্যকে প্রভাবিত করে",
+          "body": "Potential Outcomes লেখার সময় আমরা নীরবে আরেকটি বড় শর্ত ধরে নিই: একজন ব্যবহারকারীর Treatment অন্য কারো Outcome-কে প্রভাবিত করবে না (অর্থাৎ No Interference)। কিন্তু বাস্তবে সবসময় তা খাটে না। যেমন সীমিত স্টকের ই-কমার্স Recommendation, একই পরিবারের সদস্যদের মধ্যে তথ্য আদান-প্রদান (Household Spillover), কিংবা সোশ্যাল নেটওয়ার্কের ফিচার পরীক্ষায় একজনের আচরণ অন্যের ফলাফল বদলে দিতে পারে। এ ধরনের পরিস্থিতিতে সাধারণ ইউজার-ভিত্তিক হিসাবের বদলে বিশেষ Cluster, Switchback বা Network Design ও মানানসই Estimand বেছে নিতে হয়—যদিও আমাদের এই ঐতিহাসিক জব-ট্রেনিং ডেটায় এ ধরনের পারস্পরিক প্রভাব মাপার কোনো ব্যবস্থা নেই।"
+        },
+        {
+          "type": "text",
+          "title": "Randomization এখানে কীভাবে সমাধান আনে",
+          "body": "একই মানুষকে যেহেতু দুটি সমান্তরাল জগতে একসাথে দেখা সম্ভব নয়, তাই আমাদের এমন একটি উপায় চাই যাতে Treated ও Control দল দুটি গড়পড়তায় একে অপরের প্রতিচ্ছবি হয়ে ওঠে। নিখুঁত Random Assignment ঠিক এই কাজটিই করে: এটি অংশগ্রহণকারীদের অন্তর্নিহিত Potential Outcomes (Y(0), Y(1)) থেকে কার ভাগে কোন দল পড়বে সেই সিদ্ধান্তকে পুরোপুরি স্বাধীন করে দেয়। ফলে বড় নমুনার গাণিতিক প্রত্যাশায় (In Expectation) দুই দলের গড় তুলনাযোগ্য হয়। তবে ভুলে গেলে চলবে না যে বাস্তবের সীমিত Sample-এ কাকতালীয়ভাবেই কিছুটা Covariate Imbalance বা চওড়া Uncertainty থেকে যেতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে গুছিয়ে উত্তর দেবেন",
+          "body": "ইন্টারভিউতে যদি প্রশ্ন করা হয়, 'একটি নিখুঁত RCT থেকেও কেন আমরা প্রতিটি ব্যক্তির আলাদা আলাদা Individual Treatment Effect বের করতে পারি না?'—তখন প্রথমেই Observed Outcome-এর সমীকরণটি লিখে দেখিয়ে দিন যে যেকোনো ব্যক্তির জন্য Y_i(1) ও Y_i(0)-এর একটি পদ চিরকাল অদেখা থেকে যায়। এরপর স্পষ্ট করে বলুন যে দলগত গড় প্রভাব মাপা (ATE Estimation) আর ব্যক্তিনিষ্ঠ প্রভাব অনুমান করা (CATE Prediction) দুটি সম্পূর্ণ ভিন্ন কাজ। বিশেষ করে উল্লেখ করবেন যে, একটি Model দিয়ে অনুমান করা Counterfactual-কে আবার আসল Label ধরে আরেকটি Model যাচাই করতে গেলে তা নিছক Circular Validation বা নিজের তৈরি আয়নায় নিজেকে দেখার মতো ভুল হবে।"
+        }
+      ]
+    },
+    {
+      "id": "ch37_estimand",
+      "title": "ATE, ATT, ITT ও Target Population",
+      "subtitle": "গড় প্রভাবের সংখ্যাটি বলার আগে স্পষ্ট করুন সেটি ঠিক কাদের গড়",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "গড় প্রভাব—কিন্তু কাদের ওপর?",
+          "body": "আগের পাঠে আমরা দেখেছি যে একক ব্যক্তির প্রভাব না দেখা গেলেও দলগত গড় প্রভাব মাপা সম্ভব। কিন্তু 'গড় প্রভাব' বললেই সাথে সাথে পরের প্রশ্নটি আসে—ঠিক কোন জনগোষ্ঠীর গড়? পুরো লক্ষ্য জনগোষ্ঠীর (Target Population) সবার ওপর গড় প্রভাবকে বলা হয় ATE (Average Treatment Effect), আর যারা বাস্তবে Treatment পেয়েছে শুধু তাদের ওপর গড় প্রভাবকে বলা হয় ATT (Average Treatment Effect on the Treated)। জনগোষ্ঠীর গঠন বদলে গেলে একই Intervention-এর গড় প্রভাবও বদলে যেতে পারে; এমনকি আপনার হাতের Sample Average আর বৃহত্তর Population Average-ও সবসময় এক হয় না। এক জায়গার ফলাফল অন্য পরিবেশে খাটাতে চাইলে (Transportability) কারা পরীক্ষায় এসেছে এবং কাদের ওপর প্রভাব কমবেশি হয় (Effect Modifiers), সে বিষয়ে সুনির্দিষ্ট Assumption প্রয়োজন।"
+        },
+        {
+          "type": "text",
+          "title": "Intention-to-Treat (ITT) বনাম প্রকৃত গ্রহণ",
+          "body": "বাস্তব জীবনে আপনি কাউকে নতুন ফিচার বা ট্রেনিংয়ে Assign করলেই যে সে শতভাগ নিয়ম মেনে তা ব্যবহার করবে, এমন কোনো কথা নেই। Intention-to-Treat (ITT) বিশ্লেষণে কে পরে নিয়ম মানল আর কে মাঝপথে ছেড়ে দিল তা না দেখে, শুরুতে কাকে কোন দলে Assign করা হয়েছিল সেই মূল ভাগের ওপরই ফলাফল মাপা হয়। উল্টো দিকে, যারা শেষ পর্যন্ত টিকে থেকে পুরো কোর্স করেছে শুধু তাদের বেছে নিয়ে Per-protocol তুলনা করতে গেলে শুরুর Randomization-এর ভারসাম্যটাই নষ্ট হয়ে যেতে পারে। আমাদের NSW ডেটাসেটে যেহেতু মূল প্রোগ্রামের Noncompliance-এর বিস্তারিত নথি নেই, তাই আমরা প্রকাশিত treat ফিল্ড অনুযায়ী সরাসরি Experimental Contrast হিসাব করি—মনগড়াভাবে আমন্ত্রণ বনাম প্রকৃত গ্রহণের প্রভাব আলাদা করার চেষ্টা করি না।"
+        },
+        {
+          "type": "math",
+          "title": "ATE এবং ATT-এর গাণিতিক সংজ্ঞা",
+          "body": "ATE=E[Y(1)-Y(0)],\\quad ATT=E[Y(1)-Y(0)\\mid T=1]"
+        },
+        {
+          "type": "code",
+          "title": "সরাসরি গড় পার্থক্য বনাম Weighting-ভিত্তিক তুলনা",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"experiment37\", Path(\"assets/datasets/nsw/experiment_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/nsw/experiment_lab.json\").read_text(encoding=\"utf-8\")\n)\nraw = m.observational(lab[\"cohorts\"], \"experimental\", adjust=False)\nweighted = m.observational(lab[\"cohorts\"], \"experimental\", adjust=True)\nprint(raw[\"raw_gap\"], weighted[\"adjusted_gap\"])\nprint([s[\"weight\"] for s in weighted[\"strata\"]])\n"
+        },
+        {
+          "type": "text",
+          "title": "সরাসরি পার্থক্য আর Weighted পার্থক্যের তফাত",
+          "body": "উপরের কোডের আউটপুটটির দিকে খেয়াল করুন। raw_gap হলো Treated ও Experimental Control দলের সরাসরি গড় আয়ের বিয়োগফল—যা একটি সাধারণ Randomized পরীক্ষার চিরায়ত তুলনা। অন্যদিকে adjusted_gap বের করার সময় ল্যাবের হিসাবটি Treated দলের ভেতর ১৯৭৪ সালের আয় শূন্যের বেশি ছিল কি না (pre74 পজিটিভ বনাম শূন্য), সেই অনুপাতের Weight দিয়ে দুই দলকে মেলানোর চেষ্টা করে—ফলে এটি দেখতে অনেকটা মোটা দাগের ATT-ধর্মী বর্ণনামূলক হিসাবের মতো আচরণ করে। এখানে একটি গুরুত্বপূর্ণ শিক্ষা হলো, Weighting দেওয়ার পর সংখ্যাটি বদলে যাওয়া মানেই এই নয় যে আমরা আসল সত্যের আরও কাছাকাছি চলে গেছি; বরং কোন জনগোষ্ঠীর গঠনে ওজন দেওয়া হচ্ছে এবং সীমিত নমুনায় (Finite Sample) ডেটা কীভাবে আচরণ করছে, তার পার্থক্যই এখানে ফুটে উঠেছে।"
+        },
+        {
+          "type": "text",
+          "title": "গড়ের আড়ালে লুকিয়ে থাকা বৈচিত্র্য (Heterogeneity)",
+          "body": "ধরুন কোনো পরীক্ষায় গড় প্রভাব (ATE) বেশ বড় একটি ধনাত্মক সংখ্যা এল—তার মানে কি এই যে দলের প্রতিটি মানুষই উপকৃত হয়েছে? মোটেই না। ঠিক তেমনি গড় প্রভাব ঋণাত্মক আসার অর্থও এই নয় যে কারোরই কোনো উপকার হয়নি। ব্যবহারকারীর ধরন, প্রেক্ষাপট বা ফিচারের সংস্করণভেদে ফলাফল ভিন্ন হতেই পারে। তবে সাবধান থাকতে হবে, আগে থেকে পরিকল্পনা না করে ডেটার ভেতর অসংখ্য ছোট ছোট Subgroup হাতড়ে বেড়ালে কাকতালীয় Noise-কে আসল আবিষ্কার ভেবে বসার বা False Discovery-র ঝুঁকি মারাত্মকভাবে বেড়ে যায়।"
+        },
+        {
+          "type": "text",
+          "title": "প্রোডাক্ট ও প্রোডাকশন সিস্টেমে Estimand-এর অনুবাদ",
+          "body": "এবার বিষয়টিকে একটি অনলাইন ML প্রোডাক্টের চোখে দেখুন। পরীক্ষায় যোগ্য ও Assign হওয়া সব ব্যবহারকারীর মাথাপিছু আয় (Revenue per Assigned User) একটি পরিষ্কার ITT ঘরানার Primary Estimand হতে পারে। কিন্তু আপনি যদি মাপতে যান 'যারা বিজ্ঞাপনে Click করেছে শুধু তাদের প্রতি Click-এ আয় কত' (Revenue per Click), তবে সেটি কিন্তু Treatment-পরবর্তী আচরণের ওপর শর্তারোপ করা সম্পূর্ণ ভিন্ন একটি প্রশ্ন! কারণ নতুন মডেলটি যদি তুলনামূলক কম আগ্রহী ব্যবহারকারীদেরও বেশি বেশি Click করায়, তবে ভগ্নাংশের হর বা Denominator নিজেই বদলে যাবে। তাই কোড লেখার আগেই ব্যবসার আসল লক্ষ্য অনুযায়ী Estimand ঠিক করা জরুরি।"
+        },
+        {
+          "type": "text",
+          "title": "নিজের বোঝাপড়া যাচাই করে নিন",
+          "body": "যেকোনো রিপোর্ট লেখার আগে অভ্যাস করুন যেন একটিমাত্র স্পষ্ট বাক্যে আপনার Estimand-এর পাঁচটি উপাদান—Population, Intervention, Comparison, সময়ের পরিধি (Horizon) এবং Weighting—পরিষ্কারভাবে ধরা পড়ে। কখনোই ITT আর Treatment-on-the-Treated-কে সমার্থক ভেবে অদলবদল করবেন না। আর মনে রাখবেন, সুনির্দিষ্ট Instrumental Variable (IV) ও Compliance-সংক্রান্ত কঠোর শর্তগুলো পূরণ না হলে স্রেফ Assignment-এর গড় প্রভাবকে অংশগ্রহণকারীর অনুপাত দিয়ে ভাগ করেই প্রকৃত Complier Effect পাওয়া যায় না।"
+        }
+      ]
+    },
+    {
+      "id": "ch37_randomization",
+      "title": "Random Assignment, Stable Hash ও Experiment Salt",
+      "subtitle": "নিয়মতান্ত্রিক বণ্টন প্রক্রিয়া আর সুবিধামতো ডেটা ভাগ করা এক কথা নয়",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ফলাফল দেখে ভাগ নয়, আগে চাই বণ্টনের মেকানিজম",
+          "body": "একটি পরীক্ষায় সত্যিকারের Randomization আসে তার বণ্টন প্রক্রিয়া (Assignment Procedure) থেকে—কাজের শেষে ফলাফল হাতে নিয়ে সুবিধামতো দুটি দল বানিয়ে ফেলা কখনোই Randomization নয়। বড় প্রোডাকশন সিস্টেমে লক্ষাধিক রিকোয়েস্টের ভিড়ে প্রতিটি ব্যবহারকারীকে ধারাবাহিকভাবে একই দলে রাখতে সাধারণত Stable Hash ব্যবহার করা হয়, যেখানে সঠিক ইউজার Key, একক (Unit) এবং Experiment-নির্দিষ্ট Salt মিলে একটি পুনরাবৃত্তিযোগ্য (Reproducible) বণ্টন নিশ্চিত করে। নিচের কোডে আমরা ডেটাসেটের ক্রমিক Key-কে হ্যাশ করে যে উদাহরণটি দেখাব, তা মূলত প্রোডাকশন সফটওয়্যারে হ্যাশিং কীভাবে কাজ করে তার একটি হাতে-কলমে মহড়া—মূল NSW প্রোগ্রামের ঐতিহাসিক লটারি কিন্তু এভাবে করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "একই ব্যবহারকারীর অভিজ্ঞতা স্থির রাখা (Stable Exposure)",
+          "body": "ভাবুন তো, একজন ব্যবহারকারী পেজ রিফ্রেশ করার সাথে সাথে যদি একবার নতুন মডেল আর পরের বার পুরোনো মডেল দেখতে পান, তবে পরীক্ষার কী হাল হবে? এই বিভ্রান্তি ঠেকাতেই ব্যবহারকারীর স্থায়ী পরিচয় (Stable Identity) এবং প্রতিটি পরীক্ষার জন্য আলাদা Experiment Salt জোড়া দিয়ে হ্যাশ করা হয়। তা সত্ত্বেও বাস্তবে নানা ফাঁকফোকর থেকে Contamination ঘটতে পারে—যেমন একাধিক মানুষ একই অ্যাকাউন্ট শেয়ার করলে, লগইন ছাড়া ব্রাউজ থেকে অ্যাপে সুইচ করলে, ডেভেলপারদের ম্যানুয়াল Override থাকলে কিংবা দুটি পরীক্ষার Namespace মিলে গেলে। তাছাড়া এখানে দেখানো সাধারণ নন-ক্রিপ্টোগ্রাফিক FNV হ্যাশ ফাংশনটি দৈনন্দিন ট্রাফিক ভাগের ধারণা বোঝানোর জন্য দারুণ হলেও, কেউ ইচ্ছাকৃতভাবে কারসাজি (Adversarial Manipulation) করতে চাইলে তার বিরুদ্ধে কিন্তু নিরাপত্তা দেয় না।"
+        },
+        {
+          "type": "math",
+          "title": "Unconfounded Assignment ও Positivity শর্ত",
+          "body": "T_i\\perp(Y_i(0),Y_i(1)),\\quad 0<P(T_i=1)<1"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Salt-সহ Stable Hash বণ্টনের মহড়া",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"experiment37\", Path(\"assets/datasets/nsw/experiment_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/nsw/experiment_lab.json\").read_text(encoding=\"utf-8\")\n)\nrows = lab[\"cohorts\"][\"treated\"] + lab[\"cohorts\"][\"experimental\"]\ncounts = [0, 0]\nfor row in rows:\n    arm = int(m.bucket(\"ch37-assignment:\" + row[\"key\"]) < 5000)\n    counts[arm] += 1\nprint(\"Declared hash rehearsal:\", counts)\nassert counts == [220, 225]\n"
+        },
+        {
+          "type": "text",
+          "title": "ট্রাফিক ভাগের অনুপাত ও সম্ভাবনার নিয়ম",
+          "body": "অনেকেই মনে করেন A/B Test মানেই সবসময় নিখুঁত 50/50 ভাগ হতে হবে। আসলে দুই দলের খরচ সমান এবং ফলাফলের Variance কাছাকাছি হলে 50/50 ভাগ পরিসংখ্যানিক দিক থেকে সবচেয়ে সাশ্রয়ী বা Efficient হয়; কিন্তু নতুন মডেল চালানোর খরচ অনেক বেশি হলে বা ব্যবসায়িক ঝুঁকি কমাতে চাইলে অনুপাত ভিন্ন হতেই পারে। আবার খেয়াল করুন, আমাদের উপরের কোডে 50% থ্রেশহোল্ড (< 5000) দেওয়ার পরও 445 টি Row ভেঙে [220, 225] হয়েছে—কারণ স্বাধীন মুদ্রা নিক্ষেপ বা হ্যাশিংয়ে (Bernoulli Allocation) বাস্তব সংখ্যাটি সবসময় কাঁটায় কাঁটায় অর্ধেক হতেই হবে এমন কোনো বাধ্যবাধকতা নেই। এই Bernoulli Allocation, আগে থেকে সংখ্যা বেঁধে দেওয়া Complete Randomization এবং স্তরভিত্তিক Stratified Design—প্রতিটিরই নিখুঁত পরিসংখ্যানিক বিশ্লেষণের নিয়ম আলাদা।"
+        },
+        {
+          "type": "text",
+          "title": "ঐতিহাসিক ডেটায় বণ্টন অনুপাতের সতর্কতা",
+          "body": "আমাদের মূল NSW ডেটাসেটে Treated দলে 185 জন এবং Control দলে 260 জন মানুষ রয়েছেন। শুধু এই চূড়ান্ত সংখ্যাদুটি দেখেই কিন্তু অনুমান করে নেওয়া যাবে না যে শুরুতে পরীক্ষাটি 50/50 অনুপাতে সাজানো হয়েছিল কি না, কারণ মূল মাঠপর্যায়ের প্রটোকল এখানে সংরক্ষিত নেই। পরে যখন আমরা Randomization Test-এর উদাহরণ দেখব, তখন এই 445 টি বাস্তব ফলাফলের ওপর ঠিক 185 টি Treated লেবেল বারবার ওলটপালট করে দেখব; তবে সেটিকে মূল ঐতিহাসিক পরীক্ষার হুবহু নিখুঁত পুনর্নির্মাণ বলে দাবি করা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "প্রোডাকশনে বণ্টন যাচাইয়ের বাস্তব চেকলিস্ট",
+          "body": "প্রোডাকশন পাইপলাইনে কাজ করার সময় শুরু থেকে শেষ পর্যন্ত—অর্থাৎ Assignment হওয়া, ব্যবহারকারীর বাস্তবে ফিচারটি দেখা (Exposure) এবং শেষে Outcome টেবিলের সাথে Join হওয়া পর্যন্ত—একই Unit নিখুঁতভাবে প্রবাহিত হচ্ছে কি না তা ট্রেস করা জরুরি। পরীক্ষার আগের তথ্য (Pre-treatment Covariates) দুই দলে সমানভাবে আছে কি না তা দেখা একটি ভালো ডায়াগনস্টিক পরীক্ষা বটে; তবে মনে রাখবেন, কোনো Balance Test-এ p-value বড় আসা মানেই যে Randomization শতভাগ নিখুঁত হয়েছে তার চূড়ান্ত প্রমাণ নয়। আসল ভরসা হলো নিশ্ছিদ্র Randomization Log, সঠিক Eligibility ফিল্টার এবং নির্ভুল ডেটা পরিমাপ।"
+        },
+        {
+          "type": "text",
+          "title": "সিদ্ধান্তের পক্ষে যুক্তি দিন: Canary বনাম A/B Test",
+          "body": "একটু ভেবে বলুন তো—Book 6 · Chapter 2 (Serving, Monitoring & MLOps)-এ আমরা যে তারিখ বা সাধারণ রাউটিং Key ধরে অল্প ট্রাফিকে Canary রোলআউট করার কথা পড়েছিলাম, সেটিকে কি সরাসরি একটি বৈধ A/B Test বলা চলে? মোটেই না! সেখানে সময়ের তফাত বা নির্দিষ্ট সার্ভার ও রাউটিং Key-এর কারণে মারাত্মক Confounding ঢুকে পড়ে এবং সুনির্দিষ্ট Causal প্রটোকলও থাকে না। আরেকটি মূল নিয়ম মনে রাখবেন: পরীক্ষার Key সবসময় হতে হবে Treatment শুরুর আগের কোনো স্থির পরিচয়; কে Click করল বা কে কিনল সেই ফলাফলের ওপর ভিত্তি করে দল ভাগ করলে তা কখনোই কোনো Causal Experiment হতে পারে না।"
+        }
+      ]
+    },
+    {
+      "id": "ch37_units",
+      "title": "Randomization Unit, Analysis Unit ও Clustering",
+      "subtitle": "একজন ব্যবহারকারীর হাজারটি Request মানে হাজারজন স্বাধীন ব্যবহারকারী নয়",
+      "duration": "55 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "এককের স্তরভেদ: কাকে ভাগ করছেন আর কী মাপছেন?",
+          "body": "প্রোডাকশন লগে তাকালে প্রায়ই কোটি কোটি ইভেন্ট বা Request দেখা যায়, আর নতুন ইঞ্জিনিয়াররা অনেক সময় আনন্দিত হয়ে ভাবেন তাদের Sample Size বুঝি বিশাল! কিন্তু একটু থামুন—আপনি যদি Account বা User পর্যায়ে Randomization করে থাকেন, তবে একই ব্যবহারকারীর শত শত Session বা Request কিন্তু মোটেই একে অপরের থেকে স্বাধীন (Independent) নয়; যার কেনার অভ্যাস বেশি, তার প্রায় সব সেশনেই তা ফুটে উঠবে। তাই বিশ্লেষণের সময় হয় প্রতিটি Assignment Unit-এর ফলাফলকে একত্র (Aggregate) করে মাথাপিছু একটি মানে নিয়ে আসতে হয়, নতুবা ডিজাইনের সাথে সামঞ্জস্যপূর্ণ Cluster-robust Variance ব্যবহার করতে হয়। যেকোনো ডেটা হাতে পেলে সবার আগে মোট Row সংখ্যা আর ইউনিক Unit-এর সংখ্যার তফাতটা যাচাই করে নিন।"
+        },
+        {
+          "type": "text",
+          "title": "Cluster Design ও কার্যকর Sample Size-এর হিসাব",
+          "body": "যখন একক ব্যবহারকারীর বদলে পুরো একটি দল বা ক্লাস্টারকে (যেমন একটি স্কুল, একটি শহর বা একটি পরিবার) একসাথে Treatment বা Control দেওয়া হয়, তখন তথ্যের স্বাধীনতা কমে যায়। ধরা যাক প্রতিটি Cluster-এ সমান সংখ্যক m জন মানুষ আছেন এবং একই ক্লাস্টারের ভেতরের সদস্যদের ফলাফলের পারস্পরিক সম্পর্ক বা Intraclass Correlation হলো rho। তাহলে আমাদের Design Effect দাঁড়ায় 1 + (m - 1) * rho। যেহেতু সাধারণত rho ধনাত্মক হয়, তাই কার্যকর বা স্বাধীন নমুনার আকার (Effective Sample Size) আসল সংখ্যার চেয়ে কমে যায়। অবশ্য মনে রাখবেন, এটি কেবল শুরুর পরিকল্পনার জন্য একটি আনুমানিক হিসাব; চূড়ান্ত বিশ্লেষণে এটি কখনোই প্রকৃত Cluster-robust Standard Error বা বিস্তারিত Power সিমুলেশনের বিকল্প নয়।"
+        },
+        {
+          "type": "math",
+          "title": "Design Effect এবং Effective Sample Size",
+          "body": "DE=1+(m-1)\\rho,\\quad n_{eff}\\approx n/DE"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Cluster Design Effect-এর হিসাব",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"experiment37\", Path(\"assets/datasets/nsw/experiment_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/nsw/experiment_lab.json\").read_text(encoding=\"utf-8\")\n)\nsigma = lab[\"planning_sigma\"]\nindependent = m.plan(sigma, cluster_size=1, icc=0)\nclustered = m.plan(sigma, cluster_size=5, icc=0.05)\nassert abs(clustered[\"design_effect\"] - 1.2) < 1e-12\nprint(independent[\"total\"], clustered[\"adjusted_units\"], clustered[\"clusters\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "অনেক মানুষ কিন্তু হাতেগোনা কয়েকটি Cluster হলে কী হয়?",
+          "body": "ধরুন আপনার পরীক্ষায় দশ লক্ষ ব্যবহারকারী আছেন, কিন্তু আপনি শহরভিত্তিক Randomization করায় মোট শহরের সংখ্যা মাত্র ৬টি! এখানে আসল স্বাধীন Randomization Unit কিন্তু দশ লক্ষ নয়, মাত্র ৬টি। ক্লাস্টারের সংখ্যা এত কম হলে সাধারণ বড়-নমুনার অনুমান কাজ করে না; তখন প্রতিটি ক্লাস্টারের নিজস্ব বৈশিষ্ট্য, ক্লাস্টারের অসম আকার এবং Small-cluster Correction অত্যন্ত গুরুত্বপূর্ণ হয়ে ওঠে। স্রেফ মোট ইউজারের সংখ্যা বড় দেখেই পরীক্ষাকে যথেষ্ট শক্তিশালী (Powered) বলে রায় দেওয়া মারাত্মক ভুল। বলে রাখা ভালো, আমাদের NSW ডেটাসেটে কোনো Cluster আইডি নেই, তাই উপরের কোডে icc = 0.05 মানটি কেবল পরিকল্পনার অঙ্ক বোঝানোর জন্যই ব্যবহার করা হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "Spillover ঠেকাতে বিকল্প Randomization Unit",
+          "body": "কখন আমরা বাধ্য হয়ে ইউজার লেভেল ছেড়ে বড় এককে যাই? যখন একজনের Treatment পাশের মানুষের ওপর ছড়িয়ে পড়ার (Spillover) ভয় থাকে! যেমন রাইড-শেয়ারিং মার্কেটপ্লেসে শহরের একাংশে দাম কমালে পুরো শহরের ড্রাইভার সরবরাহই বদলে যায়—তখন পুরো শহর বা অঞ্চল ধরে (Geographic/Market Assignment) অথবা সময়ের স্লট ভাগ করে (Switchback Design) পরীক্ষা চালাতে হয়। আবার Switchback ডিজাইনে আগের সময়ের রেশ পরের সময়ে থেকে যাওয়া (Carryover), দিনের ব্যস্ত সময়ের ওঠানামা (Seasonality) এবং মাঝখানের বিরতি (Washout Period) সামলাতে হয়। অর্থাৎ সব ধরনের প্রোডাক্টের জন্য একটাই সার্বজনীন Randomization Unit কখনো কাজ করে না।"
+        },
+        {
+          "type": "text",
+          "title": "Ratio Metric-এর জটিলতা: লব ও হরের সম্পর্ক",
+          "body": "অনলাইন সিস্টেমে আমরা হরহামেশাই CTR = Clicks / Impressions-এর মতো অনুপাত বা Ratio Metric ব্যবহার করি। এখানে বিপত্তি হলো, একই ব্যবহারকারীর Click আর Impression একে অপরের সাথে ওতপ্রোতভাবে জড়িত এবং একেকজন ব্যবহারকারী একেক সংখ্যক Impression দেখেন। তাছাড়া প্রতিটি ব্যবহারকারীর নিজস্ব CTR বের করে তার গড় নেওয়া (Mean of User Ratios) আর সবার মোট Click-কে মোট Impression দিয়ে ভাগ করা (Ratio of Aggregate Totals)—এই দুটি কিন্তু সম্পূর্ণ ভিন্ন দুটি Estimand! তাই পরীক্ষার ডিজাইন অনুযায়ী সঠিক অনিশ্চয়তা মাপতে এখানে Delta Method, ইউজার-লেভেল Bootstrap কিংবা উপযুক্ত Cluster পদ্ধতি ব্যবহার করতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "কোডিং ও ডেটা পাইপলাইনের বাস্তব অভ্যাস",
+          "body": "বিশ্লেষণের কোড লেখার সময় সবচেয়ে নিরাপদ অভ্যাস হলো: প্রথমেই Assignment Unit ধরে ডেটা Group By করে প্রতিটি এককের জন্য একটিমাত্র সংক্ষিপ্ত Outcome তৈরি করে নেওয়া, এবং তারপর দুই দলের Mean ও Variance হিসাব করা। সবসময় মোট Row সংখ্যা আর ইউনিক Unit সংখ্যার তুলনা করে দেখবেন। একই ব্যবহারকারীর অসংখ্য লগ Row-কে স্বাধীন নমুনা ভেবে সরাসরি সাধারণ টেস্টে ঢুকিয়ে দিলে আপনার কোড হয়তো কৃত্রিমভাবে খুব ছোট Standard Error দেখাবে, কিন্তু বাস্তবে আপনার হাতে তথ্যের পরিমাণ একচুলও বাড়েনি!"
+        },
+        {
+          "type": "text",
+          "title": "CTR-এর দুই ধরনের গড় যেভাবে দুটি ভিন্ন গল্পের জন্ম দেয়",
+          "body": "চলুন একটি ছোট্ট সংখ্যার উদাহরণ দিয়ে Ratio Metric-এর পার্থক্যটা চোখের সামনে স্পষ্ট করি। ধরুন মাত্র দুজন ব্যবহারকারীর Click সংখ্যা [1, 9] এবং Impression সংখ্যা [1, 99]। আমরা যদি সবার মোট হিসাব নিই, তবে Aggregate CTR = (1 + 9) / (1 + 99) = 0.1। কিন্তু প্রতিটি ব্যবহারকারীর নিজস্ব CTR (1/1 = 1.0 এবং 9/99 = 0.0909...) বের করে সমান গুরুত্বে গড় নিলে মান আসে প্রায় 0.545455! খেয়াল করেছেন কেন এত তফাত হলো? প্রথম হিসাবটি প্রতিটি Impression-কে সমান গুরুত্ব দেয় (ফলে ভারী ব্যবহারকারীর প্রভাব বেশি পড়ে), আর দ্বিতীয়টি প্রতিটি User-কে সমান গুরুত্ব দেয়। প্রথম ধরনের অনুপাত অর্থাৎ R = mean(C) / mean(I)-এর ক্ষেত্রে Delta Method অনুযায়ী প্রতিটি ইউজারের প্রথম-ক্রমের প্রভাব বা Influence Function হলো (C - R * I) / mean(I), যার মান নিচের কোডে হিসাব করলে আসে ±0.018। মাত্র দুজন ব্যবহারকারীর এই ছোট্ট উদাহরণটি মূলত Delta Method-এর ভেতরের বীজগণিতটুকু পরিষ্কারভাবে বোঝার জন্য সাজানো হয়েছে।"
+        },
+        {
+          "type": "math",
+          "title": "Ratio Metric-এর First-order Variance (Delta Method)",
+          "body": "R=\\frac{E[C]}{E[I]},\\quad IF_i=\\frac{C_i-RI_i}{E[I]},\\qquad \\widehat{SE}(\\hat R)\\approx\\sqrt{\\frac{s^2_{\\widehat{IF}}}{n}}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Ratio of Totals বনাম Mean of User Ratios",
+          "body": "import numpy as np\n\nclicks = np.array([1.0, 9.0])\nimpressions = np.array([1.0, 99.0])\nratio = clicks.sum() / impressions.sum()\nuser_mean = np.mean(clicks / impressions)\ninfluence = (clicks - ratio * impressions) / impressions.mean()\ndelta_se = np.sqrt(np.var(influence, ddof=1) / len(clicks))\nnp.testing.assert_allclose(influence.mean(), 0, atol=1e-12)\nprint(ratio, round(user_mean, 6), *np.round(influence, 6), round(delta_se, 6))\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে যাচাই করুন",
+          "body": "উপরের কোডে মাত্র দুজন ব্যবহারকারীর ডেটা থেকে যে Delta Standard Error (delta_se) পাওয়া গেল, তার ওপর ভিত্তি করে কি প্রোডাকশনের জন্য নির্ভরযোগ্য কোনো Confidence Interval দাবি করা যায়?",
+          "solution": "না, মোটেই দাবি করা যায় না। এখানে কেবল Delta Method-এর প্রথম-ক্রমের বীজগণিতটুকু হাতে-কলমে দেখানো হয়েছে। বাস্তবে নির্ভরযোগ্য পরিসংখ্যানিক সিদ্ধান্ত বা Confidence Interval পেতে হলে যথেষ্ট সংখ্যক স্বাধীন Assignment Unit (বড় n), সসীম Variance (Finite Moments), শূন্য নয় এমন গড় Denominator এবং পরীক্ষার ডিজাইনের সাথে সামঞ্জস্যপূর্ণ বিশ্লেষণ অপরিহার্য। তাছাড়া Impression-এর Row-গুলোকে স্বাধীন ধরে Resample করলে ইউজার-পর্যায়ের নির্ভরশীলতা হারিয়ে গিয়ে ভুল ফলাফল আসবে; আর কোন ধরনের গড় (Ratio of Totals নাকি Mean of User Ratios) নেবেন, তা সবসময় প্রোডাক্টের মূল প্রশ্ন ভেবে আগেভাগে ঠিক করতে হবে।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch37_metrics",
+      "title": "Primary Metric, Guardrails ও Denominator",
+      "subtitle": "ফলাফলের প্রকৃত পরিবর্তন আর মাপকাঠির পরিবর্তনকে আলাদা করে চিনুন",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Primary Metric বেছে নেওয়ার ব্যাকরণ",
+          "body": "একটি পরীক্ষার সাফল্য মাপার জন্য সবার আগে একটি সুনির্দিষ্ট Primary Metric ঠিক করতে হয়—যার Population, লব (Numerator), হর (Denominator) এবং সময়ের জানালা (Outcome Window) নিয়ে বিন্দুমাত্র অস্পষ্টতা থাকবে না। একটু আগেই আমরা যেমনটা দেখেছি, Revenue per Assigned User, Revenue per Active User এবং Revenue per Click—শুনতে কাছাকাছি মনে হলেও এরা কিন্তু তিনটি সম্পূর্ণ আলাদা প্রশ্নের উত্তর দেয়! মূল লক্ষ্যের পাশাপাশি সিস্টেমের Latency, Crash Rate বা ইউজার বিরক্তির মতো পার্শ্বপ্রতিক্রিয়া ঠেকাতে রাখতে হয় Guardrail Metric, আর ভেতরের কার্যকারণ বুঝতে সাহায্য করে Diagnostic Metric। ফলাফল দেখার পর যদি নতুন কোনো Metric বা খণ্ডিত অংশ বেছে নিয়ে বিশ্লেষণ করতেই হয়, তবে রিপোর্টে সেই বাছাইয়ের ইতিহাস স্বচ্ছভাবে উল্লেখ করা বাঞ্ছনীয়।"
+        },
+        {
+          "type": "text",
+          "title": "পরম পার্থক্য (Absolute) বনাম আপেক্ষিক পরিবর্তন (Relative)",
+          "body": "ফলাফল প্রকাশের সময় সংখ্যাকে কীভাবে পড়ছেন তার ওপর অর্থ অনেকখানি নির্ভর করে। আমাদের NSW ডেটাসেটে Treated ও Experimental Control দলের গড় আয়ের পরম পার্থক্য (Earnings Gap) হলো 1794.342 একক; যেহেতু Control দলের গড় আয় 4554.801, তাই আপেক্ষিক বৃদ্ধি বা Relative Contrast দাঁড়ায় প্রায় 39.395%। অন্যদিকে ধনাত্মক আয়ের সূচকে (positive indicator) দুই দলের পার্থক্য 0.110603, যাকে শতকরায় বললে দাঁড়ায় 11.060 Percentage Points—অথচ Control গড়ের সাপেক্ষে এর Relative Uplift হিসাব করলে হয় প্রায় 17.117%! খেয়াল রাখবেন, Percentage Points আর Relative Percent কখনোই এক জিনিস নয়, এবং Control দলের Baseline মান শূন্য হলে আপেক্ষিক অনুপাত গাণিতিকভাবে অসংজ্ঞায়িত (Undefined) হয়ে পড়ে।"
+        },
+        {
+          "type": "math",
+          "title": "পরম পার্থক্য ও আপেক্ষিক পরিবর্তনের সূত্র",
+          "body": "\\hat\\Delta=\\bar Y_1-\\bar Y_0,\\quad relative=\\hat\\Delta/\\bar Y_0"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ আয়ের পরম ও আপেক্ষিক ব্যবধান হিসাব",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"experiment37\", Path(\"assets/datasets/nsw/experiment_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/nsw/experiment_lab.json\").read_text(encoding=\"utf-8\")\n)\nearnings = m.welch(\n    m.values(lab[\"cohorts\"][\"treated\"]), m.values(lab[\"cohorts\"][\"experimental\"])\n)\npositive = m.welch(\n    m.values(lab[\"cohorts\"][\"treated\"], \"positive\"),\n    m.values(lab[\"cohorts\"][\"experimental\"], \"positive\"),\n)\nprint(\"Monetary-unit gap:\", earnings[\"delta\"])\nprint(\"Positive-earnings percentage-point gap:\", 100 * positive[\"delta\"])\nprint(\"Relative earnings contrast:\", earnings[\"relative\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "সংখ্যা ব্যাখ্যার সীমানা: নাম বদলালেই অর্থ বদলায় না",
+          "body": "কোড থেকে নিখুঁত সংখ্যা বেরোলেই কিন্তু ইচ্ছামতো গল্পের ডালপালা মেলা যায় না। যেমন আমরা আগেই দেখেছি, এখানে positive মানে কেবল ১৯৭৮ সালের নথিভুক্ত আয় শূন্যের চেয়ে বেশি হওয়া—একে সরাসরি 'চাকরি পাওয়ার হার' বলে চালিয়ে দেওয়া ঠিক হবে না। একইভাবে আয়ের অঙ্কগুলো মূল ঐতিহাসিক মুদ্রার এককেই রাখা হয়েছে, আজকের ক্রয়ক্ষমতায় রূপান্তর করা হয়নি। একটি গাণিতিক টেস্ট যত নিখুঁতই হোক না কেন, আপনি যদি রিপোর্টে ভেরিয়েবলের প্রকৃত অর্থ বদলে চটকদার কোনো নাম বসিয়ে দেন, তবে পুরো বৈজ্ঞানিক প্রশ্নটিই ভুল খাতে প্রবাহিত হবে।"
+        },
+        {
+          "type": "text",
+          "title": "অনুপস্থিত ডেটা (Missingness) বনাম প্রকৃত শূন্য",
+          "body": "প্রোডাকশন ডেটায় আরেকটি সূক্ষ্ম ফাঁদ হলো সত্যিকারের শূন্য (Observed Zero) আর হারিয়ে যাওয়া রেকর্ডের (Missing Record) পার্থক্য ভুলে যাওয়া। আমাদের NSW ডেটায় কারো আয় 0 লেখা থাকার অর্থ এটি বাস্তব নথিভুক্ত মান, লগিং মিস হওয়া নয়। বাস্তব সিস্টেমে কোনো ব্যবহারকারীর Outcome না পাওয়া গেলে সেটিকে চোখ বুজে 0 বসিয়ে দেওয়ার আগে ডোমেইনগত যৌক্তিকতা যাচাই করতে হবে—যেমন পেমেন্ট সার্ভিস ডাউন থাকায় রেকর্ড না আসা আর ইউজার কিছু না কেনা এক কথা নয়। এজন্য Assignment, Exposure ও চূড়ান্ত Outcome-এর সংখ্যা এবং ফলাফল পরিপক্ব হওয়ার সময়সীমা (Maturity Horizon) আলাদাভাবে নজরে রাখা চাই। আর হ্যাঁ, শুধু যারা টাকা খরচ করেছে (Converters) তাদের গড় খরচের হিসাব কখনোই সব Assign হওয়া ইউজারের মাথাপিছু আয়ের Causal প্রভাব নয়!"
+        },
+        {
+          "type": "text",
+          "title": "Post-treatment Selection-এর ফাঁদ",
+          "body": "ধরুন আপনার নতুন রিকমেন্ডেশন মডেলটি এমন কিছু অনিয়মিত ব্যবহারকারীকে অ্যাপে সক্রিয় করে তুলল, যারা সাধারণত খুব কম কেনাকাটা করেন। এখন আপনি যদি পুরো দলের বদলে শুধু সক্রিয় ব্যবহারকারীদের (Active Users) গড় কেনাকাটা মাপেন, তবে দেখবেন গড় মান হয়তো কমে গেছে! কারণ Treatment নিজেই এখানে সক্রিয় দলের গঠন বদলে দিয়েছে। তাই সক্রিয়দের ওপর নেওয়া এই শর্তসাপেক্ষ পার্থক্য কখনোই প্রকৃত ITT নয়। কোনো Exposure-ভিত্তিক বিশ্লেষণকে বৈধ রাখতে হলে দুই দলেই প্রতিসমভাবে কারা সেই অভিজ্ঞতার মুখোমুখি হতো (Symmetric Counterfactual Eligibility) তা নিশ্চিত করতে হয়; নতুবা Treatment-প্রভাবিত Click বা সক্রিয়তা দিয়ে ডেটা ফিল্টার করলে সরাসরি Selection Bias বা Collider Bias ঢুকে পড়ে।"
+        },
+        {
+          "type": "text",
+          "title": "সারসংক্ষেপ ও অনুশীলনের চিন্তা",
+          "body": "নিজের প্রজেক্টের জন্য যেকোনো Primary Metric লেখার সময় তার Numerator, Denominator, বিশ্লেষণের একক, সময়ের জানালা এবং Missingness সামলানোর নিয়ম একসাথে স্পষ্ট করে লেখার অভ্যাস করুন। পাশাপাশি ঐতিহাসিক ডেটা বিশ্লেষণের সময় কোনটি মূল গবেষকদের নির্ধারিত প্রটোকল আর কোনটি আমাদের শেখার সুবিধার্থে বেছে নেওয়া মাপকাঠি (যেমন এখানকার আয় ও ধনাত্মক আয়ের সূচক)—সেই সীমারেখা সম্পর্কেও সৎ ও সচেতন থাকতে হবে।"
+        }
+      ]
+    },
+    {
+      "id": "ch37_quality",
+      "title": "Sample Ratio Mismatch (SRM) ও Logging Integrity",
+      "subtitle": "সিস্টেমের উপসর্গ দেখলে মূল কারণ খুঁজে বের করুন—ফলাফলের আড়ালে সমস্যা ঢেকে রাখবেন না",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "প্রত্যাশিত অনুপাত বনাম বাস্তব লগের হিসাব",
+          "body": "পরীক্ষার ফলাফল বা Uplift দেখারও আগে একজন অভিজ্ঞ ML ইঞ্জিনিয়ার যে স্বাস্থ্য পরীক্ষাটি সবার আগে করেন, তার নাম Sample Ratio Mismatch (SRM)। আমরা সিস্টেমে যে অনুপাতে ট্রাফিক ভাগ করার নির্দেশ দিয়েছিলাম (Configured Expected Ratio), লগে জমা হওয়া প্রকৃত সংখ্যা তার সাথে মিলছে কি না—SRM ঠিক সেটিই যাচাই করে। এখানে নমুনার আকার বা Sample Size অত্যন্ত গুরুত্বপূর্ণ: ছোট নমুনায় সামান্য হেরফের স্বাভাবিক হলেও বিশাল ট্রাফিকে আপাতদৃষ্টিতে খুব ছোট কোনো অসামঞ্জস্যও কিন্তু বড় কোনো পাইপলাইন ত্রুটির সংকেত হতে পারে। তবে মনে রাখবেন, মূল NSW ডেটাসেটের 185 বনাম 260 সংখ্যার পেছনে মূল গবেষকদের ঠিক কী কনফিগারেশন ছিল তা আমাদের জানা নেই; তাই মনগড়াভাবে 50/50 অনুপাত ধরে আসল ঐতিহাসিক ডেটাকে ত্রুটিপূর্ণ বলে দাগিয়ে দেওয়া যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "লগ হারিয়ে যাওয়ার একটি বাস্তবসম্মত মহড়া",
+          "body": "প্রোডাকশনে লগিং বাগ কীভাবে SRM তৈরি করে তা হাতে-কলমে দেখার জন্য আমরা 445 টি ক্রমিক Key-এর ওপর একটি আলাদা হ্যাশ মহড়া সাজিয়েছি। সুস্থ অবস্থায় (clean) আমাদের হ্যাশ নিয়ম অনুযায়ী 220 জন Control এবং 225 জন Treatment দলে পড়েন। এবার ধরা যাক একটি কৃত্রিম বাগের কারণে Treatment দলের প্রতি তৃতীয় যোগ্য রেকর্ডের লগ হারিয়ে যাচ্ছে—ফলে 77 টি রেকর্ড বাদ পড়ে টিকে থাকছে 220 জন Control আর মাত্র 148 জন Treatment! প্রত্যাশিত অনুপাতের বিপরীতে Chi-square টেস্ট চালালে এখানকার p-value আসে প্রায় 0.000175, যা আমাদের নির্ধারিত 0.001 সতর্কবার্তার সীমার (Threshold) নিচে হওয়ায় সাথে সাথে সংকেত বেজে ওঠে। স্পষ্ট থাকা ভালো যে এটি আমাদের তৈরি করা সফটওয়্যার মহড়ার হিসাব, মূল NSW জরিপের প্রকৃত ডেটা হারানোর হার নয়।"
+        },
+        {
+          "type": "math",
+          "title": "SRM যাচাইয়ের Chi-square পরিসংখ্যান",
+          "body": "X^2=\\sum_a\\frac{(O_a-E_a)^2}{E_a}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ সুস্থ লগ বনাম ত্রুটিপূর্ণ লগের তুলনা",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"experiment37\", Path(\"assets/datasets/nsw/experiment_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/nsw/experiment_lab.json\").read_text(encoding=\"utf-8\")\n)\nrows = lab[\"cohorts\"][\"treated\"] + lab[\"cohorts\"][\"experimental\"]\nclean = m.logging_rehearsal(rows)\nbroken = m.logging_rehearsal(rows, loss=True)\nprint(clean)\nprint(broken)\nassert clean[\"observed_units\"] == 445\nassert broken[\"dropped\"] == 77 and broken[\"flag\"]\n"
+        },
+        {
+          "type": "text",
+          "title": "সতর্কবার্তা বাজার পর মূল কারণ (Root Cause) অনুসন্ধান",
+          "body": "মনে রাখবেন, SRM একটি উপসর্গ মাত্র—এটি নিজে থেকে বলে দেয় না ঠিক কোথায় গলদ হয়েছে। এর পেছনে নানারকম কারণ থাকতে পারে: ত্রুটিপূর্ণ Assignment লজিক, দুই দলে অসম Eligibility ফিল্টার, নতুন ফিচারের কারণে পেজ Redirect বা স্লো হয়ে ব্যবহারকারীর চলে যাওয়া, ক্লায়েন্ট-সাইড Logging Loss, বট ট্রাফিক কিংবা ইউজার আইডি বদলে যাওয়া (ID Churn)। তাই SRM ধরা পড়লে পাইপলাইনের প্রতিটি ধাপের সংখ্যা, টেবিল Join, অ্যাপ সংস্করণ এবং সময়ের খণ্ড (Time Slice) ধরে ধরে সমস্যাটি শনাক্ত করতে হবে। কখনোই 'Primary Metric-এর ফলাফল তো দারুণ পজিটিভ এসেছে!'—এই লোভে পড়ে লগিংয়ের সতর্কবার্তাকে উপেক্ষা করা চলবে না।"
+        },
+        {
+          "type": "text",
+          "title": "SRM ধরা না পড়া মানেই কি সব নিখুঁত?",
+          "body": "উল্টো দিকটিও সমান গুরুত্বপূর্ণ: টেস্টে বড় p-value আসার অর্থ কেবল এই যে আপনার কনফিগার করা অনুপাতের সাথে লগের সংখ্যার বড় কোনো বিরোধ পাওয়া যায়নি; কিন্তু এটি পুরো ডেটা পাইপলাইন শতভাগ নির্ভুল হওয়ার সনদ নয়! যেমন দুই দলেই যদি সমান হারে লগ হারায় (Symmetric Missingness) অথবা Outcome-এর সংজ্ঞাই যদি ভুল লেখা থাকে, তবে SRM কোনো সংকেত না দিলেও আপনার ফলাফলে ঠিকই মারাত্মক Bias ঢুকে পড়বে। তাই পরীক্ষা শুরুর আগের A/A Test, স্কিমা ভ্যালিডেশন এবং ডোমেইন চেকগুলোকে SRM-এর পরিপূরক হিসেবে সাথে রাখতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "সতর্কবার্তার Threshold ও ভুল সমাধানের ফাঁদ",
+          "body": "আমাদের এই মহড়ায় 0.001-কে একটি নির্দিষ্ট উদাহরণ হিসেবে ধরা হয়েছে, কিন্তু সব কোম্পানির সব প্রোডাকশনে এটি কোনো সার্বজনীন ধ্রুবক নয়। আপনার সিস্টেমের সংবেদনশীলতা, দিনে কতবার অ্যালার্ম চেক করা হচ্ছে এবং ভুয়া সংকেত (False Alarm) সামলানোর নীতিমালা অনুযায়ী এই সীমা ঠিক করতে হয়। আরেকটি মারাত্মক ভুল থেকে সবসময় দূরে থাকবেন: লগিং ভেঙে যাওয়া কোনো অসুস্থ পরীক্ষায় স্রেফ গাণিতিক Reweighting চালিয়ে সুন্দর একটি p-value বানিয়ে ফেলা কিন্তু আসল সমস্যার সমাধান নয়! কারণ যেসব ব্যবহারকারীর লগ হারিয়ে গেছে, তারা গড়পড়তা ব্যবহারকারীদের চেয়ে সম্পূর্ণ আলাদা আচরণের হতে পারেন।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে গুছিয়ে উত্তর দেবেন",
+          "body": "ইন্টারভিউতে যদি প্রশ্ন করা হয়, 'ধরুন Assignment পর্যায়ে দুই দলের সংখ্যা নিখুঁত সমান আছে, কিন্তু Treatment দলে কেনাকাটার (Conversion) কিছু লগ হারিয়ে যাচ্ছে—এটি ধরার জন্য আপনি কী কী পরীক্ষা করবেন?'—উত্তরে প্রথমেই বলবেন যে সাধারণ Assignment-level SRM এখানে চুপ থাকবে। তাই সমস্যাটি ধরতে হলে প্রতিটি Metric-এর নিজস্ব Denominator যাচাই করতে হবে, Exposure থেকে চূড়ান্ত Outcome টেবিলে Join হওয়ার পূর্ণতা (Completeness) দুই দলে সমান কি না তা দেখতে হবে এবং প্রতিটি ধাপের ড্রপ-অফ হার তুলনা করতে হবে। সবশেষে মনে করিয়ে দেবেন, SRM একটি অপরিহার্য প্রাথমিক গেট হলেও এটি একাই পুরো পরিমাপ ব্যবস্থার নির্ভুলতা নিশ্চিত করতে পারে না।"
+        }
+      ]
+    },
+    {
+      "id": "ch37_estimation",
+      "title": "Difference in Means ও মূল ডেটা থেকে সরাসরি হিসাব",
+      "subtitle": "গড়ের বিয়োগফল বের করা সহজ, কিন্তু পরীক্ষার ডিজাইনের আলোকে তার অর্থ বোঝাটাই আসল কাজ",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "হাতে-কলমে দুই দলের গড় হিসাব",
+          "body": "পাইপলাইনের নির্ভরযোগ্যতা নিশ্চিত হওয়ার পর আমাদের প্রথম কাজ হলো দুই দলের গড় ফলাফলের পার্থক্য (Point Estimate) বের করা। আমাদের NSW ডেটাসেটের 185 জন Treated অংশগ্রহণকারীর মোট আয়কে 185 দিয়ে এবং 260 জন Experimental Control অংশগ্রহণকারীর মোট আয়কে 260 দিয়ে ভাগ করলে গড় দাঁড়ায় যথাক্রমে 6349.143530 এবং 4554.801126। ফলে দুই গড়ের বিয়োগফল বা পার্থক্য আসে 1794.342404। খেয়াল রাখবেন, দুই দলের সদস্যসংখ্যা যখন অসমান (185 বনাম 260), তখন সবার মোট আয়ের বিয়োগফল কিংবা দুই দল মিলিয়ে নেওয়া Pooled গড় কখনোই সঠিক Treatment Contrast দেয় না—প্রতিটি দলের নিজস্ব গড় বের করেই বিয়োগ করতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "সংখ্যাটির পেছনের ডিজাইনগত অর্থ",
+          "body": "একটি সঠিকভাবে পরিচালিত Randomized পরীক্ষায় এই সাধারণ গড়ের বিয়োগফলটি গাণিতিক প্রত্যাশায় (In Expectation) গড় Causal প্রভাবের একটি নিরপেক্ষ হিসাব দেয়। তবে আমাদের এই সংখ্যার ব্যাখ্যায় দুটি বাস্তব দিক মাথায় রাখতে হবে: প্রথমত, ঐতিহাসিক একটি বিশেষ গোষ্ঠীর ডেটা এবং মূল প্রটোকলের বিস্তারিত তথ্যের অভাবে এর বাহ্যিক সাধারণীকরণ (External Validity) সীমিত; দ্বিতীয়ত, একটি নির্দিষ্ট Sample থেকে পাওয়া এই 1794.34 মানটি কিন্তু পাথরে খোদাই করা পরম সত্য (Ground Truth) নয়—নমুনার স্বাভাবিক ওঠানামা এবং ডিজাইনগত নানা সূক্ষ্মতা এর সাথে জড়িয়ে আছে।"
+        },
+        {
+          "type": "math",
+          "title": "Difference in Means Estimator-এর সূত্র",
+          "body": "\\hat\\tau=\\frac{1}{n_1}\\sum_{T_i=1}Y_i-\\frac{1}{n_0}\\sum_{T_i=0}Y_i"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ মূল Row থেকে গড় ও পার্থক্যের হিসাব",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"experiment37\", Path(\"assets/datasets/nsw/experiment_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/nsw/experiment_lab.json\").read_text(encoding=\"utf-8\")\n)\ntreated = m.values(lab[\"cohorts\"][\"treated\"])\ncontrol = m.values(lab[\"cohorts\"][\"experimental\"])\nmean_t = sum(treated) / len(treated)\nmean_c = sum(control) / len(control)\nprint(len(treated), len(control), mean_t, mean_c, mean_t - mean_c)\nassert abs(mean_t - mean_c - 1794.342404270269) < 1e-08\n"
+        },
+        {
+          "type": "text",
+          "title": "শূন্য আয়ের মানুষদের বাদ দেওয়া চলবে না",
+          "body": "উপরের কোডটি খেয়াল করলে দেখবেন, যাদের আয় বাস্তবে 0 ছিল তারাও এই গড়ের ভেতরে পুরোপুরি অন্তর্ভুক্ত আছেন—আমরা শুধু আয়কারীদের বেছে নিয়ে গড় করিনি। ডেটা যাচাইয়ের ধাপে নিশ্চিত করা হয়েছে যে সব আয়ের অঙ্ক সসীম ও অঋণাত্মক এবং মূল Treatment কোডিং অক্ষত রয়েছে। এখানে যদি কেউ শূন্য আয়ের Row-গুলো ফেলে দিতেন, তবে তা পুরো পরীক্ষার প্রশ্ন ও জনগোষ্ঠীকেই বিকৃত করে ফেলত।"
+        },
+        {
+          "type": "causal_trial",
+          "title": "ইন্টারেক্টিভ ল্যাব: ধনাত্মক আয়ের সূচক ও তুলনামূলক পরীক্ষা",
+          "body": "মূল আয়ের পাশাপাশি re78 > 0 শর্ত দিয়ে আমরা একটি বাইনারি বা দ্বিমুখী ফলাফলও (Indicator Outcome) তৈরি করেছি, যেখানে দলের গড় মানে হলো ধনাত্মক আয়ের অনুপাত (Proportion) এবং দুই দলের বিয়োগফল কাজ করে Risk Difference-এর মতো। ডেটাসেটে Treated দলের 185 জনের মধ্যে 140 জন এবং Control দলের 260 জনের মধ্যে 168 জনের আয় শূন্যের বেশি। মনে রাখবেন, এটি একই মানুষের ডেটার ওপর দেখা একটি পরিপূরক সারসংক্ষেপ মাত্র—নতুন কোনো স্বাধীন পরীক্ষার পুনরাবৃত্তি (Independent Replication) নয়।"
+        },
+        {
+          "type": "text",
+          "title": "চরম মান বা Outlier সামলানোর সততা",
+          "body": "আয় বা খরচের মতো অর্থনৈতিক ডেটা সাধারণত একদিকে লম্বা লেজওয়ালা (Heavy-tailed) হয়ে থাকে, যেখানে হাতেগোনা কয়েকজন মানুষের অনেক বেশি আয় পুরো গড়কে টেনে তুলতে পারে—এবং এই বড় সংখ্যাগুলো কিন্তু কোনো ভুল ডেটা নয়, বরং বাস্তব অর্থনৈতিক ঘটনা! ফলাফল দেখার পর নিজের সুবিধামতো উপরের কয়েকটি বড় সংখ্যা ছেঁটে ফেললে আপনার Estimand বদলে যায় এবং মারাত্মক Selection Bias তৈরি হয়। যদি Trimmed Mean বা Winsorization-এর মতো কোনো Robust পদ্ধতি ব্যবহার করতেই হয়, তবে তার যুক্তি আগেভাগে ঠিক করে নিতে হবে কিংবা স্পষ্টভাবে Exploratory বিশ্লেষণ হিসেবে চিহ্নিত করতে হবে—গোপনে সংখ্যা ছেঁটে মূল শিরোনাম বদলে ফেলা কখনোই গ্রহণযোগ্য নয়।"
+        },
+        {
+          "type": "text",
+          "title": "ল্যাবে নিজের হাতে পরীক্ষা করে দেখুন",
+          "body": "উপরের ইন্টারেক্টিভ ল্যাবে Outcome ভেরিয়েবল, Confidence Level এবং Randomization Draw-এর সংখ্যা পাল্টে দেখুন সংখ্যাগুলো কীভাবে আচরণ করে। গড়, Variance ও Standard Error সরাসরি মূল ডেটা থেকেই হিসাব করা হচ্ছে, আর p-value ও t-critical মানগুলো প্রামাণ্য SciPy রেফারেন্সের সাথে মিলিয়ে যাচাই করা। তবে খেয়াল রাখবেন, একই ডেটাসেটের ওপর সেটিংস ঘুরিয়ে-ফিরিয়ে দেখা মানে একই তথ্যের ভিন্ন ভিন্ন কোণ দেখা—একাধিক স্বাধীন পরীক্ষা চালানো নয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch37_uncertainty",
+      "title": "Welch Standard Error, Confidence Interval ও p-value",
+      "subtitle": "দুই দলের অসম Variance এবং অনিশ্চয়তার প্রকৃত পরিসংখ্যানিক অর্থ বুঝে নিন",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "নমুনার ওঠানামা ও অসম Variance-এর হিসাব",
+          "body": "আগের পাঠে আমরা গড়ের পার্থক্য 1794.34 পেয়েছি; কিন্তু অন্য আরেকটি র‍্যান্ডম নমুনা নিলে তো সংখ্যাটি কিছুটা এদিক-ওদিক হতে পারত! এই অনিশ্চয়তা মাপার জন্য প্রতিটি দলের নিরপেক্ষ Sample Variance (n - 1 দিয়ে ভাগ করে) বের করা হয়। যেহেতু গড়ের নিজস্ব Variance হলো s^2 / n, তাই দুটি স্বাধীন দলের গড়ের বিয়োগফলের Variance হবে তাদের যোগফল। আমাদের আয়ের ডেটায় এখান থেকে Standard Error (SE) আসে 670.997 এবং Welch-Satterthwaite পদ্ধতিতে কার্যকর Degrees of Freedom (df) দাঁড়ায় 307.132। বাস্তবে Treatment নিজেই ফলাফলের ছড়িয়ে পড়ার মাত্রা বদলে দিতে পারে বলে দুই দলের Variance সমান ধরে নেওয়া (Pooled t-test) ঝুঁকিপূর্ণ; তাই অসম Variance বা Heteroskedasticity সামলাতে Welch-এর সূত্র ব্যবহার করাই নিরাপদ অভ্যাস।"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব ডেটায় Confidence Interval ও তার প্রসারণ",
+          "body": "এই SE ও df ব্যবহার করে 95% Welch Confidence Interval হিসাব করলে সীমাটি দাঁড়ায় 474.010 থেকে 3114.674 একক পর্যন্ত, এবং দ্বিমুখী p-value আসে প্রায় 0.007893। আপনি যদি আরও বেশি নিশ্চিত হতে চান—যেমন 95%-এর বদলে 99% Confidence Level বেছে নেন—তবে স্বাভাবিকভাবেই Interval-টি আরও চওড়া হয়ে যাবে। তবে খেয়াল করুন, Confidence Level বদলালেও আপনার হাতের মূল গড় পার্থক্য (Point Estimate) কিন্তু একটুও পাল্টায় না; কেবল তার চারপাশের অনিশ্চয়তার বলয়টি ছোট বা বড় হয়।"
+        },
+        {
+          "type": "math",
+          "title": "Welch Standard Error এবং Confidence Interval",
+          "body": "SE=\\sqrt{\\frac{s_1^2}{n_1}+\\frac{s_0^2}{n_0}},\\quad CI=\\hat\\tau\\pm t_{\\nu,1-\\alpha/2}SE"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ ভিন্ন ভিন্ন Confidence Level-এ Welch হিসাব",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"experiment37\", Path(\"assets/datasets/nsw/experiment_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/nsw/experiment_lab.json\").read_text(encoding=\"utf-8\")\n)\nt = m.values(lab[\"cohorts\"][\"treated\"])\nc = m.values(lab[\"cohorts\"][\"experimental\"])\nfor confidence in [0.9, 0.95, 0.99]:\n    result = m.welch(t, c, confidence)\n    print(confidence, result[\"se\"], result[\"df\"], result[\"lower\"], result[\"upper\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "বড় নমুনার অনুমান ও একপেশে ডেটার সতর্কতা",
+          "body": "এখানে মনে রাখা ভালো যে Welch-Satterthwaite পদ্ধতিটি স্বাধীন নমুনায়ন এবং বড় নমুনার আসন্ন মানের (Large-sample Approximation) ওপর দাঁড়িয়ে কাজ করে। কেবল পরীক্ষাটি Randomized হলেই যে যেকোনো ছোট ও তীব্রভাবে একপেশে (Skewed) ডেটায় গড়ের পার্থক্য হুবহু নিখুঁত t-distribution মেনে চলবে—এমন কোনো নিশ্চয়তা নেই। যেহেতু আয়ের ডেটা স্বভাবতই Heavy-tailed, তাই শুধু একটি সংখ্যা না দেখে Point Estimate, তার অনিশ্চয়তার পরিসর এবং ডোমেইনের বাস্তবতা একসাথে মিলিয়ে বিচার করতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Confidence Interval-এর সঠিক অর্থ—যা এটি বলে এবং যা বলে না",
+          "body": "ইন্টারভিউতে সবচেয়ে বেশি যে ভুলটি শোনা যায় তা হলো: 'আসল প্রভাবের মান 474 থেকে 3114-এর ভেতরে থাকার সম্ভাবনা 95%!' Frequentist পরিসংখ্যানে এই কথাটি কিন্তু সঠিক নয়। আসল অর্থ হলো, আমরা যদি একই নিয়মে বারবার অসংখ্য তুলনাযোগ্য পরীক্ষা চালাই এবং প্রতিবারই এভাবে Interval তৈরি করি, তবে দীর্ঘমেয়াদে প্রায় 95% ক্ষেত্রে সেই পদ্ধতিগত সীমাগুলো আসল অজানা প্যারামিটারটিকে ঘিরে রাখতে পারবে। একবার ডেটা দেখে সংখ্যা দুটি নির্দিষ্ট হয়ে যাওয়ার পর সেখানে আর কোনো Bayesian সম্ভাবনার দাবি চলে না। তাছাড়া Interval-এর ভেতর শূন্য না থাকা মানেই যে পরিবর্তনটি ব্যবসায়িকভাবে লাভজনক কিংবা সব Guardrail নিরাপদ আছে—তাও কিন্তু আপনাআপনি প্রমাণিত হয় না!"
+        },
+        {
+          "type": "text",
+          "title": "p-value-এর প্রকৃত অর্থ ও সীমাবদ্ধতা",
+          "body": "একইভাবে p-value মানে কিন্তু 'Null Hypothesis সত্য হওয়ার সম্ভাবনা' নয়, আবার এটি প্রভাবের আকারও (Effect Size) নির্দেশ করে না। এর প্রকৃত অর্থ হলো: যদি ধরে নিই সত্যিই কোনো প্রভাব নেই (Null Model) এবং পরীক্ষার সমস্ত ডিজাইন ও পরিমাপের শর্ত শতভাগ ঠিক আছে, তবে স্রেফ কাকতালীয়ভাবে আমাদের পাওয়া ফলাফলের সমান বা তার চেয়েও চরম কোনো সংখ্যা পাওয়ার সম্ভাবনা কতটুকু। সুতরাং ডেটায় যদি মারাত্মক Confounding বা লগিং ত্রুটি থাকে, তবে অতি ক্ষুদ্র p-value দিয়েও কোনো বিশ্বাসযোগ্য Causal প্রমাণ খাড়া করা যায় না। আবার উল্টো দিকে, ফলাফল Non-significant আসার মানেও 'প্রভাব নিশ্চিতভাবে শূন্য' নয়—বরং তখন পুরো Interval-টি দেখে বুঝতে হবে ডেটা আসলে কত বড় বা ছোট প্রভাবের সম্ভাবনাকে খোলা রাখছে।"
+        },
+        {
+          "type": "text",
+          "title": "নিজে ভেবে দেখুন: কেন 1.96-এর চেয়ে সামান্য আলাদা?",
+          "body": "উপরের কোডে 95% সীমার হিসাবটি খেয়াল করলে দেখবেন, ব্যবহৃত t-critical মানটি চিরচেনা Normal মানের 1.96 থেকে সামান্য বড়। কেন এমন হয়? কারণ এখানে অজানা Variance আমরা নমুনা থেকেই অনুমান করছি, আর সেই অতিরিক্ত অনিশ্চয়তার হিসাব রাখে Degrees of Freedom। পরিশেষে মনে রাখবেন, যদি কোনো পরীক্ষায় অনেক ডেটা হারিয়ে যায় বা এককগুলো পরস্পর নির্ভরশীল (Dependent Units) হয়, তবে চোখ বুজে এই সাধারণ সূত্র প্রয়োগ করা যাবে না।"
+        }
+      ]
+    },
+    {
+      "id": "ch37_randomization_test",
+      "title": "Sharp Null ও Monte Carlo Randomization Test",
+      "subtitle": "বাস্তব Outcome স্থির থাকে, কেবল Treatment-এর লেবেলগুলো নতুন করে ওলটপালট হয়",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Sharp Null বনাম Weak Null: দুটি ভিন্ন প্রশ্ন",
+          "body": "আগের পাঠে আমরা নমুনার বণ্টন ও t-distribution-এর অনুমান ব্যবহার করেছি; কিন্তু যদি কোনো প্যারামেট্রিক ডিস্ট্রিবিউশনের অনুমান ছাড়াই সরাসরি বণ্টন প্রক্রিয়া থেকে অনিশ্চয়তা মাপতে চাই? সেখানেই আসে Randomization Test। তবে শুরুতেই দুটি Null Hypothesis-এর পার্থক্য বুঝে নেওয়া জরুরি। Sharp Null ধরে নেয় যে পরীক্ষায় থাকা প্রত্যেকটি এককের ওপর Treatment-এর প্রভাব হুবহু শূন্য (Y_i(1) = Y_i(0))। এই জোরালো শর্তটির দারুণ সুবিধা হলো, যেকোনো কাল্পনিক পুনর্বণ্টনে মানুষের বাস্তব দেখা ফলাফলটিই তার অদেখা Counterfactual হিসেবে কাজ করে! অন্যদিকে Weak Null কেবল বলে যে সবার গড় প্রভাব শূন্য—যেখানে কারো কারো ওপর ধনাত্মক বা ঋণাত্মক প্রভাব থাকতেই পারে। তাই Randomization Distribution তৈরির আগে আপনি কোন Null এবং কোন বণ্টন নিয়ম (Assignment Law) ব্যবহার করছেন তা পরিষ্কার থাকা চাই।"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব 445 টি ফলাফলের ওপর পুনর্বণ্টনের মহড়া",
+          "body": "চলুন আমাদের NSW ডেটার ওপর ধারণাটি প্রয়োগ করি। আমরা 445 জন অংশগ্রহণকারীর প্রকৃত re78 আয়ের মানগুলোকে একদম স্থির রেখে, তার ওপর দৈবচয়নে 185 টি Treated লেবেল (এবং বাকি 260 টি Control লেবেল) বারবার নতুন করে বসিয়ে দেখব। পুনরাবৃত্তিযোগ্যতার সুবিধার্থে নির্ধারিত Seed দিয়ে তৈরি এমন 1000 টি পুনর্বণ্টনের ইনডেক্স ডেটাসেটের ফাইলে সংরক্ষিত আছে, যেখান থেকে কোড সরাসরি গড় পার্থক্যগুলো পুনর্গণনা করে। যেহেতু মূল ঐতিহাসিক পরীক্ষার স্তরবিন্যাস বা পূর্ণ প্রটোকল আমাদের জানা নেই, তাই এটিকে স্পষ্টভাবে একটি শর্তসাপেক্ষ Complete Randomization-এর উদাহরণ হিসেবেই পড়তে হবে।"
+        },
+        {
+          "type": "math",
+          "title": "Monte Carlo Randomization p-value-এর সূত্র",
+          "body": "\\hat p=\\frac{1+\\#\\{|\\hat\\tau_b|\\ge|\\hat\\tau_{obs}|\\}}{B+1}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ প্রথম Permutation ও Randomization ফলাফল যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"experiment37\", Path(\"assets/datasets/nsw/experiment_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/nsw/experiment_lab.json\").read_text(encoding=\"utf-8\")\n)\nrows = lab[\"cohorts\"][\"treated\"] + lab[\"cohorts\"][\"experimental\"]\ny = m.values(rows)\nindices = lab[\"permutation_bank\"][0][\"treated_indices\"]\nassert len(indices) == len(set(indices)) == 185\nassigned_sum = sum((y[i] for i in indices))\ndelta = assigned_sum / 185 - (sum(y) - assigned_sum) / 260\nassert abs(delta - lab[\"permutation_bank\"][0][\"earnings\"]) < 1e-08\nprint(delta, lab[\"randomization\"][\"earnings\"][\"1000\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "Monte Carlo Tail গণনা ও +1 যোগ করার রহস্য",
+          "body": "উপরের সূত্রটি একটু খেয়াল করুন: আমরা দ্বিমুখী পরম মান (Absolute Statistic) নিয়ে দেখছি B সংখ্যক সিমুলেশনের মধ্যে কয়টিতে কাল্পনিক পার্থক্যটি আসল দেখা পার্থক্যের সমান বা তার চেয়ে বড় হয়েছে। লব ও হর উভয় জায়গায় যে + 1 যোগ করা হয়েছে, তার কারণ হলো আসল দেখা বণ্টনটিকেও সম্ভাব্য সেটের একটি বৈধ সদস্য হিসেবে গণ্য করা—যাতে সিমুলেশনে কখনোই অসম্ভব p = 0 মান চলে না আসে। উল্লেখ্য, অপ্রতিসম (Asymmetric) বণ্টনের ক্ষেত্রে এই পদ্ধতিটির উত্তর অন্য প্রচলিত নিয়ম (যেমন দুই প্রান্তের ছোটটির দ্বিগুণ নেওয়া) বা বিভিন্ন লাইব্রেরির ডিফল্ট আউটপুটের চেয়ে সামান্য আলাদা হতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "সিমুলেশনের নিজস্ব ত্রুটি (Simulation Error)",
+          "body": "যেহেতু আমরা 445 জনের মধ্য থেকে 185 জনকে বেছে নেওয়ার সবকটি গাণিতিক বিন্যাস (445 choose 185, যা একটি অকল্পনীয় বিশাল সংখ্যা!) গণনা না করে B সংখ্যক নমুনা টানছি, তাই এখানে সামান্য Monte Carlo ত্রুটি থাকে—যাকে আনুমানিকভাবে sqrt(p * (1 - p) / (B + 1)) দিয়ে প্রকাশ করা হয়েছে। আমাদের ল্যাবে B = 100, 500 ও 1000 ধাপগুলো ক্রমান্বয়ে সাজানো আছে। এখানে একটি সূক্ষ্ম সত্য মনে রাখবেন: B-এর সংখ্যা বাড়ালে কেবল সিমুলেশনের গণনাগত ওঠানামা কমে, কিন্তু তাতে পরীক্ষার মূল ডেটা কোনোভাবেই 'আরও বেশি Causal' হয়ে ওঠে না!"
+        },
+        {
+          "type": "text",
+          "title": "মনমতো p-value পাওয়ার জন্য Seed পাল্টানো নিষিদ্ধ",
+          "body": "Randomization Test করার সময় একটি কারিগরি শৃঙ্খলা খুব জরুরি: নিজের পছন্দের ছোট p-value না পাওয়া পর্যন্ত বারবার Random Seed পাল্টানো, B-এর মান ঘোরানো বা Outcome বদলানো হলো একধরনের p-hacking, যা পুরো পরীক্ষার বৈধতা নষ্ট করে দেয়। আমাদের ফাইলে 37000 থেকে 37999 পর্যন্ত নির্দিষ্ট Seed কেবল হিসাবের স্বচ্ছতা ও Reproducibility বজায় রাখার জন্যই ব্যবহার করা হয়েছে। আর বলাই বাহুল্য, এই সিমুলেশনে নতুন কোনো অংশগ্রহণকারী বা নতুন কোনো ফলাফল তৈরি হচ্ছে না—পুরোনো বাস্তব সংখ্যার ওপরই কেবল লেবেল অদলবদল হচ্ছে।"
+        },
+        {
+          "type": "text",
+          "title": "কোডিং অনুশীলনের লক্ষ্য",
+          "body": "নিজে কোড লেখার সময় সবসময় যাচাই করে নেবেন যেন প্রতিটি পুনর্বণ্টনে ঠিক 185 টি অনন্য ইনডেক্স ও তার পরিপূরক 260 টি ইনডেক্স থাকে এবং সবকটি বাস্তব Outcome-এর যোগফল অবিকল অক্ষত থাকে। আর সিমুলেশনের হিস্টোগ্রাম দেখার সময় ভুল করবেন না: ওই গ্রাফটি দেখাচ্ছে কোনো প্রভাব না থাকলে (Sharp Null) গড় পার্থক্য কেমন দেখতে হতো—এটি কিন্তু আসল প্রভাবের Posterior Distribution বা ব্যক্তিভেদে প্রভাবের বণ্টন নয়!"
+        }
+      ]
+    },
+    {
+      "id": "ch37_power",
+      "title": "Power, MDE ও Sample-size Planning",
+      "subtitle": "পরীক্ষা শুরুর আগেই অর্থবহ ন্যূনতম প্রভাব ঠিক করুন—শেষে এসে Observed Power-এর ফাঁদে পা দেবেন না",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "পরিকল্পনার চারটি মূল উপাদান",
+          "body": "একটি পরীক্ষা কতদিন চালাবেন বা কতজন ব্যবহারকারী লাগবে, তা পরীক্ষা শুরুর আগেই হিসাব করে নিতে হয়। এই পরিকল্পনার জন্য আমাদের চারটি ইনপুট স্পষ্টভাবে ঠিক করতে হবে: ফলাফলের আনুমানিক Standard Deviation (σ) কত হতে পারে, প্রোডাক্টের জন্য ন্যূনতম কতটুকু বাস্তবসম্মত প্রভাব আমরা মিস করতে চাই না—অর্থাৎ Minimum Detectable Effect (MDE বা δ), মোট ট্রাফিকের কত অংশ (r) Treatment পাবে, এবং আমাদের গ্রহণযোগ্য ভুয়া সংকেতের হার (Two-sided Alpha) ও কাঙ্ক্ষিত Target Power কত।\n\nনিচের সূত্রটি স্বাধীন একক ও সমান Variance ধরে Normal আসন্ন মানের সাহায্যে নমুনার আকার হিসাব করে। উদাহরণ হিসেবে আমরা ঐতিহাসিক Control দলের SD = 5483.836 মানটিকে পরিকল্পনার ভিত্তি ধরেছি; তবে বাস্তবে নতুন কোনো প্রোডাক্টে এই Variance ঠিক কত হবে তা আগের লগ বা পাইলট ডেটা দেখেই অনুমান করতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Sample Size কীভাবে বাড়ে-কমে: বর্গের নিয়ম",
+          "body": "সূত্রটির গঠনের দিকে তাকালেই একটি চমৎকার গাণিতিক অন্তর্দৃষ্টি পাওয়া যায়! লক্ষ্য করুন, নিচে δ^2 এবং উপরে σ^2 বসে আছে। এর মানে হলো, আপনি যদি অর্ধেক আকারের সূক্ষ্ম কোনো প্রভাব (MDE অর্ধেক) ধরতে চান, তবে আপনার প্রয়োজনীয় Sample Size দ্বিগুণ নয়—বরং প্রায় চার গুণ (4×) বেড়ে যাবে! একইভাবে মেট্রিকের নিজস্ব কোলাহল বা Variance চার গুণ হলে নমুনার চাহিদাও চার গুণ বাড়ে। আবার বেশি Confidence বা বেশি Power চাইলেও আরও বেশি ডেটা লাগে। খরচ ও Variance সমান হলে r = 0.5 বা সমান ভাগে r(1 - r)-এর মান সর্বোচ্চ হয় বলে সবচেয়ে কম মোট নমুনা লাগে; কিন্তু ঝুঁকি বা খরচের অসমতা থাকলে অন্য কোনো অনুপাতই বাস্তবে সেরা হতে পারে।"
+        },
+        {
+          "type": "math",
+          "title": "Sample-size Planning-এর আসন্ন সূত্র",
+          "body": "N\\approx\\frac{\\sigma^2(z_{1-\\alpha/2}+z_{power})^2}{\\delta^2r(1-r)}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ ভিন্ন ভিন্ন MDE-এর জন্য প্রয়োজনীয় Sample হিসাব",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"experiment37\", Path(\"assets/datasets/nsw/experiment_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/nsw/experiment_lab.json\").read_text(encoding=\"utf-8\")\n)\nsigma = lab[\"planning_sigma\"]\nfor mde in [1000, 2000, 4000]:\n    design = m.plan(sigma, delta=mde)\n    print(\n        mde,\n        design[\"treated\"],\n        design[\"control\"],\n        design[\"total\"],\n        design[\"achieved_normal_power\"],\n    )\n"
+        },
+        {
+          "type": "text",
+          "title": "পূর্ণসংখ্যায় রূপান্তর ও ক্যালেন্ডারের দিন গণনা",
+          "body": "সূত্র থেকে পাওয়া দশমিক সংখ্যাকে বাস্তবে রূপ দিতে Treatment ও Control দলের সংখ্যা আলাদাভাবে উপরের পূর্ণসংখ্যায় (ceil) নিয়ে নেওয়া হয়, এবং সেই পূর্ণসংখ্যার ভিত্তিতে অর্জিত Power পুনর্গণনা করা হয় (যদি Cluster ডিজাইন থাকে, তবে তার স্ফীতি আলাদাভাবে গুণ হবে)। তবে একটি বাস্তব কথা মনে রাখবেন: কোড থেকে মোট Sample Count বেরোনো মানেই কিন্তু পরীক্ষাটি কত দিন চলবে তা ঠিক হয়ে যাওয়া নয়! ক্যালেন্ডারের দিনক্ষণ বের করতে হলে আপনার প্রতিদিনের যোগ্য ট্রাফিকের হার, Outcome পরিপক্ব হতে কত সময় লাগে (Maturity Delay) এবং সাপ্তাহিক বা মৌসুমি ব্যবসায়িক চক্র (Business Cycle, যেমন উইকএন্ড বনাম কর্মদিবস)—সবকিছু মিলিয়ে হিসাব কষতে হবে।"
+        },
+        {
+          "type": "causal_design",
+          "title": "ইন্টারেক্টিভ ডিজাইন ল্যাব: MDE, Allocation ও Power নিয়ে পরীক্ষা",
+          "body": "এই ডিজাইন ল্যাবে MDE (1000 / 2000 / 4000), ট্রাফিক ভাগ (40% / 50% / 70%), Alpha (0.05 / 0.01), Power (80% / 90%) এবং Cluster Size ও ICC বদলে দেখুন প্রয়োজনীয় নমুনার সংখ্যা কীভাবে লাফিয়ে পরিবর্তিত হয়। এখানে ঐতিহাসিক sigma ব্যবহার করে ভবিষ্যতের সম্ভাব্য পরিকল্পনার (What-if Planning) ধারণা দেওয়া হয়েছে, মূল NSW ট্রায়ালের পুরোনো নকশা উদ্ধার করা নয়; আর নিচের লগিং-লস অংশটি আপনাকে ডেটা কোয়ালিটি গেটের গুরুত্ব মনে করিয়ে দেবে।"
+        },
+        {
+          "type": "text",
+          "title": "Observed Power-এর ফাঁদ থেকে সাবধান",
+          "body": "অনেক সময় দেখা যায়, পরীক্ষা শেষ হওয়ার পর আশানুরূপ ফল না এলে কেউ কেউ প্রাপ্ত Observed Effect এবং প্রাপ্ত SE আবার Power-এর সূত্রে বসিয়ে 'আমাদের Retrospective বা Observed Power এত ছিল' বলে রিপোর্ট করেন। পরিসংখ্যানগতভাবে এটি একটি অর্থহীন ফাঁদ! কারণ প্রাপ্ত ফলাফল বসিয়ে বের করা এই সংখ্যাটি আসলে আপনার প্রাপ্ত p-value-এরই আরেকটি গাণিতিক রূপান্তর মাত্র—এতে বিন্দুমাত্র নতুন কোনো তথ্য যোগ হয় না। পরীক্ষা শেষে ফলাফল বুঝতে হলে সরাসরি Point Estimate ও Confidence Interval-এর প্রসারণ দেখুন; আর পরবর্তী পরীক্ষার MDE সবসময় প্রোডাক্টের বাস্তব উপযোগিতা ভেবে স্বাধীনভাবে নির্ধারণ করুন।"
+        },
+        {
+          "type": "text",
+          "title": "Binary ও অন্যান্য মেট্রিকের জন্য আলাদা পরিকল্পনা",
+          "body": "সবশেষে খেয়াল রাখবেন, আমাদের উপরের উদাহরণটি অবিচ্ছিন্ন আয়ের (Continuous Outcome) জন্য সাজানো। আপনার লক্ষ্য যদি Conversion Rate-এর মতো কোনো Binary Outcome হয়, তবে সেখানে Variance নির্ভর করে p(1 - p)-এর ওপর—তাই Baseline হার এবং প্রত্যাশিত পরিবর্তনের হার ধরে আলাদা সূত্র ব্যবহার করতে হবে। একইভাবে অতি বিরল ঘটনা (Rare Events), Guardrail-এর সহনশীলতার সীমা (Non-inferiority Margin) এবং Ratio Metric-এর জন্যও নিজস্ব ডিজাইন পদ্ধতি দরকার; অবিচ্ছিন্ন আয়ের sigma কখনোই চোখ বুজে কনভার্সন রেটের সূত্রে বসিয়ে দেবেন না।"
+        }
+      ]
+    },
+    {
+      "id": "ch37_variance",
+      "title": "Pre-treatment Adjustment, CUPED ও HC2",
+      "subtitle": "ফলাফলের অনুমানযোগ্য ওঠানামাটুকু ছেঁকে বাদ দিন—কিন্তু Treatment-এর নিজস্ব প্রভাবের পথটি নয়",
+      "duration": "55 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "CUPED-এর মূল অন্তর্দৃষ্টি: শুরুর কোলাহল কমানো",
+          "body": "আগের পাঠে আমরা দেখেছি, মেট্রিকের নিজস্ব Variance (σ^2) বেশি হলে প্রয়োজনীয় নমুনার আকার হু-হু করে বেড়ে যায়। কিন্তু ধরুন পরীক্ষা শুরুর আগের কোনো তথ্য (Pre-experiment Covariate, যেমন গত মাসের কেনাকাটা বা আগের বছরের আয় X) আমাদের হাতের কাছে আছে, যা পরবর্তী ফলাফল Y-এর অনেকখানি স্বাভাবিক ওঠানামা আগেভাগেই ব্যাখ্যা করতে পারে! তাহলে Y থেকে X-এর ওই অনুমানযোগ্য অংশটুকু বিয়োগ করে নিলে গড় ফলাফল অবিকৃত রেখেও তার Variance অনেকটা কমিয়ে আনা সম্ভব—অনলাইন এক্সপেরিমেন্টেশনের জগতে এই কৌশলটিই CUPED নামে পরিচিত। স্থির পপুলেশন মোমেন্টের জন্য এর সর্বোত্তম গুণক হলো theta = Cov(X, Y) / Var(X)। তবে একটাই অলঙ্ঘনীয় শর্ত: X অবশ্যই Treatment শুরুর আগে মাপা হতে হবে, যাতে Treatment কোনোভাবেই তাকে বদলাতে না পারে; নতুবা ভুল করে Treatment-পরবর্তী Engagement বাদ দিতে গেলে আসল Causal Estimand-ই বিকৃত হয়ে যাবে!"
+        },
+        {
+          "type": "text",
+          "title": "ডেটা থেকে Theta অনুমান করার বাস্তবতা",
+          "body": "তাত্ত্বিকভাবে স্থির পপুলেশনে আদর্শ Variance অনুপাত 1 - rho^2 দেখালেও বাস্তবে theta-কে আমাদের সীমিত ডেটা থেকেই অনুমান করতে হয়, যার নিজস্ব অনিশ্চয়তা ও Finite-sample প্রভাব রয়েছে। তাছাড়া আপনার বেছে নেওয়া Covariate X যদি Y-এর খুব শক্তিশালী Predictor না হয়—অর্থাৎ দুয়ের Correlation দুর্বল হয়—তবে Variance কমার সুফলও হবে অতি সামান্য। প্রোডাকশনে X-এর অনুপস্থিত মান (Missing X), মডেল ফিটিংয়ের নিয়ম এবং প্রয়োজনভেদে Out-of-sample বা Cross-fitting নীতিমালা মেনে চলা জরুরি; অর্থাৎ নাম CUPED দিলেই সব পরিস্থিতিতে নিশ্চিতভাবে বিশাল Variance কমে যাবে—এমন কোনো গ্যারান্টি নেই।"
+        },
+        {
+          "type": "math",
+          "title": "CUPED Adjusted Outcome ও সর্বোত্তম Theta",
+          "body": "Y^*=Y-\\theta(X-E[X]),\\quad \\theta^*=Cov(X,Y)/Var(X)"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ সরাসরি গড় বনাম Interacted ANCOVA ও HC2 SE",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"experiment37\", Path(\"assets/datasets/nsw/experiment_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/nsw/experiment_lab.json\").read_text(encoding=\"utf-8\")\n)\nadjusted = m.ancova(lab[\"cohorts\"])\nraw = lab[\"trial\"][\"earnings\"][\"0.95\"]\nprint(\"Raw contrast,SE:\", raw[\"delta\"], raw[\"se\"])\nprint(\"Interacted ANCOVA,HC2 SE:\", adjusted[\"delta\"], adjusted[\"hc2_se\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "NSW ডেটায় Lin-style Interacted ANCOVA ও HC2",
+          "body": "উপরের কোডে আমরা ১৯৭৫ সালের প্রাক-ট্রেনিং আয় (re75)-কে গড় বিয়োগ ও স্কেলিং (Center/Scale) করে [1, T, X, T × X] কাঠামোয় একটি পূর্ণাঙ্গ মিথস্ক্রিয়াযুক্ত OLS মডেল ফিট করেছি—যা পরিসংখ্যানে Lin-style Regression Adjustment নামে পরিচিত। এখানে অসম Variance ও উচ্চ প্রভাবশালী বিন্দুগুলোর (Leverage) সংশোধন হিসেবে ব্যবহৃত হয়েছে HC2 Sandwich Covariance। যেহেতু X-কে শুরুতেই গড়-শূন্য (Centered) করে নেওয়া হয়েছে, তাই সমীকরণে T-এর সহগটি সরাসরি গড় Covariate অবস্থানে দুই দলের গড় পার্থক্য নির্দেশ করে এবং সেখান থেকে আসন্ন Normal 95% সীমা বের করা যায়।"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব সংখ্যাগুলো কী বলছে?",
+          "body": "আউটপুটের সংখ্যা দুটির দিকে তাকান: সরাসরি গড় পার্থক্য ছিল 1794.342 (SE = 670.997), আর এই re75 সমন্বয়ের পর পার্থক্যটি দাঁড়িয়েছে 1749.052 এবং HC2 SE হয়েছে 669.524। দেখতেই পাচ্ছেন, এই নির্দিষ্ট রেসিপিতে Standard Error কমেছে খুবই সামান্য—তাই এখানে কোনো বিশাল সূক্ষ্মতা বৃদ্ধির (Precision Gain) অতিরঞ্জিত দাবি করার সুযোগ নেই! এটি আমাদের ঐতিহাসিক ডেটার ওপর পরবর্তীতে চালানো একটি বিশ্লেষণ মাত্র, মূল গবেষণার পূর্বনির্ধারিত মডেল নয়; আর নৈতিক সচেতনতা হিসেবে ব্যক্তিগত অটোমেটেড সিদ্ধান্তের জন্য এখানে জাতিগত (Race/Ethnicity) কোনো চলক ব্যবহার করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "সাধারণ OLS SE বনাম Robust HC2 SE",
+          "body": "একটি কারিগরি সতর্কতা সবসময় মনে রাখবেন: সব জায়গায় সমান Variance ধরে নেওয়া সরল Homoskedastic OLS SE আর HC2 কিন্তু এক জিনিস নয়; HC2 প্রতিটি বিন্দুর residual^2 / (1 - leverage) ব্যবহার করে অসম Variance-এর ঝুঁকি সামলায়। আবার আপনার পরীক্ষাটি যদি Cluster-ভিত্তিক হয়, তবে একক পর্যায়ের HC2-ও যথেষ্ট নয়—তখন চাই Cluster-robust হিসাব। আর সবচেয়ে বড় কথা, নিখুঁত Covariate Adjustment কেবল একটি ভালো পরীক্ষার মেট্রিকের কোলাহল কমায়; ত্রুটিপূর্ণ Randomization বা না-মাপা Confounding থাকলে এটি আপনাআপনি তা সারিয়ে তুলতে পারে না!"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এর প্রস্তুতি: প্রাক-পরীক্ষা বনাম পরবর্তী চলক",
+          "body": "ইন্টারভিউতে প্রায়ই জিজ্ঞেস করা হয়: 'কেন পরীক্ষার আগের Outcome দিয়ে Adjust করা উপকারী, কিন্তু পরীক্ষার পরের আচরণ দিয়ে Adjust করা বিপজ্জনক?' উত্তর দেওয়ার সময় ছোট্ট একটি Causal চিত্র এঁকে দেখান যে প্রাক-পরীক্ষার চলকটি কেবল Y-এর অনুমানযোগ্য কোলাহল কমায়, কিন্তু Treatment-পরবর্তী চলকটি নিজেই T -> M -> Y পথের অংশ হওয়ায় সেটিকে আটকে দিলে আসল প্রভাবটাই মুছে যায় বা বাঁকা হয়ে যায়। পাশাপাশি স্পষ্ট করে বলবেন যে RCT-তে Precision বাড়ানোর জন্য Adjustment করা আর Observational ডেটায় Confounding দূর করার জন্য Adjustment করা—দুটি সম্পূর্ণ আলাদা উদ্দেশ্য বহন করে।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে CUPED গুণক ও Variance হ্রাস যাচাই",
+          "body": "চলুন চারটি সমান ওজনের বিন্দু দিয়ে CUPED-এর ভেতরের বীজগণিতটুকু নিজের হাতে মিলিয়ে দেখি। ধরা যাক একটি ছোট পপুলেশনে X = [-1, -1, 1, 1] এবং Y = [0, 2, 2, 4]। হিসাব করলে দেখা যায় Var(X) = 1, Var(Y) = 2 এবং Cov(X, Y) = 1; সুতরাং সর্বোত্তম স্থির গুণক theta = 1 / 1 = 1। এবার Y - theta * (X - mean(X)) সূত্র প্রয়োগ করলে পরিবর্তিত ফলাফলের Variance অর্ধেক কমে ঠিক 1 হয়ে যায়! লক্ষ্য করুন, এখানে Correlation-এর বর্গ (rho^2) হলো 0.5, তাই Variance অনুপাত হুবহু 1 - rho^2 = 0.5 মিলে যাচ্ছে। অবশ্য মনে রাখবেন, এখানে পপুলেশনের জানা মোমেন্ট ধরে নিখুঁত বীজগণিত দেখানো হয়েছে; বাস্তব ট্রায়ালে ডেটা থেকে theta প্রাক্কলন করা এবং দুই দলের বিয়োগফলের অনিশ্চয়তা আলাদাভাবে সামলাতে হয়।"
+        },
+        {
+          "type": "code",
+          "title": "Centered Moments থেকে সর্বোত্তম Theta ও Variance অনুপাত",
+          "body": "import numpy as np\n\ncovariate = np.array([-1.0, -1.0, 1.0, 1.0])\noutcome = np.array([0.0, 2.0, 2.0, 4.0])\ncentered_x = covariate - covariate.mean()\ncentered_y = outcome - outcome.mean()\ncovariance = np.mean(centered_x * centered_y)\ntheta = covariance / np.mean(centered_x**2)\nadjusted = outcome - theta * centered_x\nvariance_ratio = np.var(adjusted) / np.var(outcome)\ncorrelation_squared = covariance**2 / (np.var(covariate) * np.var(outcome))\nnp.testing.assert_allclose(variance_ratio, 1 - correlation_squared)\nprint(theta, np.var(outcome), np.var(adjusted), variance_ratio)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে যাচাই করুন",
+          "body": "উপরের সূত্রে প্রাক-পরীক্ষার চলক X-এর জায়গায় যদি ভুলক্রমে Treatment দেওয়ার পরে তৈরি হওয়া ইউজার Engagement বসানো হয়, তবে কী ধরনের বিপত্তি ঘটবে?",
+          "solution": "Treatment নিজেই যদি ইউজারের Engagement বাড়ায় বা কমায়, তবে সেই চলক দিয়ে Adjust করলে মূল Treatment প্রভাবের একটি বাস্তব পথ (Mediation Path) বাদ পড়ে যাবে কিংবা পোস্ট-ট্রিটমেন্ট Selection Bias ঢুকে পুরো Estimand-কেই পাল্টে দেবে। তাই সবসময় নিশ্চিত করতে হবে যেন Covariate-টি Treatment শুরুর আগেই মাপা হয়, পাশাপাশি Missing ডেটা ও গুণক ফিটিংয়ের নিয়ম আগেভাগে লেখা থাকে। আর মনে রাখতে হবে, তাত্ত্বিক পপুলেশনের 1 - rho^2 অভেদ মানেই বাস্তবের প্রতিটি ছোট নমুনায় নিশ্চিত সূক্ষ্মতা বৃদ্ধি নয়।",
+          "reference": "https://ai.stanford.edu/~ronnyk/2013-02CUPEDImprovingSensitivityOfControlledExperiments.pdf"
+        }
+      ]
+    },
+    {
+      "id": "ch37_peeking",
+      "title": "Optional Stopping ও Sequential Inference",
+      "subtitle": "প্রতিদিন ড্যাশবোর্ডে উঁকি দিয়ে সাধারণ p < 0.05 খোঁজা আর Fixed-horizon পরীক্ষা এক কথা নয়",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Fixed-horizon পরীক্ষার মৌলিক শর্ত",
+          "body": "পরিসংখ্যানের সাধারণ t-test বা Welch পরীক্ষা একটি সুনির্দিষ্ট চুক্তির ওপর দাঁড়িয়ে কাজ করে: আপনি আগে থেকেই নির্ধারিত Sample Size বা সময়সীমা পূর্ণ করবেন এবং শেষে একবারই চূড়ান্ত বিশ্লেষণ চালাবেন—যাকে বলা হয় Fixed-horizon Inference। কিন্তু পরীক্ষা চলাকালীন প্রতিদিন ড্যাশবোর্ডে উঁকি দিয়ে (Peeking) যেই মুহূর্তে p < 0.05 দেখা গেল অমনি পরীক্ষা থামিয়ে বিজয় ঘোষণা করলে, কিংবা ফল পছন্দ না হওয়ায় মেয়াদ বাড়িয়ে দিলে পুরো নমুনায়নের গাণিতিক নিয়মটাই বদলে যায়। তখন সাধারণ টেস্টের 5% ভুয়া সংকেতের গ্যারান্টি আর কোনোভাবেই টিকে থাকে না!"
+        },
+        {
+          "type": "text",
+          "title": "বারবার পরীক্ষা চালালে ভুয়া সংকেত যেভাবে ফুলেফেঁপে ওঠে",
+          "body": "বারবার সুযোগ নিলে ভুলের ঝুঁকি কত দ্রুত বাড়ে তা বোঝার জন্য একটি সরল গাণিতিক বেঞ্চমার্ক দেখা যাক। ধরুন আসলে কোনো প্রভাবই নেই (Null সত্য), অথচ আপনি 0.05 সীমায় 10 টি সম্পূর্ণ স্বাধীন পরীক্ষা চালালেন—তাহলে অন্তত একবার ভুয়া পজিটিভ পাওয়ার সম্ভাবনা দাঁড়ায় প্রায় 40.126%! অবশ্য খেয়াল রাখবেন, চলমান একটি পরীক্ষায় প্রতিদিন জমা হতে থাকা একই ডেটার ওপর বারবার উঁকি দিলে পরীক্ষাগুলো স্বাধীন থাকে না, বরং একে অপরের সাথে সম্পর্কিত (Correlated) হয়; তাই নিচের সূত্রটি হুবহু ক্রমাগত উঁকি দেওয়ার আসল ত্রুটির হার নয়, বরং বারবার পরীক্ষা করার ঝুঁকি (Multiplicity Intuition) বোঝানোর একটি গাণিতিক মাপকাঠি।"
+        },
+        {
+          "type": "math",
+          "title": "স্বাধীন পরীক্ষায় অন্তত একটি False Positive-এর সম্ভাবনা",
+          "body": "P(\\ge1\\ false\\ positive)=1-(1-\\alpha)^m\\quad\\mathrm{(independent\\ tests)}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ একাধিক স্বাধীন পরীক্ষার False Positive ঝুঁকি",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/nsw/experiment_lab.json\").read_text(encoding=\"utf-8\")\n)\nalpha = 0.05\nfor tests in [1, 5, 10, 20]:\n    print(tests, 1 - (1 - alpha) ** tests)\nprint(\"Independent-test benchmark;not exact correlated-peek error rate\")\n"
+        },
+        {
+          "type": "text",
+          "title": "বৈধভাবে মাঝপথে দেখার উপায়: Sequential Design",
+          "body": "তাহলে প্রোডাকশনে কি পরীক্ষা শেষ না হওয়া পর্যন্ত চোখ বেঁধে বসে থাকতে হবে? মোটেই না! আপনি যদি নিয়ম মেনেই মাঝপথে সিদ্ধান্ত নিতে চান, তবে শুরু থেকেই Group Sequential পদ্ধতি (Alpha-spending সীমারেখা) অথবা আধুনিক Confidence Sequences বা Always-valid Inference ফ্রেমওয়ার্ক ব্যবহার করতে হবে—যেগুলো বারবার দেখার হিসাব মাথায় রেখেই কঠোরতর সীমা তৈরি করে। কখনোই সাধারণ একটি Fixed-horizon Confidence Interval বের করে শুধু তার নাম বদলে Always-valid বলে চালিয়ে দেওয়া যাবে না; পুরো ফ্রেমওয়ার্কের শর্ত, থামার নিয়ম এবং ফলাফল প্রাক্কলনের নীতি একসাথে মেলা চাই।"
+        },
+        {
+          "type": "text",
+          "title": "নিরাপত্তা নজরদারি (Safety Monitoring) বনাম সাফল্য দাবি",
+          "body": "ধরুন নতুন মডেল চালু করার দুদিন পরেই দেখা গেল অ্যাপের Crash Rate বা পেমেন্ট ব্যর্থতা হঠাৎ বেড়ে গেছে। তখন ব্যবসার ক্ষতি ঠেকাতে পরীক্ষাটি সাথে সাথে থামিয়ে দেওয়া (Operational Pause) অবশ্যই একজন দায়িত্বশীল ইঞ্জিনিয়ারের কাজ! তবে মনে রাখতে হবে, জরুরি নিরাপত্তার খাতিরে পরীক্ষা থামানো আর ড্যাশবোর্ডে ভালো সংখ্যা দেখে নির্ধারিত সময়ের আগেই 'নতুন মডেল জিতে গেছে' বলে দাবি করা (Confirmatory Efficacy Claim) এক জিনিস নয়—দুটির থ্রেশহোল্ড ও সিদ্ধান্ত প্রক্রিয়া আলাদা রাখা জরুরি এবং সব Exposure ও Guardrail লগ সযত্নে সংরক্ষণ করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "নতুনত্বের চমক (Novelty Effect) ও সময়ের চক্র",
+          "body": "ধরুন আপনার অ্যাপে ট্রাফিক এত বেশি যে মাত্র তিন ঘণ্টাতেই প্রয়োজনীয় Sample Size পূরণ হয়ে গেল—তবু কি তিন ঘণ্টায় পরীক্ষা শেষ করা বুদ্ধিমানের কাজ হবে? না! কারণ ব্যবহারকারীরা নতুন বাটন দেখে কৌতূহলবশত প্রথম দিন বেশি Click করতে পারেন (Novelty Effect), আবার কর্মদিবস আর সাপ্তাহিক ছুটির দিনে মানুষের আচরণ থাকে সম্পূর্ণ আলাদা (Weekly Seasonality), কিংবা কেনাকাটা বা রিফান্ডের আসল হিসাব আসতে কয়েক দিন সময় লাগতে পারে (Delayed Outcomes)। উইকএন্ডের খারাপ ডেটাটুকু সুবিধামতো কেটে বাদ দিয়ে শুধু ভালো দিনের ফলাফল প্রকাশ করাও আরেক ধরনের মারাত্মক Selection Bias।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে গুছিয়ে উত্তর দেবেন",
+          "body": "ইন্টারভিউতে যদি বলা হয়, 'প্রোডাক্ট ম্যানেজার বলছেন যতক্ষণ না ফলাফল Statistically Significant হচ্ছে ততক্ষণ পরীক্ষাটি চালিয়ে যেতে—আপনি কী করবেন?'—তখন বিনয়ের সাথে বুঝিয়ে বলবেন যে পছন্দের p-value না আসা পর্যন্ত পরীক্ষা টেনে লম্বা করলে পুরো সিদ্ধান্তটিই ভুয়া পজিটিভের ফাঁদে পড়বে। এর বদলে তার সাথে বসে সিদ্ধান্তের খরচ, কাঙ্ক্ষিত MDE, সর্বোচ্চ সময়সীমা (Max Horizon), Guardrails এবং মাঝপথে দেখার দরকার থাকলে একটি বৈধ Sequential Design চূড়ান্ত করতে হবে। আর যদি প্রমাণ করতে হয় যে নতুন পরিবর্তনটি কোনো ক্ষতি করছে না ('No Effect'), তবে সাধারণ টেস্টের বদলে সুনির্দিষ্ট মার্জিন ধরে Equivalence বা Non-inferiority ডিজাইন সাজাতে হবে।"
+        }
+      ]
+    },
+    {
+      "id": "ch37_multiplicity",
+      "title": "Multiple Outcomes, Holm সংশোধন ও Exploratory ফলাফল",
+      "subtitle": "যত বেশি তুলনা ও মেট্রিক পাশাপাশি দেখবেন, কাকতালীয় ভুয়া সাফল্যের সুযোগ তত বাড়বে",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "তুলনার পরিবার (Family of Tests) আগেভাগে নির্দিষ্ট করা",
+          "body": "শুধু সময়ের সাথে বারবার উঁকি দেওয়াই নয়, একই সময়ে একগাদা মেট্রিক বা ভ্যারিয়েন্ট পাশাপাশি পরীক্ষা করলেও ভুয়া সংকেতের ঝুঁকি বাড়ে। তাই বিশ্লেষণের আগেই ঠিক করতে হয় কোনগুলো আপনার মূল সিদ্ধান্ত নেওয়ার মেট্রিক পরিবার (Multiplicity Family)। যেমন আমাদের এই অধ্যায়ে একই 445 জন মানুষের ডেটা থেকে বার্ষিক আয় (re78) এবং ধনাত্মক আয়ের সূচক (positive)—এই দুটি মেট্রিক দেখা হচ্ছে; এরা একে অপরের সাথে ঘনিষ্ঠভাবে সম্পর্কিত সারসংক্ষেপ, কোনো স্বাধীন পুনরাবৃত্তি নয়। মনে করিয়ে দেওয়া ভালো যে এই দুই মেট্রিকের পরিবারটি আমাদের শেখার সুবিধার্থে বেছে নেওয়া হয়েছে, মূল ঐতিহাসিক গবেষণাপত্রের পূর্বনির্ধারিত পরিকল্পনা হিসেবে নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Holm Step-down পদ্ধতি কীভাবে কাজ করে?",
+          "body": "একাধিক মেট্রিকের ভেতর অন্তত একটিতেও যেন ভুল করে ভুয়া সাফল্য দাবি না করি (Family-wise Error Rate বা FWER নিয়ন্ত্রণ), তার জন্য সাধারণ Bonferroni-এর চেয়ে একটু বেশি শক্তিশালী ও চমৎকার একটি উপায় হলো Holm Procedure। এর হিসাবটি বেশ সহজ: প্রথমে প্রাপ্ত m টি কাঁচা p-value-কে ছোট থেকে বড় ক্রমে সাজান; এরপর সবচেয়ে ছোটটিকে m দিয়ে, পরেরটিকে m - 1 দিয়ে গুণ করুন। তারপর শুরু থেকে ক্রমান্বয়ে সর্বোচ্চ মান (Cumulative Maximum) বজায় রেখে 1.0-এ সীমাবদ্ধ (Cap) করুন এবং শেষে প্রতিটি মেট্রিককে তার আদি অবস্থানে ফিরিয়ে দিন। তবে শর্ত হলো, এটি কেবল আগে থেকে নির্ধারিত ও বৈধ মেট্রিক পরিবারের ওপরই কাজ করে—অন্ধকারে শখানেক মেট্রিক ঘেঁটে সেরা দুটি বেছে নিলে সেই লুকানো খোঁজাখুঁজির দায় কিন্তু এটি মেটাতে পারে না!"
+        },
+        {
+          "type": "math",
+          "title": "Holm Step-down Adjusted p-value-এর সূত্র",
+          "body": "p^{Holm}_{(i)}=\\max_{j\\le i}\\min(1,(m-j+1)p_{(j)})"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Holm সংশোধন ও একঘেয়ে ক্রমের যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"experiment37\", Path(\"assets/datasets/nsw/experiment_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/nsw/experiment_lab.json\").read_text(encoding=\"utf-8\")\n)\nraw = lab[\"multiplicity\"][\"raw\"]\nadjusted = m.holm(raw)\nprint(raw, adjusted)\nassert adjusted == lab[\"multiplicity\"][\"holm\"]\nassert m.holm([0.01, 0.01, 0.5]) == [0.03, 0.03, 0.5]\n"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব ডেটায় কাঁচা বনাম সংশোধিত p-value",
+          "body": "আমাদের NSW ডেটায় আয়ের কাঁচা p-value ছিল 0.007893 এবং ধনাত্মক আয়ের সূচকের p-value ছিল 0.011167। দুই সদস্যের এই পরিবারের ওপর Holm সংশোধন চালালে দুটিরই সংশোধিত মান দাঁড়ায় 0.015786 (কারণ প্রথমটির দ্বিগুণ 2 × 0.007893 = 0.015786 দ্বিতীয়টির একগুণের চেয়ে বড় হওয়ায় ক্রমান্বয়ে সর্বোচ্চ রাখার নিয়মে দুটোই সমান হয়ে গেছে)। রিপোর্ট লেখার সময় কাঁচা ও সংশোধিত উভয় p-value, মেট্রিক পরিবারের পরিধি এবং নির্ধারিত Alpha একসাথে প্রকাশ করবেন; আর মনে রাখবেন, সংশোধনের পর Significant থাকা মানেই প্রভাবের আকার বিশাল হওয়া বা ডিজাইনের সব ত্রুটি মাফ হয়ে যাওয়া নয়।"
+        },
+        {
+          "type": "text",
+          "title": "লুকানো তুলনার বহুমাত্রিক জাল",
+          "body": "বাস্তব প্রোডাকশনে Multiplicity শুধু দুটি মেট্রিকের মধ্যে সীমাবদ্ধ থাকে না! একাধিক Treatment ভ্যারিয়েন্ট, ডজনখানেক মেট্রিক, দেশ বা ডিভাইস ভিত্তিক ডেটা খণ্ড (Slices), ভিন্ন ভিন্ন সময়ের জানালা এবং মডেলের বিভিন্ন Seed—সব মিলিয়ে অজান্তেই শত শত লুকানো তুলনা তৈরি হয়ে যায়। আপনি যদি ব্যাকএন্ডে একশটি মেট্রিক ঘেঁটে সবচেয়ে ভালো দুটি ড্যাশবোর্ডে তুলে আনেন এবং শুধু ওই দুটির ওপর Holm চালান, তবে আগের নিরানব্বইটি বাদ দেওয়ার Selection Bias কিন্তু ঠিকই থেকে যাবে! এ ধরনের অন্বেষণমূলক প্রাপ্তিকে সবসময় পরবর্তী স্বাধীন পরীক্ষায় (Independent Confirmation) নতুন করে যাচাই করে নিতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "FWER বনাম FDR: কখন কোনটি বেছে নেবেন?",
+          "body": "পরিসংখ্যানে ভুল নিয়ন্ত্রণের দুটি প্রধান দর্শন আছে: Holm-এর মতো পদ্ধতিগুলো FWER নিয়ন্ত্রণ করে—অর্থাৎ পরিবারের একটিও যেন ভুয়া পজিটিভ না হয় সেদিকে কড়া নজর রাখে (যখন একটি ভুল সিদ্ধান্তেই প্রোডাকশন শিপ হয়ে যাওয়ার ঝুঁকি থাকে, তখন এটি আদর্শ)। অন্যদিকে হাজার হাজার ফিচার বা জিন পরীক্ষার ক্ষেত্রে Benjamini-Hochberg (BH)-এর মতো পদ্ধতিগুলো নির্দিষ্ট শর্তাধীনে False Discovery Rate (FDR)—অর্থাৎ মোট আবিষ্কারের মধ্যে গড় ভুয়া অনুপাত—নিয়ন্ত্রণ করে। সমস্যার ধরন বুঝে শুরুতেই নীতি ঠিক করতে হয়; আর কখনোই ভাববেন না যে Adjusted p-value মানে ওই নির্দিষ্ট মেট্রিকটির Null সত্য হওয়ার সম্ভাবনা!"
+        },
+        {
+          "type": "text",
+          "title": "কোডিংয়ের সূক্ষ্ম প্রান্তিক কেস (Edge Cases)",
+          "body": "নিজে Holm ফাংশন ইমপ্লিমেন্ট করার সময় সমান মানের টাই (Tied p-values), খালি তালিকা, সীমান্তবর্তী 0 বা 1 মান এবং অবৈধ NaN বা ঋণাত্মক ইনপুটের জন্য টেস্ট লিখে রাখবেন। সবচেয়ে বেশি যে বাগটি ঘটে তা হলো: সর্টিং করে গুণ করার পর আসল ইনডেক্সের ক্রমে ফিরিয়ে আনতে ভুলে যাওয়া—যার ফলে এক মেট্রিকের সংশোধিত p-value অন্য মেট্রিকের নামের পাশে বসে গিয়ে মারাত্মক বিভ্রান্তি ঘটাতে পারে!"
+        }
+      ]
+    },
+    {
+      "id": "ch37_heterogeneity",
+      "title": "Subgroups, Interaction ও CATE-এর সীমারেখা",
+      "subtitle": "একটি দলে Significant আর অন্য দলে Non-significant হওয়া মানেই দুই দলের পার্থক্য প্রমাণিত হওয়া নয়",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কার ওপর প্রভাব বেশি, কার ওপর কম?",
+          "body": "ব্যবহারকারীর পুরোনো আচরণ বা প্রেক্ষাপট (Pre-treatment History) ভেদে একই নতুন মডেলের সাড়া ভিন্ন হওয়া খুবই স্বাভাবিক। যদি ব্যবসার প্রয়োজনে সত্যিই ভিন্ন ভিন্ন সেগমেন্টের জন্য আলাদা সিদ্ধান্ত নেওয়ার সুযোগ (Actionable Segments) থাকে, তবে শুরু থেকেই সুনির্দিষ্ট Interaction Estimand এবং তার উপযোগী বড় Sample-size পরিকল্পনা দরকার হয়। আমরা আগেই জেনেছি যে গড় সুফল থেকে প্রতিটি মানুষের ব্যক্তিগত সুফল যেমন অনুমান করা যায় না, তেমনি বাস্তব ডেটাসেটে কারো ব্যক্তিগত প্রভাবের আসল লেবেলও দেওয়া থাকে না।"
+        },
+        {
+          "type": "text",
+          "title": "পরিসংখ্যানের চিরচেনা ফাঁদ: Subgroup Significance Trap",
+          "body": "ড্যাশবোর্ড বিশ্লেষণে একটি ভুল প্রায় প্রতিদিনই ঘটে: দেখা গেল গ্রুপ A-তে p < 0.05 এসেছে, কিন্তু গ্রুপ B-তে এসেছে p > 0.05—অমনি বিশ্লেষক ঘোষণা করে বসলেন, 'নতুন ফিচারটি গ্রুপ A-তে কাজ করে, কিন্তু গ্রুপ B-তে কাজ করে না!' এটি একটি মারাত্মক যুক্তিগত ভুল। দুটি দলের নিজস্ব p-value থ্রেশহোল্ডের দুই পাশে পড়লেই প্রমাণ হয় না যে তাদের প্রভাব একে অপরের চেয়ে আলাদা; হয়তো গ্রুপ B-তে স্রেফ মানুষের সংখ্যা কম ছিল বলে বা Variance বেশি ছিল বলে সীমা পার হয়নি! দুই দলের প্রভাব আসলেই ভিন্ন কি না তা জানতে হলে সরাসরি দুই প্রভাবের বিয়োগফলের অনিশ্চয়তা বা রিগ্রেশনের Interaction Term (β_TX) পরীক্ষা করতে হবে।"
+        },
+        {
+          "type": "math",
+          "title": "Subgroup পার্থক্য মাপার Interaction মডেল",
+          "body": "Y=\\beta_0+\\beta_TT+\\beta_XX+\\beta_{TX}TX+\\epsilon"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ প্রাক-পরীক্ষা আয়ের দুই স্তরে বর্ণনামূলক ব্যবধান",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"experiment37\", Path(\"assets/datasets/nsw/experiment_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/nsw/experiment_lab.json\").read_text(encoding=\"utf-8\")\n)\naudit = m.observational(lab[\"cohorts\"], \"experimental\", adjust=True)\nfor stratum in audit[\"strata\"]:\n    print(\n        stratum[\"prior_positive\"],\n        stratum[\"treated\"],\n        stratum[\"control\"],\n        stratum[\"gap\"],\n    )\nprint(\"Descriptive slices;no claim of confirmed effect heterogeneity\")\n"
+        },
+        {
+          "type": "text",
+          "title": "খোঁজাখুঁজির ঝুঁকি ও Adaptive Overfitting",
+          "body": "ডেটার ওপর ডজনখানেক বয়সসীমা, আয়ের কাট-অফ বা ইউজার সেগমেন্ট ঘুরিয়ে-ফিরিয়ে খুঁজলে কোনো না কোনো কোনায় কাকতালীয়ভাবে চমকপ্রদ পার্থক্য চোখে পড়বেই! একই নমুনার ভেতর প্যাটার্ন খুঁজে বের করা এবং সেই একই ডেটা দিয়েই তাকে 'প্রমাণিত' বলে সনদ দেওয়া হলো পরিসংখ্যানিক Overfitting। তাই পূর্বপরিকল্পিত Subgroup তালিকা, Multiplicity সংশোধন, Shrinkage/Regularization এবং নতুন ডেটায় স্বাধীন যাচাই ছাড়া এ ধরনের খণ্ডিত ফলাফলের ওপর ভরসা করা বিপজ্জনক।"
+        },
+        {
+          "type": "text",
+          "title": "NSW ডেটার দুটি খণ্ডিত স্তরের প্রকৃত অর্থ",
+          "body": "উপরের কোডে ১৯৭৪ সালের আয় শূন্য ছিল নাকি ধনাত্মক ছিল (prior_positive), সেই প্রাক-পরীক্ষা শর্তে ডেটাকে দুটি স্বচ্ছ স্তরে (Strata) ভাগ করে সদস্যসংখ্যা ও গড় আয়ের ব্যবধান দেখানো হয়েছে। খেয়াল রাখবেন, এগুলো নিছক বর্ণনামূলক চিত্র (Descriptive Slices)—এখান থেকে প্রভাবের বৈচিত্র্য চূড়ান্তভাবে প্রমাণিত হয়েছে বলে দাবি করা হচ্ছে না। এছাড়া মাত্র দুটি মোটা দাগের স্তরে উভয় দলের মানুষ উপস্থিত থাকা মানেই যে ভেতরের সূক্ষ্ম সব বৈশিষ্ট্যে নিখুঁত সামঞ্জস্য (Overlap) তৈরি হয়ে গেছে, তাও কিন্তু নয়।"
+        },
+        {
+          "type": "text",
+          "title": "CATE মডেলিংয়ের বাস্তবতা ও সতর্কতা",
+          "body": "আধুনিক ML-এ ব্যক্তি বা সেগমেন্ট পর্যায়ে শর্তসাপেক্ষ গড় প্রভাব (CATE) অনুমানের জন্য T-learner, X-learner, Causal Forest কিংবা Doubly Robust কৌশল ব্যবহার করা হয়। কিন্তু মনে রাখতে হবে, এগুলো ভেতরে ভেতরে একাধিক সহায়ক মডেল (Nuisance Functions) ও কঠোর Assumption-এর ওপর ভর করে চলে—অদেখা ব্যক্তিগত Counterfactual এতে কখনোই সরাসরি দৃশ্যমান হয়ে যায় না। এ ধরনের মডেলকে বিশ্বাসযোগ্য করতে হলে Honest Splitting বা Cross-fitting এবং আলাদাভাবে Policy Value Evaluation করতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "সিদ্ধান্তের পক্ষে যুক্তি দিন: কাকে টার্গেট করা লাভজনক?",
+          "body": "ধরুন আপনার একটি CATE মডেল ব্যবহারকারীদের সম্ভাব্য Uplift অনুযায়ী র‍্যাঙ্ক করে দিয়েছে—শুধু সেই র‍্যাঙ্কিং দেখেই কি বলে দেওয়া যায় যে এই টার্গেটিং পলিসি ব্যবসায়িকভাবে লাভজনক হবে? মোটেই না! বাস্তব সিদ্ধান্তের জন্য আপনাকে হিসাব করতে হবে প্রতিজনকে Treatment দেওয়ার খরচ কত, কারা নীতিগতভাবে যোগ্য, ঐতিহাসিক ডেটায় পর্যাপ্ত কভারেজ (Off-policy Support) আছে কি না, ন্যায্যতা ও নিরাপত্তার শর্তগুলো মানা হচ্ছে কি না এবং সর্বোপরি নতুন টার্গেটিং পলিসিটি বনাম পুরোনো পলিসির একটি সরাসরি Randomized পরীক্ষা চালিয়ে তা যাচাই করা হয়েছে কি না!"
+        }
+      ]
+    },
+    {
+      "id": "ch37_confounding",
+      "title": "Confounding, DAG ও Adjustment Set",
+      "subtitle": "সাধারণ সহসম্পর্ক (Correlation) আর বাস্তব হস্তক্ষেপের ফলাফল (Intervention Contrast) এক কথা নয়",
+      "duration": "55 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "সাধারণ কারণ (Common Cause) যেভাবে হিসাব গুলিয়ে দেয়",
+          "body": "এতক্ষণ আমরা মূলত Randomized পরীক্ষার নিরাপদ ভূখণ্ডে ছিলাম। কিন্তু যেখানে লটারি হয়নি তেমন বাস্তব ডেটায় কে Treatment নেবে আর কে নেবে না, তার পেছনে মানুষের নিজস্ব তাগিদ, আগের আয় বা পারিপার্শ্বিক সুযোগের গভীর সম্পর্ক থাকতে পারে। এই একই কারণগুলো যখন চূড়ান্ত Outcome-কেও প্রভাবিত করে, তখন সাধারণ Treated বনাম Control বিয়োগফলে আসল প্রভাবের সাথে প্রাক-নির্বাচনের ঝোঁক (Selection Bias) একাকার হয়ে মিশে যায়! তখন কোনো মডেল কত ভালো Outcome Predict করছে তা দেখা মূল কথা নয়; বরং ডোমেইন জ্ঞানের আলোকে বুঝতে হয় কোন সাধারণ কারণগুলো (Common Causes) ডেটায় মাপা আছে এবং ঠিক কোন চলকগুলোর সেট দিয়ে Adjust করা যুক্তিসঙ্গত।"
+        },
+        {
+          "type": "text",
+          "title": "Causal DAG আঁকার আসল উদ্দেশ্য",
+          "body": "চলকগুলোর পারস্পরিক কার্যকারণ সম্পর্ক চোখে দেখার জন্য আমরা Directed Acyclic Graph (DAG) ব্যবহার করি। মনে রাখবেন, শুধু ডেটার Correlation দেখে স্বয়ংক্রিয়ভাবে একটি অদ্বিতীয় Causal গ্রাফ আবিষ্কার করে ফেলা যায় না—বরং ডোমেইন ও সিস্টেম সম্পর্কে আমাদের সুস্পষ্ট Assumption-গুলোকেই তীরচিহ্ন দিয়ে প্রকাশ করা হয়। যখন কোনো প্রাক-পরীক্ষা কারণ X একইসাথে X -> T এবং X -> Y তীর তৈরি করে, তখন একটি পেছনের দরজা বা Backdoor Path খুলে যায়। যদি প্রয়োজনীয় সব Confounder সঠিকভাবে মাপা থাকে, তবে উপযুক্ত সেটের ওপর শর্তারোপ (Conditioning) করে সেই পথটি বন্ধ করা সম্ভব।"
+        },
+        {
+          "type": "math",
+          "title": "Confounding-এর মৌলিক তীরচিত্র",
+          "body": "X\\to T,\\quad X\\to Y,\\quad T\\to Y"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Experimental Control বনাম বাহ্যিক PSID Control-এর তুলনা",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"experiment37\", Path(\"assets/datasets/nsw/experiment_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/nsw/experiment_lab.json\").read_text(encoding=\"utf-8\")\n)\ntrial = m.observational(lab[\"cohorts\"], \"experimental\")\nexternal = m.observational(lab[\"cohorts\"], \"psid\")\nprint(\"Experimental observed gap:\", trial[\"raw_gap\"])\nprint(\"External observed gap:\", external[\"raw_gap\"])\nprint(\"Pre-treatment SMDs:\", external[\"smd\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "Mediator: কার্যকারণের মাঝপথ আটকে দেবেন না",
+          "body": "এবার একটি মারাত্মক ভুলের দিকে নজর দিন: সব চলককে কিন্তু চোখ বুজে মডেলে ঢুকিয়ে Adjust করা যায় না! ধরুন Treatment T প্রথমে মানুষের দক্ষতা বা অ্যাপে সক্রিয়তা M বাড়ায়, এবং সেই M পরে আয় বা কেনাকাটা Y বাড়ায় (T -> M -> Y)। এখানে M হলো একটি Mediator—অর্থাৎ মোট প্রভাবের (Total Effect) খোদ বাহক! আপনি যদি ভুল করে M-কে স্থির ধরে Adjust করেন, তবে Treatment-এর আসল প্রভাবের পথটাই কেটে দেবেন এবং উল্টো নতুন Bias ডেকে আনতে পারেন। তাই শুধু ঘড়ির সময় দেখাই যথেষ্ট নয়, চলকটির Causal ভূমিকা বোঝা অপরিহার্য।"
+        },
+        {
+          "type": "text",
+          "title": "Collider: বন্ধ দরজা ভুল করে খুলে দেওয়ার বিপদ",
+          "body": "আরেকটি চমকপ্রদ ফাঁদ হলো Collider। ধরুন গ্রাফের গঠন হলো T -> C <- U -> Y—অর্থাৎ Treatment T এবং অন্য কোনো অদেখা গুণ U দুটোই একটি তৃতীয় ঘটনা C-কে (যেমন অ্যাপে সক্রিয় থাকা বা কেনাকাটা সম্পন্ন করা) প্রভাবিত করে। স্বাভাবিকভাবে C-এর মধ্য দিয়ে পথটি বন্ধ থাকে; কিন্তু আপনি যেই মুহূর্তে শুধু C = 1 (যেমন শুধু সক্রিয় ইউজার বা শুধু ক্রেতাদের) বেছে নিয়ে বিশ্লেষণ করবেন, অমনি ওই বন্ধ দরজাটি সশব্দে খুলে গিয়ে T ও U-এর মধ্যে একটি কৃত্রিম সম্পর্ক তৈরি করবে! এজন্যই Causal বিশ্লেষণে 'যত বেশি ভেরিয়েবল ঢোকাব তত নিরাপদ' বা সাধারণ ML-এর Feature Importance দেখে চলক বাছাই করার ধারণা পুরোপুরি ভুল।"
+        },
+        {
+          "type": "text",
+          "title": "NSW বনাম PSID: বাস্তব ডেটায় আকাশ-পাতাল তফাত",
+          "body": "উপরের কোডের আউটপুটটি এই অধ্যায়ের সবচেয়ে শিক্ষণীয় মুহূর্তগুলোর একটি! একই 185 জন Treated মানুষের গড় আয় যেখানে Experimental Control দলের চেয়ে +1794.342 একক বেশি, সেখানে বাহ্যিক 2490 জন PSID Control দলের সাথে তুলনা করতেই ব্যবধানটি উল্টে গিয়ে বিশাল এক ঋণাত্মক সংখ্যায় পরিণত হয়েছে! কেন এমন হলো? Pre-treatment SMDs (Standardized Mean Differences)-এর দিকে তাকালেই দেখবেন, জব-ট্রেনিংয়ে আসা সুবিধাবঞ্চিত তরুণদের সাথে সাধারণ কর্মজীবী PSID পরিবারের বয়স, শিক্ষা ও আগের আয়ে বিশাল পার্থক্য রয়েছে। উল্লেখ্য, এই নাটকীয় পার্থক্যটি আমাদের চোখে আঙুল দিয়ে Confounding-এর শক্তি দেখায়, যদিও আসল অজানা প্রভাবের নিখুঁত পরম মান স্বতন্ত্রভাবে কারোরই জানা থাকে না।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে গুছিয়ে উত্তর দেবেন",
+          "body": "ইন্টারভিউতে যদি প্রশ্ন আসে, 'কোন কোন শর্ত বা Assumption পূরণ হলে Observational ডেটার Adjustment থেকে Causal সিদ্ধান্ত নেওয়া যায়?'—তখন চারটি মূল স্তম্ভ স্পষ্টভাবে সাজিয়ে বলবেন: (১) Conditional Exchangeability বা কোনো না-মাপা Confounder না থাকা, (২) Positivity বা প্রতিটি স্তরে উভয় দলের বাস্তব উপস্থিতি থাকা, (৩) Consistency বা সুনির্দিষ্ট Intervention এবং (৪) No Interference ও সঠিক পরিমাপ। সবশেষে অবশ্যই যোগ করবেন যে, ডেটাসেটের ভেতরে তাকিয়ে কখনোই প্রমাণ করা যায় না যে বাইরে কোনো Unmeasured Confounder লুকিয়ে নেই—এটি সবসময় ডোমেইন জ্ঞানের ওপর নির্ভরশীল একটি Assumption।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে প্রমাণ: শুধু Active User বাছলে শূন্য প্রভাবও ঋণাত্মক দেখায়!",
+          "body": "চলুন মাত্র চারটি সমান সম্ভাবনার Row দিয়ে Collider Bias-এর জাদুটি চোখের সামনে ঘটতে দেখি। ধরুন Treatment T এবং মানুষের প্রাক-প্রকৃতি X দুটি সম্পূর্ণ স্বাধীন বাইনারি চলক। আর ফলাফল Y = X—অর্থাৎ Treatment-এর প্রকৃত প্রভাব হুবহু শূন্য (0)! কিন্তু একজন মানুষ অ্যাপে সক্রিয় (Active) কি না তার সূচক হলো C = T OR X (হয় নতুন ফিচারের ধাক্কায় সক্রিয় হয়েছে, নয়তো আগে থেকেই আগ্রহী প্রকৃতির ছিল)। এবার খেয়াল করুন: Control দলে (T = 0) সক্রিয় থাকবে শুধু তারাই যাদের X = 1, কিন্তু Treatment দলে (T = 1) দু-ধরনের মানুষই (X = 0 এবং X = 1) সক্রিয় হয়ে উঠবে! ফলে পুরো জনগোষ্ঠীতে দুই দলের গড় পার্থক্য যেখানে নিখুঁত 0.0, সেখানে শুধু সক্রিয়দের (C = 1) ফিল্টার করে বিয়োগ করলেই ফলাফল আসে -0.5! অর্থাৎ T -> C <- X -> Y গ্রাফে C দিয়ে ছাঁকনি দেওয়ার কারণেই শূন্য প্রভাব উল্টো ক্ষতিকর বলে মনে হচ্ছে।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Post-treatment ফিল্টারিংয়ের Collider প্রভাব",
+          "body": "import numpy as np\n\ntreatment = np.array([0, 0, 1, 1])\npre_type = np.array([0, 1, 0, 1])\noutcome = pre_type.astype(float)\nactive = np.logical_or(treatment == 1, pre_type == 1)\nfull_gap = outcome[treatment == 1].mean() - outcome[treatment == 0].mean()\nactive_gap = (\n    outcome[active & (treatment == 1)].mean()\n    - outcome[active & (treatment == 0)].mean()\n)\nprint(\n    full_gap,\n    active_gap,\n    np.count_nonzero(active & (treatment == 0)),\n    np.count_nonzero(active & (treatment == 1)),\n)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে যাচাই করুন",
+          "body": "শুরুর Assignment সম্পূর্ণ Random ছিল বলেই কি পরবর্তীতে শুধু Active User-দের বেছে নেওয়া পার্থক্যটি মূল জনগোষ্ঠীর প্রকৃত ATE পরিমাপ করে?",
+          "solution": "মোটেই না! কারণ এখানে কে Active হবে তা একাধারে Treatment এবং মানুষের পূর্ব-প্রকৃতি (X) উভয়ের ওপর নির্ভর করছে। ফলে Active শর্তে ফিল্টার করার পর দুই দলের ভেতরের মানুষের গঠন আর সমান থাকেনি—শুরুর Randomization-এর ভারসাম্য ভেঙে গেছে। মূল Randomized জনগোষ্ঠীর ATE পেতে হলে শুরুতে কারা Assign হয়েছিল সেই মূল Denominator ও Outcome সংজ্ঞাই অক্ষত রাখতে হবে। আর যদি সত্যিই কোনো Triggered গোষ্ঠীর বিশ্লেষণ দরকার হয়, তবে দুই দলেই কারা সমতুল্যভাবে সেই ট্রিগারের যোগ্য হতো তার Causal অর্থ আলাদাভাবে সংজ্ঞায়িত করতে হবে।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch37_adjustment",
+      "title": "স্বচ্ছ Standardization ও Overlap যাচাই",
+      "subtitle": "মাত্র দুটি মোটা দাগের স্তরে ডেটা থাকলেই যে সব Confounding দূর হয়ে যায়, তা কিন্তু নয়",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "প্রাক-পরীক্ষা স্তর (Strata) তৈরি ও স্বচ্ছ হিসাব",
+          "body": "আগের পাঠে আমরা দেখেছি যে বাহ্যিক PSID Control দলের সাথে সরাসরি তুলনা করলে মারাত্মক Confounding ঢুকে পড়ে। এখন যদি আমরা কোনো ব্ল্যাক-বক্স মডেলের সাহায্য ছাড়াই একদম স্বচ্ছভাবে একটুখানি Adjustment করে দেখতে চাই? ধরা যাক ১৯৭৪ সালের আয় শূন্য ছিল নাকি ধনাত্মক ছিল (re74 > 0), সেই প্রাক-পরীক্ষা শর্তে আমরা পুরো ডেটাকে দুটি স্তরে (Strata) ভাগ করলাম। এরপর প্রতিটি স্তরের ভেতরে Treated ও Control গড়ের বিয়োগফল বের করে Treated দলের নিজস্ব অনুপাত (Stratum Weights) দিয়ে ওজনযুক্ত যোগফল নিলাম। হিসাবটি কাচের মতো পরিষ্কার সন্দেহ নেই, কিন্তু মাত্র একটি মোটা দাগের বাইনারি চলক দিয়ে ভাগ করলেই তো আর সব Confounding গায়েব হয়ে যায় না—বয়স, শিক্ষা, দীর্ঘমেয়াদি কর্ম-ইতিহাস এবং না-মাপা অসংখ্য পার্থক্য ভেতরে ঠিকই রয়ে যায়!"
+        },
+        {
+          "type": "text",
+          "title": "কার ওজনে গড় নিচ্ছেন? (Target Weights)",
+          "body": "লক্ষ্য করুন, এখানে আমরা ওজন হিসেবে নিয়েছি 185 জন Treated মানুষের স্তরভিত্তিক গঠন—ফলে এই হিসাবটি মূলত ATT-ঘরানার একটি বর্ণনামূলক লক্ষ্যকে অনুসরণ করে। আপনি যদি আদর্শ জনগোষ্ঠীর ওজন (Standard Population Weights) বদলে দেন, তবে সমন্বিত ব্যবধানটিও (Standardized Gap) বদলে যাবে। এমনকি মূল Experimental ডেটাতেও সীমিত নমুনার কারণে দুই দলের ভেতরের অনুপাত হুবহু সমান না হওয়ায় সাধারণ গড় বিয়োগফল আর এই স্তরভিত্তিক ওজনযুক্ত মানের মধ্যে সামান্য তফাত দেখা যায়। তাই ঠিক কোন জনগোষ্ঠীর ওজনে ফলাফল প্রকাশ করছেন, সে বিষয়ে সৎ ও স্পষ্ট থাকা জরুরি।"
+        },
+        {
+          "type": "math",
+          "title": "Direct Standardization-এর সূত্র",
+          "body": "\\hat\\tau_{std}=\\sum_x w_x(\\bar Y_{1,x}-\\bar Y_{0,x})"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ PSID দলের ওপর Standardization ও Overlap পরীক্ষা",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"experiment37\", Path(\"assets/datasets/nsw/experiment_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/nsw/experiment_lab.json\").read_text(encoding=\"utf-8\")\n)\naudit = m.observational(lab[\"cohorts\"], \"psid\", adjust=True)\nmanual = sum((s[\"weight\"] * s[\"gap\"] for s in audit[\"strata\"]))\nassert abs(manual - audit[\"adjusted_gap\"]) < 1e-08\nprint(audit[\"raw_gap\"], manual, audit[\"empirical_overlap\"])\nprint(audit[\"strata\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব আউটপুট: সংখ্যা বদলালেই কি সমস্যা মিটে গেল?",
+          "body": "উপরের কোডের ফলাফলটি খেয়াল করুন: বাহ্যিক PSID দলের বিপরীতে কাঁচা ব্যবধান যেমন বড় ঋণাত্মক ছিল, এই দুই-স্তরের Standardization করার পরও আয়ের ব্যবধানটি রয়ে গেছে -5413.951—অর্থাৎ এখনো প্রচণ্ডভাবে ঋণাত্মক! এখান থেকে একটি অমূল্য শিক্ষা মেলে: ডেটার ওপর কোনো একটি Adjustment কৌশল চালালেই এবং সংখ্যাটি একটু নড়েচড়ে বসলেই প্রমাণ হয়ে যায় না যে Confounding দূর হয়ে আসল প্রভাব বেরিয়ে এসেছে।"
+        },
+        {
+          "type": "text",
+          "title": "Overlap Gate: তুলনা করার মতো মানুষ আদৌ আছে তো?",
+          "body": "Standardization বা যেকোনো সমন্বয় কাজ করার জন্য একটি মৌলিক শর্ত হলো Overlap (বা Positivity)। ধরুন Treated দলের ধনাত্মক ওজনযুক্ত কোনো একটি স্তরে তুলনা করার জন্য Control দলের একজন মানুষও নেই! তখন আমাদের কোড নীরবে বাকি স্তরগুলোর ওজন বাড়িয়ে (Silent Renormalization) ভুল উত্তর দেওয়ার বদলে স্পষ্টভাবে জানিয়ে দেয় যে হিসাবটি অসংজ্ঞায়িত (Undefined)। আমাদের এই উদাহরণে দুটি মোটা দাগের বাক্সেই মানুষ উপস্থিত আছে বটে, কিন্তু তার মানে এই নয় যে বহু-মাত্রিক অবিচ্ছিন্ন (Continuous High-dimensional) সব বৈশিষ্ট্যের জায়গাতেও নিখুঁত Overlap বা স্থিতিশীল Propensity Weight বজায় আছে।"
+        },
+        {
+          "type": "text",
+          "title": "দুই বাক্সের বাইরে: আধুনিক সমন্বয় পদ্ধতির শর্তাবলি",
+          "body": "যখন চলকের সংখ্যা অনেক বেড়ে যায়, তখন সাধারণ বাক্সে ভাগ করার বদলে Matching, Inverse Probability Weighting (IPW), Outcome Regression কিংবা Doubly Robust পদ্ধতি ব্যবহার করা হয়। কিন্তু সেগুলোর প্রতিটিই সহায়ক মডেল (Nuisance Models) এবং কঠোর Assumption দাবি করে। যেমন কারো Propensity প্রায় শূন্যের কাছাকাছি হলে তার ওজন আকাশচুম্বী হয়ে Variance অস্থির করে তোলে; আবার চরম ওজনগুলো ছেঁটে ফেললে (Trimming) আপনার মূল Target Population-ই বদলে যায়! এমনকি পরের পাঠে যে Doubly Robust পদ্ধতি আমরা শিখব, তার মানেও কিন্তু এই নয় যে যেকোনো দুটি মনগড়া ভুল মডেল বসিয়ে দিলেই সঠিক Causal উত্তর পাওয়া যাবে।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে অডিট করার অভ্যাস",
+          "body": "নিজে কোড চালিয়ে তুলনার উৎস (experimental বনাম psid), Outcome এবং adjust সুইচ বদলে প্রতিটি ঘরের সদস্যসংখ্যা, ওজন, গড় এবং চিহ্নযুক্ত SMD (Signed SMD) পর্যবেক্ষণ করুন। কখনোই অনাকাঙ্ক্ষিত ঋণাত্মক সংখ্যা দেখে লেবেল উল্টে দেওয়া বা সুবিধামতো কাট-অফ পয়েন্ট খোঁজার প্রলোভনে পা দেবেন না—একটি সৎ অডিটের কাজই হলো ডেটার সীমাবদ্ধতা ও Estimand-এর স্বরূপ উন্মোচন করা।"
+        }
+      ]
+    },
+    {
+      "id": "ch37_book_doubly_robust",
+      "title": "IPW, Outcome Regression ও Doubly Robust ATE",
+      "subtitle": "প্রথমে মূল ধারণাটি বুঝে নিই, তারপর সমীকরণ ও খাতা-কলমের উদাহরণের সাথে মিলিয়ে Python-এ যাচাই করি",
+      "duration": "33 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Doubly Robust ধারণাটি কেন দরকার?",
+          "body": "Observational ডেটা থেকে গড় প্রভাব বের করার আগে অবশ্যই তিনটি Identification শর্ত—Consistency, Conditional Exchangeability এবং Positivity—মেনে নিতে হয়। এরপর প্রাক্কলনের সময় আমাদের সামনে দুটি চিরচেনা পথ খোলা থাকে: হয় বৈশিষ্ট্য X দেখে ফলাফলের গড় মডেল করা (Outcome Regression, অর্থাৎ E[Y | A, X]), নয়তো Treatment পাওয়ার সম্ভাবনা মডেল করা (Propensity Score, অর্থাৎ P(A = 1 | X))। কিন্তু দুটির যেকোনো একটি মডেল ভুল হলেই উত্তর বাঁকা হয়ে যাওয়ার ভয় থাকে! Augmented IPW (AIPW) বা Doubly Robust পদ্ধতি চমৎকারভাবে এই দুটি কৌশলকে একই সমীকরণে জুড়ে দেয়—যাতে অন্তত একটি মডেল সঠিক থাকলে গড় হিসাবটি নির্ভরযোগ্য থাকে। তবে শুরুতেই মনে করিয়ে দিই: পদ্ধতির নাম যত আধুনিকই হোক, ডেটায় না-মাপা Unmeasured Confounding থাকলে কোনো সমীকরণই তা দূর করতে পারে না!"
+        },
+        {
+          "type": "text",
+          "title": "সমীকরণটি ধাপে ধাপে বুঝে নিই",
+          "body": "ধরা যাক m_1(X) ও m_0(X) হলো যথাক্রমে Treated ও Control অবস্থার Outcome Regression মডেল, আর e(X) হলো Propensity মডেল। প্রতিটি Row-এর জন্য আমরা প্রথমে মডেলের অনুমিত পার্থক্য m_1(X_i) - m_0(X_i) নিই। এরপর তার সাথে যোগ করি একটি বুদ্ধিদীপ্ত সংশোধনী পদ: ব্যক্তিটি যদি বাস্তবে Treated হন (A_i = 1), তবে তার অনুমানের ভুল বা Residual (Y_i - m_1(X_i))-কে e(X_i) দিয়ে ভাগ করে যোগ করি; আর Control হলে (Y_i - m_0(X_i))-কে (1 - e(X_i)) দিয়ে ভাগ করে বিয়োগ করি! সঠিক Identification ও গাণিতিক নিয়মানুবর্তিতার শর্তে এই গঠনের বিশেষত্ব হলো—হয় Outcome মডেলগুলো, নয়তো Propensity মডেলটি সঠিক (Consistent) হলেই চূড়ান্ত প্রাক্কলন সঠিক লক্ষ্যে পৌঁছায়। আর নমনীয় ML মডেল ব্যবহার করলে Overfitting এড়াতে এর সাথে Cross-fitting ও উপযুক্ত কনভার্জেন্স হার (Rate Conditions) যোগ করতে হয়।"
+        },
+        {
+          "type": "math",
+          "title": "AIPW (Doubly Robust) Score-এর সমীকরণ",
+          "body": "\\psi_i=m_1(X_i)-m_0(X_i)+\\frac{A_i(Y_i-m_1(X_i))}{e(X_i)}-\\frac{(1-A_i)(Y_i-m_0(X_i))}{1-e(X_i)}"
+        },
+        {
+          "type": "text",
+          "title": "খাতা-কলমে একটি ছোট্ট উদাহরণ",
+          "body": "সমীকরণটি কীভাবে কাজ করে তা দেখার জন্য মাত্র দুটি Row-এর একটি সরল গাণিতিক উদাহরণ নেওয়া যাক: ধরুন A = [1, 0], বাস্তব ফলাফল Y = [3, 1], এবং আমাদের নির্দিষ্ট করা সহায়ক মানগুলো হলো e = 0.5, m_1 = 2, m_0 = 1। প্রথম Row-এর (A = 1, Y = 3) জন্য স্কোর হবে (2 - 1) + (3 - 2) / 0.5 = 1 + 2 = 3। আর দ্বিতীয় Row-এর (A = 0, Y = 1) জন্য স্কোর হবে (2 - 1) - (1 - 1) / 0.5 = 1 - 0 = 1। দুটি স্কোরের গড় নিলে দাঁড়ায় 2! খেয়াল করুন, শুধু মডেল দুটির বিয়োগফল (2 - 1 = 1) নিলে প্রথম Row-তে মডেল যে কম অনুমান করেছিল তা ধরা পড়ত না; কিন্তু Residual সংশোধনী পদটি এসে সেই ঘাটতিটুকু পূরণ করে গড়কে 2-এ নিয়ে গেছে। বলাই বাহুল্য, এটি কেবল সূত্রের বীজগণিত মেলানোর উদাহরণ, NSW ডেটার কোনো ফলাফল নয়।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ AIPW Score গণনার হাতে-কলমে যাচাই",
+          "body": "treatment, outcomes = [1, 0], [3.0, 1.0]\npropensity, treated_mean, control_mean = 0.5, 2.0, 1.0\nscores = []\nfor a, y in zip(treatment, outcomes):\n    score = (\n        treated_mean\n        - control_mean\n        + a * (y - treated_mean) / propensity\n        - (1 - a) * (y - control_mean) / (1 - propensity)\n    )\n    scores.append(score)\n# Nuisance values are specified fixtures; no causal identification is asserted.\nprint(*scores, sum(scores) / len(scores))\n"
+        },
+        {
+          "type": "text",
+          "title": "কোডের আউটপুট ও Cross-fitting-এর ভূমিকা",
+          "body": "কোডটি চালালে প্রত্যাশামতোই আউটপুট আসে 3.0 1.0 2.0। বাস্তব ডেটায় যখন আমরা এই সহায়ক মডেলগুলো (m_1, m_0, e) ফিট করি, তখন Cross-fitting নিয়ম মেনে প্রতিটি Row-এর Prediction আনা হয় অন্য Fold-এর ডেটায় শেখানো মডেল থেকে—যাতে নিজের ফলাফল দিয়ে নিজেকেই সংশোধন করার বায়াস না ঢোকে। আর চূড়ান্ত গড় স্কোরের Standard Error বের করার সময় স্বাধীন এককের শর্ত ও Influence Function-এর নিয়ম অনুসরণ করতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "কখন এই পদ্ধতিও বিপদে পড়তে পারে?",
+          "body": "আবারও মনে করিয়ে দেওয়া জরুরি: Double Robustness মানে কিন্তু এই নয় যে দুটি এলোমেলো ভুল মডেল বসিয়ে দিলেও জাদুবলে সঠিক উত্তর বেরিয়ে আসবে! এছাড়া কোনো এককের Propensity e(X) যদি প্রায় 0 বা 1-এর খুব কাছাকাছি চলে যায়, তবে ভগ্নাংশের হর অতি ক্ষুদ্র হয়ে ওজনগুলো বিস্ফোরিত হতে পারে এবং প্রচণ্ড অস্থির Variance তৈরি করে। তখন বাধ্য হয়ে ওজন ছাঁটাই (Trimming) বা সীমাবদ্ধ (Clipping) করতে হলে মূল Estimand পরিবর্তিত হতে পারে, তাই রিপোর্টে সেই সংবেদনশীলতা স্পষ্টভাবে উল্লেখ করতে হবে।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে ভেবে উত্তর দিন",
+          "body": "AIPW পদ্ধতিতে যদি Outcome এবং Propensity—দুটি সহায়ক মডেলই ভুল হয়, তবে কি সঠিক উত্তরের কোনো নিশ্চয়তা থাকে? আর শুরুতে নিখুঁত জানা Randomization (যেমন e = 0.5) থাকা সত্ত্বেও পরে যদি মানুষজন মাঝপথে ঝরে পড়ে (Attrition), তবে কী সমস্যা তৈরি হবে?",
+          "solution": "দুটি সহায়ক মডেলই ভুল হলে সাধারণত Consistency বা সঠিক উত্তরে পৌঁছানোর কোনো গাণিতিক নিশ্চয়তা থাকে না। আর শুরুতে নিখুঁত e = 0.5 লটারি থাকলেও পরবর্তীতে কারা ঝরে পড়ছে (Outcome Missingness) তা যদি Treatment বা সম্ভাব্য ফলাফলের ওপর নির্ভর করে, তবে টিকে থাকা মানুষের নমুনাটি আর শুরুর মূল Randomized জনগোষ্ঠীর প্রতিনিধিত্ব করে না; তখন Attrition সামলানোর জন্য আলাদা Missingness Assumption ও সমন্বয় প্রয়োজন হয়।",
+          "reference": "https://www.statlearning.com/"
+        },
+        {
+          "type": "text",
+          "title": "গাণিতিক প্রত্যাশায় Double Robustness-এর সরাসরি প্রমাণ",
+          "body": "কেন অন্তত একটি মডেল ঠিক থাকলেই গড় মিলে যায়, চলুন একটি সুনির্দিষ্ট পপুলেশন মডেলে তার নিখুঁত গাণিতিক প্রত্যাশা (Exact Expectation) হিসাব করে দেখি! ধরা যাক P(X = 0) = P(X = 1) = 0.5, আসল Propensity e = [0.25, 0.75], এবং আসল শর্তসাপেক্ষ ফলাফল যথাক্রমে m_0 = [1, 2] ও m_1 = [3, 6]। তাহলে প্রকৃত গড় প্রভাব হলো ATE = 0.5 × (3 - 1) + 0.5 × (6 - 2) = 3। এবার সম্ভাব্য সব X ও Assignment-এর সম্ভাবনা দিয়ে গড় AIPW স্কোর বের করলে চমৎকার তিনটি ঘটনা দেখা যায়: (১) আসল Propensity ঠিক রেখে পুরো ভুল শূন্য Outcome মডেল নিলে উত্তর আসে ঠিক 3.0; (২) আসল Outcome মডেল ঠিক রেখে ভুল Propensity (0.5) নিলেও উত্তর আসে ঠিক 3.0; কিন্তু (৩) দুটোই একসাথে ভুল নিলে উত্তর সরে গিয়ে হয়ে যায় 4.0! নিচের সমীকরণ ও কোডে এই শর্তটি চোখের সামনে ফুটে উঠেছে।"
+        },
+        {
+          "type": "math",
+          "title": "শর্তসাপেক্ষ স্কোরের Bias কেন দুটি ত্রুটির গুণফলের সমানুপাতিক",
+          "body": "E[\\hat\\psi\\mid X]-(m_1-m_0)=(e-\\hat e)\\left[\\frac{m_1-\\hat m_1}{\\hat e}+\\frac{m_0-\\hat m_0}{1-\\hat e}\\right]"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ চারটি সম্ভাব্য অবস্থার নিখুঁত গাণিতিক গড়",
+          "body": "import numpy as np\n\ntrue_propensity = np.array([0.25, 0.75])\noutcome_zero = np.array([1.0, 2.0])\noutcome_one = np.array([3.0, 6.0])\n\n\ndef expected_score(propensity, model_zero, model_one):\n    total = 0.0\n    for x in range(2):\n        for assigned in [0, 1]:\n            probability = true_propensity[x] if assigned else 1 - true_propensity[x]\n            outcome = outcome_one[x] if assigned else outcome_zero[x]\n            score = model_one[x] - model_zero[x]\n            score += assigned * (outcome - model_one[x]) / propensity[x]\n            score -= (1 - assigned) * (outcome - model_zero[x]) / (1 - propensity[x])\n            total += 0.5 * probability * score\n    return total\n\n\nzero_models = np.zeros(2)\nwrong_propensity = np.full(2, 0.5)\ncorrect_e = expected_score(true_propensity, zero_models, zero_models)\ncorrect_m = expected_score(wrong_propensity, outcome_zero, outcome_one)\nboth_wrong = expected_score(wrong_propensity, zero_models, zero_models)\nassert np.mean(outcome_one - outcome_zero) == 3\nprint(correct_e, correct_m, both_wrong)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে যাচাই করুন",
+          "body": "উপরের পপুলেশন গড়ের এই নিখুঁত মিল দেখে কি দাবি করা যাবে যে বাস্তবের ছোট নমুনায় ফিট করা AIPW সবসময় সম্পূর্ণ Unbiased হবে?",
+          "solution": "না, তা দাবি করা যাবে না। উপরের উদাহরণে সহায়ক ফাংশনগুলো স্থির ও অসীম পপুলেশনের প্রকৃত সম্ভাবনা জানা ছিল। বাস্তব ডেটায় সীমিত নমুনা থেকে মডেল ফিট করার ত্রুটি, Overfitting, ক্ষুদ্র Propensity-জনিত অস্থিরতা এবং কনভার্জেন্স হারের শর্তগুলো (Rate Conditions) কাজ করে। তাই বাস্তবে Cross-fitting ব্যবহার করে অন্য Fold থেকে Prediction আনতে হয় এবং সঠিক Identification শর্ত ও ডিজাইন-সম্মত অনিশ্চয়তা যাচাই করতে হয়।",
+          "reference": "https://arxiv.org/abs/1608.00060"
+        }
+      ]
+    },
+    {
+      "id": "ch37_observational",
+      "title": "Experimental বনাম বাহ্যিক Control দলের পূর্ণাঙ্গ অডিট",
+      "subtitle": "তুলনা করার দলে মানুষের সংখ্যা অনেক বেশি হওয়া কখনোই Randomization-এর বিকল্প নয়",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "একই Treated দল, কিন্তু ভিন্ন তুলনার আয়না",
+          "body": "অনেক সময় ইঞ্জিনিয়াররা ভাবেন, 'ছোট একটি Control দলের চেয়ে ডেটা ওয়্যারহাউসে পড়ে থাকা লাখ লাখ সাধারণ ইউজারের সাথে তুলনা করলে বোধহয় আরও নিখুঁত ফল পাব!' আমাদের NSW ডেটাসেটটি এই ভ্রান্ত ধারণা ভাঙার আদর্শ উদাহরণ। এখানে একই 185 জন Treated মানুষের বিপরীতে আমরা একবার রাখছি 260 জন Randomized Experimental Control-কে, আর পরের বার রাখছি 2490 জন বাহ্যিক অ-পরীক্ষামূলক PSID Control-কে। মনে রাখবেন, মানুষের সংখ্যা বাড়ালে কেবল গড়ের এলোমেলো ওঠানামা (Sampling Error) কমে, কিন্তু দুই দলের মৌলিক প্রাক-নির্বাচন পার্থক্য (Systematic Selection Bias) একচুলও কমে না! ডেটার বিশাল আকার আর Causal Identification সম্পূর্ণ আলাদা দুটি বিষয়।"
+        },
+        {
+          "type": "text",
+          "title": "ভারসাম্য যাচাইয়ের মাপকাঠি: Standardized Mean Difference (SMD)",
+          "body": "দুই দলের প্রাক-পরীক্ষা বৈশিষ্ট্যগুলো কতটা কাছাকাছি বা দূরে আছে, তা নমুনার আকার-নিরপেক্ষভাবে মাপার চমৎকার সূচক হলো SMD = (mean_T - mean_C) / sqrt((var_T + var_C) / 2)। সাধারণ t-test-এর p-value নমুনার আকার ছোট-বড় হলেই বিভ্রান্ত করতে পারে, কিন্তু SMD সরাসরি Standard Deviation-এর এককে পার্থক্য দেখায়। অবশ্য প্রচলিত কোনো থ্রেশহোল্ড (যেমন |SMD| < 0.1) পার করলেই যে সব অদেখা দিক থেকেও পূর্ণ Exchangeability প্রমাণিত হয়ে গেছে—তা কিন্তু নয়। অ্যাপের ভিজ্যুয়াল চার্টে বারের দৈর্ঘ্য |SMD| = 2-এ সীমাবদ্ধ রাখা হলেও লেখায় প্রকৃত চিহ্নযুক্ত মানই দেখানো হয়।"
+        },
+        {
+          "type": "math",
+          "title": "পর্যবেক্ষণলব্ধ ব্যবধান বনাম প্রকৃত Causal প্রভাব",
+          "body": "\\mathrm{observed\\ gap}\\ne\\mathrm{identified\\ causal\\ effect}\\quad\\mathrm{without\\ assumptions}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Experimental ও PSID উভয় উৎসের তুলনামূলক অডিট",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"experiment37\", Path(\"assets/datasets/nsw/experiment_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/nsw/experiment_lab.json\").read_text(encoding=\"utf-8\")\n)\nfor comparison in [\"experimental\", \"psid\"]:\n    for adjusted in [False, True]:\n        a = m.observational(lab[\"cohorts\"], comparison, adjust=adjusted)\n        print(comparison, adjusted, a[\"control\"], a[\"shown_gap\"], a[\"smd\"][\"re74\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব প্রমাণের অনিবার্য সীমারেখা",
+          "body": "উপরের কোডে ১৯৭৪ সালের আয়ের SMD দেখলেই বোঝা যায় PSID দলের মানুষজন কতটা আলাদা পটভূমির ছিলেন। বাস্তব অডিটে সবসময় মনে রাখবেন: মাপা চলকগুলোতে ভারসাম্য দেখা গেলেও আড়ালে না-মাপা উপাদান লুকিয়ে থাকতে পারে, আর মোটা দাগের বাক্সে Overlap দেখা গেলেও সূক্ষ্ম স্তরে তথ্যের ঘাটতি (Support Issues) থাকতে পারে। পাশাপাশি মূল লটারির প্রটোকল, বিস্তারিত Exposure ইতিহাস এবং একক পর্যায়ের অদেখা ফলাফল না থাকার সীমাবদ্ধতাগুলোও আমাদের বিবেচনায় রাখতে হয়।"
+        },
+        {
+          "type": "causal_observational",
+          "title": "ইন্টারেক্টিভ অডিট ল্যাব: সতর্ক ব্যাখ্যার অনুশীলন",
+          "body": "এই ল্যাবে Experimental ফলাফলটিকে আমরা অনিশ্চয়তা-সমেত একটি রেফারেন্স বেঞ্চমার্ক হিসেবে দেখছি, আর বাহ্যিক কাঁচা ও স্তরভিত্তিক ব্যবধানগুলোকে দেখছি বর্ণনামূলক তুলনা হিসেবে—কারণ এদের জনগোষ্ঠী, ওজন ও Estimand এক নয়। একটি গভীর সত্য মনে রাখবেন: কোনো একটি Observational পদ্ধতি হঠাৎ এই একটি ডেটাসেটে RCT বেঞ্চমার্কের কাছাকাছি সংখ্যা দিলেই প্রমাণ হয় না যে পদ্ধতিটি সব জায়গায় সর্বদা নির্ভুল; আবার এখানে দূরে থাকলেই যে পৃথিবীর সব Causal পদ্ধতি অকেজো—তেমন চরম সিদ্ধান্তও টানা যাবে না!"
+        },
+        {
+          "type": "text",
+          "title": "অন্য পরিবেশে প্রয়োগযোগ্যতা (Transportability)",
+          "body": "সত্তরের দশকের একটি বিশেষ জব-ট্রেনিং প্রোগ্রামের পুরুষ অংশগ্রহণকারী এবং তৎকালীন জরিপের তুলনা থেকে আজকের কোনো ডিজিটাল প্ল্যাটফর্মের ব্যবহারকারীদের আচরণ সরাসরি নির্ধারণ করা যায় না। সময়ের সাথে জনগোষ্ঠীর বৈশিষ্ট্য, অর্থনৈতিক প্রেক্ষাপট এবং খোদ Intervention-এর বাস্তবায়ন পদ্ধতি আমূল বদলে যেতে পারে। তাই যেকোনো পরীক্ষার ফলাফল অন্য সময়ে বা অন্য প্রোডাক্টে খাটানোর আগে Transportability-র শর্তগুলো নতুন করে ভাবতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "ল্যাবের প্রতিটি সংখ্যা নিজে ব্যাখ্যা করুন",
+          "body": "ল্যাবে প্রদর্শিত ব্যবধান (shown_gap), স্তরের ওজন, সদস্যসংখ্যা এবং ব্যালেন্স বারগুলো নিজের ভাষায় ব্যাখ্যা করার চেষ্টা করুন। এখানে বাইরের কোনো API বা লুকানো মডেল নেই—বান্ডেল করা মূল ফাইল থেকেই সরাসরি সব গড় ও Standardization আপনার চোখের সামনে পুনর্গণনা করা হচ্ছে।"
+        }
+      ]
+    },
+    {
+      "id": "ch37_evaluation",
+      "title": "End-to-End Experiment সিদ্ধান্ত ও Evidence Report",
+      "subtitle": "শুধু চূড়ান্ত সংখ্যা নয়—পরীক্ষার ডিজাইন Assumption, সীমাবদ্ধতা এবং পরবর্তী পদক্ষেপ একসাথে লিখুন",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "প্রমাণের অবিচ্ছিন্ন শৃঙ্খল (Evidence Chain)",
+          "body": "একজন পরিপক্ব ML ইঞ্জিনিয়ারের কাছে একটি Experiment রিপোর্ট মানে কেবল একটি p-value নয়, বরং শুরু থেকে শেষ পর্যন্ত গাঁথা প্রমাণের একটি অটুট শৃঙ্খল: প্রথমে সুস্পষ্ট Population, Intervention ও Outcome-এর চুক্তি → ডেটার উৎস ও সত্যতা → Assignment, Exposure ও লগিংয়ের গুণগত মান → সঠিক Estimator ও তার অনিশ্চয়তা → Multiplicity সংশোধন → ব্যবসায়িক উপযোগিতা ও Guardrails → এবং সবশেষে চূড়ান্ত সিদ্ধান্ত। শৃঙ্খলের সামনের কোনো কড়ি যদি ভেঙে থাকে (যেমন লগিং ত্রুটি বা তীব্র Attrition), তবে শেষের ছোট্ট একটি p-value দেখিয়ে সেই ফাটল কখনোই ঢাকা যাবে না!"
+        },
+        {
+          "type": "text",
+          "title": "NSW পরীক্ষার সামগ্রিক সংখ্যাগত সারসংক্ষেপ",
+          "body": "আমাদের পুরো অধ্যায়ের Experimental বিশ্লেষণের মূল সংখ্যাগুলো একনজরে গুছিয়ে নিলে দাঁড়ায়: বার্ষিক আয়ের গড় ব্যবধান 1794.342 একক, যার 95% Welch Confidence Interval হলো 474.010 থেকে 3114.674 এবং কাঁচা p-value হলো 0.007893। অন্যদিকে ধনাত্মক আয়ের সূচকে ব্যবধান 11.060 Percentage Points, যার 95% সীমা 2.530 থেকে 19.590 Percentage Points। আর এই দুই মেট্রিকের পরিবারের ওপর Holm সংশোধিত p-value দাঁড়ায় 0.015786। বরাবরের মতোই এখানে মূল মুদ্রার একক অপরিবর্তিত রাখা হয়েছে এবং ধনাত্মক আয়কে সরাসরি আনুষ্ঠানিক চাকরির সনদ হিসেবে দাবি করা হয়নি।"
+        },
+        {
+          "type": "math",
+          "title": "প্রোডাকশন সিদ্ধান্তের পূর্ণাঙ্গ সমীকরণ",
+          "body": "\\mathrm{decision}=\\mathrm{quality}+\\mathrm{effect/uncertainty}+\\mathrm{utility}+\\mathrm{guardrails}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ পূর্ণাঙ্গ ট্রায়াল সারাংশ ও প্রটোকল স্ট্যাটাস",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"experiment37\", Path(\"assets/datasets/nsw/experiment_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/nsw/experiment_lab.json\").read_text(encoding=\"utf-8\")\n)\nfor outcome in m.OUTCOMES:\n    r = lab[\"trial\"][outcome][\"0.95\"]\n    print(outcome, r[\"delta\"], r[\"lower\"], r[\"upper\"], r[\"p_value\"])\nprint(\"Holm:\", lab[\"multiplicity\"][\"holm\"])\nprint(\"Original assignment protocol recovered:\", False)\n"
+        },
+        {
+          "type": "text",
+          "title": "অনিশ্চয়তা ও প্রমাণের পরিধি স্পষ্ট রাখা",
+          "body": "একটি পেশাদার রিপোর্টে কোনটুকু সরাসরি ডেটা থেকে পাওয়া আর কোনটুকু আনুষঙ্গিক মহড়া, তা পরিষ্কারভাবে আলাদা করা থাকে। যেমন আমাদের এখানে মূল ঐতিহাসিক বণ্টন, উপস্থিতি বা ঝরে পড়ার বিস্তারিত প্রটোকল উদ্ধার করা সম্ভব হয়নি এবং নির্বাচিত জনগোষ্ঠীর কারণে বাহ্যিক সাধারণীকরণের সীমাবদ্ধতা রয়েছে। পাশাপাশি শর্তসাপেক্ষ Sharp-null সিমুলেশন, পরিকল্পনার Power হিসাব এবং লগিং-লস মহড়া—প্রতিটিই আলাদা আলাদা শিক্ষণীয় অংশ; কোনোটিই নতুন করে চালানো মাঠপর্যায়ের পরীক্ষা নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Statistically Significant মানেই চোখ বুজে Ship নয়!",
+          "body": "প্রোডাকশন সিস্টেমে একটি কথা পাথরে লিখে রাখার মতো: Statistical Significance পাওয়া মানেই স্বয়ংক্রিয়ভাবে নতুন মডেল রোলআউট (Ship) করার সবুজ সংকেত নয়! সিদ্ধান্ত নেওয়ার সময় দেখতে হবে পুরো Confidence Interval-টি ব্যবসার জন্য বাস্তবসম্মত লাভজনক সীমায় আছে কি না, সার্ভার খরচ ও রক্ষণাবেক্ষণের জটিলতা পুষিয়ে দিচ্ছে কি না, কোনো Guardrail ভাঙছে কি না এবং ন্যায্যতা বজায় থাকছে কি না। আর ফলাফল যদি অস্পষ্ট (Inconclusive) হয়, তবে মনমতো উত্তর পাওয়ার জন্য ডেটা কাটাছেঁড়া না করে হয় নতুন করে উপযুক্ত আকারের পরীক্ষা পরিকল্পনা করুন, নতুবা বৈধ Sequential কৌশল অনুসরণ করুন।"
+        },
+        {
+          "type": "text",
+          "title": "পোর্টফোলিও ও ইঞ্জিনিয়ারিং ডকুমেন্টেশনের মানদণ্ড",
+          "body": "নিজের কাজের পোর্টফোলিও বা টিমের সিদ্ধান্তের ডকুমেন্ট লেখার সময় ডেটার উৎস, হ্যাশ ও লাইসেন্স, প্রতিটি Row-এর ভূমিকা, বিশ্লেষণের পছন্দ, অন্তর্নিহিত Assumption, চালানো কোড, ফলাফল এবং সীমাবদ্ধতা—সবকিছু স্বচ্ছভাবে লিপিবদ্ধ করুন। খেয়াল রাখবেন, ফাইলের বাইট হ্যাশ মিলে যাওয়া মানে হিসাবটি পুনরাবৃত্তিযোগ্য (Reproducible), কিন্তু তাত্ত্বিক দিক থেকে বিশ্লেষণটি সঠিক কি না তা আলাদা বিচারের বিষয়!"
+        },
+        {
+          "type": "text",
+          "title": "ইন্টারভিউ প্রস্তুতির চূড়ান্ত ঝালাই",
+          "body": "এই অধ্যায়ের পর আপনি আত্মবিশ্বাসের সাথে ইন্টারভিউর যেকোনো বাস্তব প্রশ্নের উত্তর সাজাতে পারবেন: কীভাবে সঠিক Unit ও Metric বাছবেন, SRM ধরা পড়লে কীভাবে তার মূল কারণ খুঁজবেন, কীভাবে Standard Error ও Power-এর সূত্র প্রতিপাদন করবেন, Peeking ও Multiplicity কেন বিপজ্জনক তা বোঝাবেন, Post-treatment Selection শনাক্ত করবেন এবং Observational ডেটার Assumption নিয়ে যুক্তি দেবেন। পরের অংশের মৌলিক প্রশ্নগুলো ঠিক এই চিন্তাপ্রক্রিয়া ঝালাই করার জন্যই তৈরি করা হয়েছে।"
+        }
+      ]
+    },
+    {
+      "id": "ch37_review",
+      "title": "Mastery Plan: সূত্র প্রতিপাদন, কোডিং ও সমালোচনামূলক যাচাই",
+      "subtitle": "সত্যিকারের Causal Reasoning মানে প্রতিটি সংখ্যার পেছনের Assumption-কে যুক্তি দিয়ে রক্ষা করতে পারা",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "নিজের হাতে সূত্রগুলো লিখে মিলিয়ে নিন (Derive)",
+          "body": "খাতা-কলম নিয়ে না দেখে নিজে নিজে এই মূল সমীকরণগুলো একবার লিখে ফেলুন: Observed Outcome সমীকরণ, Difference in Means, নিরপেক্ষ Sample Variance ও Welch SE, শর্তসাপেক্ষ Sharp-null p-value, সমান Variance-এর Power ও Sample-size সূত্র, ক্লাস্টারিংয়ের Design Effect, ভারসাম্য মাপার SMD এবং Holm সংশোধনের ধাপগুলো। প্রতিটি সূত্রের পাশেই লিখে রাখুন তার একক (Unit), ভগ্নাংশের হর (Denominator), স্বাধীনতার শর্ত এবং Target Population কী। কারণ পরীক্ষার ডিজাইন না বুঝে স্রেফ সূত্র মুখস্থ বসালে বাস্তবে মারাত্মক ভুল সিদ্ধান্ত হতে বাধ্য।"
+        },
+        {
+          "type": "text",
+          "title": "কোডিং অনুশীলনে হাত পাকান (Implement)",
+          "body": "এই অধ্যায়ের শেষে থাকা দশটি কোডিং অনুশীলনীতে আপনি নিজের হাতে মূল ডেটার গড় পার্থক্য, নিরপেক্ষ Variance, Standard Error, Percentage-point ব্যবধান, Permutation Tail, প্রয়োজনীয় Sample Size, লগিং-লসে বাদ পড়া সংখ্যা, Holm সংশোধন, স্তরভিত্তিক ওজনযুক্ত ব্যবধান এবং আর্টিফ্যাক্ট হ্যাশ হিসাব করবেন। সমাধান দেখার আগে নিজের স্থানীয় Python পরিবেশে কোড লিখে চালিয়ে দেখুন; আর মনে রাখবেন, অ্যাপের অটোমেটেড চেকার কেবল চূড়ান্ত সংখ্যার মিল দেখে, আপনার কোডের ভেতরের কাঠামোগত সৌন্দর্য বিচার করার দায়িত্ব আপনার নিজেরই!"
+        },
+        {
+          "type": "math",
+          "title": "দক্ষতার চারটি স্তম্ভ",
+          "body": "\\mathrm{mastery}=\\mathrm{define}+\\mathrm{identify}+\\mathrm{estimate}+\\mathrm{audit}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ মূল যাচাইগুলোর চূড়ান্ত প্রস্তুতি পরীক্ষা",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"experiment37\", Path(\"assets/datasets/nsw/experiment_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/nsw/experiment_lab.json\").read_text(encoding=\"utf-8\")\n)\nassert len(lab[\"permutation_bank\"]) == 1000\nassert m.holm([0.01, 0.01, 0.5]) == [0.03, 0.03, 0.5]\nassert (\n    m.logging_rehearsal(\n        lab[\"cohorts\"][\"treated\"] + lab[\"cohorts\"][\"experimental\"], True\n    )[\"dropped\"]\n    == 77\n)\nprint(\"Ready for quizzes,coding exercises and interview defense\")\n"
+        },
+        {
+          "type": "text",
+          "title": "পুঙ্খানুপুঙ্খ নিরীক্ষা (Audit)",
+          "body": "যেকোনো বিশ্লেষণ শেষ করার পর নিজেকে অডিটরের আসনে বসিয়ে যাচাই করুন: ডেটার সংখ্যা ও হ্যাশ ঠিক আছে কি না, প্রতিটি পুনর্বণ্টনে ইনডেক্সগুলো অনন্য কি না, সব Confidence ও Planning সেটিংসে সীমান্তবর্তী শর্তগুলো ঠিকমতো কাজ করছে কি না, এবং খালি Overlap থাকলে কোড নীরবে ভুল সংখ্যা না দিয়ে সতর্ক করছে কি না। মনে রাখবেন, দুটি ভিন্ন ভাষায় লেখা কোড একই সংখ্যা প্রিন্ট করলেই কিন্তু প্রমাণ হয় না যে আপনার Causal Assumption-গুলো বাস্তব জগতে সত্য!"
+        },
+        {
+          "type": "text",
+          "title": "পাল্টা উদাহরণ দিয়ে যুক্তি রক্ষা করুন (Defend)",
+          "body": "একজন দক্ষ সিস্টেম ডিজাইনার হতে হলে নিচের চারটি প্রশ্নের জন্য নিজের ঝুলিতে অন্তত একটি করে নিখুঁত পাল্টা উদাহরণ (Counterexample) তৈরি রাখুন: (১) কেন Randomized Assignment-এর প্রভাব (ITT) আর বাস্তবে গ্রহণকারীদের প্রভাব আলাদা হতে পারে? (২) কেন সাধারণ Canary রোলআউট মানেই বৈধ A/B Test নয়? (৩) কেন Treatment-পরবর্তী আচরণের ওপর শর্তারোপ করা বিপজ্জনক? এবং (৪) কেন বিশাল ডেটাসেট (Large N) একা কখনোই Confounding দূর করতে পারে না?"
+        },
+        {
+          "type": "text",
+          "title": "পূর্ববর্তী ভিত্তিগুলো ঝালিয়ে নেওয়ার পথনির্দেশ",
+          "body": "এই অধ্যায়ের কোনো অংশে যদি ভিত্তিগত জড়তা অনুভব করেন, তবে সংশ্লিষ্ট আগের অধ্যায়গুলো একবার দেখে নিতে পারেন: পরিসংখ্যানিক Confidence ও Coverage-এর জন্য Book 1 · Chapter 4 (Probability, Statistics & Inference), মডেল মূল্যায়ন ও পরীক্ষার কাঠামোর জন্য Book 2 · Chapter 3 (Model Evaluation & Experiment Design), সময়ের কাট-অফ ও Data Leakage এড়ানোর জন্য Book 6 · Chapter 1 (Data Pipelines & Feature Systems) এবং প্রোডাকশন মনিটরিং ও Canary রোলআউটের জন্য Book 6 · Chapter 2 (Serving, Monitoring & MLOps)। এই অধ্যায়টি সেই সবগুলো ধারণাকে একটি সুসংহত Causal সিদ্ধান্তের ফ্রেমওয়ার্কে একত্র করেছে।"
+        },
+        {
+          "type": "text",
+          "title": "পরবর্তী গন্তব্য: পূর্ণাঙ্গ ML System Design",
+          "body": "Estimand, বণ্টন প্রক্রিয়া, মেট্রিকের Denominator এবং সমন্বয়ের শর্তগুলো নিজের ভাষায় প্রাঞ্জলভাবে ব্যাখ্যা করার অভ্যাস করুন। এরপর পরের অধ্যায়ে—অর্থাৎ Book 6 · Chapter 4 (ML System Design)-এ আমরা মডেল কোয়ালিটি, সিস্টেম ক্যাপাসিটি, Latency এবং ব্যর্থতা সামলানোর বাস্তব কেস স্টাডিগুলোতে এই পরীক্ষণ ও কার্যকারণ চিন্তাকে সরাসরি কাজে লাগাব।"
+        }
+      ]
+    }
+  ],
+  "quizzes": [
+    {
+      "id": "ch37_q1",
+      "question": "কোনো পরীক্ষায় একক ব্যক্তির নিজস্ব প্রভাব (Individual Treatment Effect) সরাসরি দেখা যায় না কেন?",
+      "options": [
+        "একই Unit-এর ক্ষেত্রে আমরা কেবল তার প্রাপ্ত অবস্থার (Assigned Treatment) ফলাফলটিই বাস্তবে দেখতে পাই",
+        "Randomized পরীক্ষায় কোনো বাস্তব Outcome পরিমাপ করা হয় না",
+        "Control দলের ফলাফলই সবার ব্যক্তিগত Counterfactual হিসেবে সরাসরি কাজ করে",
+        "সব পরীক্ষার Sample Size সবসময় অনেক ছোট থাকে"
+      ],
+      "answer": 0,
+      "explanation": "Y = T × Y(1) + (1 - T) × Y(0) সমীকরণ অনুযায়ী যেকোনো ব্যক্তির জন্য দুটি সম্ভাব্য ফলাফলের একটি চিরকাল অদেখা থেকে যায়—তা কখনোই সরাসরি বাস্তব Label হিসেবে পাওয়া যায় না।"
+    },
+    {
+      "id": "ch37_q2",
+      "question": "Causal সিদ্ধান্ত নেওয়ার ক্ষেত্রে Randomization-এর সবচেয়ে বড় ভূমিকা কোনটি?",
+      "options": [
+        "সীমিত নমুনায় সব প্রাক-পরীক্ষা Covariate নিখুঁত সমান করে দেয়",
+        "ডেটা লগিং বা পরিমাপের সব ত্রুটি আপনাআপনি দূর করে দেয়",
+        "অন্য যেকোনো জনগোষ্ঠীতে ফলাফলের External Validity নিশ্চিত করে",
+        "পরীক্ষার ডিজাইনের জোরেই Treatment Assignment সম্ভাব্য Potential Outcomes থেকে স্বাধীন হয়"
+      ],
+      "answer": 3,
+      "explanation": "Randomization গাণিতিক প্রত্যাশায় (In Expectation) দুই দলকে তুলনাযোগ্য করে তোলে; তবে বাস্তবের সীমিত নমুনায় সামান্য Covariate Imbalance বা পরিমাপগত ত্রুটি তখনো থাকতে পারে।"
+    },
+    {
+      "id": "ch37_q3",
+      "question": "একই Intervention-এর ক্ষেত্রে ATE এবং ATT-এর মান কেন আলাদা হতে পারে?",
+      "options": [
+        "ATT দিয়ে কেবল পরীক্ষার p-value বোঝানো হয়",
+        "ATE হলো একক ব্যক্তির নিজস্ব গোপন Label",
+        "দুটির Target Population আলাদা এবং ব্যক্তিভেদে প্রভাবে বৈচিত্র্য (Effect Heterogeneity) থাকতে পারে",
+        "আসলে দুটি মান সবসময় গাণিতিকভাবে হুবহু সমান হয়"
+      ],
+      "answer": 2,
+      "explanation": "যারা বাস্তবে Treatment পেয়েছে তাদের গড় প্রভাব (ATT) আর পুরো লক্ষ্য জনগোষ্ঠীর গড় প্রভাব (ATE) দুটি ভিন্ন Estimand—বিশেষ করে যখন মানুষের বৈশিষ্ট্যভেদে সাড়া দেওয়ার মাত্রা কমবেশি হয়।"
+    },
+    {
+      "id": "ch37_q4",
+      "question": "শুধু যারা Click করেছে (Only Clicked Users) তাদের ওপর মেট্রিক হিসাব করলে কী ধরনের সমস্যা হতে পারে?",
+      "options": [
+        "এতে পরীক্ষার কার্যকর Sample Size অনেক বেড়ে যায়",
+        "Click করার আচরণ নিজেই Treatment দ্বারা প্রভাবিত হলে Post-treatment Selection Bias ঢুকে পড়ে",
+        "এতে শুরুর Randomization আরও বেশি শক্তিশালী হয়",
+        "মূল জনগোষ্ঠীর ITT অবিকল অপরিবর্তিত থাকার নিশ্চয়তা পাওয়া যায়"
+      ],
+      "answer": 1,
+      "explanation": "নতুন মডেল বা Treatment যদি কারা Click করবে সেই দলের গঠন বদলে দেয়, তবে শুধু Click-কারীদের নিয়ে তৈরি দুই দল আর একে অপরের সাথে সমতুল্য থাকে না।"
+    },
+    {
+      "id": "ch37_q5",
+      "question": "মূল NSW ডেটাসেটের 185 বনাম 260 সংখ্যা দেখেই কি আমরা 50/50 অনুপাতের SRM ত্রুটি ঘোষণা করতে পারি?",
+      "options": [
+        "না; কারণ মূল গবেষণার কনফিগার করা বণ্টন অনুপাত ও পূর্ণ Assignment লগ আমাদের জানা নেই",
+        "হ্যাঁ, এটি নিঃসন্দেহে একটি ব্যর্থ পরীক্ষা",
+        "যেকোনো পরীক্ষায় 50/50 অনুপাত থাকা সবসময় বাধ্যতামূলক",
+        "দুই দলের সংখ্যা সমান করার জন্য অতিরিক্ত Row কেটে বাদ দেওয়া উচিত"
+      ],
+      "answer": 0,
+      "explanation": "শুধু চূড়ান্ত নমুনার সংখ্যা দেখে অজানা ঐতিহাসিক প্রটোকলকে মনগড়াভাবে 50/50 ধরে নেওয়া যায় না; SRM যাচাইয়ের জন্য আগে থেকে জানা প্রত্যাশিত অনুপাত প্রয়োজন।"
+    },
+    {
+      "id": "ch37_q6",
+      "question": "এই অধ্যায়ের লগিং-লস সফটওয়্যার মহড়ায় (Logging-loss Rehearsal) মোট কয়টি ক্রমিক Key বাদ পড়েছিল?",
+      "options": [
+        "185",
+        "260",
+        "2490",
+        "77"
+      ],
+      "answer": 3,
+      "explanation": "হ্যাশ মহড়ায় Treatment দলের প্রতি তৃতীয় যোগ্য লগ বাদ পড়ার কৃত্রিম বাগের কারণে 77 টি রেকর্ড ড্রপ হয়েছিল; এটি মূল ঐতিহাসিক ডেটার ঝরে পড়ার হার নয়।"
+    },
+    {
+      "id": "ch37_q7",
+      "question": "SRM পরীক্ষায় বড় p-value পাওয়া (অর্থাৎ Non-rejection) আসলে কী প্রমাণ করে?",
+      "options": [
+        "পরীক্ষায় নিশ্চিতভাবে ধনাত্মক Causal প্রভাব পাওয়া গেছে",
+        "পাইপলাইনে কোনো ধরনের বাগ থাকার আর কোনো সুযোগই নেই",
+        "এটি কেবল দেখায় প্রত্যাশিত অনুপাতের সাথে বড় বিরোধ নেই, তবে পুরো পরিমাপ নিখুঁত হওয়ার সনদ দেয় না",
+        "কোনো ব্যবহারকারীর Outcome ডেটা হারিয়ে যায়নি"
+      ],
+      "answer": 2,
+      "explanation": "দুই দলেই সমান হারে ডেটা হারানো (Symmetric Loss), ভুল মেট্রিক সংজ্ঞা কিংবা Outcome টেবিলের Join ব্যর্থতা কোনো SRM সংকেত ছাড়াই ফলাফলকে বিকৃত করতে পারে।"
+    },
+    {
+      "id": "ch37_q8",
+      "question": "NSW ট্রায়ালে Treated ও Experimental Control দলের বার্ষিক আয়ের প্রকৃত গড় ব্যবধান কত?",
+      "options": [
+        "প্রত্যেক ব্যক্তির নিশ্চিত ব্যক্তিগত বৃদ্ধির মান 1794",
+        "মূল ডেটাসেটের মুদ্রার এককে 1794.342",
+        "0.1106 মুদ্রা একক",
+        "2490 একক"
+      ],
+      "answer": 1,
+      "explanation": "Treated গড় 6349.144 থেকে Control গড় 4554.801 বিয়োগ করলে গড় পার্থক্য দাঁড়ায় 1794.342 একক; এটি দলগত Point Estimate, কারো ব্যক্তিগত Ground Truth নয়।"
+    },
+    {
+      "id": "ch37_q9",
+      "question": "re78 > 0 সূচকে দুই দলের গড় ব্যবধান 0.1106 আসার প্রকৃত অর্থ কী?",
+      "options": [
+        "ধনাত্মক আয়ের হারে প্রায় 11.06 Percentage Points ব্যবধান",
+        "কাঁটায় কাঁটায় 11.06% আপেক্ষিক বৃদ্ধি (Relative Percent)",
+        "সরাসরি জরিপ করা আনুষ্ঠানিক কর্মসংস্থানের নিশ্চিত প্রভাব",
+        "মোট 1794 জন মানুষের আয়ের সমষ্টি"
+      ],
+      "answer": 0,
+      "explanation": "এখানে re78 > 0 দিয়ে কেবল আয় শূন্যের বেশি কি না সেই সূচক তৈরি করা হয়েছে (যার পার্থক্য প্রায় 11.06 Percentage Points); আনুষ্ঠানিক চাকরির তথ্য এখানে আলাদাভাবে মাপা হয়নি।"
+    },
+    {
+      "id": "ch37_q10",
+      "question": "নিরপেক্ষ বা Unbiased Sample Variance হিসাব করার সময় ভগ্নাংশের হরে (Denominator) কী বসানো হয়?",
+      "options": [
+        "n + 1",
+        "সব ক্ষেত্রেই n",
+        "শুধু শূন্যের চেয়ে বড় Outcome-এর সংখ্যা",
+        "n - 1"
+      ],
+      "answer": 3,
+      "explanation": "দলের গড় মানটি যেহেতু ওই একই নমুনা থেকে অনুমান করা হয়, তাই একটি Degrees of Freedom কমে গিয়ে নিরপেক্ষ Variance-এর হরে n - 1 ব্যবহৃত হয়।"
+    },
+    {
+      "id": "ch37_q11",
+      "question": "দুটি স্বাধীন দলের গড় পার্থক্যের Welch Standard Error কীভাবে হিসাব করা হয়?",
+      "options": [
+        "দুই দলের p-value-এর গড় নিয়ে",
+        "সবসময় সমান Variance ধরে Pooled সূত্র বসিয়ে",
+        "sqrt(s1^2 / n1 + s0^2 / n0) সূত্র ব্যবহার করে",
+        "sqrt(s1^2 + s0^2) সূত্র ব্যবহার করে"
+      ],
+      "answer": 2,
+      "explanation": "স্বাধীন দুটি দলের গড়ের নিজস্ব Variance (s^2 / n) পরস্পর যোগ হয়ে বর্গমূল নিলে Welch SE পাওয়া যায়; তবে এককগুলো পরস্পর নির্ভরশীল হলে আলাদা পদ্ধতি প্রয়োজন।"
+    },
+    {
+      "id": "ch37_q12",
+      "question": "Frequentist পরিসংখ্যানে 95% Confidence Interval-এর সঠিক ব্যাখ্যা কোনটি?",
+      "options": [
+        "Null Hypothesis সত্য হওয়ার সম্ভাবনা ঠিক 5%",
+        "একই নিয়মে বারবার তুলনাযোগ্য পরীক্ষা চালালে পদ্ধতিটির দীর্ঘমেয়াদি Coverage লক্ষ্য থাকে 95%",
+        "নির্দিষ্ট ডেটা দেখার পর স্থির প্যারামিটারটি নিজেই 95% সময় এলোমেলোভাবে ওঠানামা করে",
+        "দলের ঠিক 95% মানুষ নতুন ফিচার থেকে উপকৃত হয়েছেন"
+      ],
+      "answer": 1,
+      "explanation": "Frequentist সীমা মূলত পদ্ধতিটির দীর্ঘমেয়াদি নির্ভরযোগ্যতা বোঝায়; এটি কোনো স্থির প্যারামিটারের Bayesian সম্ভাবনা কিংবা ব্যক্তিগত সুফলের হার নির্দেশ করে না।"
+    },
+    {
+      "id": "ch37_q13",
+      "question": "গড় প্রভাব শূন্য বলার সাধারণ Weak Null-এর চেয়ে Sharp Null কেন অনেক বেশি জোরালো শর্ত?",
+      "options": [
+        "কারণ Sharp Null পরীক্ষায় থাকা প্রতিটি এককের নিজস্ব প্রভাব হুবহু শূন্য ধরে নেয়",
+        "কারণ এটি কেবল দলের সামগ্রিক গড় শূন্য হওয়ার কথা বলে",
+        "এতে কোনো বাস্তব Outcome স্থির রাখা হয় না",
+        "এতে দুই দলের সব প্রাক-পরীক্ষা বৈশিষ্ট্য সমান ধরা হয়"
+      ],
+      "answer": 0,
+      "explanation": "Weak Null-এ কারো ধনাত্মক ও কারো ঋণাত্মক প্রভাব কাটাকাটি গিয়ে গড় শূন্য হতে পারে, কিন্তু Sharp Null প্রতিটি এককের জন্যই Y_i(1) = Y_i(0) দাবি করে।"
+    },
+    {
+      "id": "ch37_q14",
+      "question": "Monte Carlo Randomization পরীক্ষায় B সংখ্যক সিমুলেশনের একটিতেও যদি চরম মান না পাওয়া যায়, তবে Plus-one নিয়মে p-value কত হবে?",
+      "options": [
+        "নিশ্চিতভাবে 0",
+        "1",
+        "সব ক্ষেত্রে নিখুঁত 1 / B",
+        "1 / (B + 1)"
+      ],
+      "answer": 3,
+      "explanation": "বাস্তব দেখা বণ্টনটিকেও সম্ভাব্য সেটের অংশ ধরে লব ও হরে 1 যোগ করা হয়, ফলে সসীম সিমুলেশনে অবাস্তব শূন্য p-value এড়িয়ে মানটি দাঁড়ায় 1 / (B + 1)।"
+    },
+    {
+      "id": "ch37_q15",
+      "question": "অন্যান্য সব শর্ত অপরিবর্তিত রেখে যদি Minimum Detectable Effect (MDE) অর্ধেক করা হয়, তবে প্রয়োজনীয় Sample Size কেমন বদলাবে?",
+      "options": [
+        "একই থাকবে",
+        "দ্বিগুণ (2×) হবে",
+        "প্রায় চার গুণ (4×) হবে",
+        "অর্ধেক হয়ে যাবে"
+      ],
+      "answer": 2,
+      "explanation": "Sample-size সূত্রে N ব্যস্তানুপাতিক হয় delta^2-এর সাথে; তাই অর্ধেক আকারের সূক্ষ্ম প্রভাব ধরতে হলে প্রায় চার গুণ ডেটার প্রয়োজন পড়ে।"
+    },
+    {
+      "id": "ch37_q16",
+      "question": "পরীক্ষা শেষ হওয়ার পর প্রাপ্ত Observed Effect বসিয়ে Post-hoc Power রিপোর্ট করলে কী লাভ হয়?",
+      "options": [
+        "ভবিষ্যতের ট্রাফিকের নিখুঁত সংখ্যা জানা যায়",
+        "প্রাপ্ত p-value ও Interval-এর বাইরে নতুন কোনো স্বাধীন প্রমাণ পাওয়া যায় না",
+        "Non-significant ফলাফল আপনাআপনি Causal প্রমাণে রূপান্তরিত হয়",
+        "পরীক্ষাটি নতুন করে Preregistered হয়ে যায়"
+      ],
+      "answer": 1,
+      "explanation": "প্রাপ্ত ফলাফল বসিয়ে বের করা Observed Power আসলে প্রাপ্ত p-value-এরই আরেকটি গাণিতিক রূপ মাত্র; ভবিষ্যতের MDE সবসময় ব্যবসায়িক উপযোগিতা ভেবে আলাদাভাবে ঠিক করতে হয়।"
+    },
+    {
+      "id": "ch37_q17",
+      "question": "প্রতিটি ক্লাস্টারে সমান আকার m = 5 এবং Intraclass Correlation (ICC) = 0.05 হলে Design Effect কত হবে?",
+      "options": [
+        "1.2",
+        "5",
+        "0.25",
+        "1.05"
+      ],
+      "answer": 0,
+      "explanation": "DE = 1 + (5 - 1) × 0.05 = 1.2; মনে রাখবেন এটি শুরুর পরিকল্পনার একটি আসন্ন হিসাব, চূড়ান্ত বিশ্লেষণের Cluster-robust SE-এর বিকল্প নয়।"
+    },
+    {
+      "id": "ch37_q18",
+      "question": "CUPED বা রিগ্রেশন সমন্বয়ে প্রাক-পরীক্ষা চলকের চেয়ে Treatment-পরবর্তী Engagement ব্যবহার করা কেন বিপজ্জনক?",
+      "options": [
+        "বাস্তবে যেকোনো সময়ের সব Covariate ব্যবহার করাই সম্পূর্ণ নিরাপদ",
+        "Outcome Leakage হলেও গড় ফলাফলে কোনো ক্ষতি হয় না",
+        "যত বেশি ফিচার যোগ করা হবে ফলাফল তত বেশি Causal হবে",
+        "পরীক্ষা-পরবর্তী Engagement নিজেই Intervention-এর পথ বা দলের গঠন বদলে দিতে পারে"
+      ],
+      "answer": 3,
+      "explanation": "Treatment দেওয়ার পর তৈরি হওয়া আচরণ Mediator বা Collider হতে পারে; সেটি দিয়ে Adjust করলে আসল প্রভাব মুছে যেতে পারে বা নতুন Selection Bias ঢুকতে পারে।"
+    },
+    {
+      "id": "ch37_q19",
+      "question": "সত্যিকারের কোনো প্রভাব না থাকলেও 0.05 সীমায় 10 টি সম্পূর্ণ স্বাধীন পরীক্ষা চালালে অন্তত একটি False Positive পাওয়ার সম্ভাবনা কত?",
+      "options": [
+        "নিশ্চিতভাবে 1.0",
+        "জমা হতে থাকা ডেটায় প্রতিদিনের Correlated উঁকি দেওয়ার হারও সবসময় নিখুঁত 0.4013",
+        "1 - 0.95^10 ≈ 0.4013",
+        "ঠিক 0.05"
+      ],
+      "answer": 2,
+      "explanation": "স্বাধীন পরীক্ষার বেঞ্চমার্কে সম্ভাবনাটি দাঁড়ায় 1 - (1 - 0.05)^10 ≈ 0.4013; তবে একই চলমান ডেটায় বারবার উঁকি দিলে পরীক্ষাগুলো পরস্পর সম্পর্কিত হওয়ায় আসল হার কিছুটা ভিন্ন হয়।"
+    },
+    {
+      "id": "ch37_q20",
+      "question": "Holm সংশোধন পদ্ধতিতে প্রতিটি মেট্রিকের আদি নামের সাথে তার সংশোধিত p-value কীভাবে ঠিক রাখা হয়?",
+      "options": [
+        "সব p-value-কে পরিবারের আকার দিয়ে ভাগ করে",
+        "প্রথমে ছোট থেকে বড় সাজিয়ে ক্রমবর্ধমান সমন্বয় করে, শেষে আদি ইনডেক্সের ক্রমে ফিরিয়ে এনে",
+        "শুধু সবচেয়ে ছোট p-value-টি রেখে বাকি সব মুছে ফেলে",
+        "কোনো সর্টিং ছাড়াই সরাসরি গড় মান বসিয়ে"
+      ],
+      "answer": 1,
+      "explanation": "সর্ট করা p-value-গুলোতে গুণক ও ক্রমান্বয়ে সর্বোচ্চ মান (সর্বোচ্চ 1.0) প্রয়োগের পর অবশ্যই আদি ইনডেক্সে ফিরিয়ে আনতে হয়, যাতে এক মেট্রিকের মান অন্য মেট্রিকের গায়ে না বসে।"
+    },
+    {
+      "id": "ch37_q21",
+      "question": "Subgroup A-তে ফলাফল Significant এবং Subgroup B-তে Non-significant এলেই কি প্রমাণ হয় যে দুই দলের প্রভাব ভিন্ন?",
+      "options": [
+        "না; দুই দলের প্রভাবের পার্থক্য বা Interaction পদের অনিশ্চয়তা সরাসরি যাচাই করতে হবে",
+        "হ্যাঁ, সব ক্ষেত্রেই তা নিশ্চিত প্রমাণ",
+        "এর অর্থ Subgroup B-তে প্রকৃত প্রভাব নিশ্চিতভাবে শূন্য",
+        "এর অর্থ Subgroup A-এর প্রতিটি মানুষ উপকৃত হয়েছেন"
+      ],
+      "answer": 0,
+      "explanation": "দুটি আলাদা টেস্টের Significance সীমার দুই পাশে পড়া মানেই দুই প্রভাবের পার্থক্য Significant হওয়া নয়—দলের আকার বা Variance ভিন্ন হলেও এমনটা সহজেই ঘটতে পারে।"
+    },
+    {
+      "id": "ch37_q22",
+      "question": "260 জন Experimental Control-এর বদলে বাইরের 2490 জন PSID Control নিলেই কি Randomization-এর অভাব পূরণ হয়ে যায়?",
+      "options": [
+        "হ্যাঁ, মানুষের সংখ্যা বেশি হলেই সবসময় ভালো",
+        "কেবল 2490 সংখ্যাটির সীমা পার হলেই তা বৈধ হয়",
+        "ছোট p-value বেরোলেই তা আপনাআপনি Randomized হয়ে যায়",
+        "না; নমুনার আকার বড় (Large N) হলেই পদ্ধতিগত Confounding আপনাআপনি দূর হয় না"
+      ],
+      "answer": 3,
+      "explanation": "বড় নমুনা কেবল এলোমেলো ওঠানামা কমায়; কিন্তু দুই দলের প্রাক-নির্বাচন পার্থক্য, Overlap ও Exchangeability-র শর্ত পূরণ না হলে বড় ডেটাতেও মারাত্মক Bias থেকে যায়।"
+    },
+    {
+      "id": "ch37_q23",
+      "question": "১৯৭৪ সালের আয়ের দুটি স্তরেই উভয় দলের মানুষ উপস্থিত থাকা সত্ত্বেও কেন তা পূর্ণ Causal সমন্বয়ের নিশ্চয়তা দেয় না?",
+      "options": [
+        "কারণ স্তরের ওজনগুলো সবসময় শূন্য হয়ে যায়",
+        "কারণ আয়ের Outcome ভেরিয়েবলটি ব্যবহারের অযোগ্য",
+        "কারণ এতে সূক্ষ্ম চলকগুলোর পূর্ণ Overlap এবং না-মাপা Confounding-এর সমস্যা অমীমাংসিতই থেকে যায়",
+        "কারণ ডেটাসেটের সদস্যসংখ্যা অবৈধ"
+      ],
+      "answer": 2,
+      "explanation": "মাত্র একটি মোটা দাগের বাইনারি চলক দিয়ে স্তরবিন্যাস করলে একটি স্বচ্ছ বর্ণনামূলক তুলনা পাওয়া যায় বটে, কিন্তু বয়স, শিক্ষা বা অদেখা পার্থক্যের কারণে তা প্রকৃত ATT নিশ্চিত করে না।"
+    },
+    {
+      "id": "ch37_q24",
+      "question": "এই অধ্যায়ের সামগ্রিক বিশ্লেষণ সম্পর্কে সবচেয়ে সৎ ও শক্তিশালী বিবৃতি কোনটি?",
+      "options": [
+        "এখানকার ফলাফল বর্তমান যুগের যেকোনো শ্রমনীতির জন্য সার্বজনীনভাবে প্রমাণিত",
+        "বাস্তব ঐতিহাসিক ডেটার ব্যবধান ও অনিশ্চয়তা এখানে সুস্পষ্ট ডিজাইন Assumption ও সীমাবদ্ধতাসহ বিশ্লেষণ করা হয়েছে",
+        "এখানে সম্পূর্ণ নতুন একটি লাইভ অনলাইন পরীক্ষা চালানো হয়েছে",
+        "ডেটাসেটের প্রতিটি অংশগ্রহণকারীর ব্যক্তিগত প্রভাব নিখুঁতভাবে জানা গেছে"
+      ],
+      "answer": 1,
+      "explanation": "আমরা মূল পাবলিক ডেটা অপরিবর্তিত রেখে প্রকৃত গড় ব্যবধান ও অনিশ্চয়তা হিসাব করেছি এবং ঐতিহাসিক বিশ্লেষণ, শর্তসাপেক্ষ সিমুলেশন ও পরিকল্পনার মহড়াকে স্পষ্টভাবে আলাদা রেখেছি।"
+    },
+    {
+      "id": "ch37_q_aipw_models_revision",
+      "question": "AIPW পদ্ধতিতে যদি Propensity এবং Outcome—দুটি সহায়ক মডেলই ভুল হয়, তবে শুধু Estimator-এর নাম থেকে কী নিশ্চয়তা পাওয়া যায়?",
+      "options": [
+        "তবুও প্রকৃত প্রভাব নিশ্চিতভাবে পাওয়া যাবে",
+        "সাধারণভাবে সঠিক উত্তরে পৌঁছানোর বা Consistency-র কোনো নিশ্চয়তা পাওয়া যায় না",
+        "তখন আর Positivity শর্তের কোনো প্রয়োজন থাকে না",
+        "শুধু Cross-fitting করলেই সব Confounding দূর হয়ে যায়"
+      ],
+      "answer": 1,
+      "explanation": "Double Robustness কেবল তখনই কাজ করে যখন সঠিক Identification বজায় থাকে এবং অন্তত একটি সহায়ক মডেল সঠিক হয়। আমাদের পাঠের উদাহরণেই আসল ATE = 3 হওয়া সত্ত্বেও দুটি ভুল মডেলে প্রত্যাশিত স্কোর 4 হয়ে গিয়েছিল।"
+    },
+    {
+      "id": "ch37_q_active_filter_revision",
+      "question": "ধরুন Randomized T ও প্রাক-প্রকৃতি X পরস্পর স্বাধীন, Y = X এবং সক্রিয়তার সূচক C = T OR X। শুধু সক্রিয়দের (Active-only) মধ্যে Treated বনাম Control ব্যবধান কত হতে পারে?",
+      "options": [
+        "-0.5 হতে পারে, যদিও পুরো জনগোষ্ঠীতে প্রকৃত প্রভাব শূন্য",
+        "সবসময় শূন্যই থাকবে",
+        "অবশ্যই প্রকৃত ATE-এর সমান হবে",
+        "Sample Size বাড়ালেই এই ফিল্টারিংয়ের প্রভাব মুছে যাবে"
+      ],
+      "answer": 0,
+      "explanation": "Control দলে সক্রিয় থাকে শুধু X = 1 প্রকৃতির মানুষ, অথচ Treated দলে দুই প্রকৃতির মানুষই সক্রিয় হয়। ফলে Treatment-পরবর্তী Collider-এর ওপর শর্তারোপ করায় দলের গঠন বদলে গিয়ে কৃত্রিম ঋণাত্মক ব্যবধান তৈরি হয়েছে।"
+    }
+  ],
+  "exercises": [
+    {
+      "id": "ch37_ex_difference",
+      "title": "বার্ষিক আয়ের প্রকৃত Difference in Means",
+      "prompt": "ডেটাসেটের (assets/datasets/nsw/experiment_lab.json) cohorts থেকে treated এবং experimental অংশের re78 মানগুলোর তালিকা আলাদাভাবে নিন। সংরক্ষিত delta সরাসরি না দেখে নিজের হাতে Treated দলের গড় থেকে Control দলের গড় বিয়োগ করে সংখ্যাটি লিখুন।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/nsw/experiment_lab.json\").read_text(encoding=\"utf-8\")\n)\ntreated = [r[\"re78\"] for r in lab[\"cohorts\"][\"treated\"]]\ncontrol = [r[\"re78\"] for r in lab[\"cohorts\"][\"experimental\"]]\nresult = sum(treated) / len(treated) - sum(control) / len(control)\nprint(result)\n",
+      "expected": 1794.342404270269,
+      "explanation": "গড় আয়ের ব্যবধান আসে প্রায় 1794.3424043 একক (যেখানে Treated দলের হর 185 এবং Control দলের হর 260)। মনে রাখবেন, এই গড় ব্যবধানটির Causal অর্থ সবসময় পরীক্ষার ডিজাইন ও Assumption-এর ওপর নির্ভর করে।"
+    },
+    {
+      "id": "ch37_ex_variance",
+      "title": "Control দলের নিরপেক্ষ (Unbiased) Sample Variance",
+      "prompt": "experimental কোহর্টের 260 টি Control re78 মান থেকে প্রথমে গড় বের করুন। এরপর গড় থেকে প্রতিটি মানের বিয়োগফলের বর্গ যোগ করে n - 1 দিয়ে ভাগ করুন এবং প্রাপ্ত নিরপেক্ষ Sample Variance-এর মান লিখুন।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/nsw/experiment_lab.json\").read_text(encoding=\"utf-8\")\n)\nx = [r[\"re78\"] for r in lab[\"cohorts\"][\"experimental\"]]\nmean = sum(x) / len(x)\nresult = sum(((v - mean) ** 2 for v in x)) / (len(x) - 1)\nprint(result)\n",
+      "expected": 30072457.18027046,
+      "explanation": "নিরপেক্ষ Sample Variance আসে প্রায় 30072457.1802705 বর্গ একক। নমুনা থেকেই গড় অনুমান করা হয়েছে বলে হরে 260-এর বদলে n - 1 = 259 ব্যবহার করে সংশোধন করা হয়।"
+    },
+    {
+      "id": "ch37_ex_se",
+      "title": "নিজের হাতে Welch Standard Error হিসাব",
+      "prompt": "treated এবং experimental—উভয় দলের re78 তালিকা থেকে আলাদাভাবে নিরপেক্ষ Sample Variance (n - 1 হর দিয়ে) বের করুন। এরপর স্বাধীন এককের সূত্র ধরে নিজে Welch Standard Error হিসাব করে লিখুন।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/nsw/experiment_lab.json\").read_text(encoding=\"utf-8\")\n)\nimport math\n\n\ndef variance(x):\n    mean = sum(x) / len(x)\n    return sum(((v - mean) ** 2 for v in x)) / (len(x) - 1)\n\n\nt = [r[\"re78\"] for r in lab[\"cohorts\"][\"treated\"]]\nc = [r[\"re78\"] for r in lab[\"cohorts\"][\"experimental\"]]\nresult = math.sqrt(variance(t) / len(t) + variance(c) / len(c))\nprint(result)\n",
+      "expected": 670.9965463815241,
+      "explanation": "Welch Standard Error আসে প্রায় 670.9965464। এখানে ব্যবহৃত সূত্রটি হলো sqrt(s1^2 / n1 + s0^2 / n0)। এককগুলো পরস্পর নির্ভরশীল বা ক্লাস্টারভিত্তিক হলে ডিজাইনের সাথে মিলিয়ে Variance-এর পদ্ধতি বদলাতে হবে।"
+    },
+    {
+      "id": "ch37_ex_positive",
+      "title": "ধনাত্মক আয়ের Percentage-point ব্যবধান",
+      "prompt": "treated ও experimental দলের প্রকৃত ডেটা থেকে কাদের ক্ষেত্রে re78 > 0 তা গুনে দুই দলের অনুপাত (Proportion) বের করুন। এরপর Treated অনুপাত থেকে Control অনুপাত বিয়োগ করে বিয়োগফলকে 100 দিয়ে গুণ করে Percentage Points এককে মানটি লিখুন।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/nsw/experiment_lab.json\").read_text(encoding=\"utf-8\")\n)\nt = lab[\"cohorts\"][\"treated\"]\nc = lab[\"cohorts\"][\"experimental\"]\nresult = 100 * (\n    sum((r[\"re78\"] > 0 for r in t)) / len(t) - sum((r[\"re78\"] > 0 for r in c)) / len(c)\n)\nprint(result)\n",
+      "expected": 11.06029106029106,
+      "explanation": "100 × (140 / 185 - 168 / 260) হিসাব করলে ফলাফল আসে প্রায় 11.0602911 Percentage Points। এখানে শূন্যের বেশি বার্ষিক আয়কেই একটি বাইনারি সূচক হিসেবে ধরা হয়েছে।"
+    },
+    {
+      "id": "ch37_ex_permutation",
+      "title": "দ্বিমুখী Plus-one Monte Carlo p-value",
+      "prompt": "permutation_bank-এ সংরক্ষিত 1000 টি আয়ের পুনর্বণ্টন ব্যবধান (earnings) এবং মূল ট্রায়ালের দেখা ব্যবধান (observed delta) নিন। সংরক্ষিত p-value ব্যবহার না করে দ্বিমুখী পরম মানের চরম সংখ্যা (সামান্য টলারেন্স 1e-10 * max(1, abs(observed)) সহ) নিজে গুনে Plus-one সূত্র অনুযায়ী Monte Carlo p-value বের করে লিখুন।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/nsw/experiment_lab.json\").read_text(encoding=\"utf-8\")\n)\nobserved = lab[\"trial\"][\"earnings\"][\"0.95\"][\"delta\"]\nbank = [r[\"earnings\"] for r in lab[\"permutation_bank\"]]\ntol = 1e-10 * max(1, abs(observed))\nextreme = sum((abs(v) >= abs(observed) - tol for v in bank))\nresult = (extreme + 1) / (len(bank) + 1)\nprint(result)\n",
+      "expected": 0.001998001998001998,
+      "explanation": "হিসাবকৃত p-value আসে প্রায় 0.001998002। এটি শর্তসাপেক্ষ Sharp-null অনুমানের একটি সিমুলেশন; মূল বণ্টন প্রটোকল বা Weak Average-null পরীক্ষার জন্য নিজস্ব আলাদা শর্ত প্রয়োজন।"
+    },
+    {
+      "id": "ch37_ex_power",
+      "title": "পরিকল্পনার জন্য প্রয়োজনীয় মোট Sample Size",
+      "prompt": "ফাইলের planning_sigma, normal_quantiles (0.975 এবং 0.8), delta = 2000, r = 0.5, alpha = 0.05 এবং power = 0.8 ব্যবহার করে তাত্ত্বিক মোট নমুনা n বের করুন। এরপর দুই দলের সংখ্যা (n * 0.5) আলাদাভাবে উপরের পূর্ণসংখ্যায় (ceil) নিয়ে যোগ করে মোট প্রয়োজনীয় Unit সংখ্যা লিখুন।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/nsw/experiment_lab.json\").read_text(encoding=\"utf-8\")\n)\nimport math\n\nsigma = lab[\"planning_sigma\"]\nza = lab[\"normal_quantiles\"][\"0.975\"]\nzb = lab[\"normal_quantiles\"][\"0.8\"]\nn = sigma**2 * (za + zb) ** 2 / (2000**2 * 0.5 * 0.5)\nresult = math.ceil(n * 0.5) + math.ceil(n * 0.5)\nprint(result)\n",
+      "expected": 238.0,
+      "explanation": "প্রয়োজনীয় মোট সংখ্যা হলো 238 (প্রতি দলে 119 জন করে)। এখানে সমান Variance ও Normal আসন্ন মানের পরিকল্পনা সূত্র ব্যবহৃত হয়েছে; বাস্তবে ভবিষ্যতের Variance বা বণ্টন অনুপাত বদলালে এই সংখ্যাও পাল্টে যাবে।"
+    },
+    {
+      "id": "ch37_ex_logging",
+      "title": "লগিং ত্রুটিতে বাদ পড়া Unit সংখ্যা নির্ণয়",
+      "prompt": "treated ও experimental তালিকা পরপর জুড়ে মোট 445 টি Row নিন এবং workflow মডিউলের bucket('ch37-assignment:' + r['key']) < 5000 শর্তে পুনরায় হ্যাশ করুন। এবার ক্রমিক ইনডেক্স j % 3 == 0 হলে যদি ওই হ্যাশকৃত Treatment লগ বাদ পড়ে যায়, তবে মোট কয়টি লগ হারিয়ে যাবে তা গুনে লিখুন।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"experiment37\", Path(\"assets/datasets/nsw/experiment_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/nsw/experiment_lab.json\").read_text(encoding=\"utf-8\")\n)\nrows = lab[\"cohorts\"][\"treated\"] + lab[\"cohorts\"][\"experimental\"]\nresult = sum(\n    (\n        m.bucket(\"ch37-assignment:\" + r[\"key\"]) < 5000 and j % 3 == 0\n        for j, r in enumerate(rows)\n    )\n)\nprint(result)\n",
+      "expected": 77.0,
+      "explanation": "মোট 77 টি লগ বাদ পড়ে। এটি প্রোডাকশনের একপেশে লগিং বাগ বোঝানোর একটি সফটওয়্যার মহড়া মাত্র; মূল ঐতিহাসিক গবেষণার প্রকৃত ঝরে পড়ার হিসাব জানতে মূল মাঠপর্যায়ের নথিপত্র প্রয়োজন।"
+    },
+    {
+      "id": "ch37_ex_holm",
+      "title": "Holm পদ্ধতিতে পারিবারিক p-value সংশোধন",
+      "prompt": "multiplicity অংশের দুটি কাঁচা p-value (raw) ছোট থেকে বড় ক্রমে সাজিয়ে নিজে Holm গুণক এবং ক্রমান্বয়ে সর্বোচ্চ মানের (Cumulative Maximum, সর্বোচ্চ সীমা 1.0) নিয়ম প্রয়োগ করুন। আদি তালিকার প্রথম Outcome-টির সংশোধিত p-value কত আসে তা লিখুন।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/nsw/experiment_lab.json\").read_text(encoding=\"utf-8\")\n)\np = lab[\"multiplicity\"][\"raw\"]\norder = sorted(range(len(p)), key=lambda i: (p[i], i))\nadjusted = [0.0] * len(p)\nrunning = 0.0\nfor rank, i in enumerate(order):\n    running = max(running, min(1.0, (len(p) - rank) * p[i]))\n    adjusted[i] = running\nresult = adjusted[0]\nprint(result)\n",
+      "expected": 0.015785955429034812,
+      "explanation": "সংশোধিত p-value আসে প্রায় 0.0157859554। দুটি Outcome নিয়ে গঠিত এই পরিবারের আকার 2, এবং বৈধ ইনপুট p-value ও পূর্বনির্ধারিত পরিবারের শর্তে এটি Family-wise Error Rate নিয়ন্ত্রণ করে।"
+    },
+    {
+      "id": "ch37_ex_standardize",
+      "title": "নিজের হাতে Treated-weighted Standardized ব্যবধান",
+      "prompt": "কোনো হেল্পার ফাংশন ছাড়াই treated এবং psid দলের Row-গুলোকে re74 > 0 শর্ত অনুযায়ী দুটি স্তরে (False ও True) ভাগ করুন। প্রতিটি স্তরে দুই দলের গড় re78-এর বিয়োগফল বের করে Treated দলের স্তরভিত্তিক অনুপাত দিয়ে ওজনযুক্ত যোগফল হিসাব করুন এবং প্রাপ্ত Standardized ব্যবধানটি লিখুন।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/nsw/experiment_lab.json\").read_text(encoding=\"utf-8\")\n)\nt = lab[\"cohorts\"][\"treated\"]\nc = lab[\"cohorts\"][\"psid\"]\nresult = 0.0\nfor positive in [False, True]:\n    a = [r[\"re78\"] for r in t if (r[\"re74\"] > 0) == positive]\n    b = [r[\"re78\"] for r in c if (r[\"re74\"] > 0) == positive]\n    assert a and b\n    result += len(a) / len(t) * (sum(a) / len(a) - sum(b) / len(b))\nprint(result)\n",
+      "expected": -5413.950688710562,
+      "explanation": "সমন্বিত ব্যবধানটি আসে প্রায় -5413.9506887। এটি Treated দলের গঠনে ওজন দেওয়া একটি মোটা দাগের বর্ণনামূলক তুলনা; এখান থেকে Causal সিদ্ধান্ত টানতে হলে পূর্ণ Identification ও Overlap শর্ত পূরণ হওয়া চাই।"
+    },
+    {
+      "id": "ch37_ex_hash",
+      "title": "বিশ্লেষণ চুক্তির Canonical SHA-256 হ্যাশ যাচাই",
+      "prompt": "ডেটাসেটের report ডিকশনারিটিকে কী-গুলো সাজিয়ে (sort_keys=True) এবং বাড়তি স্পেস ছাড়া (separators=(',', ':'), ensure_ascii=False) কমপ্যাক্ট JSON স্ট্রিংয়ে রূপান্তর করে শেষে একটি নিউলাইন ('\\n') যোগ করুন ও UTF-8 বাইটে এনকোড করুন। এরপর তার SHA-256 হেক্স ডাইজেস্টের প্রথম ৮টি হেক্স ডিজিটকে ১৬-ভিত্তিক পূর্ণসংখ্যায় (Integer) রূপান্তর করে লিখুন।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/nsw/experiment_lab.json\").read_text(encoding=\"utf-8\")\n)\nimport hashlib\n\nencoded = (\n    json.dumps(lab[\"report\"], ensure_ascii=False, sort_keys=True, separators=(\",\", \":\"))\n    + \"\\n\"\n).encode()\nresult = int(hashlib.sha256(encoded).hexdigest()[:8], 16)\nprint(result)\n",
+      "expected": 2517265531.0,
+      "explanation": "পূর্ণসংখ্যাটির মান আসে 2517265531। এই হ্যাশটি নিশ্চিত করে যে রিপোর্টের বাইটগুলো অবিকল অপরিবর্তিত আছে; তবে ডেটার ডোমেইনগত অর্থ ও Causal Assumption-গুলো সবসময় আলাদাভাবেই যাচাই করতে হয়।"
+    }
+  ],
+  "interviews": [
+    {
+      "title": "অনলাইন Ranking পরিবর্তনের জন্য পূর্ণাঙ্গ A/B Test ডিজাইন",
+      "tag": "System design",
+      "prompt": "প্রোডাকশনে একটি নতুন Ranking Model রোলআউট করার আগে আপনি কীভাবে তার A/B Test ডিজাইন করবেন?",
+      "answer": "সবার আগে একটি স্পষ্ট Experiment Contract লিখব: কারা যোগ্য (Eligibility), স্থির ইউজার বা অ্যাকাউন্ট-ভিত্তিক Randomization Unit, স্বতন্ত্র Experiment Salt, এবং Assignment থেকে Exposure হয়ে Outcome টেবিলের নিখুঁত Join। এরপর ব্যবসার মূল লক্ষ্য অনুযায়ী সঠিক Denominator-সহ Primary Metric, সময়ের জানালা, বাস্তবসম্মত MDE, Latency বা ক্র্যাশ রেটের মতো Guardrail Metric, ট্রাফিক বণ্টন অনুপাত, প্রয়োজনীয় Sample Size এবং পরীক্ষা থামানোর নিয়ম (Stopping Rule) চূড়ান্ত করব। বিশ্লেষণের শুরুতেই SRM ও লগিং যাচাই, ইউজার-লেভেল বা Delta Method Variance এবং একাধিক মেট্রিক থাকলে Multiplicity সংশোধন রাখব। পাশাপাশি মনে রাখব যে সাধারণ তারিখ-ভিত্তিক Canary রোলআউট কখনোই Randomized পরীক্ষা নয়, এবং রানটাইম ঠিক করার সময় Novelty Effect, সাপ্তাহিক চক্র, বিলম্বিত ফলাফল ও সম্ভাব্য Spillover বিবেচনায় নেব।"
+    },
+    {
+      "title": "RCT থেকেও একক ব্যক্তির Counterfactual কেন পাওয়া যায় না?",
+      "tag": "Causal reasoning",
+      "prompt": "একটি নিখুঁত Randomized Controlled Trial (RCT) চালানোর পরও আমাদের কাছে প্রতিটি ব্যবহারকারীর নিজস্ব Individual Treatment Effect-এর লেবেল কেন থাকে না?",
+      "answer": "কারণ বাস্তব জগতে প্রতিটি Unit কেবল তার ভাগে পড়া অবস্থার (T = 1 অথবা T = 0) ফলাফলটিই দেখায়; একই মানুষের Y(1) এবং Y(0) একই সময়ে কখনোই একসাথে দেখা যায় না। সঠিক ডিজাইন ও Assumption-এর অধীনে Randomization আমাদের দুই দলের গড় তুলনাযোগ্য করে দলগত গড় প্রভাব (ATE) বের করতে সাহায্য করে বটে, কিন্তু কারো ব্যক্তিগত অদেখা ফলাফল তৈরি করে দেয় না। কোনো ML মডেল দিয়ে অনুপস্থিত ফলাফল অনুমান করলেও সেই Prediction কখনোই বাস্তব Ground Truth হয়ে ওঠে না। তাই ব্যক্তিনিষ্ঠ CATE বা টার্গেটিং পলিসি যাচাই করতে হলে Honest Splitting, সুনির্দিষ্ট Identification শর্ত এবং নতুন পলিসির ওপর আলাদা অফ-পলিসি বা Randomized যাচাইয়ের প্রমাণ প্রয়োজন।"
+    },
+    {
+      "title": "অসম আকারের দুই দলের গড় ব্যবধান ও অনিশ্চয়তা ইমপ্লিমেন্টেশন",
+      "tag": "Coding / statistics",
+      "prompt": "সদস্যসংখ্যা অসমান এমন দুটি দলের গড় প্রভাব এবং তার Standard Error আপনি কোডে কীভাবে হিসাব ও যাচাই করবেন?",
+      "answer": "প্রথমে Assignment Unit অনুযায়ী ডেটা একত্র করে প্রতিটি দলের আলাদা গড় বের করব, এরপর n - 1 হর ব্যবহার করে দুই দলের নিরপেক্ষ Sample Variance (s1^2 ও s0^2) নির্ণয় করব। সেখান থেকে অসম Variance সামলাতে Welch Standard Error = sqrt(s1^2 / n1 + s0^2 / n0), Welch-Satterthwaite Degrees of Freedom এবং উপযুক্ত t-critical মান দিয়ে Confidence Interval গঠন করব। কোডে বাউন্ডারি টেস্ট হিসেবে এককের স্বাধীনতা, সসীম সংখ্যা, প্রতি দলে ন্যূনতম ২টি পর্যবেক্ষণ এবং শূন্য Variance-এর প্রান্তিক অবস্থা যাচাই রাখব। উদাহরণস্বরূপ আমাদের NSW ডেটার 185 ও 260 জনের দলে গড় আয়ের ব্যবধান 1794.342 এবং Welch SE আসে 670.997—যার সাথে আয়ের Heavy-tailed প্রকৃতি ও এককের সীমাও রিপোর্টে উল্লেখ করব।",
+      "prerequisiteLessons": [
+        "ch37_units",
+        "ch37_uncertainty"
+      ]
+    },
+    {
+      "title": "মেট্রিক ভালো দেখালেও SRM ধরা পড়লে কী সিদ্ধান্ত নেবেন?",
+      "tag": "Debugging",
+      "prompt": "পরীক্ষায় দেখা গেল নতুন মডেলে Revenue দারুণ বেড়েছে, কিন্তু Treatment দলে লগ হওয়া ব্যবহারকারীর সংখ্যা প্রত্যাশার চেয়ে কম (SRM ফ্ল্যাগ)। আপনি কি মডেলটি Ship করবেন?",
+      "answer": "না, এই অবস্থায় কখনোই Ship করা যাবে না! আগে Assignment লজিক, Eligibility ফিল্টার, Exposure ইভেন্ট, Outcome টেবিলের Join এবং কনফিগার করা প্রত্যাশিত অনুপাত পুঙ্খানুপুঙ্খভাবে যাচাই করব। বিশেষ করে নতুন মডেলের কারণে কোনো নির্দিষ্ট ডিভাইস বা ব্রাউজারে ক্র্যাশ, ধীরগতির Redirect বা ক্লায়েন্ট-সাইড লগিং ড্রপ হচ্ছে কি না তা খণ্ড খণ্ড করে ট্রেস করব। মেট্রিকের সংখ্যা লোভনীয় দেখালেও পাইপলাইনের অখণ্ডতা ভাঙার সতর্কবার্তাকে উপেক্ষা করা চলে না (যেমন আমাদের মহড়ায় একপেশে বাগে 77 টি লগ বাদ পড়েছিল)। আর ঐতিহাসিক ডেটার ক্ষেত্রে কনফিগার করা অনুপাত জানা না থাকলে মনগড়া 50/50 ধরে রায় দেব না।"
+    },
+    {
+      "title": "সীমিত ট্রাফিক ও ক্লাস্টারিংয়ে Power ও Sample Size পরিকল্পনা",
+      "tag": "Experiment design",
+      "prompt": "ধরুন আপনাকে MDE অর্ধেক করতে বলা হলো, ট্রাফিক বণ্টন 50/50 থেকে বদলে 70/30 করা হলো এবং ব্যবহারকারীরা ক্লাস্টারভিত্তিক—প্রয়োজনীয় Sample Size কীভাবে বদলাবে?",
+      "answer": "সমান Variance-এর Normal পরিকল্পনা সূত্রে প্রয়োজনীয় মোট নমুনা N সমানুপাতিক হয় sigma^2 / (delta^2 × r × (1 - r))-এর সাথে। ফলে MDE অর্ধেক করলেই নমুনার চাহিদা সরাসরি ৪ গুণ (4×) বেড়ে যাবে! এর ওপর 50/50-এর বদলে 70/30 অসম বণ্টন নেওয়ায় r(1 - r) কমে 0.25 থেকে 0.21 হবে—যা প্রয়োজনীয় সংখ্যাকে আরও বাড়িয়ে দেবে। পাশাপাশি সমান আকারের ক্লাস্টার থাকলে Design Effect = 1 + (m - 1) × ICC গুণক দিয়ে নমুনাকে স্ফীত করতে হবে (এবং ক্লাস্টারের সংখ্যা খুব কম হলে আলাদা Small-cluster বিশ্লেষণ লাগবে)। সবশেষে প্রতিদিনের যোগ্য ট্রাফিক, ফলাফল পরিপক্ব হওয়ার বিলম্ব ও সাপ্তাহিক ব্যবসায়িক চক্র মিলিয়ে ক্যালেন্ডারের সময়সীমা ঠিক করব—কখনোই শেষে এসে Observed Power দিয়ে পরিকল্পনা প্রতিস্থাপন করব না।"
+    },
+    {
+      "title": "প্রতিদিন উঁকি দেওয়া (Peeking) এবং একসাথে ২০টি মেট্রিক পরীক্ষা",
+      "tag": "Statistical reasoning",
+      "prompt": "ড্যাশবোর্ডে প্রতিদিন ২০টি মেট্রিক দেখে যেকোনো দিন একটি মেট্রিক p < 0.05 ছুঁলেই কি পরীক্ষা থামিয়ে সাফল্য দাবি করা যায়?",
+      "answer": "একেবারেই না। সাধারণ Fixed-horizon টেস্টের p-value বারবার উঁকি দেওয়া এবং একগাদা মেট্রিক হাতড়ে বেড়ানোর অধীনে নিজের বৈধতা হারিয়ে ফেলে এবং ভুয়া পজিটিভের হার মারাত্মকভাবে বাড়িয়ে দেয়। মাঝপথে বৈধভাবে সিদ্ধান্ত নিতে চাইলে শুরু থেকেই Group Sequential (Alpha-spending) বা Always-valid Confidence Sequence ডিজাইন করতে হবে এবং মেট্রিকের পরিবার আগেভাগে বেঁধে দিতে হবে। পূর্বনির্ধারিত পরিবারের ওপর Holm পদ্ধতি চালিয়ে Family-wise Error Rate নিয়ন্ত্রণ করা যায় বটে, কিন্তু লুকানো খোঁজাখুঁজি বা অপরিকল্পিত থামানোর ক্ষতি তা পূরণ করতে পারে না। অবশ্য সিস্টেমের নিরাপত্তার খাতিরে জরুরি বিরতি (Safety Pause) নেওয়া যুক্তিসঙ্গত, তবে সেটিকে সাফল্যের প্রমাণ হিসেবে দাবি করা যাবে না।"
+    },
+    {
+      "title": "Causal ক্ষতি না করে কীভাবে CUPED দিয়ে Variance কমাবেন?",
+      "tag": "ML / statistics",
+      "prompt": "CUPED বা রিগ্রেশন সমন্বয়ের মাধ্যমে সূক্ষ্মতা বাড়াতে আপনি কোন ধরনের Feature বেছে নেবেন এবং কোনটি এড়িয়ে চলবেন?",
+      "answer": "আমি কেবল সেই চলকই বেছে নেব যা নিশ্চিতভাবে Treatment শুরুর আগে মাপা হয়েছে এবং চূড়ান্ত Outcome-এর সাথে শক্তিশালী সম্পর্ক রাখে (যেমন পরীক্ষা শুরুর আগের মাসের আয় বা ব্যবহার)—সাথে Missing ডেটা ও গুণক ফিটিংয়ের নিয়ম আগে থেকেই লিখে রাখব। কখনোই Treatment-পরবর্তী Engagement বা সক্রিয়তা ব্যবহার করব না, কারণ তা Mediator বা Collider হয়ে আসল Causal প্রশ্নটিকেই নষ্ট করে দেয়। পাশাপাশি তাত্ত্বিক স্থির-গুণক সূত্র, ফিট করা মডেলের অনিশ্চয়তা এবং অসম Variance-এর জন্য HC2 বা Cluster-robust SE-এর পার্থক্য বজায় রাখব। যেমন আমাদের NSW ডেটায় re75 ভিত্তিক Interacted ANCOVA-তে ব্যবধান এসেছে 1749.052 এবং HC2 SE হয়েছে 669.524 (কাঁচা SE ছিল 670.997)—যা দেখায় যে সব রেসিপিতেই বিশাল সূক্ষ্মতা বৃদ্ধি পাওয়া যায় না।",
+      "prerequisiteLessons": [
+        "ch37_variance"
+      ]
+    },
+    {
+      "title": "শুধু একটি Subgroup-এ Significant ফলাফল পাওয়ার ব্যাখ্যা",
+      "tag": "Interview defense",
+      "prompt": "বিশ্লেষণে দেখা গেল Subgroup A-তে ফলাফল Statistically Significant, কিন্তু Subgroup B-তে নয়—এখান থেকে কি প্রভাবের বৈচিত্র্য (Heterogeneity) প্রমাণিত হয়ে গেছে?",
+      "answer": "না, মোটেই প্রমাণিত হয়নি। দুটি দলের আলাদা আলাদা টেস্ট থ্রেশহোল্ডের দুই পাশে পড়ার সহজ কারণ হতে পারে তাদের সদস্যসংখ্যার তফাত বা ভিন্ন Variance। দুই দলের প্রভাব আসলেই আলাদা কি না তা জানতে হলে সরাসরি তাদের প্রভাবের বিয়োগফল বা রিগ্রেশনের Interaction পদের অনিশ্চয়তা পরীক্ষা করতে হবে। বিশ্বাসযোগ্য Subgroup বিশ্লেষণের জন্য পূর্বপরিকল্পিত তালিকা, পর্যাপ্ত Power, Multiplicity সংশোধন এবং পরবর্তী স্বাধীন পরীক্ষায় যাচাই প্রয়োজন (আমাদের অধ্যায়ে দেখানো pre74 স্তরগুলো যেমন নিছক বর্ণনামূলক ছিল)। আর কখনোই Treatment-পরবর্তী আচরণের ভিত্তিতে Subgroup তৈরি করে Causal দাবি করা যাবে না।"
+    },
+    {
+      "title": "বাহ্যিক Observational Control কেন বিপরীত ফল দেয় এবং AIPW-এর শর্ত",
+      "tag": "Causal inference",
+      "prompt": "260 জন Experimental Control-এর বদলে 2490 জন বাহ্যিক PSID Control নিলে আয়ের ব্যবধান কেন ঋণাত্মক হয়ে যায়? পাশাপাশি একটি মডেলে যদি P(X) = 0.5/0.5, e = [0.25, 0.75], m0 = [1, 2] এবং m1 = [3, 6] হয়, তবে সঠিক Propensity অথবা সঠিক Outcome মডেল রাখলে AIPW-এর গাণিতিক প্রত্যাশা কত হবে?",
+      "answer": "প্রথম অংশের উত্তর হলো: জব-ট্রেনিংয়ে আসা অংশগ্রহণকারীদের সাথে বাহ্যিক PSID জরিপের মানুষের জনগোষ্ঠীগত পটভূমি, প্রাক-পরীক্ষা আয়, শিক্ষা ও Overlap-এ বিশাল পার্থক্য রয়েছে। মানুষের সংখ্যা বাড়িয়ে 2490 করলেও এই পদ্ধতিগত প্রাক-নির্বাচন ঝোঁক (Confounding) আপনাআপনি দূর হয় না। এখানে Experimental প্রাক্কলনটি অনিশ্চয়তা-সহ একটি রেফারেন্স বেঞ্চমার্ক, আর বাহ্যিক কাঁচা বা স্তরভিত্তিক ব্যবধানগুলো ভিন্ন জনগোষ্ঠী ও ওজনের বর্ণনামূলক তুলনা—Consistency, Conditional Exchangeability ও Positivity শর্ত ছাড়া সেগুলোকে Causal বলা চলে না।\n\nদ্বিতীয় অংশের গাণিতিক মডেলে প্রকৃত গড় প্রভাব হলো ATE = 0.5 × (3 - 1) + 0.5 × (6 - 2) = 3। এখানে সঠিক Propensity রেখে ভুল শূন্য Outcome মডেল নিলে প্রত্যাশিত AIPW স্কোর আসে ঠিক 3; আবার সঠিক Outcome মডেল রেখে ভুল Propensity (0.5) নিলেও প্রত্যাশিত স্কোর আসে ঠিক 3। কিন্তু দুটি মডেলই একসাথে ভুল নিলে এই উদাহরণে মানটি সরে গিয়ে 4 হয়ে যায়! বাস্তবে এর সাথে সসীম নমুনার Cross-fitting ও Positivity শর্তও যাচাই করতে হবে।",
+      "prerequisiteLessons": [
+        "ch37_book_doubly_robust",
+        "ch37_adjustment"
+      ]
+    },
+    {
+      "title": "একটি নিরেট ও গ্রহণযোগ্য Experiment রিপোর্ট উপস্থাপন",
+      "tag": "Synthesis",
+      "prompt": "এই অধ্যায়ের প্রজেক্ট ও পরীক্ষণ বিশ্লেষণের ফলাফল একটি পেশাদার পোর্টফোলিও বা ইঞ্জিনিয়ারিং রিপোর্টে কীভাবে উপস্থাপন করবেন?",
+      "answer": "রিপোর্টের শুরুতেই মূল NSW ও PSID ডেটার উৎস, হ্যাশ ও CC BY-NC 2.0 লাইসেন্সের স্বীকৃতি দিয়ে 185 জন Treated, 260 জন Experimental Control এবং 2490 জন বাহ্যিক PSID Control-এর ভূমিকা ও মুদ্রার একক স্পষ্ট করব। এরপর মূল ফলাফল হিসেবে বার্ষিক আয়ের গড় ব্যবধান 1794.342 একক (95% Welch CI: 474.010 থেকে 3114.674, কাঁচা p = 0.007893) এবং দুই-মেট্রিক পরিবারের Holm সংশোধিত p = 0.015786 উল্লেখ করব। একইসাথে পরিষ্কারভাবে আলাদা করে দেখাব কোনগুলো শর্তসাপেক্ষ Sharp-null সিমুলেশন, কোনগুলো ভবিষ্যতের Power পরিকল্পনার অনুমান এবং কোনটি কৃত্রিম লগিং-লসের মহড়া। সবশেষে সততার সাথে সীমাবদ্ধতাগুলো—যেমন মূল মাঠপর্যায়ের পূর্ণ প্রটোকল, উপস্থিতি বা ঝরে পড়ার তথ্যের অনুপস্থিতি এবং ব্যক্তিগত অদেখা Counterfactual না জানা—লিপিবদ্ধ করব, এবং এটিকে কোনো লাইভ প্রোডাকশন পরীক্ষা বা বর্তমান শ্রমনীতির সরাসরি সুপারিশ হিসেবে দাবি করব না।",
+      "prerequisiteLessons": [
+        "ch37_confounding",
+        "ch37_metrics"
+      ]
+    }
+  ],
+  "book": {
+    "order": 44,
+    "part": "Book 6 · ML Systems, MLOps & Interviews",
+    "prerequisites": [
+      "chapter_05",
+      "chapter_08",
+      "chapter_33"
+    ],
+    "purpose": "স্রেফ Prediction Accuracy-র গণ্ডি পেরিয়ে বাস্তব প্রোডাকশন সিস্টেমে কোনো পরিবর্তন সত্যিই কাঙ্ক্ষিত প্রভাব ফেলছে কি না—তা Experiment Design, সঠিক Causal Estimand, Identification Assumption এবং সংবেদনশীলতা যাচাইয়ের মাধ্যমে নির্ণয় করার দক্ষতা গড়ে তোলা।",
+    "outcomes": [
+      "নির্দিষ্ট Population, Estimand, Assignment প্রক্রিয়া এবং Outcome Window স্পষ্টভাবে সংজ্ঞায়িত করে একটি নিখুঁত Causal প্রশ্ন তৈরি করতে পারা।",
+      "Mean ও Ratio Metric, CUPED Variance Reduction এবং Doubly Robust (AIPW) Estimator-এর গাণিতিক হিসাব ও অন্তর্নিহিত Assumption-গুলো প্রাঞ্জলভাবে ব্যাখ্যা করতে পারা।",
+      "Post-treatment Selection, Logging ত্রুটি (যেমন SRM) এবং বারবার ফলাফল উঁকি দেওয়ার (Peeking) ফলে প্রমাণ কীভাবে দুর্বল হয়ে পড়ে, তা শনাক্ত ও সমাধান করতে পারা।"
+    ],
+    "recall": [
+      "একটি মডেলে Confounder-কে Adjust করা যেখানে Bias দূর করে, সেখানে Collider-কে Adjust করলে কেন উল্টো নতুন Bias তৈরি হয়?",
+      "Doubly Robust পদ্ধতিতে দুটি Nuisance Model-ই যদি ভুল হয়, তবে কি Consistency-র কোনো নিশ্চয়তা থাকে? আর শুরুতে নিখুঁত Randomization (যেমন e = 0.5) থাকলেও পরে Attrition ঘটলে ফলাফল কেন প্রশ্নবিদ্ধ হয়ে পড়ে?"
+    ],
+    "bridge": "একটি পরিবর্তনের প্রকৃত প্রভাব মাপতে Estimand, Assignment প্রক্রিয়া, Metric-এর Denominator এবং Adjustment Assumption-গুলো কীভাবে একসূত্রে কাজ করে, তা এই অধ্যায়ে নিজের হাতে যাচাই করুন। পরের অধ্যায়ে—অর্থাৎ Book 6 · Chapter 4 (ML System Design)-এ আমরা মডেল কোয়ালিটি, সিস্টেম ক্যাপাসিটি এবং প্রোডাকশনের নানামুখী ঝুঁকি সামলানোর কৌশলের সাথে এই পরীক্ষণ-চিন্তাকে একত্রে কাজে লাগাব।",
+    "bookId": "systems",
+    "bookChapter": 3
+  }
+}

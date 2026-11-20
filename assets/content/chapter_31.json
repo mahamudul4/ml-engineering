@@ -1,0 +1,1626 @@
+{
+  "id": "chapter_31",
+  "number": 31,
+  "title": "Matrix Factorization & Feature Interactions",
+  "shortTitle": "Matrix Factorization",
+  "displayTitle": "Matrix Factorization\nFactors. Objectives. Interactions.",
+  "subtitle": "Sparse Interaction থেকে Latent Factor ও Feature Interaction শেখা—কোন Objective আসলে কী শেখায়?",
+  "description": "Derive the update. Train the model.\nInspect the factors. Defend the result.",
+  "difficulty": "Advanced · real MovieLens models",
+  "lab": "factorization",
+  "lessons": [
+    {
+      "id": "ch31_contract",
+      "title": "Neighborhood পদ্ধতি থেকে শেখা Latent Factor-এর পথে",
+      "subtitle": "কম মাত্রার যৌথ Parameter ব্যবহার করে অজানা Score অনুমান করা",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন Matrix Factorization প্রয়োজন?",
+          "body": "আগের অধ্যায়ে (Book 5 · Chapter 1: Recommendation Foundations) আমরা দেখেছি কীভাবে সমমনা User বা কাছাকাছি Item-এর পুরোনো ইতিহাস মিলিয়ে Neighborhood পদ্ধতিতে Recommendation দেওয়া হয়। কিন্তু বাস্তবে User-Item Interaction Matrix প্রচণ্ড Sparse হওয়ায় দুজন User-এর মধ্যে পর্যাপ্ত সাধারণ (Shared) পর্যবেক্ষণ প্রায়ই পাওয়া যায় না, ফলে ভালো Neighbor খুঁজে বের করা বেশ কঠিন হয়ে পড়ে। এই সীমাবদ্ধতা কাটাতেই আসে Matrix Factorization—যেখানে প্রতিটি User এবং প্রতিটি Item-কে একটি ছোট মাত্রার শেখা Vector বা Latent Factor দিয়ে প্রকাশ করা হয় এবং তাদের মধ্যকার Dot Product নিয়ে যৌথ পছন্দের অন্তর্নিহিত গঠনটি অনুমান করা হয়।\n\nএখানে সবচেয়ে বড় সতর্কতা হলো, Matrix-এর খালি ঘরগুলোকে কখনোই ঢালাওভাবে সত্যিকারের শূন্য (Zero) Rating ধরে নেওয়া যাবে না। তাই Explicit এবং Implicit Feedback-এর জন্য আলাদা আলাদা Objective সাজিয়ে আমরা ধাপে ধাপে ALS, BPR এবং Feature Interaction শেখার কৌশলগুলো জানব।"
+        },
+        {
+          "type": "text",
+          "title": "একই কাঠামোয় চারটি ভিন্ন Model",
+          "body": "এই অধ্যায়ে আমরা হাতে-কলমে চারটি ভিন্ন Model প্রশিক্ষণ দিয়ে তুলনা করব। প্রথমত, Biased Explicit MF কেবল দেখা (Observed) Star Rating-গুলোর ত্রুটি কমানোর চেষ্টা করে। দ্বিতীয়ত, Implicit ALS সব সম্ভাব্য User-Item জুটির ওপর একটি ওজনযুক্ত Binary Surrogate সাজিয়ে কাজ করে। তৃতীয়ত, BPR-MF নমুনায়িত (Sampled) Item জুটির আপেক্ষিক পছন্দের ক্রম (Preference Ordering) শেখে। আর চতুর্থত, Factorization Machine (FM) সরাসরি User, Item এবং Genre-এর মধ্যকার Feature Interaction মডেল করে। নিরপেক্ষ তুলনার স্বার্থে চারটি Model-এই `rank = 8`, নির্দিষ্ট Random Seed, স্থির Hyperparameter এবং সর্বশেষ Epoch-এর Parameter ব্যবহার করা হয়েছে—কোনো নির্দিষ্ট Model আগে থেকেই জয়ী হবে, এমন কোনো পূর্বধারণা এখানে রাখা হয়নি।"
+        },
+        {
+          "type": "math",
+          "title": "মূল Score সমীকরণ",
+          "body": "\\hat r_{ui}=\\mu+b_u+b_i+p_u^\\top q_i,\\quad p_u,q_i\\in\\mathbb R^8"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ সংরক্ষিত Model Artifact যাচাই করি",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/factor_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nassert lab[\"report\"][\"rank\"] == 8\nassert len(lab[\"users\"]) == 522 and len(lab[\"items\"]) == 7867\nassert set(lab[\"weights\"]) == {\"explicit_als\", \"implicit_als\", \"bpr\", \"fm\"}\nprint(lab[\"report\"][\"rating_metrics\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "তুলনার অভিন্ন মাপকাঠি",
+          "body": "আগের অধ্যায়ের (Book 5 · Chapter 1: Recommendation Foundations) সেই একই MovieLens Snapshot এবং মূল্যায়ন চুক্তি এখানেও হুবহু বজায় রাখা হয়েছে—অর্থাৎ `80668`টি Fit Rating, `20168`টি Future Rating, `7867`টি Item-এর Fit Catalog, আগে দেখা সব Item বাদ দেওয়ার নিয়ম (All-seen Filter), এবং মূল্যায়নের জন্য `28` জন Warm Eligible ও `116` জন Broad User-এর তালিকা একচুলও বদলানো হয়নি। ফলে User Cohort বদলে বা সুবিধামতো অল্প কিছু Candidate বেছে নিয়ে কৃত্রিমভাবে ভালো ফলাফল দেখানোর কোনো সুযোগ এখানে নেই।"
+        },
+        {
+          "type": "text",
+          "title": "অফলাইন Training বনাম অ্যাপের সরাসরি হিসাব",
+          "body": "কোডে যে সম্পূর্ণ Weight-গুলো লোড হতে দেখলেন, সেগুলো অফলাইনে Python-এ ট্রেনিং করিয়ে এই অ্যাপের ভেতর সংযুক্ত করা হয়েছে। অ্যাপটি সরাসরি ইচ্ছেমতো Python কোড চালায় না; বরং যেকোনো নির্বাচিত User-এর জন্য পুরো Catalog জুড়ে Score-গুলো Dart-এই নতুন করে হিসাব করে দেখায়। এর ফলে সমীকরণের প্রতিটি অংশ, পৃথক Factor-এর অবদান, FM-এর জোড়ায় জোড়ায় মিথস্ক্রিয়া এবং শর্তসাপেক্ষ ALS সমাধান আপনি সরাসরি খতিয়ে দেখতে পারবেন।"
+        },
+        {
+          "type": "text",
+          "title": "ফলাফলের বাস্তব চিত্র ও সীমাবদ্ধতা",
+          "body": "আমাদের পরীক্ষিত এই ছোট Cohort-এ দেখা যায়, Warm `Recall@10`-এ Explicit ALS পেয়েছে `0.064985` এবং আগের অধ্যায়ের User CF পেয়েছিল `0.059447`; অন্যদিকে Implicit ALS পেয়েছে `0.025859`, BPR পেয়েছে `0.032582` এবং FM পেয়েছে `0.024139`। খেয়াল করুন, এটি একটিমাত্র নির্দিষ্ট Seed ও সময়ের বিভাজন (Split)-এর ফলাফল, যেখানে কোনো Uncertainty Interval মাপা হয়নি। এখান থেকে একটি অত্যন্ত গুরুত্বপূর্ণ শিক্ষা মেলে: শুধু Training Loss কমা বা খাতায়-কলমে আরও শক্তিশালী ও নমনীয় Model নেওয়া মানেই যে ভবিষ্যতের অদেখা ডেটায় ভালো Ranking পাওয়া যাবে, তার কোনো নিশ্চয়তা নেই।"
+        },
+        {
+          "type": "text",
+          "title": "এই অধ্যায়ে আমাদের মূল লক্ষ্য",
+          "body": "আমাদের আসল লক্ষ্য হলো প্রতিটি Loss Function থেকে ধাপে ধাপে Gradient ও Normal Equation নিষ্কাশন করতে শেখা, Negative Sampler ও Cold-start Fallback-এর আচরণ নিরীক্ষা করা এবং বাস্তব ফলাফলের সীমা বুঝে তা যুক্তি দিয়ে ব্যাখ্যা করতে পারা। সবসময় মনে রাখবেন, শেখা Latent Factor-গুলো মানুষের মনস্তাত্ত্বিক বৈশিষ্ট্য, Calibrated Probability কিংবা কোনো কার্যকারণগত (Causal) পছন্দ নির্দেশ করে না। আর বিশাল আকারের Production Serving ও Deep Retrieval-এর কৌশলগুলো আমরা পরের অধ্যায়ে (Book 5 · Chapter 3: Deep Recommendation & Ranking) বিস্তারিত দেখব।"
+        }
+      ]
+    },
+    {
+      "id": "ch31_geometry",
+      "title": "Low-rank জ্যামিতি ও Non-identifiability",
+      "subtitle": "শেখা কোনো Latent Factor-কে সরাসরি নির্দিষ্ট Genre ধরে নেবেন না",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "মাত্রা সংকোচনের মূল ধারণা",
+          "body": "আমাদের Dataset-এ পুরো User-Item Score তালিকাটি সরাসরি সংরক্ষণ করতে হলে মোট `522 × 7867`টি ঘরের মান লাগত। অথচ `rank = 8`-এর একটি Matrix Factorization মডেলে আমরা কেবল `522 × 8`টি User Factor এবং `7867 × 8`টি Item Factor (সাথে প্রয়োজনমতো আলাদা Explicit Bias) রাখি। এই সীমিত সংখ্যক যৌথ (Shared) Parameter ব্যবহার করার সুবিধা হলো, বিভিন্ন User ও Item-এর বিক্ষিপ্ত তথ্য থেকে Model পরিসংখ্যানগত শক্তি ধার নিতে পারে। তবে বাস্তবের এই প্রচণ্ড Sparse পর্যবেক্ষণগুলো নির্ভরযোগ্য Factor শেখার মতো যথেষ্ট তথ্য দিচ্ছে কি না, তা নির্ভর করে আমাদের বেছে নেওয়া Objective এবং Regularization-এর ওপর।"
+        },
+        {
+          "type": "text",
+          "title": "ভিত্তি পরিবর্তনের স্বাধীনতা (Basis Freedom)",
+          "body": "এখানে একটি দারুণ জ্যামিতিক বৈশিষ্ট্য লুকিয়ে আছে। ধরুন, যেকোনো একটি Invertible Matrix A দিয়ে আমরা সব User Factor-কে রূপান্তর করলাম এবং Item Factor-গুলোকে তার Inverse-transpose দিয়ে গুণ করলাম। নিচের সমীকরণটির দিকে তাকালেই দেখবেন, এতে চূড়ান্ত Dot Product Matrix-এর বিন্দুমাত্র পরিবর্তন হয় না! এমনকি রূপান্তরটি যদি Orthogonal Rotation হয়, তবে Dot Product-এর পাশাপাশি প্রতিটি Vector-এর L2 Norm-ও হুবহু অক্ষত থাকে। ঠিক এই কারণেই ট্রেনিং শেষে হুট করে বলা যায় না যে প্রথম Factor-টি মানেই `Action` আর দ্বিতীয় Factor-টি মানেই `Romance`—কারণ নিছক ট্রেনিং থেকে কোনো একক স্থানাঙ্ক ব্যবস্থা (Coordinate System) স্বয়ংক্রিয়ভাবে প্রমাণিত বা নির্দিষ্ট হয় না।"
+        },
+        {
+          "type": "math",
+          "title": "রৈখিক রূপান্তরের অভেদ",
+          "body": "\\hat R=PQ^\\top,\\quad (PA)(QA^{-\\top})^\\top=PQ^\\top"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Orthogonal Rotation পরীক্ষা করি",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/factor_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nimport numpy as np\n\nw = lab[\"weights\"][\"explicit_als\"]\np = np.array(w[\"p\"][0])\nq = np.array(w[\"q\"][0])\n# Explicit algebraic rotation fixture applied to real learned vectors.\nrotation = np.eye(8)\nrotation[:2, :2] = [[0, -1], [1, 0]]\nassert abs(float((p @ rotation) @ (q @ rotation)) - float(p @ q)) < 1e-12\nprint(\"dot\", float(p @ q), \"rotated\", float((p @ rotation) @ (q @ rotation)))\n"
+        },
+        {
+          "type": "text",
+          "title": "চিহ্ন পরিবর্তন ও স্কেলিংয়ের প্রভাব",
+          "body": "উপরের কোডে যেমন দেখা গেল, কোনো একটি নির্দিষ্ট Factor-এর User ও Item উভয় দিকের চিহ্ন উল্টে দিলে তাদের গুণফল একই থাকে। আবার যেকোনো স্কেলিং রূপান্তর (যেমন User দিককে দ্বিগুণ করে Item দিককে অর্ধেক করা) Dot Product অপরিবর্তিত রাখলেও L2 Regularization Penalty বদলে দেয়। কিন্তু স্কেলিং আটকালেও Orthogonal Rotation-এর স্বাধীনতা তখনো থেকেই যায়। তাই একক কোনো Coordinate-এর মান কীভাবে ব্যাখ্যা করা হচ্ছে, তা সম্পূর্ণরূপে বেছে নেওয়া Basis-এর ওপর নির্ভরশীল।"
+        },
+        {
+          "type": "text",
+          "title": "Contribution Bar আসলে কী বোঝায়?",
+          "body": "অ্যাপের Workbench-এ যখন প্রতিটি অক্ষের অবদান হিসেবে `p_f × q_f`-এর Bar দেখানো হয়, সেটি কেবল বর্তমানে সংরক্ষিত নির্দিষ্ট Basis-এর সাপেক্ষে একটি গাণিতিক বিভাজন মাত্র। কোনো অক্ষের ঋণাত্মক (Negative) অবদান সামগ্রিক Score কমিয়ে দেয়, আর চিত্রের Bar-গুলো কেবল পরম মানের (Absolute Magnitude) আকার বোঝাতে আঁকা হয়েছে—এগুলো কোনোভাবেই Probability নয়। খেয়াল রাখবেন, Bias পদগুলো এর সাথে আলাদাভাবে যোগ হয়, এবং অক্ষভিত্তিক এই হিসাব কোনো কার্যকারণগত ব্যাখ্যা (Causal Explanation) দেয় না।"
+        },
+        {
+          "type": "text",
+          "title": "সাধারণ SVD থেকে এর পার্থক্য কোথায়?",
+          "body": "একটি সম্পূর্ণ ভরাট (Dense) Matrix-এর ওপর যখন আমরা Truncated SVD চালাই (যা আমরা Book 2 · Chapter 7: Clustering & Dimensionality Reduction-এ দেখেছি), সেটি পুরো Matrix জুড়ে Frobenius Reconstruction Error কমানোর চেষ্টা করে। এখন যদি খালি ঘরগুলো `0` দিয়ে ভরে সরাসরি SVD চালানো হয়, তবে Model ধরে নেবে যে সব অদেখা জুটির প্রকৃত Target-ই হলো `0`! আমাদের Observed-only Matrix Factorization কিংবা ওজনযুক্ত Implicit Objective কিন্তু মোটেও সেই কাজটি করে না। মনে রাখবেন, মেমরিতে Sparse আকারে ডেটা রাখার পদ্ধতি কখনোই ঠিক করে দেয় না যে অনুপস্থিত মানগুলোর গাণিতিক অর্থ কী হবে।"
+        },
+        {
+          "type": "text",
+          "title": "সঠিক Rank কীভাবে বেছে নেব?",
+          "body": "মডেলের `rank` বাড়ালে এর প্রকাশক্ষমতা (Capacity) এবং মেমরি খরচ দুটোই বাড়ে, তবে যেসব Item-এ খুব অল্প পর্যবেক্ষণ রয়েছে সেগুলো সহজেই Overfitting-এর শিকার হতে পারে। আমাদের এই অধ্যায়ে ব্যবহৃত `rank = 8` কেবল শেখার সুবিধার্থে বেছে নেওয়া একটি স্থির মান, কোনো সূক্ষ্মভাবে টিউন করা সর্বোত্তম সংখ্যা নয়। আলাদা Validation Search এবং নতুন ডেটায় যাচাই না করে কোনো নির্দিষ্ট Rank-কে সেরা বলে দাবি করা কখনোই উচিত নয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch31_book_identifiability",
+      "title": "Latent Factor-এর Identifiability, Regularization ও সঠিক ব্যাখ্যা",
+      "subtitle": "ধারণা, সমীকরণ ও হাতে-কলমে হিসাবের মাধ্যমে Latent Axis-এর সীমা বোঝা",
+      "duration": "18 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ধারণাটি কেন এত গুরুত্বপূর্ণ?",
+          "body": "অনেক সময় কোনো Recommender Model ট্রেন করার পর কেউ কেউ হুট করে প্রথম Latent Coordinate-টির নাম দিয়ে দেন \"Comedy Preference\"! কিন্তু শুধু নাম দিলেই তো আর সেই অক্ষের একটি অনন্য বা সুনির্দিষ্ট অর্থ (Identifiable Meaning) তৈরি হয় না। আসলে User Matrix U এবং Item Matrix V-এর গুণফল থেকে আমাদের চূড়ান্ত Score তৈরি হয়, আর ঠিক একই Score অসংখ্য ভিন্ন ভিন্ন Factorization থেকে পাওয়া সম্ভব। তাই কোনো অক্ষের বাস্তব অর্থ দাবি করতে হলে বাইরের নির্ভরযোগ্য Metadata (External Anchors) এবং আলাদা যাচাইকরণ অপরিহার্য।"
+        },
+        {
+          "type": "text",
+          "title": "ধাপে ধাপে গাণিতিক যুক্তিটি বুঝি",
+          "body": "যেকোনো Invertible Matrix A-এর জন্য আমরা যদি `U' = UA` এবং `V' = VA^{-T}` ধরি, তবে তাদের গুণফল `U'V'^T = UV^T` অপরিবর্তিত থাকে। অবশ্য এখানে একটি সূক্ষ্ম পার্থক্য আছে: L2 Regularization যেকোনো ইচ্ছেমতো স্কেলিংয়ের (Arbitrary Scaling) সাপেক্ষে অপরিবর্তিত থাকে না, কিন্তু Orthogonal Rotation (`Q^T Q = I`) প্রয়োগ করলে Matrix-এর Frobenius Norm হুবহু অক্ষত থাকে। অর্থাৎ দুটি ভিন্ন রূপান্তরে চূড়ান্ত Prediction এক হলেও তাদের Regularization Penalty এবং Optimization-এর অবস্থান সম্পূর্ণ আলাদা হতে পারে।"
+        },
+        {
+          "type": "math",
+          "title": "রূপান্তর ও Norm সংরক্ষণের সূত্র",
+          "body": "(UA)(VA^{-T})^T=UV^T,\\qquad \\|UQ\\|_F=\\|U\\|_F\\ \\text{if }Q^TQ=I"
+        },
+        {
+          "type": "text",
+          "title": "খাতাকলমে একটি ছোট উদাহরণ",
+          "body": "বিষয়টি এক মাত্রার (1D) একটি সহজ উদাহরণ দিয়ে পরখ করা যাক। ধরুন, একজন User-এর Factor `u = 2` এবং একটি Item-এর Factor `v = 3`; তাহলে তাদের গুণফল বা Score হবে `2 × 3 = 6`। এবার আমরা যদি স্কেল বদলে `u' = 4` এবং `v' = 1.5` নিই, তবুও কিন্তু Score সেই `4 × 1.5 = 6`-ই থাকছে! অথচ প্রথম ক্ষেত্রে বর্গফলের যোগফল বা Squared Penalty ছিল `4 + 9 = 13`, আর স্কেল বদলানোর পর তা বেড়ে দাঁড়িয়েছে `16 + 2.25 = 18.25`-এ। সুতরাং একই Prediction দেওয়া মানেই যে দুটি সমাধানের Regularized Objective একই হবে, তা মোটেও সত্য নয়।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ হিসাবটি মিলিয়ে দেখি",
+          "body": "user, item, scale = 2.0, 3.0, 2.0\nrescaled_user, rescaled_item = user * scale, item / scale\nscore = rescaled_user * rescaled_item\noriginal_penalty = user**2 + item**2\nrescaled_penalty = rescaled_user**2 + rescaled_item**2\n# Prediction invariance does not imply regularization invariance.\nprint(score, original_penalty, rescaled_penalty)\n"
+        },
+        {
+          "type": "text",
+          "title": "কোডের ফলাফল থেকে কী বোঝা যাচ্ছে?",
+          "body": "কোডটি চালালে আউটপুট হিসেবে `6.0`, `13.0` এবং `18.25` পাওয়া যায়, যা আমাদের খাতাকলমের হিসাবকেই নিশ্চিত করে। অন্যদিকে দ্বিমাত্রিক বা উচ্চমাত্রিক স্থানে যখন আমরা কোনো Orthogonal Rotation চালাই, তখন পৃথক পৃথক Coordinate-এর মান বদলে গেলেও বিন্দুগুলোর মধ্যকার দূরত্ব, Dot Product এবং L2 Penalty সবই এক থাকে। তাই কোনো Coordinate-এর নিছক চিহ্ন বদলে যাওয়া (Sign Flip) বা ঘূর্ণনকে মডেলের অর্থগত উন্নতি (Semantic Improvement) ভেবে ভুল করবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "তুলনা করার সময় যেসব ভুল এড়িয়ে চলবেন",
+          "body": "দুটি ভিন্ন Model তুলনা করার সময় যদি তাদের Regularization-এর মাত্রা, Confidence-এর সংজ্ঞা কিংবা Negative Sampling Objective আলাদা হয়, তবে কেবল একই নামের Hyperparameter (যেমন একই `alpha` বা `lambda`) দেখে বিভ্রান্ত হবেন না। পাশাপাশি Candidate Filtering এবং সময়ের ভিত্তিতে ডেটা ভাগের নিয়ম (Temporal Protocol) এক না হলে Ranking Metric-গুলোর তুলনাও কখনো ন্যায্য হয় না।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে চেষ্টা করুন",
+          "body": "যদি User ও Item Factor `u` এবং `v` উভয়কেই `-1` দিয়ে গুণ করা হয়, তবে Predicted Score এবং L2 Penalty-তে কী পরিবর্তন আসবে? কোনো একটি Latent Axis-এর বাস্তব অর্থ দাবি করতে হলে অতিরিক্ত কী ধরনের প্রমাণ দরকার?",
+          "solution": "উভয়কেই `-1` দিয়ে গুণ করলে তাদের গুণফল (Score) এবং বর্গের যোগফল (L2 Penalty) দুটোই সম্পূর্ণ অপরিবর্তিত থাকবে। কোনো Latent Axis-এর অর্থ ব্যাখ্যা করতে হলে হাতেগোনা কয়েকটি সুবিধাজনক Nearest Neighbor তালিকা দেখানো যথেষ্ট নয়; বরং অর্থবহ Item Attribute-এর সাথে সামঞ্জস্য, নিয়ন্ত্রিত পরীক্ষা (Controlled Probe) এবং একাধিক আলাদা Training Run জুড়ে স্থিতিশীল সম্পর্কের প্রমাণ প্রয়োজন।",
+          "reference": "https://www.statlearning.com/"
+        },
+        {
+          "type": "text",
+          "title": "Orthogonal প্রতিসাম্য ও ব্যাখ্যার সতর্কতা",
+          "body": "আরেকটি ছোট উদাহরণ দিয়ে পুরো চিত্রটি ঝালিয়ে নেওয়া যাক। স্কেলার Factor `u = 1` এবং `v = 1` নিলে তাদের গুণফল হয় `1` এবং বর্গের যোগফল হয় `2`। এর বদলে `u = 2` ও `v = 0.5` নিলে গুণফল `1` থাকলেও Penalty বেড়ে `4.25` হয়ে যায়—অর্থাৎ L2 Regularization অযৌক্তিক স্কেলিংকে নিরুৎসাহিত করে সুষম মানের দিকে নিয়ে আসে। কিন্তু স্কেল স্থির হওয়ার পরেও Orthogonal Transformation-এর প্রতিসাম্য রয়েই যায়, কারণ তা Dot Product ও L2 Norm দুটোই অক্ষুণ্ণ রাখে। এই অন্তর্নিহিত প্রতিসাম্যের কারণেই আলাদা প্রমাণ ছাড়া কোনো একক অক্ষকে সরাসরি একটি Genre-এর অর্থ দেওয়া যায় না।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে যাচাই করুন",
+          "body": "মডেলে L2 Regularization যোগ করলেই কি প্রতিটি Latent Axis একটি করে অনন্য ও নির্দিষ্ট অর্থ পেয়ে যায়?",
+          "solution": "না, তা পায় না। L2 Regularization কেবল ইচ্ছেমতো স্কেলিংয়ের স্বাধীনতা দূর করে, কিন্তু Orthogonal Basis Transformation বা ঘূর্ণন তখনো Dot Product এবং L2 Norm উভয়কেই অপরিবর্তিত রাখে। তাই Regularization থাকলেও Latent Axis-গুলোর একক ব্যাখ্যা নিশ্চিত হয় না; এর জন্য আলাদা Probe, Item Metadata এবং একাধিক Training Run-এর ধারাবাহিক ফলাফল মিলিয়ে যাচাই করা আবশ্যক।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch31_data",
+      "title": "Fit-only Indexing, Target এবং Feature-এর ভূমিকা",
+      "subtitle": "তিনটি ভিন্ন Objective-এ অনুপস্থিত মানের অর্থ কেন আলাদা হয়",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ডেটাসেটের উৎস ও ব্যবহারের শর্তাবলি",
+          "body": "এই অধ্যায়েও আমরা GroupLens-এর আসল `MovieLens latest-small` (২০১৮ সালের সংরক্ষিত Snapshot)-টিই ব্যবহার করছি, যার মূল Hash এবং ব্যবহারের পূর্ণাঙ্গ শর্তাবলি অ্যাপের সাথে যুক্ত আছে। এটি অবাণিজ্যিক উদ্দেশ্যে যথাযথ স্বীকৃতি (Attribution) ও অভিন্ন শর্তে বিতরণের নিয়ম মেনে ব্যবহৃত একটি শিক্ষামূলক Dataset—সময়ের সাথে বদলে যাওয়া অনলাইন ডাউনলোডের সাথে একে সরাসরি গবেষণার স্থির Benchmark হিসেবে তুলনা করা ঠিক নয়। এছাড়া এখানে বাইরে থেকে নতুন কোনো ডেটা বা প্রি-ট্রেইনড Model ডাউনলোড করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "Data Leakage এড়াতে শুধুই Fit ডেটা থেকে Indexing",
+          "body": "আমাদের Fit সেটে থাকা ক্রমানুসারে সাজানো `522` জন User এবং `7867`টি Item থেকে আমরা `0` থেকে শুরু হওয়া ধারাবাহিক Row Index তৈরি করেছি, যদিও JSON এবং UI-তে বোঝার সুবিধার্থে মূল MovieLens ID-গুলোই দেখানো হয়। সবচেয়ে জরুরি নিয়ম হলো, যেসব User বা Item কেবল ভবিষ্যতের (Future) ডেটায় প্রথমবার এসেছে, তারা এই Mapping-এ স্থান পায় না এবং ভবিষ্যতের কোনো Label বা গণনাও Model Fitting-এ ব্যবহৃত হয় না। তবে ২০১৮ সালের এই Snapshot-এ সিনেমার Metadata ঐতিহাসিক সময় ধরে আলাদা আলাদা সংস্করণে সংরক্ষিত নয়—এই বাস্তব সীমাবদ্ধতাটি আমাদের মাথায় রাখতে হবে।"
+        },
+        {
+          "type": "math",
+          "title": "দেখা জুটি ও পছন্দের সেট",
+          "body": "\\Omega=\\{(u,i):(u,i,r,t)\\in R_{fit}\\},\\quad L=\\{(u,i)\\in\\Omega:r\\ge4\\}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Temporal Split ও সংখ্যাগুলো যাচাই করি",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/factor_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nbase = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\nassert len(base[\"train\"]) == 80668 and len(base[\"future\"]) == 20168\nassert (\n    sum(r >= 4 for u, i, r, t in base[\"train\"])\n    == lab[\"report\"][\"positive_count\"]\n    == 39254\n)\nassert max(t for u, i, r, t in base[\"train\"]) < min(t for u, i, r, t in base[\"future\"])\nprint(\"cutoff\", lab[\"report\"][\"cutoff_timestamp\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "Explicit MF-এ Target-এর অর্থ",
+          "body": "Explicit Matrix Factorization-এ প্রতিটি দেখা (Observed) Star Rating—তা বেশি হোক বা কম—সরাসরি Squared Error হিসাব করতে অংশ নেয়, আর অদেখা ঘরগুলোকে পুরোপুরি হিসাবের বাইরে রাখা হয়। এখানে Global Mean হিসাব করা হয় শুধুমাত্র Fit ডেটা থেকে, এবং তার ওপর ভিত্তি করে User/Item Bias ও Latent Factor শেখা হয়। খেয়াল রাখবেন, এটি কেবল যেসব Item-এ User ইতিমধ্যে Rating দিয়েছেন সেই শর্তাধীন Rating-এর অনুমান—পুরো জনগোষ্ঠীর সার্বিক সন্তুষ্টির নিরপেক্ষ পরিমাপ নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Implicit ALS-এ Target ও Confidence-এর ভূমিকা",
+          "body": "Implicit মডেলে আমরা `rating >= 4` শর্ত থেকে মোট `39254`টি ইতিবাচক (Positive) জুটি পাই। এখানে প্রতিটি Positive জুটির জন্য Preference `p = 1` এবং Confidence `c = 21` ধরা হয়েছে; আর বাকি সব User-Item জুটির জন্য ধরা হয়েছে `p = 0` এবং `c = 1`। লক্ষ্য করুন, এই Surrogate মডেলে কম Rating পাওয়া দেখা Item এবং একেবারেই অদেখা Item—উভয়কেই একই দুর্বল শূন্য (`weak-zero`) পছন্দের ঘরে ফেলা হয়েছে, তবে একে সত্যিকারের অপছন্দ (True Dislike) বলা হচ্ছে না। এই ওজন নির্ধারণটি মূলত আমাদের একটি মডেলিং অনুমান (Modeling Assumption), ব্যবহারকারীর আসল ক্লিক বা আচরণের সরাসরি পরিমাপ নয়।"
+        },
+        {
+          "type": "text",
+          "title": "BPR এবং FM-এ ডেটা ও Feature কীভাবে কাজ করে",
+          "body": "BPR মডেলে প্রতিটি Positive Item-এর বিপরীতে ওই User-এর অদেখা Fit Item-গুলোর মধ্য থেকে সুষমভাবে (Uniformly) একটি করে Negative Item বেছে নেওয়া হয়; তবে কম হোক বা বেশি, ইতিমধ্যে দেখা কোনো Rating-ই এই Negative Pool-এ রাখা হয় না। অন্যদিকে Factorization Machine (FM) সব দেখা Star Rating-এর ওপর Regression চালায়, যেখানে ইনপুট হিসেবে ব্যবহৃত হয় Sparse আকারের User ID, Item ID এবং সিনেমার Genre Feature। এখানে একটি বিষয় গুলিয়ে ফেলবেন না: Genre Label-গুলো হলো ডেটাসেট থেকে পাওয়া বাহ্যিক Metadata, কোনো শেখা Latent Coordinate-এর নাম নয়।"
+        },
+        {
+          "type": "text",
+          "title": "সময়ের সীমানা ও Leakage নিরীক্ষা",
+          "body": "Candidate Catalog, ইতিমধ্যে দেখা Item বাদ দেওয়ার নিয়ম এবং ভবিষ্যতের Positive সেট—সবকিছুই আগের অধ্যায় (Book 5 · Chapter 1: Recommendation Foundations) থেকে অপরিবর্তিত রাখা হয়েছে। ট্রেনিংয়ের সময় আমাদের Negative Sampler ভবিষ্যতের ডেটা সম্পর্কে কিছুই জানে না; ফলে কাকতালীয়ভাবে এমন কোনো Item-ও Negative হিসেবে উঠে আসতে পারে যা User হয়তো ভবিষ্যতে পছন্দ করবেন। এটিই বাস্তবসম্মত নিয়ম, কারণ ভবিষ্যতের Test তালিকা দেখে আগেভাগে সেই Item-গুলোকে Sampling থেকে আটকালে মারাত্মক Data Leakage ঘটে যেত!"
+        }
+      ]
+    },
+    {
+      "id": "ch31_explicit",
+      "title": "Biased MF-এর Objective এবং Regularization",
+      "subtitle": "দেখা ডেটার Residual ত্রুটি এবং Parameter Penalty-র যৌথ ভারসাম্য",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Score-কে Bias ও Interaction-এ ভাগ করা",
+          "body": "কেন সরাসরি শুধু Dot Product না নিয়ে আমরা আলাদা Bias পদ যোগ করি? কারণ বাস্তবে কিছু User স্বভাবগতভাবেই সবাইকে একটু উদারভাবে বেশি Star দেন, আবার কিছু জনপ্রিয় সিনেমা প্রায় সবার কাছ থেকেই গড়ের চেয়ে ভালো Rating পায়। তাই আমাদের মডেলে Global Mean `μ` (যা Fit Rating-গুলোর গড় এবং স্থির থাকে)-এর সাথে User Bias `b_u` এবং Item Bias `b_i` যোগ করে এই মূল প্রবণতাগুলো আলাদা করে ফেলা হয়, যাতে Dot Product কেবল অবশিষ্ট প্রকৃত পছন্দ বা Residual Interaction শেখায় মনোযোগ দিতে পারে। এখানে Bias এবং Factor উভয় ক্ষেত্রেই একই Regularization ধ্রুবক `λ = 10` ব্যবহার করা হয়েছে—এটি আমাদের কোডের একটি সুনির্দিষ্ট ও নথিভুক্ত পছন্দ, সব সমস্যার জন্য চিরন্তন সেরা মান নয়।"
+        },
+        {
+          "type": "text",
+          "title": "শুধুমাত্র দেখা জুটির ওপর যোগফল (Observed-only Mask)",
+          "body": "নিচের Objective সমীকরণটির দিকে লক্ষ্য করলে দেখবেন, বর্গ ত্রুটির যোগফলটি কেবল দেখা জুটির সেট `Ω`-এর ওপর নেওয়া হয়েছে; অদেখা Rating-গুলোর জন্য এখানে কোনো Error পদ নেই। আমরা যদি খালি ঘরগুলো `0` দিয়ে ভরে পুরো Matrix-এর ওপর সাধারণ MSE চালাতাম, তবে লাখ লাখ খালি ঘর পুরো Loss-কে গ্রাস করে ফেলত এবং আমাদের মূল সমস্যাটিই বদলে যেত। এছাড়া মনে রাখবেন, এই Explicit ALS মডেলে কোনো Genre Feature ব্যবহৃত হয়নি—এটি কেবলমাত্র User ID, Item ID এবং দেখা Rating-গুলো থেকেই শেখে।"
+        },
+        {
+          "type": "math",
+          "title": "Biased Explicit MF-এর পূর্ণাঙ্গ Objective",
+          "body": "J=\\sum_{(u,i)\\in\\Omega}(r_{ui}-\\mu-b_u-b_i-p_u^\\top q_i)^2+\\lambda\\left(\\|P\\|_F^2+\\|Q\\|_F^2+\\|b_u\\|_2^2+\\|b_i\\|_2^2\\right)"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ ALS Objective-এর ক্রমহ্রাসমান ধারা যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/factor_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nimport numpy as np\n\nw = lab[\"weights\"][\"explicit_als\"]\ntrace = w[\"trace\"]\nassert w[\"reg\"] == 10 and len(trace) == 17\nassert all(b <= a + 1e-7 for a, b in zip(trace, trace[1:]))\nprint(\"initial\", trace[0], \"final\", trace[-1])\n"
+        },
+        {
+          "type": "text",
+          "title": "যোগফল (Sum) বনাম গড় (Mean): একটি জরুরি সতর্কতা",
+          "body": "আমাদের সমীকরণে আমরা বর্গ ত্রুটির সরাসরি যোগফল (SSE) এবং তার সাথে `λ` গুণিতক Squared Norm ব্যবহার করেছি। আপনি যদি যোগফলের বদলে গড় ত্রুটি (MSE) ব্যবহার করেন, তবে কিন্তু একই সংখ্যার `λ` আর আগের সমান Regularization শক্তি প্রয়োগ করবে না—কারণ তখন ত্রুটির অংশটি মোট পর্যবেক্ষণের সংখ্যা দিয়ে ভাগ হয়ে ছোট হয়ে গেছে! তাই খাতায় Gradient বা Normal Equation বের করার আগেই Loss-এর Normalization ঠিক করে নিন, এবং কোনো লাইব্রেরির ডিফল্ট Regularization মানের সাথে না বুঝে অন্ধভাবে তুলনা করবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "Regularization এখানে ঠিক কী কাজ করে?",
+          "body": "যেসব User বা Item-এর মাত্র দু-একটি Rating আছে, কোনো নিয়ন্ত্রণ না থাকলে তাদের নিখুঁতভাবে মেলানোর নেশায় Factor-গুলো বিশাল মান ধারণ করতে পারে। L2 Penalty এই Factor এবং Bias উভয়কেই শূন্যের দিকে সংকুচিত (Shrink) করে সংযত রাখে। গাণিতিকভাবেও এর একটি বড় উপকারিতা আছে: `λ > 0` থাকলে প্রতিটি ধাপের শর্তাধীন Ridge Matrix-টি Symmetric Positive Definite (SPD) হয়; অথচ `λ = 0` হলে অল্প ডেটাযুক্ত সারির জন্য Matrix-টি Rank-deficient বা অসমাধানযোগ্য হয়ে পড়তে পারে। তবে মনে রাখবেন, গাণিতিকভাবে সুস্থিত (Well-conditioned) সমাধান পাওয়া মানেই যে ভবিষ্যতের ডেটায় সেরা Accuracy মিলবে, তার কোনো নিশ্চয়তা নেই।"
+        },
+        {
+          "type": "text",
+          "title": "আংশিক Convexity বনাম সামগ্রিক Nonconvexity",
+          "body": "এই অপ্টিমাইজেশন সমস্যাটির গঠন বেশ কৌতূহলোদ্দীপক। আমরা যদি User Factor `P` স্থির রাখি, তবে Item Factor `Q` ও Item Bias নির্ণয়ের অংশটি একটি সাধারণ Convex Ridge সমস্যা হয়ে যায়; একইভাবে `Q` স্থির রাখলে `P` ও User Bias-এর অংশটিও Convex হয়। কিন্তু `P` এবং `Q` যখন একসাথে গুণ আকারে থাকে, তখন পুরো যৌথ সমস্যাটি আসলে Bilinear এবং Nonconvex! তাই ALS-এর প্রতিটি ধাপ Objective-এর মান কমালেও এটি বৈশ্বিক সর্বনিম্ন বিন্দুতে (Global Optimum) পৌঁছানো কিংবা আসল অন্তর্নিহিত Rank খুঁজে পাওয়ার কোনো প্রমাণ দেয় না।"
+        },
+        {
+          "type": "text",
+          "title": "প্রকৃত ট্রেনিং প্রক্রিয়া ও স্বচ্ছতা",
+          "body": "আমাদের ব্যবহৃত ওজনগুলো তৈরি করা হয়েছে `NumPy float64` সূক্ষ্মতায়—যেখানে `Generator` Seed দেওয়া হয়েছে `31`, প্রাথমিক Factor-গুলো নেওয়া হয়েছে `0.05` Standard Deviation-এর Normal Distribution থেকে, প্রাথমিক Bias রাখা হয়েছে শূন্য, এবং মোট `16`টি পূর্ণাঙ্গ Sweep চালানো হয়েছে। প্রতিটি Sweep-এ প্রথমে সব User Block এবং তারপর সব Item Block আপডেট করে একেবারে শেষ Epoch-এর মডেলটিই সংরক্ষণ করা হয়েছে; কোনো Early Stopping, সুবিধাজনক Seed খোঁজা কিংবা ভবিষ্যতের মেট্রিক দেখে Checkpoint বাছাই এখানে করা হয়নি।"
+        }
+      ]
+    },
+    {
+      "id": "ch31_gradients",
+      "title": "Matrix Factorization-এর Gradient এবং যুগপৎ SGD Update",
+      "subtitle": "আপডেটের আগের পুরোনো Vector ব্যবহার না করলে কেন অ্যালগরিদম বদলে যায়",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Chain Rule দিয়ে ধাপে ধাপে Derivative নিষ্কাশন",
+          "body": "আগের পাঠে আমরা Biased MF-এর পূর্ণাঙ্গ Objective লিখেছি; এবার দেখা যাক একটি একক পর্যবেক্ষণের সাপেক্ষে তার Gradient কীভাবে বের হয়। Dot Product `p^T q`-কে `p`-এর সাপেক্ষে অন্তরীকরণ (Differentiate) করলে পাওয়া যায় `q`, আর Residual `e = r - prediction`-এর ক্ষেত্রে ঋণাত্মক চিহ্নের কারণে তা হয়ে যায় `-q`। ফলে Squared Loss থেকে আসে `-2eq` এবং L2 Regularization থেকে যুক্ত হয় `+2λp`। একইভাবে User বা Item Bias-এর জন্য Gradient দাঁড়ায় `-2e + 2λb`। খেয়াল রাখবেন, বই বা পেপারে যদি বর্গ ত্রুটির সামনে `1/2` গুণক ব্যবহার করা হয়, তবে এই `2` গুণকটি কেটে যাবে—তাই সবসময় শুরুতেই নিজের সমীকরণের রীতিটি (Convention) স্পষ্টভাবে লিখে নেওয়া ভালো।"
+        },
+        {
+          "type": "text",
+          "title": "যুগপৎ আপডেট (Simultaneous Update)-এর সতর্কতা",
+          "body": "SGD দিয়ে হাতে কোড লেখার সময় একটি খুব সাধারণ কিন্তু মারাত্মক ভুল প্রায়ই ঘটে। একটি `(u, i)` জুটির জন্য `p` এবং `q` উভয়ের Gradient অবশ্যই আপডেটের আগের একই পুরোনো অবস্থা (Pre-update State) থেকে হিসাব করতে হবে। আপনি যদি প্রথমে `p`-কে নতুন মানে ওভাররাইট করে ফেলেন এবং তারপর সেই পরিবর্তিত `p` দিয়ে `q`-এর Gradient বের করেন, তবে সেটি আর বিশুদ্ধ Gradient Step থাকে না—সম্পূর্ণ ভিন্ন একটি অ্যালগরিদমে পরিণত হয়! তাই হয় আপডেটের আগে পুরোনো Vector আলাদা চলকে সংরক্ষণ করুন, নয়তো Autodiff Graph-এ আগে সব Gradient হিসাব শেষ করে একসাথে Optimizer Step চালান।"
+        },
+        {
+          "type": "math",
+          "title": "Residual ও Factor Gradient-এর সূত্র",
+          "body": "e=r-\\mu-b_u-b_i-p^\\top q,\\quad \\nabla_p J=-2eq+2\\lambda p,\\quad\\nabla_qJ=-2ep+2\\lambda q"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Finite Difference দিয়ে Gradient যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/factor_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nimport numpy as np\n\nw = lab[\"weights\"][\"explicit_als\"]\np = np.array(w[\"p\"][0])\nq = np.array(w[\"q\"][0])\ntarget = 4.0\nbias = w[\"mean\"] + w[\"bu\"][0] + w[\"bi\"][0]\nreg = 0.01\n# Clearly labeled local derivative fixture on learned vectors, not a new fit result.\nloss = lambda x: (target - bias - x @ q) ** 2 + reg * (x @ x)\ne = target - bias - p @ q\nanalytic = -2 * e * q + 2 * reg * p\neps = 1e-6\nnumeric = np.array(\n    [\n        (loss(p + eps * np.eye(8)[j]) - loss(p - eps * np.eye(8)[j])) / (2 * eps)\n        for j in range(8)\n    ]\n)\nassert np.max(np.abs(analytic - numeric)) < 1e-6\nprint(analytic)\n"
+        },
+        {
+          "type": "text",
+          "title": "Global Penalty বনাম Per-example Penalty",
+          "body": "পূর্ণাঙ্গ Objective-এ প্রতিটি Parameter-এর L2 Penalty পুরো Dataset জুড়ে একবারই যোগ হয়। কিন্তু কেউ যদি প্রতিটি দেখা উদাহরণের (Per-example) সাথে হুবহু একই পূর্ণ Penalty বারবার যোগ করতে থাকেন, তবে যেসব User বা Item বেশিবার এসেছে তাদের ওপর অজান্তেই বেশি সংখ্যক বার Regularization প্রযুক্ত হবে (যাকে Frequency Weighting বলা হয়)। আমাদের Explicit ALS মডেলে বৈশ্বিক যোগফল (Global Sum) Penalty ব্যবহৃত হয়েছে, অথচ পরের পাঠগুলোর BPR বা FM-এ নমুনায়িত সক্রিয় Vector-এর ওপর আলাদা নিয়মে Penalty প্রযুক্ত হবে। তাই খাতায় একই `λ` লেখা থাকলেও দুটি পদ্ধতির প্রকৃত Regularizer এক নয়।"
+        },
+        {
+          "type": "text",
+          "title": "SGD বনাম ALS: কখন কোনটি সুবিধাজনক?",
+          "body": "SGD-তে প্রতিটি ধাপের হিসাব খুব হালকা ও দ্রুত হলেও Gradient-এ Noise থাকে এবং সঠিক Learning Rate Schedule বেছে নেওয়া বেশ সূক্ষ্ম কাজ। অন্যদিকে ALS প্রতিটি ব্লককে সরাসরি নিখুঁত Ridge Regression হিসেবে সমাধান করে—এখানে কোনো Learning Rate টিউন করতে হয় না, যদিও প্রতিটি ব্লকের রৈখিক সমীকরণ সমাধান করা তুলনামূলকভাবে ব্যয়বহুল। আমাদের এই অধ্যায়ের Explicit মডেলটি ALS দিয়েই ট্রেন করা হয়েছে; উপরের কোডে আমরা কেবল শেখা Vector-গুলোর ওপর গাণিতিক Derivative-এর নির্ভুলতা যাচাই করে দেখালাম, আলাদা কোনো SGD Benchmark চালাইনি।"
+        },
+        {
+          "type": "text",
+          "title": "Numerical Gradient Check করার সঠিক নিয়ম",
+          "body": "কোডে আমরা যে Central Difference (`eps = 1e-6`) ব্যবহার করলাম, সেখানে `eps` অতিরিক্ত ছোট নিলে Floating-point বিয়োগে সূক্ষ্মতা নষ্ট হয় (Cancellation Error), আবার বড় নিলে সূত্রের নিজস্ব আসন্নীকরণ ত্রুটি (Approximation Bias) বেড়ে যায়। আমরা এখানে আসল শেখা Vector-গুলোর ওপর একটি সুনির্দিষ্ট স্থানীয় উদাহরণ (`target = 4.0`, `reg = 0.01`) সাজিয়ে হিসাব মিলিয়েছি। এমনকি বাস্তবে যখন আপনি Autograd ফ্রেমওয়ার্ক ব্যবহার করবেন, তখনো স্বাধীনভাবে লেখা গাণিতিক সূত্রের সাথে তার মিল (Parity) এভাবে পরীক্ষা করে নেওয়া দারুণ একটি অভ্যাস।"
+        },
+        {
+          "type": "text",
+          "title": "ইন্টারভিউয়ের পরিচিত ফাঁদ: Double-counting",
+          "body": "ইন্টারভিউতে বা কোডিংয়ের সময় একটি সূক্ষ্ম ভুলের দিকে কড়া নজর রাখবেন: মডেলে যখন ইতিমধ্যেই Global Mean এবং User Bias আলাদা পদ হিসেবে রয়েছে, তখন ইনপুট Rating থেকে আবারও নতুন করে User Mean বিয়োগ করতে যাবেন না—এতে একই গড় প্রবণতা দুবার হিসাব (Double-count) হয়ে যাবে! যেকোনো ডিবাগিংয়ের শুরুতেই Missing Entry-র Mask, ডেটার `dtype`, Loss-এর Reduction (Sum নাকি Mean) এবং In-place Mutation ঘটছে কি না, তা আগেভাগে নিরীক্ষা করে নিন।"
+        }
+      ]
+    },
+    {
+      "id": "ch31_normal",
+      "title": "ALS-এর Normal Equation নিষ্কাশন",
+      "subtitle": "একজন User-এর Bias ও Latent Factor একসাথে বের করার Joint Ridge সমাধান",
+      "duration": "60 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Item দিক স্থির রেখে রৈখিক সমস্যা সাজানো",
+          "body": "ALS-এর মূল কৌশলটি খুবই পরিচ্ছন্ন: এক ধাপে আমরা সব Item Factor `Q` এবং Item Bias স্থির (Frozen) ধরে নিই এবং কেবল একজন নির্দিষ্ট User-এর দেখা Rating-গুলোর সারিগুলো আলাদা করে নিই। যেহেতু `rank = 8`, তাই প্রতিটি দেখা Item-এর জন্য আমাদের Design Row হবে `[1, q_i]` যার দৈর্ঘ্য `9` (প্রথম `1`-টি User Bias-এর জন্য)। আর আমাদের লক্ষ্যমাত্রা বা Adjusted Response হবে `y = r - μ - b_i`, এবং অজানা Parameter Vector হবে `w = [b_u, p_u]`। খেয়াল করুন, এখানে User Bias এবং Latent Factor একই সমীকরণে একসাথে আপডেট হচ্ছে—সাধারণ লাইব্রেরিতে যেমন Intercept-কে Penalty-র বাইরে রাখা হয়, এখানে কিন্তু তা করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "গ্রেডিয়েন্ট শূন্য ধরে Normal Equation নিষ্কাশন",
+          "body": "এখন এই একক User-এর শর্তাধীন Objective দাঁড়াল `J(w) = ||y - Xw||^2 + λ||w||^2`। এর Gradient বের করে শূন্যের সমান ধরলে পাই `-2 X^T (y - Xw) + 2λw = 0`। একটু সাজিয়ে নিলেই চিরচেনা রৈখিক সমীকরণ `Aw = b` চলে আসে, যেখানে `A = X^T X + λI` এবং `b = X^T y`। আমাদের মডেলে `λ = 10` নেওয়া হয়েছে এবং Bias-এর কর্ণ (Diagonal) পদসহ পুরো `9`টি উপাদানেই এই `λ` যোগ হয়।"
+        },
+        {
+          "type": "math",
+          "title": "একক User-এর Joint Ridge সমীকরণ",
+          "body": "X_u=[\\mathbf1,Q_{I_u}],\\quad y_u=r_u-\\mu-b_{I_u},\\quad (X_u^\\top X_u+\\lambda I)w_u=X_u^\\top y_u"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ আসল User-এর 9×9 সিস্টেম সমাধান ও যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/factor_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nimport numpy as np\n\naudit = lab[\"als_audit\"]\na = np.array(audit[\"a\"])\nb = np.array(audit[\"b\"])\nw = np.linalg.solve(a, b)\nassert a.shape == (9, 9) and b.shape == (9,)\nassert np.max(np.abs(a @ w - b)) < 1e-10\nassert np.max(np.abs(w - audit[\"solution\"])) < 1e-12\nprint(\"user\", audit[\"user\"], \"bias\", w[0], \"residual\", max(abs(a @ w - b)))\n"
+        },
+        {
+          "type": "text",
+          "title": "বিপরীত ম্যাট্রিক্স না বানিয়ে সংখ্যাত্মক সমাধান",
+          "body": "বাস্তব কোডে কখনোই সরাসরি Inverse ম্যাট্রিক্স বানিয়ে গুণ করবেন না; তার বদলে `solve` অথবা Cholesky Decomposition ব্যবহার করা অনেক বেশি দ্রুত ও সংখ্যাত্মকভাবে স্থিতিশীল। যেহেতু `λ > 0` এবং ইনপুট মানগুলো সসীম, তাই `A` ম্যাট্রিক্সটি নিশ্চিতভাবেই Symmetric Positive Definite (SPD) হয়। আমাদের অ্যাপের ভেতরেও পূর্ণ ৯-মাত্রিক (`9D`) Cholesky পদ্ধতি ব্যবহার করে নির্বাচিত User-এর প্রকৃত সমাধান বের করা হয়—স্ক্রিনে সংক্ষেপে শুরুর কয়েকটি Coordinate দেখানো হলেও ভেতরের হিসাবে সব কটি Factor-ই অংশ নেয়।"
+        },
+        {
+          "type": "factor_als",
+          "title": "ইন্টারেক্টিভ পরীক্ষা: Regularization বদলে প্রভাব দেখুন",
+          "body": "নিচের প্যানেলে Regularization-এর মান `0.1`, `1` এবং `10`-এ বদলে দেখুন—একই স্থির Item মডেলের সাপেক্ষে ওই একজন User-এর সর্বোত্তম সমাধান কীভাবে পরিবর্তিত হয়। আপডেটের আগের ও পরের শর্তাধীন Objective তুলনা করার সময় অবশ্যই একই `λ`-এর ভেতরে তুলনা করবেন, কারণ `λ` বদলে গেলে মূল গাণিতিক সমস্যাটিই বদলে যায়। মনে রাখবেন, এই আপডেট কেবল ওই User-এর স্থানীয় Fit উন্নত করতে পারে; ভবিষ্যতের অদেখা ডেটায় তার পারফরম্যান্স কেমন হবে তা এই প্যানেল মাপে না।"
+        },
+        {
+          "type": "text",
+          "title": "এই পরীক্ষায় কোন অংশগুলো স্থির থাকছে?",
+          "body": "এই ইন্টারেক্টিভ পরীক্ষায় Global Mean `μ`, সব Item Vector, Item Bias এবং User-এর মূল রেটিং ইতিহাস স্থির রাখা হয়েছে; স্লাইডার নাড়ালে পুরো মডেলের `16`টি পূর্ণাঙ্গ Sweep নতুন করে চালানো হয় না। এখানে ব্যবহৃত ম্যাট্রিক্সগুলো একজন বাস্তব User-এর দেখা সারিগুলো থেকেই তৈরি, তবে স্লাইডার ঘুরিয়ে পাওয়া ফলাফলকে কখনোই ভবিষ্যতের নিরপেক্ষ Benchmark হিসেবে রিপোর্ট করা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "ম্যাট্রিক্সের আকার ও Cold User-এর আচরণ",
+          "body": "কোড লেখার সময় প্রতিটি অংশের Shape পরিষ্কার রাখা চাই: একজন User যদি `n`টি সিনেমায় রেটিং দেন, তবে `X` হবে `n × 9`, `A` হবে `9 × 9` এবং `b` হবে `9` দৈর্ঘ্যের Vector। এখন ভাবুন, কোনো নতুন বা Cold User-এর ক্ষেত্রে যদি `n = 0` হয়, তবে সমীকরণটি দাঁড়ায় `λIw = 0`, যার গাণিতিক সমাধান হলো শূন্য Vector ও শূন্য Bias! কিন্তু ব্যবহারকারীকে অর্থহীন তালিকা দেখানো চলে না বলে তখন আমাদের Serving Policy জনপ্রিয়তার ভিত্তিতে (Popularity Fallback) তালিকা সাজায়। অর্থাৎ গাণিতিক শূন্য সমাধান এবং ব্যবহারকারীকে দেখানোর Fallback নীতি—দুটি সম্পূর্ণ আলাদা দায়িত্ব।"
+        },
+        {
+          "type": "text",
+          "title": "খাতাকলমে দুই রেটিং থেকে Normal Equation সমাধান",
+          "body": "সমীকরণটি হাতের মুঠোয় আনার জন্য চলুন এক-ফ্যাক্টরের (`rank = 1`) একটি ছোট উদাহরণ নিজে কষে দেখি। ধরুন, দুটি Item-এর স্থির Factor যথাক্রমে `[0, 1]`। তাহলে Bias কলামসহ আমাদের Design Matrix হবে `[[1, 0], [1, 1]]`, Global ও Item Offset বাদ দেওয়ার পর Adjusted Rating ধরা যাক `[2, 3]`, এবং `lambda = 1`। এখান থেকে হিসাব করলে পাই `X^T X + I = [[3, 1], [1, 2]]` এবং ডানপাশের অংশ `X^T y = [5, 3]`। এই রৈখিক সমীকরণটি সমাধান করলেই পাওয়া যায় User Bias `1.4` এবং Latent Coefficient `0.8`। খেয়াল করুন, এখানে দুটি সহগকেই Regularize করা হয়েছে এবং কেবলমাত্র রেটিং দেওয়া Item-গুলোর সারিই হিসাবে এসেছে।"
+        },
+        {
+          "type": "code",
+          "title": "Cholesky সমাধান ও শূন্য Gradient মিলিয়ে দেখি",
+          "body": "import numpy as np\n\ndesign = np.array([[1.0, 0.0], [1.0, 1.0]])  # Bias column, frozen item factor.\ntarget = np.array([2.0, 3.0])\nregularization = 1.0\nsystem = design.T @ design + regularization * np.eye(2)\nright_hand_side = design.T @ target\nlower = np.linalg.cholesky(system)\nuser = np.linalg.solve(lower.T, np.linalg.solve(lower, right_hand_side))\ngradient = 2 * design.T @ (design @ user - target) + 2 * regularization * user\nnp.testing.assert_allclose(gradient, 0, atol=1e-12)\nprint(*system.flatten(), *right_hand_side, *np.round(user, 6))\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে হিসাব করুন",
+          "body": "এই Objective-এ বর্গ ত্রুটির যোগফলের (Sum) বদলে যদি গড় বর্গ ত্রুটি (Mean Squared Error) ব্যবহার করা হতো, তবে একই `lambda` কি একই সমাধান দিত?",
+          "solution": "না, একই সমাধান দিত না। Mean Squared Error-এর সাথে `lambda * ||w||^2` যোগ করলে অন্তরীকরণের পর Normal Matrix-টি দাঁড়ায় `X^T X + n * lambda * I` (যেখানে `n` হলো ওই User-এর দেখা রেটিংয়ের সংখ্যা)। যোগফলভিত্তিক Objective-এর সমান ভারসাম্য বজায় রাখতে হলে গড়ভিত্তিক সমীকরণে `lambda`-কে `n` দিয়ে ভাগ করতে হবে। পাশাপাশি Bias কলামটিকে Regularize করা হচ্ছে কি না, সেটিও Objective-এর সংজ্ঞায় সুস্পষ্টভাবে উল্লেখ থাকা জরুরি।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch31_solves",
+      "title": "Regularization, Conditioning এবং ALS-এর হিসাবের খরচ",
+      "subtitle": "প্রতিটি ব্লকের সমাধান নিখুঁত হলেও সামগ্রিক সমস্যা কেন Nonconvex থাকে",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Condition Number ও সংখ্যাত্মক স্থিতিশীলতা",
+          "body": "কোনো User যদি খুব অল্প বা প্রায় একই ধাঁচের কয়েকটি Item-এ রেটিং দিয়ে থাকেন, তবে তার `X^T X` ম্যাট্রিক্সের কলামগুলো পরস্পরের খুব কাছাকাছি হয়ে ম্যাট্রিক্সটিকে প্রায় Singular বা অস্থিতিশীল করে তুলতে পারে। এর সাথে `λI` যোগ করার সুফল হলো, এটি ম্যাট্রিক্সের ক্ষুদ্রতম Eigenvalue-কে অন্তত `λ` পরিমাণ বাড়িয়ে দেয় এবং অস্থিতিশীল দিকগুলোকে সংকুচিত করে। ফলে Bias কলামের সাথে অন্য কলামের সহসম্পর্ক (Correlation) থাকলেও যৌথ Ridge সমাধানটি স্থিতিশীল থাকে। তবে মনে রাখবেন, Floating-point হিসাবের সূক্ষ্মতা এবং অদেখা ডেটায় মডেলের Generalization—দুটি আলাদা বিষয়।"
+        },
+        {
+          "type": "text",
+          "title": "প্রতিটি Sweep-এ সময়ের জটিলতা (Time Complexity)",
+          "body": "হিসাবের খরচের খতিয়ান নেওয়া যাক। যে User `n_u` সংখ্যক Item রেট করেছেন, তার Gram Matrix বানাতে খরচ হয় `O(n_u k^2)` এবং সেই সমীকরণ সমাধান করতে লাগে `O(k^3)` সময়; Item-গুলোর ক্ষেত্রেও ঠিক একই হিসাব প্রযোজ্য। ফলে Bias সহ মাত্রা `k + 1` ধরে একটি পূর্ণাঙ্গ Sweep-এর মোট খরচ দাঁড়ায় প্রায় `O(|Ω|k^2 + (|U| + |I|)k^3)`। আমাদের টিউটোরিয়ালে `rank = 8` হওয়ায় এই হিসাব চোখের পলকে হয়ে যায়, কিন্তু লাখ লাখ Item এবং বড় Rank নিলে রানটাইম দ্রুত বেড়ে যাবে।"
+        },
+        {
+          "type": "math",
+          "title": "Ridge Matrix-এর Spectral Condition Number",
+          "body": "\\kappa_2(X^\\top X+\\lambda I)=\\frac{\\sigma_{max}^2+\\lambda}{\\sigma_{min}^2+\\lambda}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ বিভিন্ন Regularization-এ Condition Number পরীক্ষা",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/factor_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nimport numpy as np\n\nw = lab[\"weights\"][\"explicit_als\"]\nq = np.array(w[\"q\"])\nids = lab[\"als_audit\"][\"items\"]\nlookup = {i: j for j, i in enumerate(lab[\"items\"])}\nx = np.column_stack([np.ones(len(ids)), q[[lookup[i] for i in ids]]])\nfor reg in [0.1, 1, 10]:\n    a = x.T @ x + reg * np.eye(9)\n    assert np.linalg.eigvalsh(a).min() > 0\n    print(reg, np.linalg.cond(a))\n"
+        },
+        {
+          "type": "text",
+          "title": "ALS কেন সমান্তরালভাবে (Parallel) চালানো এত সহজ?",
+          "body": "বাস্তব প্রকৌশলে ALS জনপ্রিয় হওয়ার অন্যতম প্রধান কারণ এর সহজাত Parallelism। একটি User Sweep চলাকালীন সব User একই স্থির Item Matrix দেখেন, তাই শত শত CPU কোর বা ওয়ার্কারে সব User-এর সমীকরণ সম্পূর্ণ স্বাধীন ও সমান্তরালভাবে সমাধান করা যায়! সব User আপডেট শেষ হলে তখন Item Sweep শুরু হয়। তবে কোনো সমন্বয় (Synchronization) ছাড়া User এবং Item ব্লক যদি একই সময়ে এলোমেলোভাবে আপডেট করা হয়, তবে তা মূল ALS অ্যালগরিদম থাকবে না। সঠিক Sparse Indexing ও দক্ষ রৈখিক Solver ব্যবহার করলে GPU ছাড়াই মাঝারি আকারের ডেটায় ALS চমৎকার গতি দেয়।"
+        },
+        {
+          "type": "text",
+          "title": "Objective Trace পড়ার সঠিক নিয়ম",
+          "body": "আমাদের সংরক্ষিত Trace তালিকায় মোট `17`টি মান রয়েছে: শুরুর প্রাথমিক অবস্থা এবং তারপর `16`টি পূর্ণাঙ্গ Sweep-এর পর পাওয়া পূর্ণ Penalized Fit Objective। প্রতিটি ধাপে নিখুঁত শর্তাধীন সর্বনিম্ন মান বের করায় সংখ্যাত্মক সীমার মধ্যে এই ক্রমটি কখনোই বাড়ে না (Non-increasing)। খেয়াল রাখবেন, পরে আমরা BPR বা FM-এ যে Trace দেখব, সেগুলো Minibatch চলার সময়ের গড় মান—তাদের সাথে ALS-এর এই পূর্ণাঙ্গ বৈশ্বিক Objective সরাসরি এক পাল্লায় মাপা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "থামার নিয়ম (Stopping Rule) ও স্থানীয় সমতলতা",
+          "body": "আমাদের এই পরীক্ষায় পূর্বনির্ধারিত শেষ Sweep-টিই সংরক্ষণ করা হয়েছে; মাঝপথে কোনো ডায়াগনস্টিক মেট্রিক দেখে সেরা Checkpoint বেছে নেওয়া হয়নি। প্রোডাকশনে যদি আপনি Validation সেটের ওপর ভিত্তি করে Early Stopping করতে চান, তবে তার জন্য আলাদা Validation Split, স্বচ্ছ বাছাই প্রক্রিয়া এবং সবশেষে সম্পূর্ণ নতুন Test সেটে চূড়ান্ত যাচাইকরণ লাগবে। আর কখনো যদি দেখেন Objective রেখাটি সমতল হয়ে থেমে গেছে, তবে বুঝবেন তা Non-identifiability, দুর্বল সংকেত অথবা কোনো Local Optimum-এ আটকে যাওয়ার লক্ষণ হতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব সিস্টেমে ত্রুটি সামলানো",
+          "body": "নির্ভরযোগ্য ইঞ্জিনিয়ারিং কোডে ইনপুটে `NaN` থাকলে, ID Mapping ভুল হলে, Regularization শূন্য বা ঋণাত্মক হলে কিংবা ম্যাট্রিক্স Singular হয়ে পড়লে নীরবে ভুল উত্তর না দিয়ে স্পষ্ট Exception ছোড়া উচিত; আমাদের অ্যাপের নিয়ন্ত্রণে কেবল ধনাত্মক `λ`-ই অনুমোদিত। সবশেষে একটি কথা মনে রাখবেন: রৈখিক সমীকরণের অবশিষ্ট ত্রুটি `||Aw - b||` খুব ছোট হওয়া কেবল প্রমাণ করে যে সমীকরণটি নির্ভুলভাবে সমাধান হয়েছে—মডেলটি বাস্তব কাজে দারুণ Recommendation দেবে, এমন কোনো সনদ তা দেয় না!"
+        }
+      ]
+    },
+    {
+      "id": "ch31_implicit",
+      "title": "Implicit ALS: Preference এবং Confidence-এর ধারণা",
+      "subtitle": "সরাসরি রেটিং না থাকলে অদেখা আচরণকে কীভাবে Weak-zero অনুমান দিয়ে মডেল করা হয়",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Explicit থেকে সম্পূর্ণ ভিন্ন এক Objective",
+          "body": "Explicit MF যেখানে অদেখা জুটিগুলোকে পুরোপুরি উপেক্ষা করেছিল, Implicit ALS সেখানে ক্যাটালগের প্রতিটি সম্ভাব্য User-Item জুটির ওপর একটি ওজনযুক্ত বর্গ ত্রুটির Surrogate ফিট করে! আমাদের সেটআপে রূপান্তরিত পছন্দের জুটিগুলোর (`rating >= 4`) জন্য Preference ধরা হয়েছে `p = 1`, আর বাকি সব ঘরের জন্য `p = 0`। কিন্তু সাথে যোগ হয়েছে Confidence: পছন্দের জুটিগুলোর ক্ষেত্রে `c = 21`, এবং বাকি সব জুটির ক্ষেত্রে `c = 1`। স্পষ্টতার খাতিরে মনে করিয়ে দিই, এখানে আমরা প্রকৃত ক্লিক বা ওয়াচ-টাইম গণনা থেকে নয়, বরং Star Rating-কে দ্বিমানে (Binary) রূপান্তর করে এই শিক্ষামূলক সেটআপটি তৈরি করেছি।"
+        },
+        {
+          "type": "text",
+          "title": "Weak-zero অনুমানের সঠিক অর্থ কী?",
+          "body": "কোনো ঘরে `p = 0` এবং `c = 1` ধরার অর্থ হলো মডেলকে মৃদুভাবে শূন্যের দিকে টেনে রাখা—এটি মোটেও প্রমাণিত অপছন্দ (Verified Dislike) নয়। লক্ষ্য করুন, আমাদের এই Surrogate-এ একজন User কম Star দিয়েছেন এমন দেখা সিনেমা এবং তিনি কখনো নামই শোনেননি এমন অদেখা সিনেমা—দুটোই একই `p = 0, c = 1` পাচ্ছে, যদিও বাস্তবে তাদের অর্থ আলাদা। ব্যবহারকারী কোন সিনেমা দেখার সুযোগ পেয়েছেন (Exposure Bias) আর কোনটি পাননি, সেই তথ্য অজানা থাকায় এই Surrogate-কে ব্যবহারকারীর প্রকৃত সন্তুষ্টির নিখুঁত বণ্টন বলে ধরে নেওয়া যাবে না।"
+        },
+        {
+          "type": "math",
+          "title": "Implicit ALS-এর ওজনযুক্ত Objective",
+          "body": "J=\\sum_{u,i}c_{ui}(p_{ui}-x_u^\\top y_i)^2+\\lambda(\\|X\\|_F^2+\\|Y\\|_F^2),\\quad c_{ui}=1+20p_{ui}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Implicit ALS-এর প্যারামিটার ও Trace যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/factor_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nimport numpy as np\n\nw = lab[\"weights\"][\"implicit_als\"]\ntrace = w[\"trace\"]\nassert w[\"alpha\"] == 20 and w[\"reg\"] == 0.1 and len(trace) == 13\nassert all(b <= a + 1e-7 for a, b in zip(trace, trace[1:]))\nprint(trace[0], trace[-1])\n"
+        },
+        {
+          "type": "text",
+          "title": "কেন ক্যাটালগের সব জুটিকেই হিসাবে রাখতে হয়?",
+          "body": "মনে প্রশ্ন জাগতে পারে, শুধু `p = 1` থাকা পছন্দের জুটিগুলোর ওপর বর্গ ত্রুটি কমালে সমস্যা কী ছিল? একটু ভেবে দেখুন—তখন তো সব User ও Item Vector এমন মান নিত যাতে সবার সাথে সবার Dot Product ঢালাওভাবে `1` হয়ে যায়, আর কোনো অর্থবহ পার্থক্যই শেখা হতো না (Trivial Solution)! এই অদেখা ঘরগুলোর মৃদু শূন্য পটভূমিই (Weak-zero Background) মডেলকে ভালো ও অপ্রাসঙ্গিক Item-এর মধ্যে পার্থক্য করার প্রয়োজনীয় চাপ দেয়। অবশ্য এখানে Confidence-এর সূত্র, Regularization এবং Catalog-এর পরিধি বদলালে পুরো Objective-ই বদলে যায়; আমাদের নেওয়া `α = 20` একটি স্থির শিক্ষামূলক মান, টিউন করা সেরা মান নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Confidence-এর মানে 20 বনাম 21-এর সূক্ষ্ম পার্থক্য",
+          "body": "সমীকরণটি খুব ভালো করে খেয়াল করুন: `c_ui = 1 + α p_ui` হওয়ায় `α = 20` হলে প্রতিটি Positive জুটির মোট Confidence দাঁড়ায় `1 + 20 = 21`, শুধু `20` নয়! ডানপাশের সমীকরণে ভুল করে `21`-এর জায়গায় `20` বসিয়ে দিলে আপডেটের মানই ভুল হয়ে যাবে। যদি `α = 0` ধরা হয়, তবে Positive ও Background উভয় জুটিই সমান Confidence পায়, যদিও তাদের Target (`1` বনাম `0`) তখনো আলাদা থাকে। আর নির্বিচারে `α` বাড়ালেই যে ভালো Ranking পাওয়া যাবে, তারও কোনো নিশ্চয়তা নেই।"
+        },
+        {
+          "type": "text",
+          "title": "ট্রেনিংয়ের খুঁটিনাটি ও শূন্য ইতিহাসের Fallback",
+          "body": "এই মডেলটিও `NumPy float64`-এ `seed = 310` এবং `0.05` প্রাথমিক Standard Deviation দিয়ে শুরু করা হয়েছে। এখানে `λ = 0.1` রেখে প্রথমে User আপডেট এবং পরে Item আপডেট—এভাবে মোট `12`টি পূর্ণাঙ্গ Sweep চালানো হয়েছে, যেখানে কোনো আলাদা Bias পদ রাখা হয়নি বা সরাসরি Star Rating মেলানোর চেষ্টা করা হয়নি।\n\nএখানে একটি বিশেষ পরিস্থিতি ঘটে: কোনো User-এর Fit ইতিহাসে যদি একটিও Positive (`rating >= 4`) উদাহরণ না থাকে, তবে সমীকরণের ডানপাশ শূন্য হওয়ায় তার শেখা Factor নিখুঁত শূন্য হয়ে যায়। তখন সব সিনেমার Score শূন্য হয়ে যাওয়ায় কেবল সংখ্যাসূচক Item ID ধরে তালিকা না দেখিয়ে আমাদের Ranking সিস্টেম সুস্পষ্টভাবে Popularity Fallback ব্যবহার করে।"
+        },
+        {
+          "type": "text",
+          "title": "মূল গবেষণাপত্রের সাথে সম্পর্ক",
+          "body": "গাণিতিক কাঠামোর দিক থেকে আমরা Hu, Koren এবং Volinsky (2008)-এর বিখ্যাত ওজনযুক্ত Implicit Feedback পদ্ধতির পরিবারটিই অনুসরণ করছি। তবে মূল গবেষণাপত্রে যেখানে ব্যবহারকারীর বাস্তব আচরণের সংখ্যা (যেমন কতবার কোনো অনুষ্ঠান দেখেছেন বা ক্লিক করেছেন) দিয়ে Confidence তৈরি করা হয়েছিল, সেখানে আমরা স্বচ্ছতার সাথে আমাদের Explicit Star ডেটাকে দ্বিমানে রূপান্তর করে নিয়েছি—তাই একে মূল পেপারের হুবহু Benchmark পুনরুৎপাদন হিসেবে না দেখে পদ্ধতিটি বোঝার একটি পরিচ্ছন্ন স্থানীয় প্রয়োগ হিসেবে দেখাই শ্রেয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch31_gram",
+      "title": "Implicit ALS-এর Gram Trick",
+      "subtitle": "লাখ লাখ অদেখা জুটি মেমরিতে না বানিয়েও নিখুঁত রৈখিক আপডেট করার কৌশল",
+      "duration": "60 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "সরাসরি হিসাব করতে গেলে কোথায় বিপত্তি বাধে?",
+          "body": "Item Matrix `Y` স্থির রাখলে একজন User `u`-এর জন্য Implicit ALS-এর Normal Equation দাঁড়ায় `(Y^T C_u Y + λI)x_u = Y^T C_u p_u`, যেখানে `C_u` হলো ক্যাটালগের সবগুলো Item-এর Confidence নিয়ে গঠিত একটি বিশাল কর্ণ ম্যাট্রিক্স (Diagonal Matrix)। এখন আমাদের যদি হাজার হাজার বা লাখ লাখ Item থাকে, তবে প্রতিটি User-এর জন্য আলাদা করে পুরো ক্যাটালগের ওপর এই গুণফল হিসাব করা ভীষণ ধীরগতির ও ব্যয়বহুল হয়ে পড়বে। সৌভাগ্যবশত, এই বিশাল কর্ণ ম্যাট্রিক্সটি মেমরিতে তৈরি করার কোনো দরকারই নেই!"
+        },
+        {
+          "type": "text",
+          "title": "পটভূমি আলাদা করে নেওয়ার বীজগাণিতিক কৌশল (Gram Trick)",
+          "body": "একটু বীজগণিত খাটালেই চমৎকার একটি পথ খুলে যায়! যেহেতু অদেখা সব ঘরের Confidence `1` এবং কেবল Positive ঘরগুলোতে অতিরিক্ত `20` যোগ হয়েছে, তাই আমরা লিখতে পারি `C_u = I + 20 Diag(p_u)`। একে সমীকরণে বসালেই পাওয়া যায় `Y^T C_u Y = Y^T Y + 20 Y_{L_u}^T Y_{L_u}`! লক্ষ্য করুন, প্রথম অংশ `Y^T Y` হলো একটি মাত্র `k × k` আকারের যৌথ Gram Matrix—যা পুরো Sweep-এর শুরুতে মাত্র একবার হিসাব করে সব User-এর জন্য বারবার ব্যবহার করা যায়, আর প্রতি User-এর জন্য কেবল তার গুটিকয়েক পছন্দের Item (`L_u`)-এর ওপর ছোট্ট একটি সংশোধনী যোগ করতে হয়। এটি কোনো আসন্নীকরণ (Approximation) নয়; প্রদত্ত Confidence সংজ্ঞার অধীনে শতভাগ নিখুঁত বীজগাণিতিক অভেদ!"
+        },
+        {
+          "type": "math",
+          "title": "Gram Trick-এর দ্রুত ও নিখুঁত সমীকরণ",
+          "body": "A_u=Y^\\top Y+20Y_{L_u}^\\top Y_{L_u}+\\lambda I,\\quad b_u=21\\sum_{i\\in L_u}y_i"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Dense হিসাব ও Gram Trick-এর নিখুঁত মিল যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/factor_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nimport numpy as np\n\nbase = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\nuser = lab[\"als_audit\"][\"user\"]\nlookup = {i: j for j, i in enumerate(lab[\"items\"])}\nliked = [lookup[i] for u, i, r, t in base[\"train\"] if u == user and r >= 4]\ny = np.array(lab[\"weights\"][\"implicit_als\"][\"q\"])\ntarget = np.zeros(len(y))\ntarget[liked] = 1\nc = 1 + 20 * target\nfast = y.T @ y + 20 * y[liked].T @ y[liked] + 0.1 * np.eye(8)\ndense = y.T @ (c[:, None] * y) + 0.1 * np.eye(8)\nassert np.max(abs(fast - dense)) < 1e-10\nassert np.max(abs(21 * y[liked].sum(0) - y.T @ (c * target))) < 1e-10\nprint(np.linalg.solve(fast, 21 * y[liked].sum(0)))\n"
+        },
+        {
+          "type": "text",
+          "title": "ডানপাশের পদে কেন 20 নয়, পুরো 21 গুণ হয়?",
+          "body": "সমীকরণের ডানপাশ `b_u = Y^T C_u p_u`-এর দিকে একটু মন দিয়ে তাকান। Positive সেটের বাইরে সব জায়গায় `p_ui = 0`, আর Positive ঘরগুলোতে `p_ui = 1` এবং মোট Confidence `c_ui = 21`। তাই ডানপাশে পছন্দের Item Factor-গুলোর যোগফলের সাথে পুরো `21` গুণ হয়! অর্থাৎ অদেখা পটভূমি বামপাশের ম্যাট্রিক্স `A_u`-কে প্রভাবিত করলেও ডানপাশের `b_u`-তে শূন্য হয়ে মিলিয়ে যায়। কেউ যদি ভুল করে `A_u`-তে পটভূমি বাদ দিয়ে শুধু Positive-গুলো রাখেন, তবে পুরো Objective-ই বদলে যাবে; আবার ডানপাশে `21`-এর বদলে `20` লিখলে চিরচেনা Off-by-one ভুল ঘটে যাবে!"
+        },
+        {
+          "type": "text",
+          "title": "Item আপডেটের প্রতিসাম্য",
+          "body": "User দিক আপডেট হয়ে গেলে ঠিক একই প্রতিসম কৌশলে Item দিক আপডেট করা হয়: নতুন `X`-এর জন্য যৌথ Gram Matrix `X^T X` একবার হিসাব করে নেওয়া হয়, আর প্রতিটি Item-কে যারা পছন্দ করেছেন সেই User-দের উপসেট নিয়ে সংশোধনী যোগ করা হয়। এজন্য আমাদের কোডে Positive তালিকাটি User এবং Item—উভয় অভিমুখেই আলাদাভাবে ইনডেক্স করে রাখা আছে। যে Item-এ কোনো Positive উদাহরণ নেই, তার সমাধান শূন্য Vector হয় এবং ধনাত্মক Regularization ম্যাট্রিক্সটিকে সর্বদা SPD রাখে।"
+        },
+        {
+          "type": "text",
+          "title": "বিশাল টেবিল না বানিয়েও বৈশ্বিক Loss হিসাব",
+          "body": "শুধু আপডেটই নয়, পুরো `|U| × |I|` আকারের বিশাল টেবিল না বানিয়েও আমরা বৈশ্বিক Objective-এর মান নিখুঁতভাবে বের করতে পারি! সব সম্ভাব্য জুটির বর্গ Score-এর যোগফল হলো স্রেফ `trace((X^T X)(Y^T Y))`, আর তার সাথে শুধু দেখা Positive জুটিগুলোর জন্য `α s^2 - 2(1 + α)s + (1 + α)` সংশোধনী যোগ করলেই পুরো Loss পাওয়া যায়। উপরের কোডে আমরা একজন বাস্তব User-এর জন্য সরাসরি Dense হিসাবের সাথে দ্রুত সূত্রটির ফলাফল মিলিয়ে দেখেছি।"
+        },
+        {
+          "type": "text",
+          "title": "স্কেলিংয়ের সুবিধা ও বাস্তব সীমা",
+          "body": "এই কৌশলের ফলে যৌথ Gram Matrix রাখতে মাত্র `O(k^2)` এবং সব Factor রাখতে `O((|U| + |I|)k)` মেমরি লাগে, যদিও প্রতিটি ব্লকে রৈখিক সমীকরণ সমাধানের `O(k^3)` খরচটি থেকেই যায়। তবে কোটি কোটি Item-এর ক্যাটালগ থেকে মিলিসেকেন্ডে লাইভ Recommendation খুঁজে আনা (Serving Retrieval) সম্পূর্ণ আলাদা প্রকৌশল সমস্যা (যা আমরা পরের অধ্যায়ে দেখব), আর আমাদের টিউটোরিয়ালের এই CPU রানটাইমকে প্রোডাকশন সিস্টেমের গতির মাপকাঠি হিসেবে ধরা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "খাতাকলমে উদাহরণ: পটভূমির পদটি কীভাবে বক্রতা নিয়ন্ত্রণ করে",
+          "body": "পটভূমির ভূমিকাটি হাতে-কলমে অনুভব করার জন্য একটি ছোট উদাহরণ নেওয়া যাক। ধরুন, তিনটি Item-এর Factor যথাক্রমে `[[1, 0], [0, 1], [1, 1]]`, একজন User-এর Preference `[1, 0, 0]`, Confidence `[3, 1, 1]` এবং `lambda = 1`। এখানে যৌথ Background Gram `Y^T Y`-এর ভেতরেই তিনটি Item-এর মূল `confidence = 1` হিসাব হয়ে আছে। এর সাথে প্রথম Positive Item-টির অতিরিক্ত `confidence = 2` এবং Regularization `I` যোগ করলে আমরা পাই `A = [[5, 1], [1, 3]]`। এবার ডানপাশের `b = [3, 0]` বসিয়ে সমাধান করলে User Vector পাওয়া যায় `[9/14, -3/14]`। লক্ষ্য করুন, দ্বিতীয় Coordinate-টি ঋণাত্মক হলো কেন? কারণ শূন্য পছন্দের Item-গুলোর মৃদু Confidence-ও ম্যাট্রিক্সের বক্রতা (Curvature) নির্ধারণ করে অপ্রাসঙ্গিক দিক থেকে Vector-টিকে দূরে সরিয়ে দেয়! নিচের কোডে Dense সূত্র ও Gram Trick-এর অভিন্ন সমাধান মিলিয়ে দেখুন।"
+        },
+        {
+          "type": "code",
+          "title": "Dense সূত্র এবং Gram Trick একই উত্তর দেয়",
+          "body": "import numpy as np\n\nitems = np.array([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]])\npreference = np.array([1.0, 0.0, 0.0])\nconfidence = np.array([3.0, 1.0, 1.0])\ndense_system = items.T @ (confidence[:, None] * items) + np.eye(2)\ngram_system = items.T @ items + 2 * np.outer(items[0], items[0]) + np.eye(2)\nright_hand_side = items.T @ (confidence * preference)\nuser = np.linalg.solve(gram_system, right_hand_side)\nnp.testing.assert_allclose(gram_system, dense_system)\nnp.testing.assert_allclose(right_hand_side, 3 * items[0])\nprint(*gram_system.flatten(), *right_hand_side, *np.round(user, 6))\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে হিসাব করুন",
+          "body": "উপরের উদাহরণে বামপাশের ম্যাট্রিক্সে অতিরিক্ত Confidence হিসেবে `2` যোগ করা হলেও ডানপাশের (Right-hand side) পদে কেন `2`-এর বদলে পুরো Confidence `3` ব্যবহার করতে হলো?",
+          "solution": "বামপাশের ম্যাট্রিক্স A-তে যৌথ Gram `Y^T Y`-এর ভেতর সব Item-এর মূল `confidence = 1` আগে থেকেই অন্তর্ভুক্ত ছিল, তাই প্রথম Item-এর জন্য কেবল বাড়তি সংশোধনী `3 - 1 = 2` যোগ করতে হয়েছে। কিন্তু ডানপাশের সূত্রে সরাসরি `confidence * preference` গুণ হয়—যেখানে শূন্য Preference-এর Item-গুলো শূন্য হয়ে বাদ পড়ে যায় এবং Positive Item (`preference = 1`)-টির ক্ষেত্রে তার পূর্ণ Confidence `3`-ই অবশিষ্ট থাকে।",
+          "reference": "https://yifanhu.net/PUB/cf.pdf"
+        }
+      ]
+    },
+    {
+      "id": "ch31_schedule",
+      "title": "Training Loss কমা, ভবিষ্যতের Ranking এবং সঠিক Model নির্বাচন",
+      "subtitle": "শুধু Training Trace দেখে কেন সেরা Model বেছে নেওয়া যায় না",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ভিন্ন ভিন্ন Loss-এর একক কখনো এক পাল্লায় মাপা যায় না",
+          "body": "চারটি মডেলের দিকে একবার ফিরে তাকান: Explicit ALS কমায় বর্গ ত্রুটির যোগফল (SSE) ও বৈশ্বিক L2 Penalty, Implicit ALS কমায় সব সম্ভাব্য জুটির Confidence-weighted বর্গ ত্রুটি, BPR কমায় নমুনায়িত জুটির গড় Softplus Loss, আর FM কমায় দেখা রেটিংয়ের গড় বর্গ ত্রুটি (MSE)। যেহেতু প্রতিটি মডেলের ইনপুট সেট, Target এবং Normalization সম্পূর্ণ আলাদা, তাই কার সংখ্যাসূচক Loss ছোট আর কার বড়—সেই সরাসরি তুলনার কোনো গাণিতিক অর্থই নেই!"
+        },
+        {
+          "type": "text",
+          "title": "সংরক্ষিত Trace রেখাগুলোর প্রকৃত অর্থ",
+          "body": "শুধু Loss-এর সংজ্ঞাই নয়, প্রতিটি মডেলের Trace হিসাব করার পদ্ধতিও আলাদা। দুই ALS মডেলে প্রতিটি পূর্ণাঙ্গ Sweep শেষে পুরো Dataset-এর ওপর নিখুঁত Penalized Objective হিসাব করা হয়েছে। অন্যদিকে BPR এবং FM-এর ক্ষেত্রে পুরো Epoch চলাকালীন প্রতিটি Minibatch আপডেটের ঠিক আগের গড় Data Loss (Regularizer বাদ দিয়ে) সংরক্ষণ করা হয়েছে। ফলে এগুলো কোনো স্থির Epoch-end নিখুঁত Objective নয়, এবং Stochastic নমুনায়নের কারণে এতে সামান্য ওঠানামা (Non-monotonicity) থাকা খুবই স্বাভাবিক।"
+        },
+        {
+          "type": "math",
+          "title": "Fit Loss কমা মানেই ভবিষ্যতের Ranking উন্নতি নয়",
+          "body": "J_{fit}^{(t+1)}\\le J_{fit}^{(t)}\\ \\not\\Rightarrow\\ \\mathrm{NDCG}_{future}^{(t+1)}\\ge\\mathrm{NDCG}_{future}^{(t)}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ চারটি মডেলের Training Trace ও Warm Recall তুলনা",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/factor_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nfor method in [\"explicit_als\", \"implicit_als\", \"bpr\", \"fm\"]:\n    w = lab[\"weights\"][method]\n    print(\n        method,\n        w[\"epochs\"],\n        w[\"trace\"][0],\n        w[\"trace\"][-1],\n        lab[\"scorecards\"][method][\"warm\"][\"recall\"],\n    )\nassert (\n    lab[\"scorecards\"][\"implicit_als\"][\"warm\"][\"recall\"]\n    < lab[\"scorecards\"][\"popularity\"][\"warm\"][\"recall\"]\n)\n"
+        },
+        {
+          "type": "text",
+          "title": "Optimization বনাম Generalization-এর পার্থক্য",
+          "body": "ট্রেনিং চলাকালীন Fit Loss কমা কেবল প্রমাণ করে যে আপনার Optimizer সমীকরণ অনুযায়ী ঠিকঠাক কাজ করছে। কিন্তু আমাদের ভবিষ্যতের ডেটায় রয়েছে Exposure Bias, ছোট আকারের Warm Cohort এবং দীর্ঘ স্থির সময়ের ব্যবধান। ভুল ওজন নির্ধারণ কিংবা Overfitting ঘটলে Fit Loss চমৎকারভাবে কমলেও অদেখা ডেটায় `Recall` উল্টো কমে যেতে পারে! যেমন উপরের কোডেই দেখা যাচ্ছে, ডিফল্ট সেটিংসে Implicit ALS-এর Warm Recall সাধারণ Popularity Baseline-এর চেয়েও কম হয়েছে—এবং মেট্রিকের সংজ্ঞা ঘুরিয়ে এই বাস্তব ব্যর্থতা কখনোই আড়াল করা উচিত নয়।"
+        },
+        {
+          "type": "text",
+          "title": "পরীক্ষার ফলাফল থেকে তাড়াহুড়ো করে সিদ্ধান্ত নেবেন না",
+          "body": "আমাদের এই নির্দিষ্ট রানটিতে Explicit ALS-এর Warm Recall আগের অধ্যায়ের User CF-এর চেয়ে সামান্য বেশি হলেও ডিফল্ট সেটিংসে Implicit ALS, BPR এবং FM পিছিয়ে পড়েছে। কিন্তু খেয়াল রাখবেন, এখানে একাধিক Random Seed বা কোনো Confidence Interval মাপা হয়নি। একটিমাত্র Seed-এর এই ক্ষুদ্র ব্যবধান দেখে হুট করে ঘোষণা করা যাবে না যে একটি অ্যালগরিদম পরিবার চিরকাল অন্যটির চেয়ে সেরা!"
+        },
+        {
+          "type": "text",
+          "title": "সঠিক Model বাছাইয়ের আদর্শ নিয়ম",
+          "body": "বাস্তব প্রজেক্টে যদি আপনি `rank`, `λ`, `α`, Epoch সংখ্যা বা Negative Sampler টিউন করতে চান, তবে তার জন্য অবশ্যই একটি আলাদা Validation Split থাকতে হবে। আমাদের এই Future Window-টি আমরা ইতিমধ্যেই আগের অধ্যায়ে (Book 5 · Chapter 1: Recommendation Foundations) এবং এই অধ্যায়ে বারবার পরিদর্শন করেছি—তাই এটি আর অদেখা বা Blind Test সেট নেই। পরের অধ্যায়গুলোতে আরও উন্নত মডেল আনলেও বারবার দেখা এই একই ডেটাকে কখনোই চূড়ান্ত নতুন Test পরীক্ষার মর্যাদা দেওয়া যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "ইন্টারভিউতে যেভাবে নিজের সিদ্ধান্ত ডিফেন্ড করবেন",
+          "body": "ইন্টারভিউতে কোনো মডেল বেছে নেওয়ার প্রশ্ন এলে সবার আগে সমস্যার মূল লক্ষ্যটি পরিষ্কার করে নিন: আপনি কি নিখুঁত Star Rating অনুমান করতে চান, নতুন আইটেম খুঁজে দেওয়ার Discovery Recall বাড়াতে চান, নাকি Cold-start কভারেজ ও অনলাইন ব্যবসায়িক উপযোগিতা চান? এরপর একই সুনির্দিষ্ট Artifact থেকে মেট্রিকগুলো পড়ুন এবং সবচেয়ে দুর্বল User Cohort-এ মডেলটি কেমন করছে তা খুঁটিয়ে দেখুন। জাঁকজমকপূর্ণ আর্কিটেকচারের নাম না ভাঙিয়ে কোথায় মডেলটি ব্যর্থ হয়েছে এবং কোথায় অনিশ্চয়তা রয়েছে, তা সততার সাথে তুলে ধরাই একজন দক্ষ ইঞ্জিনিয়ারের পরিচয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch31_bpr",
+      "title": "BPR: Pairwise Likelihood এবং সংখ্যাত্মকভাবে স্থিতিশীল Loss",
+      "subtitle": "সরাসরি রেটিং না মিলিয়ে একটি পছন্দের Item-কে নমুনায়িত অদেখা Item-এর ওপরে রাখার কৌশল",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "সংখ্যা মেলানোর বদলে ক্রম (Ordering) শেখার লক্ষ্য",
+          "body": "রেকমেন্ডেশনের আসল কাজ যদি হয় ব্যবহারকারীর সামনে সেরা তালিকাটি সাজিয়ে দেওয়া, তবে সরাসরি রেটিংয়ের মান না মিলিয়ে আইটেমগুলোর আপেক্ষিক ক্রম শেখা কেমন হয়? Bayesian Personalized Ranking (BPR)-এ প্রতিটি ট্রেনিং উদাহরণ গঠিত হয় তিনটি ID নিয়ে: একজন User `u`, তার দেখা একটি পছন্দের Item `i`, এবং নমুনায়িত একটি অদেখা Item `j`। আমাদের লক্ষ্য হলো `i`-এর Score যেন `j`-এর চেয়ে বেশি থাকে। এদের Score-এর ব্যবধান `Δ = s_ui - s_uj` ধরে আমরা জুটির সম্ভাবনা `sigmoid(Δ)` নিই এবং তার Negative Log-Likelihood কমানোর চেষ্টা করি।\n\nমনে রাখবেন, এটি ক্রম শেখার একটি Surrogate Objective—এখানে দেখা Star Rating-এর সংখ্যাসূচক মান মেলানো হচ্ছে না, আর নমুনায়িত অদেখা Item `j`-কেও নিশ্চিত অপছন্দ বলে ধরে নেওয়া হচ্ছে না।"
+        },
+        {
+          "type": "text",
+          "title": "Overflow এড়াতে স্থিতিশীল Softplus সমীকরণ",
+          "body": "গাণিতিকভাবে BPR Loss `-log(sigmoid(Δ))`-কে ভাঙলে পাওয়া যায় `log(1 + exp(-Δ))`। কিন্তু কম্পিউটারে সরাসরি এই সূত্র লিখলে একটি বড় বিপদ ঘটে: `Δ` যদি খুব বড় ঋণাত্মক সংখ্যা হয়, তবে `exp(-Δ)` হিসাব করতে গিয়ে সাথে সাথে Floating-point Overflow হয়ে যাবে! তাই সংখ্যাত্মক স্থিতিশীলতার জন্য আমরা অভিন্ন কিন্তু নিরাপদ Softplus রূপটি ব্যবহার করি: `max(-Δ, 0) + log1p(exp(-|Δ|))`।\n\nআমাদের অ্যাপের ভেতরেও ঠিক এই স্থিতিশীল সূত্রটিই ব্যবহৃত হয়েছে, যাতে ধনাত্মক বা ঋণাত্মক—যেকোনো বড় ব্যবধানেই Loss ও Derivative নিখুঁতভাবে হিসাব করা যায়।"
+        },
+        {
+          "type": "math",
+          "title": "Pairwise Likelihood ও স্থিতিশীল Softplus Loss",
+          "body": "\\Pr(i\\succ_u j)=\\sigma(s_{ui}-s_{uj}),\\quad\\ell=-\\log\\sigma(\\Delta)=\\operatorname{softplus}(-\\Delta)"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ সংরক্ষিত Triplet-এর স্থিতিশীল Loss যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/factor_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nimport math\n\np = lab[\"pair_audit\"]\nd = p[\"margin\"]\nstable = max(-d, 0) + math.log1p(math.exp(-abs(d)))\nassert abs(stable - p[\"loss\"]) < 1e-12\nprint(p[\"user\"], p[\"positive\"], p[\"unobserved\"], d, stable)\n"
+        },
+        {
+          "type": "text",
+          "title": "Sigmoid মানটিকে কেন প্রকৃত Probability ভাবা যাবে না?",
+          "body": "সমীকরণে `sigmoid(Δ)` দেখে একে ব্যবহারকারীর প্রকৃত পছন্দের Calibrated Probability ভেবে ভুল করবেন না। এটি কেবল আমাদের Pairwise মডেলের অভ্যন্তরীণ Likelihood; কারণ ট্রেনিংয়ের জুটিগুলো Exposure Bias এবং আমাদের বেছে নেওয়া Negative Sampler-এর নিয়মের ওপর পুরোপুরি নির্ভরশীল। বাস্তবে একটি অদেখা আইটেমও ব্যবহারকারীর দারুণ পছন্দের হতে পারে—তাই কীভাবে ট্রেনিং জুটি তৈরি করা হয়েছে, সেই অনুমানটি সবসময় স্পষ্টভাবে ব্যাখ্যা করা দরকার।"
+        },
+        {
+          "type": "factor_ranking",
+          "title": "ব্যবহৃত BPR-MF মডেলের গঠন",
+          "body": "আমাদের BPR-MF মডেলে Score হিসাব করা হয় কেবল Dot Product `p^T q` দিয়ে; এখানে কোনো User বা Item Bias রাখা হয়নি। একটু খেয়াল করলেই দেখবেন, User Bias রাখলেও দুই আইটেমের বিয়োগফলে তা এমনিতেই কেটে যেত, আর Item Bias রাখতে হলে আলাদা পদ ও Regularization যোগ করতে হতো। এখানে `rank = 8`-এর Factor-গুলো `0.05` Standard Deviation দিয়ে শুরু করে CPU-তে `PyTorch float64`, `seed = 3101`, `Adam` (`lr = 0.01`), সর্বোচ্চ `1024` আকারের Batch এবং `25`টি Epoch চালিয়ে ট্রেন করা হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "সক্রিয় Vector-এর ওপর Minibatch Regularization",
+          "body": "প্রতিটি Minibatch-এ গড় Softplus Loss-এর সাথে আমরা `0.001 / 2 × mean(||p_u||^2 + ||q_i||^2 + ||q_j||^2)` যোগ করেছি। লক্ষ্য করুন, এখানে যেসব User বা জনপ্রিয়/নমুনায়িত Item বারবার Batch-এ আসে, তাদের ওপর এই Penalty-ও বারবার প্রযুক্ত হয়—তাই একে প্রতি Epoch-এ একবার সব Parameter-এর ওপর বৈশ্বিক L2 Penalty দেওয়ার সমান ভাবা যাবে না।\n\nস্বচ্ছতার জন্য বলে রাখা ভালো, এটি মূল BPR অ্যালগরিদম পরিবারের একটি আধুনিক Batched Adam সংস্করণ; মূল গবেষণাপত্রের হুবহু একক-ধাপ SGD প্রতিলিপি নয়।"
+        },
+        {
+          "type": "text",
+          "title": "ইন্টারেক্টিভ প্যানেলে Triplet নিরীক্ষা",
+          "body": "ট্রেনিংয়ের শুরুতে নমুনায়িত প্রথম বাস্তব Triplet-টি আমরা নিরীক্ষার জন্য সংরক্ষণ করে রেখেছি, যাতে ট্রেনড মডেলের চূড়ান্ত Margin, Loss এবং Derivative আপনি সরাসরি পরখ করতে পারেন।\n\nপ্যানেলের Offset স্লাইডার নাড়ালে কেবল ওই ব্যবধানের গাণিতিক হিসাবগুলো তাৎক্ষণিকভাবে বদলায়—ভেতরে নতুন কোনো Optimizer Step চলে না এবং মূল্যায়ন তালিকার সংরক্ষিত Prediction-ও পরিবর্তিত হয় না।"
+        }
+      ]
+    },
+    {
+      "id": "ch31_sampling",
+      "title": "Negative Sampling-এর সুনির্দিষ্ট চুক্তি",
+      "subtitle": "কেন অদেখা আইটেমের Pool এবং দেখা কম রেটিংপ্রাপ্ত আইটেমকে আলাদা রাখা জরুরি",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Negative Pool আসলে কীভাবে সংজ্ঞায়িত?",
+          "body": "BPR-এ অদেখা আইটেম তোলার নিয়মটি নিখুঁতভাবে জানা থাকা চাই। আমাদের মডেলে প্রতিটি User-এর অনুমোদিত Negative Pool হলো পুরো Fit Catalog থেকে ওই User-এর দেখা প্রতিটি Fit Rating বাদ দেওয়ার পর অবশিষ্ট আইটেমগুলো। প্রতি Epoch-এ প্রতিটি Positive আইটেম `i`-এর বিপরীতে এই Pool থেকে প্রতিস্থাপনসহ সুষমভাবে (Uniform with Replacement) একটি করে `j` তোলা হয়। খেয়াল করুন, User কম রেটিং দিয়েছেন এমন দেখা আইটেমগুলোও কিন্তু এই Negative Pool-এ নেই—আমরা সেগুলোকে আলাদা অপছন্দের লক্ষ্য হিসেবে ব্যবহার করিনি। অনেক প্রচলিত কোডে কেবল Positive আইটেম বাদ দিয়ে কম রেটিং পাওয়া আইটেমকে অদেখা Pool-এ রেখে দেওয়া হয়, আমাদের চুক্তিটি তার চেয়ে সুস্পষ্টভাবে আলাদা।"
+        },
+        {
+          "type": "text",
+          "title": "Sampler-এর নিয়ম বদলালে কেন পুরো সমস্যাই বদলে যায়?",
+          "body": "আপনি কি সুষমভাবে (Uniform) নমুনা তুলছেন, জনপ্রিয়তার অনুপাতে তুলছেন, নাকি মডেলের কাছে কঠিন মনে হওয়া Hard Negative বেছে নিচ্ছেন? এই প্রতিটি পছন্দের ফলে নমুনার বণ্টন ও শেখার কাঠিন্য আমূল বদলে যায়! খাতায় একই BPR Loss লেখা থাকলেও Sampler বদলালে আপনার প্রত্যাশিত ঝুঁকি (Expected Risk) সম্পূর্ণ পাল্টে যায়। তাই কেবল \"BPR ব্যবহার করেছি\" বলা যথেষ্ট নয়; প্রতি Positive-এ কয়টি নমুনা, Replacement আছে কি না, কোন আইটেমগুলো ফিল্টার করা হয়েছে এবং কোন Random Seed ব্যবহৃত হয়েছে—সবকিছু নির্দিষ্ট না করলে ফলাফল পুনরুৎপাদন করা অসম্ভব।"
+        },
+        {
+          "type": "math",
+          "title": "সুষম অদেখা নমুনায়নের সূত্র",
+          "body": "j\\sim\\operatorname{Uniform}(I_{fit}\\setminus H_u),\\quad (u,i)\\in L"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ সংরক্ষিত Triplet-এর বৈধতা ও Pool-এর আকার যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/factor_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nbase = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\np = lab[\"pair_audit\"]\nhistory = {i: r for u, i, r, t in base[\"train\"] if u == p[\"user\"]}\nassert history[p[\"positive\"]] >= 4 and p[\"unobserved\"] not in history\nassert p[\"unobserved\"] in lab[\"items\"]\nprint(\"eligible negatives\", len(lab[\"items\"]) - len(history), \"first triple\", p)\n"
+        },
+        {
+          "type": "text",
+          "title": "False Negative-এর বাস্তবতা ও Data Leakage এড়ানো",
+          "body": "আগেই যেমন ইঙ্গিত দিয়েছিলাম, Fit সময়ের শেষে কোনো একটি সিনেমা হয়তো User তখনো দেখেননি, কিন্তু ভবিষ্যতের Window-তে গিয়ে তিনি সেটি দেখে দারুণ পছন্দ করবেন। আমাদের Sampler ভবিষ্যতের খবর জানে না বলে ট্রেনিংয়ের সময় সেই সিনেমাটিকেও অদেখা `j` হিসেবে তুলে আনতে পারে (যাকে False Negative বলা হয়)। এখন কেউ যদি চালাকি করে ভবিষ্যতের Test সেট দেখে সেই সিনেমাগুলোকে আগেভাগেই Negative Pool থেকে সরিয়ে দেন, তবে তা হবে ভয়াবহ Data Leakage! বাস্তব Exposure Log না থাকায় আমরা এই অদেখা লেবেলের Noise আলাদা করে মাপিনি, এবং নমুনায়িত `j`-কে কখনোই নিশ্চিত অপছন্দ বলে দাবি করিনি।"
+        },
+        {
+          "type": "text",
+          "title": "নির্ভুল পুনরুৎপাদনের জন্য Deterministic ক্রম",
+          "body": "কোডের ফলাফল শতভাগ পুনরুৎপাদনযোগ্য রাখতে `NumPy Generator(3101)` দিয়ে প্রতি Epoch-এ প্রথমে সব Negative নমুনা তুলে নেওয়া হয় এবং তারপর Positive উদাহরণগুলোর ক্রম এলোমেলো (Permute) করা হয়। প্রতিটি Positive প্রতি Epoch-এ ঠিক একবার করে আসে এবং `np.array_split` দিয়ে সর্বোচ্চ `1024` আকারের Batch তৈরি করা হয়। আগে থেকেই বৈধ আইটেমের ক্রমবদ্ধ তালিকা তৈরি থাকায় এখানে কোনো অনিশ্চিত Rejection Loop চালাতে হয় না, ফলে র‍্যান্ডম সংখ্যার ব্যবহার থাকে সম্পূর্ণ সুনির্দিষ্ট।"
+        },
+        {
+          "type": "text",
+          "title": "ট্রেনিংয়ে Sampling বনাম মূল্যায়নে পুরো Catalog",
+          "body": "এখানে একটি মারাত্মক পদ্ধতিগত ভুল থেকে সাবধান থাকুন: ট্রেনিং দ্রুত করার জন্য আমরা Negative Sampling করলেও মূল্যায়নের (Evaluation) সময় কিন্তু কোনো Sampling করা চলবে না! আমাদের মূল্যায়ন চলে ইতিমধ্যে দেখা আইটেম বাদে পুরো Fit Catalog-এর ওপর। মাত্র `100`টি নমুনায়িত আইটেমের ভেতর র‍্যাঙ্ক করে সেটিকে পূর্ণ ক্যাটালগের `Recall@10` বলে চালিয়ে দেওয়া গবেষণার একটি পরিচিত ত্রুটি (যা আমরা Book 5 · Chapter 4: RecSys Evaluation & Feedback Loops-এও দেখব)। আমাদের সংরক্ষিত সব তালিকা পূর্ণ ক্যাটালগ হিসাব করেই তৈরি।"
+        },
+        {
+          "type": "text",
+          "title": "প্রান্তিক পরিস্থিতি (Edge Cases) সামলানো",
+          "body": "যদি কখনো এমন কোনো User থাকেন যিনি ক্যাটালগের সব কটি আইটেমই দেখে ফেলেছেন, তবে তার অদেখা Pool ফাঁকা হয়ে যাবে—একটি সাধারণ Sampler কোডে অবশ্যই এই শূন্য Pool নিরাপদে এড়িয়ে যাওয়ার ব্যবস্থা থাকতে হবে (আমাদের ডেটা নিরীক্ষায় নিশ্চিত করা হয়েছে যে প্রতিটি ট্রেনিং User-এর জন্য অদেখা আইটেম রয়েছে)। আর যে User-এর একটিও Positive রেটিং নেই, BPR-এ তার কোনো আপডেট ঘটে না; তখন এলোমেলো প্রাথমিক ওজনের ওপর ভরসা না করে আমাদের সিস্টেম সরাসরি Popularity Fallback ব্যবহার করে।"
+        }
+      ]
+    },
+    {
+      "id": "ch31_pairgrad",
+      "title": "BPR-এর Gradient, যুগপৎ Update এবং Bias কাটাকাটি",
+      "subtitle": "Score ব্যবধানের একটিমাত্র Derivative থেকে কীভাবে তিনটি Vector-এর আপডেট নির্ধারিত হয়",
+      "duration": "60 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "একটি স্কেলার গুণক থেকে তিনটি Vector Gradient",
+          "body": "চলুন BPR Loss `ℓ = softplus(-Δ)`-এর Gradient হাতে নিষ্কাশন করি। প্রথমে ব্যবধান `Δ`-এর সাপেক্ষে অন্তরীকরণ করলে পাওয়া যায় একটি স্কেলার গুণক `g = -sigmoid(-Δ)`। যেহেতু `Δ = p^T (q_i - q_j)`, তাই Chain Rule প্রয়োগ করলেই তিনটি পরিচ্ছন্ন সূত্র বেরিয়ে আসে: User Vector-এর জন্য `g(q_i - q_j)`, পছন্দের Item-এর জন্য `gp`, এবং নমুনায়িত অদেখা Item-এর জন্য `-gp`! লক্ষ্য করুন, ঋণাত্মক Gradient-এর দিকে একটি ছোট ধাপ নিলে তা স্বাভাবিক নিয়মেই ব্যবধান `Δ` বাড়ানোর দিকে কাজ করে; আর যখন মডেল ইতিমধ্যেই বড় ধনাত্মক ব্যবধান তৈরি করে ফেলে, তখন `sigmoid(-Δ)` প্রায় শূন্য হয়ে যাওয়ায় ওই সহজ উদাহরণ থেকে নতুন কোনো চাপ আসে না।"
+        },
+        {
+          "type": "text",
+          "title": "Data Gradient-এর সাথে Regularization যোগ করা",
+          "body": "আমাদের ট্রেনিংয়ে ব্যবহৃত অর্ধেক-`λ` সক্রিয় Vector Penalty থেকে উপরোক্ত তিনটির সাথে যথাক্রমে `+λp`, `+λq_i` এবং `+λq_j` যুক্ত হয় এবং তারপর পুরো Minibatch-এর গড় নেওয়া হয়। খেয়াল রাখবেন, নিচের গাণিতিক ব্লক এবং অ্যাপের প্যানেলে প্রদর্শিত Derivative কেবল বিশুদ্ধ Data Loss-এর অংশটুকু দেখায়—পূর্ণ Optimizer Step মেলাতে চাইলে অবশ্যই এর সাথে Regularization-এর অংশটি যোগ করে নিতে হবে।"
+        },
+        {
+          "type": "math",
+          "title": "BPR-এর তিনটি মূল Gradient সমীকরণ",
+          "body": "g=-\\sigma(-\\Delta),\\quad\\nabla_p\\ell=g(q_i-q_j),\\quad\\nabla_{q_i}\\ell=gp,\\quad\\nabla_{q_j}\\ell=-gp"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ সংরক্ষিত Triplet-এর Analytic ও Numerical Gradient যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/factor_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nimport numpy as np\n\nw = lab[\"weights\"][\"bpr\"]\na = lab[\"pair_audit\"]\num = {u: j for j, u in enumerate(lab[\"users\"])}\nim = {i: j for j, i in enumerate(lab[\"items\"])}\np = np.array(w[\"p\"][um[a[\"user\"]]])\nqi = np.array(w[\"q\"][im[a[\"positive\"]]])\nqj = np.array(w[\"q\"][im[a[\"unobserved\"]]])\nd = p @ (qi - qj)\ng = -1 / (1 + np.exp(d))\ngradient = g * (qi - qj)\neps = 1e-6\nloss = lambda x: np.logaddexp(0, -x @ (qi - qj))\nnumeric = np.array(\n    [\n        (loss(p + eps * np.eye(8)[f]) - loss(p - eps * np.eye(8)[f])) / (2 * eps)\n        for f in range(8)\n    ]\n)\nassert max(abs(gradient - numeric)) < 1e-6\nprint(\"margin\", d, \"gradient\", gradient)\n"
+        },
+        {
+          "type": "text",
+          "title": "কেন User Bias বিয়োগফলে আপনা-আপনি কেটে যায়?",
+          "body": "একটু ভেবে দেখুন, যদি আমরা Score সমীকরণে Global Mean এবং User Bias যোগ করতাম, তবে কী ঘটত? একই User-এর দুটি আইটেমের Score বিয়োগ করার সময় (`s_ui - s_uj`) উভয় পদে থাকা Global Mean এবং User Bias নিখুঁতভাবে একে অপরকে বাতিল (Cancel) করে দিত, ফলে তাদের Gradient হতো শূন্য! অবশ্য Item Bias যোগ করলে `b_i - b_j` টিকে থাকত, তবে আমাদের এই BPR মডেলে কোনো Item Bias রাখা হয়নি। Pairwise Objective-এ কোন Parameter আদৌ ডেটা থেকে শেখা বা চিহ্নিত করা সম্ভব আর কোনটি নয়, এটি তার একটি চমৎকার উদাহরণ।"
+        },
+        {
+          "type": "text",
+          "title": "তিনটি Vector-এর যুগপৎ আপডেট",
+          "body": "Explicit SGD-এর মতোই এখানেও `p`, `q_i` এবং `q_j`—এই তিনটি Vector-এর Gradient অবশ্যই একই Forward অবস্থার পুরোনো মান থেকে হিসাব করতে হবে। আগে `p` বদলে ফেলে সেই নতুন মান দিয়ে `q_i` বা `q_j`-এর হিসাব করলে অ্যালগরিদমটি বদলে যাবে। PyTorch-এ `backward()` চালানোর পর `Adam` একসাথে সব Parameter আপডেট করে, যেখানে তার নিজস্ব প্রথম ও দ্বিতীয় Moment Estimate, Learning Rate এবং Batch Reduction মিলে প্রকৃত গতিপথ নির্ধারণ করে।"
+        },
+        {
+          "type": "text",
+          "title": "চিহ্নের ভুল ধরতে সংখ্যাত্মক পরীক্ষা",
+          "body": "হাতে BPR কোড লেখার সময় `-sigmoid(-Δ)`-এর ঋণাত্মক চিহ্নটি বাদ পড়ে যাওয়া খুবই নৈমিত্তিক একটি ভুল—যার ফলে মডেল পছন্দের আইটেমকে ওপরে তোলার বদলে উল্টো নিচে নামিয়ে দেয়! উপরের কোডে এবং নিচের PyTorch উদাহরণে আমরা আসল সংরক্ষিত Triplet ও ছোট ভেক্টরের ওপর Analytic সূত্র, Central Finite Difference এবং Autograd মিলিয়ে দেখেছি। এটি কেবল আমাদের অন্তরীকরণ সূত্রের শুদ্ধতা প্রমাণ করে, নতুন কোনো ট্রেনিং ফলাফল দাবি করে না।"
+        },
+        {
+          "type": "text",
+          "title": "ইন্টারভিউ প্রশ্ন: BPR Loss কমলেও কেন Recall@10 কমতে পারে?",
+          "body": "ইন্টারভিউতে প্রায়ই জিজ্ঞেস করা হয়: BPR তো সরাসরি র‍্যাঙ্কিংয়ের জন্যই তৈরি, তবুও এর Loss কমার পরেও `Recall@10` কেন কম হতে পারে? উত্তরটি হলো, নমুনায়িত যেকোনো অদেখা জুটির গড় স্থানীয় ক্রম ঠিক করা আর পুরো ক্যাটালগের শীর্ষ ১০টি ঘরে (`Top-K`) সঠিক আইটেম বসানো এক কথা নয়! একটি মাঝারি আইটেম হাজারো অপ্রাসঙ্গিক আইটেমকে হারালেও শীর্ষ ১০-এ জায়গা নাও পেতে পারে; তা ছাড়া Sampling বণ্টন, Regularization, জনপ্রিয় বনাম দুষ্প্রাপ্য আইটেম এবং ভবিষ্যতের Cohort-এর ধরনও ফলাফলকে প্রভাবিত করে। তাই এই Surrogate Loss-কে কখনোই সরাসরি `NDCG` অপ্টিমাইজেশন বলবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "খাতাকলমে একটি Triplet-এর সব Gradient হিসাব",
+          "body": "চলুন সংখ্যার সাহায্যে পুরো হিসাবটি একবার ঝালিয়ে নিই। ধরা যাক, User Factor `u = [1, 2]`, Positive Item Factor `[2, 0]` এবং Negative Item Factor `[0, 1]`। এখানে দুটি Dot Product-এর মানই `2`, ফলে তাদের ব্যবধান `margin = 0` এবং `loss = log(2)`। এই বিন্দুতে ব্যবধানের সাপেক্ষে Loss-এর অন্তরজ হলো `-0.5`। এবার Chain Rule বসালেই আমরা পেয়ে যাই: User Gradient `-0.5 × ([2, 0] - [0, 1]) = [-1, 0.5]`, Positive Item Gradient `[-0.5, -1]` এবং Negative Item Gradient `[0.5, 1]`। আর নিচের কোডে যেমন দেখবেন, সাথে একটি `user_bias = 5.0` যোগ করলেও বিয়োগের সময় তা কেটে গিয়ে তার Gradient নিখুঁত `0.0` আসে!"
+        },
+        {
+          "type": "code",
+          "title": "PyTorch Autograd দিয়ে Margin ও চারটি Derivative যাচাই",
+          "body": "import torch\nimport torch.nn.functional as F\n\nuser = torch.tensor([1.0, 2.0], dtype=torch.float64, requires_grad=True)\npositive = torch.tensor([2.0, 0.0], dtype=user.dtype, requires_grad=True)\nnegative = torch.tensor([0.0, 1.0], dtype=user.dtype, requires_grad=True)\nuser_bias = torch.tensor(5.0, dtype=user.dtype, requires_grad=True)\nmargin = (user @ positive + user_bias) - (user @ negative + user_bias)\nloss = F.softplus(-margin)\ndu, di, dj, db = torch.autograd.grad(loss, (user, positive, negative, user_bias))\nmultiplier = -torch.sigmoid(-margin.detach())\ntorch.testing.assert_close(du, multiplier * (positive.detach() - negative.detach()))\ntorch.testing.assert_close(di, multiplier * user.detach())\ntorch.testing.assert_close(dj, -multiplier * user.detach())\nprint(round(loss.item(), 6), *du.tolist(), *di.tolist(), *dj.tolist(), db.item())\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে হিসাব করুন",
+          "body": "যদি উপরের Loss-এর সাথে অতিরিক্ত `lambda * ||u||^2` Regularization Penalty যোগ করা হয়, তবে User Gradient `du` কীভাবে পরিবর্তিত হবে?",
+          "solution": "মূল Pair-loss থেকে পাওয়া Gradient-এর সাথে অতিরিক্ত `2 * lambda * u` পদটি যোগ হবে। মনে রাখতে হবে, যুগপৎ আপডেটের নিয়ম অনুযায়ী `u`, `positive` এবং `negative`—সব কটির Gradient আপডেটের আগের একই পুরোনো Parameter থেকে বের করতে হবে; আগে `u` আপডেট করে তারপর Item Gradient হিসাব করলে আপডেট নিয়মটি বদলে যাবে। পাশাপাশি প্রতি নমুনায় কতবার এই Regularization প্রযুক্ত হচ্ছে এবং Sampling Pool কীভাবে নেওয়া হচ্ছে, সেটিও স্পষ্টভাবে উল্লেখ করা প্রয়োজন।",
+          "reference": "https://arxiv.org/abs/1205.2618"
+        }
+      ]
+    },
+    {
+      "id": "ch31_features",
+      "title": "Factorization Machine-এ Feature Encoding",
+      "subtitle": "User ও Item ID-র পাশাপাশি Sparse Genre Metadata একীভূত করার কৌশল",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "নির্দিষ্ট User-Item ছকের বাইরে এক সাধারণ কাঠামো",
+          "body": "সাধারণ Matrix Factorization কেবল একটি নির্দিষ্ট ছক চেনে: একপাশে User ID, আরেক পাশে Item ID। কিন্তু আমরা যদি এর সাথে সিনেমার Genre, সময় বা অন্য কোনো প্রাসঙ্গিক বৈশিষ্ট্য যোগ করতে চাই? তখনই কাজে আসে Factorization Machine (FM), যা যেকোনো Sparse বাস্তব-মানের (Real-valued) Feature Vector থেকে জোড়ায় জোড়ায় মিথস্ক্রিয়া (Pairwise Interactions) শিখতে পারে। আমাদের এই মডেলে আমরা User-এর One-hot সংকেত, Item-এর One-hot সংকেত এবং সিনেমার উৎস Genre-গুলো ব্যবহার করেছি—ভবিষ্যতের কোনো Tag, Text Embedding বা ব্যবহারকারীর জনমিতিক তথ্য (Demographics) এখানে যোগ করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "Genre Feature-এর L2 Normalization",
+          "body": "কোনো সিনেমার যদি ১টি Genre থাকে আর অন্য একটি সিনেমার থাকে ৫টি Genre, তবে সরাসরি `1` বসালে বেশি Genre-ওয়ালা সিনেমার সক্রিয় পদের যোগফল অসামঞ্জস্যপূর্ণভাবে বড় হয়ে যাবে। তাই একটি সিনেমার `m`টি Genre থাকলে প্রতিটি সক্রিয় Genre-এর মান আমরা রেখেছি `1 / sqrt(m)`—যার ফলে Genre ব্লকটির মোট L2 Norm সবসময় সুন্দরভাবে `1` থাকে! অন্যদিকে User এবং Item-এর One-hot পদের মান থাকে `1`। কোনো সিনেমায় একটিও Genre না থাকলে সেই ব্লকটি স্রেফ খালি থাকে, ফলে শূন্য দিয়ে ভাগের কোনো ঝুঁকি নেই। খেয়াল রাখবেন, এটি সরল L2 স্কেলিং; আগের অধ্যায়ে (Book 5 · Chapter 1: Recommendation Foundations) দেখা IDF Profile নয়।"
+        },
+        {
+          "type": "math",
+          "title": "একক উদাহরণের যৌথ Sparse Feature Vector",
+          "body": "x=[\\mathrm{onehot}(u),\\mathrm{onehot}(i),g_i/\\sqrt{|G_i|}]"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ FM Feature Offset ও Genre Norm যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/factor_lab.json\").read_text(encoding=\"utf-8\")\n)\n\na = lab[\"fm_audit\"]\nids = a[\"indices\"]\nx = a[\"values\"]\nnu = len(lab[\"users\"])\nni = len(lab[\"items\"])\nassert ids[0] < nu and nu <= ids[1] < nu + ni\nassert all(j >= nu + ni for j in ids[2:])\nassert not x[2:] or abs(sum(v * v for v in x[2:]) - 1) < 1e-12\nprint(ids, x, \"feature rows\", len(lab[\"weights\"][\"fm\"][\"linear\"]))\n"
+        },
+        {
+          "type": "text",
+          "title": "8408টি সারির সুশৃঙ্খল সূচক বিন্যাস (Feature Offsets)",
+          "body": "একটি একক সারণিতে সব Feature রাখার জন্য আমরা সুনির্দিষ্ট সূচক সীমা বা Offset ব্যবহার করেছি: `0` থেকে `521` পর্যন্ত `522` জন User, `522` থেকে `8388` পর্যন্ত `7867`টি Item, এবং সবশেষে `19`টি Genre—সব মিলিয়ে মোট `8408`টি Feature সারি! মনে রাখবেন, মূল ডেটাসেটের `movieId` সংখ্যাটি সরাসরি গাণিতিক ইনপুট হিসেবে ঢোকে না, বরং আমাদের Mapping সারণি ঘুরে তার নির্দিষ্ট One-hot সূচকে রূপান্তরিত হয়; আর সিনেমার প্রদর্শিত নাম বা মুক্তির সালও এখানে ইনপুট হিসেবে ব্যবহৃত হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "যৌথ Embedding-এর শক্তি",
+          "body": "এই `8408`টি Feature-এর প্রতিটির জন্য মডেল একটি করে রৈখিক স্কেলার ওজন `w_j` এবং একটি করে ৮-মাত্রিক (`8D`) Latent Vector `v_j` শেখে। এখানে দারুণ ব্যাপার হলো, কোনো একটি Genre-এর একই ভেক্টর একই সাথে `User × Genre`, `Item × Genre` এবং একাধিক Genre থাকলে `Genre × Genre`—সবগুলো জোড়ার মিথস্ক্রিয়ায় যৌথভাবে অংশ নেয়! আদর্শ (Standard) FM এভাবেই একই Embedding সব ক্ষেত্রে ভাগাভাগি করে পরিসংখ্যানগত শক্তি সঞ্চয় করে। (উন্নততর Field-aware FM বা FFM প্রতিটি ক্ষেত্রের জন্য আলাদা আলাদা ভেক্টর রাখে, যা আমরা এখানে বাস্তবায়ন করিনি।)"
+        },
+        {
+          "type": "text",
+          "title": "Feature Model মানেই কি অদেখা ID-র জাদুকরী সমাধান?",
+          "body": "অনেকে মনে করেন, FM যেহেতু Genre নেয়, তাই নতুন বা অদেখা সিনেমার সমস্যার বোধহয় এমনিতেই সমাধান হয়ে গেছে! কিন্তু বাস্তব প্রকৌশলে কোনো কিছুই স্বয়ংক্রিয় জাদুতে ঘটে না। আমাদের বর্তমান পরীক্ষিত ছকটি কেবল Fit সেটে থাকা পরিচিত ID-গুলোর জন্যই তৈরি; অপরিচিত User বা Item এলে রেটিং অনুমানের ক্ষেত্রে আমাদের সিস্টেম নিরাপদে Global Mean-এ এবং Cold Ranking-এর ক্ষেত্রে Popularity-তে ফিরে যায় (Fallback)। কেবল Genre Metadata ব্যবহার করে সম্পূর্ণ নতুন আইটেমের র‍্যাঙ্কিং কতটা ভালো হয়, তা এই অধ্যায়ে আলাদাভাবে মাপা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "স্থির ওজনে Genre বন্ধ করা বনাম নতুন করে ট্রেনিং",
+          "body": "অ্যাপের Workbench-এ যখন আপনি Genre সুইচটি বন্ধ (Off) করেন, তখন আসলে একই ট্রেনড ওজন স্থির রেখে ইনপুট থেকে Genre পদগুলো সরিয়ে দেওয়া হয়—যাকে বলা হয় Frozen-input Intervention। আপনি যদি জানতে চান \"Genre একেবারেই না থাকলে নতুন করে শেখা FM কেমন করত?\", তবে সেটি হবে Refitted Ablation, যার জন্য শুরু থেকে মডেলটি আবার ট্রেন করে অভিন্ন মূল্যায়ন চুক্তিতে পরীক্ষা করতে হবে।"
+        }
+      ]
+    },
+    {
+      "id": "ch31_fm",
+      "title": "FM সমীকরণ এবং O(kd) সময়ের Interaction অভেদ",
+      "subtitle": "দ্বৈত লুপ না চালিয়েই কীভাবে সব Feature জোড়ার নিখুঁত Score হিসাব করা হয়",
+      "duration": "60 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "স্বাধীন সহগের বদলে Factorized জোড়া",
+          "body": "একটি সাধারণ দ্বিতীয় ক্রমের বহুপদী মডেলে প্রতিটি Feature জোড়ার `(j, k)` জন্য আলাদা ওজন রাখতে গেলে মোট `O(d^2)` সংখ্যক স্বাধীন Parameter লাগত—আর আমাদের মতো প্রচণ্ড Sparse ডেটায় বেশিরভাগ জোড়াই কখনো একসাথে দেখা দেয় না বলে সেই ওজনগুলো শেখাই যেত না! Factorization Machine (FM) এই সমস্যার চমৎকার সমাধান দেয়: এটি জোড়ার ওজনকে দুটি `k`-মাত্রিক ভেক্টরের Dot Product `<v_j, v_k>` হিসেবে প্রকাশ করে, ফলে মাত্র `dk` সংখ্যক Parameter দিয়েই সব মিথস্ক্রিয়া ধরা যায়। একই Feature বিভিন্ন জোড়ায় অংশ নেওয়ায় বিক্ষিপ্ত পর্যবেক্ষণ থেকেও মডেল পরিসংখ্যানগত শক্তি ভাগাভাগি করে নিতে পারে, যদিও পর্যাপ্ত তথ্য না থাকলে সঠিক মান উদ্ধার হওয়ার নিশ্চয়তা আপনা-আপনি তৈরি হয় না।"
+        },
+        {
+          "type": "text",
+          "title": "বর্গ বিস্তৃতি থেকে রৈখিক সময়ের অভেদ নিষ্কাশন",
+          "body": "কিন্তু সব জোড়ার ওপর সরাসরি `Σ_{j < k} <v_j, v_k> x_j x_k` লুপ চালাতে গেলে তো সময়ের জটিলতা বেশি হয়ে যাবে! একটি সাধারণ বীজগাণিতিক কৌশল এখানে দারুণ কাজ করে। একটি নির্দিষ্ট অক্ষ `f`-এর জন্য যোগফলের বর্গ `(Σ_j v_jf x_j)^2` বিস্তৃত করে দেখুন: এর ভেতরে পাবেন প্রতিটি পদের নিজের সাথে গুণফল (Diagonal পদ `Σ_j v_jf^2 x_j^2`) এবং ভিন্ন ভিন্ন পদের গুণফলের দ্বিগুণ। সুতরাং এই বর্গ থেকে কর্ণ পদগুলো বিয়োগ করে `2` দিয়ে ভাগ করলেই এবং সব `f` অক্ষে যোগ করলেই দ্বৈত লুপ ছাড়াই হুবহু একই উত্তর বেরিয়ে আসে! নিজের সাথে নিজের মিথস্ক্রিয়া (Self-interaction) বাদ দেওয়ার জন্য এই বিয়োগটি অপরিহার্য।"
+        },
+        {
+          "type": "math",
+          "title": "Factorization Machine-এর দ্রুত ও নিখুঁত সমীকরণ",
+          "body": "\\hat y=w_0+\\sum_jw_jx_j+\\frac12\\sum_f\\left[(\\sum_jv_{jf}x_j)^2-\\sum_jv_{jf}^2x_j^2\\right]"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ জোড়ার লুপ ও দ্রুত অভেদের নিখুঁত মিল যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/factor_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nimport numpy as np\n\nw = lab[\"weights\"][\"fm\"]\na = lab[\"fm_audit\"]\nids = a[\"indices\"]\nx = np.array(a[\"values\"])\nv = np.array(w[\"v\"])[ids]\nlinear = np.array(w[\"linear\"])[ids] @ x\nslow = sum(\n    float(v[j] @ v[k]) * x[j] * x[k]\n    for j in range(len(ids))\n    for k in range(j + 1, len(ids))\n)\nvx = v * x[:, None]\nfast = 0.5 * (np.square(vx.sum(0)).sum() - np.square(vx).sum())\nassert abs(slow - fast) < 1e-12 and abs(w[\"bias\"] + linear + fast - a[\"score\"]) < 1e-12\nprint(\"bias\", w[\"bias\"], \"linear\", linear, \"interaction\", fast)\n"
+        },
+        {
+          "type": "text",
+          "title": "হিসাবের জটিলতা ও Padding-এর নিরাপদ আচরণ",
+          "body": "একটি উদাহরণে যদি মাত্র `s`টি সক্রিয় (Nonzero) Feature থাকে এবং মডেলের মাত্রা হয় `k`, তবে সরাসরি জোড়া গুনতে লাগত `O(s^2 k)` সময়, অথচ আমাদের দ্রুত অভেদে লাগে মাত্র `O(sk)` সময়! পুরো Embedding সারণির মেমরি মোট Feature সংখ্যা `d`-এর ওপর নির্ভর করলেও Prediction দেওয়ার সময় কেবল সক্রিয় পদগুলো পড়লেই চলে। এমনকি ব্যাচ সমান করার জন্য যদি `index = 0` দিয়ে Padding যোগ করাও হয়, তার মান `x = 0` থাকায় Score এবং Gradient উভয় ক্ষেত্রেই তার অবদান নিখুঁত শূন্য থাকে।"
+        },
+        {
+          "type": "factor_workbench",
+          "title": "Matrix Factorization আসলে FM-এরই একটি বিশেষ রূপ",
+          "body": "একটু মিলিয়ে দেখলেই চমৎকৃত হবেন: যদি কোনো উদাহরণে কেবল একজন User-এর One-hot এবং একটি Item-এর One-hot সক্রিয় থাকে, তবে তাদের মধ্যে জোড়া তৈরি হয় মাত্র একটি—`<v_user, v_item>`! এর সাথে Global Bias এবং রৈখিক পদ `w_user + w_item` যোগ করলে অবিকল আমাদের চেনা Biased Matrix Factorization-এর সমীকরণটিই ফিরে পাওয়া যায়! আর যখনই এর সাথে সিনেমার Genre যুক্ত হয়, তখন `User × Item`-এর পাশাপাশি `User × Genre`, `Item × Genre` এবং একাধিক Genre থাকলে `Genre × Genre` জোড়াগুলোও স্বয়ংক্রিয়ভাবে হিসাবের ভেতরে চলে আসে; তাই তখন একে শুধু User-Item Dot Product বলে বর্ণনা করা অসম্পূর্ণ।"
+        },
+        {
+          "type": "text",
+          "title": "Workbench-এ জোড়াগুলোর অবদান কীভাবে পড়বেন",
+          "body": "উপরের ইন্টারেক্টিভ Workbench-এ নির্বাচিত বাস্তব User-এর শীর্ষ FM আইটেমটির Global Bias, রৈখিক যোগফল এবং সব জোড়ার মোট অবদান আলাদাভাবে দেখানো হয়েছে। তালিকায় বোঝার সুবিধার্থে প্রথম `15`টি প্রধান জোড়া দেখানো হলেও মোট যোগফলের ভেতরে প্রতিটি সক্রিয় জোড়ার হিসাবই রয়েছে। মনে রাখবেন, বর্তমান সংরক্ষিত Basis-এ কোন জোড়া কতটুকু ধনাত্মক বা ঋণাত্মক যোগ করল তা কেবল গাণিতিক Score ভাঙে—এগুলো Calibrated Probability বা কার্যকারণগত ব্যাখ্যা নয়।"
+        },
+        {
+          "type": "text",
+          "title": "স্বাধীন যাচাইকরণ ও দ্রুত Serving কৌশল",
+          "body": "বাস্তব সক্রিয় Feature-গুলোর ওপর ধীরগতির জোড়ার লুপ, দ্রুত অভেদ, PyTorch Forward এবং অ্যাপের Dart হিসাব—চারটিই শতভাগ মিলে যাওয়া নিশ্চিত করা হয়েছে। এছাড়া দ্রুত Serving-এর জন্য প্রতিটি আইটেমের নিজস্ব `Item + Genre` সমষ্টিগত ভেক্টর এবং আইটেমের ভেতরের অভ্যন্তরীণ পদগুলো আগেভাগেই হিসাব করে (Precompute) রাখা যায়; ফলে র‍্যাঙ্কিংয়ের সময় কেবল User ভেক্টরের সাথে একটি Dot Product নিলেই নিখুঁত বীজগাণিতিক ফলাফল পাওয়া যায়—কোনো আসন্নীকরণের প্রয়োজনই পড়ে না!"
+        },
+        {
+          "type": "text",
+          "title": "খাতাকলমে একটি FM Interaction দুইভাবে হিসাব",
+          "body": "হাতে একটি ছোট উদাহরণ কষে অভেদটির সৌন্দর্য পরখ করা যাক। ধরুন, ইনপুট ভেক্টর `x = [1, 2, 0]` এবং তিনটি Feature-এর Factor সারি যথাক্রমে `[[1, 2], [3, 4], [5, 6]]`। এখানে কেবল প্রথম দুটি Feature সক্রিয়; তাদের Factor Dot Product হলো `11` এবং ইনপুট মানের গুণফল `2`, তাই আসল মিথস্ক্রিয়ার মান হলো `22`। এবার দ্রুত অভেদ দিয়ে দেখুন: ওজনযুক্ত ভেক্টরগুলোর যোগফলের বর্গ শক্তি `149` থেকে কর্ণ পদগুলোর বর্গ অবদান `105` বিয়োগ করে `2` দিয়ে ভাগ করলেই অবিকল `22` পাওয়া যায়! পাশাপাশি প্রথম সারির Gradient আসে `[6, 8]` এবং নিষ্ক্রিয় তৃতীয় সারির (`x_2 = 0`) Gradient হয় নিখুঁত শূন্য। নিচের কোডে দুটো হিসাবই পাশাপাশি যাচাই করে দেখুন।"
+        },
+        {
+          "type": "code",
+          "title": "জোড়ার লুপ, দ্রুত অভেদ ও Gradient একসাথে যাচাই",
+          "body": "import torch\n\nfeatures = torch.tensor([1.0, 2.0, 0.0], dtype=torch.float64)\nfactors = torch.tensor(\n    [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]], dtype=features.dtype, requires_grad=True\n)\npair_sum = sum(\n    (factors[j] @ factors[k]) * features[j] * features[k]\n    for j in range(3)\n    for k in range(j + 1, 3)\n)\ncombined = (features[:, None] * factors).sum(dim=0)\ndiagonal = (features[:, None].square() * factors.square()).sum()\nfast = 0.5 * (combined.square().sum() - diagonal)\ntorch.testing.assert_close(fast, pair_sum)\ngradient = torch.autograd.grad(fast, factors)[0]\nmanual = features[:, None] * (combined.detach() - features[:, None] * factors.detach())\ntorch.testing.assert_close(gradient, manual)\nprint(pair_sum.item(), fast.item(), *gradient[0].tolist(), gradient[2].norm().item())\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে হিসাব করুন",
+          "body": "দ্রুত অভেদটির (`Fast Identity`) ভেতর থেকে যদি কর্ণ পদগুলো (Diagonal Terms) বিয়োগ না করা হতো, তবে কোন ভুল মিথস্ক্রিয়াগুলো Score-এর ভেতর ঢুকে পড়ত?",
+          "solution": "বর্গ বিস্তৃতির ভেতরে প্রতিটি Feature-এর নিজের সাথে নিজের বর্গ পদ (`v_jf^2 * x_j^2` বা Self-interaction) ঢুকে থাকে। কর্ণ পদগুলো বিয়োগ করলে কেবল ভিন্ন ভিন্ন Feature-এর মধ্যকার Cross Term-গুলোই অবশিষ্ট থাকে, আর যেহেতু প্রতিটি ভিন্ন জোড়া বিস্তৃতিতে দুবার করে আসে, তাই `2` দিয়ে ভাগ করলে নিখুঁতভাবে `j < k` জোড়াগুলোর যোগফল পাওয়া যায়। মনে রাখবেন, Global Bias ও রৈখিক পদগুলো পূর্ণাঙ্গ Prediction-এর আলাদা অংশ।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch31_fmtraining",
+      "title": "FM Training, Gradient এবং Masked Padding",
+      "subtitle": "একই Forward সমীকরণের ওপর ভিন্ন Loss বসালে কীভাবে পুরো টাস্ক বদলে যায়",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "আমাদের ট্রেনিংয়ে ব্যবহৃত সুনির্দিষ্ট Objective",
+          "body": "আমাদের FM মডেলটির ট্রেনিং লক্ষ্য ছিল প্রতিটি দেখা Fit Star Rating। ব্যবহৃত Objective-টি হলো Minibatch Mean Squared Error, যার সাথে যুক্ত হয়েছে সক্রিয় ভেক্টরগুলোর গড় পেনাল্টি `0.001 × mean(Σ_active ||v_j||^2 x_j^2)` এবং সক্রিয় রৈখিক ওজনগুলোর গড় পেনাল্টি `0.0001 × mean(Σ_active w_j^2 x_j^2)` (এখানে Global Bias-এর ওপর কোনো Penalty দেওয়া হয়নি)। খেয়াল করুন, কেবল সক্রিয় Feature-এর ওপর এই পেনাল্টি দেওয়ায় তা আইটেম বা ইউজারের আসার হারের ওপর নির্ভরশীল (Frequency-dependent)—এটি ALS-এর বৈশ্বিক L2 পেনাল্টির সমতুল্য নয়।"
+        },
+        {
+          "type": "text",
+          "title": "O(kd) সময়েই নিখুঁত Gradient হিসাব",
+          "body": "দ্রুত মিথস্ক্রিয়া সূত্রটির সবচেয়ে বড় উপহার হলো, এর অন্তরজও রৈখিক সময়েই বের করা যায়! অক্ষ `f`-এর সমষ্টি `S_f = Σ_k v_kf x_k` আগে হিসাব করা থাকলে `v_jf`-এর সাপেক্ষে Prediction-এর অন্তরজ হয় স্রেফ `x_j (S_f - v_jf x_j)`। এরপর MSE Loss-এর জন্য এর সাথে `2(pred - rating) / batch_size` গুণ করে Regularizer-এর অংশ যোগ করলেই কাজ শেষ! একইভাবে রৈখিক ওজনের অন্তরজ হলো `x_j` এবং Global Bias-এর অন্তরজ `1`। আর যেসব ঘরে Padding দেওয়া হয়েছে, সেখানে `x_j = 0` হওয়ায় তাদের অবদান ও Gradient আপনা-আপনিই শূন্য হয়ে যায়।"
+        },
+        {
+          "type": "math",
+          "title": "FM Interaction পদের আংশিক অন্তরজ",
+          "body": "\\frac{\\partial\\hat y}{\\partial v_{jf}}=x_j\\left(\\sum_kv_{kf}x_k-v_{jf}x_j\\right)"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ PyTorch Autograd ও হাতে লেখা FM Derivative যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"factor31\", Path(\"assets/datasets/movielens/factor_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/factor_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nimport torch, numpy as np\n\nw = lab[\"weights\"][\"fm\"]\na = lab[\"fm_audit\"]\nids = torch.tensor([a[\"indices\"]])\nx = torch.tensor([a[\"values\"]], dtype=torch.float64)\nmodel = m.FM(len(w[\"linear\"]), 0)\nwith torch.no_grad():\n    model.bias.copy_(torch.tensor(w[\"bias\"], dtype=torch.float64))\n    model.linear.copy_(torch.tensor(w[\"linear\"], dtype=torch.float64))\n    model.v.copy_(torch.tensor(w[\"v\"], dtype=torch.float64))\n# Backward accumulates into .grad; the seed or reduction sets the scale.\npred = model(ids, x)\npred.backward()\nj = a[\"indices\"][0]\nv = np.array(w[\"v\"])\nvalues = np.array(a[\"values\"])\nsumv = (v[a[\"indices\"]] * values[:, None]).sum(0)\nassert np.max(abs(model.v.grad[j].numpy() - (sumv - v[j]))) < 1e-7\nprint(float(pred.detach()[0]))\n"
+        },
+        {
+          "type": "text",
+          "title": "প্রকৃত ট্রেনিংয়ের সেটিংস ও স্বচ্ছতা",
+          "body": "এই রানটি চালানো হয়েছে CPU-তে `PyTorch float64` ব্যবহার করে: যেখানে `seed = 3102`, ভেক্টরের প্রাথমিক Standard Deviation `0.02`, প্রাথমিক রৈখিক ওজন `0`, এবং প্রাথমিক Global Bias ধরা হয়েছে Fit সেটের গড় রেটিং। `Adam` অপ্টিমাইজারে `lr = 0.01` রেখে সর্বোচ্চ `1024` আকারের ব্যাচে মোট `20`টি Epoch চালানো হয়েছে (`NumPy Generator(3102)` দিয়ে ডেটা শাফল করে)। আগের মডেলগুলোর মতোই এখানেও সর্বশেষ Epoch-টিই রাখা হয়েছে—কোনো ডায়াগনস্টিক মেট্রিক দেখে সেরা Epoch বা সুবিধাজনক Seed বেছে নেওয়া হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "মডেলের পরিবার বনাম প্রকৃত ব্যবহৃত Objective",
+          "body": "একটি জরুরি ধারণাগত পার্থক্য মনে রাখবেন: হুবহু একই FM Forward সমীকরণকে আপনি Logistic Loss দিয়ে Click-Through Rate (CTR) ক্লাসিফিকেশনে বা BPR-এর মতো Pairwise Loss দিয়ে র‍্যাঙ্কিংয়েও ট্রেন করতে পারেন! কিন্তু আমাদের এই পরীক্ষায় চালানো হয়েছে শুধুমাত্র দেখা রেটিংয়ের ওপর Regression। তাই এই ফলাফলকে কখনোই বাইনারি CTR ক্লাসিফায়ার, Field-aware FM (FFM) কিংবা DeepFM-এর ফলাফল হিসেবে দাবি করা যাবে না—সবসময় মডেলের নাম এবং প্রকৃত ব্যবহৃত Loss আলাদা করে উল্লেখ করবেন।"
+        },
+        {
+          "type": "text",
+          "title": "কেন বেশি ক্ষমতাসম্পন্ন FM এই রানে পিছিয়ে পড়ল?",
+          "body": "আমাদের এই রানে দেখা যায়, সব ভবিষ্যৎ রেটিংয়ে FM-এর `RMSE` হয়েছে `1.07709` এবং উভয় দিক পরিচিত এমন Warm সারিতে `1.09790`—যা আমাদের সরল Explicit ALS মডেলের চেয়ে দুর্বল! এটি বাস্তব মেশিন লার্নিংয়ের একটি অমূল্য শিক্ষা: খাতায়-কলমে বেশি নমনীয় বা Expressive মডেল নিলেই যে স্বয়ংক্রিয়ভাবে ভালো Generalization মিলবে, তার কোনো গ্যারান্টি নেই। এখানে আলাদা Hyperparameter টিউনিং বা নতুন করে Genre-বিহীন ট্রেনিং চালানো হয়নি; বরং কেন ডিফল্ট সেটিংসে বড় মডেলও পিছিয়ে পড়তে পারে, তা বোঝার জন্যই এই ফলাফলটি অকপটে সংরক্ষণ করা হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "নিজে কোড চালানোর সময় যেসব দিকে খেয়াল রাখবেন",
+          "body": "সংরক্ষিত ওজন লোড করে হিসাব মেলানোর সময় ডেটার ধরন অবশ্যই `float64` রাখবেন এবং শুরুতেই Feature Offset, Genre Normalization ও Padding Mask ঠিক আছে কি না তা যাচাই করে নেবেন। মনে রাখবেন, অ্যাপটি আপনার শেখার সুবিধার্থে কোড প্রদর্শন ও খসড়া সংরক্ষণ করে, আর প্রকৃত কোড চলে বাহ্যিক Python পরিবেশে; অনুশীলনীর সংখ্যাসূচক পরীক্ষক কেবল আপনার চূড়ান্ত উত্তরের মান মিলিয়ে দেখে।"
+        }
+      ]
+    },
+    {
+      "id": "ch31_cold",
+      "title": "Cold Start, Bias Fallback এবং Serving Policy",
+      "subtitle": "কেন অদেখা User বা Item-এর ক্ষেত্রে Rating অনুমান এবং Ranking-এর নীতি আলাদা রাখতে হয়",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "অপরিচিত User-এর কোনো শেখা Embedding থাকে না",
+          "body": "সম্পূর্ণ নতুন বা Cold User যখন সিস্টেমে আসেন, তখন তার জন্য আমাদের মডেলে কোনো শেখা Latent Vector থাকে না। এই অবস্থায় ট্রেনিংয়ের শুরুর কোনো এলোমেলো প্রাথমিক ভেক্টর দিয়ে র‍্যাঙ্কিং করে সেটিকে \"ব্যক্তিগত পছন্দ\" বলে চালিয়ে দেওয়া পুরোপুরি অর্থহীন! তাই আমাদের পরীক্ষিত চারটি র‍্যাঙ্কারই প্রকৃত Cold User-এর ক্ষেত্রে সুস্পষ্টভাবে Popularity Fallback ব্যবহার করে। এমনকি Implicit ALS এবং BPR-এ কোনো পুরোনো Fit User-এরও যদি একটিও Positive রেটিং না থাকে, তখনো ঠিক একই Fallback নীতি ব্যবহৃত হয় এবং UI-তে তা স্পষ্টভাবে জানিয়ে দেওয়া হয়।"
+        },
+        {
+          "type": "text",
+          "title": "রেটিং অনুমানের ক্ষেত্রে আংশিক পরিচিতির সুবিধা",
+          "body": "কিন্তু টাস্কটি যদি র‍্যাঙ্কিং না হয়ে Explicit Star Rating অনুমান (`RMSE`) হয়, তখন আমাদের নীতিটি হয় আরও সূক্ষ্ম! যদি User বা Item-এর মধ্যে অন্তত একটি পরিচিত থাকে, তবে তার শেখা Bias পদটি আমরা ঠিকই ব্যবহার করি, কেবল যেকোনো একটি ID অপরিচিত হলে তাদের মধ্যকার Dot Product অংশটুকু শূন্য (`0`) হয়ে যায়; আর দুটোই অপরিচিত হলে ফিরে যাই Global Mean-এ। লক্ষ্য করুন: র‍্যাঙ্কিংয়ের বেলায় জনপ্রিয়তার গণনা, আর রেটিং অনুমানের বেলায় উপলব্ধ Bias ব্যবহার—এই দুটি স্বতন্ত্র নীতি আমাদের রিপোর্টে আলাদাভাবে নথিভুক্ত রাখা হয়েছে।"
+        },
+        {
+          "type": "math",
+          "title": "Explicit Cold-start Rating-এর আংশিক Fallback সূত্র",
+          "body": "\\hat r_{cold}=\\mu+b_u^{known}+b_i^{known},\\quad p_u^\\top q_i=0\\ \\text{if either ID unknown}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Cold User-এর জন্য চারটি মডেলের অভিন্ন Fallback যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/factor_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nbase = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\ncold = lab[\"samples\"][-1][\"user\"]\nassert cold not in lab[\"users\"]\nrow = next(r for r in lab[\"rows\"] if r[\"user\"] == cold)\nfor method in [\"explicit_als\", \"implicit_als\", \"bpr\", \"fm\"]:\n    assert row[\"rankings\"][method] == row[\"rankings\"][\"popularity\"]\nprint(\"actual cold source user\", cold)\n"
+        },
+        {
+          "type": "text",
+          "title": "FM মডেলে অদেখা ID-র বর্তমান নীতি",
+          "body": "আমাদের বর্তমান FM রেটিং নীতিতে User অথবা Item যেকোনো একটি অপরিচিত হলেই সরাসরি Fit Global Mean ব্যবহার করা হয়; আমরা এখানে কোনো কৃত্রিম `UNK` টোকেন Embedding বানাইনি বা যাচাইবিহীনভাবে শুধু Genre দিয়ে Cold Score অনুমান করিনি। যেহেতু আমাদের ভবিষ্যতের সেটে প্রচুর নতুন User রয়েছেন, তাই সামগ্রিক `All-future RMSE`-এর ওপর এই Fallback নীতিটির বড় প্রভাব পড়ে—ঠিক এ কারণেই স্বচ্ছতার স্বার্থে উভয় দিক পরিচিত এমন `Warm-known RMSE` আমরা আলাদা করে রিপোর্ট করেছি।"
+        },
+        {
+          "type": "text",
+          "title": "Serving-এর সময় হিসাব দ্রুত করার কৌশল",
+          "body": "আগেই যেমন দেখেছি, FM-এ প্রতিটি আইটেমের নিজস্ব `Item + Genre` ভেক্টর এবং অভ্যন্তরীণ মিথস্ক্রিয়া আগেভাগেই ক্যাশ (Cache) করে রাখা যায়, যাতে রিকোয়েস্ট আসার পর User পদের সাথে কেবল একটি Dot Product নিলেই পুরো ক্যাটালগের Score বেরিয়ে আসে। অবশ্য বিশাল প্রোডাকশন ক্যাটালগে সব আইটেম স্ক্যান না করে আলাদা Retrieval Index প্রয়োজন হয় (যা আমরা পরের অধ্যায়ে পড়ব)—আমাদের এই `7867` আইটেমের প্রোটোটাইপ কোনো লাইভ Latency বা QPS বেঞ্চমার্ক নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Retrieval-এ দূরত্বের জ্যামিতিক সতর্কতা",
+          "body": "বড় সিস্টেমে Approximate Nearest Neighbor (ANN) ইনডেক্স বসানোর সময় একটি জ্যামিতিক পার্থক্য সবসময় মনে রাখবেন: Cosine Similarity, Euclidean Distance এবং Maximum Inner Product Search (MIPS) কিন্তু এক জিনিস নয়—বিশেষ করে যখন ভেক্টরের দৈর্ঘ্য (Norm) বা Item Bias স্কোরের গুরুত্বপূর্ণ অংশ হয়! অবশ্য ভেক্টরের মাত্রা বাড়িয়ে (Vector Augmentation) Bias-সহ Dot Product-কে ইনডেক্স উপযোগী রূপে আনা সম্ভব, তবে তেমন কোনো ANN ইনডেক্স এখানে তৈরি করা হয়নি এবং করলে তার Candidate Quality আলাদাভাবে যাচাই করতে হতো।"
+        },
+        {
+          "type": "text",
+          "title": "সব Artifact একই সংস্করণে (Version) একসাথে রাখা",
+          "body": "প্রোডাকশনে একটি সোনালি নিয়ম হলো: ID Mapping, Genre অভিধান, Normalization নিয়ম এবং শেখা Weight—সবকিছুকে একটি অভিন্ন সংস্করণের বান্ডেল হিসেবে একসাথে শিপ করতে হবে! যেহেতু প্রতিবার নতুন করে ট্রেন করলে Latent Basis ঘুরে যেতে পারে, তাই নতুন User Factor-এর সাথে পুরোনো ক্যাশ করা Item Index মেশালে মুহূর্তেই সব Score অর্থহীন হয়ে ভেঙে পড়বে। আমাদের ব্যবহৃত Canonical Fingerprint কেবল নির্দিষ্ট ফাইলের মান শনাক্ত করে—মডেলের গুণমান বা নিরাপত্তার সনদ হিসেবে নয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch31_evaluation",
+      "title": "প্রকৃত Scorecard এবং সততার সাথে Model তুলনা",
+      "subtitle": "কেন একটি মেট্রিকে এগিয়ে থাকা মানেই সব লক্ষ্যে জয়ী হওয়া নয়",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Warm Cohort-এ র‍্যাঙ্কিংয়ের প্রকৃত ফলাফল",
+          "body": "একই `28` জন Warm Eligible User, পূর্ণ Fit Catalog এবং দেখা আইটেম বাদ দেওয়ার অভিন্ন নিয়মে `Recall@10`-এর ফলাফলগুলো পাশাপাশি দেখুন: Explicit ALS পেয়েছে `0.064985`, Implicit ALS পেয়েছে `0.025859`, BPR পেয়েছে `0.032582`, এবং FM পেয়েছে `0.024139`। অথচ আমাদের আগের অধ্যায়ের সরল Popularity পেয়েছিল `0.044923` এবং User CF পেয়েছিল `0.059447`! অর্থাৎ কেবল আধুনিক বা র‍্যাঙ্কিং-কেন্দ্রিক Objective-এর নাম দেখেই আগেভাগে ভবিষ্যতের বিজয়ী নির্ধারণ করা যায়নি।"
+        },
+        {
+          "type": "text",
+          "title": "Recall বনাম NDCG: মেট্রিক বদলালেই ক্রম বদলে যায়!",
+          "body": "আরও একটি দারুণ শিক্ষণীয় দিক লক্ষ্য করুন: Explicit ALS যদিও `Recall@10`-এ User CF-কে (`0.064985` বনাম `0.059447`) ছাড়িয়ে গেছে, কিন্তু `NDCG@10`-এ সে পেয়েছে `0.124361`—যেখানে User CF `0.135868` নিয়ে এগিয়ে আছে! কেন এমন হলো? কারণ `Recall` কেবল দেখে শীর্ষ ১০টির ভেতর কয়টি সঠিক আইটেম ঢুকল, আর `NDCG` দেখে সেগুলো তালিকার ঠিক কত ওপরের পজিশনে জায়গা পেল। তাই কখনোই একটি মেট্রিকে জিতে ঢালাওভাবে সব দিকে উন্নতির দাবি করবেন না, বিশেষ করে এমন একক-Seed ও ছোট Cohort-এ যেখানে কোনো অনিশ্চয়তার সীমা মাপা হয়নি।"
+        },
+        {
+          "type": "math",
+          "title": "RMSE এবং Macro Recall@10-এর মূল্যায়ন সূত্র",
+          "body": "\\mathrm{RMSE}=\\sqrt{N^{-1}\\sum(r-\\hat r)^2},\\quad \\mathrm{MacroRecall}@10=|U|^{-1}\\sum_u|T_{10}(u)\\cap G_u|/|G_u|"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ সব মডেলের Scorecard ও Rating Metric পরিদর্শন",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/factor_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nfor method, scope in lab[\"scorecards\"].items():\n    print(method, scope[\"warm\"])\nfor method, metrics in lab[\"report\"][\"rating_metrics\"].items():\n    print(method, metrics)\nassert lab[\"report\"][\"rating_metrics\"][\"explicit_als\"][\"warm_known_count\"] == 1311\n"
+        },
+        {
+          "type": "text",
+          "title": "রেটিং অনুমানের ফলাফল: সামগ্রিক বনাম Warm-known",
+          "body": "সব কটি (`20168`টি) দেখা ভবিষ্যৎ রেটিংয়ের ওপর `RMSE` মাপলে দেখা যায়: Explicit ALS পেয়েছে `1.020970`, FM পেয়েছে `1.077088`, আর আগের অধ্যায়ের সরল Bayesian Baseline পেয়েছিল `1.033748`। কিন্তু আমরা যদি কেবল উভয় দিক পরিচিত এমন `1311`টি Warm-known সারির দিকে তাকাই, সেখানে Explicit ALS নেমে আসে `0.912391`-এ, অথচ FM থাকে `1.097899`-এ! বুঝতেই পারছেন, সামগ্রিক `All-future RMSE`-এর ভেতর আমাদের Cold-start Fallback নীতি ও জনগোষ্ঠীর অনুপাত বড় ভূমিকা রাখে—তাই এই দুই ভিন্ন পরিধির সংখ্যা কখনো একসাথে গুলিয়ে তুলনা করবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "Broad Cohort এবং Coverage-এর সূক্ষ্ম পার্থক্য",
+          "body": "আমাদের বৃহত্তর `116` জন Future-positive User-এর মধ্যে আসলে `88` জনই হলেন নতুন বা Cold User! যেহেতু চারটি মডেলই ওই `88` জনের ক্ষেত্রে হুবহু একই Popularity তালিকা দেখায়, তাই Broad স্কোরটি এককভাবে ব্যক্তিগতকরণের (Personalization) মান বোঝায় না। এছাড়া মনে রাখবেন, প্রধান মূল্যায়নে কেবল ক্যাটালগে থাকা বৈধ ভবিষ্যৎ পছন্দগুলো ধরা হয়, আর Broad মূল্যায়নে ক্যাটালগের বাইরের অপ্রাপ্য নতুন আইটেমগুলোও হরে (Denominator) থেকে যায়। পাশাপাশি ক্যাটালগের কত শতাংশ আইটেম রিকমেন্ড করা হলো (Catalog Coverage), তা দিয়ে ব্যবহারকারীর কভারেজ বা ন্যায্যতা (Fairness) প্রমাণিত হয় না।"
+        },
+        {
+          "type": "text",
+          "title": "পরীক্ষাটির অমীমাংসিত সীমাবদ্ধতা",
+          "body": "স্বচ্ছতার খাতিরে স্পষ্ট রাখা দরকার যে এখানে একাধিক Seed চালানো, Resampling Confidence Interval বের করা, বিস্তৃত Hyperparameter Search, অনলাইন পরীক্ষা কিংবা Exposure Bias সংশোধন করা হয়নি। তা ছাড়া এই ভবিষ্যতের Window-টি ইতিমধ্যেই একাধিকবার পরিদর্শন করা হয়েছে বলে এটি আর অন্ধ চূড়ান্ত পরীক্ষা (Blind Confirmation) নয়, এবং ডেটাসেটের Selection Bias, স্থির সময়ের দিগন্ত ও ঐতিহাসিক Metadata-র সীমাবদ্ধতাও আগের মতোই বহাল আছে।"
+        },
+        {
+          "type": "text",
+          "title": "পরবর্তী ধাপে কীভাবে আরও নিখুঁত পরীক্ষা সাজাবেন",
+          "body": "আপনি যদি এই ভিত্তির ওপর দাঁড়িয়ে পরের পরীক্ষাটি সাজাতে চান, তবে শুরুতেই একটি পৃথক Validation Split আলাদা করে নিন এবং আগে থেকেই Hyperparameter খোঁজার পরিধি ঘোষণা করুন। সেখানে Genre ছাড়া নতুন করে ট্রেন করা FM (Refitted Ablation), ভিন্ন ভিন্ন `rank` ও Regularization কিংবা বিকল্প Negative Sampling বণ্টন ন্যায্যভাবে তুলনা করা যেতে পারে—মনে রাখবেন, অ্যাপের বর্তমান Genre-off সুইচটি কেবল স্থির ওজনের ইনপুট পরিবর্তন মাত্র।"
+        }
+      ]
+    },
+    {
+      "id": "ch31_engineering",
+      "title": "Reproducibility, Artifact এবং ভাষাগত Parity",
+      "subtitle": "কেন শুধু শেখা Weight নয়, বরং ID Map ও Fallback নীতিও মডেলের অবিচ্ছেদ্য অংশ",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "একটি স্বয়ংসম্পূর্ণ Model Artifact-এ কী কী থাকে?",
+          "body": "বাস্তব প্রকৌশলে কেবল ভেক্টরের অ্যারে সেভ করলেই মডেল সম্পূর্ণ হয় না। আমাদের `factor_lab.json` ফাইলে চারটি মডেলের পূর্ণাঙ্গ Weight-এর পাশাপাশি সুনির্দিষ্ট ID Map, Genre তালিকা, Loss Trace, চারটি বাস্তব পরিদর্শন কেস, `116` জন User-এর সব র‍্যাঙ্কিং, Baseline নিয়ন্ত্রণ এবং পূর্ণ Scorecard একসাথে বান্ডেল করা আছে। এমনকি নিরীক্ষার জন্য আসল ALS সিস্টেম, BPR Triplet এবং FM Feature উদাহরণও এতে যুক্ত রয়েছে, এবং আগের অধ্যায়ের (Book 5 · Chapter 1: Recommendation Foundations) মূল ফাইলগুলো একবিন্দুও পরিবর্তন করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "নির্দিষ্ট পরিবেশে শতভাগ পুনরুৎপাদনযোগ্যতা",
+          "body": "ফলাফল স্থির রাখতে দুটি ALS মডেলে স্থানীয় `NumPy Generator` (`31` ও `310`) এবং BPR ও FM মডেলে PyTorch-এর `fork_rng`-এর ভেতর নির্দিষ্ট Seed (`3101` ও `3102`) ব্যবহার করা হয়েছে—যাতে বাইরের কোনো কোডের Random State বা Thread সংখ্যা প্রভাবিত না হয়। নির্ধারিত CPU `float64` পরিবেশে স্ক্রিপ্টটি চালালে সম্পূর্ণ এক্সপোর্ট হুবহু পুনরুৎপাদিত হয়, যদিও ভিন্ন হার্ডওয়্যার বা লাইব্রেরি সংস্করণে একেবারে শেষ বিট পর্যন্ত অভিন্নতার (Bit-for-bit Identity) অবাস্তব প্রতিশ্রুতি দেওয়া হয় না।"
+        },
+        {
+          "type": "math",
+          "title": "পূর্ণাঙ্গ প্রোডাকশন Artifact-এর উপাদানসমূহ",
+          "body": "\\mathrm{artifact}=\\{P,Q,b,\\mathrm{maps},\\mathrm{features},\\mathrm{policy},\\mathrm{sourcehashes}\\}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Source Hash এবং সংরক্ষিত Weight-এর SHA-256 যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"factor31\", Path(\"assets/datasets/movielens/factor_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/factor_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nimport hashlib\n\nfor name, h in lab[\"report\"][\"source_hashes\"].items():\n    assert m.digest(m.DATA / name) == h\ncanonical = json.dumps(lab[\"weights\"], sort_keys=True, separators=(\",\", \":\")).encode()\nassert hashlib.sha256(canonical).hexdigest() == lab[\"report\"][\"weights_sha256\"]\nprint(\"complete weights hash\", lab[\"report\"][\"weights_sha256\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "নিরাপদ CLI আচরণ ও এক্সপোর্ট নিয়ন্ত্রণ",
+          "body": "আমাদের ওয়ার্কফ্লো মডিউলটি সাধারণভাবে ইমপোর্ট বা রান করলে সম্পূর্ণ অফলাইনে কাজ করে এবং অ্যাপের কোনো সংরক্ষিত Asset পরিবর্তন করে না। কেবল সচেতনভাবে `--write-lab` ফ্ল্যাগ দিলে JSON ফাইলটি নতুন করে তৈরি হয়, আর `--artifact-dir` দিলে মূল ফাইল অক্ষত রেখে আলাদা ফোল্ডারে সব আউটপুট ও Checksum সংরক্ষণ করে। এখানে কেবল ইনফারেন্সের জন্য প্রয়োজনীয় চূড়ান্ত Weight রাখা হয়েছে—মাঝপথ থেকে ট্রেনিং রিজিউম করার ভারী Optimizer State রাখা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "Python এবং Dart-এর মধ্যকার গাণিতিক Parity",
+          "body": "ডেটার Mask, Normal Equation, সংখ্যাত্মক Gradient, Implicit Dense-বনাম-Gram অভেদ, BPR Autograd এবং FM-এর দ্রুত সূত্র ও Padding—প্রতিটি অংশ স্বতন্ত্র টেস্ট দিয়ে যাচাই করা হয়েছে। সবচেয়ে গুরুত্বপূর্ণ প্রকৌশলগত দিক হলো, অ্যাপের ভেতরে লেখা Dart কোডের Forward Score এবং Cholesky সমাধান আমাদের Python রেফারেন্সের সাথে নিখুঁতভাবে মেলে (Cross-language Parity)—যাতে ট্রেনিং ও ডিসপ্লের মধ্যে কোনো নীরব অমিল না থাকে।"
+        },
+        {
+          "type": "text",
+          "title": "শিক্ষার্থীর অগ্রগতি সংরক্ষণ ও ডেটাবেস নিরাপত্তা",
+          "body": "অ্যাপে নতুন অধ্যায় যুক্ত বা আপডেট হলেও পুরোনো পাঠ, কুইজ বা অনুশীলনীর ID কখনো বদলায় না—ফলে আপনার লেখা নোট, বুকমার্ক, কুইজের উত্তর ও কোডের খসড়া SQLite ডেটাবেসে অক্ষত থাকে। আর ল্যাবের স্লাইডারগুলো নেড়ে আপনি যে পরীক্ষা-নিরীক্ষা চালান, তা কেবল তাৎক্ষণিক বোঝার জন্য; সেগুলো আপনার ব্যক্তিগত প্রোফাইল হিসেবে স্থায়ীভাবে সংরক্ষিত হয় না।"
+        },
+        {
+          "type": "text",
+          "title": "এই প্রোটোটাইপের প্রকৌশলগত সীমানা",
+          "body": "মাঝারি আকারের এই নিয়ন্ত্রিত পরীক্ষাটির জন্য সাধারণ CPU-ই যথেষ্ট; এখানে প্রোডাকশন সার্ভারের Latency, ডিস্ট্রিবিউটেড ANN ইনডেক্স কিংবা লাইভ ইউজার ট্রাফিকের ব্যবসায়িক সুফল মাপা হয়নি (এবং ব্যবহৃত ডেটাসেটের লাইসেন্সও বাণিজ্যিক ব্যবহারের অনুমতি দেয় না)। তবে ইন্টারনেট সংযোগ ছাড়াই সব সমীকরণ, কোড এবং মডেল ইনফারেন্স শতভাগ অফলাইনে যাচাই করার জন্য উপলব্ধ।"
+        }
+      ]
+    },
+    {
+      "id": "ch31_review",
+      "title": "Interview প্রস্তুতি এবং কার্যকর অনুশীলনের পথরেখা",
+      "subtitle": "সমীকরণ নিষ্কাশন, নির্ভুল কোডিং এবং ফলাফলের সীমা যুক্তি দিয়ে ব্যাখ্যা করা",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "হোয়াইটবোর্ডে সমীকরণ নিষ্কাশনের আদর্শ ক্রম",
+          "body": "ইন্টারভিউয়ের হোয়াইটবোর্ডে যেকোনো প্রশ্ন এলে ধাপে ধাপে এই ক্রমটি অনুসরণ করতে পারেন: প্রথমে Observed-only MF-এর Objective ও তার যুগপৎ Gradient লিখে দেখান; এরপর একজন User-এর যৌথ ALS Normal Equation নিষ্কাশন করুন; তারপর Implicit ALS-এর Gram Trick লিখে কেন বামপাশে সংশোধনী `20` অথচ ডানপাশে পূর্ণ Confidence `21` বসে তা পরিষ্কার করুন; আর সবশেষে BPR-এর Pairwise Gradient এবং FM-এর `O(kd)` অভেদটি প্রতিপাদন করুন। প্রতিবার কলম ধরার আগেই আপনার অনুমান এবং Loss-এর Reduction (যোগফল নাকি গড়) স্পষ্টভাবে লিখে নেবেন।"
+        },
+        {
+          "type": "text",
+          "title": "নিজের হাতে কোড লিখে দক্ষতা যাচাইয়ের ক্রম",
+          "body": "কোডিং অনুশীলনের সময় একে একে বাস্তবায়ন করুন: Dot Product ও Bias সহ Forward হিসাব, Sparse User ব্লক তৈরি, Cholesky সমাধান, সুষম অদেখা Negative Sampler, সংখ্যাত্মকভাবে স্থিতিশীল Softplus Loss এবং FM-এর Feature Encoding। খেয়াল রাখবেন, গাণিতিক উদাহরণ এবং বাস্তব ডেটার ফলাফল যেন স্পষ্টভাবে আলাদা থাকে, এবং `dtype`, ছোট `epsilon`, ভুল Mapping বা শূন্য Padding-এর নীরব বাগ ধরার জন্য ছোট ছোট আচরণগত পরীক্ষা (Behavior Checks) লেখার অভ্যাস করুন।"
+        },
+        {
+          "type": "math",
+          "title": "ইন্টারভিউতে যুক্তি উপস্থাপনের পাঁচ-ধাপের কাঠামো",
+          "body": "\\mathrm{defense}=\\mathrm{target}\\to\\mathrm{objective}\\to\\mathrm{optimizer}\\to\\mathrm{policy}\\to\\mathrm{evaluation}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ চারটি মডেলের Epoch সংখ্যা ও পুনরুৎপাদন কমান্ড যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/factor_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nassert lab[\"weights\"][\"explicit_als\"][\"epochs\"] == 16\nassert lab[\"weights\"][\"implicit_als\"][\"epochs\"] == 12\nassert lab[\"weights\"][\"bpr\"][\"epochs\"] == 25\nassert lab[\"weights\"][\"fm\"][\"epochs\"] == 20\nprint(\n    \"Reproduce: python assets/datasets/movielens/factor_workflow.py --artifact-dir <output>\"\n)\n"
+        },
+        {
+          "type": "text",
+          "title": "ব্যাখ্যার সূক্ষ্ম পার্থক্যগুলো গুলিয়ে ফেলবেন না",
+          "body": "ফলো-আপ প্রশ্নে নিজের স্বচ্ছতা বজায় রাখুন: সংরক্ষিত Coordinate Bar কেবল বর্তমান Basis-এর বিভাজন (কোনো চিরন্তন অর্থ নয়); অ্যাপের Genre-off সুইচ কেবল স্থির ওজনের ইনপুট পরীক্ষা (নতুন করে ট্রেন করা Ablation নয়); Cold র‍্যাঙ্কিংয়ের Popularity Fallback আর Cold রেটিংয়ের Bias অনুমান এক জিনিস নয়; এবং BPR/FM-এর চলমান Minibatch গড় Trace কখনোই ALS-এর স্থির Epoch-end বৈশ্বিক Objective-এর সমান নয়।"
+        },
+        {
+          "type": "text",
+          "title": "ফলাফলের জয়-পরাজয় যুক্তি দিয়ে ব্যাখ্যা করা",
+          "body": "আপনাকে যদি জিজ্ঞেস করা হয়—কেন BPR এখানে সরল Popularity থেকে পিছিয়ে পড়ল, কেন Explicit ALS-এর `Recall` জয় মানেই `NDCG` জয় নয়, কিংবা কেন বেশি ক্ষমতাসম্পন্ন FM-ও রেটিং অনুমানে হার মানল—তখন অনুমান না করে ডেটার গঠন, Surrogate Loss-এর পার্থক্য ও টিউনিংবিহীন একক রানের সীমা তুলে ধরে উত্তর দিন। মনে রাখবেন, একটি নির্দিষ্ট কনফিগারেশনে পিছিয়ে পড়া মানে পুরো অ্যালগরিদম পরিবার বাতিল হয়ে যাওয়া নয়; আর নতুন করে টিউন করতে হলে অবশ্যই আলাদা Validation ও নতুন Test ডেটা লাগবে।"
+        },
+        {
+          "type": "text",
+          "title": "অনুশীলনের মাপকাঠি",
+          "body": "এই অধ্যায়ের দশটি কোডিং অনুশীলনী প্রথমে সমাধান না দেখে নিজের লোকাল মেশিনে লিখুন, এবং তারপর মধ্যবর্তী ভেক্টর, Gradient ও প্রান্তিক পরিস্থিতিগুলো মুখে মুখে ব্যাখ্যা করার চর্চা করুন। কেবল চূড়ান্ত সংখ্যাসূচক উত্তর মিলে গেলেই কোড নিখুঁত হয়েছে ধরে নেবেন না; ইন্টারভিউ কেসগুলোতে সমস্যা স্পষ্ট করা, সমীকরণ প্রতিপাদন, জটিলতা হিসাব ও ব্যর্থতা বিশ্লেষণ—সব কটি ধাপ সমান গুরুত্ব দিয়ে অনুশীলন করুন।"
+        },
+        {
+          "type": "text",
+          "title": "পরবর্তী অধ্যায়ের প্রস্তুতি",
+          "body": "Explicit ও Implicit ALS, BPR এবং Factorization Machine-এর সমীকরণ ও Gradient-গুলো আরেকবার নিজের খাতায় মিলিয়ে নিন। এই ভিত্তিটুকু মজবুত হলেই পরের অধ্যায়ে (Book 5 · Chapter 3: Deep Recommendation & Ranking) আমরা দেখব কীভাবে Two-Tower Retrieval, আধুনিক Negative Sampling এবং বহু-ধাপের Neural Ranker দিয়ে বিশাল আকারের Recommender System গড়ে তোলা হয়!"
+        }
+      ]
+    }
+  ],
+  "quizzes": [
+    {
+      "id": "ch31_q1",
+      "question": "Observed-only Matrix Factorization-এ অনুপস্থিত (Missing) রেটিংগুলোকে কীভাবে ব্যবহার করা হয়?",
+      "options": [
+        "Residual Loss হিসাবের বাইরে রাখা হয়",
+        "Target শূন্য (Zero) হিসেবে ধরা হয়",
+        "সর্বোচ্চ 5-star রেটিং হিসেবে ধরা হয়",
+        "ভবিষ্যতের Test Label দিয়ে পূরণ করা হয়"
+      ],
+      "answer": 0,
+      "explanation": "Observed-only MF-এর যোগফল কেবল দেখা জুটিগুলোর সেট `Ω`-এর ওপর নেওয়া হয়; খালি ঘরগুলো `0` দিয়ে ভরে নিলে মূল Objective-টিই সম্পূর্ণ বদলে যায়।"
+    },
+    {
+      "id": "ch31_q2",
+      "question": "ট্রেনিং শেষে প্রথম Latent Factor-টির নাম সরাসরি `Action` বলা কেন গাণিতিকভাবে নিশ্চিত নয়?",
+      "options": [
+        "প্রতিটি Factor-এর নাম ডেটাসেটে আগে থেকেই ঠিক করা থাকে",
+        "User ID এবং Genre আসলে একই সংখ্যা নির্দেশ করে",
+        "SVD স্বয়ংক্রিয়ভাবে প্রতিটি অক্ষের নাম লিখে দেয়",
+        "Latent Basis-এর Orthogonal Rotation একই Score এবং L2 Norm অক্ষত রাখতে পারে"
+      ],
+      "answer": 3,
+      "explanation": "যেকোনো Orthogonal Rotation প্রয়োগ করলে Dot Product এবং Vector-গুলোর L2 Norm দুটোই অপরিবর্তিত থাকে; ফলে নিছক ট্রেনিং থেকে কোনো একক Coordinate-এর অর্থ স্বয়ংক্রিয়ভাবে নির্দিষ্ট (Identifiable) হয় না।"
+    },
+    {
+      "id": "ch31_q3",
+      "question": "আমাদের Biased Explicit MF সমীকরণে Dot Product-এর পাশাপাশি কোন Bias পদগুলো যোগ করা হয়?",
+      "options": [
+        "শুধু ভবিষ্যতের গড় রেটিং (Future Mean)",
+        "কেবল সংখ্যাসূচক User ID",
+        "Global Mean + User Bias + Item Bias",
+        "শুধুমাত্র সিনেমার Genre Bias"
+      ],
+      "answer": 2,
+      "explanation": "স্থির Global Mean-এর সাথে ব্যবহারকারীর নিজস্ব রেটিং প্রবণতা (User Bias) এবং আইটেমের সার্বিক গ্রহণযোগ্যতা (Item Bias) যোগ করার পর অবশিষ্ট মিথস্ক্রিয়াটুকু Dot Product দিয়ে শেখা হয়।"
+    },
+    {
+      "id": "ch31_q4",
+      "question": "যদি Objective-এ বর্গ ত্রুটির যোগফল (SSE Sum)-এর বদলে গড় বর্গ ত্রুটি (MSE Mean) নেওয়া হয়, তবে একই সংখ্যাসূচক `λ` কী প্রভাব ফেলবে?",
+      "options": [
+        "মডেলের Rank আপনা-আপনি দ্বিগুণ হয়ে যাবে",
+        "আপেক্ষিক Regularization-এর শক্তি বদলে যাবে",
+        "সবসময় হুবহু একই সমাধান দেবে",
+        "মডেলে আর কোনো Loss অবশিষ্ট থাকবে না"
+      ],
+      "answer": 1,
+      "explanation": "ত্রুটির অংশকে পর্যবেক্ষণ সংখ্যা দিয়ে ভাগ করলে পুরো Data Loss-এর স্কেল ছোট হয়ে যায়; তাই আগের সমান ভারসাম্য রাখতে হলে `λ`-কেও সামঞ্জস্যপূর্ণভাবে রিস্কেল করতে হয়।"
+    },
+    {
+      "id": "ch31_q5",
+      "question": "Item Vector `q` স্থির থাকলে একটি একক পর্যবেক্ষণের বর্গ ত্রুটি `(r - prediction)^2` থেকে User Vector `p`-এর Data Gradient কত হবে?",
+      "options": [
+        "-2 e q",
+        "2 e p",
+        "-q^2",
+        "সবসময় 0"
+      ],
+      "answer": 0,
+      "explanation": "`e = r - prediction` ধরলে Chain Rule অনুযায়ী বর্গ ত্রুটির অন্তরীকরণ থেকে পাওয়া যায় `-2 e q` (এর সাথে আলাদাভাবে Regularization পদ যোগ হয়)।"
+    },
+    {
+      "id": "ch31_q6",
+      "question": "আমাদের `rank = 8` Explicit ALS মডেলে একজন User-এর জন্য প্রতিটি দেখা আইটেমের Design Row-টি কেমন হয়?",
+      "options": [
+        "[future_rating]",
+        "[movieId]-এর সরাসরি সংখ্যাসূচক মান",
+        "[userId, timestamp]",
+        "[1, q_i]"
+      ],
+      "answer": 3,
+      "explanation": "User Bias এবং ৮টি Latent Factor একই সাথে সমাধান করার জন্য প্রথমে `1` বসিয়ে মোট ৯-মাত্রিক (`9D`) Design Row `[1, q_i]` গঠন করা হয়।"
+    },
+    {
+      "id": "ch31_q7",
+      "question": "এই অধ্যায়ের Explicit ALS মডেলে `λ = 10` পেনাল্টিটি Normal Matrix-এর কোন কর্ণ (Diagonal) পদগুলোতে যোগ করা হয়?",
+      "options": [
+        "Bias বাদে কেবল বাকি পদগুলোতে",
+        "শুধুমাত্র প্রথম Latent Factor-টিতে",
+        "Bias পদসহ পুরো 9টি কর্ণ পদেই",
+        "শুধুমাত্র Item ID-র ঘরে"
+      ],
+      "answer": 2,
+      "explanation": "আমাদের সংজ্ঞায়িত Objective-এ Bias এবং Latent Factor উভয়কেই সমানভাবে Regularize করা হয়েছে; সাধারণ লাইব্রেরির মতো এখানে Intercept পেনাল্টিমুক্ত রাখা হয়নি।"
+    },
+    {
+      "id": "ch31_q8",
+      "question": "নিখুঁত ALS Sweep চালানোর পর Objective-এর মান কমলে কোন বিষয়টি গাণিতিকভাবে নিশ্চিত হয়?",
+      "options": [
+        "আউটপুটগুলো নিখুঁত Calibrated Probability হয়ে গেছে",
+        "Fit সেটের Penalized Loss কমেছে",
+        "ভবিষ্যতের ডেটায় NDCG অবশ্যই বাড়বে",
+        "যৌথ সমস্যাটির Global Optimum পাওয়া গেছে"
+      ],
+      "answer": 1,
+      "explanation": "প্রতিটি শর্তাধীন ব্লক নিখুঁতভাবে সমাধান হওয়ায় Fit সেটের Penalized Loss না বাড়ার নিশ্চয়তা থাকে; কিন্তু যৌথ সমস্যাটি Nonconvex হওয়ায় Global Optimum বা ভবিষ্যতের `NDCG` বৃদ্ধির কোনো গ্যারান্টি মেলে না।"
+    },
+    {
+      "id": "ch31_q9",
+      "question": "`alpha = 20` সহ আমাদের Implicit ALS মডেলে একটি Positive জুটির মোট Confidence কত?",
+      "options": [
+        "21",
+        "20",
+        "1/20",
+        "0"
+      ],
+      "answer": 0,
+      "explanation": "সূত্রটি হলো `c = 1 + 20 * p`; তাই `p = 1` হলে মোট Confidence দাঁড়ায় `1 + 20 = 21`।"
+    },
+    {
+      "id": "ch31_q10",
+      "question": "Implicit ALS-এর Gram Trick-এ বামপাশের ম্যাট্রিক্স `A_u` তৈরির সময় পটভূমির (Background) যৌথ পদটি কী?",
+      "options": [
+        "ভবিষ্যতের Test Label-গুলোর যোগফল",
+        "কেবলমাত্র Positive আইটেমগুলোর গড়",
+        "সিনেমার Genre-এর IDF ওজন",
+        "Y^T Y"
+      ],
+      "answer": 3,
+      "explanation": "সব সম্ভাব্য জুটির মূল `confidence = 1` ধরে যৌথ Gram Matrix `Y^T Y` একবার হিসাব করে নিলে তার সাথে কেবল Positive আইটেমের সংশোধনী যোগ করেই নিখুঁত আপডেট পাওয়া যায়।"
+    },
+    {
+      "id": "ch31_q11",
+      "question": "`alpha = 20` সহ Implicit ALS-এ একজন User আপডেটের ডানপাশের (Right-hand side) পদ `b_u` কোনটি?",
+      "options": [
+        "ক্যাটালগের সব আইটেম ভেক্টরের গড়",
+        "সবসময় শূন্য ভেক্টর",
+        "পছন্দের আইটেম ভেক্টরগুলোর যোগফলের 21 গুণ",
+        "পছন্দের আইটেম ভেক্টরগুলোর যোগফলের 20 গুণ"
+      ],
+      "answer": 2,
+      "explanation": "Positive সেটের বাইরে সব জায়গায় Preference `p = 0`, আর Positive ঘরগুলোতে `p = 1` এবং পূর্ণ Confidence `21`; তাই ডানপাশে পছন্দের ভেক্টরগুলোর যোগফলের সাথে `21` গুণ হয়।"
+    },
+    {
+      "id": "ch31_q12",
+      "question": "একটি জুটির স্কোর ব্যবধান `margin = s_ui - s_uj` হলে সংখ্যাত্মকভাবে পরিচ্ছন্ন BPR Pair Loss কোনটি?",
+      "options": [
+        "দুটি ভেক্টরের Cosine Distance",
+        "softplus(-margin)",
+        "কেবল দেখা Star Rating-এর বর্গ ত্রুটি",
+        "softplus(margin)"
+      ],
+      "answer": 1,
+      "explanation": "`-log(sigmoid(s_ui - s_uj))` আসলে `softplus(-margin)`-এরই সমান, যা পছন্দের আইটেম `i`-এর স্কোরকে `j`-এর ওপরে তুলতে উৎসাহিত করে।"
+    },
+    {
+      "id": "ch31_q13",
+      "question": "ব্যবধান `margin`-এর সাপেক্ষে বিশুদ্ধ BPR Pair Loss-এর অন্তরজ (Derivative) কত?",
+      "options": [
+        "-sigmoid(-margin)",
+        "+sigmoid(margin)",
+        "সবসময় 1",
+        "দেখা Star Rating-এর দ্বিগুণ"
+      ],
+      "answer": 0,
+      "explanation": "`softplus(-margin)`-কে `margin`-এর সাপেক্ষে অন্তরীকরণ করলে `-sigmoid(-margin)` পাওয়া যায়—যা সর্বদা ঋণাত্মক এবং বড় ধনাত্মক ব্যবধানে শূন্যের কাছাকাছি চলে যায়।"
+    },
+    {
+      "id": "ch31_q14",
+      "question": "এই অধ্যায়ের BPR মডেলে একজন User-এর বৈধ Negative Pool কীভাবে তৈরি করা হয়েছে?",
+      "options": [
+        "ভবিষ্যতের Test সেটের নেগেটিভ তালিকা থেকে",
+        "শুধুমাত্র কম Star পাওয়া দেখা সিনেমাগুলো দিয়ে",
+        "ইতিমধ্যে দেখা সব পছন্দের সিনেমা দিয়ে",
+        "পুরো Fit Catalog থেকে ওই User-এর দেখা সব Fit ইতিহাস বাদ দিয়ে"
+      ],
+      "answer": 3,
+      "explanation": "আমাদের চুক্তিতে কম বা বেশি—যেমন রেটিংই হোক, ইতিমধ্যে দেখা সব আইটেম বাদ দিয়ে অবশিষ্ট অদেখা Fit আইটেমগুলো থেকে সুষমভাবে নমুনা তোলা হয়।"
+    },
+    {
+      "id": "ch31_q15",
+      "question": "ট্রেনিংয়ের সময় আমাদের Negative Sampler কি ভবিষ্যতে User পছন্দ করবেন এমন আইটেমগুলোকে আগেভাগেই বাদ দেয়?",
+      "options": [
+        "হ্যাঁ, Gold তালিকা দেখে ফিল্টার করা বাধ্যতামূলক",
+        "শুধু একই Genre হলে বাদ দেয়",
+        "না, Sampler ভবিষ্যতের কোনো Gold তথ্য ব্যবহার করে না",
+        "হ্যাঁ, প্রতি Epoch-এই তা বাদ দেওয়া হয়"
+      ],
+      "answer": 2,
+      "explanation": "ভবিষ্যতের Test সেট দেখে ট্রেনিংয়ের নমুনা ফিল্টার করলে মারাত্মক Data Leakage ঘটে; তাই Fit সময়ে অদেখা যেকোনো বৈধ আইটেমই নমুনা হিসেবে উঠতে পারে।"
+    },
+    {
+      "id": "ch31_q16",
+      "question": "BPR-এর স্কোর ব্যবধান `(s_ui - s_uj)` হিসাব করার সময় User Bias পদ যোগ করলে কী ঘটে?",
+      "options": [
+        "অন্য কোনো মডেলেও User Bias কখনো কাজে লাগে না",
+        "দুই স্কোরের বিয়োগফলে তা আপনা-আপনি কেটে (Cancel) যায়",
+        "ব্যবধানের মান দ্বিগুণ হয়ে যায়",
+        "তা স্বয়ংক্রিয়ভাবে Genre ওজনে রূপান্তরিত হয়"
+      ],
+      "answer": 1,
+      "explanation": "একই User-এর দুটি আইটেমের স্কোরে একই `b_u` যোগ থাকায় বিয়োগ করার সাথে সাথে তা কেটে যায় (তবে Item Bias থাকলে `b_i - b_j` অবশিষ্ট থাকত)।"
+    },
+    {
+      "id": "ch31_q17",
+      "question": "Factorization Machine-এ যদি কেবল একজন User ও একটি Item-এর One-hot পদ সক্রিয় থাকে, তবে তার দ্বিতীয় ক্রমের মিথস্ক্রিয়াটি কী দাঁড়ায়?",
+      "options": [
+        "User এবং Item Factor ভেক্টরের Dot Product",
+        "সরাসরি Genre সারণির লুকআপ",
+        "একটি ত্রিঘাত বহুপদী (Cubic Polynomial)",
+        "সবগুলো ভেক্টরের নিজের সাথে নিজের বর্গের যোগফল"
+      ],
+      "answer": 0,
+      "explanation": "মাত্র দুটি সক্রিয় One-hot Feature থাকলে তাদের মধ্যে কেবল একটিই জোড়া তৈরি হয়—ফলে রৈখিক ওজনসহ এটি অবিকল Biased Matrix Factorization-এর বিশেষ রূপে পরিণত হয়।"
+    },
+    {
+      "id": "ch31_q18",
+      "question": "FM-এর দ্রুত মিথস্ক্রিয়া অভেদে বর্গের যোগফল থেকে কর্ণ পদগুলো (Diagonal Terms) কেন বিয়োগ করা হয়?",
+      "options": [
+        "সিনেমার সব Genre মুছে ফেলার জন্য",
+        "ঋণাত্মক স্কোরগুলোকে শূন্যে আটকে দেওয়ার জন্য",
+        "Probability Calibration যোগ করার জন্য",
+        "প্রতিটি Feature-এর নিজের সাথে নিজের মিথস্ক্রিয়া (Self-interactions) বাদ দেওয়ার জন্য"
+      ],
+      "answer": 3,
+      "explanation": "যোগফলের বর্গ ভাঙলে কর্ণ পদ এবং ভিন্ন জোড়াগুলোর দ্বিগুণ পাওয়া যায়; তাই কর্ণ পদ বিয়োগ করে `2` দিয়ে ভাগ করলেই কেবল `j < k` জোড়াগুলোর নিখুঁত যোগফল মেলে।"
+    },
+    {
+      "id": "ch31_q19",
+      "question": "একটি উদাহরণে `s` সংখ্যক সক্রিয় Feature এবং মডেলের মাত্রা `k` হলে দ্রুত অভেদে FM মিথস্ক্রিয়া হিসাবের জটিলতা কত?",
+      "options": [
+        "O(k^3)",
+        "O(catalog^2)",
+        "O(sk)",
+        "সবসময় O(s^2 k)"
+      ],
+      "answer": 2,
+      "explanation": "দ্রুত বীজগাণিতিক অভেদটি সক্রিয় Feature-এর সংখ্যা `s` এবং ভেক্টরের মাত্রা `k` উভয়ের সাপেক্ষেই রৈখিক সময়ে (`O(sk)`) কাজ শেষ করে।"
+    },
+    {
+      "id": "ch31_q20",
+      "question": "এই অধ্যায়ের FM মডেলে কোনো সিনেমার সক্রিয় Genre ব্লককে কীভাবে স্কেল করা হয়েছে?",
+      "options": [
+        "সিনেমা মুক্তির সাল দিয়ে ভাগ করে",
+        "1 / sqrt(number of genres) দিয়ে",
+        "Book 5 · Chapter 1-এর IDF Profile দিয়ে",
+        "movieId / 100 দিয়ে"
+      ],
+      "answer": 1,
+      "explanation": "সিনেমাটিতে যতগুলো Genre আছে তার বর্গমূল দিয়ে ভাগ করায় পুরো Multi-hot Genre ব্লকটির L2 Norm সবসময় `1` থাকে; এখানে IDF ওজন ব্যবহার করা হয়নি।"
+    },
+    {
+      "id": "ch31_q21",
+      "question": "অ্যাপের Workbench-এ থাকা Genre-off সুইচটি আসলে কী ধরনের পরীক্ষা চালায়?",
+      "options": [
+        "স্থির ট্রেনড ওজনে কেবল ইনপুট সরিয়ে পরীক্ষা (Frozen-weight Input Intervention)",
+        "শুরু থেকে নতুন করে ট্রেন করা Refitted Ablation",
+        "সম্পূর্ণ নতুন একটি Benchmark মডেল",
+        "সরাসরি GPU-তে পুনরায় ট্রেনিং"
+      ],
+      "answer": 0,
+      "explanation": "সুইচটি একই সংরক্ষিত ওজন স্থির রেখে ইনপুট থেকে Genre পদগুলো বাদ দিয়ে স্কোর দেখায়; এর মাধ্যমে নতুন কোনো ট্রেনিং রান চালানো হয় না।"
+    },
+    {
+      "id": "ch31_q22",
+      "question": "আমাদের Explicit ALS মডেলে অপরিচিত User বা Item-এর ক্ষেত্রে Star Rating অনুমানের (Cold Rating Prediction) নীতি কোনটি?",
+      "options": [
+        "সরাসরি জনপ্রিয়তার গণনাকে Star হিসেবে বসানো",
+        "ভবিষ্যতের Test সেটের গড় বসানো",
+        "এলোমেলো (Random) ভেক্টর দিয়ে গুণ করা",
+        "পরিচিত ID-র উপলব্ধ Bias রেখে অজানা Latent গুণফলটিকে 0 ধরা"
+      ],
+      "answer": 3,
+      "explanation": "রেটিং অনুমানে পরিচিত User বা Item-এর শেখা Bias যোগ রাখা হয় এবং কেবল অজানা দিকের Dot Product শূন্য ধরা হয় (অন্যদিকে র‍্যাঙ্কিংয়ের বেলায় আলাদাভাবে Popularity Fallback ব্যবহৃত হয়)।"
+    },
+    {
+      "id": "ch31_q23",
+      "question": "একই মূল্যায়নে কোনো মডেলের `Recall@10` বেশি হওয়া সত্ত্বেও `NDCG@10` কি অন্য মডেলের চেয়ে কম হতে পারে?",
+      "options": [
+        "কেবল K = 0 হলেই তা সম্ভব",
+        "শুধুমাত্র কৃত্রিম বা ভুল ডেটাসেটেই এমন ঘটে",
+        "হ্যাঁ, কারণ সঠিক আইটেমের সংখ্যা এবং তালিকায় তাদের অবস্থান আলাদা বিষয়",
+        "না, দুটি মেট্রিক সবসময় একই ক্রম দেয়"
+      ],
+      "answer": 2,
+      "explanation": "আমাদের বাস্তব পরীক্ষাতেই দেখা গেছে, Warm Cohort-এ Explicit ALS `Recall@10`-এ User CF-এর চেয়ে এগিয়ে (`0.064985` বনাম `0.059447`) থাকলেও নিচের সারিতে হিট আসায় `NDCG@10`-এ পিছিয়ে (`0.124361` বনাম `0.135868`) রয়েছে।"
+    },
+    {
+      "id": "ch31_q24",
+      "question": "আমাদের সংরক্ষিত Model Export ফাইলটি দিয়ে কি ঠিক মাঝপথের কোনো Epoch থেকে ট্রেনিং পুনরায় শুরু (Exact Mid-run Resume) করা সম্ভব?",
+      "options": [
+        "হ্যাঁ, ভবিষ্যতের সব Label ও Optimizer একসাথে দেওয়া আছে",
+        "না, এতে কেবল ইনফারেন্সের চূড়ান্ত Weight, Map এবং নিরীক্ষার তথ্য দেওয়া আছে",
+        "হ্যাঁ, ভেতরে Optimizer ও RNG Cursor সংরক্ষিত আছে",
+        "হ্যাঁ, এটি স্বয়ংক্রিয়ভাবে GPU মেমরি ফিরিয়ে আনে"
+      ],
+      "answer": 1,
+      "explanation": "এক্সপোর্ট ফাইলে Optimizer-এর অভ্যন্তরীণ মোমেন্ট বা RNG Cursor সংরক্ষিত নেই; তবে নির্ধারিত পরিবেশে শুরু থেকে পুরো রানটি হুবহু পুনরুৎপাদন করা যায়।"
+    },
+    {
+      "id": "ch31_q_gram_revision",
+      "question": "Implicit ALS-এ একটি Positive জুটির মোট `confidence = 3`, আর যৌথ Background Gram-এ সব আইটেমের মূল `confidence = 1` ধরা আছে। তাহলে বামপাশের ম্যাট্রিক্সের সংশোধনী এবং ডানপাশের (RHS) Positive গুণক যথাক্রমে কত হবে?",
+      "options": [
+        "3 এবং 2",
+        "2 এবং 3",
+        "1 এবং 1",
+        "3 এবং 3"
+      ],
+      "answer": 1,
+      "explanation": "যৌথ Gram-এ মূল `1` আগেই যুক্ত থাকায় বামপাশের ম্যাট্রিক্সে কেবল অতিরিক্ত সংশোধনী `c - 1 = 2` যোগ হয়; কিন্তু ডানপাশে `preference = 1`-এর সাথে পূর্ণ `confidence = 3`-ই গুণ করতে হয়।"
+    },
+    {
+      "id": "ch31_q_fm_revision",
+      "question": "FM-এর দ্রুত মিথস্ক্রিয়া অভেদে যোগফলের বর্গ (`Squared Sum`) থেকে কোন অংশটুকু বিয়োগ করতে হয়?",
+      "options": [
+        "প্রতিটি Feature-এর নিজের বর্গ (Self-square Diagonal) পদগুলো",
+        "ভিন্ন ভিন্ন Feature-এর সব Cross-pair পদ",
+        "Global Bias-এর দ্বিগুণ মান",
+        "ঋণাত্মক মানের সব Feature"
+      ],
+      "answer": 0,
+      "explanation": "যোগফলের বর্গ বিস্তৃত করলে কর্ণ পদগুলোর পাশাপাশি ভিন্ন জোড়াগুলোর দ্বিগুণ পাওয়া যায়; তাই কর্ণ পদগুলো বাদ দিয়ে `2` দিয়ে ভাগ করলেই নিখুঁত `j < k` জোড়ার যোগফল বেরিয়ে আসে।"
+    }
+  ],
+  "exercises": [
+    {
+      "id": "ch31_ex_dot",
+      "title": "সংরক্ষিত Factor থেকে Dot Score নির্ণয়",
+      "prompt": "প্রথম Source User-এর জন্য Explicit ALS মডেলের শীর্ষ (Top) আইটেমটি নিন। আটটি Latent Factor-এর গুণফল যোগ করে কেবল বিশুদ্ধ Dot Score-টির মান নির্ণয় করুন।",
+      "starter": "# Run Python locally; enter result below.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/factor_lab.json\").read_text(encoding=\"utf-8\")\n)\nu = lab[\"samples\"][0][\"user\"]\ni = lab[\"samples\"][0][\"top\"][\"explicit_als\"][0][0]\np = lab[\"weights\"][\"explicit_als\"][\"p\"][lab[\"users\"].index(u)]\nq = lab[\"weights\"][\"explicit_als\"][\"q\"][lab[\"items\"].index(i)]\ncontributions = [a * b for a, b in zip(p, q)]\nresult = sum(contributions)\nprint(result)\n",
+      "expected": 0.09897580101061554,
+      "explanation": "আটটি অক্ষের গুণফল যোগ করলে বিশুদ্ধ Dot অবদান পাওয়া যায় প্রায় `0.09897580`। পূর্ণ রেটিং অনুমান পেতে এর সাথে Global Mean, User Bias এবং Item Bias আলাদাভাবে যোগ করতে হয়, আর প্রতিটি অক্ষের অবদান বর্তমানে সংরক্ষিত শেখা Basis অনুযায়ী হিসাব করা হয়েছে।"
+    },
+    {
+      "id": "ch31_ex_bias",
+      "title": "Bias সহ পূর্ণাঙ্গ Rating Score পুনর্গঠন",
+      "prompt": "ওই একই শীর্ষ আইটেমটির Dot Score-এর সাথে Global Mean, User Bias এবং Item Bias যোগ করে পূর্ণাঙ্গ কাঁচা (Raw) Rating Score-টি নির্ণয় করুন।",
+      "starter": "# Run Python locally; enter result below.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/factor_lab.json\").read_text(encoding=\"utf-8\")\n)\nu = lab[\"samples\"][0][\"user\"]\ni = lab[\"samples\"][0][\"top\"][\"explicit_als\"][0][0]\nui = lab[\"users\"].index(u)\nii = lab[\"items\"].index(i)\nw = lab[\"weights\"][\"explicit_als\"]\nresult = (\n    w[\"mean\"]\n    + w[\"bu\"][ui]\n    + w[\"bi\"][ii]\n    + sum(a * b for a, b in zip(w[\"p\"][ui], w[\"q\"][ii]))\n)\nprint(result)\n",
+      "expected": 4.094490285202314,
+      "explanation": "সব কটি অংশ যোগ করলে পূর্ণাঙ্গ কাঁচা Score পাওয়া যায় প্রায় `4.0944903`, যার একক হলো রেটিংয়ের Star (এখানে কোনো উর্ধ্বসীমা বা Score Clipping প্রয়োগ করা হয়নি)।"
+    },
+    {
+      "id": "ch31_ex_ridge",
+      "title": "যৌথ Ridge Normal Equation সমাধান",
+      "prompt": "হাতে হিসাবের জন্য একটি ছোট উদাহরণ দেওয়া হলো: `X = [[1, 1], [1, 2]]`, `y = [2, 3]` এবং `lambda = 1`। দুটি সহগকেই (Bias ও Factor) সমানভাবে Regularize করে যৌথ Ridge Normal Equation সমাধান করুন এবং প্রথম সহগ `w[0]`-এর মান লিখুন।",
+      "starter": "# Run Python locally; enter result below.\nresult = None\nprint(result)\n",
+      "solution": "import numpy as np\n\nx = np.array([[1.0, 1.0], [1.0, 2.0]])\ny = np.array([2.0, 3.0])\na = x.T @ x + np.eye(2)\nb = x.T @ y\nresult = np.linalg.solve(a, b)[0]\nprint(result)\n",
+      "expected": 0.6666666666666666,
+      "explanation": "সমীকরণটি সমাধান করলে প্রথম সহগ `w[0]` পাওয়া যায় `2/3`, অর্থাৎ প্রায় `0.6666667`। খেয়াল রাখবেন, আমাদের এই Objective-এ Bias কলামটিকেও পেনাল্টির আওতায় রাখা হয়েছে; তাই সবসময় Loss-এর সংজ্ঞা ও Reduction দেখে কর্ণের পেনাল্টি নির্ধারণ করবেন।"
+    },
+    {
+      "id": "ch31_ex_als",
+      "title": "বাস্তব ৯-মাত্রিক ALS সমাধানের Squared Norm",
+      "prompt": "নিরীক্ষার জন্য সংরক্ষিত ৯-মাত্রিক (`9D`) Normal System-এর `A` এবং `b` ব্যবহার করে সমীকরণটি সমাধান করুন। এরপর Bias ও আটটি Factor-সহ পুরো সমাধান ভেক্টরটির Squared Norm (`||w||^2`) নির্ণয় করে লিখুন।",
+      "starter": "# Run Python locally; enter result below.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/factor_lab.json\").read_text(encoding=\"utf-8\")\n)\nimport numpy as np\n\nw = np.linalg.solve(np.array(lab[\"als_audit\"][\"a\"]), np.array(lab[\"als_audit\"][\"b\"]))\nresult = float(w @ w)\nprint(result)\n",
+      "expected": 0.1904332799290682,
+      "explanation": "সমাধান ভেক্টরটির প্রতিটি উপাদানের বর্গ যোগ করলে মোট Squared Norm পাওয়া যায় প্রায় `0.1904333`। স্ক্রিনে সংক্ষেপে দেখানো কয়েকটি Coordinate নয়, বরং পুরো `9`টি উপাদানই এই হিসাবে অন্তর্ভুক্ত করতে হবে।"
+    },
+    {
+      "id": "ch31_ex_confidence",
+      "title": "Implicit ALS-এর মোট Confidence নির্ণয়",
+      "prompt": "হিসাবের জন্য Implicit Confidence-এর সূত্র `c = 1 + alpha * positive` দেওয়া আছে, যেখানে `alpha = 20` এবং `positive = 1`। এই Positive জুটির মোট Confidence `c`-এর মান লিখুন।",
+      "starter": "# Run Python locally; enter result below.\nresult = None\nprint(result)\n",
+      "solution": "alpha = 20\npreference = 1\nresult = 1 + alpha * preference\nprint(result)\n",
+      "expected": 21.0,
+      "explanation": "মোট Confidence হলো `c = 21`। মনে রাখবেন, যৌথ Gram ম্যাট্রিক্সের সংশোধনীতে `c - 1 = 20` বসলেও ডানপাশের (RHS) পদে পূর্ণ Confidence `21`-ই ব্যবহার করতে হয়।"
+    },
+    {
+      "id": "ch31_ex_bpr",
+      "title": "সংরক্ষিত Triplet-এর স্থিতিশীল Softplus Loss",
+      "prompt": "নিরীক্ষার জন্য সংরক্ষিত BPR Triplet-টির `margin` থেকে সংখ্যাত্মকভাবে স্থিতিশীল (Numerically Stable) এবং Regularization-বিহীন বিশুদ্ধ Pair Loss নির্ণয় করে লিখুন।",
+      "starter": "# Run Python locally; enter result below.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/factor_lab.json\").read_text(encoding=\"utf-8\")\n)\nimport math\n\nd = lab[\"pair_audit\"][\"margin\"]\nresult = max(-d, 0) + math.log1p(math.exp(-abs(d)))\nprint(result)\n",
+      "expected": 0.0001256676772104755,
+      "explanation": "`softplus(-margin)` হিসাব করলে বিশুদ্ধ Pair Loss পাওয়া যায় প্রায় `0.0001256677`। এখানে ট্রেনিংয়ের Regularization যোগ করা হয়নি, এবং অদেখা আইটেমটি আমাদের নির্ধারিত সুষম Sampling নিয়ম মেনেই বেছে নেওয়া হয়েছে।"
+    },
+    {
+      "id": "ch31_ex_derivative",
+      "title": "সংরক্ষিত Triplet-এর Margin Derivative",
+      "prompt": "ওই একই সংরক্ষিত BPR Triplet-টির বিশুদ্ধ Pair Loss-কে `margin`-এর সাপেক্ষে অন্তরীকরণ করে তার Derivative-এর মান লিখুন।",
+      "starter": "# Run Python locally; enter result below.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/factor_lab.json\").read_text(encoding=\"utf-8\")\n)\nimport math\n\nd = lab[\"pair_audit\"][\"margin\"]\nresult = -math.exp(-d) / (1 + math.exp(-d)) if d >= 0 else -1 / (1 + math.exp(d))\nprint(result)\n",
+      "expected": -0.00012565978135868237,
+      "explanation": "নির্ণেয় Derivative হলো `-sigmoid(-margin)`, যার মান প্রায় `-0.0001256598`। ঋণাত্মক চিহ্নের কারণে Gradient Descent ধাপটি এই ব্যবধান বা `margin` আরও বাড়ানোর দিকেই কাজ করে।"
+    },
+    {
+      "id": "ch31_ex_fm",
+      "title": "সংরক্ষিত FM উদাহরণের জোড়া মিথস্ক্রিয়ার যোগফল",
+      "prompt": "নিরীক্ষার জন্য সংরক্ষিত FM উদাহরণটির সক্রিয় Feature-গুলোর সব `j < k` জোড়ার মিথস্ক্রিয়া যোগ করুন। Global Bias এবং রৈখিক পদগুলো বাদ দিয়ে কেবল বিশুদ্ধ Interaction যোগফলটি লিখুন।",
+      "starter": "# Run Python locally; enter result below.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/factor_lab.json\").read_text(encoding=\"utf-8\")\n)\nw = lab[\"weights\"][\"fm\"]\na = lab[\"fm_audit\"]\nids = a[\"indices\"]\nx = a[\"values\"]\nresult = sum(\n    sum(v * t for v, t in zip(w[\"v\"][ids[j]], w[\"v\"][ids[k]])) * x[j] * x[k]\n    for j in range(len(ids))\n    for k in range(j + 1, len(ids))\n)\nprint(result)\n",
+      "expected": 4.30825431502239,
+      "explanation": "সব সক্রিয় জোড়ার মিথস্ক্রিয়ার যোগফল হলো প্রায় `4.3082543`। দ্রুত বীজগাণিতিক অভেদে কর্ণের বর্গ পদগুলো বাদ দিয়ে `2` দিয়ে ভাগ করলেও হুবহু এই একই মান পাওয়া যায়।"
+    },
+    {
+      "id": "ch31_ex_recall",
+      "title": "BPR মডেলের প্রকৃত Macro Recall@10",
+      "prompt": "`28` জন Warm Eligible User-এর সংরক্ষিত BPR `Top-10` তালিকা এবং মূল বৈধ ভবিষ্যৎ পছন্দগুলো (`Eligible Gold`) নিন। প্রত্যেকের পৃথক `Recall@10` বের করে তাদের গড় বা Macro Mean নির্ণয় করুন।",
+      "starter": "# Run Python locally; enter result below.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/factor_lab.json\").read_text(encoding=\"utf-8\")\n)\nvalues = []\nfor row in lab[\"rows\"]:\n    if row[\"train_count\"] and row[\"eligible\"]:\n        values.append(\n            len(set(row[\"rankings\"][\"bpr\"]) & set(row[\"eligible\"]))\n            / len(row[\"eligible\"])\n        )\nresult = sum(values) / len(values)\nprint(result)\n",
+      "expected": 0.0325815553494125,
+      "explanation": "হিসাব করলে Macro `Recall@10` পাওয়া যায় প্রায় `0.03258156`। এখানে যোগ্য প্রতিটি User সমান গুরুত্ব পান এবং হরের (Denominator) Gold সেট ও যোগ্যতার নিয়ম আগের অধ্যায়ের চুক্তির সাথে অভিন্ন রাখা হয়েছে।"
+    },
+    {
+      "id": "ch31_ex_parameters",
+      "title": "Biased Explicit MF-এর মোট Trainable Parameter গণনা",
+      "prompt": "সংরক্ষিত `rank = 8` Biased Explicit MF মডেলটির সব কটি শেখাযোগ্য (Trainable) Factor এবং Bias স্কেলারের মোট সংখ্যা গুনুন। স্থির Global Mean-টিকে গণনার বাইরে রেখে মোট সংখ্যাটি লিখুন।",
+      "starter": "# Run Python locally; enter result below.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/factor_lab.json\").read_text(encoding=\"utf-8\")\n)\nnu = len(lab[\"users\"])\nni = len(lab[\"items\"])\nrank = lab[\"report\"][\"rank\"]\nresult = (nu + ni) * (rank + 1)\nprint(result)\n",
+      "expected": 75501.0,
+      "explanation": "`522` জন User ও `7867`টি Item-এর প্রত্যেকের ৮টি করে Factor এবং ১টি করে Bias মিলিয়ে মোট `(522 + 7867) × 9 = 75501`টি শেখাযোগ্য স্কেলার রয়েছে; Global Mean স্থির থাকে বলে তা এই গণনায় ধরা হয়নি।"
+    }
+  ],
+  "interviews": [
+    {
+      "title": "Biased ALS-এর Normal Equation নিষ্কাশন ও বাস্তবায়ন",
+      "tag": "Math / coding",
+      "prompt": "দেখা Star Rating-এর ওপর সংজ্ঞায়িত Biased Matrix Factorization থেকে একজন User-এর যৌথ Normal Equation ধাপে ধাপে নিষ্কাশন করুন এবং কীভাবে তা কোডে সমাধান করবেন ব্যাখ্যা করুন।",
+      "answer": "প্রথমে সব Item Factor `Q` এবং Item Bias `b_i` স্থির রেখে ওই User-এর কেবল দেখা আইটেমগুলোর সারি নিয়ে Design Matrix `X = [1, Q_obs]`, সমন্বিত লক্ষ্যমাত্রা `y = r - μ - b_i` এবং অজানা ভেক্টর `w = [b_u, p_u]` গঠন করব। এরপর শর্তাধীন বর্গ ত্রুটির যোগফল ও পেনাল্টি `||y - Xw||^2 + λ||w||^2`-এর Gradient শূন্য ধরলে পাওয়া যায় `(X^T X + λI)w = X^T y`। আমাদের চুক্তিতে Bias কলামসহ সব কটি কর্ণ পদেই `λ` যোগ হয়। সমাধানের জন্য সরাসরি Inverse না বানিয়ে `9 × 9` Cholesky বা রৈখিক Solver ব্যবহার করব এবং কেবল দেখা সারিগুলোই পড়ব—অদেখা ঘরগুলোকে কখনোই শূন্য Target ধরব না। ফলো-আপে আমি ব্যাখ্যা করব কীভাবে Sum থেকে Mean নিলে `λ`-এর স্কেল বদলায়, কীভাবে প্রতিসম নিয়মে Item দিক আপডেট হয় এবং কেন যৌথ সমস্যাটি Nonconvex হওয়ায় Global Optimum নিশ্চিত নয়।",
+      "prerequisiteLessons": [
+        "ch31_normal",
+        "ch31_solves"
+      ]
+    },
+    {
+      "title": "Implicit ALS-এর Gram Trick ও হাতে-কলমে সমাধান",
+      "tag": "Algorithms",
+      "prompt": "ক্যাটালগের সব সম্ভাব্য User-Item জুটি মেমরিতে না বানিয়েই কীভাবে Implicit ALS আপডেট করবেন?\n\nধরা যাক, তিনটি আইটেমের Factor `Y = [[1, 0], [0, 1], [1, 1]]`, একজন User-এর `preferences = [1, 0, 0]`, `confidence = [3, 1, 1]` এবং `lambda = 1` দেওয়া আছে। Gram সূত্র ব্যবহার করে `A`, `b` এবং User Factor ভেক্টরটি বের করুন।",
+      "answer": "কর্ণ ম্যাট্রিক্সকে `C = I + α Diag(p)` হিসেবে ভাঙলে বামপাশের ম্যাট্রিক্স দাঁড়ায় `A = Y^T Y + α Y_L^T Y_L + λI` এবং ডানপাশের ভেক্টর হয় `b = (1 + α) sum(Y_L)`। ফলে পুরো Sweep-এ যৌথ Gram `Y^T Y` মাত্র একবার হিসাব করলেই চলে এবং প্রতি User-এর জন্য কেবল তার গুটিকয়েক Positive আইটেমের সংশোধনী যোগ করতে হয় (প্রতি ব্লকে খরচ মাত্র `O(|L|k^2 + k^3)`)। খেয়াল রাখতে হবে, `α = 20` হলে ডানপাশে পূর্ণ Confidence `21` বসে, `20` নয়; আর বৈশ্বিক Loss-ও বড় টেবিল না বানিয়ে Gram Trace ও Positive সংশোধনী দিয়ে বের করা যায়। এখানে অদেখা শূন্যগুলো কেবল মৃদু পটভূমির অনুমান, প্রমাণিত অপছন্দ নয়।\n\nপ্রদত্ত উদাহরণে সব আইটেমের মূল `confidence = 1` যৌথ `Y^T Y`-তেই রয়েছে; প্রথম Positive আইটেমের অতিরিক্ত সংশোধনী `c - 1 = 2` এবং `λI` যোগ করলে পাওয়া যায় `A = [[5, 1], [1, 3]]`। ডানপাশে পূর্ণ Confidence `c = 3` ব্যবহার করে `b = [3, 0]` বসালে সমাধান হিসেবে পাওয়া যায় User Vector `[9/14, -3/14]`।",
+      "prerequisiteLessons": [
+        "ch31_gram"
+      ]
+    },
+    {
+      "title": "BPR-এর Gradient, Negative Sampler ও False Negative সামলানো",
+      "tag": "ML coding",
+      "prompt": "BPR Pair Loss-এর Gradient নিষ্কাশন করুন, সুষম Negative Pool কীভাবে বাস্তবায়ন করবেন বলুন এবং False Negative কীভাবে সামলাবেন ব্যাখ্যা করুন।",
+      "answer": "স্কোর ব্যবধান `Δ = p^T (q_i - q_j)` এবং স্থিতিশীল Loss `softplus(-Δ)` ধরলে ব্যবধানের সাপেক্ষে অন্তরজ হয় `g = -sigmoid(-Δ)`। এখান থেকে তিনটি ভেক্টরের বিশুদ্ধ Data Gradient আসে: `p`-এর জন্য `g(q_i - q_j)`, `q_i`-এর জন্য `gp`, এবং `q_j`-এর জন্য `-gp` (সাথে অর্ধেক-`λ` পেনাল্টি থাকলে প্রতিটির সাথে `λ` গুণিতক নিজস্ব ভেক্টর যোগ হবে)। অবশ্যই আপডেটের আগের একই পুরোনো অবস্থা থেকে তিনটি Gradient একসাথে হিসাব করতে হবে। আমাদের চুক্তিতে একজন User-এর বৈধ Negative Pool হলো পুরো Fit Catalog বিয়োগ তার দেখা সব Fit রেটিং (কম রেটিং পাওয়া দেখা আইটেমও বাদ), যেখান থেকে প্রতি Epoch-এ প্রতি Positive-এর বিপরীতে প্রতিস্থাপনসহ সুষমভাবে একটি আইটেম তোলা হয়। ট্রেনিংয়ের সময় ভবিষ্যতের পছন্দ হওয়া কোনো অদেখা আইটেমও কাকতালীয়ভাবে উঠে আসতে পারে (False Negative), কিন্তু ভবিষ্যতের Test সেট দেখে তা ফিল্টার করতে গেলে মারাত্মক Data Leakage ঘটবে—তাই অদেখা নমুনাকে নিশ্চিত অপছন্দ না ভেবে এই সীমাবদ্ধতাটি স্পষ্টভাবে মেনে নিতে হবে।",
+      "prerequisiteLessons": [
+        "ch31_pairgrad",
+        "ch31_sampling"
+      ]
+    },
+    {
+      "title": "FM Interaction-কে দ্বিঘাত থেকে রৈখিক সময়ে রূপান্তর",
+      "tag": "Math / coding",
+      "prompt": "Factorization Machine-এর দ্বিতীয় ক্রমের মিথস্ক্রিয়াকে কীভাবে `O(s^2 k)` থেকে কমিয়ে `O(sk)` সময়ে নামিয়ে আনা হয়, তা প্রতিপাদন করে দেখান।",
+      "answer": "প্রতিটি Latent অক্ষ `f`-এর জন্য ওজনযুক্ত যোগফলের বর্গ `(Σ_j v_jf x_j)^2` বিস্তৃত করলে ভেতরে প্রতিটি Feature-এর নিজস্ব বর্গ পদ (`Σ_j v_jf^2 x_j^2`) এবং সব ভিন্ন জোড়ার দ্বিগুণ যোগফল পাওয়া যায়। তাই এই বর্গ থেকে কর্ণ পদগুলো বিয়োগ করে `2` দিয়ে ভাগ করলে এবং সব `k` অক্ষে যোগ করলেই দ্বৈত লুপ ছাড়াই `O(sk)` সময়ে নিখুঁত উত্তর পাওয়া যায়। কোডে আমরা কেবল সক্রিয় (Nonzero) Feature-গুলোই পড়ি, আর ব্যাচের Padding পদে `x = 0` থাকায় তার অবদান ও Gradient শূন্য থাকে। কেবল User ও Item One-hot সক্রিয় থাকলে এটি একটিমাত্র Dot Product দেয় (যা Biased MF-এরই বিশেষ রূপ), আর Genre যোগ হলে `User × Genre`, `Item × Genre` ও `Genre × Genre` জোড়াগুলোও স্বয়ংক্রিয়ভাবে যুক্ত হয় (যা Field-aware FM থেকে আলাদা)। যাচাইয়ের জন্য ধীরগতির জোড়ার লুপ, দ্রুত সূত্র ও Autograd পাশাপাশি মিলিয়ে টেস্ট লিখব।",
+      "prerequisiteLessons": [
+        "ch31_fm"
+      ]
+    },
+    {
+      "title": "Latent Factor-এর Non-identifiability ডিফেন্ড করা",
+      "tag": "Concept",
+      "prompt": "কোনো সহকর্মী যদি ট্রেনড মডেলের প্রথম Latent Coordinate-টিকে সরাসরি 'Action সিনেমার রুচি' বলে দাবি করেন, তবে আপনি কীভাবে তার সীমাবদ্ধতা ব্যাখ্যা করবেন?",
+      "answer": "অতিরিক্ত বাহ্যিক প্রমাণ ও যাচাই ছাড়া আমি কোনো একক Latent Coordinate-কে 'Action রুচি' বলব না। কারণ যেকোনো Invertible রূপান্তর `PA` এবং `QA^{-T}` চূড়ান্ত সব Dot Product অপরিবর্তিত রাখে, আর Orthogonal Rotation প্রয়োগ করলে তার পাশাপাশি L2 Norm বা Regularization Penalty-ও হুবহু এক থাকে! তাই স্ক্রিনে দেখানো Coordinate Bar কেবল বর্তমান সংরক্ষিত Basis-এর গাণিতিক বিভাজন মাত্র—ব্যবহারকারীর মনস্তাত্ত্বিক বৈশিষ্ট্য বা কার্যকারণগত ব্যাখ্যা নয়। কোনো অক্ষের সাথে নির্দিষ্ট Metadata-র মিল খুঁজে পেলেও সেটিকে একটি অনুমান (Post-hoc Hypothesis) ধরে আলাদা ডেটায় পরীক্ষা করতে হবে, এবং দুটি ভিন্ন Seed-এর কাঁচা Coordinate সরাসরি না মিলিয়ে চূড়ান্ত Prediction আচরণ বা সঠিকভাবে সারিবদ্ধ (Aligned) ভেক্টর তুলনা করতে হবে।"
+    },
+    {
+      "title": "যখন Ranking Objective সরল Baseline-এর কাছে হেরে যায়",
+      "tag": "Experiment review",
+      "prompt": "ধরুন BPR মডেলের ট্রেনিং Ranking Loss সুন্দরভাবে কমেছে, কিন্তু মূল্যায়নে দেখা গেল এর ফলাফল সাধারণ Popularity Baseline-এর চেয়েও খারাপ। ইন্টারভিউতে আপনি কীভাবে এই ফলাফল রিপোর্ট ও বিশ্লেষণ করবেন?",
+      "answer": "সবার আগে স্থির Candidate নীতি ও অভিন্ন Cohort-এ পাওয়া সম্পূর্ণ মেট্রিকগুলো কোনো কাটছাঁট ছাড়াই সততার সাথে রিপোর্ট করব—যেমন আমাদের পরীক্ষায় BPR-এর Warm `Recall@10` এসেছে `0.03258`, যেখানে Popularity পেয়েছে `0.04492`। এরপর এর সম্ভাব্য কারণগুলো বিশ্লেষণ করব: সুষম Negative Sampler-এর সহজ নমুনা বণ্টন, অদেখা লেবেলের Noise, Regularization-এর মাত্রা, দীর্ঘ স্থির সময়ের ব্যবধান এবং Cold Fallback-এর প্রভাব। তা ছাড়া মনে করিয়ে দেব যে গড় Pairwise Likelihood কমানো আর পুরো ক্যাটালগের `Top-K` মেট্রিক বাড়ানো এক কথা নয়। পরবর্তী পদক্ষেপ হিসেবে একটি পৃথক Validation Split-এ সুনির্দিষ্ট Search Space সাজিয়ে নতুন পরীক্ষার প্রস্তাব দেব—কিন্তু ইতিমধ্যে দেখা এই Future Window-কে কখনোই নতুন Blind Test বলে চালিয়ে দেব না, আবার একটি কনফিগারেশনের ব্যর্থতা দেখে পুরো BPR পরিবারকেও বাতিল ঘোষণা করব না।"
+    },
+    {
+      "title": "Recall-এ জয় কিন্তু NDCG-তে পিছিয়ে পড়ার ব্যাখ্যা",
+      "tag": "Metrics",
+      "prompt": "একই মূল্যায়নে Explicit ALS কীভাবে `Recall@10`-এ User CF-কে হারিয়েও `NDCG@10`-এ তার চেয়ে পিছিয়ে থাকতে পারে?",
+      "answer": "`Recall@10` কেবল গুনতি করে শীর্ষ ১০টির ভেতর কয়টি প্রাসঙ্গিক আইটেম জায়গা পেল, কিন্তু `NDCG@10` প্রতিটি পজিশনের ওপর লগারিদমিক ছাড় (Position Discount) প্রয়োগ করে দেখে আইটেমগুলো তালিকার কত ওপরে এসেছে। তাই কোনো মডেল যদি একটু বেশি সংখ্যক সঠিক আইটেম খুঁজে আনে কিন্তু সেগুলোকে তালিকার নিচের দিকে (যেমন ৭ থেকে ১০ নম্বরের মধ্যে) রাখে, তবে তার `Recall` বাড়লেও এক বা দুই নম্বরে নিখুঁত হিট দেওয়া মডেলের চেয়ে `NDCG` কম হতে পারে! আমাদের বাস্তব `28` জন Warm User-এর পরীক্ষায় ঠিক এটিই ঘটেছে: Explicit ALS ও User CF-এর `Recall@10` যথাক্রমে `0.06499` ও `0.05945` হলেও `NDCG@10` হয়েছে `0.12436` বনাম `0.13587`। এমন অবস্থায় নিজের সুবিধামতো একটি মেট্রিক বেছে বিজয়ী ঘোষণা না করে আগে প্রোডাক্টের প্রকৃত লক্ষ্য স্পষ্ট করতে হবে এবং মনে রাখতে হবে যে একক-Seed ও ছোট Cohort-এ পরিসংখ্যানগত অনিশ্চয়তা রয়েছে।"
+    },
+    {
+      "title": "অপরিচিত User ও Item-এর জন্য Serving Policy",
+      "tag": "Serving",
+      "prompt": "সার্ভিংয়ের সময় অপরিচিত (Unknown) User বা Item এলে আপনি Bias, Latent Factor এবং FM কীভাবে ব্যবহার করবেন?",
+      "answer": "আমি শুরুতেই র‍্যাঙ্কিং এবং রেটিং অনুমানের নীতি দুটিকে সুস্পষ্টভাবে আলাদা রাখব। র‍্যাঙ্কিংয়ের ক্ষেত্রে সম্পূর্ণ অপরিচিত User (কিংবা Implicit ALS ও BPR-এ শূন্য Positive ইতিহাসের User) এলে এলোমেলো প্রাথমিক ভেক্টরের ওপর ভরসা না করে সরাসরি Popularity Fallback ব্যবহার করব। অন্যদিকে Explicit রেটিং অনুমানের বেলায় যে দিকটি পরিচিত তার শেখা User বা Item Bias ঠিকই ব্যবহার করব, কেবল অজানা দিকের কারণে Latent Dot Product অংশটুকু `0` ধরব (দুটোই অজানা হলে নেব Global Mean)। আর আমাদের বর্তমান FM রেটিং নীতিতে যেকোনো ID অপরিচিত হলে Fit Global Mean নেওয়া হয়, কারণ শুধু Genre দিয়ে অদেখা আইটেমের মান এখানে আলাদাভাবে যাচাই করা হয়নি—নতুন আইটেমের Metadata কাজে লাগাতে চাইলে তার জন্য আলাদা Encoding চুক্তি ও Cold-item মূল্যায়ন সাজাতে হবে।"
+    },
+    {
+      "title": "Regularization-এর স্কেল ও Frequency Weighting",
+      "tag": "Optimization",
+      "prompt": "MSE গড় বনাম SSE যোগফল, এবং বৈশ্বিক L2 পেনাল্টি বনাম নমুনায়িত সক্রিয় ভেক্টরের L2 পেনাল্টিতে কেন একই সংখ্যার `λ` একই অর্থ বহন করে না?",
+      "answer": "প্রথমত, বর্গ ত্রুটির যোগফল (SSE) থেকে গড়ে (MSE) গেলে ডেটা অংশটি পর্যবেক্ষণ সংখ্যা দিয়ে ভাগ হয়ে ছোট হয়ে যায়, ফলে একই সংখ্যাসূচক `λ` অনেক বেশি শক্তিশালী পেনাল্টি হয়ে দাঁড়ায়। দ্বিতীয়ত, প্রতি Sweep-এ সব Parameter-এর ওপর একবার বৈশ্বিক Norm পেনাল্টি দেওয়া আর প্রতিটি নমুনায়িত Minibatch-এ কেবল সক্রিয় ভেক্টরগুলোর ওপর পেনাল্টি দেওয়া এক নয়—দ্বিতীয় ক্ষেত্রে যেসব জনপ্রিয় আইটেম বা সক্রিয় ইউজার বারবার ব্যাচে আসে, তাদের ওপর পেনাল্টিও বেশি সংখ্যক বার প্রযুক্ত হয় (Frequency Weighting)। আমাদের চারটি মডেলেই দেখুন: Explicit ALS-এ SSE যোগফলের সাথে `10` গুণ বৈশ্বিক Norm, Implicit ALS-এ সব জুটির সাথে `0.1` গুণ Norm, BPR-এ সক্রিয় Triplet গড়ের সাথে `0.001 / 2` গুণ পেনাল্টি, এবং FM-এ `x^2`-ওজনযুক্ত `0.001` ভেক্টর ও `0.0001` রৈখিক পেনাল্টি ব্যবহৃত হয়েছে। তাই শুধু `λ` প্রতীকটি না দেখে পূর্ণ সমীকরণ, Reduction ও Sampling নিয়ম লিখে তবেই তুলনা করতে হবে।"
+    },
+    {
+      "title": "পূর্ণাঙ্গ ও নিরাপদ Factor Model শিপ করার শর্তাবলি",
+      "tag": "Engineering",
+      "prompt": "শুধু শেখা Model Weights ফাইলটি দিয়ে দিলেই কি একটি অফলাইন Factor Recommender নিরাপদে ও নির্ভুলভাবে পুনরুৎপাদনযোগ্যভাবে চালানো সম্ভব?",
+      "answer": "না, শুধু Weight ম্যাট্রিক্স কখনোই যথেষ্ট নয়। এর সাথে অবশ্যই সঠিক সংস্করণের User/Item ID Map, Genre তালিকা, ইনপুট Normalization নিয়ম, ডেটা Split-এর পরিচয়, ইতিমধ্যে দেখা আইটেম বাদ দেওয়ার ফিল্টার, এবং Cold-start Fallback ও সমান স্কোর ভাঙার (Tie-breaking) নীতি একসাথে শিপ করতে হবে। এছাড়া আগে থেকে হিসাব করা কোনো FM ক্যাশ বা ANN ইনডেক্স থাকলে তা অবশ্যই ওই নির্দিষ্ট ট্রেনিং রানের Latent Basis-এর সাথে সামঞ্জস্যপূর্ণ হতে হবে। ফাইলের SHA-256 হ্যাশ কেবল নির্দিষ্ট মানের অখণ্ডতা নিশ্চিত করে—এটি মাঝপথ থেকে ট্রেনিং রিজিউম করার Optimizer State দেয় না এবং প্রোডাকশনের গুণমান বা Latency-র গ্যারান্টিও দেয় না; তাই ভিন্ন প্ল্যাটফর্মের অফলাইন আচরণ, ডেটাবেস আপগ্রেড ও বাস্তব ট্রাফিকের গতি আলাদাভাবে পরীক্ষা করতে হবে।"
+    }
+  ],
+  "book": {
+    "order": 37,
+    "part": "Book 5 · Recommender Systems",
+    "prerequisites": [
+      "chapter_30",
+      "chapter_07"
+    ],
+    "purpose": "আগের অধ্যায়ের Recommendation Baseline থেকে এক ধাপ এগিয়ে এই অধ্যায়ে আমরা দেখব কীভাবে Explicit ও Implicit Feedback থেকে কম মাত্রার Latent Factor শেখা যায়, এবং কীভাবে ALS, BPR ও Factorization Machine (FM) ভিন্ন ভিন্ন Objective ও Ranking সমস্যার সমাধান করে।",
+    "outcomes": [
+      "Biased Explicit MF, Implicit ALS, BPR এবং Factorization Machine (FM)-এর Objective ও Update সমীকরণগুলো গাণিতিকভাবে নিষ্কাশন করতে পারা এবং Latent Factor-এর Non-identifiability ও Regularization-এর প্রভাব স্পষ্টভাবে ব্যাখ্যা করতে পারা।",
+      "হাতে-কলমে উদাহরণ, Python কোড ও যাচাইমূলক পরীক্ষার সাহায্যে বুঝতে পারা কেন আলাদা আলাদা Objective একই Dataset-এ ভিন্ন আচরণ করে এবং কেন কোনো নির্দিষ্ট Latent Coordinate-কে সরাসরি মানুষের চেনা Genre বলে ধরে নেওয়া যায় না।"
+    ],
+    "recall": [
+      "Implicit ALS-এ Confidence এবং Binary Preference কেন দুটি সম্পূর্ণ ভিন্ন রাশি, এবং অনুপস্থিত (Unobserved) জুটিকে কীভাবে এখানে মডেল করা হয়?",
+      "User ও Item Factor u এবং v উভয়কে -1 দিয়ে গুণ করলে Predicted Score এবং L2 Penalty-র কী পরিবর্তন হয়? কোনো Latent Axis-এর অর্থ ব্যাখ্যা করতে হলে অতিরিক্ত কী ধরনের প্রমাণ প্রয়োজন?"
+    ],
+    "bridge": "এই অধ্যায়ে রৈখিক Factor Model ও দ্বিতীয় ক্রমের Feature Interaction আয়ত্ত করার পর পরের অধ্যায়ে (Book 5 · Chapter 3: Deep Recommendation & Ranking) আমরা জানব কীভাবে Neural Architecture ও Two-Tower Retrieval দিয়ে আরও বড় আকারের Recommender System তৈরি করা হয়। সেখানে যাওয়ার আগে এই অধ্যায়ের Quiz, Coding Exercise ও Interview প্রশ্নগুলো নিজে যাচাই করে নিন।",
+    "bookId": "recsys",
+    "bookChapter": 2
+  }
+}

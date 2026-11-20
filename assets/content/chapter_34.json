@@ -1,0 +1,1617 @@
+{
+  "id": "chapter_34",
+  "number": 34,
+  "title": "Recommender Capstone",
+  "shortTitle": "Recommender Capstone",
+  "displayTitle": "Recommender Capstone\nBuild. Audit. Defend.",
+  "subtitle": "Candidate Retrieval থেকে Frozen Selection, Portable Artifact ও Reproducible Serving Contract—একটি পূর্ণাঙ্গ Recommender Capstone প্রজেক্ট।",
+  "description": "Build the recommendation pipeline.\nAudit the evidence. Defend the decision.",
+  "difficulty": "Advanced · end-to-end project",
+  "lab": "recommender_capstone",
+  "lessons": [
+    {
+      "id": "ch34_contract",
+      "title": "Capstone Contract: কী বানাব এবং কী প্রমাণ করব?",
+      "subtitle": "Candidate Retrieval থেকে Reproducible Serving পর্যন্ত একটি পূর্ণাঙ্গ প্রজেক্টের নকশা",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "প্রজেক্টের মূল লক্ষ্য ও পরিধি",
+          "body": "Book 5-এর গত চারটি অধ্যায়ে আমরা Recommender System-এর বিভিন্ন অংশ আলাদাভাবে শিখেছি। এই সমাপনী Capstone অধ্যায়ে আমাদের লক্ষ্য হলো সেই সবগুলো টুকরো জুড়ে একটি বাস্তবসম্মত ও নিরীক্ষণযোগ্য (Auditable) সিস্টেম দাঁড় করানো। এখানে আমরা একজন MovieLens User-এর অতীত Fit History বিশ্লেষণ করে তার আগে না-দেখা Movie-গুলোর মধ্য থেকে সেরা Top 10 তালিকা তৈরি করব। এজন্য আমরা তিনটি ভিন্ন উৎস—Popularity, Genre Content এবং User-CF—থেকে সম্ভাব্য Candidate সংগ্রহ করব এবং Weighted Reciprocal Rank Fusion (RRF) পদ্ধতিতে সেগুলোকে একত্র করব। এরপর Validation ডেটার ওপর ভিত্তি করে সেরা Policy বেছে নেব এবং সবশেষে Frozen Audit সেটে তার ফলাফল মূল্যায়ন করব।\n\nতবে কাজ শুরুর আগেই একজন দায়িত্বশীল ML Engineer হিসেবে আমাদের তথ্যের সীমাটুকু স্পষ্টভাবে মেনে নিতে হবে। এই ডেটাসেট থেকে আমরা মূলত ইউজারের দেখা ও রেটিং দেওয়া পছন্দের (Observed Preference) একটি আংশিক চিত্র পাই; ইউজার সিনেমাটি দেখে বাস্তবে কতটা তৃপ্ত হয়েছেন কিংবা এতে ব্যবসার সরাসরি কতটুকু লাভ (Business Utility) হয়েছে, তা এখান থেকে দাবি করা যাবে না। তাই প্রজেক্টের প্রতিটি সিদ্ধান্তকে আমরা কাঁচা Source ডেটা, সময়ের Cutoff এবং সংরক্ষিত Artifact-এর সঙ্গে মিলিয়ে ধাপে ধাপে যাচাই করব।"
+        },
+        {
+          "type": "text",
+          "title": "গ্রহণযোগ্যতার শর্তাবলি (Acceptance Contract)",
+          "body": "সিস্টেমটি কখন প্রকৌশলগতভাবে গ্রহণযোগ্য বলে গণ্য হবে, তার জন্য শুরুতেই একটি সুনির্দিষ্ট Acceptance Contract বেঁধে নেওয়া দরকার। প্রথমত, প্রতিটি কাঁচা ফাইলের Source Bytes যেন Hash মিলিয়ে ট্রেস করা যায় এবং Fit, Validation ও Audit—এই তিনটি ধাপের ডেটা যেন সম্পূর্ণ পরস্পর-বিচ্ছিন্ন (Disjoint) থাকে। দ্বিতীয়ত, মডেলের শেখা সব পরিসংখ্যান কেবল Fit ডেটা থেকেই আসতে হবে, সুপারিশকৃত Candidate তালিকাটি হতে হবে অনন্য (Unique), এবং ইউজারের আগে দেখা সবগুলো আইটেম (All-seen Items) সেখান থেকে বাদ দিতে হবে। তৃতীয়ত, একই Input দিলে সিস্টেমকে সবসময় অভিন্ন ও স্থিতিশীল (Deterministic) Output দিতে হবে, পূর্ণাঙ্গ Artifact এক্সপোর্ট করতে হবে এবং কোনো অসামঞ্জস্য (Contract Mismatch) পেলে নীরবে ভুল উত্তর না দিয়ে সাথে সাথে তা প্রত্যাখ্যান (Reject) করতে হবে। আর সবচেয়ে বড় শর্ত হলো সততা—চূড়ান্ত পরীক্ষায় আমাদের ফিউশন মডেল যদি কোনো সরল Baseline-এর কাছে হেরেও যায়, সেই ফলাফল লুকানো যাবে না; বরং স্বচ্ছভাবে তা রিপোর্টে তুলে ধরাই এই প্রজেক্টের অন্যতম প্রধান অঙ্গীকার।"
+        },
+        {
+          "type": "math",
+          "title": "সিস্টেমের প্রবাহচিত্র",
+          "body": "\\mathrm{request}\\to\\mathrm{eligible\\ catalog}\\to\\mathrm{candidates}\\to\\mathrm{fusion}\\to\\mathrm{Top10}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ প্রজেক্ট আর্টিফ্যাক্ট ও প্রোটোকল যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommender_capstone_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\n\nassert lab[\"report\"][\"raw_rows\"] == 100836\nassert lab[\"policy\"][\"selected\"] == \"rrf_cf\"\nprint(lab[\"report\"][\"protocol\"])\nprint(lab[\"manifest\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "আগের অধ্যায়গুলোর কোন কোন ধারণা একত্র হচ্ছে?",
+          "body": "উপরের কোডে আমরা প্রজেক্টের সংরক্ষিত রিপোর্ট ও Manifest-এর মূল কাঠামোটি দেখলাম, যেখানে 100836টি কাঁচা Row এবং নির্বাচিত rrf_cf পলিসি নথিভুক্ত আছে। খেয়াল করলে দেখবেন, এই প্রজেক্টে অকারণে ভারী কোনো Neural Model চাপিয়ে দেওয়া হয়নি; বরং Book 5 · Chapter 1 (Recommendation Foundations)-এর স্বচ্ছ Retriever, Book 5 · Chapter 2 (Matrix Factorization) ও Chapter 3 (Deep Recommendation)-এর বহু-ধাপবিশিষ্ট (Multi-stage) র‍্যাঙ্কিং ভাবনা এবং Book 5 · Chapter 4 (RecSys Evaluation & Feedback Loops)-এর Cohort ও Uncertainty পরিমাপের শৃঙ্খলাকে এক সুতোয় গাঁথা হয়েছে। বাস্তব ইঞ্জিনিয়ারিংয়ে জটিল মডেল ব্যবহার করা কখনোই বাধ্যতামূলক নয়—সরল Baseline যদি যথেষ্ট শক্তিশালী হয়, তবে বাড়তি জটিলতা যোগ করার আগে তার সপক্ষে সুস্পষ্ট প্রমাণ দেখাতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "যাচাইযোগ্য ডেলিভারেবল ও দায়িত্বের সীমানা",
+          "body": "এই প্রজেক্টের আর্কিটেকচারে দুটি আলাদা পরিবেশের দায়িত্ব খুব পরিষ্কারভাবে ভাগ করা হয়েছে। একদিকে আমাদের সহায়ক Python Pipeline মূল কাঁচা ডেটা থেকে পুরো মডেল Fit করে এবং সব পরিসংখ্যান নতুন করে হিসাব করে; অন্যদিকে অ্যাপের ভেতরের পরিবেশটি সংরক্ষিত Frozen Source Snapshot থেকে Candidate Union, Fusion, Metric এবং Contract Replay চালিয়ে দেখায়। নিরাপত্তার খাতিরে অ্যাপের ভেতরের স্ক্র্যাচপ্যাড ইচ্ছেমতো যেকোনো বাহ্যিক কোড এক্সিকিউট করে না—কারণ অফলাইন রিপ্লে সুবিধা এবং পূর্ণাঙ্গ বাহ্যিক Training Environment-এর দায়িত্ব সম্পূর্ণ আলাদা।"
+        },
+        {
+          "type": "text",
+          "title": "ঐতিহাসিক ডেটার সীমা ও মূল্যায়নের সততা",
+          "body": "আরেকটি বাস্তবতা আমাদের মনে রাখতে হবে: MovieLens-এর এই পাবলিক ডেটাসেট এবং এর ভবিষ্যৎ সময়ের উইন্ডোগুলো গবেষণার জগতে বহুবার বিশ্লেষিত হয়েছে। তাই ডেটাকে নতুন করে Validation বা Audit নামে ভাগ করলেই তা আনকোরা অন্ধ পরীক্ষা (Fresh Blind Confirmation) হয়ে যায় না। আমাদের এই Capstone মূলত একটি শতভাগ Reproducible ঐতিহাসিক ডেভেলপমেন্ট স্টাডি—এখানে লাইভ Online Experiment, প্রোডাকশন সার্ভারের Latency কিংবা ব্যবসার ওপর সরাসরি Causal Lift প্রমাণ করার কোনো অতিরঞ্জিত দাবি আমরা করব না।"
+        },
+        {
+          "type": "text",
+          "title": "এই প্রজেক্টে আপনার চূড়ান্ত দায়িত্ব",
+          "body": "অধ্যায়ের শেষে আপনাকে একজন সিস্টেম ওনারের জায়গায় দাঁড়িয়ে পুরো রিপোর্ট, ফাইলের Hash, নির্বাচিত Preset, Baseline তুলনা এবং Failure Analysis নিজের যুক্তিতে ডিফেন্ড করতে হবে। মনে রাখবেন, শুধু নির্বাচিত অ্যালগরিদমটির নাম বলে দিলেই একটি ইঞ্জিনিয়ারিং প্রজেক্ট শেষ হয়ে যায় না; কেন অন্য Policy বা ত্রুটিপূর্ণ Serving Response প্রত্যাখ্যান করা হলো এবং প্রোডাকশনে যাওয়ার আগে এখনো কোন কোন প্রমাণ আমাদের হাতে নেই, সেটিও স্পষ্টভাবে তুলে ধরতে পারাই আসল দক্ষতা।"
+        }
+      ]
+    },
+    {
+      "id": "ch34_source",
+      "title": "Data Provenance, Source License ও Observation Grain",
+      "subtitle": "কেন একটি Rating Event আর একটি Impression কখনোই এক জিনিস নয়",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "উৎস ডেটা ও তার অখণ্ডতা যাচাই",
+          "body": "যেকোনো ডেটা পাইপলাইনের প্রথম কাজ হলো তথ্যের উৎস (Data Provenance) এবং ফাইলের বাইট-স্তরের অখণ্ডতা নিশ্চিত করা। আমাদের প্রজেক্টের সাথে যুক্ত মূল ratings.csv.gz, movies.csv এবং SOURCE_README.txt ফাইলগুলোর প্রতিটি বাইট অবিকৃত আছে কি না, তা আমরা শুরুতেই SHA-256 Hash মিলিয়ে যাচাই করে নিই। মূল ডেটাসেটে মোট 610 জন Source User-এর দেওয়া 100836টি রেটিং রয়েছে। তবে সময়ের শর্ত (Timestamp Predicate) দিয়ে ডেটা ভাগ করার কারণে শুরুর Fit অংশে এই সব ইউজার বা সব সিনেমা উপস্থিত থাকে না। পুরো প্রক্রিয়ায় মূল ফাইলের Row-এর ক্রম (Original File Order) অক্ষুণ্ণ রেখে শুধুমাত্র সময়ের শর্ত ব্যবহার করে বিভিন্ন ধাপের ডেটা আলাদা করা হয়।"
+        },
+        {
+          "type": "text",
+          "title": "ডেটার Grain এবং Positive Label-এর সংজ্ঞা",
+          "body": "এবার ডেটার একক বা Observation Grain-এর দিকে তাকানো যাক। এখানকার প্রতিটি Row মূলত চারটি তথ্যের সমন্বয়: ইউজার, সিনেমা, স্টার রেটিং এবং সময় (user, movie, star, timestamp)। আমাদের প্রজেক্টের নিয়মে rating >= 4 হলে সেটিকে আমরা ইতিবাচক পছন্দ (Positive Preference) হিসেবে গণ্য করছি, আর এর চেয়ে কম স্টার পাওয়া দেখা সিনেমাগুলোকে Positive ধরছি না। তবে খেয়াল রাখবেন, ইউজার-আইটেম ম্যাট্রিক্সের যে ঘরগুলো ফাঁকা (Missing Cell), সেগুলোর মানে মোটেও অপছন্দ (Dislike) নয়—হয়তো ইউজার সিনেমাটির নামই শোনেননি! তাছাড়া এখানকার Timestamp হলো ইউজার কবে ওয়েবসাইটে রেটিং জমা দিয়েছেন সেই সময়, সিনেমাটি বাস্তবে দেখার সময় (Watch Time) নয়। ফলে বিলম্বিত প্রতিক্রিয়া (Delayed Feedback) এবং ইউজারদের নিজস্ব পছন্দে রেটিং দেওয়ার পক্ষপাত (Self-selection Bias) এই ডেটার ভেতরে স্বাভাবিকভাবেই রয়ে গেছে।"
+        },
+        {
+          "type": "math",
+          "title": "ইভেন্ট ও পজিটিভ লেবেলের গাণিতিক রূপ",
+          "body": "e=(u,i,r,t),\\quad y=\\mathbf1[r\\ge4]"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Source Hash ও ফাইলের মাপ যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommender_capstone_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\n\nimport hashlib\n\nroot = Path(\"assets/datasets/movielens\")\nfor name, expected in lab[\"report\"][\"source_hashes\"].items():\n    assert hashlib.sha256((root / name).read_bytes()).hexdigest() == expected\nprint(lab[\"report\"][\"raw_rows\"], lab[\"report\"][\"fit_items\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "Metadata-এর প্রাপ্যতা ও সময়ের সীমাবদ্ধতা",
+          "body": "উপরের কোডে আমরা ফাইলের Hash মিলিয়ে নিশ্চিত হলাম যে কাঁচা ডেটা অবিকৃত আছে। কিন্তু ফাইল ঠিক থাকলেই সব সময়গত সূক্ষ্মতা মিটে যায় না। যেমন, movies.csv ফাইলে সিনেমাগুলোর যে Genre তালিকা দেওয়া আছে, সেটি মূলত 2018 সালের একটি স্থির চিত্র (Snapshot)—অতীতের কোন সময়ে কোন ট্যাগ যোগ বা সংশোধন হয়েছিল তার ঐতিহাসিক সংস্করণ (Point-in-time Versioning) এখানে সংরক্ষিত নেই। আমরা যদিও সাবধানতার সাথে শুধুমাত্র Fit Catalog-এ থাকা সিনেমাগুলো দিয়েই Genre Vocabulary এবং IDF তৈরি করেছি, তবুও অতীতের ঠিক ওই মুহূর্তে মেটাডেটা হুবহু এমনই ছিল কি না তা শতভাগ প্রমাণিত নয়। উল্লেখ্য, ইউজারের সুবিধার্থে সিনেমার Title কেবল পর্দায় দেখানো হয়, কিন্তু র‍্যাঙ্কিং বা স্কোরিংয়ে নামের টেক্সট ব্যবহার করা হয় না।"
+        },
+        {
+          "type": "text",
+          "title": "লাইসেন্সের শর্ত ও ব্যবহারের সীমা",
+          "body": "ইঞ্জিনিয়ারিং প্রজেক্টে ডেটার আইনি দিকটিও সমান গুরুত্বপূর্ণ। এই ডেটাসেটের সাথে GroupLens-এর স্বীকৃতি (Attribution) এবং মূল ব্যবহারের শর্তাবলি যুক্ত করা আছে, যেখানে অ-বাণিজ্যিক (Non-commercial) ব্যবহারের স্পষ্ট বাধ্যবাধকতা রয়েছে। ডেটাসেটটি আকারে ছোট এবং বিশেষ এক শ্রেণির সিনেমাপ্রেমী ইউজারদের স্বতঃস্ফূর্ত রেটিং থেকে তৈরি। তাই আজকের কোনো বাণিজ্যিক স্ট্রিমিং প্ল্যাটফর্মের ইউজার ডিস্ট্রিবিউশন বা বাণিজ্যিক লাইসেন্সের অধিকার এখান থেকে ধরে নেওয়া মারাত্মক ভুল হবে। প্রজেক্ট রিপোর্টে ডেটার উৎস এবং অনুমোদিত ব্যবহারের সীমা অবশ্যই স্পষ্টভাবে উল্লেখ করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "ডেটা অডিট চেকলিস্ট",
+          "body": "মডেল ট্রেনিংয়ে যাওয়ার আগে একটি সংক্ষিপ্ত অডিট চেকলিস্ট মিলিয়ে নেওয়া ভালো অভ্যাস: একই ইউজার-সিনেমা জুটির পুনরাবৃত্তি (Duplicate Pair Policy) কীভাবে সামলানো হচ্ছে, অজানা ID বা Genre-বিহীন সিনেমা আছে কি না, রেটিংয়ের পাল্লা (Rating Range) ও Timestamp-এর একক ঠিক আছে কি না, এবং ফাইলের Byte Hash মিলছে কি না। মনে রাখবেন, ফাইল Hash কেবল এটিই নিশ্চিত করে যে আপনি সঠিক বাইটগুলো পড়ছেন; এটি কখনোই ডেটার পরিসংখ্যানগত বৈধতা বা Label-এর সত্যতা গ্যারান্টি দেয় না। নিখুঁত Parser লেখার পরও ভুল অনুমানের ওপর দাঁড় করানো পুরো ML Task-টিই ত্রুটিপূর্ণ হতে পারে!"
+        },
+        {
+          "type": "text",
+          "title": "নিজের সিদ্ধান্তের পক্ষে যুক্তি দিন",
+          "body": "রিভিউ বা ইন্টারভিউয়ে কেউ যদি প্রশ্ন করেন, 'আপনি কেন Click বা Impression-ভিত্তিক মেট্রিক দেখাননি?'—তখন স্পষ্টভাবে বলুন যে মূল ডেটাসেটে ইউজারকে কখন কোন তালিকা দেখানো হয়েছিল সেই Exposure বা Impression লগ আদৌ নেই। কখনোই রেটিং ডেটা থেকে মনগড়া Exposure Log বানিয়ে কৃত্রিম Inverse Propensity Scoring (IPS) রিপোর্ট করার চেষ্টা করবেন না। যদি সত্যিকারের Impression-ভিত্তিক মূল্যায়ন দরকার হয়, তবে তার জন্য নতুন Logging Contract এবং ডেটা সংগ্রহের পাইপলাইন ডিজাইন করাই হবে সম্পূর্ণ আলাদা একটি ইঞ্জিনিয়ারিং ডেলিভারেবল।"
+        }
+      ]
+    },
+    {
+      "id": "ch34_roles",
+      "title": "Chronological Fit, Validation ও Audit বিভাজন",
+      "subtitle": "সময়ের সীমানা (Boundary Ties) এবং মূল্যায়ন প্যানেলের বাস্তবতা আগে যাচাই করুন",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "সময়ানুক্রমিক ডেটা বিভাজন (Chronological Split)",
+          "body": "রিকমেন্ডার সিস্টেমে ভবিষ্যতের তথ্য যেন অতীতের মডেল ট্রেনিংয়ে ঢুকে না পড়ে, সেজন্য আমরা ঘড়ির কাঁটা মেনে ডেটাকে Fit, Validation এবং Audit—এই তিনটি ভূমিকায় ভাগ করি। আমাদের প্রজেক্টে প্রথম Timestamp Cutoff 1458635162 পর্যন্ত মোট 80668টি ইভেন্ট রাখা হয়েছে Fit সেটে; পরবর্তী Cutoff 1498029445 পর্যন্ত 10084টি ইভেন্ট গেছে Validation সেটে এবং এর পরের বাকি 10084টি ইভেন্ট রাখা হয়েছে চূড়ান্ত Audit সেটে। সীমানার ওপর থাকা সমান Timestamp-গুলোকে (t == cutoff) সুনির্দিষ্ট নিয়ম মেনে আগের ধাপেই রাখা হয়েছে। মডেলের সমস্ত প্যারামিটার ও Feature Statistics শেখা হয় কেবল Fit ডেটা থেকে, সেরা Policy বাছাইয়ের কাজ চলে Validation সেটে, আর নির্বাচিত সেই পলিসির চূড়ান্ত মূল্যায়ন করা হয় Audit সেটে।"
+        },
+        {
+          "type": "text",
+          "title": "কোহর্টের আকার ও প্রোটোকল পরিবর্তনের বাস্তবতা",
+          "body": "কিন্তু প্রচলিত 60/20/20 অনুপাতের বদলে আমরা কেন 80/10/10 অনুপাত বেছে নিলাম? কারণ শুরুতে 60/20/20 প্রোটোকল পরীক্ষা করে দেখা গিয়েছিল যে চূড়ান্ত Audit উইন্ডোতে মূল্যায়নযোগ্য Warm User পাওয়া যাচ্ছে মাত্র 5 জন! এত ক্ষুদ্র প্যানেলে কোনো অর্থবহ তুলনা করা সম্ভব নয়। Fit অংশের পরিধি বাড়িয়ে 80% করায় Audit প্যানেলে 18 জন Warm User পাওয়া গেল, যা বিশ্লেষণের জন্য একটি ব্যবহারযোগ্য প্যানেল দেয়। ডেটা পরীক্ষা করে বিভাজনের অনুপাত বদলানোর এই ডেভেলপমেন্ট সিদ্ধান্তটি রিপোর্টে অকপটে নথিভুক্ত করা হয়েছে—তাই এই নতুন প্রোটোকলকে কখনোই আনকোরা অন্ধ পরীক্ষা (Fresh Blind Confirmation) বলে দাবি করা যাবে না।"
+        },
+        {
+          "type": "math",
+          "title": "তিনটি ধাপের সময়গত সীমানা",
+          "body": "F:t\\le t_1,\\quad V:t_1<t\\le t_2,\\quad A:t>t_2"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Cutoff সীমানা ও Row সংখ্যা যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"capstone34\", Path(\"assets/datasets/movielens/recommender_capstone_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommender_capstone_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\n\nimport numpy as np\n\nraw, _ = m.source().load()\nr = lab[\"report\"]\nfit = raw[raw[:, 3] <= r[\"fit_cutoff\"]]\nvalid = raw[(raw[:, 3] > r[\"fit_cutoff\"]) & (raw[:, 3] <= r[\"validation_cutoff\"])]\naudit = raw[raw[:, 3] > r[\"validation_cutoff\"]]\nassert [len(fit), len(valid), len(audit)] == [80668, 10084, 10084]\nassert fit[:, 3].max() < valid[:, 3].min() and valid[:, 3].max() < audit[:, 3].min()\nprint(r[\"fit_cutoff\"], r[\"validation_cutoff\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "Fit-only State: মডেল কোথা থেকে কী শিখছে?",
+          "body": "উপরের কোডের assert স্টেটমেন্টগুলো নিশ্চিত করে যে তিনটি সেটের মধ্যে সময়ের কোনো ওভারল্যাপ নেই। এই সীমানা মানার মূল উদ্দেশ্য হলো মডেলের ভেতরের প্রতিটি শেখা তথ্য—যেমন User ও Item Index Map, Genre Vocabulary ও IDF, ইউজারের Positive History, User-CF Similarity এবং আইটেমের Popularity—যেন শতভাগ Fit ডেটা থেকেই তৈরি হয়। Validation সেটের লেবেলগুলো আমরা কেবল সেরা Fusion Preset বাছাই করতে ব্যবহার করি, আর Audit লেবেলগুলো কাজে লাগে শেষ ধাপের ডায়াগনস্টিক রিপোর্টে। এখানে লক্ষণীয় যে, পলিসি বাছাইয়ের পর Fit ও Validation একত্র করে মডেলকে পুনরায় ট্রেন (Refit) করা হয়নি; ফলে হুবহু একই Fitted Model দুটি ধাপেই পরীক্ষিত হচ্ছে।"
+        },
+        {
+          "type": "text",
+          "title": "স্থির হিস্ট্রি (Frozen History) ও তার প্রভাব",
+          "body": "যেহেতু আমরা মডেল বা ইউজার প্রোফাইলকে সময়ের সাথে সাথে আপডেট করছি না, তাই Validation সময়ে ইউজার যে সিনেমাগুলো দেখেছেন সেগুলো Audit সময়ের Seen History-তে যোগ করা হয় না। এর একটি সরাসরি প্রভাব হলো, Audit ধাপের সুপারিশের তালিকায় এমন কোনো সিনেমা চলে আসতে পারে যা ইউজার ইতিমধ্যে Validation উইন্ডোতে রেটিং দিয়ে ফেলেছেন। এটি মূলত একটি Frozen Launch Policy-র পরীক্ষা; আমরা যদি প্রতি পদক্ষেপে হিস্ট্রি আপডেট হওয়া Prequential Serving পরীক্ষা করতে চাইতাম, তবে হিস্ট্রি আপডেট ও ফিচার রিফ্রেশের আলাদা নিয়ম লিখে সম্পূর্ণ নতুন মূল্যায়ন চালাতে হতো।"
+        },
+        {
+          "type": "text",
+          "title": "সময়ের সাথে ইউজার প্যানেলের পরিবর্তন",
+          "body": "আরেকটি সূক্ষ্ম বিষয় খেয়াল করুন: আমাদের Validation সেটে মূল্যায়নযোগ্য Warm Eligible User আছেন 21 জন, অথচ Audit সেটে আছেন 18 জন। বৃহত্তর (Broad) ইউজার সংখ্যার হিসেবেও দুটি উইন্ডোতে যথাক্রমে 62 ও 72 জন ইউজার সক্রিয় ছিলেন—অর্থাৎ দুটি সময়ের ইউজার দল হুবহু এক নয়। তাই Validation থেকে Audit-এ মেট্রিক ওঠানামা করলেই সেটিকে এককথায় মডেলের Time Decay বলে চালিয়ে দেওয়া যায় না; ইউজারদের সক্রিয়তা, নাগালের মধ্যে থাকা লক্ষ্যবস্তু (Reachable Targets) এবং পুরো Cohort-এর গঠন বদলে যাওয়াও এর বড় কারণ হতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "Data Leakage এড়ানোর সতর্কবার্তা",
+          "body": "সবশেষে একটি কঠোর নিয়ম মনে রাখুন: একবার Audit সেটের পারফরম্যান্স দেখে ফেলার পর যদি সেই অনুযায়ী Fusion Weight বা সময়ের Cutoff ঘুরিয়ে আবার ওই একই Audit সেটে ভালো স্কোর দেখান, তবে সেটি আর স্পর্শহীন পরীক্ষা (Untouched Test) থাকে না—তা সরাসরি Data Leakage-এ পরিণত হয়। আমাদের এই ঐতিহাসিক ডেটা যে আগেও দেখা হয়েছে, তা আমরা খোলাখুলি স্বীকার করছি। সত্যিকারের চূড়ান্ত প্রমাণের প্রয়োজন হলে সম্পূর্ণ আলাদা করে রাখা নতুন ডেটা (Prospective Role) এবং পূর্বনির্ধারিত অপরিবর্তনীয় সিলেকশন প্রোটোকল দরকার হবে।"
+        }
+      ]
+    },
+    {
+      "id": "ch34_features",
+      "title": "Fit-only Catalog, IDF ও User Profile গঠন",
+      "subtitle": "Content Representation-এর প্রতিটি শেখা পরিসংখ্যানের উৎস ট্রেস করুন",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ক্যাটালগের সীমানা (Catalog Boundary)",
+          "body": "কন্টেন্ট-ভিত্তিক ফিচার তৈরির সময়ও আমাদের Fit ডেটার গণ্ডি কঠোরভাবে মেনে চলতে হবে। এখানে আমাদের Fit Catalog-এ মোট 7867টি আইটেম, সক্রিয় Fit User 522 জন এবং ইতিবাচক (Positive) Fit রেটিং রয়েছে 39254টি। প্রতিটি Genre-এর গুরুত্ব বা IDF হিসাব করার সময় হর (Denominator) হিসেবে এই 7867টি সিনেমার Fit Catalog-ই ব্যবহার করা হয়। ভুলে যদি মূল movies.csv ফাইলের সবগুলো অর্থাৎ 9742টি সিনেমা ব্যবহার করা হতো, তবে ভবিষ্যতের অদেখা ক্যাটালগের তথ্যও ফিচারের সংজ্ঞায় ঢুকে পড়ত।"
+        },
+        {
+          "type": "text",
+          "title": "Genre IDF-এর মূল অন্তর্দৃষ্টি",
+          "body": "সাধারণ বাইনারি ট্যাগের বদলে আমরা IDF (Inverse Document Frequency) কেন নিচ্ছি? ভেবে দেখুন, অতি প্রচলিত কোনো Genre হাজার হাজার সিনেমায় থাকে, তাই দুটি সিনেমার স্বতন্ত্র পরিচয় আলাদা করতে সেটি খুব কম তথ্য দেয়। বিপরীতে বিরল কোনো Genre ইউজারের সুনির্দিষ্ট পছন্দ চিনতে অনেক বেশি কার্যকর। আমাদের ব্যবহৃত Smoothed Log Ratio সূত্রটি Fit Catalog-এর ভেতরে প্রতিটি Genre-এর উপস্থিতির সংখ্যা (Document Frequency) ব্যবহার করে। শূন্য ফ্রিকোয়েন্সি বা ভাগের অস্থিতিশীলতা (Division Instability) এড়াতে লব ও হরে + 1 যোগ করা হয়েছে, এবং রিপ্লে করার সুবিধার্থে এই হুবহু গাণিতিক নিয়মটি Artifact-এ সংরক্ষণ করতে হয়।"
+        },
+        {
+          "type": "math",
+          "title": "IDF, Item Vector ও User Profile-এর সমীকরণ",
+          "body": "\\mathrm{idf}_g=1+\\log\\frac{1+|I_F|}{1+df_g},\\quad z_i=\\frac{x_i\\odot idf}{\\|x_i\\odot idf\\|_2},\\quad p_u=\\frac{\\sum_{i\\in H_u^+}z_i}{\\|\\sum_{i\\in H_u^+}z_i\\|_2}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Fit Catalog, IDF ও Unit Norm যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"capstone34\", Path(\"assets/datasets/movielens/recommender_capstone_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommender_capstone_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\n\nimport numpy as np\n\nraw, movies = m.source().load()\nfit = raw[raw[:, 3] <= lab[\"report\"][\"fit_cutoff\"]]\nmodel = m.source().Recommender(fit, movies)\nassert len(model.ids) == 7867 and len(model.users) == 522\nnp.testing.assert_allclose(model.idf, lab[\"model\"][\"idf\"])\nnp.testing.assert_allclose(\n    np.linalg.norm(model.features, axis=1)[np.linalg.norm(model.features, axis=1) > 0],\n    1,\n)\nprint(model.genres, model.idf[:3])\n"
+        },
+        {
+          "type": "text",
+          "title": "Unit Vector Normalization কেন জরুরি?",
+          "body": "উপরের সমীকরণ ও কোডে দেখুন, প্রতিটি সিনেমার Multi-hot Genre ও IDF গুণফল ভেক্টরকে তার L2 Norm দিয়ে ভাগ করে Unit Vector বানানো হয়েছে। এর ফলে কোনো সিনেমায় কয়টি ট্যাগ আছে সেই দৈর্ঘ্য (Magnitude) নয়, বরং কেবল রুচির দিকের (Direction) Cosine সাদৃশ্য তুলনা করা হয়। যেসব সিনেমায় কোনো বৈধ Genre নেই, সেগুলো Zero Vector হিসেবেই থাকে। একইভাবে ইউজারের Profile তৈরি হয় কেবল তার Fit-positive আইটেম ভেক্টরগুলোর যোগফলকে Normalize করে—পরবর্তী সময়ের কোনো লেবেল বা ভবিষ্যতের জনপ্রিয়তার ছোঁয়া এখানে নেই।"
+        },
+        {
+          "type": "text",
+          "title": "Content Score-এর অর্থ ও সীমাবদ্ধতা",
+          "body": "ইউজারের প্রোফাইল ভেক্টর এবং যেকোনো সম্ভাব্য সিনেমার ভেক্টরের Dot Product থেকেই পাওয়া যায় Derived Content Score। মনে রাখতে হবে, এটি কেবল একটি সরল Genre Affinity Proxy—কোনো গভীর Neural Preference Model নয়। কোনো ইউজারের পছন্দ করা Genre-গুলো যদি খুব একঘেয়ে (Homogeneous) হয়, তবে এই পদ্ধতি তাকে ঘুরেফিরে একই ধাঁচের Redundant Candidate দেখাতে পারে। তাই শুধু বাড়তি Metadata যোগ করলেই যে ব্যক্তিগতকৃত উপযোগিতা (Personalized Utility) বেড়ে গেছে, তা পরীক্ষা ছাড়া দাবি করা যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "স্কিমা সামঞ্জস্য ও ইনডেক্স ম্যাপের সতর্কতা",
+          "body": "অফলাইন ট্রেনিং এবং রানটাইম সার্ভিং—দুই জায়গাতেই Genre-এর ক্রম, IDF ভেক্টর এবং আইটেমের Map হুবহু এক হতে হবে। ধরুন, ভোকাবুলারির ক্রম বদলে গেল কিন্তু পুরোনো Weight বা IDF ভেক্টর অপরিবর্তিত রইল; তখন ভেক্টরের Dimension মিলে যাওয়ায় দেখতে বৈধ মনে হলেও ভেতরে ভেতরে প্রতিটি স্কোর সম্পূর্ণ ভুল বের হবে। তাই শুধু ক্যাটালগ ফাইলের Hash মেলানোই কখনোই পূর্ণাঙ্গ Feature Schema ও Version যাচাইয়ের বিকল্প হতে পারে না।"
+        },
+        {
+          "type": "text",
+          "title": "কোড ও রিপ্লে চেকপয়েন্ট",
+          "body": "আমাদের Python ওয়াকথ্রু কাঁচা Fit ডেটা থেকে পুরো স্টেট পুনর্গঠন করে এক্সপোর্ট করা IDF এবং ভেক্টরের Norm মিলিয়ে দেখে। পাশাপাশি অ্যাপের ভেতরের Dart মডেলটিও চারটি নমুনা কেসে হুবহু একই পূর্ণাঙ্গ Retriever ফলাফল পুনরুৎপাদন (Reproduce) করতে পারে। যখনই আপনি প্রি-কম্পিউটেড Source Snapshot ব্যবহার করবেন, তখন সেটি কোন মডেল ও কোন ভার্সন থেকে তৈরি হয়েছিল তা অবশ্যই সঙ্গে সংরক্ষণ করবেন।"
+        }
+      ]
+    },
+    {
+      "id": "ch34_baselines",
+      "title": "শক্তিশালী Baseline এবং সৎ Fallback নীতি",
+      "subtitle": "কেবল Popularity-কে হারানোই জটিল মডেল ব্যবহারের যুক্তি হতে পারে না",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Popularity Baseline কীভাবে কাজ করে?",
+          "body": "যেকোনো রিকমেন্ডার সিস্টেমের প্রথম মানদণ্ড হলো একটি স্বচ্ছ Popularity Baseline। এখানে Fit ডেটায় কোন সিনেমা কতবার পজিটিভ রেটিং (r >= 4) পেয়েছে তার মোট সংখ্যা বড় থেকে ছোট ক্রমে সাজানো হয়, এবং স্কোর সমান হলে ছোট সংখ্যার movieId আগে আসে। তবে একটি গুরুত্বপূর্ণ সূক্ষ্মতা খেয়াল করুন: সুপারিশ দেওয়ার সময় Unseen Filter থেকে ইউজারের কেবল পছন্দ করা সিনেমাই নয়, বরং Fit সময়ে দেখা ও রেটিং দেওয়া সবগুলো সিনেমাই বাদ দেওয়া হয়। ফলে খুব সক্রিয় ইউজারদের Eligible Catalog আলাদা হয়ে যায় এবং একই গ্লোবাল Popularity ভেক্টর থেকেও ভিন্ন ভিন্ন ইউজারের জন্য ভিন্ন Top 10 তালিকা তৈরি হতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "শক্তিশালী User-CF Baseline ও বাস্তব ফলাফল",
+          "body": "দ্বিতীয় গুরুত্বপূর্ণ মানদণ্ড হলো User-CF Baseline, যেখানে ইতিবাচক পছন্দের মিল (Positive Overlap), Cosine সাদৃশ্য ও Shrinkage ব্যবহার করে সমমনা ইউজারদের পছন্দ একত্র করা হয়। বহু-উৎসের Ranker বা Fusion বানানোর আগে এই একক Baseline-টির ফলাফল রিপোর্ট করা অত্যন্ত জরুরি। আমাদের পরীক্ষায় চূড়ান্ত Audit Warm প্যানেলে একক user_cf-এর NDCG এসেছে 0.16652, যেখানে নির্বাচিত ফিউশন পলিসি rrf_cf-এর NDCG এসেছে 0.13819—অর্থাৎ বাড়তি ধাপ ও ফিউশন যোগ করলেই যে স্বয়ংক্রিয়ভাবে ভালো ফল মিলবে, এমন কোনো কথা নেই!"
+        },
+        {
+          "type": "math",
+          "title": "পপুলারিটি কাউন্ট ও ইউজারের এলিজিবল ক্যাটালগ",
+          "body": "c_i=\\sum_{(u,i,r,t)\\in F}\\mathbf1[r\\ge4],\\quad C_u=I_F\\setminus H_u"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Baseline বনাম Selected Fusion তুলনা",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommender_capstone_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\n\nfor role in [\"validation\", \"audit\"]:\n    for name in [\"popularity\", \"user_cf\", lab[\"policy\"][\"selected\"]]:\n        card = lab[\"scorecards\"][role][name][\"warm\"]\n        print(role, name, card[\"recall\"], card[\"ndcg\"])\nassert (\n    lab[\"scorecards\"][\"audit\"][\"user_cf\"][\"warm\"][\"ndcg\"]\n    > lab[\"scorecards\"][\"audit\"][\"rrf_cf\"][\"warm\"][\"ndcg\"]\n)\n"
+        },
+        {
+          "type": "text",
+          "title": "Cold User ও শূন্য পজিটিভ হিস্ট্রির Fallback নীতি",
+          "body": "যখন কোনো ইউজারের Fit ডেটায় একটিও পজিটিভ রেটিং থাকে না, তখন Content এবং User-CF—উভয় পদ্ধতিই সুশৃঙ্খলভাবে Popularity Fallback গ্রহণ করে। তবে এখানে দুটি ভিন্ন অবস্থাকে গুলিয়ে ফেলা যাবে না: একজন Outer-cold User-এর Fit উইন্ডোতে আদৌ কোনো ইন্টারঅ্যাকশন হিস্ট্রি নেই; অন্যদিকে একজন Warm User-এর Fit হিস্ট্রি থাকলেও সেখানে কোনো পজিটিভ রেটিং (r >= 4) না-ও থাকতে পারে। এই দুটি পরিস্থিতি এক নয় বলেই আমাদের এক্সপোর্ট করা আর্টিফ্যাক্টে এগুলোর জন্য আলাদা Flag রাখা হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "কম্পিউটেশনাল খরচ ও Candidate Budget তুলনা",
+          "body": "ছোট আকারের এই CPU পরীক্ষায় প্রতিটি সোর্স থেকেই পুরো ক্যাটালগ স্ক্যান করে নিখুঁত (Exact) রিট্রিভাল করা সম্ভব হয়েছে। তবে তুলনা করার সময় একক Baseline-এর চূড়ান্ত 10টি আইটেম আর তিনটি সোর্স মিলিয়ে তৈরি হওয়া সর্বোচ্চ 150টি আইটেমের Fusion Union-কে একই Candidate Budget বলে চালিয়ে দেবেন না। তাছাড়া এখানে প্রোডাকশন সার্ভারের Latency, QPS বা Approximate Nearest Neighbor (ANN) রিকল মাপা হয়নি; অপারেশনাল ডিজাইনের জন্য সেগুলো আলাদাভাবে হিসাব করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "নেতিবাচক ফলাফল না লুকানোর সততা",
+          "body": "Validation সেটে ফিউশন প্রিসেটগুলোর মধ্যে rrf_cf বিজয়ী হলেও সামগ্রিকভাবে এটি সবচেয়ে শক্তিশালী Baseline (user_cf)-কে হারাতে পারেনি। কোয়ালিটি রিপোর্টে যদি আমরা চুপিসারে user_cf-এর নম্বরটি লুকিয়ে রাখতাম, তবে পুরো প্রজেক্টটিই বিভ্রান্তিকর হয়ে যেত। বাস্তব সিস্টেমে কখনো কখনো জটিল পাইপলাইনের বদলে সরল পলিসি বেছে নেওয়াই বেশি বুদ্ধিমানের কাজ—সেক্ষেত্রে পরিসংখ্যানগত প্রমাণ, রক্ষণাবেক্ষণের ঝক্কি (Maintenance) এবং সার্ভিং খরচ একসঙ্গে বিবেচনা করতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "অনুশীলনের প্রশ্ন ও সার্ভিং চুক্তি",
+          "body": "একবার ভেবে দেখুন, কোড থেকে যদি Cold Fallback অংশটুকু সরিয়ে দেওয়া হয় তবে কোন ইউজাররা নীরবে বাদ পড়ে যাবেন? এমন অবস্থায় ইউজারকে কি শূন্য তালিকা (Zero Recommendation) দেখানো হবে, নাকি অপ্রাপ্য আইটেম বা আনক্যালিব্রেটেড কোনো স্কোর ফেরত দেওয়া হবে—তার সুস্পষ্ট নিয়ম Serving Contract-এ লেখাই থাকতে হবে। মনে রাখবেন, আমাদের এই ল্যাবটি অফলাইন বিশ্লেষণের জন্য তৈরি, কোনো লাইভ অনলাইন সার্ভিস নয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch34_neighbors",
+      "title": "User-CF: Overlap, Shrinkage ও প্রমাণ একত্রীকরণ",
+      "subtitle": "খুব সামান্য Overlap-এ উচ্চ Cosine Similarity কেন বিভ্রান্তিকর হতে পারে?",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "বাইনারি পজিটিভ হিস্ট্রি ও তার তাৎপর্য",
+          "body": "আমাদের User-CF মডেলে কেবল Fit সময়ের পজিটিভ রেটিংগুলোকে (r >= 4) ইউজারের পছন্দের সেট হিসেবে ধরা হয়েছে, আর কম স্টারের রেটিংগুলো এই পজিটিভ সেটে স্থান পায়নি। কারণ আমাদের লক্ষ্য কোনো সিনেমার নিখুঁত স্টার রেটিং অনুমান করা নয়, বরং সমমনা প্রতিবেশী ইউজারদের (Neighborhood Evidence) খুঁজে বের করা। একইভাবে, না-দেখা সিনেমাগুলোকে আমরা নেতিবাচক পছন্দ হিসেবে ধরছি না। তবে খেয়াল রাখতে হবে, পজিটিভ ইভেন্ট দিয়ে পছন্দের এই প্রক্সি বানালেও ইউজাররা কোন সিনেমাগুলো আগে দেখেছেন সেই Exposure ও Selection Bias ডেটার ভেতরে থেকেই যায়।"
+        },
+        {
+          "type": "text",
+          "title": "Shrinkage কেন ব্যবহার করা হয়?",
+          "body": "ধরুন দুজন ইউজার মাত্র দুটি করে সিনেমা পছন্দ করেছেন এবং কাকতালীয়ভাবে দুটি সিনেমাই এক—তাহলে তাদের সাধারণ Cosine Similarity হয়ে যাবে পুরোপুরি 1.0! অথচ মাত্র দুটি মিলের ওপর ভরসা করে এত জোরালো সিদ্ধান্ত নেওয়া খুবই নড়বড়ে (Unstable)। এই সমস্যা এড়াতে আমরা সাদৃশ্যের সাথে c / (c + 10) আকারের একটি গুণিতক Shrinkage ফ্যাক্টর জুড়ে দিই, যেখানে c হলো দুজনের সাধারণ পছন্দের সংখ্যা (Overlap)। এতে ছোট Overlap আপনাআপনিই কম গুরুত্ব পায়, আর c অনেক বড় হলে ফ্যাক্টরটি 1-এর কাছাকাছি পৌঁছে যায়। এছাড়াও কমপক্ষে 2টি Overlap থাকা বাধ্যতামূলক করা হয়েছে এবং ইউজার নিজেই যেন নিজের প্রতিবেশী না হন (Self-neighbor Exclusion) তা নিশ্চিত করা হয়েছে।"
+        },
+        {
+          "type": "math",
+          "title": "Shrinkage-যুক্ত সাদৃশ্য ও প্রতিবেশীদের গড় প্রমাণের সূত্র",
+          "body": "s(u,v)=\\frac{|H_u^+\\cap H_v^+|}{\\sqrt{|H_u^+||H_v^+|}}\\frac{c_{uv}}{c_{uv}+10},\\quad \\hat r_{ui}=\\frac{\\sum_{v\\in N_{20}(u)}s(u,v)\\mathbf1[i\\in H_v^+]}{\\sum_vs(u,v)}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ প্রতিবেশী নির্বাচন ও User-CF র‍্যাঙ্কিং",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"capstone34\", Path(\"assets/datasets/movielens/recommender_capstone_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommender_capstone_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\n\nraw, movies = m.source().load()\nfit = raw[raw[:, 3] <= lab[\"report\"][\"fit_cutoff\"]]\nmodel = m.source().Recommender(fit, movies)\nuser = lab[\"samples\"][0]\nneighbors = model.neighbours(user)\nassert len(neighbors) <= 20 and all(overlap >= 2 for _, _, overlap in neighbors)\nprint(user, neighbors[:3])\nprint(model.recommend(user, \"user_cf\", k=10))\n"
+        },
+        {
+          "type": "text",
+          "title": "প্রতিবেশীদের পছন্দ একত্রীকরণ (Aggregation)",
+          "body": "প্রতিবেশী নির্বাচনের পর সবচেয়ে বেশি পজিটিভ সাদৃশ্য থাকা Top 20 জন প্রতিবেশীর পছন্দের বাইনারি সূচকগুলোকে তাদের সাদৃশ্য স্কোর দিয়ে ওজনযুক্ত যোগ (Weighted Sum) করা হয় এবং শেষে মোট ওজনের যোগফল দিয়ে ভাগ করা হয়। সোর্স র‍্যাঙ্কিং তৈরির আগেই ইউজারের ইতিমধ্যে দেখা সব সিনেমা (Seen Filter) বাদ দিয়ে দেওয়া হয়। আর কোনো ইউজারের জন্য যদি একজনও বৈধ প্রতিবেশী না পাওয়া যায়, তখন শূন্য দিয়ে ভাগ (Division by Zero) করে কৃত্রিম স্কোর না বানিয়ে সিস্টেম সরাসরি Popularity Fallback ব্যবহার করে।"
+        },
+        {
+          "type": "text",
+          "title": "স্থিতিশীল ক্রম ও Tie-breaking নিয়ম",
+          "body": "ভিন্ন ভিন্ন মেশিনেও যেন ফলাফল একচুল না নড়ে, সেজন্য প্রতিবেশীদের Similarity স্কোরকে 12 দশমিক ঘর পর্যন্ত রাউন্ড করে র‍্যাঙ্কিং কী তৈরি করা হয় এবং সমান স্কোর হলে সংখ্যাসূচক userId দিয়ে টাই ভাঙা হয়। আইটেম স্কোরের বেলাতেও একইভাবে রাউন্ড করা স্কোর এবং movieId ব্যবহার করা হয়। আপনি চাইলে কাঁচা ফ্লোটিং-পয়েন্ট স্কোর এক্সপোর্ট করতে পারেন, কিন্তু মনে রাখবেন—টাই ভাঙার এই সূক্ষ্ম নিয়ম সামান্য বদলে গেলেও Candidate Pool এবং পরবর্তী ধাপের RRF র‍্যাঙ্কিং বদলে যেতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "স্কেলেবিলিটির সীমানা (Scalability Boundary)",
+          "body": "আমাদের এই ছোট ডেটাসেটে বাইনারি Sparse User-Item Matrix এবং ইউজারে-ইউজারে Overlap সরাসরি হিসাব করা খুবই সহজসাধ্য। কিন্তু কোটি কোটি ইউজারের বিশাল সিস্টেমে সব ইউজার জুটির পূর্ণাঙ্গ ম্যাট্রিক্স হিসাব করতে গেলে খরচ বর্গাকারে (Quadratic) বেড়ে অকেজো হয়ে পড়বে। সেক্ষেত্রে বাস্তবে Blocking, Approximate Retrieval কিংবা পর্যায়ক্রমিক রিফ্রেশ ডিজাইন অপরিহার্য হয়ে ওঠে—যা এই অফলাইন প্রজেক্টে সরাসরি মেপে দেখানো হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "ইন্টারভিউ চেকপয়েন্ট",
+          "body": "ইন্টারভিউয়ের জন্য প্রস্তুতি হিসেবে খাতায় না দেখে Similarity ও Weighted Evidence-এর সূত্রটি প্রতিপাদন করুন এবং খুব সামান্য Overlap, প্রতিবেশী না থাকা, Cold Profile ও শুধু পজিটিভ রেটিং নেওয়ার অনুমানগুলো ব্যাখ্যা করুন। স্পষ্টভাবে মনে রাখবেন যে এই স্কোরগুলো কোনো ক্যালিব্রেটেড Click Probability নয়। পাশাপাশি কখন একটি শক্তিশালী User-CF ফলাফল জটিল ফিউশনের বদলে সরল ডিপ্লয়মেন্ট বেছে নেওয়ার পক্ষে জোরালো যুক্তি দেয়, তাও গুছিয়ে বলতে শিখুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch34_candidates",
+      "title": "Candidate Union, Source Budget ও Deduplication",
+      "subtitle": "Ranking-কে দোষ দেওয়ার আগে Retrieval Ceiling বুঝে নিন",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "প্রতিটি সোর্সের বাজেট ও একত্রীকরণ (Per-source Budget)",
+          "body": "আমাদের পাইপলাইনে তিনটি সোর্সের প্রতিটি থেকে সেরা Top 50 আইটেম নেওয়া হয়, ফলে সব মিলিয়ে সর্বোচ্চ 150টি অনন্য (Unique) Candidate তৈরি হতে পারে। অবশ্য একাধিক সোর্সে একই সিনেমা উঠে এলে (Overlap) প্রকৃত সংখ্যা 150-এর চেয়ে কম হয়। একত্রীকরণের সময় popularity -> content -> user_cf ক্রম অনুসরণ করে প্রথমবার আসা আইটেমটি রাখা হয় ও ডুপ্লিকেট বাদ দেওয়া হয় (Deduplication); এরপর ফিউশন ধাপে সেগুলোর চূড়ান্ত স্কোর হিসাব করা হয়। খেয়াল রাখবেন, Candidate Union-এর এই আকার কেবল আইটেম সংখ্যার হিসাব—এটিকে সরাসরি সার্ভারের মেপে দেখা Compute Latency ধরে নেওয়া যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "আগে Seen Filter, তারপর বাজেট কর্তন",
+          "body": "প্রতিটি সোর্স রিট্রিভার প্রথমে ইউজারের Fit সময়ে দেখা সবগুলো আইটেম বাদ দেয় এবং তারপর অবশিষ্ট ক্যাটালগ থেকে Top L আইটেম বেছে নেয়। যদি উল্টোটা করা হতো—অর্থাৎ আগে Top L নিয়ে পরে দেখা সিনেমা বাদ দেওয়া হতো—তবে ইউজারের ইতিমধ্যে দেখা জনপ্রিয় সিনেমাগুলো বাজেটের জায়গা দখল করে রাখত এবং দরকারি নতুন Candidate বাজেটের বাইরে ছিটকে যেত! উল্লেখ্য, আমাদের বর্তমান Frozen History-তে Validation বা Audit সময়ের রেটিং যুক্ত নেই; তাই ভবিষ্যতের দেখা আইটেম আগেভাগে বাদ দেওয়ার কোনো Hindsight Leakage এখানে ঘটছে না।"
+        },
+        {
+          "type": "math",
+          "title": "তিনটি সোর্সের Candidate Union ও সর্বোচ্চ সীমা",
+          "body": "C_u=\\bigcup_{s\\in\\{pop,content,CF\\}}\\mathrm{TopL}_s(u),\\quad |C_u|\\le3L"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ বিভিন্ন Budget-এ Candidate Union ও Fusion যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"capstone34\", Path(\"assets/datasets/movielens/recommender_capstone_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommender_capstone_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\n\nrow = next(r for r in lab[\"roles\"][\"audit\"] if r[\"user\"] == lab[\"samples\"][0])\nfor budget in [25, 50, 100]:\n    result = m.fuse(row[\"sources\"], \"rrf_cf\", budget)\n    assert len(result[\"candidates\"]) <= 3 * budget\n    assert len(result[\"candidates\"]) == len(set(result[\"candidates\"]))\n    assert set(result[\"ranked\"]) <= set(result[\"candidates\"])\n    print(budget, len(result[\"candidates\"]), result[\"ranked\"][:3])\n"
+        },
+        {
+          "type": "text",
+          "title": "পৌঁছানোর সর্বোচ্চ সীমা (Reachability Ceiling)",
+          "body": "ইউজারের ভবিষ্যৎ পছন্দের (Gold Set) কত অংশ আমাদের Candidate Pool-এ জায়গা পেয়েছে, সেটিই হলো Candidate Recall। আর সেই পুল থেকে সেরা Top 10 তালিকা সাজালে একটি নিখুঁত র‍্যাঙ্কারও সর্বোচ্চ min(10, pool_hits) / |G| পরিমাণ রিকল পেতে পারে—এটিই হলো আমাদের Oracle Ceiling, কোনো বাস্তব ডিপ্লয়যোগ্য মডেল নয়। আপনার চূড়ান্ত র‍্যাঙ্কিংয়ের Final Recall যদি কখনো এই সীমাকে ছাড়িয়ে যায়, তবে নিশ্চিত থাকুন যে মেট্রিক হিসাব বা ডেটা Join-এ কোথাও মারাত্মক বাগ লুকিয়ে আছে!"
+        },
+        {
+          "type": "capstone_retrieval",
+          "title": "ইন্টারেক্টিভ Candidate ও Budget পর্যবেক্ষণ",
+          "body": "ল্যাবের ভেতরে Budget হিসেবে 25, 50 বা 100 বেছে নিলে সংরক্ষিত পূর্ণাঙ্গ সোর্স Top 100 তালিকা থেকে তৎক্ষণাৎ নতুন Union ও Fusion হিসাব করে দেখানো হয়। এতে মূল মডেল বা Validation Selection নতুন করে Fit হয় না। এখানে পরীক্ষা করলেই দেখবেন, Candidate Pool-এর কভারেজ বাড়লেই যে সবসময় চূড়ান্ত Top 10 র‍্যাঙ্কিং ভালো হবে তার কোনো নিশ্চয়তা নেই—তাই রিট্রিভাল, ওরাকল এবং ফাইনাল এই তিনটি ধাপ সবসময় পাশাপাশি মিলিয়ে দেখুন।"
+        },
+        {
+          "type": "text",
+          "title": "ত্রুটি নির্ণয়: কোন ধাপে সমস্যা হচ্ছে?",
+          "body": "কোনো প্রাসঙ্গিক সিনেমা যদি Candidate Pool-এই না ঢোকে, তবে দুনিয়ার সেরা Ranker বসিয়েও সেটিকে Top 10-এ ফেরানো সম্ভব নয়। আবার সিনেমাটি পুলে থাকা সত্ত্বেও যদি Top 10-এ জায়গা না পায়, তবে বুঝতে হবে সমস্যাটি আমাদের Fusion বা ওজন নির্বাচনের ধাপে। অন্যদিকে ভবিষ্যতের কোনো সিনেমা যদি Fit Catalog-এর বাইরেই থাকে, তবে সেটি সম্পূর্ণ আলাদা একটি Source Availability সমস্যা।"
+        },
+        {
+          "type": "text",
+          "title": "Cold User-দের ক্ষেত্রে ওভারল্যাপের স্বরূপ",
+          "body": "একজন Cold User-এর বেলায় তিনটি সোর্সই ঘুরেফিরে একই Popularity Fallback ব্যবহার করে, ফলে তার সম্মিলিত Candidate Union-এর আকার 3L না হয়ে প্রায় L-এর সমানই থাকে। তাই রেকর্ডে তিনটি সোর্সের নাম উপস্থিত দেখেই সেগুলোকে তিনটি স্বাধীন প্রমাণ (Independent Evidence) বলে ভুল করবেন না। একটি স্বচ্ছ Explainability রিপোর্টে সোর্সের Fallback Flag এবং প্রকৃত Unique Candidate সংখ্যা দুটোই উল্লেখ করা জরুরি।"
+        }
+      ]
+    },
+    {
+      "id": "ch34_rrf",
+      "title": "Reciprocal Rank Fusion: আলাদা স্কেলের স্কোর মেলানোর কৌশল",
+      "subtitle": "কাঁচা স্কোরের Calibration ছাড়াই Rank Contribution দিয়ে বহু উৎস একত্র করুন",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন কাঁচা স্কোরের বদলে Rank ব্যবহার করব?",
+          "body": "আমাদের তিনটি সোর্সের দিকে একবার তাকান: Popularity দেয় পূর্ণসংখ্যার কাউন্ট, Genre Content দেয় 0 থেকে 1-এর ভেতর Cosine সাদৃশ্য, আর User-CF দেয় প্রতিবেশীদের ওজনযুক্ত গড়। তিনটির সংখ্যাসূচক একক (Units) ও বিস্তৃতি সম্পূর্ণ আলাদা! এদের কাঁচা মান সরাসরি যোগ করতে গেলে বড় সংখ্যার Popularity অন্য দুটি সোর্সকে পুরোপুরি গ্রাস করে ফেলবে। Reciprocal Rank Fusion (RRF) এই সমস্যা এড়াতে কাঁচা স্কোরের বদলে প্রতিটি সোর্সে আইটেমের অবস্থান বা Rank ব্যবহার করে। অবশ্য এই সুবিধার একটি মূল্যও আছে—শুধু ক্রম ব্যবহার করায় দুটি আইটেমের মূল স্কোরের ব্যবধান বা আত্মবিশ্বাসের পার্থক্য (Score Confidence) এখানে হারিয়ে যায়।"
+        },
+        {
+          "type": "text",
+          "title": "প্রতিটি সোর্সের অবদান (Rank Contribution) হিসাব",
+          "body": "কোনো সোর্সের তালিকায় একটি আইটেমের 1-ভিত্তিক অবস্থান (One-based Rank) যদি r হয় এবং ওই সোর্সের ওজন w হয়, তবে RRF-এ তার অবদান হবে w / (60 + r)। সোর্স তালিকায় আইটেমটি না থাকলে তার অবদান শূন্য। উদাহরণস্বরূপ, ওজন 2 থাকা কোনো সোর্সের একদম শীর্ষে (r = 1) থাকা আইটেমটি পাবে 2 / 61 স্কোর। মজার ব্যাপার হলো, একাধিক সোর্সে মাঝারি অবস্থানে থাকা কোনো সিনেমা সম্মিলিত ঐকমত্যের (Consensus Effect) জোরে কেবল একটি সোর্সের 1 নম্বর সিনেমাকেও টপকে যেতে পারে!"
+        },
+        {
+          "type": "math",
+          "title": "Weighted Reciprocal Rank Fusion (RRF)-এর সমীকরণ",
+          "body": "\\mathrm{RRF}(i)=\\sum_s\\frac{w_s\\mathbf1[i\\in C_s]}{60+rank_s(i)}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ RRF অবদান ও মোট স্কোর যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"capstone34\", Path(\"assets/datasets/movielens/recommender_capstone_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommender_capstone_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\n\nrow = next(r for r in lab[\"roles\"][\"audit\"] if r[\"user\"] == lab[\"samples\"][0])\nfor policy in m.POLICIES:\n    result = m.fuse(row[\"sources\"], policy)\n    for step in result[\"trace\"]:\n        assert abs(sum(step[\"contributions\"]) - step[\"score\"]) < 1e-12\n    print(policy, result[\"trace\"][0])\n"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের তিনটি পূর্বনির্ধারিত Preset",
+          "body": "এই প্রজেক্টে আমরা তিনটি সুনির্দিষ্ট ওজনের সেট বা Preset পরীক্ষা করছি (Popularity, Content ও User-CF ক্রমে): rrf_equal-এ ওজন [1, 1, 1], rrf_cf-এ [1, 1, 2] এবং rrf_content-এ [1, 2, 1]। এখানে ড্যাম্পিং ধ্রুবক 60, প্রতি সোর্সের বাজেট Top 50 এবং চূড়ান্ত তালিকা K = 10 স্থির রাখা হয়েছে। এটি কোনো ট্রেনিং-লুপ বা Gradient-নির্ভর Neural Ranker নয়; বরং আমাদের Validation Selector এই তিনটি স্বচ্ছ ফিউশন প্রিসেটের মধ্য থেকেই সেরাটিকে বেছে নেয়।"
+        },
+        {
+          "type": "text",
+          "title": "ধাপে ধাপে RRF অ্যালগরিদম",
+          "body": "অ্যালগরিদমটি বাস্তবায়নের ধাপগুলো খুবই সরল: প্রথমে প্রতিটি সোর্সের Top L প্রিফিক্স থেকে আইটেমের পজিশন ম্যাপ এবং ডুপ্লিকেটমুক্ত Union তৈরি করুন; এরপর প্রতিটি Candidate-এর জন্য সব সোর্সের অবদান যোগ করুন; সবশেষে মোট স্কোরকে 12 দশমিক ঘরে রাউন্ড করে বড় থেকে ছোট ক্রমে এবং সমান স্কোরে ছোট movieId আগে রেখে সাজিয়ে নিন। এতে চূড়ান্ত তালিকাটি শতভাগ অনন্য ও স্থিতিশীল থাকে—সোর্সের ক্রমটি কেবল Candidate ট্রেস করার কাজে থাকে, আর চূড়ান্ত র‍্যাঙ্কিং পুরোপুরি স্কোর ও টাই-ব্রেকিং নীতি মেনে চলে।"
+        },
+        {
+          "type": "text",
+          "title": "সময় জটিলতা (Time Complexity) ও বাস্তব খরচ",
+          "body": "তিনটি সোর্স মিলিয়ে মোট আইটেম সংখ্যা সর্বোচ্চ 3L হওয়ায় ম্যাপ ও Union তৈরিতে রৈখিক (Linear) সময় লাগে, আর C আকারের Union সাজাতে সময় লাগে O(C log C), যার পর সেরা K আইটেম নেওয়া হয়। তবে ভুলে যাবেন না যে এই হিসাবের বাইরেও মূল সোর্সগুলো থেকে ক্যাটালগ খুঁজে Candidate আনার আসল খরচ রয়ে গেছে—দ্রুতগতির RRF বসালেই আগের ধাপের ব্যয়বহুল রিট্রিভাল অদৃশ্য হয়ে যায় না! অ্যাপের ভেতরে অবশ্য সংরক্ষিত সোর্স স্ন্যাপশট থেকেই সরাসরি এই ফিউশন চালানো হয়।"
+        },
+        {
+          "type": "text",
+          "title": "RRF কী প্রমাণ করতে পারে না?",
+          "body": "বেশি RRF স্কোর পাওয়ার মানে এই নয় যে ইউজারের সিনেমাটি পছন্দ করার Probability বেশি, কিংবা এটি কোনো ক্যালিব্রেটেড CTR-ও নয়। সোর্সগুলোর নিজেদের মধ্যে কোরিলেশন থাকে, Top 50 কাটঅফের কারণে পরের দিকের র‍্যাঙ্ক বাদ পড়ে যায় এবং শুধু র‍্যাঙ্ক নেওয়ায় স্কোরের দূরত্বের তথ্য হারায়। সর্বোপরি, আমাদের নির্বাচিত ফিউশন মডেলটি যে একক user_cf বেসলাইনের কাছে হেরেছে—সেই সীমাবদ্ধতাটুকুও আমরা Capstone রিপোর্টে অকপটে তুলে ধরব।"
+        }
+      ]
+    },
+    {
+      "id": "ch34_selection",
+      "title": "Validation-only Selector এবং অপরিবর্তনীয় Policy",
+      "subtitle": "ফিউশন পরিবারের বিজয়ী আর পুরো সিস্টেমের সেরা মডেল এক কথা নয়",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "পলিসি নির্বাচনের সুস্পষ্ট চুক্তি (Selection Contract)",
+          "body": "ফিউশন প্রিসেটগুলোর মধ্য থেকে সেরা Policy বেছে নেওয়ার জন্য আমাদের প্রধান মাপকাঠি হলো Warm Validation NDCG। যদি দুটি প্রিসেটের NDCG সমান হয়, তবে পর্যায়ক্রমে Recall, 12 দশমিক ঘরে রাউন্ড করা কী এবং সবশেষে পূর্বঘোষিত প্রিসেট ক্রম ব্যবহার করে টাই ভাঙা হয়। আমাদের গ্রিডে নির্বাচিত প্রিসেটটির 0-ভিত্তিক ইনডেক্স হলো 1 (অর্থাৎ rrf_cf)। এই নির্বাচন শেষ হওয়ার পরেই কেবল Audit মেট্রিকগুলো পড়া হয়, এবং ফিউশন গ্রিডের বিজয়ীর পাশাপাশি একক Baseline-গুলোর তুলনাও আলাদাভাবে দেখানো হয়।"
+        },
+        {
+          "type": "text",
+          "title": "অপরিবর্তনীয় আউটপুট (Locked Output)",
+          "body": "Validation পরীক্ষার পর আমাদের নির্বাচিত ও লক করা পলিসি হলো rrf_cf। খেয়াল করুন, আমাদের Selector Function-এ ইনপুট হিসেবে Audit সেটের লেবেল বা স্কোরকার্ড পাঠানোর কোনো সুযোগই রাখা হয়নি! পলিসি নির্বাচনের পর Fit মডেলটিকে Validation ডেটা মিশিয়ে নতুন করে Refit করা হয়নি; বরং হুবহু একই মডেলের ওপর নির্বাচিত পলিসি চালিয়ে Frozen Audit ফলাফল নেওয়া হয়েছে। Audit স্কোর দেখার পর নির্বাচিত পলিসির নাম বদলে ফেললে পুরো মূল্যায়ন প্রোটোকলই অকার্যকর হয়ে যাবে।"
+        },
+        {
+          "type": "math",
+          "title": "Lexicographic Policy Selector-এর গাণিতিক সংজ্ঞা",
+          "body": "p^*=\\arg\\max_{p\\in\\mathcal P}(\\mathrm{NDCG}_V(p),\\mathrm{Recall}_V(p),-order(p))"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Validation Selector ও Baseline তুলনা",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"capstone34\", Path(\"assets/datasets/movielens/recommender_capstone_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommender_capstone_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\n\ncards = lab[\"scorecards\"][\"validation\"]\nselected = m.select(cards)\nassert selected == lab[\"policy\"][\"selected\"] == \"rrf_cf\"\nprint([(p, cards[p][\"warm\"][\"ndcg\"]) for p in m.POLICIES])\nprint(\"Stronger separate baseline\", cards[\"user_cf\"][\"warm\"][\"ndcg\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "Baseline-এর সাথে সৎ তুলনা",
+          "body": "Validation Warm প্যানেলেই একটি গুরুত্বপূর্ণ সংখ্যা লক্ষ্য করুন: একক user_cf বেসলাইনের NDCG হলো 0.05437, অথচ নির্বাচিত ফিউশন প্রিসেট rrf_cf-এর NDCG হলো 0.04913! তার মানে, ফিউশন পরিবারের ভেতরে সেরা প্রিসেট খুঁজে পাওয়ার অর্থ এই নয় যে এটি সব সিস্টেমের মধ্যেও সেরা। আপনার পোর্টফোলিও রিপোর্টে যদি এই শক্তিশালী একক বেসলাইনটিকে বাদ দিয়ে শুধু ফিউশন বিজয়ীকে দেখান, তবে মডেল নির্বাচনের প্রমাণটিই অসম্পূর্ণ ও বিভ্রান্তিকর হয়ে পড়বে।"
+        },
+        {
+          "type": "capstone_evaluation",
+          "title": "ইন্টারেক্টিভ স্কোরকার্ড পর্যবেক্ষণ",
+          "body": "অ্যাপের ইন্টারফেসে Role ও Cohort পরিবর্তনের বাটনগুলো কেবল সংরক্ষিত Frozen রিপোর্টের দৃশ্যপট বদলায়। আপনি Audit বা Broad স্কোর দেখতে গেলে পেছনের লক করা ফিউশন সিলেকশন কখনোই বদলে যায় না। আমাদের অ্যাপের লেবেলগুলো এই সীমানাটি একদম স্পষ্ট রাখে, এবং র‍্যাঙ্কিং ল্যাবের প্যারামিটার ঘোরানোর কন্ট্রোলগুলোও শুধুমাত্র পর্যবেক্ষণ ও বোঝার (Inspection-only) জন্য রাখা হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "বারবার ব্যবহৃত ডেটা ও অনিশ্চয়তার সীমা",
+          "body": "এই ডেটাসেটটি আমরা বইয়ের একাধিক অধ্যায়ে বিশ্লেষণ করেছি। তাই নতুন করে সময়ের দাগ টানলেই অতীতের সেই পরিদর্শনের ইতিহাস মুছে যায় না; তাছাড়া শুরুতে কোহর্টের আকার দেখে প্রোটোকল বদলানোর (60/20/20 থেকে 80/10/10) বিষয়টিও আমরা প্রকাশ্যে জানিয়েছি। ফলে লাইভ Online Confirmation বা সম্পূর্ণ নতুন অন্ধ পরীক্ষা ছাড়া শুধুমাত্র এই নম্বরের ওপর ভিত্তি করে প্রোডাকশন বিজয় ঘোষণা করা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "অনুশীলনের লক্ষ্য",
+          "body": "নিজে হাতে এমন একটি Pure Selector Function লিখুন যা ইনপুট হিসেবে কেবল Validation স্কোরকার্ড গ্রহণ করে। এরপর ইউনিট টেস্ট লিখে যাচাই করুন যে Audit স্কোরকার্ডে ইচ্ছাকৃতভাবে উল্টোপাল্টা মান বসালেও নির্বাচিত পলিসি একচুল বদলায় না, এবং সব প্রিসেটের স্কোর সমান হলে রাউন্ডিং ও পূর্বঘোষিত প্রিসেট ক্রম নিখুঁতভাবে কাজ করে।"
+        }
+      ]
+    },
+    {
+      "id": "ch34_metrics",
+      "title": "Candidate, Oracle ও Final Metric-এর হর (Denominator)",
+      "subtitle": "বিভিন্ন ধাপের Stage Metric-কে কখনো সমান খরচের Benchmark ভাববেন না",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "মূল্যায়ন মেট্রিকগুলোর নিখুঁত সংজ্ঞা",
+          "body": "মেট্রিক পড়ার আগে প্রতিটির হর (Denominator) পরিষ্কারভাবে বুঝে নেওয়া চাই। P@10-এর হর সবসময় স্থির 10; Recall-এর হর হলো ওই ইউজারের ভবিষ্যৎ পজিটিভ বা Gold সেটের আকার |G|; আর বাইনারি NDCG হিট হওয়া পজিশনগুলোর ডিসকাউন্টেড গেইনকে আদর্শ গেইন (Ideal Gain) দিয়ে ভাগ করে। আমাদের রিপোর্টে User-macro গড় ব্যবহার করা হয়েছে, যা প্রতিটি যোগ্য ইউজারকে সমান গুরুত্ব দেয়। সব ইউজারের হিট একত্র করে মোট Gold দিয়ে ভাগ করলে (Pooled Ratio) সম্পূর্ণ ভিন্ন একটি রাশি (Estimand) তৈরি হয়, যেখানে অতি-সক্রিয় গুটিকয়েক ইউজারের আচরণ পুরো ফলাফলকে ঘুরিয়ে দিতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "Warm, Broad ও Cold—তিনটি Gold সংজ্ঞার পার্থক্য",
+          "body": "প্যানেলের সংজ্ঞা বদলালে মেট্রিকের অর্থও বদলে যায়। Warm কোহর্টে কেবল তারাই আছেন যাদের Fit হিস্ট্রি আছে এবং ভবিষ্যতে অন্তত একটি না-দেখা ও Fit Catalog-এ থাকা পজিটিভ সিনেমা আছে। Broad কোহর্টে ভবিষ্যতে পজিটিভ রেটিং দেওয়া সব ইউজারই অন্তর্ভুক্ত—এমনকি যাদের লক্ষ্যবস্তু ক্যাটালগের বাইরে বা আগে দেখা (Unreachable Targets)। আর Cold কোহর্টে থাকেন তারা যাদের কোনো Fit হিস্ট্রি নেই কিন্তু ভবিষ্যৎ পজিটিভ রেটিং আছে। যেসব ইউজারের প্রাসঙ্গিক লক্ষ্যবস্তু শূন্য, তাদের জন্য Recall ও NDCG অসংজ্ঞায়িত; আমরা সেখানে মনগড়া 0 বসিয়ে গড় মানকে কৃত্রিমভাবে হালকা (Dilute) করিনি।"
+        },
+        {
+          "type": "math",
+          "title": "তিনটি ধাপের Recall অসমতা (Funnel Inequality)",
+          "body": "R_C=\\frac{|C\\cap G|}{|G|},\\quad R_{oracle@10}=\\frac{\\min(10,|C\\cap G|)}{|G|},\\quad R_{final@10}\\le R_{oracle@10}\\le R_C"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Recall Funnel অসমতা যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommender_capstone_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\n\nfor role in lab[\"scorecards\"].values():\n    for method, scopes in role.items():\n        for scope, s in scopes.items():\n            if s[\"users\"]:\n                assert s[\"recall\"] <= s[\"oracle_recall10\"] + 1e-12\n                assert s[\"oracle_recall10\"] <= s[\"candidate_recall\"] + 1e-12\nprint(lab[\"scorecards\"][\"audit\"][\"rrf_cf\"][\"warm\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব অডিট ফানেল: কোথায় কতটুকু হারাচ্ছে?",
+          "body": "আমাদের Audit সেটে নির্বাচিত ফিউশন পলিসি rrf_cf-এর Warm ফানেলটি দেখুন: Candidate Recall হলো 0.18461, পুলের ভেতরে সেরা 10টির তাত্ত্বিক সীমা Oracle Recall@10 হলো 0.15553, অথচ চূড়ান্ত Final Recall@10 নেমে এসেছে 0.07406-এ! অর্থাৎ নাগালের মধ্যে আসা প্রাসঙ্গিক সিনেমাগুলোরও একটি বড় অংশ চূড়ান্ত র‍্যাঙ্কিংয়ে পেছনে পড়ে গেছে। শুধু বেশি Candidate পুলের ভেতরে আনাই মডেলের সাফল্য নয়; সোর্সের বৈচিত্র্য ও ফিউশনের ট্রেড-অফগুলোও খতিয়ে দেখতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "Baseline Pool তুলনার সতর্কতা",
+          "body": "স্কোরকার্ড পড়ার সময় একটি গুরুত্বপূর্ণ কারিগরি দিক মনে রাখবেন: এখানে একক Baseline-গুলোর candidate ফিল্ডে কেবল চূড়ান্ত ফেরত দেওয়া Top 10 আইটেম রাখা হয়েছে, পুরো রিট্রিভাল জগত নয়; অন্যদিকে ফিউশন পদ্ধতির ক্ষেত্রে সেখানে সর্বোচ্চ 150 আকারের Union রয়েছে। ফলে Baseline এবং Fusion-এর Candidate Recall বা গড় পুল আকার সরাসরি তুলনা করা মোটেও সমান বাজেটের (Equal-budget) রিট্রিভাল তুলনা নয়! কেবল একই কোহর্ট ও একই Gold সেটের ওপর চূড়ান্ত Top 10 মেট্রিকগুলোই সরাসরি তুলনাযোগ্য।"
+        },
+        {
+          "type": "text",
+          "title": "Catalog Coverage এবং যা এটি মাপে না",
+          "body": "আমাদের রিপোর্টে Catalog Coverage মাপা হয়েছে সব ইউজারের Top 10 তালিকায় আসা অনন্য সিনেমাগুলোর সম্মিলিত সেটকে Fit Catalog-এর আকার 7867 দিয়ে ভাগ করে। কিন্তু এই একটি সংখ্যা দিয়ে ইউজার কভারেজের হর, সুপারিশের নতুনত্ব (Novelty), Genre বৈচিত্র্য কিংবা ন্যায্যতা (Fairness) বোঝা যায় না। পাশাপাশি Broad স্কোর আলাদাভাবে দেখায় যে Cold Fallback মেশানোর পর সামগ্রিক চিত্রটি কেমন দাঁড়াচ্ছে। কখনোই ইউজার প্যানেলের আসল হর গোপন করে শুধু আকর্ষণীয় Warm ফলাফল দেখাবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "ইমপ্লিমেন্টেশন যাচাইয়ের তালিকা",
+          "body": "কোড লেখার পর নিশ্চিত করুন যে চূড়ান্ত তালিকার সব ID অনন্য, প্রতিটি Candidate আমাদের Fit Catalog-এর অন্তর্ভুক্ত, ইউজারের Fit-seen সব আইটেম বাদ পড়েছে এবং সোর্স বা র‍্যাঙ্কিংয়ের কোথাও ভবিষ্যতের Gold লেবেল স্পর্শ করা হয়নি। ডেটাসেট Join, দশমিক রাউন্ডিংয়ের টাই এবং শূন্য হিস্ট্রির নিয়মগুলো আলাদাভাবে পরীক্ষা করুন—কারণ মেট্রিকের গাণিতিক সূত্র শতভাগ সঠিক হলেও ইউজার বা আইটেম ম্যাপে একটি ভুল পুরো প্রজেক্টের সিদ্ধান্তকে নষ্ট করে দিতে পারে।"
+        }
+      ]
+    },
+    {
+      "id": "ch34_cold",
+      "title": "Cold User, শূন্য পজিটিভ হিস্ট্রি ও অপ্রাপ্য আইটেম",
+      "subtitle": "Fallback Policy কোনো জোড়াতালি নয়, এটি বাস্তব সিস্টেমের অবিচ্ছেদ্য অংশ",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "দুই ধরনের Cold পরিস্থিতি আলাদা করুন",
+          "body": "রিকমেন্ডার সিস্টেমে 'Cold' কথাটি আমরা প্রায়ই ঢালাওভাবে ব্যবহার করি, কিন্তু এখানে দুটি সম্পূর্ণ ভিন্ন পরিস্থিতি আছে। প্রথমত, Outer-cold ইউজার—যার Fit উইন্ডোতে আদৌ কোনো ইন্টারঅ্যাকশন নেই (train_count == 0)। দ্বিতীয়ত, No-positive-history ইউজার—যিনি Fit সময়ে কিছু সিনেমা দেখে কম স্টার রেটিং (r < 4) দিয়েছেন, কিন্তু একটিও পজিটিভ রেটিং দেননি; ফলে তার Content Profile শূন্য এবং User-CF প্রতিবেশীও পাওয়া যায় না। কিন্তু খেয়াল করুন, দ্বিতীয় ইউজারের বেলায় All-seen ফিল্টার ঠিকই তার ওই কম রেটিং দেওয়া সিনেমাগুলোকে সুপারিশ থেকে বাদ দেবে! এজন্যই আমাদের ডেটায় fallback ফ্ল্যাগ এবং train_count দুটিই আলাদাভাবে সংরক্ষণ করা হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "সোর্স-ভিত্তিক Fallback বনাম সিস্টেম ত্রুটি",
+          "body": "যখন কোনো ইউজারের Content প্রোফাইল শূন্য হয় অথবা User-CF কোনো বৈধ প্রতিবেশী খুঁজে পায় না, তখন সংশ্লিষ্ট সোর্সটি নিয়ম মেনে Popularity তালিকা ব্যবহার করে। এমনকি একজন সক্রিয় Warm ইউজারেরও পর্যাপ্ত Overlap-এর অভাবে User-CF সোর্সটি Fallback নিতে পারে, অথচ একই সময়ে তার Genre Content সোর্সটি নিজস্ব ব্যক্তিগতকৃত তালিকা দিচ্ছে! বাস্তব মনিটরিংয়ে এই পরিকল্পিত Fallback এবং অপ্রত্যাশিত সিস্টেম ক্র্যাশ (Source Failure)-কে অবশ্যই দুটি আলাদা Observability ফিল্ড হিসেবে লগ করতে হবে।"
+        },
+        {
+          "type": "math",
+          "title": "Cold User ও অজানা আইটেমের চুক্তি",
+          "body": "u\\notin U_F\\Rightarrow\\mathrm{popularity},\\quad i\\notin I_F\\Rightarrow i\\notin C_u"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Cold User-দের সোর্স আচরণ যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommender_capstone_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\n\nfor role, rows in lab[\"roles\"].items():\n    cold = [r for r in rows if not r[\"train_count\"] and r[\"positive\"]]\n    for row in cold:\n        assert all(\n            row[\"sources\"][s] == row[\"sources\"][\"popularity\"]\n            for s in [\"content\", \"user_cf\"]\n        )\n    print(role, \"cold positives\", len(cold))\nprint(\"source cases\", lab[\"samples\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "নতুন সিনেমার (New Items) সীমাবদ্ধতা",
+          "body": "ভবিষ্যতে রেটিং পাওয়া যেসব সিনেমা আমাদের 7867 আকারের Fit Catalog-এ নেই, সেগুলোকে এই প্রজেক্টে Zero-shot হিসেবে সার্ভ করা হয়নি—যদিও মূল movies.csv ফাইলে তাদের নাম ও Genre উপস্থিত আছে। এর কারণ হলো মেটাডেটার ঐতিহাসিক প্রাপ্যতার অনিশ্চয়তা এড়ানো এবং আমাদের ঘোষিত ক্যাটালগ সীমানা কঠোরভাবে বজায় রাখা। আর রিপোর্টে Broad কোহর্টের মেট্রিক পাশাপাশি রাখার ফলে নতুন আইটেম না ধরতে পারার এই সীমাবদ্ধতাটি কখনোই আড়ালে চলে যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "একটি বাস্তব উদাহরণ: User 25 পর্যবেক্ষণ",
+          "body": "আমাদের নমুনা প্যানেলের User 25 হলেন এই Cold আচরণের একটি প্রামাণ্য উদাহরণ। তার ক্ষেত্রে তিনটি সোর্সের তালিকাই হুবহু একই Popularity আউটপুট দেয়; ফলে আপনি ফিউশনের ওজন যেভাবেই বদলান না কেন, মোট স্কোরের যোগফল বদলালেও আইটেমগুলোর আপেক্ষিক ক্রম (Relative Ordering) একচুলও বদলায় না! এখানে ইউজার একটি বৈধ Top 10 তালিকা পাচ্ছেন ঠিকই, কিন্তু সেটিকে মডেলের Personalization সাফল্য বলে দাবি করা যাবে না। এজন্যই Cold প্যানেলের ফলাফল Warm রিপোর্ট থেকে পৃথক রাখা হয়।"
+        },
+        {
+          "type": "text",
+          "title": "সার্ভিং সিদ্ধান্ত ও ত্রুটি প্রতিরোধ",
+          "body": "প্রোডাকশন পরিবেশে যদি কখনো Candidate তালিকা শূন্য আসে, ক্যাটালগ পাওয়া না যায় কিংবা মডেলের ভার্সন না মেলে, তখন কী উত্তর যাবে তার সুনির্দিষ্ট Response Contract থাকতে হবে। সঠিকভাবে ভার্সন মেলানো একটি Fallback Bundle ব্যবহার করা সুচিন্তিত ইঞ্জিনিয়ারিং সিদ্ধান্ত; কিন্তু ক্যাশে পড়ে থাকা এলোমেলো পুরোনো (Stale) কোনো এন্ট্রি ফেরত দেওয়া কখনোই গ্রহণযোগ্য Fallback নয়! আমাদের অ্যাপের Fault Lab-এ এমন অসামঞ্জস্য ধরা পড়লে সার্ভিং সাথে সাথে ব্লক করে দেওয়া হয়।"
+        },
+        {
+          "type": "text",
+          "title": "ইন্টারভিউয়ের সীমানা ও পরবর্তী প্রোডাক্ট চাহিদা",
+          "body": "নতুন ইউজারদের অনবোর্ডিং প্রশ্ন করা, সক্রিয় Exploration (যেমন Bandits), মেটাডেটা দিয়ে নতুন আইটেম রাউট করা এবং বিলম্বিত ফিডব্যাক সামলানো—এগুলোর প্রতিটিই আলাদা প্রোডাক্ট ও সিস্টেম রিকোয়ারমেন্ট। স্থির ঐতিহাসিক রেটিং ডেটা থেকে আমরা কখনোই অনলাইন ইউজার সন্তুষ্টি বা Exploration-এর সুফল দাবি করব না; নতুন লগ সংগ্রহ না করা পর্যন্ত অজানা আচরণের উত্তর অজানাই থেকে যায়।"
+        }
+      ]
+    },
+    {
+      "id": "ch34_errors",
+      "title": "Error Analysis: সমস্যাটি Retrieval-এ নাকি Fusion-এ?",
+      "subtitle": "গড় স্কোরের আড়ালে না থেকে প্রকৃত ব্যর্থতার পদচিহ্ন (Failure Trace) অনুসন্ধান করুন",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ব্যর্থতার শ্রেণিবিন্যাস (Failure Taxonomy) দিয়ে শুরু করুন",
+          "body": "মডেলের স্কোর কম এলে অন্ধভাবে টিউনিং শুরু না করে আগে ব্যর্থতাগুলোকে সঠিক শ্রেণিতে ভাগ করুন। লক্ষ্যবস্তু ক্যাটালগেই নেই বা আগেই দেখা (Unavailable Target), যোগ্য হয়েও কোনো সোর্সের পুলে না আসা (Eligible-but-unretrieved), পুলে এসেও র‍্যাঙ্কিংয়ে পিছিয়ে পড়া (Pooled-but-low-ranked) এবং ইউজারের পর্যবেক্ষণগত অসামঞ্জস্য—এগুলো সম্পূর্ণ আলাদা ধরনের ব্যর্থতা। এক ধাপের সমস্যা সারালে অন্য ধাপের মেট্রিক আপনাআপনি ভালো হয়ে যাবে না। সুনির্দিষ্ট ইউজার ID, হিস্ট্রি, Candidate পুল ও র‍্যাঙ্ক পজিশন সংরক্ষণ করে রাখলে এই ডিবাগিং শতভাগ Reproducible হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Catalog Gap: নাগালের বাইরের লক্ষ্যবস্তু",
+          "body": "ইউজারের ভবিষ্যৎ কোনো পজিটিভ সিনেমা যদি Fit Catalog-এর বাইরে থাকে অথবা তিনি Fit সময়েই সেটিকে দেখে থাকেন, তবে সেটি Warm প্যানেলের Eligible Gold সেটে স্থান পায় না। খেয়াল রাখবেন, মোট পজিটিভ সেট থেকে Eligible সেট বাদ দিলে (positive - eligible) যে আইটেমগুলো থাকে, সেগুলোর সবকটিকে ঢালাওভাবে 'নতুন সিনেমা' বলে দেবেন না—এই পার্থক্যের পেছনে একাধিক কারণ থাকতে পারে। প্রতিটি কারণের নিখুঁত সংখ্যা জানতে চাইলে ক্যাটালগ সেট এবং Seen সেটের সাথে আলাদাভাবে মিলিয়ে (Join) দেখতে হবে।"
+        },
+        {
+          "type": "math",
+          "title": "Retrieval Gap ও Ranking Gap-এর সেট সমীকরণ",
+          "body": "G\\setminus C:\\mathrm{retrieval\\ gap},\\quad (G\\cap C)\\setminus Top10:\\mathrm{ranking\\ gap}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ একজন ইউজারের Miss Trace বিশ্লেষণ",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommender_capstone_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\n\nrow = next(r for r in lab[\"roles\"][\"audit\"] if r[\"user\"] == lab[\"samples\"][0])\np = row[\"pipelines\"][lab[\"policy\"][\"selected\"]]\ng = set(row[\"eligible\"])\nprint(\"unretrieved\", sorted(g - set(p[\"candidates\"]))[:10])\nprint(\n    \"retrieved but not top10\",\n    sorted((g & set(p[\"candidates\"])) - set(p[\"ranked\"]))[:10],\n)\nprint(\"unreachable catalog targets\", len(set(row[\"positive\"]) - set(row[\"eligible\"])))\n"
+        },
+        {
+          "type": "text",
+          "title": "Retrieval Gap: কেন পুলের ভেতরেই এল না?",
+          "body": "উপরের কোডের প্রথম অংশটি আমাদের দেখায় Retrieval Gap (G \\ C)—অর্থাৎ সিনেমাটি Fit Catalog-এ পরিচিত এবং ইউজারের আগে না-দেখা হওয়া সত্ত্বেও তিনটি সোর্সের Top 50 ইউনিয়নে জায়গা পায়নি। এমন হলে সোর্সের বাজেট ও কভারেজ, ইউজার প্রোফাইলের Sparsity এবং User-CF প্রতিবেশীদের সমর্থন খতিয়ে দেখতে হয়। তবে সাবধান: কখনোই ভবিষ্যতের Gold লেবেল দেখে অনলাইন Candidate তালিকা ছেঁকে নতুন মেট্রিক বানাবেন না—তা সরাসরি Hindsight Leakage!"
+        },
+        {
+          "type": "text",
+          "title": "Fusion Gap: পুলে থেকেও কেন Top 10-এ জায়গা পেল না?",
+          "body": "দ্বিতীয় অংশটি চিহ্নিত করে Fusion বা Ranking Gap ((G ∩ C) \\ Top 10)—যেখানে প্রাসঙ্গিক সিনেমাটি Candidate Pool-এ এসেছিল ঠিকই, কিন্তু চূড়ান্ত Top 10-এ উঠতে পারেনি। এর কারণ বুঝতে প্রতিটি সোর্সে সিনেমাটির অবস্থান, RRF অবদান, কাটঅফ ট্রাঙ্কেশন এবং বহু-সোর্সের ঐকমত্য (Consensus) পরীক্ষা করুন। ওজন বদলালে র‍্যাঙ্ক কীভাবে নড়ে তা দেখা একটি চমৎকার ঐতিহাসিক ডায়াগনস্টিক কৌশল; কিন্তু অডিট বা টেস্ট স্কোর দেখে ওজন টিউন করে সেটিকে আবার স্পর্শহীন Held-out ফলাফল বলে দাবি করা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "নমুনা নির্বাচনে সততা (No Cherry-picking)",
+          "body": "আমাদের ডায়াগনস্টিক প্যানেলে যে প্রথম তিনজন Warm অডিট ইউজার এবং একজন Cold ইউজারকে রাখা হয়েছে, তা সংখ্যাসূচক ইউজার ক্রম মেনে শুরুতেই স্থির করা—মনমতো সুন্দর সুপারিশ দেখে বেছে নেওয়া (Cherry-picked) নয়! কোনো নমুনা ইউজারের বেলায় যদি শূন্য হিটও আসে, আমরা সেটিই খোলাখুলি দেখাই। মনে রাখবেন, গড় মেট্রিকের উন্নতি কখনোই প্রতিটি একক ইউজারের উপকারের নিশ্চয়তা দেয় না।"
+        },
+        {
+          "type": "text",
+          "title": "প্রকৌশলগত বাগ টিকেট কীভাবে লিখবেন?",
+          "body": "র‍্যাঙ্কিংয়ের কোনো ব্যর্থতা নিয়ে ইঞ্জিনিয়ারিং টিকেট লেখার সময় তা পুনরুৎপাদনের জন্য সব তথ্য দিন: Artifact Version, userId, Fit History Hash, সোর্সগুলোর র‍্যাঙ্ক, ব্যবহৃত Preset ও Budget, প্রত্যাশিত ফিল্টার এবং প্রাপ্ত আউটপুট তালিকা। শুধু সিনেমার নাম বা ব্যক্তিগত অনুভূতি ('এই সাজেশনটি অদ্ভুত লাগছে') কোনো প্রকৌশলগত প্রমাণ নয়। পাশাপাশি ডেটায় ইউজারের সব পছন্দের রেকর্ড না থাকাকে (Label Incompleteness) কোডের বাগ ভেবে জোর করে 'ঠিক' করতে যাবেন না!"
+        }
+      ]
+    },
+    {
+      "id": "ch34_uncertainty",
+      "title": "নির্বাচিত পলিসির Audit Uncertainty ও তার সীমা",
+      "subtitle": "মাত্র 18 জন ইউজারের প্যানেল থেকে পুরো জনগোষ্ঠীর নিশ্চিত সিদ্ধান্ত টানা যায় না",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন জোড়ায় জোড়ায় তুলনা (Paired Comparison) দরকার?",
+          "body": "অনিশ্চয়তা পরিমাপের জন্য আমরা প্রতিটি Audit ইউজারের ওপর নির্বাচিত ফিউশন পলিসি (rrf_cf) এবং একক Popularity বেসলাইনের Recall পাশাপাশি তুলনা করি। যেহেতু একই ইউজারের ক্ষেত্রে অতীত হিস্ট্রি এবং ভবিষ্যৎ লক্ষ্যবস্তুর কাঠিন্য (Difficulty) অভিন্ন, তাই আমরা প্রতি ইউজারের মেট্রিক পার্থক্য d_u হিসাব করে রাখি। যদি তা না করে ফিউশন ও বেসলাইনের ইউজার তালিকা দুটিকে আলাদাভাবে স্বাধীনভাবে রিস্যাম্পল করা হতো, তবে এই জোড়া বা Pairing ভেঙে যেত! তাই এখানে প্রতিস্থাপনসহ (With Replacement) পুরো ইউজার পার্থক্যগুলোকেই ড্র করা হয়।"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তবায়িত ডায়াগনস্টিক ও সংখ্যাসূচক ফলাফল",
+          "body": "আমাদের Audit প্যানেলের 18 জন Warm ইউজারের ওপর লোকাল NumPy Generator (সিড 34) দিয়ে 5000 বার Bootstrap ড্র চালিয়ে 95% রৈখিক Percentile Interval হিসাব করা হয়েছে। এতে গড় Recall পার্থক্য এসেছে +0.01757155 এবং ব্যবধিটি দাঁড়িয়েছে [0, 0.04671717]। খেয়াল করুন, ব্যবধির নিচের প্রান্তটি ঠিক 0 ছুঁয়ে আছে—সুতরাং এখান থেকে পুরো ইউজার জনগোষ্ঠীর ওপর নিরঙ্কুশ শ্রেষ্ঠত্ব বা Causal জয়ের দাবি করা চলে না। তার ওপর NDCG মেট্রিকে একক user_cf বেসলাইনটি যে আরও শক্তিশালী, সেটিও আমাদের চোখের সামনেই আছে।"
+        },
+        {
+          "type": "math",
+          "title": "Per-user পার্থক্য ও Paired Bootstrap গড়ের সূত্র",
+          "body": "d_u=R_u(p^*)-R_u(pop),\\quad \\Delta^{*(b)}=\\frac1n\\sum_jd_{u_j^{*(b)}}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ 5000 Bootstrap Draw দিয়ে Confidence Interval যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"capstone34\", Path(\"assets/datasets/movielens/recommender_capstone_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommender_capstone_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\n\nimport numpy as np\n\nrows = [r for r in lab[\"roles\"][\"audit\"] if r[\"train_count\"] and r[\"eligible\"]]\np = lab[\"policy\"][\"selected\"]\nd = np.array(\n    [\n        m.metrics(r[\"rankings\"][p], r[\"eligible\"])[\"recall\"]\n        - m.metrics(r[\"rankings\"][\"popularity\"], r[\"eligible\"])[\"recall\"]\n        for r in rows\n    ]\n)\nsamples = d[np.random.default_rng(34).integers(len(d), size=(5000, len(d)))].mean(1)\nnp.testing.assert_allclose(\n    np.quantile(samples, [0.025, 0.975]), [lab[\"paired\"][\"low\"], lab[\"paired\"][\"high\"]]\n)\nprint(len(d), d.mean(), lab[\"paired\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "শর্তসাপেক্ষ পরিধি (Conditional Scope)",
+          "body": "এই Bootstrap হিসাবটির সীমা খুব পরিষ্কারভাবে বুঝতে হবে: এখানে মডেলের Fit স্টেট, পলিসি নির্বাচনের ফলাফল, সময়ের বিভাজন এবং Gold লেবেল সবই স্থির (Fixed) ধরে নেওয়া হয়েছে। অর্থাৎ প্রতিবার ড্র করার সময় মডেল ট্রেনিং বা Validation Selector নতুন করে চালানো হয়নি; তাই ট্রেনিং বা সিলেকশন ধাপের অনিশ্চয়তা এর ভেতরে নেই। এছাড়াও ইউজাররা পরস্পর স্বাধীন নমুনা—এই আসন্নীকরণ (Approximation) এখানে ব্যবহৃত হয়েছে, যা ক্যাটালগের সাধারণ আইটেম বা নেটওয়ার্ক নির্ভরতা পুরোপুরি ধরতে পারে না।"
+        },
+        {
+          "type": "text",
+          "title": "ছোট প্যানেলের বাস্তবতা (Small Panel Limit)",
+          "body": "মাত্র 18 জন Warm ইউজার কখনোই পুরো প্ল্যাটফর্মের ইউজার জনগোষ্ঠীর প্রতিনিধিত্ব করে না। ডেটাসেটের বিশাল অংশ জুড়ে থাকা Cold ইউজার এবং ক্যাটালগের বাইরের অপ্রাপ্য সিনেমাগুলো এই Warm হিসাবের বাইরেই রয়ে গেছে। গড় পার্থক্যের ধনাত্মক মানটি আমাদের পোর্টফোলিওতে একটি প্রাথমিক হাইপোথিসিস দিতে পারে বটে, কিন্তু বাস্তব ডিপ্লয়মেন্টের অডিয়েন্স, Exposure প্রক্রিয়া এবং প্রকৃত ব্যবসায়িক উপযোগিতার প্রশ্নগুলো এখনো অমীমাংসিত।"
+        },
+        {
+          "type": "text",
+          "title": "Equivalence দাবি করার ভুল এড়িয়ে চলুন",
+          "body": "Confidence Interval-এর এক প্রান্ত শূন্য স্পর্শ করার অর্থ এই নয় যে মডেলটি সেরা হওয়ার সম্ভাবনা 95%; আবার চওড়া বা শূন্য অতিক্রম করা ব্যবধি কখনোই প্রমাণ করে না যে দুটি মডেল সমতুল্য (Equivalent)! দুটি মডেলকে সমতুল্য বা Non-inferior দাবি করতে হলে পরীক্ষার আগেই সুনির্দিষ্ট Equivalence Margin ও স্টাডি ডিজাইন ঠিক করতে হয়—ফলাফল দেখার পর সুবিধামতো থ্রেশহোল্ড বসিয়ে সিদ্ধান্ত চাপিয়ে দেবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "সব প্রমাণ একসাথে রিপোর্ট করুন",
+          "body": "চূড়ান্ত রিপোর্টে Popularity-র বিপরীতে Recall বৃদ্ধি, user_cf-এর কাছে NDCG হারানো, Candidate থেকে Final র‍্যাঙ্কিংয়ের ক্ষয়, Cold Fallback-এর হার এবং ঐতিহাসিক ডেটা বারবার ব্যবহারের সীমা—সবকিছু একসঙ্গে তুলে ধরুন। নিজের পছন্দমতো কেবল সবচেয়ে চমকপ্রদ বাক্যটি বেছে নেওয়া (Metric Shopping) প্রজেক্টের সততা নষ্ট করে। রিপোর্টের শেষ অংশে অবশ্যই ভবিষ্যতের নিশ্চিতকরণ পরীক্ষার (Confirmation Plan) রূপরেখা রাখুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch34_artifacts",
+      "title": "Portable Artifact: Model, Policy, Manifest ও Checksum",
+      "subtitle": "কেবল একটি JSON ফাইল সেভ করলেই প্রকৃত Reproducibility অর্জিত হয় না",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Model Artifact-এ কী কী সংরক্ষিত থাকে?",
+          "body": "আমাদের Model Artifact-এর ভেতরে সংরক্ষিত থাকে Fit ডেটার Row-গুলো, সুনির্দিষ্ট ক্রমের সিনেমা ID ও Genre তালিকা, IDF ভেক্টর, পজিটিভ রেটিং থ্রেশহোল্ড, User-CF Shrinkage ধ্রুবক এবং প্রতিবেশীর সর্বোচ্চ সীমা। যেহেতু এখানে কোনো Neural Network নেই, তাই শেখা ওজনের ম্যাট্রিক্সের বদলে এই রিট্রিভাল স্টেট ও Fit ডেটাই মডেলের সম্পূর্ণ তথ্য বহন করে। অবশ্য কোটি ইউজারের প্রোডাকশন হিস্ট্রি সিরিয়ালাইজ করার নকশা এই ছোট শিক্ষামূলক বান্ডেলের চেয়ে আলাদা হবে।"
+        },
+        {
+          "type": "text",
+          "title": "Policy Artifact কেন আলাদা ও অপরিহার্য?",
+          "body": "মডেলের পাশাপাশি আলাদা Policy Artifact-এ লেখা থাকে সোর্সগুলোর ক্রম, প্রতি সোর্সের বাজেট 50, চূড়ান্ত K = 10, RRF ধ্রুবক 60, তিনটি ওজনের প্রিসেট, নির্বাচিত পলিসি (rrf_cf) এবং সিলেকশনের নিয়ম। এই কনফিগারেশন বাদ দিয়ে শুধু চূড়ান্ত সুপারিশের তালিকা এক্সপোর্ট করলে অন্য কোনো স্বাধীন প্রসেস কখনোই হুবহু একই হিসাব পুনরুৎপাদন (Reproduce) করতে পারবে না।"
+        },
+        {
+          "type": "math",
+          "title": "আর্টিফ্যাক্ট বান্ডেল ও SHA-256 বাইট হ্যাশ",
+          "body": "\\mathrm{bundle}=\\{model,policy,lab,checksums\\},\\quad h=\\mathrm{SHA256}(bytes)"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Model ও Policy-র Canonical Hash যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"capstone34\", Path(\"assets/datasets/movielens/recommender_capstone_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommender_capstone_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\n\nassert m.sha(m.payload(lab[\"model\"]).encode()) == lab[\"manifest\"][\"model_sha256\"]\nassert m.sha(m.payload(lab[\"policy\"]).encode()) == lab[\"manifest\"][\"policy_sha256\"]\nprint(\"model\", lab[\"manifest\"][\"model_sha256\"])\nprint(\"selected policy\", lab[\"policy\"][\"selected\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "Canonical Serialization-এর নিয়মাবলি",
+          "body": "দুটি ফাইলের অর্থ এক হলেও শুধু স্পেস বা কী-এর ক্রম আলাদা হলেই তাদের Byte Hash পুরোপুরি বদলে যায়! তাই আমরা Canonical Serialization-এর কড়া নিয়ম মেনে চলি: UTF-8 এনকোডিং, ensure_ascii=False, সাজানো অবজেক্ট কী (sort_keys=True), বাড়তি স্পেস ছাড়া কমপ্যাক্ট সেপারেটর এবং ফাইলের শেষে একটি LF নিউলাইন। আমাদের CLI টুল এক্সপোর্ট করা model ও policy ফাইলের প্রকৃত বাইট পড়ে সরাসরি Manifest হ্যাশের সাথে মিলিয়ে দেখে।"
+        },
+        {
+          "type": "text",
+          "title": "পোর্টেবল CLI ও নিরাপদ ফাইল ব্যবস্থাপনা",
+          "body": "কমান্ড লাইনে --artifact-dir দিলে একটি ফোল্ডারে পূর্ণাঙ্গ model, policy, lab, checksums এবং মূল ডেটার লাইসেন্স নোটিশ তৈরি হয়; আর --verify-dir দিলে ডিস্কের ফাইলগুলো স্বাধীনভাবে যাচাই করা যায়। যেকোনো Working Directory থেকে সোর্স অ্যাসেট নিরাপদে লোড হয়। ডিফল্ট মোডে মডিউল ইমপোর্ট বা CLI চালালে মূল বান্ডেল ফাইলগুলো অক্ষত থাকে—কেবল --write-lab ফ্ল্যাগ দিলেই সচেতনভাবে স্ন্যাপশট নতুন করে লেখা হয়।"
+        },
+        {
+          "type": "text",
+          "title": "SHA-256 Hash যা প্রমাণ করে এবং যা করে না",
+          "body": "দুটি ফাইলের SHA-256 Hash মিলে যাওয়ার অর্থ হলো তাদের বাইটগুলো অবিকৃত আছে (Byte Integrity)—কিন্তু এটি বৈজ্ঞানিক নির্ভুলতা কিংবা নিরাপত্তার সনদ নয়। কোনো আক্রমণকারী যদি পেলোড এবং চেকসাম ফাইল দুটোই একসাথে বদলে দিতে পারে, তবে তা ঠেকাতে ক্রিপ্টোগ্রাফিক স্বাক্ষর (Cryptographic Signing) ও নিরাপদ ট্রান্সপোর্ট প্রয়োজন হয়, যা এই লোকাল পাইপলাইনের পরিধির বাইরে।"
+        },
+        {
+          "type": "text",
+          "title": "Reproducibility-র প্রকৃত সীমানা",
+          "body": "নির্দিষ্ট ভার্সনের লোকাল NumPy ও SciPy পরিবেশে আমাদের পাইপলাইন শতভাগ অভিন্ন আউটপুট দেয় বলে যাচাই করা হয়েছে। তবে ভিন্ন লাইব্রেরি ভার্সন বা হার্ডওয়্যারে সূক্ষ্ম ফ্লোটিং-পয়েন্ট পার্থক্য হতে পারে—ঠিক যে কারণে র‍্যাঙ্কিং কী-তে 12 দশমিক ঘরের প্রিসিশন স্পষ্টভাবে ঘোষণা করা হয়েছে। এছাড়াও মনে রাখবেন, এই এক্সপোর্ট কোনো ইটারেটিভ Optimizer বা RNG স্টেট নয় যা দিয়ে মাঝপথ থেকে ট্রেনিং শুরু (Resume) করা যাবে, কারণ আমাদের এই ওয়ার্কফ্লোতে কোনো ইটারেটিভ গ্রেডিয়েন্ট অপ্টিমাইজার নেই।"
+        }
+      ]
+    },
+    {
+      "id": "ch34_integrity",
+      "title": "Contract Faults: অসামঞ্জস্যপূর্ণ Artifact সাথে সাথে প্রত্যাখ্যান করুন",
+      "subtitle": "নীরবে আংশিক ফাইল লোড করলে দেখতে বৈধ কিন্তু ভেতরে ভুল আউটপুট তৈরি হয়",
+      "duration": "55 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "সার্ভিং প্রস্তুতির আবশ্যিক চুক্তি (Required Contract)",
+          "body": "সংরক্ষিত মডেল, Feature Schema এবং Manifest—এই তিনটি মিলে একটি নিরীক্ষণযোগ্য ও Reproducible আর্টিফ্যাক্ট তৈরি করে। এখানে সাজানো কী, কমপ্যাক্ট সেপারেটর, ensure_ascii=False, UTF-8 ও শেষের LF নিউলাইন দিয়ে মডেলের বাইটগুলো সুনির্দিষ্ট করা হয়েছে এবং Hash সেই বাইটগুলোকে শনাক্ত করে। তবে শুধু বাইট মেলানোই শেষ কথা নয়; Manifest-এর আবশ্যিক ফিল্ড, ID Map এবং ফিচারের অর্থগত সামঞ্জস্যতাও (Semantic Compatibility) আলাদা চেকের মাধ্যমে যাচাই করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "কৃত্রিম ত্রুটি পরীক্ষা (Injected Fault) বনাম বাস্তব দুর্ঘটনা",
+          "body": "ল্যাবে ব্যবহৃত declared-software-fault বা অসামঞ্জস্যপূর্ণ ফিক্সচার স্ট্রিংগুলো মূলত সফটওয়্যার পরীক্ষার জন্য তৈরি সুস্পষ্ট টেস্ট ইনপুট—কোনো বাস্তব প্রোডাকশন আউটেজের লগ নয়। এখানে প্রত্যাশিত ফিল্ডগুলো কপি করে একেকবারে একটি করে অমিল তৈরি করে দেখা হয় সিস্টেম তা ধরতে পারছে কি না। খেয়াল রাখবেন, অ্যাপের ইন্টারফেসটি মেটাডেটার সমতা পরীক্ষা করে দেখায়, আর Python CLI ডিস্কের প্রকৃত ফাইল বাইট স্বাধীনভাবে হ্যাশ করে—যাচাইয়ের এই দুটি ভিন্ন স্তরকে গুলিয়ে ফেলবেন না।"
+        },
+        {
+          "type": "math",
+          "title": "সার্ভিং Ready হওয়ার যৌক্তিক শর্ত",
+          "body": "\\mathrm{ready}\\iff\\bigwedge_{f\\in required}\\mathrm{loaded}[f]=\\mathrm{expected}[f]"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ প্রতিটি আবশ্যিক Metadata Mismatch পরীক্ষা",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"capstone34\", Path(\"assets/datasets/movielens/recommender_capstone_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommender_capstone_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\n\nexpected = lab[\"manifest\"]\nloaded = dict(expected)\nassert m.contract_errors(expected, loaded) == []\nfor field in [\n    \"model_version\",\n    \"model_sha256\",\n    \"catalog_sha256\",\n    \"feature_schema\",\n    \"policy_sha256\",\n]:\n    bad = dict(loaded)\n    bad[field] = \"declared-software-fault\"\n    assert m.contract_errors(expected, bad) == [field]\nprint(\"all required metadata mismatches rejected\")\n"
+        },
+        {
+          "type": "text",
+          "title": "Cache দেখার আগেই Fail করুন (Fail Before Cache)",
+          "body": "যদি স্টার্টআপ বা রিলোডের সময় Contract Mismatch ধরা পড়ে, তবে ক্যাশ থেকে পুরোনো সুপারিশ খুঁজে দেওয়ার পথটিও সাথে সাথে ব্লক করতে হবে! ক্যাশে পুরোনো হিট পাওয়া গেল বলেই একটি অসামঞ্জস্যপূর্ণ মডেল বান্ডেল বৈধ হয়ে যায় না। আপৎকালীন সময়ের জন্য হয় আলাদাভাবে যাচাইকৃত ও ভার্সনযুক্ত Fallback Bundle রাখুন, নয়তো স্পষ্ট এরর রিটার্ন করুন—কখনোই ভাঙা বা আংশিক ফাইল নিয়ে সার্ভিং চালিয়ে যাবেন না।"
+        },
+        {
+          "type": "capstone_serving",
+          "title": "ইন্টারেক্টিভ Artifact Fault Lab",
+          "body": "ল্যাবের Fault ড্রপডাউন থেকে যেকোনো একটি ত্রুটি বেছে নিলে স্ট্যাটাস সাথে সাথে BLOCKED হয়ে যাবে, আর আবার none বেছে নিলে READY অবস্থায় ফিরে আসবে। কেবল সবগুলো চুক্তি অক্ষুণ্ণ থাকলেই স্ক্রিপ্টেড ক্যাশ রিপ্লে চালানো যায়। Reset বাটন চাপলে মেমোরিতে মূল প্রত্যাশিত মেটাডেটা ফিরে আসে; এতে ডিস্কের সোর্স অ্যাসেট বা আসল Manifest ফাইলের কোনো পরিবর্তন হয় না।"
+        },
+        {
+          "type": "text",
+          "title": "সীমানা পরীক্ষা (Boundary Tests)",
+          "body": "নিয়মটি একদম নিশ্ছিদ্র হতে হবে: আবশ্যিক যেকোনো একটি কী অনুপস্থিত থাকলে বা না মিললেই প্রত্যাখ্যান, আর সবকটি হুবহু মিললেই কেবল অনুমোদন। পাশাপাশি ফাইলের ভেতরের বাইট কেউ বদলে দিলে CLI-এর টেম্পোরারি এক্সপোর্ট পরীক্ষায় তা ধরা পড়ে। কখনোই ফাইল পার্স বা Deserialize হতে পেরেছে দেখেই সেটিকে সঠিক আর্টিফ্যাক্ট বলে ধরে নেবেন না!"
+        },
+        {
+          "type": "text",
+          "title": "ইনসিডেন্ট রেসপন্স ও ইন্টারভিউ উত্তর",
+          "body": "প্রোডাকশনে কখনো আর্টিফ্যাক্টজনিত সমস্যা হলে কোন ভার্সন লোড হয়েছিল, কোন Cache Generation চলছিল এবং ID Mapping-এর উৎস কী ছিল তা ধাপে ধাপে ট্রেস করুন। নিরাপদ Rollback করার জন্য আগে থেকে মহড়া দেওয়া (Rehearsed) সম্পূর্ণ পূর্ববর্তী বান্ডেল প্রস্তুত রাখতে হয়—কারণ শুধু হ্যাশ মিলে যাওয়াই মডেলের গুণগত মানের অনুমোদন নয়। লক্ষ্য করুন, কোনো ব্যক্তিগত ইউজার ডেটা লগ না করেই আমাদের লোকাল প্রোটোটাইপে এই পুরো অখণ্ডতা পরীক্ষাটি সম্পন্ন করা যায়।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে Canonical Bytes-এর নিয়ম যাচাই",
+          "body": "চলুন একটি ছোট Manifest ডিকশনারির কী-গুলোকে উল্টো ক্রমে রেখে পরীক্ষা করে দেখি। সাজানো কী, কমপ্যাক্ট সেপারেটর, UTF-8 এবং শেষে LF ব্যবহার করলে নিচের নির্দিষ্ট Serializer দুটি ডিকশনারি থেকেই হুবহু একই বাইট ও একই SHA-256 হ্যাশ তৈরি করে। কিন্তু পূর্ণসংখ্যা 1-এর জায়গায় ফ্লোট 1.0 লিখলে কিংবা শেষের নিউলাইনটি কেটে নিলেই বাইট স্ট্রিম বদলে যায়! তাই এক্সপোর্টার ও কনজিউমার উভয় প্রান্তেই সিরিয়ালাইজেশনের নিয়ম অভিন্ন থাকতে হবে, এবং বাইটের অভিন্নতা ও মডেলের কার্যকারিতা—দুটির জন্যই আলাদা প্রমাণ রাখতে হবে।"
+        },
+        {
+          "type": "code",
+          "title": "সমতুল্য Dictionary বনাম নিখুঁত Serialized Bytes",
+          "body": "import hashlib\nimport json\n\nfirst = {\"schema\": \"বাংলা\", \"weights\": [1, 2]}\nsecond = {\"weights\": [1, 2], \"schema\": \"বাংলা\"}\n\n\ndef canonical(value):\n    return (\n        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(\",\", \":\"))\n        + \"\\n\"\n    ).encode(\"utf-8\")\n\n\nfirst_bytes, second_bytes = canonical(first), canonical(second)\nfloat_version = {\"schema\": \"বাংলা\", \"weights\": [1.0, 2.0]}\nsame_hash = (\n    hashlib.sha256(first_bytes).digest() == hashlib.sha256(second_bytes).digest()\n)\nprint(\n    int(json.dumps(first) != json.dumps(second)),\n    int(same_hash),\n    int(canonical(float_version) != first_bytes),\n    int(first_bytes[:-1] != first_bytes),\n)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে ভেবে উত্তর দিন",
+          "body": "ধরুন কোনো Artifact ফাইলের Canonical SHA-256 Hash প্রত্যাশিত হ্যাশের সাথে মিলে গেছে। এরপরও কি Manifest-এর আবশ্যিক Schema Field ও সামঞ্জস্যতা যাচাই করার প্রয়োজন থাকে?",
+          "solution": "অবশ্যই প্রয়োজন থাকে। Hash কেবল এটিই যাচাই করে যে নির্দিষ্ট অবজেক্টটির বাইট পরিচয় (Byte Identity) অবিকৃত আছে। কিন্তু প্রত্যাশিত Manifest-এর উৎস, আবশ্যিক ফিল্ডগুলোর উপস্থিতি, Feature-এর অর্থ, ID Map এবং সময়ের চুক্তি (Temporal Contract) সার্ভিং কোডের সাথে সামঞ্জস্যপূর্ণ কি না—তা আলাদাভাবে পরীক্ষা করতেই হবে। কোনো আবশ্যিক ফিল্ড অনুপস্থিত থাকলে বা মান অসামঞ্জস্যপূর্ণ হলে সাথে সাথে Artifact-টি প্রত্যাখ্যান করতে হবে।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch34_serving",
+      "title": "Serving Design: লোকাল এক্সিকিউটেবল পথ বনাম প্রোডাকশন পরিকল্পনা",
+      "subtitle": "ছোট ক্যাটালগের নিখুঁত Inference এবং বাস্তব প্রোডাকশনের অজানা চ্যালেঞ্জ",
+      "duration": "55 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "আমাদের বাস্তবায়িত লোকাল সার্ভিং পথ",
+          "body": "আমাদের সহায়ক Python পাইপলাইন ছোট ক্যাটালগের ওপর নিখুঁত সোর্স র‍্যাঙ্কিং তৈরি করে স্ন্যাপশট এক্সপোর্ট করে। আর অ্যাপটি কোনো নেটওয়ার্ক কল বা অথেনটিকেশন ছাড়াই লোকাল মেমোরিতে সেই সোর্স প্রিফিক্স থেকে তাৎক্ষণিক Fusion ও ধাপে ধাপে ট্রেস হিসাব করে দেখায়। অ্যাপের ভেতরের লোকাল Dart মডেলও নমুনা কেসগুলোর পূর্ণাঙ্গ Retriever ফলাফল পুনরুৎপাদন করতে পারে—তবে মনে রাখতে হবে, অ্যাপটি একটি রিপ্লে ও ইনফারেন্স ভিউয়ার, পূর্ণাঙ্গ ট্রেনিং ইঞ্জিন নয়।"
+        },
+        {
+          "type": "text",
+          "title": "প্রোডাকশন সিস্টেমের প্রকৃত চাহিদা",
+          "body": "বাস্তব প্রোডাকশন সার্ভিং ডিজাইন করতে হলে Latency SLO, প্রতি সেকেন্ডে রিকোয়েস্টের চাপ (QPS), ইনভেন্টরির তাজা ভাব (Freshness), এলিজিবিলিটি ফিল্টার, প্রাইভেসি ও ডেটা রিটেনশন নীতি, ফেইলিউর বাজেট এবং মডেল আপডেটের ঘনত্ব আগে জানতে হয়। কখনোই ছোট অফলাইন ডেটাসেটের আকার দেখে মনগড়া প্রোডাকশন ওয়ার্কলোড বা বেঞ্চমার্ক রিপোর্ট বানাবেন না; আমাদের বর্তমান রিপ্লে সংখ্যা কোনো মাপা সার্ভার ক্যাপাসিটি নয়।"
+        },
+        {
+          "type": "math",
+          "title": "সার্ভিং রেসপন্সের পূর্ণাঙ্গ ফাংশনাল রূপ",
+          "body": "\\mathrm{response}=f(\\mathrm{artifact},u,H_u,policy,budget,filters)"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ একটি সার্ভিং রিকোয়েস্ট ও সংরক্ষিত রেসপন্স পরিদর্শন",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommender_capstone_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\n\nrow = next(r for r in lab[\"roles\"][\"audit\"] if r[\"user\"] == lab[\"samples\"][0])\nprint(\"request\", row[\"user\"], row[\"history_sha256\"])\nprint(\"source lengths\", {s: len(ids) for s, ids in row[\"sources\"].items()})\nprint(\"frozen response\", row[\"rankings\"][lab[\"policy\"][\"selected\"]])\n"
+        },
+        {
+          "type": "text",
+          "title": "অবিভাজ্য বান্ডেল লোডিং (Atomic Loading)",
+          "body": "মডেল স্টেট, Feature Schema, ID Map, ফিউশন পলিসি এবং Cache Generation—সবগুলো মিলে একটি একক ভার্সনযুক্ত ইউনিট তৈরি করে। নতুন বান্ডেল মেমোরিতে লোড, ভেরিফাই ও ওয়ার্ম-আপ শেষ করার পর এক ঝটকায় ট্রাফিক সুইচ করলে পুরোনো ও নতুন ভার্সন মিশে যাওয়ার (Mixed Generation) ঝুঁকি থাকে না। অবশ্য কনকারেন্সি, ডিস্ট্রিবিউটেড রোলআউট ও রোলব্যাক নিয়ে আমাদের এখানকার আলোচনা মূলত আর্কিটেকচারাল ডিজাইন যুক্তি—কোনো লাইভ ক্লাস্টার ডিপ্লয়মেন্টের ফলাফল নয়।"
+        },
+        {
+          "type": "text",
+          "title": "নিরাপদ Fallback নকশা",
+          "body": "ইউজারের কোনো পজিটিভ হিস্ট্রি না থাকলে পূর্বনির্ধারিত Popularity পলিসি ব্যবহৃত হয়; কিন্তু আর্টিফ্যাক্ট নষ্ট বা অসামঞ্জস্যপূর্ণ হওয়া সম্পূর্ণ আলাদা শ্রেণির মারাত্মক ত্রুটি! ব্যবসার নিয়মে যদি আপৎকালীন কোনো স্ট্যাটিক Fallback ক্যাটালগ দেখানোর অনুমতি থাকেও, তবু তার নিজস্ব ভার্সন ও ফিল্টার সামঞ্জস্যতা থাকতে হবে। এক ইউজারের রিকোয়েস্টে অন্য ইউজারের ক্যাশড পেলোড দেখিয়ে দেওয়া কখনোই গ্রহণযোগ্য ডিগ্রেডেশন হতে পারে না।"
+        },
+        {
+          "type": "text",
+          "title": "প্রোডাকশন Monitoring পরিকল্পনা",
+          "body": "লাইভ সিস্টেমের স্বাস্থ্য বোঝার জন্য কার্যকর কাউন্টারগুলো হলো: সফল রিকোয়েস্টের হার, অনুপস্থিত ফিচারের হার, শূন্য Candidate পুলের হার, Cold ইউজারের অনুপাত, প্রতি সোর্সের Fallback হার, ফিল্টারে বাদ পড়ার কারণ এবং সক্রিয় Artifact Version। তবে সঠিক Exposure লগিং এবং ইউজারের পরিণত প্রতিক্রিয়া (Matured Outcomes) ছাড়া অফলাইন স্কোরের কোনো তাৎক্ষণিক অনলাইন প্রতিরূপ পাওয়া যায় না। আমাদের লোকাল প্রোটোটাইপ বাইরে কোনো টেলিমেট্রি পাঠায় না।"
+        },
+        {
+          "type": "text",
+          "title": "এন্ড-টু-এন্ড রিকোয়েস্ট ওয়াকথ্রু অনুশীলন",
+          "body": "ইন্টারভিউয়ের জন্য একটি পূর্ণাঙ্গ রিকোয়েস্টের জীবনচক্র গুছিয়ে বলার অভ্যাস করুন: ইনপুট যাচাই -> সামঞ্জস্যপূর্ণ বান্ডেল নিশ্চিতকরণ -> পূর্ণাঙ্গ Cache Signature পরীক্ষা -> রিট্রিভ, ফিউজ ও ফিল্টার -> চূড়ান্ত ID তালিকা ও ব্যাখ্যা প্রদান। কোন অংশটি ক্যাশ থেকে এসেছে, কোন অংশটি নতুন হিসাব হয়েছে এবং ঠিক কোন সময়ের হিস্ট্রি ব্যবহৃত হয়েছে তা স্পষ্টভাবে বলুন। লাইভ ফিচার রিফ্রেশ ও পাইপলাইন নিয়ে আমরা এর ঠিক পরের অধ্যায়ে—অর্থাৎ Book 6 (ML Systems & Interviews) · Chapter 1 (Data Pipelines & Feature Systems)-এ আরও গভীরে যাব।"
+        },
+        {
+          "type": "text",
+          "title": "মাত্রা (Dimension) এক থাকলেও পুরোনো Item Index কেন ভুল ফল দেয়?",
+          "body": "ধরুন একটি Two-Tower মডেলে শুরুতে Query = [1, 0], Item A = [1, 0] এবং Item B = [0, 1]; এখানে ডট প্রোডাক্টে স্বাভাবিকভাবেই Item A জেতে। এবার নতুন ট্রেনিংয়ে দুটি টাওয়ারেরই স্থানাঙ্ক অক্ষ (Latent Basis) একসঙ্গে অদলবদল হয়ে গেল! যদি Query এবং Item Index দুটোই নতুন ভার্সনে আপডেট হয়, তবে আগের মতোই সঠিক স্কোর পাওয়া যাবে এবং Item A-ই শীর্ষে থাকবে। কিন্তু নতুন Query = [0, 1] যদি ভুলবশত পুরোনো Item Index ব্যবহার করে, তবে কোনো ডাইমেনশন এরর ছাড়াই উল্টো Item B শীর্ষে চলে আসবে! ভেক্টরের Shape হুবহু এক থাকা সত্ত্বেও কেন দুই টাওয়ারের ভার্সন সামঞ্জস্যতা পরীক্ষা করা অপরিহার্য, নিচের কোডে তার প্রমাণ দেখুন।"
+        },
+        {
+          "type": "code",
+          "title": "সামঞ্জস্যপূর্ণ বান্ডেল বনাম মিশ্র ভার্সনের বিপর্যয়",
+          "body": "import numpy as np\n\nquery = np.array([1.0, 0.0])\nitems = np.array([[1.0, 0.0], [0.0, 1.0]])\nrotation = np.array([[0.0, 1.0], [1.0, 0.0]])\nnew_query, new_items = query @ rotation, items @ rotation\noriginal_scores = query @ items.T\nmixed_scores = new_query @ items.T\ncoherent_scores = new_query @ new_items.T\nnp.testing.assert_allclose(original_scores, coherent_scores)\nquery_version, stale_index_version = \"new\", \"old\"\ncompatible = query_version == stale_index_version\nprint(\n    original_scores.argmax(),\n    mixed_scores.argmax(),\n    coherent_scores.argmax(),\n    int(compatible),\n)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে ভেবে উত্তর দিন",
+          "body": "মিশ্র ভার্সনের নীরব ত্রুটি এড়াতে একটি Atomic Bundle-এ কোন কোন সংযুক্ত পরিচয় (Linked Identities) একসঙ্গে প্রকাশ ও যাচাই করতে হবে?",
+          "solution": "Query ও Item Tower-এর ভার্সন, Feature Schema, Normalization নিয়ম, User/Item ID Map এবং Candidate Index-এর পরিচয়—এই সবগুলোকে একটি অবিভাজ্য একক হিসেবে একসঙ্গে প্রকাশ ও যাচাই করতে হবে। পাশাপাশি চলমান রিকোয়েস্ট এবং Cache Namespace কোন ভার্সন ব্যবহার করবে তা নির্ধারণ করে ট্রাফিক সুইচের আগে পরিচিত Golden Ranking-গুলোর ফলাফল মিলিয়ে নিতে হবে।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch34_cache",
+      "title": "Cache Key-র নির্ভুলতা: User, History, Policy ও Version",
+      "subtitle": "বেশি Cache Hit পাওয়ার মানেই দ্রুত ও সঠিক সার্ভিস নয়",
+      "duration": "55 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "পূর্ণাঙ্গ রিকোয়েস্ট সিগনেচার (Complete Signature)",
+          "body": "একই ইউজারের রিকোয়েস্ট হলেও যদি ফিউশন Policy, ইউজারের দেখা History কিংবা Model Version বদলে যায়, তবে চূড়ান্ত সুপারিশের তালিকাও বদলে যেতে পারে। তাই Cache Key এবং সংরক্ষিত Payload Signature—উভয় জায়গাতেই ফলাফল নির্ধারণকারী সবকটি তথ্য থাকতে হবে। আমাদের স্ক্রিপ্টেড রিপ্লেতে যখন omit_policy মোড ব্যবহার করে কী থেকে পলিসির নাম বাদ দেওয়া হয়, তখন পেলোড সিগনেচার পরীক্ষায় 3টি অমিল ধরা পড়ে এবং ভুল এড়াতে ফলাফল নতুন করে হিসাব করা হয়। রিকোয়েস্ট আসা থেকে শুরু করে ক্যাশ হিট, সিগনেচার গার্ড ও রিকম্পিউট পর্যন্ত প্রতিটি ধাপ মনোযোগ দিয়ে অনুসরণ করুন।"
+        },
+        {
+          "type": "text",
+          "title": "স্ক্রিপ্টেড রিপ্লে ও তার পরিধি",
+          "body": "প্রকৃত Warm ও Cold ইউজার ID নিয়ে দুটি প্রিসেটের মধ্যে অদলবদল করে মোট 5টি রিকোয়েস্ট চালানো হলে complete কী মোডে 2টি বৈধ হিট এবং 3টি নতুন কম্পিউটেশন পাওয়া যায়। মনে রাখবেন, এটি ক্যাশের নির্ভুলতা পরীক্ষার জন্য তৈরি একটি সুনির্দিষ্ট সফটওয়্যার ফিক্সচার—কোনো বাস্তব ইউজার ট্রাফিক, হিট-রেটের পূর্বাভাস কিংবা Latency সাশ্রয়ের প্রমাণ নয়। প্রতিটি ক্ষেত্রে প্রকৃত সোর্স Candidate থেকেই সঠিক তালিকা তৈরি করা হয়।"
+        },
+        {
+          "type": "math",
+          "title": "সঠিক সার্ভিং Cache Key-র উপাদানসমূহ",
+          "body": "key=(v_m,h_p,u,h_H,p,L,seenPolicy)"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ তিনটি Cache Mode-এর রিপ্লে ও কলিশন পরীক্ষা",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"capstone34\", Path(\"assets/datasets/movielens/recommender_capstone_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommender_capstone_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\n\nfor mode in [\"complete\", \"shared_user\", \"omit_policy\"]:\n    replay = m.replay(lab[\"roles\"][\"audit\"], lab[\"manifest\"], mode)\n    assert replay == lab[\"cache\"][mode]\n    print(mode, {k: v for k, v in replay.items() if k != \"trace\"})\nassert lab[\"cache\"][\"omit_policy\"][\"rejected\"] == 3\n"
+        },
+        {
+          "type": "text",
+          "title": "অসম্পূর্ণ Key দিলে কী ঘটে?",
+          "body": "উপরের কোডে shared_user মোডে কী থেকে ইউজার ও হিস্ট্রি বাদ দেওয়ায় 1টি বিপজ্জনক Cross-user Collision ঘটে; আর omit_policy মোডে পলিসি বাদ দেওয়ায় ঘটে 3টি কলিশন। কিন্তু ক্যাশ পেলোডের ভেতরে পূর্ণাঙ্গ সিগনেচার গার্ড (Payload Full Signature Guard) থাকায় প্রতিটি অমিল তৎক্ষণাৎ প্রত্যাখ্যাত (Rejected) হয় এবং নতুন করে সঠিক র‍্যাঙ্কিং হিসাব করা হয়—ফলে ইউজারের কাছে কখনোই ভুল সুপারিশ পৌঁছায় না।"
+        },
+        {
+          "type": "text",
+          "title": "দ্বিতীয় সুরক্ষাস্তর (Payload Guard) কেন রাখব?",
+          "body": "ক্যাশ ইনডেক্সের কী তৈরিতে কখনো কোডিং ভুল হয়ে গেলেও পেলোডের ভেতরের সিগনেচার গার্ড দ্বিতীয় প্রতিরক্ষা দেয়াল হিসেবে কাজ করে। তবে এর মানে এই নয় যে কী-ডিজাইন ভুল রেখেই অনন্তকাল সিস্টেম চালানো যাবে; সঠিক Key, Schema ও Version তখনো অপরিহার্য। খেয়াল রাখবেন, কলিশন রিজেক্ট কাউন্টার বেড়ে যাওয়ার অর্থ হলো আপনার ক্যাশ কী-তে ত্রুটি আছে—এটি কোনো মডেল কোয়ালিটির উন্নতি নয়!"
+        },
+        {
+          "type": "text",
+          "title": "ক্যাশ পরীক্ষার কড়া শৃঙ্খলা (Testing Discipline)",
+          "body": "টেস্ট লেখার সময় প্রতিটি ক্যাশড রেসপন্সকে একই রিকোয়েস্টের আনক্যাশড (Uncached) ডিটারমিনিস্টিক ফিউশন আউটপুটের সাথে মিলিয়ে দেখুন। কী মোড ইচ্ছাকৃতভাবে খারাপ করলেও গার্ড থাকা অবস্থায় চূড়ান্ত উত্তর যেন শতভাগ সঠিক থাকে, এবং hits, rejected ও computed সংখ্যাগুলো যেন আলাদাভাবে assert করা হয়। শুধু মোট Hit সংখ্যা টেস্ট করলে এক ইউজারের ডেটা অন্য ইউজারের কাছে চলে যাওয়ার মতো ভয়াবহ বাগও আড়ালে থেকে যেতে পারে!"
+        },
+        {
+          "type": "text",
+          "title": "বড় সিস্টেমের প্রশ্নাবলি",
+          "body": "লাইভ সিস্টেমে ইউজারের হিস্ট্রি রিফ্রেশ, স্টক ফুরিয়ে যাওয়া আইটেম বাতিল করা, প্রাইভেসি আইসোলেশন এবং নতুন পলিসি রোলআউটের সময় কীভাবে Cache Key বা Namespace আপডেট হবে? আমাদের বর্তমান পরীক্ষায় হিস্ট্রি স্থির (Frozen) থাকায় সময়ের সাথে ক্যাশ বাসি হওয়ার (Stale-time) পরীক্ষা এখানে চালানো হয়নি; তাই না মেপে ক্যাশ এভিকশন বা কনকারেন্সি Latency নিয়ে কোনো প্রোডাকশন দাবি করবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "মডেল এক থাকলেও ইউজারের History বদলালে কী হবে?",
+          "body": "ধরুন শুরুতে user 1-এর দেখা সিনেমার সেট ছিল {1} এবং সেই অবস্থায় ক্যাশে সুপারিশ রাখা হয়েছিল [10, 20]। কিছুক্ষণ পর ইউজার 10 নম্বর সিনেমাটি দেখে ফেলায় তার নতুন হিস্ট্রি হলো {1, 10}—অর্থাৎ 10 নম্বর আইটেমটি এখন আর অদেখা নয়! আপনি যদি শুধু user ও model দিয়ে দুর্বল Cache Key বানান, তবে নতুন রিকোয়েস্টটিও পুরোনো এন্ট্রিতে হিট করবে এবং দেখা সিনেমাটিই আবার সাজেস্ট করবে। বিপরীতে History Fingerprint-সহ পূর্ণাঙ্গ কী ব্যবহার করলে আলাদা এন্ট্রি তৈরি হয়, আর পেলোডের সিগনেচার গার্ডও পুরোনো পেলোডটিকে প্রত্যাখ্যান করে নতুন তালিকা [20, 30] নিশ্চিত করে।"
+        },
+        {
+          "type": "code",
+          "title": "History-সচেতন Cache Key এবং Payload Signature Guard",
+          "body": "old_request = dict(user=1, model=\"v1\", policy=\"p1\", history=(1,), top_k=10)\nnew_request = {**old_request, \"history\": (1, 10)}\n\n\ndef full_key(request):\n    return (\n        request[\"user\"],\n        request[\"model\"],\n        request[\"policy\"],\n        request[\"history\"],\n        request[\"top_k\"],\n    )\n\n\nweak_old = (old_request[\"user\"], old_request[\"model\"])\nweak_new = (new_request[\"user\"], new_request[\"model\"])\npayload = dict(signature=full_key(old_request), items=[10, 20])\nrejected = payload[\"signature\"] != full_key(new_request)\nassert rejected and 10 in new_request[\"history\"]\nrefreshed = [20, 30]\nseen_leak = any(item in new_request[\"history\"] for item in refreshed)\nprint(\n    int(weak_old == weak_new),\n    int(rejected),\n    int(full_key(old_request) != full_key(new_request)),\n    int(seen_leak),\n)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে ভেবে উত্তর দিন",
+          "body": "ইউজারের History Tuple-এ যদি হুবহু একই আইটেমগুলো কেবল ভিন্ন ক্রমে (Order) আসে, তবে Cache Key তৈরির সময় কী করবেন?",
+          "solution": "এটি নির্ভর করে মডেলের কাছে History-র অর্থ (Feature Semantics) কী তার ওপর। যদি আমাদের এই প্রজেক্টের মতো History কেবল একটি ক্রমহীন সেট (Set) বোঝায়, তবে ডুপ্লিকেট বাদ দিয়ে সাজানো ID তালিকা (Sorted, Deduplicated IDs) থেকে একটি অভিন্ন Canonical Fingerprint তৈরি করুন। কিন্তু যদি সিকোয়েন্স বা সময়-সংবেদনশীল মডেল হয় যেখানে ক্রম ও Timestamp অর্থ বহন করে, তবে সেই ক্রম অক্ষুণ্ণ রেখেই Cache Identity নির্ধারণ করতে হবে।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch34_operations",
+      "title": "Operational Review: Rollback, Monitoring ও Retraining Trigger",
+      "subtitle": "নকশাগত প্রস্তাবনাকে (Design Proposal) বাস্তবায়িত প্রমাণ থেকে আলাদা রাখুন",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "সম্পূর্ণ রিভিউ প্যাকেট (Review Packet)",
+          "body": "একটি পেশাদার ML প্রজেক্টের রিভিউ প্যাকেটে সব প্রমাণ এক জায়গায় গোছানো থাকে: Artifact ও Schema-র সোর্স হ্যাশ, Fit/Validation/Audit সেটের সংখ্যা, পলিসি নির্বাচনের রেকর্ড, বেসলাইন ও ফানেল মেট্রিক, ক্যাশের নির্ভুলতা পরীক্ষা এবং জানা সীমাবদ্ধতাগুলোর তালিকা। ডকুমেন্টেশনের মান এমন হতে হবে যেন একজন রিভিউয়ার লেখকের সাথে আলাদা কোনো কথোপকথন ছাড়াই হুবহু একই ফলাফল পুনরুৎপাদন (Reproduce) করতে পারেন।"
+        },
+        {
+          "type": "text",
+          "title": "Rollback প্রস্তাবনা ও তার প্রকৃত পরিধি",
+          "body": "নিরাপদ অপারেশনের জন্য আগে থেকে যাচাইকৃত একটি পূর্ণাঙ্গ পূর্ববর্তী বান্ডেল হাতে রেখে লোড ভ্যালিডেশন, ওয়ার্ম-আপ, ট্রাফিক সুইচ এবং জরুরি Revert পরিকল্পনা লিখে রাখতে হয়। তবে সততার সাথে মনে রাখবেন: আমাদের এই প্রোটোটাইপটি লোকাল মেমোরিতে অসামঞ্জস্যতা আটকানোর গার্ড চালিয়ে দেখিয়েছে, কিন্তু বহু সার্ভারের ডিস্ট্রিবিউটেড রোলআউট বা Rollback পারফরম্যান্স বাস্তবে চালিয়ে মাপেনি। একটি সুন্দর আর্কিটেকচার ডায়াগ্রাম কখনোই পরীক্ষিত প্রমাণের বিকল্প নয়!"
+        },
+        {
+          "type": "math",
+          "title": "অপারেশনাল প্রমাণ বনাম অফলাইন র‍্যাঙ্কিং মেট্রিক",
+          "body": "\\mathrm{operational\\ evidence}\\ne\\mathrm{offline\\ ranking\\ metric}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ বাস্তবায়িত বনাম অমাপা বৈশিষ্ট্যের সারাংশ",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommender_capstone_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\n\nassert lab[\"manifest\"][\"model_version\"] == \"capstone34-v1\"\nprint(\n    \"Implemented: deterministic export,byte verification,contract checks,cache replay\"\n)\nprint(\"Not measured: service latency,QPS,online utility,distributed rollback\")\nprint(\"source roles\", [(name, len(rows)) for name, rows in lab[\"roles\"].items()])\n"
+        },
+        {
+          "type": "text",
+          "title": "Monitoring প্রস্তাবনা ও সতর্কতা",
+          "body": "সোর্স ক্র্যাশ, শূন্য Candidate পুল, অজানা ID, অনুপস্থিত ফিচার, Cold ইউজারের অনুপাত এবং ভার্সন পরিবর্তনের মতো কারিগরি সংকেতগুলো সার্ভিং লগ থেকেই তাৎক্ষণিকভাবে ধরা সম্ভব। কিন্তু ইউজারের সন্তুষ্টি বা ব্যবসায়িক ফলাফল মাপার জন্য Exposure লগিং, অ্যাট্রিবিউশন এবং বিলম্বিত ফিডব্যাকের সম্পূর্ণ আলাদা চুক্তি প্রয়োজন। তাছাড়া মনে রাখবেন—ড্যাশবোর্ডে সামান্য Feature Drift দেখা গেলেই যে স্বয়ংক্রিয়ভাবে মডেল Retrain করলে লাভ হবে, এমন কোনো নিশ্চয়তা নেই।"
+        },
+        {
+          "type": "text",
+          "title": "কখন মডেল Retrain করবেন?",
+          "body": "নতুন ডেটার প্রাপ্যতা, লেবেলের পরিপক্বতা (Label Maturity), ক্যাটালগের পরিবর্তন, প্রমাণিত কোয়ালিটি অবনমন এবং কম্পিউটেশনাল খরচ—এই সবগুলো দিক বিচার করে তবেই Retraining ট্রিগার করা উচিত। আমাদের বর্তমান স্থির-হিস্ট্রির (Frozen-fit) অডিট কোনো Continual Learning সিমুলেশন নয়। যখনই নতুন ট্রেনিং স্টেট তৈরি হবে, তখন তার সাথে মিলিয়ে Validation পলিসি নির্বাচন এবং নতুন আর্টিফ্যাক্ট ও ক্যাশ জেনারেশনও সামঞ্জস্যপূর্ণভাবে আপডেট করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "সৎ ইঞ্জিনিয়ারিং পোর্টফোলিও লেখার নিয়ম",
+          "body": "নিজের পোর্টফোলিও বা ডিজাইন ডকে সবসময় চারটি অংশ স্পষ্টভাবে আলাদা করে লিখুন: কী বাস্তবায়ন করা হয়েছে (Implemented), কী মাপা হয়েছে (Measured), কী কেবল নকশা করা হয়েছে (Designed) এবং কী এখনো অজানা (Unknown)। ভুলে যাবেন না যে গড় সংখ্যার আড়ালে Tail Latency, কোহর্টের পরিবর্তন কিংবা নীরব ব্যর্থতা লুকিয়ে থাকতে পারে। আমরা এই প্রজেক্টে কোনো কাল্পনিক SLO সংখ্যা বসাইনি; ভবিষ্যতের সিস্টেম ডিজাইন ধাপে প্রকৃত রিকোয়ারমেন্ট জেনে সেগুলো নির্ধারণ করতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "অনুশীলন: সিদ্ধান্ত বৃক্ষ (Decision Tree) তৈরি করুন",
+          "body": "নিজে একটি অপারেশনাল Decision Tree লিখে ফেলুন: ঠিক কোন ধরনের Artifact Mismatch হলে সার্ভিং পুরোপুরি ব্লক করবেন, কোন সোর্সের ঘাটতিতে নিরাপদে Fallback দিয়ে কাজ চালাবেন, আর মেট্রিকের কতটুকু পতনে Rollback রিভিউ শুরু করবেন। প্রতিটি এরর ক্লাসের পাশে ইউজার পর্দায় কী দেখবে তা সুনির্দিষ্ট করুন—কারণ ল্যাবের সংখ্যাসূচক গার্ডগুলো কখনোই পূর্ণাঙ্গ প্রোডাকশন অনুমোদন প্রক্রিয়ার সমান নয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch34_evaluation",
+      "title": "চূড়ান্ত Evidence Card: শক্তি, দুর্বলতা ও পরবর্তী পরীক্ষা",
+      "subtitle": "নির্বাচিত ফিউশন মডেল যে সব Baseline-কে হারায়নি, সেই স্বচ্ছতাই প্রজেক্টের আসল শক্তি",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "প্রকৃত সংখ্যাসূচক ফলাফল (Actual Results)",
+          "body": "পুরো প্রজেক্টের মূল নম্বরগুলো একনজরে মিলিয়ে নিন: Validation সেটের Warm প্যানেলে নির্বাচিত rrf_cf পলিসির Recall ছিল 0.044967 এবং NDCG ছিল 0.049133; আর চূড়ান্ত Audit সেটে তা দাঁড়িয়েছে Recall 0.074063 এবং NDCG 0.138193। Audit সেটে একক Popularity বেসলাইনের চেয়ে (Recall 0.056491, NDCG 0.120525) আমাদের ফিউশন এগিয়ে আছে ঠিকই, কিন্তু একক user_cf বেসলাইনটি Recall 0.074401 এবং NDCG 0.166521 পেয়ে সবার ওপরে রয়েছে! অর্থাৎ ফিউশন পরিবারের ভেতরে বিজয়ী হলেও সামগ্রিকভাবে আরও শক্তিশালী একক বেসলাইন এখানে বিদ্যমান।"
+        },
+        {
+          "type": "text",
+          "title": "ধাপভিত্তিক ফানেল ফলাফল (Stage Results)",
+          "body": "Audit প্যানেলে তিনটি সোর্সের সম্মিলিত Candidate Union-এর গড় আকার হলো 122.944, যেখানে Candidate Recall এসেছে 0.184610 এবং সেরা 10টির তাত্ত্বিক সীমা Oracle Recall@10 এসেছে 0.155528। অথচ চূড়ান্ত Final Recall@10 নেমে এসেছে 0.074063-এ, যা ওই সম্ভাব্য সীমার চেয়ে অনেক নিচে। তাই Candidate কভারেজ বাড়াকে কখনোই চূড়ান্ত র‍্যাঙ্কিং সাফল্য হিসেবে রিপোর্ট করা যাবে না, আর পূর্ণ ক্যাটালগ স্ক্যান করার সোর্স খরচও ফিউশন খরচের বাইরে আলাদা হিসাব করতে হবে।"
+        },
+        {
+          "type": "math",
+          "title": "চূড়ান্ত ইঞ্জিনিয়ারিং সিদ্ধান্তের সমীকরণ",
+          "body": "\\mathrm{decision}=\\mathrm{quality}+\\mathrm{uncertainty}+\\mathrm{coverage}+\\mathrm{cost}+\\mathrm{limitations}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ চূড়ান্ত Scorecard ও Paired Diagnostic যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommender_capstone_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\n\nselected = lab[\"policy\"][\"selected\"]\nfor role in [\"validation\", \"audit\"]:\n    print(role, \"selected\", lab[\"scorecards\"][role][selected][\"warm\"])\n    print(role, \"user-CF\", lab[\"scorecards\"][role][\"user_cf\"][\"warm\"])\nprint(\"conditional paired diagnostic\", lab[\"paired\"])\nassert (\n    lab[\"scorecards\"][\"audit\"][selected][\"warm\"][\"ndcg\"]\n    < lab[\"scorecards\"][\"audit\"][\"user_cf\"][\"warm\"][\"ndcg\"]\n)\n"
+        },
+        {
+          "type": "text",
+          "title": "অনিশ্চয়তার হিসাব ও কোহর্টের পার্থক্য",
+          "body": "Popularity-র বিপরীতে জোড়ায় জোড়ায় (Paired) Recall পার্থক্যের গড় এসেছে +0.017572 এবং শর্তসাপেক্ষ 95% ব্যবধিটি হলো [0, 0.046717]—তাও মাত্র 18 জন Warm ইউজারের ওপর। সিলেকশন ধাপের অনিশ্চয়তা, প্রোটোকল পুনর্বিন্যাস, ঐতিহাসিক ডেটার পুনর্ব্যবহার কিংবা Exposure পক্ষপাত এই ব্যবধির ভেতরে ধরা নেই। পাশাপাশি মনে রাখতে হবে যে 72 জনের Broad প্যানেল এবং 54 জনের Cold প্যানেল সম্পূর্ণ ভিন্ন ইউজার বাস্তবতা তুলে ধরে।"
+        },
+        {
+          "type": "text",
+          "title": "রিলিজ সিদ্ধান্ত (Release Conclusion)",
+          "body": "আমাদের চূড়ান্ত রায় একদম পরিষ্কার: একটি শিক্ষামূলক ও শতভাগ Reproducible অফলাইন প্রোটোটাইপ হিসেবে এই প্রজেক্টটি সম্পূর্ণ; কিন্তু সরাসরি প্রোডাকশন রিলিজের গুণগত অনুমোদন হিসেবে এটি যথেষ্ট নয়। একক user_cf-এর উচ্চতর NDCG, মাত্র 18 জনের ক্ষুদ্র অডিট প্যানেল, পূর্ব-পরিদর্শিত ঐতিহাসিক ডেটা এবং অনলাইন উপযোগিতার প্রমাণের অভাব এর প্রধান সীমাবদ্ধতা। তাই জটিল ফিউশন ডিপ্লয় করার আগে আমাদের লক্ষ্যমাত্রা এবং সরল বেসলাইন বেছে নেওয়ার যুক্তিটি নতুন করে ভাবা উচিত।"
+        },
+        {
+          "type": "text",
+          "title": "পরবর্তী ধাপের প্রয়োজনীয় প্রমাণ",
+          "body": "প্রোডাকশনের দিকে এগোতে চাইলে পরবর্তী পদক্ষেপ হবে নতুন ইমপ্রেশন ও Exposure লগিং চালু করা, যোগ্য ইউজার প্যানেল সংজ্ঞায়িত করা, উপযুক্ত গার্ডরেইলসহ নিয়ন্ত্রিত অনলাইন A/B পরীক্ষা চালানো এবং পরিণত ফলাফলের জন্য অপেক্ষা করা। বিদ্যমান MovieLens রেটিং থেকে কখনোই কাল্পনিক Impression Propensity বা অনলাইন আপলিফট বানানোর চেষ্টা করবেন না—যা উৎস ডেটায় নেই, তা অজানা বলেই স্বীকার করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "আপনার এক পৃষ্ঠার Evidence Card",
+          "body": "সবশেষে এক পৃষ্ঠার একটি সংহত Evidence Card তৈরি করুন, যেখানে প্রজেক্টের লক্ষ্য, ডেটার উৎস, সময়ের বিভাজন, সিলেকশন নিয়ম, বেসলাইন তুলনা, ফানেল মেট্রিক, অনিশ্চয়তার ব্যবধি, আর্টিফ্যাক্ট হ্যাশ এবং জানা সীমাবদ্ধতাগুলো স্পষ্টভাবে লেখা থাকবে। সাথে কোড চালানোর নির্দেশনা এবং একটি বাস্তব ব্যর্থতার উদাহরণ দিন—যাতে কোনো রিভিউয়ারকে মেট্রিকের হর বা নির্বাচিত পলিসির কারণ অনুমান করে নিতে না হয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch34_book_replay_contract",
+      "title": "Replay Correctness: Deterministic Ranking ও Artifact Semantics",
+      "subtitle": "বাইটের অভিন্নতা থেকে র‍্যাঙ্কিংয়ের অর্থগত নির্ভুলতা—সূত্র, উদাহরণ ও কোডে যাচাই",
+      "duration": "33 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ধারণাটি কেন দরকার?",
+          "body": "ফাইলের Checksum মিলে যাওয়া কেবল এটিই বলে যে ডিস্কের বাইটগুলো অবিকৃত আছে; কিন্তু র‍্যাঙ্কিংয়ের গাণিতিক অর্থ (Ranking Semantics) সঠিক কি না, ডেটার উৎস নির্ভরযোগ্য কি না, কিংবা মডেলটি গোপনে ভবিষ্যতের ডেটা দেখে ফেলেছে কি না—চেকসাম তা বলতে পারে না! তাই একটি পোর্টেবল বান্ডেল আত্মবিশ্বাসের সাথে রিলিজ করতে হলে বাইট হ্যাশের পাশাপাশি সুস্পষ্ট Schema, ডিটারমিনিস্টিক র‍্যাঙ্কিং নিয়ম এবং সূক্ষ্ম প্রান্তিক কেস (Adversarial Edge Cases) পরীক্ষা করা অপরিহার্য।"
+        },
+        {
+          "type": "text",
+          "title": "ধাপে ধাপে Replay মেলানোর নিয়ম",
+          "body": "হুবহু একই ইনপুটের জন্য অনলাইন স্কোরার এবং অফলাইন রেফারেন্স পাইপলাইনের যোগ্য আইটেম ID, প্রতিটির স্কোর, টাই ভাঙার ক্রম এবং বাদ পড়া আইটেমগুলো একে একে মিলিয়ে দেখুন। ফ্লোটিং-পয়েন্ট রাউন্ডিং ঠিক কোন ধাপে ঘটছে তা চুক্তিতে স্পষ্টভাবে লিখুন। আগে দেখা আইটেম ফিল্টারিং, অনুপস্থিত মেটাডেটা এবং শূন্য Candidate পুলের আচরণ টেস্ট করুন। বিশেষ করে ডুপ্লিকেট আইটেম ID থাকার সম্ভাবনা থাকলে মার্জ করার নিয়ম আগেভাগে ঠিক না করলে RRF স্কোর দুইবার যোগ (Double-count) হয়ে পুরো র‍্যাঙ্কিং ওলটপালট করে দিতে পারে!"
+        },
+        {
+          "type": "math",
+          "title": "ধ্রুবক ড্যাম্পিংসহ মৌলিক RRF সমীকরণ",
+          "body": "\\mathrm{RRF}(i)=\\sum_{s:i\\in L_s}\\frac{1}{k+\\mathrm{rank}_s(i)}"
+        },
+        {
+          "type": "text",
+          "title": "খাতাকলমে একটি ছোট উদাহরণ",
+          "body": "ধরুন তিনটি আইটেমের স্কোর যথাক্রমে A = 0.5, B = 0.5 এবং C = 0.7। আমাদের নিয়ম যদি হয় 'স্কোর বড় থেকে ছোট এবং সমান স্কোরে আইটেম ID ছোট থেকে বড়', তবে একমাত্র বৈধ ক্রম হবে C, A, B। এই স্পষ্ট নিয়ম ছাড়া সাধারণ Dictionary বা Set-এর ইটারেশন ক্রমের ওপর ভরসা করলে সমান স্কোরের আইটেমগুলোর অবস্থান একেক রানটাইমে একেক রকম (Non-deterministic) হয়ে যেতে পারে।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ স্থিতিশীল Tie-breaking সহ র‍্যাঙ্ক হিসাব",
+          "body": "items = [(\"B\", 0.5), (\"A\", 0.5), (\"C\", 0.7)]\nranked = sorted(items, key=lambda item: (-item[1], item[0]))\nrank_by_id = {item_id: rank for rank, (item_id, _) in enumerate(ranked, start=1)}\n# Assert a total order; equal scores are resolved by a stable identity.\nprint(rank_by_id[\"C\"], rank_by_id[\"A\"], rank_by_id[\"B\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "কোড চালালে কী দেখা যাচ্ছে?",
+          "body": "কোডটি চালালে C, A এবং B-এর র‍্যাঙ্ক হিসেবে সুনির্দিষ্টভাবে 1 2 3 আউটপুট পাওয়া যায়। আপনার রিপ্লে টেস্ট স্যুইটে সমান স্কোর, ডুপ্লিকেট ID, শূন্য যোগ্য আইটেম এবং বাসি (Stale) ফিচার ভার্সনের টেস্ট কেস অবশ্যই রাখবেন। লক্ষ্য করুন, সংরক্ষিত এই Frozen রিকমেন্ডার বান্ডেলটি নতুন কোনো Holdout লেবেল ছাড়াই যেকোনো পরিবেশে হুবহু রিপ্লে করে যাচাই করা যায়।"
+        },
+        {
+          "type": "text",
+          "title": "কখন এই হিসাবের বাড়তি সতর্কতা লাগে?",
+          "body": "আবারও মনে করিয়ে দিই: বাইট মিলে যাওয়া কখনোই বৈজ্ঞানিক বৈধতার প্রমাণ নয়। আবার ভিন্ন অপারেটিং সিস্টেম বা লাইব্রেরিতে শেষ বিটের সূক্ষ্ম ফ্লোটিং-পয়েন্ট পার্থক্যের (ULP Difference) কারণে প্রায়-সমান স্কোরের ক্রম উল্টে যেতে পারে—সেক্ষেত্রে সুচিন্তিত রাউন্ডিং ও Tolerance নিয়ম দরকার হয়, কারণ অন্ধভাবে স্থূল রাউন্ডিং করলে সূক্ষ্ম র‍্যাঙ্কিং পার্থক্যও নষ্ট হয়ে যেতে পারে।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে চেষ্টা করুন (প্রথম যাচাই)",
+          "body": "ধরুন কোনো Artifact-এর Checksum শতভাগ বৈধ, কিন্তু এলিজিবিলিটি নির্ধারণের Timestamp ভুল দেওয়া হয়েছে—এক্ষেত্রে কোন Gate ব্যর্থ হবে? আর সার্ভিং Cache Key-তে কোন কোন Version Field রাখবেন?",
+          "solution": "এক্ষেত্রে বাইট পরীক্ষা পাস করলেও Semantic বা Temporal Gate ব্যর্থ হবে। আর ক্যাশে যেন কখনোই ভুল স্টেটের ফলাফল না মেশে, সেজন্য প্রয়োজন অনুযায়ী Model Version, Feature Schema Version, Candidate Snapshot, User-history Cutoff এবং Policy Version ফিল্ডগুলো Cache Key-তে রাখতে হবে।",
+          "reference": "https://www.statlearning.com/"
+        },
+        {
+          "type": "text",
+          "title": "শুধু Score Array মেলালেই কেন Item Mapping ভুল ধরা পড়ে না?",
+          "body": "ধরুন আমাদের Golden Ranking হলো [(10, 0.8), (20, 0.7)], কিন্তু আইটেম ম্যাপ উল্টে যাওয়ায় রিপ্লে থেকে পাওয়া গেল [(20, 0.8), (10, 0.7)]! আপনি যদি পজিশন ধরে শুধু স্কোরের অ্যারে দুটি মেলান ([0.8, 0.7] বনাম [0.8, 0.7]), তবে দুটো ফলাফল হুবহু এক মনে হবে! অথচ সাজানো আইটেম ID তালিকা পুরো উল্টে গেছে এবং প্রতিটি আইটেমের নিজস্ব স্কোরও বদলে গেছে। তাই গোল্ডেন রিপ্লে যাচাইয়ে ID Map, এলিজিবিলিটি, টাই পলিসি, সাজানো আউটপুট এবং আইটেম-ভিত্তিক সংখ্যাসূচক সহনশীলতা সব একসঙ্গে পরীক্ষা করতে হয়। নিচের কোডে দেখুন, পজিশনাল চেক পাস করলেও বাকি দুটি আসল চেক কীভাবে ত্রুটি ধরে ফেলে।"
+        },
+        {
+          "type": "code",
+          "title": "Ordered ID এবং Per-ID স্কোর একসাথে যাচাই",
+          "body": "import numpy as np\n\ngolden = [(10, 0.8), (20, 0.7)]\nreplayed = [(20, 0.8), (10, 0.7)]\npositional_scores_match = np.allclose(\n    [score for item, score in golden], [score for item, score in replayed]\n)\nordered_ids_match = [item for item, score in golden] == [\n    item for item, score in replayed\n]\nper_id = dict(replayed)\nmapped_scores_match = all(np.isclose(score, per_id[item]) for item, score in golden)\nassert positional_scores_match and not ordered_ids_match and not mapped_scores_match\nprint(int(positional_scores_match), int(ordered_ids_match), int(mapped_scores_match))\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে ভেবে উত্তর দিন (দ্বিতীয় যাচাই)",
+          "body": "স্কোরগুলো যদি প্রায় সমান (Nearly Tied) হয়, তবে সাজানো আইটেম ID যাচাই করার জন্য কী ধরনের Contract লাগবে?",
+          "solution": "সুস্পষ্টভাবে ঘোষিত Rounding প্রিসিশন, সংখ্যাসূচক Tolerance এবং নির্ধারিত Tie-break নিয়ম লাগবে। একই স্ন্যাপশটে ডিটারমিনিস্টিক ID ক্রম এবং যুক্তিসংগত সংখ্যাসূচক সহনশীলতা ব্যবহার করে রিপ্লে মেলান। আর কখনো Tie-breaking নীতি পরিবর্তন করলে পরবর্তী ধাপের র‍্যাঙ্ক মেট্রিক ও Artifact Version আবার নতুন করে যাচাই করুন।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch34_defense",
+      "title": "Capstone Defense ও Interview মহড়া",
+      "subtitle": "Code, Math, Data এবং System Reasoning—চারটি স্তম্ভ একসঙ্গে গুছিয়ে বলুন",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "পাঁচ মিনিটের Capstone পিচ কীভাবে সাজাবেন?",
+          "body": "যেকোনো প্রজেক্ট ডিফেন্সের শুরুতে মূল সমস্যা, ইউজার জনগোষ্ঠী ও ডেটার উৎস স্পষ্ট করুন; এরপর Fit-only স্টেট এবং সময়ের তিনটি সীমানা (Fit, Validation ও Audit) ব্যাখ্যা করুন। একজন বাস্তব ইউজারের উদাহরণ ধরে Candidate Retrieval থেকে RRF ফিউশন হয়ে Top 10 তৈরির পথটি দেখান এবং সবশেষে Validation সিলেক্টর, শক্তিশালী বেসলাইন তুলনা ও মডেলের প্রকৃত দুর্বলতাগুলো অকপটে তুলে ধরুন। কখনোই না মাপা SLO বা কাল্পনিক অনলাইন সাফল্যের দাবি যোগ করে রিপোর্ট ফুলিয়ে-ফাঁপিয়ে বড় করবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "হোয়াইটবোর্ড মহড়া (Whiteboard Drill)",
+          "body": "সাদা কাগজে বা হোয়াইটবোর্ডে না দেখে নিচের সূত্রগুলো নিজে প্রতিপাদন করুন: User-CF Cosine ও Shrinkage, RRF অবদান, Candidate থেকে Oracle ও Final রিকলের অসমতা, Macro Recall এবং Paired Bootstrap ব্যবধি। এরপর পাল্টা উদাহরণ (Counterexample) দিয়ে নিজের যুক্তি যাচাই করুন—যেমন খুব সামান্য Overlap, শূন্য Gold সেট, ভুল ID Mapping বা টাই এবং Cold Fallback। মনে রাখবেন, সূত্র মুখস্থ থাকাই নিখুঁত ইমপ্লিমেন্টেশন করার সক্ষমতা নয়।"
+        },
+        {
+          "type": "math",
+          "title": "একটি সম্পূর্ণ ইঞ্জিনিয়ারিং ডিফেন্সের পাঁচটি উপাদান",
+          "body": "\\mathrm{defense}=\\mathrm{contract}+\\mathrm{derivation}+\\mathrm{implementation}+\\mathrm{evidence}+\\mathrm{limits}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ সমাপনী প্রজেক্ট ইনভ্যারিয়েন্ট যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommender_capstone_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\n\nassert (\n    lab[\"report\"][\"fit_rows\"]\n    + lab[\"report\"][\"validation_rows\"]\n    + lab[\"report\"][\"audit_rows\"]\n    == 100836\n)\nassert lab[\"policy\"][\"selected\"] == \"rrf_cf\"\nassert lab[\"cache\"][\"complete\"][\"hits\"] == 2\nprint(\"Next after review: Chapter35 ML Data Pipelines & Feature Systems\")\n"
+        },
+        {
+          "type": "text",
+          "title": "কোডিং মহড়া (Coding Drill)",
+          "body": "রেফারেন্স কোড না দেখে নিজে হাতে লিখুন: স্থিতিশীল Candidate Union ও RRF ফিউশন, Validation-only সিলেক্টর, সময়ের শর্তে Fit বিভাজন, রৈখিক Quantile হিসাব এবং ক্যাশ পেলোড সিগনেচার গার্ড। ভুল ID, ডুপ্লিকেট আইটেম, ফাঁকা তালিকা, সমান স্কোরের টাই এবং অনুপস্থিত ফিল্ড দিয়ে নিজের কোডকে কঠিন পরীক্ষায় ফেলুন এবং সমাধান দেখার আগে প্রতিটি মধ্যবর্তী আউটপুটের যৌক্তিকতা ব্যাখ্যা করুন।"
+        },
+        {
+          "type": "text",
+          "title": "সিস্টেম ডিজাইন মহড়া (System Drill)",
+          "body": "একটি সার্ভিং রিকোয়েস্টের সব নির্ভরতা, অবিভাজ্য বান্ডেল লোডিং (Artifact Atomicity), ক্যাশ আইসোলেশন, সময়ের সাপেক্ষে ফিচারের প্রাপ্যতা, নিরাপদ Fallback এবং মনিটরিং পরিকল্পনা ধারাবাহিকভাবে বলার অনুশীলন করুন। লোকাল পরিবেশে মেপে দেখা পথ আর প্রোডাকশনের প্রস্তাবিত নকশাকে সবসময় আলাদা রাখুন, এবং ইন্টারভিউয়ার শর্ত বদলে দিলে আপনার আর্কিটেকচার কীভাবে খাপ খাওয়াবে তা যুক্তি দিয়ে দেখান।"
+        },
+        {
+          "type": "text",
+          "title": "দক্ষতার চূড়ান্ত মাপকাঠি (Mastery Gate)",
+          "body": "এই অধ্যায়ের শেষে থাকা দশটি Coding Exercise এবং দশটি Interview কেস মনোযোগ দিয়ে সম্পন্ন করুন। মনে রাখবেন, সবকটি বহুনির্বাচনী Quiz মিলিয়ে ফেলা কেবল সঠিক উত্তর চেনার প্রমাণ দেয়; আসল দক্ষতা হলো ভুল ID Mapping হলে বা বাজেট কাটার পরে Seen Filter বসালে পাইপলাইনের ঠিক কোথায় বিপর্যয় ঘটবে তা নিখুঁতভাবে ধরতে পারা। নিজের ভাষায় একটি পূর্ণাঙ্গ Model Card ও Reproducibility Packet তৈরি করে রাখুন।"
+        },
+        {
+          "type": "text",
+          "title": "সমাপনী সেতুবন্ধন: পরবর্তী বইয়ের পথে",
+          "body": "এই Capstone প্রজেক্টের শক্তিশালী Baseline তুলনা, অপরিবর্তনীয় পলিসি নির্বাচন, আর্টিফ্যাক্ট সামঞ্জস্যতা এবং ডিটারমিনিস্টিক রিপ্লে টেস্টগুলো আত্মবিশ্বাসের সাথে ডিফেন্ড করতে পারলে Book 5 (Recommender Systems)-এ আপনার যাত্রা সফলভাবে পূর্ণ হলো। এরপর শুরু করুন Book 6 (ML Systems & Interviews) · Chapter 1 (Data Pipelines & Feature Systems), যেখানে আমরা প্রোডাকশন ডেটা পাইপলাইন, Point-in-time Join এবং পূর্ণাঙ্গ Feature System নিয়ে গভীরে আলোচনা করব।"
+        }
+      ]
+    }
+  ],
+  "quizzes": [
+    {
+      "id": "ch34_q1",
+      "question": "এই Capstone প্রজেক্টে পজিটিভ পছন্দের Label হিসেবে কোনটি ব্যবহার করা হয়েছে?",
+      "options": [
+        "ইউজারের দেওয়া rating >= 4-এর পর্যবেক্ষণকৃত পছন্দ (Observed Preference)",
+        "সার্ভ করা Impression থেকে পাওয়া সরাসরি Click",
+        "র‍্যান্ডমাইজড পরীক্ষার Treatment Outcome",
+        "সিনেমা দেখে ইউজারের নিশ্চিত সন্তুষ্টি (Guaranteed Watch Satisfaction)"
+      ],
+      "answer": 0,
+      "explanation": "এখানে কেবল ইউজারের দেওয়া স্টার রেটিং (r >= 4) থেকে পছন্দের একটি প্রক্সি নেওয়া হয়েছে—এটি কোনো Impression Click বা Causal Utility নয়। এছাড়া না-দেখা (Missing) ইন্টারঅ্যাকশনকে এখানে নেতিবাচক লেবেল হিসেবে ধরা হয়নি।"
+    },
+    {
+      "id": "ch34_q2",
+      "question": "সময়ের সীমানায় থাকা সমান Timestamp-এর (Boundary Tie) ইভেন্টগুলো কোন ধাপে বা Role-এ যায়?",
+      "options": [
+        "দৈবচয়নে (Randomly) দুই ধাপে ভাগ হয়ে যায়",
+        "সবগুলো চূড়ান্ত Audit সেটে চলে যায়",
+        "পাইপলাইন থেকে পুরোপুরি বাদ দেওয়া হয়",
+        "ঠিক আগের ধাপে (Earlier Role-এ) রাখা হয়"
+      ],
+      "answer": 3,
+      "explanation": "আমাদের সময়গত বিভাজনের নিয়ম হলো Fit: t <= cut1, Validation: cut1 < t <= cut2 এবং Audit: t > cut2। এই নিয়মে তিনটি ধাপে যথাক্রমে 80668, 10084 এবং 10084টি ইভেন্ট পাওয়া যায়।"
+    },
+    {
+      "id": "ch34_q3",
+      "question": "কন্টেন্ট ফিচারের জন্য প্রতিটি Genre-এর IDF কোন ডেটা থেকে হিসাব করা হয়?",
+      "options": [
+        "কেবল Audit সেটের পজিটিভ রেটিং থেকে",
+        "প্রাপ্যতা নির্বিশেষে মূল ফাইলের সম্পূর্ণ ক্যাটালগ থেকে",
+        "কেবল Fit Catalog-এ থাকা সিনেমাগুলো থেকে",
+        "Validation সেটের Gold আইটেমগুলো থেকে"
+      ],
+      "answer": 2,
+      "explanation": "ক্যাটালগের Document Frequency এবং IDF পুরোপুরি Fit ডেটা থেকে শেখা স্টেট (7867টি সিনেমা)। অবশ্য মূল 2018 মেটাডেটা ফাইলটি ঐতিহাসিকভাবে ভার্সন করা নয়—সেই সীমাবদ্ধতাটি রিপোর্টে উল্লেখ করা হয়েছে।"
+    },
+    {
+      "id": "ch34_q4",
+      "question": "আমাদের ব্যবহৃত Reciprocal Rank Fusion (RRF) সূত্রে র‍্যাঙ্ক ইনডেক্স কীভাবে ধরা হয়?",
+      "options": [
+        "সিনেমার স্টার রেটিংয়ের মান অনুযায়ী",
+        "1-ভিত্তিক অবস্থান (One-based Rank) হিসেবে",
+        "0-ভিত্তিক অবস্থান হিসেবে, যেখানে প্রথম হর হয় 60",
+        "সিনেমার সংখ্যাসূচক movieId-এর সমান করে"
+      ],
+      "answer": 1,
+      "explanation": "কোনো সোর্সের শীর্ষ অবস্থানে (r = 1) থাকা আইটেমের অবদান হলো weight / (60 + 1)। আর সোর্সের Top L প্রিফিক্সে আইটেমটি অনুপস্থিত থাকলে সেই সোর্সের অবদান হয় 0।"
+    },
+    {
+      "id": "ch34_q5",
+      "question": "নির্বাচিত rrf_cf প্রিসেটে Popularity, Content ও User-CF সোর্সের ওজন (Weights) কত?",
+      "options": [
+        "[1, 1, 2]",
+        "[2, 1, 1]",
+        "[1, 2, 1]",
+        "গ্রেডিয়েন্ট দিয়ে শেখা CTR Probability"
+      ],
+      "answer": 0,
+      "explanation": "rrf_cf হলো একটি পূর্বঘোষিত ও স্থির ওজনের প্রিসেট ([1, 1, 2]), যেখানে User-CF সোর্সকে দ্বিগুণ গুরুত্ব দেওয়া হয়েছে; এটি কোনো গ্রেডিয়েন্ট-ট্রেইনড র‍্যাঙ্কার নয়।"
+    },
+    {
+      "id": "ch34_q6",
+      "question": "তিনটি সোর্স থেকে Top 50 করে আইটেম নিয়ে তৈরি করা Candidate Union-এর আকার কত হতে পারে?",
+      "options": [
+        "সবসময়ই ঠিক 150 হবে",
+        "সবসময়ই ঠিক 50 হবে",
+        "পুরো Fit Catalog-এর সমান হবে",
+        "সর্বোচ্চ 150 হবে, তবে সোর্সগুলোর মধ্যে Overlap থাকলে কম হবে"
+      ],
+      "answer": 3,
+      "explanation": "সোর্সের ক্রম মেনে ডুপ্লিকেট বাদ (Deduplication) দেওয়ার পর প্রকৃত অনন্য সংখ্যা রিপোর্ট করতে হয়। বিশেষ করে Cold Fallback-এর ক্ষেত্রে সোর্সগুলো অভিন্ন হওয়ায় ইউনিয়ন অনেক ছোট হয়।"
+    },
+    {
+      "id": "ch34_q7",
+      "question": "ইউজারের আগে দেখা সিনেমা বাদ দেওয়ার Seen Filter কখন প্রয়োগ করা হয়?",
+      "options": [
+        "শুধুমাত্র মূল্যায়নের Gold Set তৈরির সময়",
+        "এই প্রজেক্টে কখনোই প্রয়োগ করা হয় না",
+        "প্রতিটি সোর্স থেকে Top L বাজেট নেওয়ার আগেই",
+        "চূড়ান্ত Top 10 তালিকা তৈরির পরে"
+      ],
+      "answer": 2,
+      "explanation": "কেবল পছন্দ করা সিনেমাই নয়, ইউজারের দেখা সব Fit রেটিংই শুরুতে বাদ দেওয়া হয়। Top L নেওয়ার পরে ফিল্টার করলে দেখা সিনেমাগুলো Candidate বাজেটের মূল্যবান জায়গা নষ্ট করে ফেলত।"
+    },
+    {
+      "id": "ch34_q8",
+      "question": "RRF থেকে পাওয়া চূড়ান্ত স্কোর কি একটি ক্যালিব্রেটেড Click-Through Rate (CTR)?",
+      "options": [
+        "ওজনের যোগফল 1 হলেই তা ক্যালিব্রেটেড CTR হয়",
+        "না, এটি কেবল র‍্যাঙ্ক একত্র করার আপেক্ষিক স্কোর",
+        "হ্যাঁ, সব পরিস্থিতিতেই তা ক্যালিব্রেটেড Probability",
+        "কেবল Cold User-দের ক্ষেত্রে এটি CTR বোঝায়"
+      ],
+      "answer": 1,
+      "explanation": "RRF-এর র‍্যাঙ্ক অবদানগুলো কেবল একাধিক তালিকা মেলানোর গাণিতিক স্কোর—এটি ইউজারের পছন্দের Probability বা ক্যালিব্রেটেড উপযোগিতা নয়।"
+    },
+    {
+      "id": "ch34_q9",
+      "question": "ফিউশন প্রিসেট নির্বাচনের Selector Function সবার আগে কোন মেট্রিকটি বিচার করে?",
+      "options": [
+        "Warm Validation NDCG",
+        "চূড়ান্ত Audit Recall",
+        "Broad Audit প্যানেলের ক্লিক সংখ্যা",
+        "প্রোডাকশন সার্ভারের Serving Latency"
+      ],
+      "answer": 0,
+      "explanation": "সিলেক্টর প্রথমে 12 দশমিক ঘরে রাউন্ড করা Warm Validation NDCG দেখে; সমান হলে Recall এবং শেষে প্রিসেট ক্রম মেনে তিনটি ফিউশন প্রিসেটের মধ্য থেকে একটি বেছে নেয়।"
+    },
+    {
+      "id": "ch34_q10",
+      "question": "নির্বাচিত ফিউশন পলিসি (rrf_cf) কি পুরো প্রজেক্টের সবচেয়ে শক্তিশালী মডেল?",
+      "options": [
+        "হ্যাঁ, সব মেট্রিকে এটিই নিরঙ্কুশ সেরা",
+        "প্রজেক্টের সবকটি পদ্ধতি হুবহু একই স্কোর দেয়",
+        "কেবল Popularity বাদ দিলেই এটি নিশ্চিত সেরা",
+        "না, একক User-CF বেসলাইনের NDCG এর চেয়ে বেশি"
+      ],
+      "answer": 3,
+      "explanation": "ফিউশন পরিবারের ভেতরের বিজয়ী আর সামগ্রিক সেরা পলিসি আলাদা বিষয়। শক্তিশালী একক Baseline-কে (user_cf) কখনোই কোয়ালিটি রিপোর্ট থেকে বাদ দেওয়া যাবে না।"
+    },
+    {
+      "id": "ch34_q11",
+      "question": "চূড়ান্ত Audit মূল্যায়নের সময় কি Validation উইন্ডোর ইউজার হিস্ট্রি মডেলে যোগ করে আপডেট করা হয়?",
+      "options": [
+        "কেবল পজিটিভ রেটিংগুলো যোগ করা হয়",
+        "কেবল User-CF প্রতিবেশী খোঁজার জন্য আপডেট করা হয়",
+        "না, এখানে পুরো Fit স্টেট ও হিস্ট্রি স্থির (Frozen) থাকে",
+        "প্রতিটি Row পড়ার পরেই তাৎক্ষণিক আপডেট করা হয়"
+      ],
+      "answer": 2,
+      "explanation": "আমাদের বর্তমান টাস্কটি একটি Frozen History পরীক্ষা। ক্রমান্বয়ে হিস্ট্রি আপডেট (Prequential Update) করতে চাইলে নতুন প্রোটোকল ও ফিচার প্রাপ্যতার নিয়ম লিখতে হবে।"
+    },
+    {
+      "id": "ch34_q12",
+      "question": "Warm Audit কোহর্টে মূল্যায়নের লক্ষ্যবস্তু বা Gold Set বলতে কোনটি বোঝায়?",
+      "options": [
+        "দৈবচয়নে বেছে নেওয়া নেগেটিভ আইটেমগুলো",
+        "Fit Catalog-এ পরিচিত এবং ইউজারের আগে না-দেখা ভবিষ্যৎ পজিটিভ সিনেমাগুলো",
+        "রেটিং নির্বিশেষে ভবিষ্যতের সবগুলো ইভেন্ট",
+        "কেবল ক্যাটালগের সবচেয়ে জনপ্রিয় সিনেমাগুলো"
+      ],
+      "answer": 1,
+      "explanation": "Warm Gold-এ কেবল নাগালের ভেতরে থাকা (Fit-known ও Unseen) ভবিষ্যৎ পজিটিভ আইটেম থাকে; আর অপ্রাপ্য আইটেমসহ সব ভবিষ্যৎ পজিটিভ থাকে Broad Gold-এ—দুটির হর আলাদা।"
+    },
+    {
+      "id": "ch34_q13",
+      "question": "যেকোনো র‍্যাঙ্কারের চূড়ান্ত Final Recall@10-এর তাত্ত্বিক ঊর্ধ্বসীমা (Upper Bound) কোনটি?",
+      "options": [
+        "সংগৃহীত Candidate Pool-এর Oracle Recall@10",
+        "সবসময়ই স্থির 1 / 10",
+        "সব আইটেমের গড় RRF স্কোর",
+        "পুরো সিস্টেমের Catalog Coverage"
+      ],
+      "answer": 0,
+      "explanation": "পুল থেকে সেরা 10টি নিলে সর্বোচ্চ min(10, pool_hits) / |G| রিকল পাওয়া সম্ভব, তাই Final <= Oracle <= Candidate Recall। তবে Gold দেখে বানানো এই Oracle কোনো ডিপ্লয়যোগ্য মডেল নয়।"
+    },
+    {
+      "id": "ch34_q14",
+      "question": "সংরক্ষিত স্কোরকার্ডে একক Baseline-গুলোর candidate পুল ফিল্ডে আসলে কী বোঝানো হয়েছে?",
+      "options": [
+        "সম্পূর্ণ 7867টি সিনেমার ক্যাটালগ",
+        "তিনটি সোর্সের সম্মিলিত ইউনিয়ন",
+        "Top 1000 আকারের একটি ANN তালিকা",
+        "চূড়ান্ত হিসেবে ফেরত দেওয়া Top 10 তালিকাটিই"
+      ],
+      "answer": 3,
+      "explanation": "ফিউশনের বেলায় এই ফিল্ডে সর্বোচ্চ 150 আকারের ইউনিয়ন থাকলেও একক বেসলাইনের বেলায় কেবল ফেরত দেওয়া Top 10 রাখা হয়েছে; তাই এটি সমান বাজেটের রিট্রিভাল তুলনা নয়।"
+    },
+    {
+      "id": "ch34_q15",
+      "question": "একজন Outer-cold ইউজারের বেলায় তিনটি সোর্সের রিট্রিভাল আউটপুট কেমন হয়?",
+      "options": [
+        "ভবিষ্যতের প্রোফাইল থেকে এনকোড করা তালিকা আসে",
+        "তিনটি তালিকাই সম্পূর্ণ ফাঁকা (Empty) থাকে",
+        "তিনটি সোর্সই অভিন্ন Popularity Fallback তালিকা দেয়",
+        "তিনটি সম্পূর্ণ স্বাধীন দৈব সংকেত তৈরি হয়"
+      ],
+      "answer": 2,
+      "explanation": "শূন্য প্রোফাইলের কারণে Content এবং বৈধ প্রতিবেশী না থাকায় User-CF উভয়ই Popularity তালিকা ব্যবহার করে। তাই তিনটি সোর্স উপস্থিত থাকলেই সেগুলোকে স্বাধীন প্রমাণ বলা যাবে না।"
+    },
+    {
+      "id": "ch34_q16",
+      "question": "অডিট রিপোর্টের 95% Bootstrap Interval-টি কি মডেল নির্বাচনের (Selection) অনিশ্চয়তা সমন্বয় করে?",
+      "options": [
+        "হ্যাঁ, এটি সরাসরি অনলাইন Causal Lift পরিমাপ করে",
+        "না, এটি স্থির নির্বাচিত পলিসির ওপর একটি শর্তসাপেক্ষ (Conditional) ব্যবধি",
+        "হ্যাঁ, প্রতিবার ড্র করার সময় সিলেক্টর নতুন করে চালানো হয়েছে",
+        "এটি সব সম্ভাব্য ট্রেনিং সিডের পরিবর্তন কভার করে"
+      ],
+      "answer": 1,
+      "explanation": "সিড 34 দিয়ে 5000 বার ইউজার রিস্যাম্পলিং করার সময় নির্বাচিত পলিসিটি স্থির রাখা হয়েছে; তাই সিলেকশন প্রক্রিয়া, সময়ের বিভাজন ও ঐতিহাসিক Exposure অনিশ্চয়তা এর আওতায় আসে না।"
+    },
+    {
+      "id": "ch34_q17",
+      "question": "আগে থেকেই বিশ্লেষিত ঐতিহাসিক ডেটার শেষ অংশকে Audit Role নাম দিলেই কি তা অন্ধ পরীক্ষা (Blind Test) হয়ে যায়?",
+      "options": [
+        "না, শুধু নতুন নাম দিলেই অতীত পরিদর্শনের ইতিহাস মুছে যায় না",
+        "নতুন একটি JSON ফাইলে সেভ করলেই তা অন্ধ পরীক্ষা হয়ে যায়",
+        "মডেলের ভার্সন নম্বর বদলে দিলেই তা অন্ধ পরীক্ষা হয়",
+        "সাথে একটি Confidence Interval রিপোর্ট করলেই তা অন্ধ পরীক্ষা হয়"
+      ],
+      "answer": 0,
+      "explanation": "বইয়ের আগের অধ্যায়গুলোতে এই ডেটাসেট ও সময়ের উইন্ডোগুলো দেখা হয়েছে এবং কোহর্টের আকার দেখে প্রোটোকল বদলানোর কথাও প্রকাশ করা হয়েছে—তাই নতুন নাম দিলেই এটি আনকোরা অন্ধ পরীক্ষা হয় না।"
+    },
+    {
+      "id": "ch34_q18",
+      "question": "প্রত্যাশিত Model SHA-256 Hash মিলে গেলে তা থেকে নিশ্চিতভাবে কী জানা যায়?",
+      "options": [
+        "মডেলটির পরিসংখ্যানগত বৈধতা প্রমাণিত হয়েছে",
+        "ডেটাসেটটি বাণিজ্যিক কাজে ব্যবহারের অনুমতি পাওয়া গেছে",
+        "মডেলটি পুরো ইউজার জনগোষ্ঠীর ওপর দারুণ কাজ করবে",
+        "সংরক্ষিত ফাইলটির বাইটগুলো অবিকৃত আছে (Exact Bytes Integrity)"
+      ],
+      "answer": 3,
+      "explanation": "বিশ্বস্ত প্রত্যাশিত হ্যাশের সাথে মিলে যাওয়া কেবল বাইটের অভিন্নতা নিশ্চিত করে। পেলোড ও চেকসাম দুটোই কেউ বদলাতে পারলে প্রামাণিকতার জন্য আলাদা ক্রিপ্টোগ্রাফিক সুরক্ষা দরকার হয়।"
+    },
+    {
+      "id": "ch34_q19",
+      "question": "স্টার্টআপে Artifact Contract Mismatch ধরা পড়লেও ক্যাশে হিট পাওয়া গেলে কি ক্যাশ থেকে সুপারিশ সার্ভ করবেন?",
+      "options": [
+        "কেবল পুরোনো ইউজারদের জন্য সার্ভ করব",
+        "কেবল সেরা Top 3 আইটেম সার্ভ করব",
+        "না, ক্যাশ দেখার আগেই সার্ভিং ব্লক করতে হবে",
+        "ক্যাশে হিট পাওয়া গেলেই সবসময় সার্ভ করব"
+      ],
+      "answer": 2,
+      "explanation": "ভুল ম্যাপ, স্কিমা বা ভার্সনের ত্রুটি কখনোই পুরোনো ক্যাশ দিয়ে বৈধ হয়ে যায় না। আপৎকালীন কাজের জন্য আলাদাভাবে যাচাইকৃত স্বতন্ত্র Fallback Bundle ডিজাইন করা যেতে পারে।"
+    },
+    {
+      "id": "ch34_q20",
+      "question": "অ্যাপের ভেতরের Artifact Fault Lab কি ডিস্কের মূল আর্টিফ্যাক্ট বাইটগুলো প্রতিবার নতুন করে হ্যাশ করে?",
+      "options": [
+        "হ্যাশ নামের ফিল্ড থাকলেই বাইট আপনাআপনি বৈধ ধরা হয়",
+        "না, অ্যাপ মেটাডেটা ফিল্ডের সমতা মেলায় আর Python CLI প্রকৃত ফাইল বাইট যাচাই করে",
+        "হ্যাঁ, প্রতি ক্লিকে ডিস্কের সব বাইট নতুন করে হ্যাশ করে",
+        "বাইরের কোনো ক্লাউড API ডেকে হ্যাশ যাচাই করে"
+      ],
+      "answer": 1,
+      "explanation": "মেমোরিতে মেটাডেটা ফিল্ডের সমতা পরীক্ষা করা এবং ডিস্কের প্রকৃত ফাইল বাইটের চেকসাম মেলানো—এ দুটি যাচাইয়ের ভিন্ন স্তর।"
+    },
+    {
+      "id": "ch34_q21",
+      "question": "অসম্পূর্ণ Cache Key-র কারণে কলিশন ঘটলে পেলোডের ভেতরের গার্ড (Payload Signature Guard) কী করে?",
+      "options": [
+        "পেলোড সিগনেচার অমিল হওয়ায় তা প্রত্যাখ্যান করে নতুন করে হিসাব করে",
+        "অন্য ইউজারের ভুল তালিকাটিই সরাসরি সার্ভ করে দেয়",
+        "কোনো উত্তর না দিয়ে ইউজারকে নীরবে বাদ দিয়ে দেয়",
+        "কলিশনটিকে মডেলের গুণগত উন্নতি হিসেবে দাবি করে"
+      ],
+      "answer": 0,
+      "explanation": "ক্যাশ পেলোডের ভেতরে থাকা পূর্ণাঙ্গ রিকোয়েস্ট সিগনেচার যাচাই করে অমিল পেলেই তা বাতিল করে রিকম্পিউট করা হয়। তবে এই গার্ড সঠিক Cache Key ও স্কিমা ডিজাইনের বিকল্প নয়।"
+    },
+    {
+      "id": "ch34_q22",
+      "question": "পূর্ণাঙ্গ কী (complete মোড) ব্যবহার করে চালানো স্ক্রিপ্টেড রিপ্লেতে কয়টি Cache Hit পাওয়া যায়?",
+      "options": [
+        "5টি রিকোয়েস্টের মধ্যে 5টিই হিট",
+        "5টি রিকোয়েস্টের মধ্যে 0টি হিট",
+        "প্রোডাকশন ট্রাফিকের মতো 99% হিট",
+        "5টি রিকোয়েস্টের মধ্যে 2টি হিট"
+      ],
+      "answer": 3,
+      "explanation": "প্রকৃত ইউজার ID নিয়ে সাজানো এই সফটওয়্যার টেস্ট সিকোয়েন্সে 5টির মধ্যে 2টি বৈধ হিট পাওয়া যায়। এটি কোনো লাইভ ট্রাফিকের হিট-রেট পূর্বাভাস বা Latency বেঞ্চমার্ক নয়।"
+    },
+    {
+      "id": "ch34_q23",
+      "question": "রিট্রিভাল ধাপে বেশি Candidate Recall পাওয়া গেলে তা কী নিশ্চিত করে?",
+      "options": [
+        "নিশ্চিতভাবে অনলাইন ব্যবসার Causal Utility বৃদ্ধি পায়",
+        "সার্ভারের রিকোয়েস্ট Latency কমে যায়",
+        "এটি স্বয়ংক্রিয়ভাবে চূড়ান্ত Top 10 র‍্যাঙ্কিংয়ের মান বৃদ্ধি নিশ্চিত করে না",
+        "সবসময়ই চূড়ান্ত NDCG বাড়িয়ে দেয়"
+      ],
+      "answer": 2,
+      "explanation": "Candidate পুলের কভারেজ, Oracle Ceiling এবং চূড়ান্ত র‍্যাঙ্কিং তিনটি আলাদা ধাপ—পুলে ভালো আইটেম এলেও ফিউশন ধাপে তা পেছনে পড়ে যেতে পারে।"
+    },
+    {
+      "id": "ch34_q24",
+      "question": "আমাদের বর্তমান Capstone প্রজেক্টটির চূড়ান্ত রিলিজ সিদ্ধান্ত (Release Conclusion) কী?",
+      "options": [
+        "একক User-CF বেসলাইনটি সম্পূর্ণ অপ্রাসঙ্গিক",
+        "এটি একটি শিক্ষামূলক অফলাইন প্রোটোটাইপ; কোনো প্রোডাকশন জয়ের দাবি নয়",
+        "সিস্টেমটি এখনই গ্লোবাল রোলআউটের জন্য প্রস্তুত",
+        "অনলাইন CTR বৃদ্ধি নিঃসন্দেহে প্রমাণিত হয়েছে"
+      ],
+      "answer": 1,
+      "explanation": "শক্তিশালী একক বেসলাইন, ছোট অডিট প্যানেল, ঐতিহাসিক ডেটার পুনর্ব্যবহার এবং অনলাইন প্রমাণের অভাব—সবকিছু স্বচ্ছভাবে রিপোর্ট করাই এই প্রজেক্টের মূল শিক্ষা।"
+    },
+    {
+      "id": "ch34_q_index_revision",
+      "question": "Query Tower নতুন ভার্সনে আপডেট হয়েছে, কিন্তু একই ডাইমেনশনের Item Index পুরোনো রয়ে গেছে। তখন কী ঘটতে পারে?",
+      "options": [
+        "কোনো এরর ছাড়াই চূড়ান্ত Ranking নীরবে বদলে যেতে পারে",
+        "ভেক্টরের Shape মিলে গেলে স্কোর নিশ্চিতভাবে একই থাকে",
+        "সবকটি ভেক্টর আপনাআপনি শূন্য হয়ে যায়",
+        "সার্ভিং ক্যাশ নিজে থেকেই নতুন করে ইনডেক্স তৈরি করে নেয়"
+      ],
+      "answer": 0,
+      "explanation": "নতুন ভার্সনে ল্যাটেন্ট ভেক্টরের স্থানাঙ্ক ভিত্তি (Learned Basis) ও ফিচারের অর্থ বদলে যেতে পারে। তাই অভিন্ন Query/Item/Index বান্ডেল দিয়ে Golden Ranking মিলিয়ে সামঞ্জস্যতা যাচাই করুন।"
+    },
+    {
+      "id": "ch34_q_replay_revision",
+      "question": "Golden রেফারেন্স এবং Replay-এর স্কোর অ্যারে একই, কিন্তু সাজানো আইটেম ID তালিকা আলাদা। এই রিপ্লের ফল কী হবে?",
+      "options": [
+        "শুধু স্কোরের অ্যারে মিললেই রিপ্লে পাস করবে",
+        "ID Mapping বা ক্রমের চুক্তি (Order Contract) ব্যর্থ হবে",
+        "আউটপুট বৈধ JSON হলেই পাস করবে",
+        "ক্যাটালগের মোট আকার মিললেই পাস করবে"
+      ],
+      "answer": 1,
+      "explanation": "পজিশন অনুযায়ী স্কোর মেলার পাশাপাশি সাজানো আইটেম ID (Ordered IDs) এবং প্রতিটি আইটেমের নিজস্ব স্কোরও মিলতে হবে; এলিজিবিলিটি, Manifest ও টাই পলিসিও রিপ্লে চুক্তির অংশ।"
+    }
+  ],
+  "exercises": [
+    {
+      "id": "ch34_ex_rrf",
+      "title": "সোর্স অবস্থান থেকে প্রকৃত RRF স্কোর গণনা",
+      "prompt": "প্রথম Audit নমুনা কেসের নির্বাচিত শীর্ষ আইটেমটির RRF স্কোর সোর্স তালিকাগুলোর অবস্থান থেকে সরাসরি হিসাব করুন। এজন্য weights = [1, 1, 2], constant = 60 এবং 1-ভিত্তিক র‍্যাঙ্ক (One-based Ranks) ব্যবহার করুন। সংরক্ষিত ট্রেস দেখার আগে নিজে স্কোরটি বের করে লিখুন।",
+      "starter": "# Run Python locally; implement the computation, then enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommender_capstone_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\nrow = next(r for r in lab[\"roles\"][\"audit\"] if r[\"user\"] == lab[\"samples\"][0])\nitem = row[\"rankings\"][\"rrf_cf\"][0]\nsources = [\"popularity\", \"content\", \"user_cf\"]\nweights = [1, 1, 2]\nresult = 0.0\nfor source, w in zip(sources, weights):\n    ids = row[\"sources\"][source][:50]\n    if item in ids:\n        result += w / (60 + ids.index(item) + 1)\nprint(result)\n",
+      "expected": 0.04713064713064713,
+      "explanation": "সঠিক স্কোর প্রায় 0.04713065। কোনো সোর্সের প্রিফিক্সে আইটেমটি অনুপস্থিত থাকলে সেই সোর্সের অবদান শূন্য ধরা হয়, এবং স্কোরিংয়ের ইনপুটে ভবিষ্যতের কোনো Gold তথ্য রাখা হয়নি।"
+    },
+    {
+      "id": "ch34_ex_union",
+      "title": "স্থিতিশীল Candidate Union গঠন",
+      "prompt": "প্রথম নমুনা কেসে popularity, content ও user_cf—প্রতিটি সোর্স থেকে 50টি করে Candidate নিন। সোর্সের ক্রম মেনে প্রথমবার আসা আইটেমটি রেখে ডুপ্লিকেট বাদ দিন (Deduplicate) এবং প্রাপ্ত Union-এর আকার লিখুন।",
+      "starter": "# Run Python locally; implement the computation, then enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommender_capstone_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\nrow = next(r for r in lab[\"roles\"][\"audit\"] if r[\"user\"] == lab[\"samples\"][0])\nunion = []\nseen = set()\nfor source in [\"popularity\", \"content\", \"user_cf\"]:\n    for item in row[\"sources\"][source][:50]:\n        if item not in seen:\n            seen.add(item)\n            union.append(item)\nresult = len(union)\nassert union == row[\"pipelines\"][\"rrf_cf\"][\"candidates\"]\nprint(result)\n",
+      "expected": 120.0,
+      "explanation": "প্রাপ্ত Union-এর আকার হলো 120। তিনটি সোর্স থেকে সর্বোচ্চ 150টি আলাদা আইটেম আসতে পারলেও এখানে সোর্সগুলোর মধ্যে Overlap থাকার কারণে ইউনিয়ন ছোট হয়েছে।"
+    },
+    {
+      "id": "ch34_ex_fit",
+      "title": "Timestamp শর্ত দিয়ে Fit Row গণনা",
+      "prompt": "মূল রেটিং ডেটার ওপর timestamp <= fit_cutoff শর্ত প্রয়োগ করুন। শতাংশ ধরে অ্যারে স্লাইস করার পরিবর্তে সরাসরি এই শর্ত থেকে প্রাপ্ত Fit Row সংখ্যা লিখুন।",
+      "starter": "# Run Python locally; implement the computation, then enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"capstone34\", Path(\"assets/datasets/movielens/recommender_capstone_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommender_capstone_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\nraw, _ = m.source().load()\nresult = int((raw[:, 3] <= lab[\"report\"][\"fit_cutoff\"]).sum())\nprint(result)\n",
+      "expected": 80668.0,
+      "explanation": "মোট Fit Row সংখ্যা হলো 80668। সীমানার সমান Timestamp-গুলোকে নিয়ম অনুযায়ী আগের ধাপেই রাখা হয়েছে এবং এই সময়গত শর্ত থেকেই Row সংখ্যাটি নির্ধারিত।"
+    },
+    {
+      "id": "ch34_ex_idf",
+      "title": "Fit Catalog থেকে প্রথম Genre-এর IDF হিসাব",
+      "prompt": "কেবল Fit Catalog থেকে প্রথম Genre-টির Document Frequency (df) গুনুন। এরপর IDF = 1 + log((1 + n) / (1 + df)) সূত্র ব্যবহার করে মানটি হিসাব করে লিখুন।",
+      "starter": "# Run Python locally; implement the computation, then enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommender_capstone_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\nimport math\n\ngenre = lab[\"model\"][\"genres\"][0]\nmovies = lab[\"model\"][\"movies\"]\ndf = sum(genre in row[2] for row in movies)\nresult = 1 + math.log((1 + len(movies)) / (1 + df))\nprint(result)\n",
+      "expected": 2.7058290015790822,
+      "explanation": "প্রথম Genre-টির IDF মান প্রায় 2.7058290। এখানে n হলো Fit Catalog-এর আকার অর্থাৎ 7867; মূল সোর্সের সব 9742টি সিনেমা ব্যবহার করলে পরিসংখ্যানের ডেটা সীমানা বদলে যেত।"
+    },
+    {
+      "id": "ch34_ex_selector",
+      "title": "বিশুদ্ধ Validation-only Selector",
+      "prompt": "প্রাথমিক মেট্রিক হিসেবে Warm Validation NDCG, টাই ভাঙতে Recall, 12 দশমিক ঘরে রাউন্ড করা কী এবং পূর্বঘোষিত প্রিসেট ক্রম দিয়ে সিলেক্টর লিখুন। ফিউশন গ্রিডে নির্বাচিত প্রিসেটটির 0-ভিত্তিক ইনডেক্স (Zero-based Index) লিখুন।",
+      "starter": "# Run Python locally; implement the computation, then enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommender_capstone_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\npresets = [\"rrf_equal\", \"rrf_cf\", \"rrf_content\"]\ncards = lab[\"scorecards\"][\"validation\"]\nselected = min(\n    presets,\n    key=lambda p: (\n        -round(cards[p][\"warm\"][\"ndcg\"], 12),\n        -round(cards[p][\"warm\"][\"recall\"], 12),\n        presets.index(p),\n    ),\n)\nresult = presets.index(selected)\nassert selected == lab[\"policy\"][\"selected\"]\nprint(result)\n",
+      "expected": 1.0,
+      "explanation": "নির্বাচিত ইনডেক্সটি হলো 1 (rrf_cf)। পলিসি নির্বাচনে Audit মেট্রিক ব্যবহার করা হয় না, আর ফলাফল বোঝার সময় নির্বাচিত পলিসির পাশাপাশি একক Baseline-গুলোর পারফরম্যান্সও একসাথে দেখতে হয়।"
+    },
+    {
+      "id": "ch34_ex_oracle",
+      "title": "প্রকৃত Candidate পুলের Oracle Ceiling",
+      "prompt": "প্রথম নমুনা কেসের নির্বাচিত পলিসির Candidate Pool এবং ইউজারের Eligible Gold সেটের ছেদ (Intersection) বের করুন। এরপর min(10, pool_hits) / gold_count থেকে Oracle Recall@10-এর মান লিখুন।",
+      "starter": "# Run Python locally; implement the computation, then enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommender_capstone_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\nrow = next(r for r in lab[\"roles\"][\"audit\"] if r[\"user\"] == lab[\"samples\"][0])\ngold = set(row[\"eligible\"])\npool = set(row[\"pipelines\"][\"rrf_cf\"][\"candidates\"])\nresult = min(10, len(gold & pool)) / len(gold)\nprint(result)\n",
+      "expected": 0.20833333333333334,
+      "explanation": "এখানে Oracle Recall@10 হলো 5 / 24, অর্থাৎ প্রায় 0.2083333। Gold সেট এখানে কেবল ডায়াগনস্টিক সীমা গণনার জন্য ব্যবহৃত হয়েছে; প্রোডাকশন সার্ভিংয়ের ইনপুট তার নিজস্ব প্রেডিকশন-টাইম চুক্তি মেনে চলে।"
+    },
+    {
+      "id": "ch34_ex_hash",
+      "title": "Model Artifact-এর Canonical Byte Hash",
+      "prompt": "Model ডিকশনারিটিকে সাজানো কী (Sorted Keys), কমপ্যাক্ট সেপারেটর এবং ensure_ascii=False দিয়ে UTF-8 বাইটে সিরিয়ালাইজ করুন এবং শেষে একটি LF নিউলাইন দিন। প্রাপ্ত SHA-256 হ্যাশের প্রথম আটটি হেক্স ডিজিটকে পূর্ণসংখ্যায় (Integer) রূপান্তর করে লিখুন।",
+      "starter": "# Run Python locally; implement the computation, then enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommender_capstone_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\nimport hashlib\n\nencoded = (\n    json.dumps(lab[\"model\"], ensure_ascii=False, sort_keys=True, separators=(\",\", \":\"))\n    + \"\\n\"\n).encode()\ndigest = hashlib.sha256(encoded).hexdigest()\nassert digest == lab[\"manifest\"][\"model_sha256\"]\nresult = int(digest[:8], 16)\nprint(result)\n",
+      "expected": 2009565313.0,
+      "explanation": "রূপান্তরিত ফল হলো 2009565313। শেষের নিউলাইনসহ প্রতিটি অবিকৃত বাইটই এই হ্যাশের অংশ; তবে আর্টিফ্যাক্টের পরিচয়ের পাশাপাশি বৈজ্ঞানিক বৈধতার প্রমাণও আলাদাভাবে যাচাই করতে হয়।"
+    },
+    {
+      "id": "ch34_ex_contract",
+      "title": "অনুপস্থিত Feature Schema প্রত্যাখ্যান",
+      "prompt": "প্রত্যাশিত Manifest ডিকশনারির একটি কপি থেকে feature_schema ফিল্ডটি বাদ দিন। আবশ্যিক পাঁচটি ফিল্ড তুলনা করে কয়টি অমিল (Mismatch Count) পাওয়া যায় তা লিখুন।",
+      "starter": "# Run Python locally; implement the computation, then enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommender_capstone_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\nexpected = lab[\"manifest\"]\nloaded = dict(expected)\nloaded.pop(\"feature_schema\")\nrequired = [\n    \"model_version\",\n    \"model_sha256\",\n    \"catalog_sha256\",\n    \"feature_schema\",\n    \"policy_sha256\",\n]\nresult = sum(expected.get(k) != loaded.get(k) for k in required)\nprint(result)\n",
+      "expected": 1.0,
+      "explanation": "এখানে Mismatch Count হলো 1। আবশ্যিক কোনো ফিল্ড অনুপস্থিত থাকলে সাথে সাথে Artifact প্রত্যাখ্যান করতে হবে, এবং স্কিমা সামঞ্জস্যতা যাচাইয়ে ফিল্ডের অর্থ ও ভার্সনও পরীক্ষা করতে হবে।"
+    },
+    {
+      "id": "ch34_ex_cache",
+      "title": "সুরক্ষিত Cache Collision গণনা",
+      "prompt": "পাঁচটি স্ক্রিপ্টেড সোর্স-ইউজার রিকোয়েস্ট হাতে ট্রেস করুন এবং দেখুন omit_policy ক্যাশ কী ব্যবহার করলে কতবার পেলোড সিগনেচার প্রত্যাখ্যাত হয়। পরে রেফারেন্স রিপ্লের সাথে মিলিয়ে সংখ্যাটি লিখুন।",
+      "starter": "# Run Python locally; implement the computation, then enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"capstone34\", Path(\"assets/datasets/movielens/recommender_capstone_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommender_capstone_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\nreplay = m.replay(lab[\"roles\"][\"audit\"], lab[\"manifest\"], \"omit_policy\")\nresult = replay[\"rejected\"]\nassert all(len(r[\"ranked\"]) == 10 for r in replay[\"trace\"])\nprint(result)\n",
+      "expected": 3.0,
+      "explanation": "মোট 3 বার সিগনেচার অমিল ধরা পড়ে এবং ফলাফল নতুন করে হিসাব করা হয়। ভুল পেলোড সার্ভ হওয়ার আগেই সিগনেচার গার্ড তা আটকে দেয়—এই সংখ্যাটি প্রদত্ত স্ক্রিপ্টেড রিকোয়েস্টগুলোর ফলাফল।"
+    },
+    {
+      "id": "ch34_ex_delta",
+      "title": "প্রকৃত Paired Recall পার্থক্যের গড়",
+      "prompt": "অডিট সেটের যোগ্য একই 18 জন Warm ইউজারের নির্বাচিত ফিউশন Recall থেকে popularity বেসলাইনের Recall বিয়োগ করুন। প্রতি ইউজারের নিজস্ব Gold হর বজায় রেখে পার্থক্যগুলোর গড় (Mean) লিখুন।",
+      "starter": "# Run Python locally; implement the computation, then enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommender_capstone_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\nrows = [r for r in lab[\"roles\"][\"audit\"] if r[\"train_count\"] and r[\"eligible\"]]\ndifferences = []\nfor row in rows:\n    gold = set(row[\"eligible\"])\n    score = lambda name: len(gold & set(row[\"rankings\"][name])) / len(gold)\n    differences.append(score(\"rrf_cf\") - score(\"popularity\"))\nresult = sum(differences) / len(differences)\nprint(result)\n",
+      "expected": 0.01757154882154882,
+      "explanation": "গড় পার্থক্যটি হলো প্রায় 0.01757155। এই ফলাফল ব্যাখ্যা করার সময় শর্তসাপেক্ষ Confidence Interval এবং শক্তিশালী user_cf বেসলাইনের তুলনাও পাশাপাশি রাখুন।"
+    }
+  ],
+  "interviews": [
+    {
+      "title": "Recommender Capstone-এর পূর্ণাঙ্গ চুক্তি নির্ধারণ",
+      "tag": "Project defense",
+      "prompt": "এই Capstone প্রজেক্টের Input, Output এবং গ্রহণযোগ্যতার শর্তগুলো (Acceptance Criteria) কীভাবে গুছিয়ে বলবেন?",
+      "answer": "আমাদের সিস্টেমটি একজন Fit-history ইউজারের জন্য যোগ্য অদেখা ক্যাটালগ থেকে তিনটি সোর্সের Top L Candidate সংগ্রহ করে এবং RRF ফিউশনের মাধ্যমে চূড়ান্ত Top 10 তালিকা তৈরি করে। শুরুতেই কাঁচা ফাইলের হ্যাশ, পরস্পর-বিচ্ছিন্ন সময়গত বিভাজন, All-seen ফিল্টার, ডিটারমিনিস্টিক আউটপুট এবং Artifact Contract সুনির্দিষ্ট করা হয়েছে। এখানকার লেবেল হলো পর্যবেক্ষণকৃত স্টার রেটিং (r >= 4), কোনো Impression Click নয়। Validation ধাপ তিনটি ফিউশন প্রিসেট থেকে rrf_cf বেছে নেয়, যদিও একক user_cf আরও শক্তিশালী বেসলাইন হিসেবে উপস্থিত আছে। রিপোর্টে আমরা কোয়ালিটি, কভারেজ, অনিশ্চয়তা ও অপারেশনাল অজানা দিকগুলো আলাদা রাখি—অফলাইন প্রোটোটাইপ সম্পূর্ণ হলেও লাইভ প্রোডাকশন উপযোগিতা এখনো অজানা।"
+    },
+    {
+      "title": "সময়ানুক্রমিক ডেটা বিভাজন ও Refit নীতি",
+      "tag": "Data engineering",
+      "prompt": "Fit, Validation ও Audit বিভাজন এবং Validation শেষে পুনরায় Refit না করার সিদ্ধান্তটি কীভাবে ডিফেন্ড করবেন?",
+      "answer": "আমরা গ্লোবাল Timestamp কাটঅফ 1458635162 এবং 1498029445 ব্যবহার করেছি, যেখানে সমান সময়ের টাই আগের ধাপেই থাকে। শুরুতে 60/20/20 অনুপাতে চূড়ান্ত Audit প্যানেলে মাত্র 5 জন Warm ইউজার পাওয়া গিয়েছিল; তাই ব্যবহারযোগ্য প্যানেলের (18 জন Warm ইউজার) স্বার্থে Fit অংশ বাড়িয়ে 80% করা হয়েছে (80668টি Fit, 10084টি Validation এবং 10084টি Audit ইভেন্ট) এবং এই পরিবর্তন প্রকাশ্যে জানানো হয়েছে। পুরো পরীক্ষায় Fit স্টেট স্থির (Frozen) রাখা হয়েছে—কোনো হিস্ট্রি রিফ্রেশ বা Refit করা হয়নি যাতে হুবহু একই মডেল উভয় ধাপে পরীক্ষিত হয়। নতুন Refit নীতি নিতে হলে সামঞ্জস্যপূর্ণ ফিচার/আর্টিফ্যাক্ট আপডেট ও নতুন নিশ্চিতকরণ পরীক্ষা লাগত; কারণ পূর্ব-পরিদর্শিত ঐতিহাসিক ডেটা কখনোই অন্ধ পরীক্ষা (Blind Test) নয়।"
+    },
+    {
+      "title": "Reciprocal Rank Fusion (RRF) বাস্তবায়ন ও জটিলতা",
+      "tag": "Algorithms / coding",
+      "prompt": "তিনটি সাজানো সোর্স তালিকা, ওজন এবং ড্যাম্পিং ধ্রুবক দিয়ে কীভাবে RRF লিখবেন? এর Time Complexity ও সীমা বলুন।",
+      "answer": "প্রতিটি সোর্সের Top L প্রিফিক্স থেকে প্রথমে 1-ভিত্তিক অবস্থান ম্যাপ ও ক্রম-সংরক্ষিত ডুপ্লিকেটমুক্ত Union তৈরি করব। কোনো সোর্সে আইটেম অনুপস্থিত থাকলে অবদান 0 ধরে বাকিদের জন্য w / (60 + rank) যোগ করব। এরপর 12 দশমিক ঘরে রাউন্ড করা স্কোর বড় থেকে ছোট এবং সমান স্কোরে সংখ্যাসূচক movieId ছোট থেকে বড় ক্রমে সাজিয়ে Top 10 নেব। ম্যাপ ও ইউনিয়ন তৈরির প্রত্যাশিত কাজ রৈখিক O(total prefix) এবং C আকারের ইউনিয়ন সাজাতে লাগে O(C log C)—অবশ্য মূল সোর্স রিট্রিভালের খরচ এর বাইরে। টেস্টে আমরা ওভারল্যাপ, টাই, অনুপস্থিত আইটেম, Cold ইউজারের অভিন্ন তালিকা, ভিন্ন বাজেট ও অনন্য আউটপুট যাচাই করব, এবং কখনোই এই স্কোরকে ক্যালিব্রেটেড প্রবাবিলিটি বা স্বাধীন সংকেত বলে দাবি করব না।"
+    },
+    {
+      "title": "Candidate Miss বনাম Ranking Miss নির্ণয়",
+      "tag": "Debugging",
+      "prompt": "একটি প্রাসঙ্গিক সিনেমা চূড়ান্ত Top 10 তালিকায় আসেনি। আপনি কোন ধাপ থেকে কীভাবে অনুসন্ধান শুরু করবেন?",
+      "answer": "সবার আগে যাচাই করব সিনেমাটি আমাদের 7867 আকারের Fit Catalog-এ আছে কি না, ইউজার Fit সময়েই সেটি দেখে ফেলেছেন কি না এবং ID Mapping ঠিক আছে কি না। সিনেমাটি যদি যোগ্য (Eligible) হওয়া সত্ত্বেও তিনটি সোর্সের Candidate Union-এ না থাকে, তবে এটি Retrieval Gap—তখন সোর্স বাজেট, প্রোফাইল Sparsity ও CF প্রতিবেশী সমর্থন দেখব। আর যদি ইউনিয়নে থেকেও Top 10-এ না ওঠে, তবে এটি Fusion Gap—তখন প্রতিটি সোর্সে তার র‍্যাঙ্ক, RRF অবদান ও Fallback ফ্ল্যাগ পরীক্ষা করব। ডিবাগিংয়ে কখনোই ভবিষ্যতের Gold লেবেলকে ফিল্টারিং ইনপুট বানাব না, Candidate -> Oracle -> Final সীমা মেলাব এবং মনে রাখব যে না-দেখা আইটেম মানেই অপছন্দ নয়।",
+      "prerequisiteLessons": [
+        "ch34_candidates",
+        "ch32_ceiling"
+      ]
+    },
+    {
+      "title": "ফিউশন বিজয়ী যখন একক User-CF-এর কাছে হারে",
+      "tag": "Model selection",
+      "prompt": "rrf_cf পলিসি নির্বাচিত হয়েছে, কিন্তু একক user_cf বেসলাইনের NDCG বেশি—এই পরিস্থিতিতে কোন সিদ্ধান্ত ডিফেন্ড করবেন?",
+      "answer": "প্রথমেই স্পষ্ট করব যে আমাদের সিলেক্টর কেবল তিনটি ফিউশন প্রিসেটের মধ্য থেকে সেরাটি বেছে নেয়, একক বেসলাইনগুলো সেই গ্রিডের বাইরে। প্রকৃত সংখ্যায় Validation Warm প্যানেলে user_cf-এর NDCG হলো 0.05437 বনাম rrf_cf-এর 0.04913; আর চূড়ান্ত Audit প্যানেলে user_cf পেয়েছে 0.16652 বনাম ফিউশনের 0.13819। তাই আমরা কখনোই rrf_cf-কে সামগ্রিক সেরা বলব না; বরং শক্তিশালী বেসলাইনটিকে রিপোর্টের কেন্দ্রে রেখে সরল user_cf পলিসি, রক্ষণাবেক্ষণ খরচ ও প্রোডাক্ট চাহিদা নতুন করে পর্যালোচনা করব। কখনোই Audit স্কোর দেখে ফিউশনের ওজন ঘুরিয়ে সেটিকে স্পর্শহীন ফলাফল দাবি করব না—পরবর্তী ধাপে গার্ডরেইলসহ অনলাইন পরীক্ষার প্রস্তাব দেব।"
+    },
+    {
+      "title": "Cold Fallback, নতুন আইটেম ও Artifact ত্রুটির পার্থক্য",
+      "tag": "System design",
+      "prompt": "একজন Cold ইউজার, ক্যাটালগের বাইরের নতুন সিনেমা এবং নষ্ট হয়ে যাওয়া Artifact কি একই ধরনের Fallback পাবে?",
+      "answer": "কখনোই এক নীতি পাবে না—এগুলো তিনটি ভিন্ন প্রকৌশলগত পরিস্থিতি। পজিটিভ হিস্ট্রিহীন ইউজারের বেলায় Content ও CF পরিকল্পিতভাবে Popularity Fallback নিতে পারে, তবে তার কম রেটিং দেওয়া দেখা সিনেমা থাকলে All-fit-seen ফিল্টার অবশ্যই মানতে হবে। নতুন সিনেমা Fit Catalog-এর বাইরে থাকলে সেটি মেটাডেটা ও ক্যাটালগ প্রাপ্যতার সীমাবদ্ধতা (Availability Gap)। কিন্তু অসামঞ্জস্যপূর্ণ বা ভাঙা Artifact হলো মারাত্মক চুক্তি ভঙ্গ—এক্ষেত্রে ক্যাশ দেখার আগেই সার্ভিং ব্লক করতে হবে এবং প্রয়োজনে কেবল আলাদাভাবে যাচাইকৃত স্বতন্ত্র Fallback Bundle ব্যবহার করা যাবে। এলোমেলো বাসি ক্যাশ সার্ভ করা কোনোভাবেই Graceful Degradation নয়; আর বর্তমান Cold সোর্সগুলো পরস্পর সম্পর্কিত হওয়ায় তা Personalization প্রমাণ করে না।"
+    },
+    {
+      "title": "ক্ষুদ্র প্যানেলের Audit Uncertainty ব্যাখ্যা",
+      "tag": "Statistics",
+      "prompt": "18 জন ইউজারের জোড়া Bootstrap ব্যবধি [0, 0.0467] দেখে আপনি কী বলতে পারবেন এবং কী বলতে পারবেন না?",
+      "answer": "বলতে পারব যে স্থির নির্বাচিত পলিসি (rrf_cf) বনাম Popularity-র গড় Recall পার্থক্য +0.01757 এবং সিড 34 দিয়ে 5000 বার ইউজার রিস্যাম্পলিংয়ে শর্তসাপেক্ষ 95% ব্যবধি এসেছে [0, 0.0467]। কিন্তু যেহেতু নিচের সীমাটি ঠিক 0 এবং এই হিসাবের ভেতরে সিলেক্টর পরিবর্তন, প্রোটোকল পুনর্বিন্যাস, ট্রেনিং কিংবা ঐতিহাসিক Exposure অনিশ্চয়তা ধরা হয়নি, তাই এখান থেকে জনগোষ্ঠীগত নিশ্চিত জয় দাবি করা যাবে না। মাত্র 18 জনের ক্ষুদ্র Warm প্যানেল, ইউজারদের স্বাধীন ধরার অনুমান এবং একক user_cf-এর উচ্চতর NDCG আমরা পাশাপাশি রিপোর্ট করব। এছাড়াও মনে রাখব যে এই CI কোনো বেইজিয়ান Posterior Probability, Causal জয় কিংবা মডেল সমতুল্যতার (Equivalence) প্রমাণ নয়।"
+    },
+    {
+      "title": "Artifact সামঞ্জস্যতা এবং টু-টাওয়ার রোলআউট ঝুঁকি",
+      "tag": "Reliability",
+      "prompt": "বৈধ JSON লোড হলেও কখন সার্ভিং ব্লক করবেন?\n\nধরুন পুরোনো query = [1, 0] এবং items = [[1, 0], [0, 1]]। নতুন ট্রেনিংয়ে দুই টাওয়ারের স্থানাঙ্ক ভিত্তি অদলবদল হলো, কিন্তু Item Index পুরোনোই রয়ে গেল। র‍্যাঙ্কিংয়ে কী অমিল ঘটবে?",
+      "answer": "ফাইলটি বৈধ JSON হওয়ার অর্থ এই নয় যে তার স্কিমা, ID Map, ভোকাবুলারি ক্রম বা মডেল/পলিসি ভার্সন সামঞ্জস্যপূর্ণ। তাই স্টার্টআপে প্রত্যাশিত model_version, model_sha256, catalog_sha256, feature_schema ও policy_sha256 মিলিয়ে দেখব এবং CLI-তে প্রকৃত বাইট চেকসাম যাচাই করব; অমিল পেলেই ব্লক করব। প্রোডাকশনের জন্য অবিভাজ্য বান্ডেল লোড, ওয়ার্ম-আপ, রুট সুইচ ও রোলব্যাকের নকশা দেব (যা লোকাল প্রোটোটাইপে ডিস্ট্রিবিউটেডভাবে চালানো হয়নি), এবং বিশ্বস্ত প্রত্যাশিত Manifest ব্যবহার করব।\n\nগাণিতিক উদাহরণে পুরোনো সামঞ্জস্যপূর্ণ অবস্থায় শীর্ষ আইটেম ইনডেক্স ছিল 0। কিন্তু নতুন ঘোরানো query = [0, 1]-কে পুরোনো বাসি ইনডেক্সের সাথে মেলালে শীর্ষ ইনডেক্স উল্টে 1 হয়ে যায়! আবার নতুন ইনডেক্সসহ সামঞ্জস্যপূর্ণ বান্ডেল নিলে শীর্ষ ইনডেক্স 0-তে ফিরে আসে। ভেক্টরের Shape হুবহু এক থাকলেও ল্যাটেন্ট অর্থ বদলে গেছে—তাই Query, Item, Index, ID-map ও Schema ভার্সন একসঙ্গে যাচাই করা অপরিহার্য।",
+      "prerequisiteLessons": [
+        "ch34_integrity",
+        "ch34_serving"
+      ]
+    },
+    {
+      "title": "Cache Isolation বাগ শনাক্তকরণ ও সমাধান",
+      "tag": "Coding / safety",
+      "prompt": "সার্ভিং ক্যাশ হিট থেকে ভুল ইউজারের সুপারিশ তালিকা চলে যাচ্ছে। এর সমাধান ও পরীক্ষার কৌশল দিন।",
+      "answer": "ফলাফল নির্ধারণকারী সবকটি উপাদান দিয়ে পূর্ণাঙ্গ Cache Key তৈরি করব: ইউজার ID, হিস্ট্রি ফিঙ্গারপ্রিন্ট, মডেল ভার্সন, পলিসি প্রিসেট ও হ্যাশ, বাজেট এবং Seen ফিল্টার নীতি। সাথে ভার্সন Namespace এবং পেলোডের ভেতরে পূর্ণাঙ্গ সিগনেচার গার্ড রাখব, যাতে কলিশন হলে সাথে সাথে প্রত্যাখ্যান করে নতুন করে হিসাব করা হয়। আমাদের প্রকৃত ID-ভিত্তিক স্ক্রিপ্টেড টেস্টে পূর্ণ কী-তে 2টি হিট, shared_user কী-তে 1টি প্রত্যাখ্যান এবং omit_policy কী-তে 3টি প্রত্যাখ্যান নিশ্চিত করব, এবং প্রতিটি গার্ডেড উত্তর যেন আনক্যাশড ফিউশনের সমান হয় তা assert করব। শুধু Hit সংখ্যা কখনোই নির্ভুলতা বা Latency সাশ্রয়ের প্রমাণ নয়; লাইভ সিস্টেমের জন্য ইনভ্যালিডেশন ও কনকারেন্সি নিয়মও পর্যালোচনা করব।",
+      "prerequisiteLessons": [
+        "ch34_cache"
+      ]
+    },
+    {
+      "title": "পোর্টফোলিও সারসংক্ষেপ ও পরবর্তী ধাপের প্রমাণ",
+      "tag": "Interview synthesis",
+      "prompt": "এই প্রজেক্টটি কী কী প্রমাণ দেয় এবং এখনো কোন বিষয়গুলো অজানা রয়ে গেছে?",
+      "answer": "প্রকৃত MovieLens রেটিং থেকে হ্যাশ-যাচাইকৃত ও শতভাগ Reproducible অফলাইন পাইপলাইন, Fit-only স্টেট, অপরিবর্তনীয় পলিসি নির্বাচন, সৎ বেসলাইন/ফানেল/অনিশ্চয়তা বিশ্লেষণ, পোর্টেবল আর্টিফ্যাক্ট এবং লোকাল কন্ট্রাক্ট ও ক্যাশ গার্ড এখানে সফলভাবে বাস্তবায়িত হয়েছে। অন্যদিকে অনলাইন ইউজার উপযোগিতা, সার্ভারের Latency SLO ও QPS, ANN রিট্রিভাল এবং ডিস্ট্রিবিউটেড রোলআউট এখনো অজানা। আমরা টাস্ক, উৎস, সময়ের সীমানা, হ্যাশ, রান কমান্ড ও ব্যর্থতার উদাহরণসহ এক পৃষ্ঠার Evidence Card দেব; আর পরবর্তী প্রমাণ হিসেবে মনগড়া Exposure লগ না বানিয়ে প্রকৃত ইমপ্রেশন লগিং, গার্ডরেইলযুক্ত অনলাইন পরীক্ষা ও পরিণত ফলাফল মাপার পরিকল্পনা দেব।",
+      "prerequisiteLessons": [
+        "ch34_book_replay_contract"
+      ]
+    }
+  ],
+  "book": {
+    "order": 40,
+    "part": "Book 5 · Recommender Systems",
+    "prerequisites": [
+      "chapter_30",
+      "chapter_31",
+      "chapter_32",
+      "chapter_33"
+    ],
+    "purpose": "Book 5-এর আগের চারটি অধ্যায়ে শেখা Candidate Retrieval, শক্তিশালী Baseline তুলনা, Multi-source Fusion, Chronological Evaluation এবং Serving Contract-এর ধারণাগুলোকে এক সুতোয় গেঁথে একটি সম্পূর্ণ, নিরীক্ষণযোগ্য ও Reproducible Recommender System প্রজেক্ট তৈরি করা।",
+    "outcomes": [
+      "MovieLens ডেটাসেটে Chronological Fit, Validation ও Audit বিভাজন মেনে Popularity, Genre Content (TF-IDF) এবং Shrinkage-যুক্ত User-CF থেকে Candidate তৈরি করে Reciprocal Rank Fusion (RRF) দিয়ে Top 10 র‍্যাঙ্কিং তৈরি করতে পারবেন।",
+      "Validation-only সিলেকশন, Cohort ও Denominator-এর সূক্ষ্ম পার্থক্য, Uncertainty সীমা এবং শক্তিশালী Baseline-এর (যেমন User-CF) সৎ তুলনা বজায় রেখে চূড়ান্ত অডিট রিপোর্ট প্রস্তুত ও ডিফেন্ড করতে পারবেন।",
+      "Portable Model Artifact, Manifest Checksum, Deterministic Replay, Cache Key এবং Incompatible Contract প্রত্যাখ্যানের নিয়মগুলো কোড ও গাণিতিক যুক্তির মাধ্যমে যাচাই করতে পারবেন।"
+    ],
+    "recall": [
+      "আগেই পরিদর্শন করা Saved Audit Cohort বারবার পড়লে কেন সেটিকে আর সম্পূর্ণ নতুন বা Fresh Blind Evaluation Sample বলা যায় না?",
+      "Artifact-এর Byte Checksum ঠিক থাকার পরও Eligibility Timestamp ভুল হলে কোন Contract Gate ব্যর্থ হয়, এবং Serving Cache Key-তে কোন কোন Version Field রাখা অপরিহার্য?"
+    ],
+    "bridge": "Book 5 (Recommender Systems)-এর যাত্রা এই Capstone প্রজেক্টের মধ্য দিয়েই পূর্ণতা পাচ্ছে। এরপর আমরা প্রবেশ করব Book 6 (ML Systems & Interviews) · Chapter 1 (Data Pipelines & Feature Systems)-এ; তবে তার আগে এই অধ্যায়ের Quiz, Coding Exercise এবং না দেখে ব্যাখ্যা করার Interview প্রশ্নগুলোর মাধ্যমে নিজের প্রস্তুতি পুরোপুরি যাচাই করে নিন।",
+    "bookId": "recsys",
+    "bookChapter": 5
+  }
+}

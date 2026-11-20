@@ -1,0 +1,1614 @@
+{
+  "id": "chapter_36",
+  "number": 36,
+  "title": "Serving, Monitoring & MLOps",
+  "shortTitle": "Serving & MLOps",
+  "displayTitle": "Serving & MLOps\nPackage. Observe. Recover.",
+  "subtitle": "Model Package তৈরি থেকে শুরু করে নির্ভরযোগ্য Inference, অর্থবহ Monitoring এবং নিরাপদ Rollback পর্যন্ত পুরো Production MLOps প্রক্রিয়া ধাপে ধাপে শিখুন।",
+  "description": "Package the model. Observe the system.\nAudit drift. Rehearse recovery.",
+  "difficulty": "Advanced · serving & operations",
+  "lab": "mlops",
+  "lessons": [
+    {
+      "id": "ch36_contract",
+      "title": "Serving Contract: Notebook থেকে নির্ভরযোগ্য Prediction",
+      "subtitle": "Model Quality, Service Health এবং Product Impact—তিনটি ভিন্ন প্রশ্নের উত্তর খোঁজা",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Notebook-এর বাইরে আসল চ্যালেঞ্জ",
+          "body": "Book 6 · Chapter 1 (Data Pipelines & Feature Systems)-এ আমরা Point-in-Time নিরাপদ একটি Feature Pipeline তৈরি করেছি। এবার আমাদের সামনে পরের বড় ইঞ্জিনিয়ারিং ধাপ: সেই Feature দিয়ে একটি Model ট্রেন করা, নতুন Request এলে নির্ভুলভাবে Inference চালানো এবং নতুন Version কোনো অপ্রত্যাশিত আচরণ করলে নিরাপদে আগের অবস্থায় ফিরে যাওয়া। Jupyter Notebook-এর ভেতরে একটিমাত্র `.predict()` কল চালিয়ে কিন্তু একটি Production Serving সিস্টেমের সব দায়িত্ব পরীক্ষা করা যায় না।\n\nতাই কোড লেখার আগেই আমাদের একটি স্পষ্ট Serving Contract দাঁড় করাতে হবে—প্রতিটি Input-এর অর্থ কী, কোনো Feature সময়মতো না এলে কী নীতি অনুসরণ করা হবে, কোন Model Version উত্তর দিচ্ছে, Response-এর গঠন কেমন হবে এবং কখন Fallback চালু হবে। এরপর আমরা Service Health এবং Mature Label-ভিত্তিক Model Quality-কে সম্পূর্ণ আলাদা স্তরে রেখে পর্যবেক্ষণ করা শিখব।"
+        },
+        {
+          "type": "text",
+          "title": "তিনটি আলাদা প্রশ্ন ও তাদের প্রমাণ",
+          "body": "প্রোডাকশনে একটি ML সিস্টেম ঠিকমতো কাজ করছে কি না, তা আসলে তিনটি সম্পূর্ণ আলাদা প্রশ্নের সমষ্টি: (১) Model কি যথেষ্ট নির্ভুল Prediction দিচ্ছে? (২) Service কি সঠিক সময়ে ও নির্ভরযোগ্যভাবে Response পাঠাচ্ছে? এবং (৩) এর ফলে মূল Product বা ব্যবহারকারী কি সত্যিই উপকৃত হচ্ছে? প্রতিটি প্রশ্নের উত্তরের জন্য আলাদা প্রমাণ (Evidence) দরকার। অফলাইনে কম MAE পেলেই যেমন সার্ভিসের Uptime বা ব্যবসায়িক সাফল্য প্রমাণ হয়ে যায় না, তেমনি সার্ভার দ্রুত HTTP 200 পাঠাচ্ছে মানেই যে ভেতরের Prediction সঠিক—তারও কোনো নিশ্চয়তা নেই। আবার উল্টোদিকে, অত্যন্ত চমৎকার একটি Model-ও ভাঙা Endpoint বা নেটওয়ার্ক সমস্যার কারণে সম্পূর্ণ অকেজো হয়ে বসে থাকতে পারে।"
+        },
+        {
+          "type": "math",
+          "title": "একটি পূর্ণাঙ্গ Release-এর সমীকরণ",
+          "body": "\\mathrm{release}=\\mathrm{model}+\\mathrm{transform}+\\mathrm{schema}+\\mathrm{lineage}+\\mathrm{policy}"
+        },
+        {
+          "type": "code",
+          "title": "Serving Lab-এর Protocol ও ডেটা বিভাজন যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/serving_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nassert lab[\"report\"][\"fit_examples\"] == 358\nassert lab[\"report\"][\"development_examples\"] == 182\nassert lab[\"report\"][\"reserved_outcomes_used\"] == 0\nprint(lab[\"report\"][\"protocol\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের এই Lab-এর কাঠামো ও পরিধি",
+          "body": "উপরের কোডে যে `serving_lab.json` ফাইলটি দেখলেন, আমাদের Flutter অ্যাপ সরাসরি সেই বান্ডল করা JSON থেকেই Dart-এ Prediction, Deterministic Routing, Fallback, Drift নির্ণয় এবং যাবতীয় Metric-এর হিসাব চালায়। এর পাশাপাশি আমাদের সহযোগী Python ওয়ার্কফ্লো দিয়ে আপনি নিজের মেশিনে প্রকৃত Loopback HTTP Request চালিয়েও পরীক্ষা করতে পারবেন। অ্যাপটির ভেতরে কোনো বাহ্যিক Server, API, Authentication বা Internet সংযোগের প্রয়োজন নেই। যেহেতু এই অধ্যায়ে আমাদের মূল লক্ষ্য Serving ও MLOps-এর গাণিতিক ও সিস্টেমগত শৃঙ্খলা শেখা, তাই এখানে আমরা হালকা CPU-ভিত্তিক একটি Ridge Model ব্যবহার করছি—কোনো GPU-এর প্রয়োজন নেই।"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব ডেটা বনাম সিমুলেশন: তথ্যের সীমানা",
+          "body": "হাতে-কলমে শেখার এই পরিবেশে আমরা UCI Bike Sharing Dataset-এর প্রথম 547 দিনের বাস্তব ভাড়ার হিসাব ও তারিখ ব্যবহার করেছি। এর মধ্যে 2011 সালের ডেটা (358টি বৈধ উদাহরণ) দিয়ে Model Fit করা হয়েছে এবং জানুয়ারি থেকে জুন 2012 পর্যন্ত 182 দিনের ডেটার ওপর Historical Rolling Evaluation চালানো হয়েছে। অন্যদিকে, Feature পৌঁছানোর সময়সূচি (Arrival Schedule), Label Maturity-র বিলম্ব, Routing Policy এবং 20 Row-এর SLO Telemetry টেবিলটি পরিকল্পিত সফটওয়্যার সিনারিও হিসেবে তৈরি করা হয়েছে, যাতে আপনি প্রতিটি জটিল পরিস্থিতি নিয়ন্ত্রিতভাবে পরীক্ষা করতে পারেন। তাই এগুলোকে লাইভ Production Traffic বা হার্ডওয়্যারে মাপা প্রকৃত Latency হিসেবে ভুল করা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "Data Leakage রোধ ও মূল্যায়নের শৃঙ্খলা",
+          "body": "মূল্যায়নের নিখুঁত শৃঙ্খলা বজায় রাখতে Dataset-এর শেষ 184 দিনের প্রকৃত ফলাফল (Outcomes) এই পুরো পরীক্ষায় সম্পূর্ণ অস্পৃশ্য রাখা হয়েছে (`reserved_outcomes_used == 0`)। খেয়াল রাখবেন, 182 দিনের Historical Development অংশটি আমরা সিস্টেম তৈরির সময় ইতিমধ্যেই পর্যবেক্ষণ করেছি; তাই একই ডেটা পরে আবার ব্যবহার করে সেটিকে নতুন Blind Benchmark বলে দাবি করা চলবে না। নির্দিষ্ট দিনের মোট ভাড়ার সংখ্যা বা তার উপাংশগুলো কেবল পরবর্তী সময়ে Model Scoring-এর কাজে ব্যবহৃত হয়—কখনোই Inference-এর Input হিসেবে নয়। আর যেহেতু এটি পুরো শহরের দৈনিক সমষ্টিগত (Daily Aggregate) ডেটা, তাই এখান থেকে একক ব্যবহারকারীর আচরণ বা নির্দিষ্ট কোনো স্টেশনের নিশ্চয়তা অনুমান করা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "নিজেকে যাচাই করার লক্ষ্য",
+          "body": "পরের পাঠে যাওয়ার আগে একটি মানসিক মাপকাঠি ঠিক করে নিন: যেকোনো একটি Inference Response দেখে আপনি যেন নিখুঁতভাবে শনাক্ত করতে পারেন কোন Model, কোন Scaler, কোন Feature Definition, কোন Request Cutoff এবং কোন Fallback কারণের ভিত্তিতে এই উত্তরটি তৈরি হয়েছে। একই Input-এর জন্য Python ও প্রোডাকশন কোডের সমতা (Parity), অনুপস্থিত Input সামলানোর নীতি এবং Mature-Label Metric-এর সঠিক Denominator কেন অপরিহার্য—তা নিজের ভাষায় ব্যাখ্যা করার অভ্যাস গড়ে তুলুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch36_packaging",
+      "title": "Model Package ও Immutable Release",
+      "subtitle": "শুধু Weights পাঠালে চলবে না—Transformation না থাকলে Prediction পাল্টে যায়",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "একটি Model Package-এর ভেতরে কী কী থাকে?",
+          "body": "ধরুন, নোটবুকে ট্রেনিং শেষ করে আপনি শুধু Model-এর Weights ফাইলটি সার্ভারে পাঠিয়ে দিলেন। সার্ভিস কি একই Prediction তৈরি করতে পারবে? কখনোই না—কারণ কাঁচা ডেটাকে কীভাবে রূপান্তর (Preprocessing) করা হয়েছিল, সেই তথ্য ছাড়া Weights অর্থহীন! এজন্যই আমাদের Ridge Model Package-এর ভেতরে সুনির্দিষ্ট ক্রমের `input_fields`, শুধুমাত্র Training ডেটা থেকে হিসাব করা `mean` ও `scale`, `intercept`, `alpha`, ট্রেনিং Target-এর পরিসর এবং `version` একসাথে বেঁধে দেওয়া হয়েছে। এর সাথে নির্ভরতা (Dependency) হিসেবে যুক্ত থাকে Feature Definition এবং মূল ডেটার Hash। মনে রাখবেন, সব ইনপুট সংখ্যায় সঠিক এবং সঠিক Shape-এ থাকলেও কেবল Column-এর ক্রম উল্টে গেলে ভেতরে ভেতরে সম্পূর্ণ ভিন্ন একটি গাণিতিক Function হিসাব হয়ে যাবে!"
+        },
+        {
+          "type": "text",
+          "title": "Standardization-এর নিখুঁত নিয়ম",
+          "body": "প্রতিটি কাঁচা Lag Feature ($x_j$) থেকে আমরা প্রথমে তার Training Mean ($\\mu_j$) বিয়োগ করি এবং তারপর Training Population Standard Deviation ($s_j$) দিয়ে ভাগ করি। ট্রেনিংয়ের সময় কোনো ধ্রুবক (Constant) Column-এর ক্ষেত্রে শূন্য দিয়ে ভাগ এড়াতে `1` বসানোর সুরক্ষা থাকলেও একটি বৈধ Serving Artifact-এ প্রতিটি `scale` অবশ্যই সসীম ও ধনাত্মক সংখ্যা হতে হবে। সবচেয়ে জরুরি নিয়ম হলো: কখনোই Test ব্যাচ বা লাইভ Inference Request-এর ওপর নতুন করে `mean` বা `scale` হিসাব করবেন না; তা করলে প্রতি মুহূর্তে আপনার Release-এর মূল গাণিতিক Function-টিই বদলে যাবে।"
+        },
+        {
+          "type": "math",
+          "title": "Feature Standardization ও Clipped Prediction সমীকরণ",
+          "body": "z_j=(x_j-\\mu_j)/s_j,\\quad \\hat y=\\max(0,b+w^\\top z)"
+        },
+        {
+          "type": "code",
+          "title": "হাতে-কলমে Standardization ও Model Prediction মিলিয়ে দেখা",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"serving36\", Path(\"assets/datasets/bike_sharing/serving_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/serving_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nmodel = lab[\"models\"][\"candidate\"]\nassert model[\"input_fields\"] == [\"lag1\", \"lag7\", \"mean7\"]\nf = lab[\"rows\"][10][\"features\"]\nstandardized = [\n    (f[k] - mu) / s\n    for k, mu, s in zip(model[\"input_fields\"], model[\"mean\"], model[\"scale\"])\n]\nprint(standardized, m.predict(model, f))\n"
+        },
+        {
+          "type": "text",
+          "title": "Raw Linear Fit বনাম Clipped Serving Output",
+          "body": "উপরের কোড ও সমীকরণের ধাপটি খেয়াল করুন: প্রথমে নির্দিষ্ট ক্রমে Standardized Vector $z$ তৈরি হয়, এরপর `intercept` $b$-এর সাথে $w^\\top z$ যোগ করা হয়। যেহেতু বাইক ভাড়ার দৈনিক সংখ্যা কখনোই ঋণাত্মক হতে পারে না, তাই Serving-এর চূড়ান্ত ধাপে আমরা $\\max(0, \\text{raw})$ বসিয়ে মানটিকে শূন্যের নিচে নামতে দিই না। এখানে একটি সূক্ষ্ম ইঞ্জিনিয়ারিং পার্থক্য সবসময় মনে রাখবেন: এই Clipping কিন্তু আমাদের মূল Ridge Training Objective-এর অংশ ছিল না, এটি Serving পর্যায়ের সুরক্ষা। তাই ট্রেনিংয়ের Residual বা Gradient যাচাই করার সময় কাঁচা Linear Output আর Clipped Serving Output যেন কখনোই গুলিয়ে না যায়।"
+        },
+        {
+          "type": "text",
+          "title": "Immutable Release ও Atomic Pointer পরিবর্তন",
+          "body": "নতুন Model ডিপ্লয় করার সময় চলমান সার্ভিসের ফাইলগুলো সরাসরি একটি একটি করে ওভাররাইট করলে ভয়াবহ বিপদ ঘটতে পারে—কোনো Request হয়তো নতুন Weights-এর সাথে পুরোনো Scaler মিলিয়ে উদ্ভট ফলাফল দিয়ে বসবে! তাই একটি আদর্শ Release ডিরেক্টরিতে Baseline Model, Candidate Model, Feature Definition, Lab Payload এবং উৎস-সংক্রান্ত তথ্যগুলো একসাথে রাখা হয়, আর আলাদা একটি ফাইলে থাকে সেগুলোর Checksum তালিকা। এখানে আমাদের কোনো বিশাল ডিস্ট্রিবিউটেড Model Registry না থাকলেও প্রোডাকশন সিস্টেমের মূলনীতিটি হুবহু একই: প্রথমে সম্পূর্ণ নতুন ডিরেক্টরিটি প্রস্তুত ও যাচাই (Verify) করে নিন, তারপর এক ঝটকায় (Atomically) Active Pointer-টি নতুন ডিরেক্টরির দিকে ঘুরিয়ে দিন।"
+        },
+        {
+          "type": "text",
+          "title": "Schema ও Feature Contract-এর সামঞ্জস্য",
+          "body": "Model Schema নির্ধারণ করে দেয় যে `lag1`, `lag7` এবং `mean7` ঠিক এই ক্রমেই সংখ্যাবাচক মান হিসেবে আসবে। অন্যদিকে Feature Contract বলে দেয় প্রতিটি Feature-এর সময়ের জানালা (Window), ডেটা পাওয়ার সময়সীমা এবং উৎসের অর্থ কী। তবে বাস্তবে দেখা যায়, ফাইলের নাম ও Metadata হুবহু মিলে যাওয়ার পরও ভেতরের হিসাবের ভুলে ভিন্ন মান তৈরি হতে পারে—তাই স্বতন্ত্র Parity Test রাখা বাধ্যতামূলক। মনে রাখবেন, একটি নিখুঁত Schema মানে শুধু Column-এর নাম মেলানো নয়; একক (Unit), Null Policy এবং সঠিক Event Cutoff-ও এর অবিচ্ছেদ্য অংশ।"
+        },
+        {
+          "type": "text",
+          "title": "নিজে হাতে পরীক্ষার অনুশীলন",
+          "body": "অনুশীলন হিসেবে Dataset-এর যেকোনো একটি প্রকৃত Feature Vector নিয়ে কাগজে-কলমে বা নিজের স্ক্রিপ্টে Dot Product বের করে দেখুন তা আমাদের Helper-এর `predict` Function-এর সাথে হুবহু মেলে কি না। পাশাপাশি `mean` আর `scale`-এর জায়গা অদলবদল হয়ে গেলে ফলাফলে কতটা বিপর্যয় ঘটে, তাও নিজে হিসাব করে দেখুন। জানিয়ে রাখা ভালো, অ্যাপের ভেতরের Scratchpad আপনার সংখ্যার উত্তর যাচাই করে এবং Python কোডের খসড়া সংরক্ষণ করে রাখে, তবে নিরাপত্তার খাতিরে মোবাইল অ্যাপের ভেতরে সরাসরি যেকোনো Python কোড রান করানো হয় না।"
+        }
+      ]
+    },
+    {
+      "id": "ch36_training",
+      "title": "Reproducible Ridge Recipe ও Temporal Protocol",
+      "subtitle": "কোন ডেটা দিয়ে Fit করবেন আর কোন ডেটা দিয়ে সিদ্ধান্ত নেবেন—তা শুরুতেই নির্দিষ্ট করুন",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Training Population ও ল্যাগ Feature-এর সীমানা",
+          "body": "যেকোনো নির্ভরযোগ্য Model Package-এর ভিত্তি হলো একটি স্বচ্ছ ও পুনরায় তৈরিযোগ্য (Reproducible) Training প্রোটোকল। আমাদের এই পরীক্ষায় Target Index 7 থেকে 364 পর্যন্ত—অর্থাৎ 2011 সালের মোট 358টি উদাহরণ দিয়ে Model Fit করা হয়েছে। শুরুর প্রথম 7টি দিন (0 থেকে 6) কেন বাদ দেওয়া হলো? কারণ প্রতিটি দিনের Prediction-এর জন্য প্রয়োজনীয় তিনটি Feature (`lag1`, `lag7` এবং পূর্ববর্তী সাত দিনের গড় `mean7`) কেবল সেই দিনের আগে জানা বাস্তব পর্যবেক্ষণ থেকেই তৈরি হতে পারে; প্রথম সাত দিনে পূর্ণ ইতিহাস না থাকায় সেগুলো বাদ রাখা হয়েছে। আর যেহেতু Standardized Feature Column-গুলোর গড় শূন্য, তাই Regularization ছাড়া আমাদের সর্বোত্তম Intercept ($b$) হয় সরাসরি Training Label-গুলোর গাণিতিক গড়।"
+        },
+        {
+          "type": "text",
+          "title": "নির্দিষ্ট Alpha ও Closed-Form সমাধান",
+          "body": "এই অধ্যায়ে আমাদের মূল মনোযোগ Hyperparameter খোঁজা নয়, বরং Serving ও Monitoring-এর কাঠামো বোঝা—তাই শুরু থেকেই Regularization Parameter `alpha = 10` স্থির রাখা হয়েছে এবং কোনো Model Search বা পুনরায় Fit করা হয়নি। এখানে Loss Function-এর গঠনটি খুব মনোযোগ দিয়ে লক্ষ্য করুন: আমরা বর্গ ত্রুটির সমষ্টি (Sum of Squared Errors)-এর সাথে `10` গুণিতক বর্গ Weights যোগ করেছি। যদি কেউ সমষ্টির বদলে গড় ত্রুটি (Mean Loss) ব্যবহার করতেন, তবে একই `alpha = 10` কিন্তু সম্পূর্ণ ভিন্ন মাত্রার Regularization প্রয়োগ করত! CPU-তে `float64` ব্যবহার করে সরাসরি Matrix Inverse বের করার বদলে Linear System `solve` ব্যবহার করায় এই Closed-Form সমাধানটি শতভাগ Deterministic ও সংখ্যাগতভাবে স্থিতিশীল।"
+        },
+        {
+          "type": "math",
+          "title": "Ridge Regression-এর Sum-Squared Loss Objective",
+          "body": "\\min_{b,w}\\sum_i(y_i-b-z_i^\\top w)^2+10\\lVert w\\rVert_2^2"
+        },
+        {
+          "type": "code",
+          "title": "NumPy-এ Closed-Form Ridge Weights পুনরুৎপাদন",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"serving36\", Path(\"assets/datasets/bike_sharing/serving_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/serving_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nimport numpy as np\n\nrows = lab[\"training\"]\nmodel = lab[\"models\"][\"candidate\"]\nx = np.array([[r[\"features\"][k] for k in m.FIELDS] for r in rows])\ny = np.array([r[\"outcome\"] for r in rows])\nz = (x - x.mean(0)) / x.std(0)\nweights = np.linalg.solve(z.T @ z + 10 * np.eye(3), z.T @ (y - y.mean()))\nassert np.allclose(weights, model[\"weights\"])\nprint(len(rows), weights, y.mean())\n"
+        },
+        {
+          "type": "text",
+          "title": "সময়ের ক্রম মেনে Rolling Evaluation",
+          "body": "2011 সালের ডেটায় Scaler ও Weights স্থির (Frozen) করার পর আমরা Target Index 365 থেকে 546 পর্যন্ত মোট 182 দিনে (জানুয়ারি–জুন 2012) Rolling One-Step পদ্ধতিতে মূল্যায়ন চালাই। আমাদের `on_time` অনুমান অনুযায়ী, প্রতিটি দিন শেষ হওয়ার পর যখন সেদিনের প্রকৃত ভাড়ার সংখ্যা জানা যায়, তখন সেটি পরের দিনের বৈধ Feature (`lag1` বা `mean7`-এর অংশ) হিসেবে ব্যবহৃত হতে পারে। খেয়াল করুন, এটি কিন্তু ১লা জানুয়ারিতে দাঁড়িয়ে একটানা পরের 182 দিনের Prediction করার মতো Fixed-Origin Forecast নয়। তবে এই পুরো 182 দিনের মূল্যায়ন জুড়ে আমাদের Model-এর Weights এবং Scaler একচুলও পরিবর্তন করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "Baseline-এর সাথে প্রকৃত ফলাফলের তুলনা",
+          "body": "ঐতিহাসিক এই 182 দিনের মূল্যায়নে আমাদের Candidate Ridge Model-এর MAE এসেছে `811.421`, যেখানে গতকালের মান বললে (`naive1`) MAE হয় `900.604` এবং ঠিক সাত দিন আগের মান বললে (`seasonal7`) MAE দাঁড়ায় `1090.791`। আমাদের Serving ডেমোতে আমরা `seasonal7`-কে ঘোষিত Baseline হিসেবে বেছে নিয়েছি—এটি সবচেয়ে শক্তিশালী বিকল্প Model বলে নয়, বরং এক দিনের ডেটা দেরিতে এলেও এটি সাত দিন আগের ডেটা দিয়ে নিরাপদে কাজ চালিয়ে যেতে পারে বলে! তবে কেবল একটি গড় MAE দেখে চূড়ান্ত রায় দেবেন না; পাশাপাশি RMSE, Signed Bias এবং বিভিন্ন ঋতুভিত্তিক (Seasonal) ফলাফলের দিকেও নজর দেওয়া জরুরি।"
+        },
+        {
+          "type": "text",
+          "title": "Data Leakage প্রতিরোধের কড়া পাহারা",
+          "body": "পুরো প্রক্রিয়ায় যাতে বিন্দুমাত্র Data Leakage না ঘটে, সেজন্য Target দিনের মূল `cnt`, `casual`, `registered` কিংবা সেদিনের ঘটে যাওয়া আবহাওয়ার কোনো তথ্যই Input হিসেবে নেওয়া হয়নি। Feature-এর Scaling Parameter যেমন কেবল 2011-এর Fit ডেটা থেকে নেওয়া হয়েছে, তেমনি পরবর্তীতে Drift মাপার জন্য যে Quintile Bin প্রান্তগুলো ব্যবহৃত হবে, সেগুলোও শুধুমাত্র ওই Fit ডেটা থেকেই নির্ধারিত। যেহেতু 182 দিনের Development অংশটি সিস্টেম বানানোর সময় আমরা দেখেছি, তাই একে নতুন অদেখা ডেটার প্রমাণ বলে দাবি করব না; আর শেষ 184 দিনের ডেটা কোনো ধরনের ট্রেনিং, বিনিং, Metric বা রিলিজ সিদ্ধান্তে স্পর্শও করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "Interview পরামর্শ: Reproducibility ও Promotion-এর যুক্তি",
+          "body": "ইন্টারভিউ বা প্রোডাকশন রিভিউতে যেকোনো Modeling প্রোটোকল ব্যাখ্যা করার সময় শুরুতেই Data Cutoff, Forecast Horizon, Label পাওয়ার বিলম্ব, Preprocessing Population, Objective-এর Normalization এবং Baseline-এর সংজ্ঞা স্পষ্ট করে বলুন। শুধু একটি Random Seed নির্দিষ্ট করলেই কিন্তু পূর্ণ Reproducibility অর্জিত হয় না; এর জন্য অবিকল একই Source Bytes, সংখ্যাগত ইমপ্লিমেন্টেশন এবং সঠিক Artifact Serialization প্রয়োজন। আর সবসময় মনে রাখবেন—অতীত ডেটায় ভালো Metric পাওয়া প্রোডাকশনে Model প্রমোট করার একটি প্রাথমিক শর্ত মাত্র, একমাত্র শর্ত নয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch36_requests",
+      "title": "Request, Response ও Optional HTTP Lab",
+      "subtitle": "একটি Inference Endpoint ঠিক কী জানে এবং কী জানে না",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Endpoint-এর দৃষ্টিভঙ্গি ও Request-এর সীমানা",
+          "body": "Model Package প্রস্তুত হওয়ার পর এবার দেখা যাক একটি Inference Endpoint কীভাবে কাজ করে। আমাদের সহযোগী Endpoint-টি মূলত ঐতিহাসিক Request-গুলোকে পুনরায় চালিয়ে (Replay) দেখায়। প্রতিটি Request-এর ইনপুটে থাকে `target` দিনের Index, অনুমোদিত ডেটা পৌঁছানোর `scenario`, Canary রাউটিংয়ের `threshold` এবং একটি `rollback` ফ্ল্যাগ। সার্ভার সেই অনুযায়ী Cutoff-পূর্ববর্তী Feature-গুলো খুঁজে বের করে Prediction তৈরি করে। এখানে `365` থেকে `546` পর্যন্ত Target পরিসরটি সরাসরি এই Serving Contract-এর অংশ; ভবিষ্যতের লাইভ প্রোডাকশন সার্ভিস ডিজাইন করতে হলে আমাদের রিয়েল-টাইম ডেটা উৎস এবং নতুন অপারেশনাল শর্ত যুক্ত করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "অর্থবহ Response কাঠামো ও Observability",
+          "body": "একটি ভালো Inference সার্ভিস কখনোই উত্তরে শুধু একটি খালি সংখ্যা ফিরিয়ে দেয় না—কারণ সমস্যা হলে তখন বোঝার উপায় থাকে না কোন Model বা কোন নীতির কারণে ওই সংখ্যাটি এসেছিল! তাই আমাদের Response-এ Prediction-এর পাশাপাশি Request-এর পরিচয়, নির্ধারিত Route Bucket, কোন নীতিতে উত্তর দেওয়া হলো (`candidate`, `fallback` নাকি `baseline`) এবং তার স্পষ্ট `reason` যুক্ত থাকে। বাস্তব প্রোডাকশন সিস্টেমে এর সাথে Immutable Release আইডি, ডিস্ট্রিবিউটেড Trace আইডি, Feature Version এবং নিরাপদ Error Contract রাখা হয়। তবে লগিংয়ের সময় সতর্ক থাকতে হবে যেন সংবেদনশীল কাঁচা ইউজার Feature নির্বিচারে সাধারণ লগে ছড়িয়ে না পড়ে।"
+        },
+        {
+          "type": "math",
+          "title": "Request ও Traceable Response-এর কাঠামো",
+          "body": "\\mathrm{request}=(target,scenario,route),\\quad \\mathrm{response}=(version,reason,prediction)"
+        },
+        {
+          "type": "code",
+          "title": "Loopback HTTP Server-এ প্রকৃত Inference Request পাঠানো",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"serving36\", Path(\"assets/datasets/bike_sharing/serving_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/serving_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nimport threading, urllib.request\n\nserver = m.make_http_server(lab, 0)\nthread = threading.Thread(target=server.serve_forever, daemon=True)\nthread.start()\ntry:\n    url = \"http://127.0.0.1:\" + str(server.server_address[1]) + \"/predict\"\n    request = urllib.request.Request(\n        url,\n        data=json.dumps({\"target\": 375}).encode(),\n        headers={\"Content-Type\": \"application/json\"},\n    )\n    with urllib.request.urlopen(request, timeout=5) as response:\n        result = json.load(response)\n    assert \"outcome\" not in result\n    print(result[\"served\"], result[\"prediction\"], result[\"reason\"])\nfinally:\n    server.shutdown()\n    server.server_close()\n    thread.join(timeout=5)\n"
+        },
+        {
+          "type": "text",
+          "title": "স্থানীয়ভাবে নিরাপদে HTTP Lab চালানো",
+          "body": "উপরের কোডটি খেয়াল করলে দেখবেন, এটি আপনার মেশিনে `127.0.0.1` ঠিকানায় একটি প্রকৃত Loopback Socket খুলে `/predict` পাথে POST Request পাঠাচ্ছে, উত্তরে কোনো ভবিষ্যৎ `outcome` ফাঁস হয়েছে কি না তা যাচাই করছে এবং শেষে `finally` ব্লকের ভেতরে সার্ভারটিকে নিরাপদে বন্ধ করে দিচ্ছে। আপনি চাইলে টার্মিনাল থেকে `--serve --port 8765` কমান্ড দিয়েও এটি চালাতে পারেন, যেখানে Host সবসময় লোকালহোস্ট (`127.0.0.1`)-এই সীমাবদ্ধ থাকবে। মনে রাখবেন, Python-এর বিল্ট-ইন `http.server` শুধুমাত্র শেখার একটি হালকা মাধ্যম—এখানে প্রোডাকশন মানের Authentication, TLS, Admission Control বা Autoscaling নেই।"
+        },
+        {
+          "type": "text",
+          "title": "মোবাইল অ্যাপে সম্পূর্ণ Offline অভিজ্ঞতা",
+          "body": "এই HTTP Lab-টি উৎসাহী ডেভেলপারদের জন্য একটি ঐচ্ছিক (Optional) ডেস্কটপ পরীক্ষা। আপনার ফোনে ইনস্টল করা Android বা iOS অ্যাপটি কিন্তু সম্পূর্ণভাবে বান্ডল করা অ্যাসেট এবং লোকাল SQLite ডেটাবেস ব্যবহার করে চলে। তাই কোনো সার্ভার না চালালেও বা ইন্টারনেট সংযোগ না থাকলেও অ্যাপের প্রতিটি Lesson, Quiz, Exercise-এর ফিডব্যাক এবং ইন্টারঅ্যাক্টিভ ভিজ্যুয়ালাইজেশন নির্বিঘ্নে কাজ করবে।"
+        },
+        {
+          "type": "text",
+          "title": "HTTP Status Code ও Fallback-এর অর্থ",
+          "body": "`POST /predict` এন্ডপয়েন্টে স্ট্যাটাস কোডগুলো খুব সুনির্দিষ্ট অর্থ বহন করে: ক্লায়েন্টের পাঠানো ভুল গঠনের Request হলে `400`, Baseline নিজেই নষ্ট বা ব্যবহারের অনুপযুক্ত হলে `503`, আর বৈধ Inference কিংবা অনুমোদিত নীতিমালা অনুযায়ী Fallback উত্তর দেওয়া হলে `200` ফেরত আসে। অন্যদিকে `GET /metrics` কল করলে প্রকৃত Request, Error ও Fallback-এর লাইভ Counter পাওয়া যায় (উল্লেখ্য, পরের SLO পাঠের সময়কালগুলো প্রাক-নির্মিত উদাহরণ, এই Counter-এর লাইভ টাইমিং নয়)। খেয়াল রাখবেন, বৈধ Fallback-এ HTTP 200 আসা সিস্টেমের নীতির দিক থেকে সঠিক হলেও ড্যাশবোর্ডে Fallback Rate অবশ্যই আলাদাভাবে পর্যবেক্ষণ করতে হবে—নইলে সবুজ 200 OK-এর আড়ালে Model-এর সমস্যা ঢাকা পড়ে যাবে!"
+        },
+        {
+          "type": "text",
+          "title": "ইঞ্জিনিয়ারিং সতর্কতা: Timeout, Retry ও Payload সীমা",
+          "body": "যেকোনো নেটওয়ার্ক সার্ভিস বানানোর সময় Timeout, Retry-এর নিরাপত্তা এবং Request বাতিলের (Cancellation) দিকগুলো নিয়ে ভাবতে হয়। আমাদের Inference Function-টি Pure ও Deterministic হওয়ায় কোনো Request পুনরায় পাঠালে (Retry) অবিকল একই Prediction পাওয়া যাবে; কিন্তু যদি এই কলের ফলে ডেটাবেসে কিছু লেখা বা আর্থিক লেনদেনের মতো Side Effect ঘটে, তবে আলাদা Idempotency Key থাকা বাধ্যতামূলক। এছাড়া কখনোই অসীম আকারের JSON Payload বা অজানা কী-ভ্যালু গ্রহণ করবেন না—যেমন আমাদের এই ডেমো সার্ভারে বডির সর্বোচ্চ আকার `4096` বাইট এবং অনুমোদিত কী ও প্রিসেট কঠোরভাবে বেঁধে দেওয়া হয়েছে।"
+        }
+      ]
+    },
+    {
+      "id": "ch36_validation",
+      "title": "Input Validation ও Failure Policy",
+      "subtitle": "ভুল গঠনের Request আর অনুপস্থিত Feature কখনোই এক ধরনের ঘটনা নয়",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "প্রথম দেয়াল: কঠোর Input Schema Validation",
+          "body": "সার্ভিসের দরজায় প্রথম কাজ হলো ক্লায়েন্টের পাঠানো Request-এর গঠন যাচাই করা। এখানে `target` অবশ্যই একটি পূর্ণসংখ্যা (Strict Integer) হতে হবে—মজার ব্যাপার হলো, Python-এ `bool` যেহেতু `int`-এর একটি Subclass, তাই আলাদাভাবে পরীক্ষা না করলে `target = True` পাঠালে তা চুপচাপ `1` হিসেবে ঢুকে পড়তে পারে! এজন্য আমরা Boolean মান স্পষ্টভাবে প্রত্যাখ্যান করি এবং অনুমোদিত `scenario` তালিকা, নির্ধারিত Basis-Point Threshold ও Boolean `rollback` ফ্ল্যাগ কড়াকড়িভাবে মিলিয়ে দেখি। অপরিচিত যেকোনো JSON Key সাথে সাথে বাতিল করা হয়। মনে রাখবেন, ভুল Request হলো কলকারীর ত্রুটি; চুপচাপ মান কেটে ঠিক করে নেওয়া (Silent Clamping) বা String-কে জোর করে সংখ্যায় রূপান্তর করলে বাগ ধরা ও Contract Monitoring ভীষণ জটিল হয়ে পড়ে।"
+        },
+        {
+          "type": "text",
+          "title": "দ্বিতীয় দেয়াল: বৈধ Request কিন্তু অনুপস্থিত Feature",
+          "body": "এবার ধরুন, ক্লায়েন্ট শতভাগ সঠিক গঠনের একটি Request পাঠাল (`target = 375`), কিন্তু আপস্ট্রিম ডেটা পাইপলাইনে দেরি হওয়ার কারণে গতকালের ভাড়ার হিসাব (`lag1`) এখনো এসে পৌঁছায়নি! আমাদের বাস্তব ডেটার 375তম দিনের `late_fixture` সিনারিওতে ঠিক এটিই ঘটে: পুরোনো দিনের গড় জানা থাকলেও `lag1` অনুপস্থিত (`None`), ফলে তিন Feature-এর Ridge Schema অসম্পূর্ণ থেকে যায়। এখানে একটি সোনালি নিয়ম কখনোই ভুলবেন না: **অনুপস্থিত সংখ্যা মানে কখনোই শূন্য (Zero) নয়!** অনুপস্থিত `lag1`-এর জায়গায় গায়ের জোরে `0` বসিয়ে দিলে Model ধরে নেবে গতকাল শহরে একটিও বাইক ভাড়া হয়নি, যা ডেটার Distribution ও Prediction-এর অর্থ পুরোপুরি বিকৃত করে দেবে।"
+        },
+        {
+          "type": "math",
+          "title": "নিরাপদ Inference Pipeline-এর ধাপসমূহ",
+          "body": "\\mathrm{validate}\\to\\mathrm{lookup}\\to\\mathrm{transform}\\to\\mathrm{predict}\\to\\mathrm{policy}"
+        },
+        {
+          "type": "code",
+          "title": "Invalid Input প্রত্যাখ্যান এবং Missing Feature-এ Fallback",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"serving36\", Path(\"assets/datasets/bike_sharing/serving_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/serving_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nfor target in [364, 547, True]:\n    try:\n        m.serve(lab, target)\n    except ValueError:\n        print(\"rejected\", target)\nlate = m.serve(lab, 375, \"late_fixture\")\nassert late[\"served\"] == \"fallback\" and late[\"features\"][\"lag1\"] is None\nprint(late[\"reason\"], late[\"prediction\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "নিরাপদ Fallback কখন এবং কীভাবে কাজ করে?",
+          "body": "উপরের কোডে দেখুন সিস্টেমটি কত পরিচ্ছন্নভাবে পরিস্থিতি সামাল দিল! আমাদের Fallback Model `seasonal7`-এর কেবল সাত দিন আগের `lag7` প্রয়োজন এবং তার নিজস্ব Validation প্রক্রিয়া সম্পূর্ণ স্বাধীন। তাই Candidate Model-এর কোনো Feature না পাওয়া গেলে কিংবা Candidate-এর Metadata অসামঞ্জস্যপূর্ণ হলে সার্ভিস নিরাপদে `seasonal7` থেকে উত্তর দেয়। কিন্তু যদি দেখা যায় খোদ Baseline Model-টিই নষ্ট বা অসামঞ্জস্যপূর্ণ? তখন সার্ভিস সাথে সাথে কলটি `BLOCKED` করে দেয়—অসুরক্ষিত Baseline-কে কখনোই Fallback হিসেবে চালিয়ে দেওয়া হয় না। (খেয়াল রাখবেন, আমাদের এই উদাহরণে `lag7` উপস্থিত থাকলেও বাস্তব প্রোডাকশনে টানা এক সপ্তাহের ডেটা বিভ্রাটে `lag7`-ও অনুপস্থিত হতে পারে।)"
+        },
+        {
+          "type": "text",
+          "title": "ব্যবসায়িক প্রেক্ষাপটে Safe Failure নীতি",
+          "body": "কোনো Prediction না দেওয়া (Abstain) আর একটি নিরাপদ Baseline উত্তর দেওয়া—ব্যবসায়িক দিক থেকে দুটি সম্পূর্ণ ভিন্ন ফলাফল। প্রোডাক্টের চাহিদা অনুযায়ী বিপদের মুহূর্তে কখনো ক্যাশ করা পুরোনো উত্তর (Cached Answer), কখনো সাধারণ Heuristic নিয়ম, কখনো উত্তর দেওয়া থেকে বিরত থাকা, আবার কখনো মানুষের কাছে হস্তান্তর (Human Escalation) করার প্রয়োজন হতে পারে। তবে দুটি নিষেধাজ্ঞা সব ক্ষেত্রেই অলঙ্ঘনীয়: ঐতিহাসিক মূল্যায়নের Score ভালো দেখানোর লোভে কখনোই ভবিষ্যতের Training Label দিয়ে অনুপস্থিত Feature পূরণ করবেন না, আর ক্লায়েন্টকে পাঠানো Error Response-এ কখনোই অভ্যন্তরীণ Stack Trace বা গোপন কী (Secrets) ফাঁস করবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "সংখ্যাগত সীমা ও NaN/Inf প্রতিরোধ",
+          "body": "Request-এর কাঠামোর পাশাপাশি ভেতরের সংখ্যার সুস্থতাও যাচাই করা জরুরি। আমরা Model-এর প্রতিটি Vector-এর Shape, সসীম সংখ্যাগত মান (`NaN` বা `Inf` মুক্ত কি না) এবং প্রতিটি `scale` কঠোরভাবে ধনাত্মক কি না তা পরীক্ষা করি; পাশাপাশি সোর্স ভ্যালিডেশন নিশ্চিত করে যেন অতীত ভাড়ার সংখ্যাগুলো কখনো ঋণাত্মক না হয়। আমাদের এই রিপ্লে API সরাসরি কাঁচা Feature Vector নেয় না, কিন্তু আপনি যখন প্রোডাকশনে সরাসরি ইউজার ইনপুট নেওয়া Endpoint বানাবেন, তখন প্রতিটি Feature-এর টাইপ, সসীম পরিসর ও একক (Unit) কোন স্তরে যাচাই হবে তা Contract অনুযায়ী সুনির্দিষ্ট করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "নিজেকে যাচাই করার অনুশীলন",
+          "body": "চারটি ভিন্ন ঘটনার পথ শুরু থেকে শেষ পর্যন্ত মিলিয়ে দেখুন: (১) `lag1` অনুপস্থিত থাকা, (২) Candidate-এর Metadata ভুল থাকা, (৩) Baseline-এর Metadata ভুল থাকা এবং (৪) সীমার বাইরের `target` পাঠানো। কোন ক্ষেত্রে Feature Lookup পর্যন্ত যায়, কোন ক্ষেত্রে শুরুতেই Block হয় এবং কোন ঘটনাটি Error Rate বা Fallback Rate-এর কোন Denominator-এ যুক্ত হয়—তা খাতায় লিখে ফেলুন। মনে রাখবেন, `Fail Closed` মানেই সব পরিস্থিতিতে পুরো সার্ভিস বন্ধ করে দেওয়া নয়; বরং যাচাইকৃত নীতিমালার ভেতরে থেকে নিয়ন্ত্রিত ও নিরাপদ উত্তর দেওয়াই এর মূল লক্ষ্য।"
+        }
+      ]
+    },
+    {
+      "id": "ch36_readiness",
+      "title": "Liveness, Readiness ও Semantic Correctness",
+      "subtitle": "Process বেঁচে থাকা মানেই কিন্তু Traffic নেওয়ার জন্য প্রস্তুত হওয়া নয়",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Liveness, Readiness ও ফলাফলের সঠিকতা—তিনটি ভিন্ন স্তর",
+          "body": "প্রোডাকশনে কন্টেইনার অর্কেস্ট্রেটর (যেমন Kubernetes) নিয়মিত সার্ভিসের খোঁজ নেয়, কিন্তু অনেকেই এর Probe-গুলোর অর্থ গুলিয়ে ফেলেন। `Liveness` কেবল জানতে চায় অপারেটিং সিস্টেমে প্রসেসটি বেঁচে আছে এবং সাড়া দিতে পারছে কি না। অন্যদিকে `Readiness` জানতে চায় সার্ভিসটি তার দায়িত্ব অনুযায়ী লাইভ Traffic গ্রহণের জন্য পুরোপুরি প্রস্তুত কি না—অর্থাৎ সঠিক Model লোড হওয়া, Feature Contract মেলা এবং বৈধ Fallback প্রস্তুত থাকা এর অংশ। কিন্তু প্রসেস Alive এবং Ready হওয়ার পরেও Model যে অর্থবহ Prediction দিচ্ছে (`Semantic Correctness`), তা কেবল Semantic Test এবং পরবর্তীতে Mature-Label মূল্যায়নের মাধ্যমেই নিশ্চিত করা সম্ভব।"
+        },
+        {
+          "type": "text",
+          "title": "Traffic ঢোকার আগেই Gatekeeper যাচাই",
+          "body": "যদি স্টার্টআপে দেখা যায় Model বা Scaler অসম্পূর্ণ, Feature Definition ভুল, কিংবা মূল ডেটার পরিচয় (Checksum) বিকৃত—তবে সেই Release-কে কখনোই `Ready` ঘোষণা করা যাবে না। আমাদের সিস্টেমে যেকোনো Serving Lookup শুরু হওয়ার আগেই Baseline-এর সামঞ্জস্যতা যাচাই (Gate) করা হয়। যদি Baseline ঠিক থাকে কিন্তু Candidate অকেজো হয়, তবে চলমান Request-কে বৈধ Fallback দিয়ে বাঁচানো গেলেও সামগ্রিক `Readiness` কিন্তু `False` রাখা হয় যাতে নতুন ট্রাফিক এসে ভিড় না করে। এটি আমাদের ডেমোর একটি রক্ষণশীল (Conservative) সুরক্ষা নীতি; প্রোডাকশনের চাহিদা ভেদে অন্য বৈধ নকশাও থাকতে পারে।"
+        },
+        {
+          "type": "math",
+          "title": "Health Probe-এর অসমতা: Alive মানেই Ready বা Useful নয়",
+          "body": "\\mathrm{alive}\\not\\Rightarrow\\mathrm{ready}\\not\\Rightarrow\\mathrm{useful}"
+        },
+        {
+          "type": "code",
+          "title": "Corrupt Baseline Checksum ধরা পড়লে Lookup-এর আগেই Block",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"serving36\", Path(\"assets/datasets/bike_sharing/serving_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/serving_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nimport copy\n\nbad = copy.deepcopy(lab)\nbad[\"manifests\"][\"baseline\"][\"model_sha256\"] = \"wrong\"\nresponse = m.serve(bad, 375)\nassert response[\"status\"] == \"BLOCKED\" and \"features\" not in response\nprint(response[\"reason\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "ফাইলের বাইট যাচাই বনাম ইন-মেমরি Schema যাচাই",
+          "body": "উপরের কোডে দেখলেন তো, Baseline-এর `model_sha256` ভুল হওয়ার সাথে সাথে সার্ভিসটি কোনো `features` খোঁজার আগেই কলটিকে `BLOCKED` করে দিল! এখানে আমাদের দুই স্তরের যাচাইয়ের সীমানাটি স্পষ্ট রাখা দরকার: কমান্ড-লাইন (CLI) বান্ডল ভেরিফিকেশন ডিস্কের প্রতিটি ফাইলের প্রকৃত বাইট Hash করে এবং ভেতরের Model ও Feature Definition-এর যোগসূত্র মিলিয়ে দেখে। অন্যদিকে মোবাইল অ্যাপটি মেমরিতে থাকা সংখ্যাগত Schema ও Metadata-র অমিলগুলো মহড়া (Rehearsal) করে দেখায়—প্রতিবার রানটাইমে ফাইল রি-Hash করার সার্ভিস হিসেবে নয়। আর কখনোই ভুলবেন না: Hash মিলে যাওয়া মানে কেবল ফাইলটি অবিকৃত আছে, এর মানে কিন্তু এই নয় যে Model-এর Prediction ব্যবসায়িকভাবে সঠিক!"
+        },
+        {
+          "type": "text",
+          "title": "ভালো Health Probe ডিজাইনের কৌশল",
+          "body": "ভুলভাবে ডিজাইন করা Health Probe নিজেই বড় বিভ্রাটের (Outage) কারণ হতে পারে! কখনোই প্রতিবার Readiness চেকের ভেতরে ভারী Model Fit চালাবেন না বা বাহ্যিক ডেটাবেসে কিছু লিখবেন না। সঠিক কৌশল হলো স্টার্টআপের সময় একবার Artifact লোড ও যাচাই করে নেওয়া এবং এরপর মেমরির Active State দেখে হালকা ও দ্রুত চেক চালানো। Probe অতিরিক্ত কঠোর হলে সামান্য কারণে পুরো Cluster ট্রাফিক নেওয়া বন্ধ করে দিতে পারে; আবার ডাউনস্ট্রিম সার্ভিসের ক্ষণিকের সমস্যার কারণে যদি `Liveness` ফেল করিয়ে বারবার প্রসেস রিস্টার্ট করানো হয়, তবে পরিস্থিতি আরও ভয়াবহ রূপ নেয়। তাই প্রোডাক্টের Latency Budget ও Failure Domain বুঝে Probe সাজান।"
+        },
+        {
+          "type": "text",
+          "title": "বড় Neural Model-এ Warmup ও Resource প্রস্তুতি",
+          "body": "আমাদের এই ছোট CPU Ridge Model-টির জন্য কোনো GPU Warmup বেঞ্চমার্কের প্রয়োজন নেই। কিন্তু বাস্তবে আপনি যখন বড় কোনো Neural Network বা LLM সার্ভ করবেন, তখন মেমরি বরাদ্দ (Memory Allocation), সঠিক ডিভাইসে Model বসানো (Device Placement), Tokenizer ও Model-এর মিল এবং বাস্তবসম্মত ডামি Request দিয়ে Warmup করানো অত্যন্ত জরুরি—নইলে প্রথম দিকের ইউজার Request-গুলো প্রচণ্ড Latency-র মুখে পড়বে। তবে ফ্রেমওয়ার্ক ছোট হোক বা বিশাল, Readiness-এর মূল চুক্তি সবখানেই এক: সম্পূর্ণ Artifact, বৈধ ইনপুট, পর্যাপ্ত রিসোর্স এবং নিয়ন্ত্রিত আচরণ।"
+        },
+        {
+          "type": "text",
+          "title": "Interview পরামর্শ: Stale Model কীভাবে ধরবেন?",
+          "body": "ধরুন ইন্টারভিউতে প্রশ্ন করা হলো: 'আপনার প্রসেস শতভাগ Healthy দেখাচ্ছে, কিন্তু ভুলবশত সেটি ছয় মাস আগের পুরোনো (Stale) একটি Model সার্ভ করে যাচ্ছে—কোন Alert ও Diagnostic দিয়ে এটি ধরবেন?' উত্তরে বলুন, এটি ধরার জন্য Response-এ থাকা Model Version Telemetry, Sample করা ট্রাফিকের ওপর Parity Check, Feature-এর সতেজতা (Data Freshness) মনিটর এবং Mature-Label মূল্যায়নের সমন্বয় প্রয়োজন। কখনোই শুধু Health Probe পাশ করাকে ব্যবসায়িক সঠিকতার সনদ মনে করবেন না, এবং মনে রাখবেন—জরুরি Rollback রিলিজকেও ট্রাফিক নেওয়ার আগে ঠিক একই Readiness Gate পেরিয়ে আসতে হবে।"
+        }
+      ]
+    },
+    {
+      "id": "ch36_routing",
+      "title": "Deterministic Canary Routing",
+      "subtitle": "নির্ধারিত Threshold আর বাস্তবে পাওয়া Traffic অনুপাত সবসময় এক হয় না",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Canary Routing-এর মূল উদ্দেশ্য",
+          "body": "নতুন Candidate Model প্রস্তুত হলেই শুরুতে ১০০% ট্রাফিক তার দিকে ঘুরিয়ে দেওয়া ঝুঁকিপূর্ণ; তাই সীমিত অংশে পরীক্ষা করার জন্য আমরা Canary Routing ব্যবহার করি। এখানে Random সংখ্যার বদলে কেন Deterministic Hash ব্যবহার করা হয়? কারণ একই Request Key, একই UTF-8 এনকোডিং, একই Hash গাণিতিক নিয়ম এবং একই Threshold থাকলে Python ও Dart উভয় পরিবেশেই Request-টি অবিকল একই Bucket পায়। আমাদের এই ল্যাবে `entity + date` ভিত্তিক কী (`bike-global:YYYY-MM-DD`) দিয়ে Canary আচরণ দেখানো হয়েছে। তবে অনলাইনে প্রকৃত কার্যকারণ (Causal) পরীক্ষা চালাতে হলে Assignment Unit, Exposure এবং Outcome প্রোটোকল আলাদাভাবে নির্ধারণ করতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "কেন ভাষা-নিরপেক্ষ FNV-1a Hash ব্যবহার করি?",
+          "body": "Python বা অন্য প্রোগ্রামিং ভাষার নিজস্ব বিল্ট-ইন `hash()` Function নিরাপত্তার খাতিরে একেক প্রসেসে একেক রকম মান দিতে পারে—ফলে সার্ভার রিস্টার্ট হলে বা অন্য ভাষায় পোর্ট করলে একই Request ভিন্ন Model-এ চলে যেতে পারে! এই অস্থিরতা এড়াতে আমরা UTF-8 বাইটের ওপর সুনির্দিষ্ট `FNV-1a` (32-bit) অ্যালগরিদম ব্যবহার করি: একটি নির্দিষ্ট প্রারম্ভিক মান (Offset), প্রতি বাইটে XOR, মৌলিক সংখ্যা দিয়ে গুণ এবং শেষে 32-bit মাস্ক। এর ফলে কোনো Request পুনরায় পাঠানো হলেও (Retry) একই `entity + date` কী সবসময় একই Bucket-এ পড়ে। তবে মনে রাখবেন, FNV কোনো Cryptographic Hash নয়; কেউ ইচ্ছাকৃতভাবে কী বানিয়ে নির্দিষ্ট Bucket-এ ঢোকার চেষ্টা করলে (Adversarial Routing) এটি তা ঠেকাতে পারবে না।"
+        },
+        {
+          "type": "math",
+          "title": "Basis-Point Bucket ও Canary নির্বাচন সূত্র",
+          "body": "b=\\mathrm{FNV1a32}(key)\\bmod10000,\\quad candidate\\iff b<c"
+        },
+        {
+          "type": "code",
+          "title": "10% Canary Threshold-এ প্রকৃত রাউটিং গণনা",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"serving36\", Path(\"assets/datasets/bike_sharing/serving_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/serving_lab.json\").read_text(encoding=\"utf-8\")\n)\n\ncounts = m.replay(lab, canary_bp=1000)\nassert counts[\"candidate\"] == 22 and counts[\"baseline\"] == 160\nkey = \"bike-global:2012-01-11\"\nprint(m.route_bucket(key), counts)\n"
+        },
+        {
+          "type": "text",
+          "title": "Threshold বনাম বাস্তবে পাওয়া Traffic অনুপাত",
+          "body": "উপরের কোডের ফলাফলটি একটু মিলিয়ে দেখুন: `10%` Canary Threshold মানে হলো `10000` Basis Point-এর মধ্যে `bucket < 1000` হলে Candidate Model-টি চলবে। কিন্তু আমাদের মোট `182`টি ঐতিহাসিক কী-এর ১০ শতাংশ হিসাব করলে হয় `18.2`—অথচ ভগ্নাংশ Request তো আর বাস্তবে সম্ভব নয়! Hash করার পর দেখা যাচ্ছে বাস্তবে `22`টি Request গেছে Candidate-এ এবং `160`টি গেছে Baseline-এ। একইভাবে `50%` Threshold-এ পাওয়া যায় `87`টি Candidate এবং `95`টি Baseline। ছোট বা সসীম Sample-এ Hash-ভিত্তিক Allocation কখনোই কাঁটায় কাঁটায় নির্ধারিত শতাংশের সমান হতে বাধ্য নয়; তাই রিপোর্টে সবসময় শতকরার পাশাপাশি প্রকৃত Traffic Unit ও Denominator উল্লেখ করবেন।"
+        },
+        {
+          "type": "mlops_release",
+          "title": "ইন্টারঅ্যাক্টিভ ল্যাব: Release Policy পরীক্ষা করুন",
+          "body": "নিচের ইন্টারঅ্যাক্টিভ কন্ট্রোলে তারিখ (`Date`), ডেটা আগমনের পরিস্থিতি (`on_time` বনাম `late_fixture`), Candidate Metadata-র অমিল এবং `Rollback` সুইচ পরিবর্তন করে দেখুন। বিশেষ করে `375`তম দিনের `late_fixture` অবস্থায় Request-টি যখন Candidate-এ রাউট হয়, তখন অনুপস্থিত `lag1`-এর কারণে কীভাবে নিরাপদে Fallback চালু হয় তা পর্যবেক্ষণ করুন। স্ক্রিনের মোট রিপ্লে সংখ্যাগুলো কোনো স্থির লেখা নয়, আপনার পরিবর্তনের সাথে সাথে পুরো ডেটার ওপর নতুন করে হিসাব করা হয়; আর `Reset` চাপলে ডিফল্ট অবস্থায় ফিরে যাবে।"
+        },
+        {
+          "type": "text",
+          "title": "সতর্কতা: Canary Routing মানেই কিন্তু A/B Experiment নয়",
+          "body": "এখানে আমাদের রাউটিং কী হলো `entity + date`—এটি কিন্তু ব্যবহারকারীদের ওপর দৈবচয়িত (User-Randomized) কোনো ট্রিটমেন্ট নয়! দৈনিক বাইক ভাড়ার ডেটায় সময়ের ধারাবাহিক প্রভাব (Serial Correlation), ঋতুগত ওঠানামা (Seasonality), এক দিনের সাথে অন্য দিনের প্রভাব (Interference) এবং ছোট Sample-এর ঝোঁক রয়েছে। তাই রাউট হওয়া দুই দলের গড় ত্রুটি পাশাপাশি বসিয়েই তাকে অনলাইন Causal Lift বলে দাবি করা যাবে না। একটি নিখুঁত A/B Experiment-এর জন্য কীভাবে Randomization Unit, Statistical Power, Guardrails এবং বিশ্লেষণ পরিকল্পনা সাজাতে হয়, তা আমরা পরের অধ্যায়ে—Book 6 · Chapter 3 (Experimentation & Causal Reasoning)-এ বিস্তারিত শিখব।"
+        },
+        {
+          "type": "text",
+          "title": "কখন Rollout থামাবেন (Stop Conditions)?",
+          "body": "যেকোনো Canary Rollout শুরু করার আগেই থামার শর্তগুলো (Stop Conditions) লিখে রাখা জরুরি: যদি Contract Error দেখা দেয়, Service SLO খারাপ হতে থাকে, হঠাৎ Fallback-এর হার লাফিয়ে বাড়ে, কিংবা Mature-Label মূল্যায়নে অগ্রহণযোগ্য অবনতি ধরা পড়ে—তবে সাথে সাথে Rollout থামানো বা আগের অবস্থায় ফিরে যাওয়ার সিদ্ধান্ত নিতে হবে। আমাদের ইন্টারঅ্যাক্টিভ প্যানেলে শেখার সুবিধার্থে `10%`, `50%` এবং `100%` প্রিসেট দেওয়া হলেও বাস্তব প্রোডাকশনের ধাপগুলো অবশ্যই আপনার নিজস্ব প্রোডাক্টের ঝুঁকি এবং প্রয়োজনীয় Sample Size হিসাব করে ঠিক করতে হবে।"
+        }
+      ]
+    },
+    {
+      "id": "ch36_shadow",
+      "title": "Shadow Evaluation, Parity ও Load Boundary",
+      "subtitle": "Shadow ফলাফল ব্যবহারকারীকে না দেখালেও তার কিন্তু বাস্তব Compute খরচ আছে",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Shadow Mode কীভাবে কাজ করে?",
+          "body": "ব্যবহারকারীর সামনে নতুন Model উন্মুক্ত করার আগেও একটি নিরাপদ পরীক্ষার ধাপ আছে, যার নাম Shadow Evaluation। এই পদ্ধতিতে লাইভ ইনপুটের ওপর পর্দার আড়ালে Candidate Model-টি চালানো হয় এবং তার আউটপুট লগ করা হয়, অথচ ব্যবহারকারীর কাছে প্রকৃত Response যায় আগের নিরাপদ নীতি (যেমন Baseline) অনুযায়ীই। একই Request-এ দুই Model-এর সমতা (Parity) এবং সংখ্যাগত পার্থক্য বোঝার জন্য এটি দারুণ কার্যকর। তবে ভুলে গেলে চলবে না যে ব্যবহারকারী ফলাফলটি না দেখলেও Candidate Model-এর বাড়তি হিসাব, শেয়ার্ড ডেটা সোর্স কল এবং লগিং সিস্টেমের ওপর ঠিকই বাড়তি চাপ (Load) তৈরি করে! তাই Shadow Agreement, Service Health এবং ব্যবসায়িক ফলাফল—প্রতিটির জন্য আলাদা মাপকাঠি রাখতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "সবার আগে Cross-Language Parity যাচাই",
+          "body": "আমরা আমাদের Python রেফারেন্স কোড এবং Dart ইনফারেন্স ইঞ্জিনের ফলাফল Development অংশের প্রতিটি প্রকৃত Row-তে মিলিয়ে দেখি—মূল ডেটা Row, Feature-এর ক্রম (`Field Order`), শুধুমাত্র Fit ডেটার Scaler এবং শূন্যে Clipping হুবহু এক ফলাফল দিচ্ছে কি না তা যাচাই করি। দুই ভাষার এই Parity পরীক্ষা ইমপ্লিমেন্টেশনের সূক্ষ্ম বাগ ধরতে অসাধারণ কাজ করে; কিন্তু একটি সীমাবদ্ধতা মনে রাখবেন: যদি Python ও Dart উভয় জায়গাতেই একই ভুল Feature Definition ব্যবহৃত হয়, তবে কিন্তু Parity পরীক্ষা অনায়াসেই পাশ করে যাবে! এজন্য সময়ের ক্রম ও ডেটার শুদ্ধতার স্বতন্ত্র পরীক্ষাও পাশাপাশি চালাতে হয়।"
+        },
+        {
+          "type": "math",
+          "title": "একই ইনপুটে Candidate ও Baseline-এর পার্থক্য (Delta)",
+          "body": "\\Delta(x)=f_{candidate}(x)-f_{baseline}(x)"
+        },
+        {
+          "type": "code",
+          "title": "একই Feature Vector-এ Candidate বনাম Baseline তুলনা",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"serving36\", Path(\"assets/datasets/bike_sharing/serving_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/serving_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nrow = lab[\"rows\"][10]\nf = row[\"features\"]\ncandidate = m.predict(lab[\"models\"][\"candidate\"], f)\nbaseline = m.predict(lab[\"models\"][\"baseline\"], f)\nprint(candidate, baseline, candidate - baseline)\nassert f[\"lag1\"] == lab[\"events\"][\"on_time\"][374][\"cnt\"]\n"
+        },
+        {
+          "type": "text",
+          "title": "বড় পার্থক্য (Disagreement) দেখলে কী বুঝবেন?",
+          "body": "দুই Model-এর আউটপুটে বড় পার্থক্য ($\\Delta$) দেখা মানেই কিন্তু Candidate Model-টি ভুল করছে এমন নয়—বরং এটি একটি অনুসন্ধানের সংকেত (Debugging Signal); উন্নত Model কঠিন দিনে দুর্বল Baseline-এর চেয়ে ভিন্ন উত্তর দেওয়াই স্বাভাবিক! যখন প্রকৃত ফলাফল (Outcome) হাতে আসবে, তখন একই Request-এ দুই Model-এর ত্রুটি পাশাপাশি রেখে (Paired Error) তুলনা করুন। আর কোনো Feature অনুপস্থিত থাকলে খেয়াল রাখবেন যে দুই Model-এর ইনপুট যোগ্যতার শর্ত আলাদা হতে পারে; সব Request নির্বিচারে গড় করলে তার ভেতর Selection Bias লুকিয়ে থাকতে পারে। গণনার সময় নন-নেগেটিভ শর্ত এবং Feature না পাওয়ার কারণগুলোও ট্র্যাক করুন।"
+        },
+        {
+          "type": "text",
+          "title": "প্রোডাকশনে Resource Isolation ও Latency সুরক্ষা",
+          "body": "বাস্তব প্রোডাকশনে ১০০% ট্রাফিকের ওপর Shadow চালালে মোট কম্পিউট খরচ দ্বিগুণ হয়ে শেয়ার্ড CPU বা GPU কিউ স্যাচুরেট করে ফেলতে পারে! আরও বিপজ্জনক হলো, Shadow কল যদি মূল Response পাঠানোর রাস্তায় (Critical Path) সমান্তরালভাবে অপেক্ষা করায়, তবে Candidate-এর ধীরগতির কারণে মূল Baseline-এর ইউজার Latency বেড়ে যাবে। তাই প্রোডাকশনে ট্রাফিক Sampling, কঠোর Deadline, Backpressure এবং আলাদা রিসোর্স সীমানা (Isolation) অপরিহার্য। আমাদের এই অধ্যায়ের লোকাল Function কলগুলো গাণিতিক আচরণ শেখানোর জন্য—এখান থেকে প্রোডাকশনের Throughput বা Scalability দাবি করা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "Shadow Logging-এর চুক্তি ও গোপনীয়তা",
+          "body": "পরবর্তীতে অফলাইনে নিখুঁতভাবে রিপ্লে করার জন্য Shadow লগে Request-এর পরিচয়, Model-এর Version, Feature Definition, অনুমোদিত ডায়াগনস্টিক তথ্য এবং ভবিষ্যৎ ফলাফলের সাথে মেলানোর চাবি (Outcome Join Key) থাকা চাই। তবে লগ করার নামে ব্যক্তিগত সংবেদনশীল তথ্য (PII), সম্পূর্ণ ইউজার প্রম্পট বা গোপনীয় Feature নির্বিচারে সংরক্ষণ করা যাবে না। আমাদের এই পাবলিক বাইক Dataset-টি শহরের দৈনিক সমষ্টিগত হিসাব হওয়ায় এখানে কোনো ব্যক্তির পরিচয় নেই; তাই প্রোডাকশনে ইউজার-লেভেল ডেটা নিয়ে কাজ করার সময় গোপনীয়তার সুরক্ষা আলাদাভাবে যুক্ত করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "Interview পরামর্শ: ফলাফল অমিল হলে কীভাবে তদন্ত করবেন?",
+          "body": "ইন্টারভিউতে যদি বলা হয়, 'Shadow মোডে Candidate Model-টি Baseline-এর চেয়ে অদ্ভুতভাবে আলাদা ফলাফল দিচ্ছে—আপনি কোথা থেকে তদন্ত শুরু করবেন?'—তাহলে সরাসরি Model-কে দোষারোপ না করে ধাপে ধাপে এগোন: প্রথমেই Input Schema, Preprocessing Transform, ডেটা সোর্সের সতেজতা (Freshness), ফ্লোটিং-পয়েন্ট প্রিসিশন এবং সঠিক Version রাউটিং মিলিয়ে দেখুন; সব ঠিক থাকলে তবেই Model-এর আচরণ ও Mature Label মূল্যায়নে যান। আর সবশেষে মনে করিয়ে দিন যে, শুধু Shadow Score ভালো হওয়া মানেই ব্যবহারকারীর বাস্তব অভিজ্ঞতার উন্নতি প্রমাণিত হওয়া নয়, কারণ Shadow Model-এর সিদ্ধান্ত প্রোডাক্টের পরিবেশকে বাস্তবে প্রভাবিত করেনি।"
+        }
+      ]
+    },
+    {
+      "id": "ch36_rollback",
+      "title": "Rollback, Fallback ও Recovery Rehearsal",
+      "subtitle": "জরুরি মুহূর্তে আগের Version-এ ফিরতে হলে সেটিকেও বর্তমান Feature Contract-এ বৈধ হতে হবে",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Fallback, Rollback ও Failover—তিনটি ভিন্ন প্রক্রিয়া",
+          "body": "প্রোডাকশনে সমস্যা সামলানোর সময় অনেকেই Fallback, Rollback আর Failover শব্দ তিনটি গুলিয়ে ফেলেন, অথচ এদের কাজ সম্পূর্ণ আলাদা! `Fallback` হলো প্রতিটি একক Request-ভিত্তিক নীতি—যেমন Candidate নির্বাচিত হয়েছিল কিন্তু `lag1` অনুপস্থিত থাকায় ওই Request-টি নিরাপদ বিকল্পে গেল। অন্যদিকে `Rollback` হলো সক্রিয় Release নীতিকে ঘুরিয়ে দেওয়া, যা সব যোগ্য Request-কে সরাসরি যাচাইকৃত Baseline Model-এ পাঠাতে শুরু করে। আর `Failover` হলো সার্ভার বা ডেটাসেন্টারের অবকাঠামোগত Replica বদলানো। সঠিক সময়ে সঠিক পদক্ষেপ নিতে এই তিনটি নামের পার্থক্য পরিষ্কার থাকা জরুরি।"
+        },
+        {
+          "type": "text",
+          "title": "Rollback করার আগেও সামঞ্জস্যতা (Compatibility) যাচাই",
+          "body": "ডিস্কে শুধু আগের Model-এর পুরোনো Weights ফাইলটি রেখে দিলেই কিন্তু নিরাপদ Recovery নিশ্চিত হয় না! ভাবুন তো, এর মধ্যে যদি Feature-এর Schema, একক বা Null Policy বদলে গিয়ে থাকে? তাই আগের Version-এ ফিরে যাওয়ার সময়ও তার পুরোনো Schema, Feature উৎস, Scaler এবং ডিপেন্ডেন্সিগুলো বর্তমান পরিবেশে বৈধ কি না তা যাচাই হতে হবে। আমাদের সিস্টেমে Candidate ও Baseline-এর Manifest আলাদা রাখা হয়েছে এবং যেকোনো Lookup-এর আগেই Baseline যাচাই করা হয়। যদি দেখা যায় Baseline-এর Contract নিজেই অমিল বা নষ্ট, তবে সিস্টেম অসুরক্ষিত পুরোনো Model চালানোর বদলে সরাসরি Inference `BLOCKED` করে দেয়।"
+        },
+        {
+          "type": "math",
+          "title": "নিরাপদ Rollback-এর শর্ত",
+          "body": "rollback\\Rightarrow served=validated\\ baseline"
+        },
+        {
+          "type": "code",
+          "title": "দুই Arrival Scenario-তেই পূর্ণ Rollback মহড়া",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"serving36\", Path(\"assets/datasets/bike_sharing/serving_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/serving_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nfor scenario in [\"on_time\", \"late_fixture\"]:\n    result = m.replay(lab, scenario, rollback=True)\n    assert result == dict(\n        requests=182, candidate=0, baseline=182, fallback=0, blocked=0\n    )\n    print(scenario, result)\n"
+        },
+        {
+          "type": "text",
+          "title": "স্থানীয় মহড়ার প্রমাণ এবং প্রোডাকশনের বাড়তি বাস্তবতা",
+          "body": "উপরের কোডে দেখুন, `on_time` এবং `late_fixture`—উভয় পরিস্থিতিতেই `rollback = True` করার পর `182`টির মধ্যে পূর্ণ `182`টি Request-ই সরাসরি `baseline` (`seasonal7`)-এ গেছে, যেখানে `candidate = 0`, `fallback = 0` এবং `blocked = 0`। এটি আমাদের রাউটিং কন্ট্রোলারের গাণিতিক আচরণের নিখুঁত প্রমাণ। তবে বাস্তব প্রোডাকশনে Rollback করার সময় আরও কিছু সিস্টেমগত দিক সামলাতে হয়—যেমন মাঝপথে থাকা (In-Flight) Request-গুলো শেষ হতে দেওয়া, পুরোনো Cache মুছে ফেলা, ডেটাবেস মাইগ্রেশনের সামঞ্জস্যতা এবং অর্কেস্ট্রেটরের প্রকৃত রিকভারি সময়—যেগুলো এই লোকাল Function মহড়ায় মাপা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "ডেটা নষ্ট হলে কেন শুধু Model Rollback কাজ করে না?",
+          "body": "একটি খুব গুরুত্বপূর্ণ বাস্তব শিক্ষা মনে রাখুন: আপস্ট্রিম পাইপলাইনের বাগের কারণে যদি মূল ভাড়ার ডেটাই নষ্ট (Corrupt) হয়ে আসে, তবে আগের Model-এ Rollback করেও কিন্তু কোনো লাভ হবে না—কারণ পুরোনো Model-টিও সেই একই ভুল ইনপুট খাবে! Rollback কেবল Model-এর Weights ও কোড বদলায়, নষ্ট ডেটা মেরামত করে না। ডেটা-সংক্রান্ত বিপর্যয়ে আমাদের দরকার স্বাধীন Data Freshness চেক, Quality Gate এবং প্রয়োজনে উত্তর দেওয়া থেকে নিরাপদে বিরত থাকা (Safe Abstention)। পরবর্তীতে সেই ডেটা সংশোধন বা Backfill করা হলেও ইতিহাসের মূল্যায়ন করার সময় 'তখন সিস্টেম ঠিক কী জানত' সেই সময়ের জ্ঞান (Point-in-Time Knowledge) অক্ষুণ্ণ রাখতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "একটি কার্যকর Incident Runbook-এ কী থাকে?",
+          "body": "বিপদের মুহূর্তে তাড়াহুড়োয় ভুল এড়াতে আগে থেকেই একটি লিখিত Runbook তৈরি রাখুন। সেখানে স্পষ্টভাবে লেখা থাকবে: কখন অ্যালার্ট বাজবে (Trigger), দায়িত্বপ্রাপ্ত ব্যক্তি কে (Owner), কোন Version আক্রান্ত, নিরাপদ গন্তব্য কোনটি, কী কমান্ড চালাতে হবে, কীভাবে পুনরুদ্ধার যাচাই করবেন এবং কখন প্রক্রিয়া থামাতে হবে। ঘটনার সময় নতুন ডিপ্লয়মেন্ট বন্ধ রেখে (Change Freeze) লগ ও Metric-এর একটি Evidence Snapshot সংরক্ষণ করুন। সিস্টেম সুস্থ হয়েছে কি না তা দেখতে শুধু HTTP 200 দেখলেই চলবে না—Response-এর Version, Fallback-এর অনুপাত, Feature-এর বৈধতা ও পরবর্তীতে Mature Outcome-ও মেলান; আর সামান্য কয়েকটি অস্বাভাবিক ডেটা দেখেই তড়িঘড়ি করে স্বয়ংক্রিয় Retraining শুরু করে দেবেন না!"
+        },
+        {
+          "type": "text",
+          "title": "নিজে হাতে পরীক্ষার অনুশীলন",
+          "body": "নিজে একটি ছোট পরীক্ষা চালিয়ে দেখুন: প্রথমে Candidate-এর Metadata নষ্ট করে `rollback = False` অবস্থায় চালিয়ে দেখুন কেন `fallback` Counter বাড়ে; এরপর `rollback = True` করে দেখুন কেন ফলাফল বদলে `baseline = 182` এবং `fallback = 0` হয়ে যায়—এই পার্থক্যটি নিজের ভাষায় ব্যাখ্যা করুন। সবশেষে Baseline-এর Metadata ভুল করে দিয়ে Python-এ যাচাই করুন কীভাবে সিস্টেমটি নিরাপদে `BLOCKED` পথে চলে যায়। কোডের ভেতরে সুস্পষ্ট Assertion দিয়ে এই অপারেশনাল পার্থক্যগুলো যাচাই করার অভ্যাস গড়ে তুলুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch36_metrics",
+      "title": "Monitoring: Service, Data ও Model স্তর",
+      "subtitle": "একই Dashboard-এ সব Metric বসাতে গিয়ে আলাদা Denominator-গুলো হারিয়ে ফেলবেন না",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "প্রথম স্তর: Service Health Monitoring",
+          "body": "সার্ভিস চালু হওয়ার পর মনিটরিং ড্যাশবোর্ডকে চারটি সুস্পষ্ট স্তরে ভাগ করে দেখা সবচেয়ে কার্যকর। সবার প্রথমে আসে **Service Layer**: প্রতি সেকেন্ডে Request-এর হার (`Request Rate`), স্ট্যাটাস ও `Error Rate`, রিসোর্সের চাপ (`Saturation`), `Queue Depth` এবং `Latency Distribution`। প্রতিটি রেট হিসাবের জন্য একটি নির্দিষ্ট সময়ের জানালা (Window) এবং কোন Request-গুলো গণনায় আসবে তার স্পষ্ট চুক্তি থাকা চাই। আমাদের ঐচ্ছিক HTTP সার্ভারটি প্রকৃত Request Counter দেখায়; তবে প্রোডাকশনে প্রসেস রিস্টার্ট হলে মেমরির Counter শূন্য থেকে শুরু হতে পারে—তাই রেট হিসাব করার সময় সিস্টেমকে অবশ্যই Counter Reset সম্পর্কে সচেতন হতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "দ্বিতীয় স্তর: Data ও Feature Completeness Monitoring",
+          "body": "সার্ভার শতভাগ সচল থাকলেও ইনপুট ডেটা নষ্ট হতে পারে—তাই দ্বিতীয় স্তরে অর্থাৎ **Data Layer**-এ আমাদের দেখতে হয় Feature-এর `Null Fraction`, `Schema` লঙ্ঘন, ডেটার সতেজতা (`Freshness`), `Coverage` এবং `Distribution Drift`। খেয়াল রাখবেন, Drift দেখা হয় প্রতিটি Feature-এর Distribution ধরে আলাদাভাবে, আর ডেটার পূর্ণতা (`Completeness`) সম্পূর্ণ ভিন্ন একটি সংকেত! যেমন, ডেটা আসতে দেরি হলে `375`তম দিনে `lag1` অনুপস্থিত থাকতে পারে, অথচ জানা পুরোনো দিনগুলোর গড় তখনও হিসাবযোগ্য থাকতে পারে। তাই সর্বশেষ তারিখের একটি Row উপস্থিত আছে দেখেই ধরে নেওয়া যাবে না যে সব Feature-এর জানালা (Window) পূর্ণ আছে।"
+        },
+        {
+          "type": "math",
+          "title": "যেকোনো Rate Metric-এর মৌলিক সংজ্ঞা",
+          "body": "\\mathrm{rate}=\\frac{\\mathrm{eligible\\ events\\ meeting\\ condition}}{\\mathrm{all\\ eligible\\ events}}"
+        },
+        {
+          "type": "code",
+          "title": "7 দিনের Label Delay-তে Request বনাম Mature Label গণনা",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"serving36\", Path(\"assets/datasets/bike_sharing/serving_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/serving_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nq = m.quality(lab[\"rows\"], \"full\", delay=7)\nassert q[\"request_rows\"] == 182 and q[\"mature_labels\"] == 175\nprint(q[\"models\"])\nprint(\"candidate fallback\", m.replay(lab, \"late_fixture\")[\"fallback\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "তৃতীয় স্তর: Model Quality ও Selection Bias এড়ানো",
+          "body": "উপরের কোডটি দেখুন: মোট `182`টি Request Row-এর মধ্যে ৭ দিনের Label বিলম্ব ধরা হলে মূল্যায়নের জন্য বৈধ `mature_labels` পাওয়া যায় `175`টি! এই **Model Layer**-এ আমরা Mature-Label ভিত্তিক `MAE`, `RMSE`, `Signed Bias`, গুরুত্বপূর্ণ খণ্ডাংশ (`Slices`), আউটপুটের বৈধতা এবং `Fallback Fraction` পর্যবেক্ষণ করি। Model-এর দুই Version তুলনা করার সময় অবশ্যই একই যোগ্য Population-এর ওপর তুলনা করবেন। যেসব কঠিন Request-এ Feature না থাকায় Fallback হয়েছে, সেগুলোকে বাদ দিয়ে শুধু সহজ Request-গুলোতে Candidate-এর Score মাপলে মারাত্মক `Selection Bias` তৈরি হবে এবং Model-কে বাস্তবের চেয়ে বেশি নির্ভুল মনে হবে! এছাড়া মনে রাখবেন, রিগ্রেশন Model-এর সাধারণ সংখ্যাগত আউটপুট নিজে থেকে কোনো Calibrated Uncertainty দেয় না।"
+        },
+        {
+          "type": "text",
+          "title": "চতুর্থ স্তর: প্রকৃত Business ও Product Impact",
+          "body": "সবকিছুর ওপরে থাকে **Business Layer**: কনভার্সন, প্রোডাক্টের উপযোগিতা, নিরাপত্তা বা পরিচালন ব্যয়—যা মাপার জন্য প্রোডাক্টের নিজস্ব ইনস্ট্রুমেন্টেশন এবং সঠিক অনলাইন এক্সপেরিমেন্ট প্রয়োজন। আমাদের এই পাবলিক সমষ্টিগত Dataset-এ সেই ব্যবসায়িক ফলাফলগুলো নেই; তাই ঐতিহাসিক MAE কম দেখেই কোম্পানির আয় বেড়েছে বা কোনো একক গ্রাহকের অভিজ্ঞতা ভালো হয়েছে—এমন দাবি আমরা কখনোই করব না। একটি সফল ML সিস্টেমে অপারেশনাল সুস্থতা এবং প্রকৃত ব্যবসায়িক উপযোগিতা—দুটোই সমানভাবে প্রয়োজন।"
+        },
+        {
+          "type": "text",
+          "title": "Denominator-এর কঠোর শৃঙ্খলা",
+          "body": "একই প্রজেক্টের তিনটি আলাদা সংখ্যার দিকে নজর দিন: `Feature Drift` মাপার সময় আমাদের কাছে আছে পূর্ণ `182`টি Request ইনপুট; ৭ দিনের Label Maturity বিলম্বে তখন প্রকৃত ফলাফল জানা আছে `175`টির, তাই `Model Quality`-র হর (Denominator) হলো `175`; আর আমাদের `Service SLO` উদাহরণের হর হলো সম্পূর্ণ আলাদা `20`টি Telemetry ইভেন্ট! ড্যাশবোর্ডে Metric দেখানোর সময় এই তিনটি আলাদা Denominator স্পষ্ট করে পাশে লিখে রাখুন। কখনোই অজানা বা দেরিতে আসা Label-কে শূন্য ত্রুটি (`Zero Residual`) কিংবা সফল Prediction হিসেবে গণনায় ঢোকাবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "সতর্কতা: High-Cardinality Label বিস্ফোরণ",
+          "body": "মনিটরিং সিস্টেম ডিজাইনের একটি বড় ফাঁদ হলো `High Cardinality`। Metric-এর গায়ে `model_version` বা `served_policy`-র মতো সীমিত কয়েকটি মানের Label লাগানো খুবই ভালো অভ্যাস; কিন্তু ভুল করেও যদি প্রতিটি ইউনিক `request_id` বা সুনির্দিষ্ট তারিখকে Metric Label বানিয়ে দেন, তবে লাখ লাখ আলাদা টাইম-সিরিজ তৈরি হয়ে মনিটরিং সার্ভার অচল হয়ে পড়বে! প্রতি Request-এর বিস্তারিত তথ্য নিয়ন্ত্রিতভাবে স্ট্রাকচার্ড লগ বা Trace স্টোরেজে রাখুন (প্রয়োজনে Sampling করে), আর লাইভ Counter ও Histogram সবসময় সমষ্টিগত (Aggregated) রাখুন—যেমন আমাদের `/metrics` এন্ডপয়েন্টে কোনো Request আইডি Label রাখা হয়নি।"
+        }
+      ]
+    },
+    {
+      "id": "ch36_slo",
+      "title": "SLI, SLO, Error Budget ও Burn Rate",
+      "subtitle": "সফলতা (Success) এবং গতি (Latency)—দুটোকেই একই Good-Event সংজ্ঞায় নিয়ে আসুন",
+      "duration": "55 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "একটি Request কখন সত্যিকারের 'Good Event'?",
+          "body": "অনেক সময় দেখা যায় সার্ভিসের Availability আর Latency আলাদা চার্টে মাপা হয়—যার ফলে ধীরগতির সফল Request বা দ্রুত ঘটে যাওয়া এররের আসল চিত্রটি আড়ালে থেকে যায়। আমাদের এই উদাহরণে কোনো Request-কে `Good` বলতে হলে দুটি শর্তই একসাথে পূরণ করতে হবে: Request-টি সফল হতে হবে (`ok`) **এবং** তার সময়কাল `≤ 100 ms` হতে হবে। খেয়াল করুন, হর বা Denominator-এ কিন্তু সব `20`টি যোগ্য Request-ই রয়েছে—ব্যর্থ Request-গুলোকে মোটেও বাদ দেওয়া হয়নি!\n\nএখানে সফল Request আছে `18`টি, তাই সাধারণ Availability হলো `18 / 20 = 0.9`। কিন্তু সফল হওয়ার পাশাপাশি `100 ms` সময়সীমার ভেতরে থেকেছে মাত্র `16`টি Request—তাই আমাদের প্রকৃত `Composite SLI` হলো `16 / 20 = 0.8`। কেবল সফল Request-এর Latency মাপলে ব্যর্থ Request-গুলোর ক্ষতিকর প্রভাব এভাবেই লুকিয়ে পড়তে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "Error Budget-এর সহজ হিসাব",
+          "body": "ধরা যাক আমাদের `SLO` লক্ষ্যমাত্রা হলো `99%` (`S = 0.99`)। তাহলে `20`টি Request-এর মধ্যে অনুমোদিত খারাপ Request-এর বাজেট (`Allowed Bad`) দাঁড়ায় `20 × 0.01 = 0.2` Request-সমতুল্য। বাস্তবে যেহেতু `4`টি খারাপ Request ঘটেছে, তাই আমাদের অবশিষ্ট বাজেট (`Remaining Budget`) হলো `0.2 - 4 = -3.8`! ভগ্নাংশ বাজেট দেখে অবাক হবেন না—বাস্তবে আংশিক Request না থাকলেও গাণিতিক অনুপাতের হিসাব হিসেবে এটি সম্পূর্ণ সঠিক, আর ঋণাত্মক মান (`-3.8`) স্পষ্টভাবে জানিয়ে দিচ্ছে যে এই উইন্ডোতে আমরা লক্ষ্যমাত্রা অতিক্রম করে ফেলেছি। (বলাই বাহুল্য, মাত্র `20` Row-এর এই উদাহরণটি হিসাবের স্বচ্ছতা শেখার জন্য; বাস্তব প্রোডাকশনের উইন্ডোতে হাজার বা লাখো Request থাকে।)"
+        },
+        {
+          "type": "math",
+          "title": "Good Event, Error Budget ও Burn Rate সমীকরণ",
+          "body": "g=\\mathbb1(ok\\land d\\le100),\\quad B=N(1-S),\\quad burn=\\frac{bad/N}{1-S}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Composite SLI, Error Budget ও Burn Rate গণনা",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"serving36\", Path(\"assets/datasets/bike_sharing/serving_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/serving_lab.json\").read_text(encoding=\"utf-8\")\n)\n\ns = m.slo_fixture(threshold=100, target=0.99)\nassert s[\"good\"] == 16 and s[\"bad\"] == 4\nprint(\n    s[\"availability\"],\n    s[\"composite_sli\"],\n    s[\"allowed_bad\"],\n    s[\"remaining_bad\"],\n    s[\"burn_rate\"],\n)\n"
+        },
+        {
+          "type": "text",
+          "title": "Burn Rate আসলে কী নির্দেশ করে?",
+          "body": "উপরের কোডে `burn_rate` এসেছে `20.0`! হিসাবটি খুব সোজা: আমাদের প্রকৃত খারাপ Request-এর অনুপাত `4 / 20 = 0.2`, আর `99%` লক্ষ্যমাত্রায় অনুমোদিত খারাপ অনুপাত মাত্র `0.01`—তাই `0.2 / 0.01 = 20x` হারে আমাদের Error Budget পুড়ছে! তবে ট্রাফিকের হার এবং সময়ের উইন্ডোর অনুমান স্থির না ধরে শুধু এই সংখ্যা থেকেই 'ঠিক কত মিনিটে পুরো মাসের বাজেট ফুরাবে' তা সরাসরি বলে দেওয়া যায় না। বাস্তব Alerting পরিকল্পনায় হঠাৎ বড় সমস্যা ধরতে ছোট উইন্ডো এবং ক্ষণিকের নয়েজ এড়াতে বড় উইন্ডো একসাথে দেখা হয়—যাতে সমস্যার স্থায়িত্ব, গুরুত্ব এবং অন-কল ইঞ্জিনিয়ারকে পেজ করার খরচের মধ্যে ভারসাম্য থাকে।"
+        },
+        {
+          "type": "text",
+          "title": "লক্ষ্যমাত্রা (Threshold) বদলালে কী ঘটে?",
+          "body": "সময়সীমা `50 ms`, `100 ms` বা `200 ms` এবং লক্ষ্যমাত্রা `95%`, `99%` বা `99.9%` বদলে দেখুন কীভাবে `good` সংখ্যা ও বাজেট পাল্টে যায়। এখানে একটি গভীর সত্য লুকিয়ে আছে: আপনি যদি Latency Threshold `100 ms` থেকে শিথিল করে `200 ms` করে দেন, তবে ড্যাশবোর্ডের Metric মুহূর্তেই সুন্দর হয়ে উঠবে, কিন্তু ব্যবহারকারীর বাস্তব অভিজ্ঞতা এক চুলও বদলাবে না! তাই SLO-এর সংজ্ঞা পরিবর্তন করতে হলে সুস্পষ্ট ব্যবসায়িক যুক্তি ও নতুন Version প্রয়োজন—চলমান Incident ঢাকার জন্য কখনোই গায়ের জোরে Threshold বা Denominator বদলানো চলে না।"
+        },
+        {
+          "type": "text",
+          "title": "Telemetry তথ্যের সীমানা ও শূন্য ট্রাফিকের ফাঁদ",
+          "body": "তথ্যের সীমানাটি পরিষ্কার রাখি: এই `20`টি সময়কাল ও স্ট্যাটাস Row গাণিতিক হিসাব শেখানোর জন্য সাজানো উদাহরণ; আমাদের লোকাল HTTP এন্ডপয়েন্টটি কার্যকরভাবে পরীক্ষিত হলেও এই সংখ্যাগুলো তার হার্ডওয়্যার বেঞ্চমার্ক বা লাইভ প্রোডাকশন ট্রাফিকের মাপ নয়। আরেকটি সূক্ষ্ম কেস খেয়াল করুন: কোনো উইন্ডোতে যদি একটিও Request না আসে (`0` requests), তবে আমাদের অ্যাপ সেখানে রেটকে `Undefined` দেখায়। শূন্য Request মানে কখনোই `100%` নিখুঁত SLI নয়—হতে পারে সামনের Load Balancer ছিঁড়ে যাওয়ায় একটি Request-ও সার্ভারে পৌঁছাতে পারছে না!"
+        },
+        {
+          "type": "text",
+          "title": "Interview পরামর্শ: Alert ডিজাইনের চুক্তি",
+          "body": "ইন্টারভিউতে SLO ডিজাইন করার সময় সূত্র লেখার আগেই চুক্তির খুঁটিনাটি পরিষ্কার করে নিন: কোন Request-গুলো গণনায় আসবে (Eligible), ক্লায়েন্ট নিজে কল বাতিল করলে (Cancellation) বা Retry করলে কীভাবে গোনা হবে, এবং ব্যর্থ Request-এর Latency কীভাবে ধরা হবে। প্রতিটি Alert-কে সরাসরি ব্যবহারকারীর ক্ষতি এবং সুনির্দিষ্ট করণীয় পদক্ষেপের সাথে যুক্ত করুন। যেমন—সার্ভারের নেটওয়ার্ক বিভ্রাটের সময় নিছক Drift Alert দেখে স্বয়ংক্রিয়ভাবে Model Retrain করতে বসালে আসল সার্ভিস Incident-ই আড়ালে পড়ে যাবে!"
+        },
+        {
+          "type": "text",
+          "title": "একাধিক Window একত্র করার সময় কেন সাধারণ গড় ভুল হয়?",
+          "body": "একই `99%` SLO এবং একই Good-Event সংজ্ঞা মেনে দুটি সম্পূর্ণ আলাদা (Disjoint) সময়ের উইন্ডো কল্পনা করুন। প্রথম উইন্ডোতে `100`টির মধ্যে `2`টি খারাপ Request হয়েছে, আর দ্বিতীয় উইন্ডোতে `900`টির মধ্যে খারাপ Request `0`টি। তাহলে প্রথমটির Burn Rate হলো `2` এবং দ্বিতীয়টির `0`। আপনি যদি এ দুটির সরল গড় করেন, তবে পাবেন `1`! অথচ পুরো `100 + 900 = 1000` Request-এ মোট খারাপ Request মাত্র `2`টি, যার প্রকৃত সম্মিলিত Burn Rate আসলে `(2 / 1000) / 0.01 = 0.2`! অর্থাৎ রেট গড় না করে সবসময় মূল Count যোগ করে তারপর রেট বের করতে হবে। আবার উল্টো দিকটিও দেখুন: পুরো `1000` Request-এর বড় উইন্ডোতে `0.2` দেখে সব শান্ত মনে হলেও ছোট `100` Request-এর উইন্ডোতে কিন্তু ঠিকই `2x` হারে সমস্যা চলছিল—তাই Alerting-এ ছোট ও বড় প্রতিটি উইন্ডোর নিজস্ব সংকেত আলাদাভাবেও দেখতে হয়।"
+        },
+        {
+          "type": "code",
+          "title": "ভুল সাধারণ গড় বনাম সঠিক Request-Weighted Burn Rate",
+          "body": "request_counts = [100, 900]\nbad_counts = [2, 0]\nallowed_fraction = 1 - 0.99\nburns = [\n    bad / total / allowed_fraction for bad, total in zip(bad_counts, request_counts)\n]\ncombined_burn = sum(bad_counts) / sum(request_counts) / allowed_fraction\nweighted_burn = sum(total * burn for total, burn in zip(request_counts, burns)) / sum(\n    request_counts\n)\nassert abs(combined_burn - weighted_burn) < 1e-12\nprint(\n    *[round(value, 6) for value in burns],\n    round(sum(burns) / 2, 6),\n    round(combined_burn, 6)\n)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে যাচাই করুন",
+          "body": "ধরুন দুটি সময়ের Window একে অপরের সাথে আংশিকভাবে মিলে আছে (Overlapping Windows)—যেমন শেষ 5 মিনিট এবং শেষ 1 ঘণ্টা। এদের Request ও Bad Count সরাসরি যোগ করে Combined Burn Rate বের করলে কী ভুল হবে?",
+          "solution": "শেষ 5 মিনিটের প্রতিটি Request যেহেতু শেষ 1 ঘণ্টার Window-এর ভেতরেও রয়েছে, তাই সরাসরি সংখ্যা দুটি যোগ করলে ওই 5 মিনিটের সব ভালো ও খারাপ Request দুবার করে গণনা (Double Counting) হয়ে যাবে! আমাদের আগের উদাহরণে দুটি Window সম্পূর্ণ আলাদা (Disjoint) ছিল এবং উভয়েরই SLO লক্ষ্যমাত্রা ও যোগ্যতার নিয়ম (Eligibility) এক ছিল বলে সরাসরি যোগ করা গেছে। প্রোডাকশনের Nested বা Overlapping (ছোট ও বড়) Window দিয়ে Alert তৈরি করার সময় প্রতিটি Window-এর Burn Rate তার নিজস্ব স্বাধীন Denominator দিয়ে আলাদাভাবেই হিসাব করতে হয়। আর Error Budget ঠিক কত ঘণ্টার মধ্যে ফুরিয়ে যাবে—এমন ক্যালেন্ডার সময়ের হিসাব দিতে হলে ভবিষ্যতের Traffic-এর গতি ও ত্রুটির হার কেমন থাকবে, সেই অনুমানও স্পষ্টভাবে উল্লেখ করতে হবে।",
+          "reference": "https://sre.google/workbook/alerting-on-slos/"
+        }
+      ]
+    },
+    {
+      "id": "ch36_histogram",
+      "title": "Percentiles ও Histogram Aggregation",
+      "subtitle": "প্রতিটি সার্ভারের আলাদা p95 গড় করে কখনোই পুরো Cluster-এর Global p95 পাওয়া যায় না",
+      "duration": "55 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Exact Sample Quantile কীভাবে হিসাব হয়?",
+          "body": "সার্ভিসের গতি বোঝার জন্য গড় (Mean)-এর চেয়ে `p95` বা `p99` অনেক বেশি কার্যকর। নিখুঁত Sample Quantile বের করতে প্রথমে সবগুলো সময়কাল ছোট থেকে বড় ক্রমে সাজাতে (Sort) হয়। আমাদের উদাহরণে `n = 20` এবং `p = 0.95` হলে অবস্থান সূচক দাঁড়ায় `h = (20 - 1) × 0.95 = 18.05` (শূন্য-ভিত্তিক Index-এ)। সাজানো তালিকায় ১৯তম মান (`x_18`) হলো `150` এবং ২০তম মান (`x_19`) হলো `200`—তাদের রৈখিক অন্তর্পাতন (Linear Interpolation) করলে পাওয়া যায় `150 + 0.05 × (200 - 150) = 152.5 ms`। বিভিন্ন সফটওয়্যার লাইব্রেরিতে Quantile-এর সংজ্ঞা সামান্য আলাদা হতে পারে, তাই কোন পদ্ধতি ব্যবহার করছেন তা সবসময় উল্লেখ করবেন। আর মনে রাখবেন, মাত্র `20`টি ডেটা পয়েন্টের `p95` থেকে প্রোডাকশনের স্থিতিশীল Tail Latency অনুমান করা যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "শর্তসাপেক্ষ ফিল্টারিংয়ের পার্থক্য: সব Request বনাম শুধুই সফল Request",
+          "body": "একই ডেটায় শুধুমাত্র সফল Request-গুলোর `p95` হিসাব করলে আসে `133 ms`, অথচ সবগুলো Request একসাথে নিলে `p95` দাঁড়ায় `152.5 ms`! কারণ এই দুটি সম্পূর্ণ ভিন্ন Population। ব্যর্থ বা টাইমআউট হওয়া Request-গুলো বাদ দিয়ে Latency রিপোর্ট করলে ব্যবহারকারীর বাস্তব ভোগান্তি (Tail Latency) কৃত্রিমভাবে কম দেখাতে পারে। তাই যেকোনো Latency চার্টের সাথে তার Denominator, স্ট্যাটাস ফিল্টার এবং সময়টি ক্লায়েন্টে মাপা হয়েছে নাকি সার্ভারে—তা স্পষ্টভাবে জানাতে হবে।"
+        },
+        {
+          "type": "math",
+          "title": "Linear Sample Quantile-এর গাণিতিক সূত্র",
+          "body": "Q_p=x_{\\lfloor h\\rfloor}+(h-\\lfloor h\\rfloor)(x_{\\lceil h\\rceil}-x_{\\lfloor h\\rfloor}),\\quad h=(n-1)p"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Histogram ও দুই ধরনের p95 যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"serving36\", Path(\"assets/datasets/bike_sharing/serving_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/serving_lab.json\").read_text(encoding=\"utf-8\")\n)\n\ns = m.slo_fixture()\nassert abs(s[\"p95_all\"] - 152.5) < 1e-9\nassert abs(s[\"p95_success\"] - 133) < 1e-9\nprint(s[\"histogram\"], s[\"p95_all\"], s[\"p95_success\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "Cumulative Histogram Bucket বোঝার নিয়ম",
+          "body": "উপরের কোডে আমাদের Histogram-এর Bucket সংখ্যাগুলো দেখুন: `≤ 25: 6`, `≤ 50: 10`, `≤ 100: 16`, `≤ 200: 20` এবং `+Inf: 20`। খেয়াল করুন, এই Bucket-গুলো ক্রমযোজিত (`Cumulative`)—অর্থাৎ `≤ 50`-এর `10` সংখ্যার ভেতরে `≤ 25`-এর `6`টি Request-ও অন্তর্ভুক্ত আছে! আপনি যদি শুধুমাত্র `(25, 50]` অংশের একক সংখ্যা চান, তবে পাশের দুটি ক্রমযোজিত Bucket-এর বিয়োগফল (`10 - 6 = 4`) নিতে হবে। প্রোডাকশনে সব কাঁচা Sample জমানো ব্যয়বহুল বলে Histogram Quantile Bucket-এর ভেতরে রৈখিক অনুমান ধরে একটি আসন্ন মান (Approximate Value) দেয়—তাই এটি কাঁটায় কাঁটায় Exact Sample `p95`-এর সমান না হওয়াই স্বাভাবিক।"
+        },
+        {
+          "type": "text",
+          "title": "পুরো Cluster-এর (Fleet) হিসাব একত্র করার সঠিক উপায়",
+          "body": "একাধিক সার্ভার বা Replica-র সম্মিলিত Latency বের করতে হলে প্রতিটি ইনস্ট্যান্সে **অবিকল একই সীমানার (Bucket Boundaries)** Bucket কাউন্টগুলো আগে যোগ করতে হয়, তারপর সেই সম্মিলিত Histogram থেকে Cluster-এর Quantile অনুমান করতে হয়। ভুলেও প্রতিটি সার্ভারের আলাদা `p95` গড় করবেন না—তাতে ট্রাফিকের পরিমাণ এবং প্রান্তিক মানের ক্রম (Tail Ordering) হারিয়ে যায়; এমনকি ট্রাফিকের ওজন দিয়ে গড় (Weighted Average) করলেও প্রকৃত Global Quantile পাওয়া যায় না!"
+        },
+        {
+          "type": "text",
+          "title": "প্রোডাকশনে অর্থবহ Instrumentation",
+          "body": "বাস্তব সার্ভিসে সমস্যার উৎস ধরতে পুরো Request-এর সময়কাল (`End-to-End Duration`), প্রিপ্রসেসিং সময়, কিউতে অপেক্ষার সময় (`Queue Time`) এবং মূল Model ইনফারেন্সের সময় আলাদা Histogram-এ রাখা বুদ্ধিমানের কাজ। পাশাপাশি কোনো Request Retry হলে সেটি কীভাবে গণনা হবে তারও সুনির্দিষ্ট নিয়ম চাই। শুধু কোডে একটি মনিটরিং লাইব্রেরি ইমপোর্ট করলেই কিন্তু অর্থবহ Instrumentation হয়ে যায় না—কোথায় ঘড়ি শুরু আর কোথায় শেষ হচ্ছে, সেটিই আসল।"
+        },
+        {
+          "type": "text",
+          "title": "কোডিং অনুশীলনের দিকনির্দেশনা",
+          "body": "নিজের হাতে সাজানো Array থেকে ম্যানুয়াল `p95`, ক্রমযোজিত Bucket গণনা এবং শুধুমাত্র সফল Request-এর ফিল্টার ইমপ্লিমেন্ট করে দেখুন। সীমানার ঠিক সমান মান (`≤ 100`) কোন Bucket-এ যায়, তার জন্য আলাদা টেস্ট লিখুন এবং খালি তালিকার ক্ষেত্রে `Undefined` ফেরত দিন। সবসময় মনে রাখবেন: গড় Latency চমৎকার দেখালেও `p99` ভয়াবহ খারাপ হতে পারে—তাই Distribution-এর প্রমাণ ছাড়া শুধু গড় (Mean) দিয়ে কখনোই SLO সনদ দেবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "দুই Replica-র আলাদা p95 থেকে কি Fleet p95 পাওয়া সম্ভব?",
+          "body": "কেন Replica-র `p95` গড় করা মারাত্মক ভুল, তা একটি সহজ সংখ্যাগত উদাহরণ দিয়ে দেখা যাক। ধরুন প্রথম Replica-য় `99`টি Request চলেছে প্রতিটিতে ঠিক `10 ms` সময় নিয়ে, আর দ্বিতীয় Replica-য় মাত্র `1`টি Request চলেছে `1000 ms` সময় নিয়ে। তাহলে দুই Replica-র নিজস্ব `p95` দাঁড়ায় যথাক্রমে `10 ms` এবং `1000 ms`। এদের সরল গড় করলে হয় `505 ms`, আর ট্রাফিকের ওজন দিয়ে গড় করলে হয় `19.9 ms`। অথচ সবগুলো অর্থাৎ `100`টি Sample একসাথে জড়ো করে Linear Sample Quantile বের করলে পুরো Cluster-এর প্রকৃত `p95` হয় মাত্র `10 ms`! অর্থাৎ Quantile বের করার **আগে** অবশ্যই পুরো Distribution-কে একত্র করতে হবে। নিচের কোডে দেখুন কীভাবে একই Bucket সীমানার কাউন্ট যোগ করে সঠিক সমষ্টি মেলানো হয়েছে।"
+        },
+        {
+          "type": "code",
+          "title": "ভুল গড় বনাম সম্মিলিত Sample Quantile ও Bucket যোগফল",
+          "body": "import numpy as np\n\nfirst = np.full(99, 10.0)\nsecond = np.array([1000.0])\nlocal = np.array([np.quantile(first, 0.95), np.quantile(second, 0.95)])\ncombined = np.concatenate([first, second])\nweighted = np.average(local, weights=[len(first), len(second)])\nedges = [10, 1000]\nmerged_counts = [\n    sum(np.count_nonzero(part <= edge) for part in [first, second]) for edge in edges\n]\nassert merged_counts == [99, 100]\nprint(local.mean(), round(weighted, 6), np.quantile(combined, 0.95), *merged_counts)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে যাচাই করুন",
+          "body": "প্রতিটি Replica-র নিজস্ব p95 অপরিবর্তিত থাকলেও তাদের ভেতরকার Traffic-এর অনুপাত বদলে গেলে কি পুরো Cluster-এর Fleet p95 একই থাকবে?",
+          "solution": "মোটেও একই থাকার নিশ্চয়তা নেই! কারণ সম্মিলিত Quantile নির্ভর করে সব Replica মিলিয়ে তৈরি হওয়া সামগ্রিক Distribution-এর ওপর। ট্রাফিকের অনুপাত বদলালে সম্মিলিত Distribution-এর ৯৫তম শতাংশের অবস্থানও বদলে যেতে পারে। তাই সঠিক Fleet Quantile পেতে হলে কাঁচা Sample অথবা অভিন্ন সীমানার Histogram Bucket Count একত্র করতে হবে; আর Bucket-গুলো Counter-ভিত্তিক হলে একই সময়ের উইন্ডো এবং প্রসেস রিস্টার্ট সামলানোর (Reset Handling) নিয়মও এক হতে হবে।",
+          "reference": "https://prometheus.io/docs/practices/histograms/"
+        }
+      ]
+    },
+    {
+      "id": "ch36_book_shift_taxonomy",
+      "title": "Distribution Shift: Covariate, Label ও Concept Drift",
+      "subtitle": "ডেটার কোন অংশটি বদলাচ্ছে তা না বুঝে অন্ধভাবে Retrain করলে সমস্যার সমাধান হয় না",
+      "duration": "18 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Drift মানেই কিন্তু একক কোনো রোগ নয়",
+          "body": "মনিটরিং ড্যাশবোর্ডে 'Drift ধরা পড়েছে' মানে কেবল একটি সতর্কবার্তা—এটি নিজে কোনো চূড়ান্ত রোগনির্ণয় (Diagnosis) নয়! গাণিতিকভাবে অন্তত তিনটি ভিন্ন উপায়ে ডেটার জগৎ বদলাতে পারে: `Covariate Shift`-এ ইনপুটের Distribution $P(x)$ বদলায় কিন্তু ইনপুট দিলে আউটপুটের সম্পর্ক $P(y \\mid x)$ অটুট থাকে; `Label Shift`-এ ফলাফলের সামগ্রিক অনুপাত $P(y)$ বদলায় কিন্তু $P(x \\mid y)$ স্থির থাকে; আর `Concept Drift`-এ খোদ ইনপুট ও আউটপুটের মধ্যকার আসল সম্পর্ক $P(y \\mid x)$-ই পাল্টে যায়! বাস্তব প্রোডাকশনে অনেক সময় এর একাধিক পরিবর্তন একই সাথে ঘটে।"
+        },
+        {
+          "type": "text",
+          "title": "লক্ষণ দেখে ধাপে ধাপে তদন্তের নিয়ম",
+          "body": "প্রকৃত Label ছাড়াই যেসব Feature Monitor চলে, সেগুলো কেবল ইনপুটের Distribution পরিবর্তন (`Covariate Shift`) ধরতে পারে—Model-এর আসল Prediction-এর মান কেমন হচ্ছে তা সরাসরি জানে না। তাই যখনই Mature Label হাতে আসবে, তখন স্থির নীতিমালায় সামগ্রিক Metric এবং খণ্ডাংশভিত্তিক (`Slice`) পারফরম্যান্স হিসাব করুন। পরিবর্তন দেখলে ডেটা পাইপলাইনের বাগ, ব্যবহারকারীর Population পরিবর্তন এবং Model-এর নিজস্ব সিদ্ধান্তের প্রভাব (Feedback)—এই তিনটি আলাদা অনুমান (Hypothesis) যাচাই করুন। শুরুতেই Schema বা ডেটা সোর্সের ত্রুটি বাদ না দিয়ে কখনোই স্বয়ংক্রিয় Retraining চালাবেন না।"
+        },
+        {
+          "type": "math",
+          "title": "Covariate Shift-এর গাণিতিক সংজ্ঞা",
+          "body": "\\text{covariate shift: }p_{new}(x)\\ne p_{old}(x),\\ p_{new}(y\\mid x)=p_{old}(y\\mid x)"
+        },
+        {
+          "type": "text",
+          "title": "খাতাকলমে উদাহরণ: প্রতিটি Slice ঠিক থেকেও গড় ত্রুটি বৃদ্ধির রহস্য",
+          "body": "কল্পনা করুন আপনার সিস্টেমে দুটি ইউজার সেগমেন্ট বা Slice আছে, যেখানে Model-এর ত্রুটির হার যথাক্রমে `0.1` এবং `0.4`। আগে ট্রাফিকের অনুপাত ছিল `0.8` এবং `0.2`—ফলে সামগ্রিক গড় ত্রুটি ছিল `0.8 × 0.1 + 0.2 × 0.4 = 0.16`। এখন হঠাৎ ট্রাফিকের মিশ্রণ উল্টে গিয়ে `0.2` এবং `0.8` হয়ে গেল! খেয়াল করুন, দুটি Slice-এর কোনোটিতেই কিন্তু Model-এর নিজস্ব দক্ষতা একটুও খারাপ হয়নি (`0.1` ও `0.4`-ই আছে), তবুও শুধু Population-এর গঠন (`Composition`) বদলে যাওয়ায় সামগ্রিক ত্রুটি লাফিয়ে `0.34` হয়ে গেল!"
+        },
+        {
+          "type": "code",
+          "title": "Population Composition পরিবর্তনের প্রভাবে গড় ত্রুটির হিসাব",
+          "body": "slice_errors = [0.1, 0.4]\nold_weights, new_weights = [0.8, 0.2], [0.2, 0.8]\nold_error = sum(w * e for w, e in zip(old_weights, slice_errors))\nnew_error = sum(w * e for w, e in zip(new_weights, slice_errors))\n# Keep slice performance fixed to isolate a population-composition change.\nprint(round(old_error, 6), round(new_error, 6))\n"
+        },
+        {
+          "type": "text",
+          "title": "কোডের ফলাফল থেকে বাস্তব শিক্ষা",
+          "body": "উপরের কোডটি চালালে আমরা ঠিক `0.16` এবং `0.34` পাচ্ছি। বাস্তব ডেটা থেকে যখন এ ধরনের Slice এবং তাদের অনুপাত প্রাক্কলন করা হয়, তখন ছোট Sample-এর অনিশ্চয়তাও (Uncertainty) রিপোর্টে উল্লেখ করা উচিত। মনে রাখবেন, আমাদের বান্ডল করা PSI নির্দেশকগুলো ডেটার Distribution-গত পার্থক্য বর্ণনা করে মাত্র—এগুলো নিজে থেকে ত্রুটির কারণ বলে দেয় না।"
+        },
+        {
+          "type": "text",
+          "title": "শুধুই Feature Monitor-এর ওপর ভরসা করার বিপদ",
+          "body": "একটি মারাত্মক ভুল ধারণা হলো: 'কোনো Feature Drift ধরা পড়েনি মানেই Model সম্পূর্ণ নিরাপদ!' বাস্তবে ইনপুট Feature-এর Distribution হুবহু এক থাকার পরেও তীব্র `Concept Drift` ঘটতে পারে। আবার উল্টোদিকে অনুপস্থিত Label, Selection Bias কিংবা পুরোনো ভুল Join আমাদের কোয়ালিটি মনিটরকেও অন্ধ করে রাখতে পারে। আর মনে রাখবেন—ডেটার Schema ভেঙে গেলে হাজারবার Model Retrain করেও সেই ভাঙা পাইপলাইন মেরামত করা সম্ভব নয়।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে চেষ্টা করুন",
+          "body": "যদি দেখা যায় ইনপুট Feature Distribution একেবারেই বদলায়নি, কিন্তু বাস্তবে Label-এর অর্থ বা সম্পর্ক বদলে গেছে—তবে তা ধরার জন্য কোন ধরনের Monitor দরকার? আর এমন পরিস্থিতিতে আগের Model-এ Rollback করলে কি সবসময় সমস্যার সমাধান হবে?",
+          "solution": "এটি যেহেতু সরাসরি Concept Drift ($P(y \\mid x)$ বদলে গেছে), তাই শুধু ইনপুট Feature মনিটর দিয়ে এটি কখনোই ধরা পড়বে না; এর জন্য প্রয়োজন Mature-Label ভিত্তিক Quality Monitor, Calibration যাচাই এবং খণ্ডাংশভিত্তিক Error Analysis। আর যেহেতু বাইরের বাস্তব জগতের নিয়ম বা অর্থই বদলে গেছে, তাই আগের পুরোনো Model-এ Rollback করলেও সেটি নতুন বাস্তবতায় একইভাবে ব্যর্থ হতে পারে! এমন অবস্থায় নিরাপদ Fallback বা Abstention নীতি চালু করে নতুন বাস্তবতার ডেটা সংগ্রহ ও Model আপডেটের পরিকল্পনা করতে হবে।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch36_drift",
+      "title": "Feature Drift: Fixed Bins ও PSI Audit",
+      "subtitle": "ডেটার Distribution-এ পরিবর্তন (Shift) মাপুন, কিন্তু সংখ্যা দেখেই আগেভাগে কারণ অনুমান করে বসবেন না",
+      "duration": "55 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "স্থির Reference Population ও Bin সীমানা",
+          "body": "কোনো Feature-এর Distribution সময়ের সাথে কতটা সরে গেছে তা মাপতে একটি স্থির ভিত্তি বা Reference প্রয়োজন। এখানে আমরা 2011 সালের `358`টি Fit ইনপুটকে Reference হিসেবে ব্যবহার করছি এবং সেখান থেকে `lag1`, `lag7` ও `mean7`-এর Quintile সীমানা (`[0.2, 0.4, 0.6, 0.8]`) একবারের জন্য স্থির করে নিচ্ছি। সীমানার ঠিক সমান মান ডান পাশের Bucket-এ পড়ে এবং ডুপ্লিকেট প্রান্ত থাকলে তা বাদ দেওয়া হয়। সময়ের সাথে মনিটরিং উইন্ডোর ডেটা বদলালেও তুলনার স্বচ্ছতার জন্য এই Reference Bin সীমানাগুলো কিন্তু স্থির রাখতে হবে! Bucket-এর সংজ্ঞা ও Smoothing সূত্র ফাইলে সংরক্ষণ করে রাখলে যে কেউ পরে স্বাধীনভাবে হিসাবটি নিরীক্ষা (Audit) করতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "শূন্য Bucket সামলানো ও Probability Mass হিসাব",
+          "body": "Population Stability Index (`PSI`)-এর সূত্রে লগারিদম ও ভাগ থাকায় কোনো Bucket-এ Request সংখ্যা শূন্য (`0`) হলে হিসাব অসংজ্ঞায়িত হয়ে যেতে পারে! এটি এড়াতে প্রতিটি Bucket-এর মূল সংখ্যার সাথে `0.5` Pseudocount যোগ করা হয় এবং মোট হর `N + 0.5 K` দিয়ে ভাগ করে Normalize করা হয় (যেখানে `K` হলো মোট Bucket সংখ্যা)। ফলে সবগুলো Bucket-এর Probability Mass-এর যোগফল ঠিক `1` থাকে এবং শূন্য Bucket-এও সসীম লগ অনুপাত পাওয়া যায়। তবে মনে রাখবেন: Sample Size, Bucket-এর সংখ্যা এবং এই Smoothing মানের ওপর PSI-এর সংখ্যাগত মান নির্ভর করে—তাই সব ডোমেইনের জন্য অন্ধভাবে একই সার্বজনীন Threshold দাবি করা ঠিক নয়।"
+        },
+        {
+          "type": "math",
+          "title": "Smoothed Probability Mass ও PSI-এর সমীকরণ",
+          "body": "PSI=\\sum_k(q_k-p_k)\\log(q_k/p_k),\\quad p_k=\\frac{n_k+0.5}{N+0.5K}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Training Reference বনাম Observed ডেটার PSI গণনা",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"serving36\", Path(\"assets/datasets/bike_sharing/serving_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/serving_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nimport numpy as np\n\nreference = [r[\"features\"][\"lag1\"] for r in lab[\"training\"]]\nobserved = [r[\"features\"][\"lag1\"] for r in lab[\"rows\"]]\nedges = sorted(set(np.quantile(reference, [0.2, 0.4, 0.6, 0.8], method=\"linear\")))\nresult = m.psi(reference, observed, edges)\nprint(result[\"reference_bins\"], result[\"observed_bins\"], result[\"psi\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "বাইক ডেটায় বাস্তব ঋতুগত পরিবর্তনের চিত্র",
+          "body": "আমাদের Dataset-এ `lag1`-এর PSI পুরো Development সময়ে এসেছে `0.882`, শুরুর দিকের উইন্ডোতে (`early`) `0.351` এবং পরের গ্রীষ্মকালীন উইন্ডোতে (`late`) লাফিয়ে হয়েছে `2.790`! আর `mean7`-এর ক্ষেত্রে `late` উইন্ডোর PSI উঠেছে `3.781`-এ। এই সংখ্যাগুলো আমাদের জানাচ্ছে যে 2011 সালের গড় Distribution-এর তুলনায় 2012 সালের মাঝামাঝি সময়ে ভাড়ার সংখ্যার Distribution অনেক ওপরের Bucket-এ সরে গেছে। শহরের বাইক শেয়ারিংয়ের স্বাভাবিক প্রসার ও গ্রীষ্মকাল এর একটি যৌক্তিক প্রেক্ষাপট হতে পারে, কিন্তু মনে রাখবেন—PSI কেবল Distribution-এর পার্থক্য দেখায়, এর পেছনের কার্যকারণ (Causal Attribution) প্রমাণ করে না! তাই ডেটা নষ্ট হওয়া, প্রোডাক্টের পরিবর্তন নাকি স্বাভাবিক ঋতুচক্র—প্রতিটি সম্ভাবনা আলাদাভাবে যাচাই করতে হবে।"
+        },
+        {
+          "type": "mlops_monitor",
+          "title": "ইন্টারঅ্যাক্টিভ ল্যাব: Drift ও Label Delay নিরীক্ষা",
+          "body": "নিচের প্যানেলে সময়ের খণ্ড (`Period`), কাঁচা Feature এবং `Label Delay` পরিবর্তন করে দেখুন। চার্টের বারগুলো Reference এবং বর্তমান উইন্ডোর Smoothed Probability Mass দেখায়—এগুলোকে কোনো Calibrated Confidence মনে করবেন না। বিশেষভাবে লক্ষ্য করুন: আপনি যখন `Label Delay` বদলাবেন, তখন কেবল Model কোয়ালিটির হর (Denominator) বদলাবে, কিন্তু ইনপুট Feature-এর Distribution বা PSI একচুলও বদলাবে না! প্রতিটি পরিবর্তন অ্যাপটি সরাসরি মূল Row-গুলো থেকে তাৎক্ষণিকভাবে হিসাব করে।"
+        },
+        {
+          "type": "text",
+          "title": "একক Feature-এর PSI-এর সীমাবদ্ধতা",
+          "body": "একটি করে Feature আলাদাভাবে মাপা (`Univariate PSI`) অনেক সময় একাধিক Feature-এর পারস্পরিক সম্পর্কের পরিবর্তন (`Joint Dependency Shift`) পুরোপুরি মিস করতে পারে! তাছাড়া $P(X)$ বদলানো মানেই যেমন $P(Y \\mid X)$ নষ্ট হওয়া নয়, তেমনি $P(X)$ স্থির থেকেও ভেতরে ভেতরে Concept Drift ঘটতে পারে। আর PSI কখনোই পরিসংখ্যানগত `p-value` বা Model-এর ব্যবসায়িক উপযোগিতার গ্যারান্টি দেয় না। অনুপস্থিত Feature (`Missingness`) এবং ডেটার সতেজতার জন্য আলাদা চার্ট রাখুন—কারণ অনুপস্থিত Row-গুলো চুপচাপ বাদ দিয়ে PSI মাপলে আসল বিপর্যয় ঢাকা পড়ে যায়।"
+        },
+        {
+          "type": "text",
+          "title": "Drift Alert বাজলে করণীয় নীতি",
+          "body": "হঠাৎ PSI বেড়ে যাওয়ার অ্যালার্ট পেলে প্রথম কাজ হলো ডেটা সোর্স, Version, একক (Units) এবং স্বাভাবিক ঋতুগত আচরণ যাচাই করা; এরপর Mature-Label কোয়ালিটি এবং প্রোডাক্টের বিভিন্ন Slice পরীক্ষা করা। স্বয়ংক্রিয় Retraining ট্রিগার করার আগে পর্যাপ্ত নতুন ডেটা প্রস্তুত আছে কি না, সত্যিকারের উন্নতি হবে কি না, অনুমোদনের নীতি এবং নিরাপদ Rollback পথ আছে কি না—তা নিশ্চিত হতে হবে। নিছক PSI বড় দেখেই চলমান Model-কে সাথে সাথে অকেজো ঘোষণা করা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "প্রতিটি Feature-এর Marginal Distribution এক থেকেও কীভাবে Joint Distribution বদলে যায়?",
+          "body": "Univariate PSI কেন অন্ধ হতে পারে, তার একটি চমৎকার গাণিতিক উদাহরণ দেখা যাক। ধরুন দুটি বাইনারি Feature-এর পুরোনো Population-এ সমান হারে ছিল `(0, 0)` এবং `(1, 1)`। আর নতুন Population-এ সমান হারে এসেছে `(0, 1)` এবং `(1, 0)`। খেয়াল করুন: প্রথম Feature-টি আগেও অর্ধেক শূন্য ও অর্ধেক এক ছিল, এখনও তাই; দ্বিতীয় Feature-টিও ঠিক তাই! ফলে দুটি Feature-এরই আলাদাভাবে হিসাব করা `Marginal PSI` হবে কাঁটায় কাঁটায় শূন্য (`0`)। অথচ প্রকৃত ফলাফলের নিয়ম যদি স্থির থাকে $y = x_1 \\oplus x_2$ (`XOR`), তবে আগে যে Model সবসময় `0` বলে ১০০% সফল হচ্ছিল (`error = 0`), নতুন Population-এ তার ত্রুটির হার এক লাফে ১০০% (`error = 1`) হয়ে যাবে! কারণ এখানে `Joint Distribution` বা `Joint P(X)` পুরোপুরি পাল্টে গেছে, যা একক Feature-এর চার্টে ধরা পড়া অসম্ভব।"
+        },
+        {
+          "type": "code",
+          "title": "শূন্য Marginal PSI থাকা সত্ত্বেও ফলাফলের আমূল পরিবর্তন",
+          "body": "import numpy as np\n\nold = np.array([[0, 0], [1, 1]])\nnew = np.array([[0, 1], [1, 0]])\nmarginal_psi = []\nfor column in range(2):\n    ref = np.bincount(old[:, column], minlength=2).astype(float) + 0.5\n    obs = np.bincount(new[:, column], minlength=2).astype(float) + 0.5\n    ref, obs = ref / ref.sum(), obs / obs.sum()\n    marginal_psi.append(np.sum((obs - ref) * np.log(obs / ref)))\nold_labels = np.logical_xor(old[:, 0], old[:, 1])\nnew_labels = np.logical_xor(new[:, 0], new[:, 1])\nprint(*marginal_psi, old_labels.mean(), new_labels.mean())\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে যাচাই করুন",
+          "body": "উপরের এই XOR উদাহরণে Model-এর Error 0 থেকে বেড়ে 1 হয়ে গেল—শুধু এই ফলাফল দেখেই কি নিশ্চিতভাবে বলা যায় যে এখানে Concept Drift ঘটেছে?",
+          "solution": "না, নিশ্চিতভাবে বলা যায় না—এবং এই উদাহরণে আসলে কোনো Concept Drift ঘটেইনি! কারণ ইনপুট থেকে আউটপুট তৈরির মূল নিয়ম ($y = x_1 \\oplus x_2$) আগে যা ছিল, এখনও হুবহু তা-ই আছে ($P(y \\mid x)$ অপরিবর্তিত)। এখানে বদলেছে ইনপুটগুলোর যৌথ মিশ্রণ (`Joint Input Mixture` অর্থাৎ Covariate Shift), আর আমাদের সরল Model-টি নতুন কম্বিনেশনগুলোতে ভুল করছে। তাই শুধু সামগ্রিক Error বাড়তে দেখলেই সেটিকে Concept Drift ধরে নেবেন না; পাশাপাশি Feature Interaction, ডেটার কভারেজ এবং Mature-Label কোয়ালিটি বিশ্লেষণ করে কোন Conditional Distribution-টি বদলেছে তা আলাদাভাবে চিহ্নিত করতে হবে।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch36_quality",
+      "title": "Mature Labels ও Paired Quality Evaluation",
+      "subtitle": "মূল্যায়নের মুহূর্তে যে ফলাফলগুলো সত্যিই জানা ছিল, কেবল সেগুলো দিয়েই Model যাচাই করুন",
+      "duration": "55 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "দুটি আলাদা ঘড়ি: Feature পৌঁছানো বনাম স্থির Label পাওয়া",
+          "body": "আমাদের মূল বাইক Dataset-এ প্রকৃত ফলাফল ঠিক কোন মুহূর্তে সার্ভারে এসে পৌঁছেছিল তার আলাদা Timestamp নেই। তাই বিলম্বিত Label-এর বাস্তব চ্যালেঞ্জটি শেখার জন্য আমরা একটি সুনির্দিষ্ট নিয়ম ধরেছি: `label_available = target + 1 + delay`, আর রিপোর্ট তৈরির সময় ধরা হয়েছে `reporting_clock = period_end + 1`। এখানে `delay`-এর মান `0`, `2` বা `7` দিন বসালে মূল্যায়নের জন্য যোগ্য (Mature) Label-এর সংখ্যাও বদলে যায়। মনে রাখবেন, কাঁচা Feature আসা আর নিরীক্ষার উপযোগী স্থির (Stable) Label পাওয়া দুটি আলাদা নীতি—কোনো প্রাথমিক সংখ্যা আগে পাওয়া গেলেও চূড়ান্ত হিসাব মেলানোর পর সেটি স্থির Label হিসেবে স্বীকৃতি পেতে দেরি হতে পারে। তাই রিপোর্টে সবসময় এই দুই ঘড়ির সংজ্ঞাই লিখে রাখা উচিত।"
+        },
+        {
+          "type": "text",
+          "title": "ন্যায্য তুলনার শর্ত: অভিন্ন Mature Population",
+          "body": "পুরো `182`টি Request-এর উইন্ডোতে `delay = 0` হলে `182`টি, `delay = 2` হলে `180`টি এবং `delay = 7` হলে `175`টি Mature Label পাওয়া যায়। একইভাবে `91` Row-এর শুরুর (`early`) বা পরের (`late`) খণ্ডে সংখ্যাগুলো দাঁড়ায় যথাক্রমে `91`, `89` এবং `84`। আমরা যখন `candidate`, `naive1` এবং `seasonal7` Model-এর তুলনা করি, তখন তাদের প্রত্যেককে **ঠিক একই Mature Subset**-এর ওপর Score করি—ভিন্ন ভিন্ন হর (Denominator) বা ভিন্ন দিনের সেটের ওপর গড় MAE বের করে তুলনা করলে তা কখনোই ন্যায্য জুটিবদ্ধ তুলনা (Paired Comparison) হয় না।"
+        },
+        {
+          "type": "math",
+          "title": "Label যোগ্যতার শর্ত ও গড় পরম ত্রুটি (MAE)",
+          "body": "eligible(t,c,d)\\iff t+1+d\\le c,\\quad MAE=\\frac1n\\sum_i|\\hat y_i-y_i|"
+        },
+        {
+          "type": "code",
+          "title": "বিভিন্ন Period ও Delay-তে Mature Label এবং MAE গণনা",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"serving36\", Path(\"assets/datasets/bike_sharing/serving_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/serving_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nfor period in m.PERIODS:\n    for delay in [0, 2, 7]:\n        q = m.quality(lab[\"rows\"], period, delay)\n        print(\n            period,\n            delay,\n            q[\"request_rows\"],\n            q[\"mature_labels\"],\n            q[\"models\"][\"candidate\"][\"mae\"],\n        )\n"
+        },
+        {
+          "type": "text",
+          "title": "MAE, RMSE এবং Signed Bias—কোন Metric কী বলে?",
+          "body": "Model-এর গুণমান বুঝতে একাধিক Metric পাশাপাশি দেখা জরুরি: `MAE` আমাদের দেয় সাধারণ পরম ত্রুটির ধারণা, `RMSE` বড় ভুলগুলোকে বর্গ করে বাড়তি শাস্তি দেয়, আর `Signed Bias` (গড় $(\\hat y - y)$) দেখিয়ে দেয় Model কি ধারাবাহিকভাবে কম নাকি বেশি অনুমান করছে। যেমন, পুরো ডেটায় আমাদের Candidate Model-এর Bias হলো `-199.801` (একক: `rentals/day`), যার অর্থ Model-টি গড়ে প্রকৃত চাহিদার চেয়ে প্রায় ২০০টি কম বাইক অনুমান করছে! উল্লেখ্য, প্রকৃত সংখ্যা শূন্য বা খুব ছোট হলে শতকরা ত্রুটি (`MAPE`) অস্থিতিশীল হয়ে পড়ে, আর কম অনুমান ও বেশি অনুমানের ব্যবসায়িক ক্ষতি অসমান হলে আলাদা Asymmetric Loss ব্যবহার করা উচিত।"
+        },
+        {
+          "type": "text",
+          "title": "বিলম্বিত Label-এ Selection Bias-এর ঝুঁকি",
+          "body": "বাস্তব প্রোডাকশনে সব Label সমান গতিতে আসে না—অনেক সময় জটিল ট্রানজ্যাকশন বা বিশেষ ইউজার সেগমেন্টের ফলাফল আসতে বেশি দেরি হয়। তেমন হলে হাতে থাকা প্রাথমিক Mature Subset পুরো Population-এর সঠিক প্রতিনিধিত্ব নাও করতে পারে! আমাদের এই ল্যাবে বিলম্বের সময়টি স্থির সিনারিও হিসেবে দেওয়া হলেও প্রোডাকশন ড্যাশবোর্ডে সবসময় অপেক্ষমাণ Label-এর সংখ্যা (`Pending Count`) ও কভারেজ শতাংশ প্রকাশ করবেন। আর কখনোই না আসা Label-এর ত্রুটি শূন্য (`Zero Residual`) ধরে Model-এর গুণমান ভালো দেখানোর ভুল করবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "Model প্রমোশন ও পরিসংখ্যানগত সতর্কতা",
+          "body": "দুটি রিলিজ তুলনা করার সময় অবিকল একই Request, সময়, ইনপুট উৎস এবং আউটকাম নীতি বজায় রাখুন। খেয়াল রাখবেন: ঐতিহাসিক মূল্যায়ন সেটের ফলাফল দেখে যখনই আপনি Candidate Model-কে প্রমোট করার সিদ্ধান্ত নিচ্ছেন, তখনই সেই সেটটি আপনার সিদ্ধান্তের অংশ হয়ে যাচ্ছে—ভবিষ্যতে স্বাধীন নিশ্চিতকরণের জন্য নতুন ডেটা প্রয়োজন (যে কারণে আমরা আমাদের সংরক্ষিত `184`টি ফলাফল এখানে স্পর্শও করিনি)। এছাড়া টাইম-সিরিজ ডেটায় পরপর দিনগুলোর মধ্যে নির্ভরশীলতা (`Temporal Dependence`) থাকায় সাধারণ স্বাধীন ডেটার (`i.i.d.`) সূত্র বসিয়ে সরাসরি Confidence Interval বানানো ঠিক নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Interview পরামর্শ: Label আসতে দেরি হলে কী করবেন?",
+          "body": "ধরুন সার্ভিসের Latency চমৎকার, কিন্তু প্রকৃত ফলাফল আসতে এক সপ্তাহ দেরি হয়—তখন আপনার মনিটরিং কৌশল কী হবে? বুঝিয়ে বলুন যে সার্ভিসের অপারেশনাল সুস্থতা ও ইনপুট কমপ্লিটনেস তাৎক্ষণিকভাবে দেখা গেলেও প্রকৃত Model Quality ততক্ষণ `Pending` অবস্থায় থাকবে; দ্রুত পাওয়া কোনো পরোক্ষ সংকেত (Proxy) দেখেই চূড়ান্ত উপযোগিতা দাবি করা যাবে না। ড্যাশবোর্ডে Request সংখ্যা, প্রাপ্ত Label সংখ্যা, Maturity নিয়ম, উইন্ডো ও Version স্পষ্টভাবে লিখুন; এবং পরে আপস্ট্রিম ডেটা সংশোধিত হয়ে এলে পুরোনো রিপোর্টের পরিবর্তন ইতিহাস (Revision Lineage) সংরক্ষণ করুন।"
+        },
+        {
+          "type": "text",
+          "title": "সহজ Label আগে চলে এলে কীভাবে বিজয়ী Model উল্টে যেতে পারে!",
+          "body": "Selective Delay কীভাবে আমাদের ধোঁকা দিতে পারে, তা চারটি ফলাফলের একটি ছোট্ট উদাহরণে দেখুন: ধরুন প্রকৃত ফলাফলগুলো হলো `[0, 0, 100, 100]`। আমাদের Candidate Model সবক্ষেত্রেই অন্ধভাবে `0` বলে, আর Baseline Model বলে `[20, 20, 80, 80]`। ধরা যাক প্রথম দুটি সহজ ফলাফল (`0, 0`) তাৎক্ষণিকভাবে চলে এসেছে (`Mature`), কিন্তু পরের বড় সংখ্যা দুটি (`100, 100`) যাচাই হতে সময় লাগছে (`Pending`)। এখন শুধু Mature অংশটুকু মাপলে Candidate-এর `MAE = 0` এবং Baseline-এর `MAE = 20`—মনে হবে Candidate অসাধারণ জিতেছে! অথচ বাকি দুটি Label আসার পর পুরো Population-এ Candidate-এর `MAE` দাঁড়াবে `50`, আর Baseline-এর থাকবে মাত্র `20`! এজন্যই একই Mature Subset-এ তুলনা করার পাশাপাশি সেই Subset-টি কাদের প্রতিনিধিত্ব করছে তা প্রকাশ করাও অপরিহার্য।"
+        },
+        {
+          "type": "code",
+          "title": "আংশিক Mature Label-এ আপাত বিজয়ী বনাম পূর্ণ ডেটায় আসল ফলাফল",
+          "body": "import numpy as np\n\noutcome = np.array([0.0, 0.0, 100.0, 100.0])\ncandidate = np.zeros(4)\nbaseline = np.array([20.0, 20.0, 80.0, 80.0])\nmature = np.array([True, True, False, False])\ncandidate_error = np.abs(candidate - outcome)\nbaseline_error = np.abs(baseline - outcome)\nprint(\n    candidate_error[mature].mean(),\n    baseline_error[mature].mean(),\n    candidate_error.mean(),\n    baseline_error.mean(),\n    mature.mean(),\n)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে যাচাই করুন",
+          "body": "বাস্তব প্রোডাকশনে রিপোর্ট তৈরির মুহূর্তে যখন Pending Label-গুলোর মান সত্যিই অজানা থাকে, তখন আপনি সামগ্রিক MAE কীভাবে রিপোর্ট করবেন?",
+          "solution": "তখন অনুমান করে পূর্ণ Population-এর MAE বানানো যাবে না; বরং ওই মুহূর্তে হাতে থাকা Mature Subset-এর MAE, তার সাথে কতগুলো Label এখনো অপেক্ষমাণ (`Pending Count`), শতকরা কতভাগ কভারেজ পাওয়া গেছে এবং Label পরিপক্ব হওয়ার নিয়ম (`Maturity Rule`) স্পষ্টভাবে একসাথে রিপোর্ট করতে হবে। আমাদের উপরের উদাহরণে চারটি ফলাফলই আগে থেকে জানা ছিল বলে আমরা ফলাফল উল্টে যাওয়াটা দেখতে পেয়েছি; কিন্তু বাস্তবে পরে যখনই বাকি Label-গুলো এসে পৌঁছাবে, তখন Revision Lineage বজায় রেখে আপডেটেড Metric প্রকাশ করতে হবে। আর Label না আসার পেছনে যদি নির্দিষ্ট কোনো ঝোঁক (Selective Missingness) থাকে, তবে তা সংশোধনের জন্য বাড়তি পরিসংখ্যানগত অনুমান ও প্রমাণের প্রয়োজন হবে।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch36_feedback",
+      "title": "Feedback Loops ও Monitoring Blind Spots",
+      "subtitle": "প্রোডাকশনে Model-এর আজকের সিদ্ধান্ত নিজেই আগামীকালের আগত ডেটাকে বদলে দিতে পারে",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "নীরব পর্যবেক্ষণ (Passive Replay) বনাম সক্রিয় হস্তক্ষেপ",
+          "body": "আমাদের এই ঐতিহাসিক বাইক রিপ্লে সিস্টেমে Model নীরবে অতীতের সংখ্যা পড়ে Prediction করে—Model-এর উত্তরের কারণে শহরের মানুষ পরদিন বেশি বা কম বাইক ভাড়া নেয়নি! কিন্তু বাস্তব প্রোডাকশনে একটি Recommender System কোন পণ্য সামনে দেখাল, Fraud Model কোন লেনদেন আটকে দিল, কিংবা Dynamic Pricing Model কত দাম হাঁকাল—সেই সিদ্ধান্ত সরাসরি ভবিষ্যতের সংগৃহীত ডেটা ও Label-কে বদলে দেয়! Candidate Model যেসব পণ্য ব্যবহারকারীকে দেখায়নি, সেগুলোর ক্ষেত্রে কী ঘটত (`Counterfactual Outcome`) তা আমাদের জানা থাকে না। তাই প্যাসিভ ঐতিহাসিক রিপ্লে থেকে কখনোই অনলাইনের প্রকৃত কার্যকারণ প্রভাব (Causal Effect) মাপা যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "Selective Labels: যে ফলাফলগুলো কখনোই দেখা যায় না",
+          "body": "একটু ভাবুন: ব্যাংক যাকে ঋণ দেয়নি সে সময়মতো কিস্তি শোধ করত কি না, যে বিজ্ঞাপন দেখানোই হয়নি তাতে কেউ ক্লিক করত কি না, কিংবা যে পেমেন্ট শুরুতেই ব্লক করা হয়েছে তা আসলেই জালিয়াতি ছিল কি না—এই Label-গুলো কিন্তু দৈবচয়িতভাবে (Randomly) হারিয়ে যায়নি, বরং Model-এর নিজস্ব নীতির কারণেই অদৃশ্য হয়ে গেছে! একে বলা হয় `Selective Labels` সমস্যা। একটি সরল কোয়ালিটি ড্যাশবোর্ড কেবল অনুমোদিত বা সহজ কেসগুলোর ওপর Model-কে যাচাই করে আত্মতুষ্টিতে ভুগতে পারে। মনে রাখবেন, ফলাফল না পাওয়া এবং নীতির কারণে তৈরি হওয়া এই বাছাইকরণ সাধারণ Feature Drift থেকে সম্পূর্ণ ভিন্ন ও গভীর একটি সমস্যা।"
+        },
+        {
+          "type": "math",
+          "title": "Model Action থেকে পরবর্তী ডেটা বদলে যাওয়ার চক্র (Feedback Loop)",
+          "body": "\\hat y_t\\to a_t\\to data_{t+1}\\to\\hat y_{t+1}"
+        },
+        {
+          "type": "code",
+          "title": "সমষ্টিগত ডেটায় ব্যক্তিগত ট্রিটমেন্ট বা এক্সপোজার না থাকার যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/serving_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nassert all(r[\"target\"] < 547 for r in lab[\"rows\"])\nassert all(\"user_id\" not in r for r in lab[\"events\"][\"on_time\"])\nprint(\"Daily aggregate;no observed treatment assignment or individual exposures\")\n"
+        },
+        {
+          "type": "text",
+          "title": "ভবিষ্যৎ বিশ্লেষণের জন্য কী কী লগ করতে হয়?",
+          "body": "Feedback Loop-যুক্ত সিস্টেমকে পরে সঠিকভাবে বিশ্লেষণ করতে হলে লগে অবশ্যই লিখে রাখতে হবে: কোন Decision Policy ও Version কাজ করেছে, Request-টি কোন কোন অপশনের জন্য যোগ্য ছিল (`Exposure Eligibility`), চূড়ান্ত কোন `Action` নেওয়া হয়েছে, প্রযোজ্য ক্ষেত্রে সেই অ্যাকশন বেছে নেওয়ার সম্ভাবনা (`Propensity`), এবং কত বিলম্বে কীভাবে ফলাফল যুক্ত (`Outcome Join`) হয়েছে। তবে শুধু পর্যবেক্ষণমূলক Propensity লগ থাকলেই যে সব লুকানো প্রভাব (`Confounding`) মুছে যাবে, এমন নয়। পাশাপাশি ইউজারের গোপনীয়তা, ডেটা ধরে রাখার সময়সীমা (`Retention`) ও সম্মতির শর্তগুলোও মানতে হবে—এবং আমাদের এই সমষ্টিগত পাবলিক ডেটায় আমরা কখনোই কাল্পনিক ইউজার এক্সপোজার ফিল্ড বানিয়ে নেব না।"
+        },
+        {
+          "type": "text",
+          "title": "খণ্ডাংশভিত্তিক (Slice) মনিটরিং ও তথ্যের সততা",
+          "body": "বাস্তব প্রোডাক্টে অঞ্চল, ডিভাইস, নতুন বনাম পুরোনো ইউজার কোহর্ট কিংবা সংরক্ষিত জনগোষ্ঠীর (`Protected Groups`) ওপর Model-এর পারফরম্যান্স আলাদাভাবে যাচাই করা অত্যন্ত জরুরি—তবে তা করতে হবে বাস্তবে লগ থাকা বৈধ তথ্যের ভিত্তিতেই। আমাদের বর্তমান Dataset-এ যেহেতু কোনো স্টেশন বা ব্যবহারকারীর আইডি নেই, তাই আমরা কৃত্রিম কোনো ইউজার স্লাইস তৈরি করে দেখাইনি। এখানে সময়ের খণ্ডগুলো বাস্তব হলেও এখান থেকে সার্বজনীন ন্যায্যতা (`Fairness Guarantee`) বা সব ধরনের ব্যবহারকারীর প্রতিনিধিত্ব দাবি করা যাবে না। আর ছোট কোহর্ট বিশ্লেষণ করার সময় পরিসংখ্যানগত নয়েজ এবং গোপনীয়তা ফাঁসের ঝুঁকির দিকেও নজর রাখতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "অন্ধত্ব দূর করার বাস্তব উপায়সমূহ",
+          "body": "ডোমেইন ও ঝুঁকির মাত্রা ভেদে এই অন্ধত্ব কাটানোর বেশ কিছু স্বীকৃত কৌশল রয়েছে: নিয়ন্ত্রিত অনলাইন এক্সপেরিমেন্ট (`Controlled Experiment`), সীমিত ও নিরাপদ অনুসন্ধান (`Safe Exploration`), ছোট একটি স্থির `Holdout Policy` চালু রাখা, বিলম্বিত ম্যানুয়াল নিরীক্ষা (`Delayed Audit`) কিংবা বিশেষজ্ঞ মানুষের রিভিউ। অবশ্যই সব প্রোডাক্টে (যেমন চিকিৎসা বা ক্রেডিট ঝুঁকি) অন্ধভাবে Random এক্সপ্লোরেশন চালানো গ্রহণযোগ্য নয়। তবে অদেখা ফলাফলগুলোকে কাল্পনিক সংখ্যা (`Synthetic Labels`) দিয়ে পূরণ করে ড্যাশবোর্ড ভরাট দেখানো কখনোই প্রকৃত সমাধান নয়!"
+        },
+        {
+          "type": "text",
+          "title": "Interview পরামর্শ: ডিপ্লয়মেন্টের পর Metric বাড়লে কীভাবে ব্যাখ্যা করবেন?",
+          "body": "নতুন Model ডিপ্লয় করার পর কোনো Metric বাড়তে বা কমতে দেখলে সাথে সাথেই কৃতিত্ব বা দোষ Model-এর ঘাড়ে চাপাবেন না! আলাদা আলাদা অনুমান হিসেবে পরীক্ষা করুন: এটি কি সত্যিই Model-এর উন্নতি, নাকি এক্সপোজার মিশ্রণের পরিবর্তন, ঋতুগত প্রভাব (`Seasonality`), অন্য কোনো Policy পরিবর্তন, নাকি নিছক লগিং বা ইনস্ট্রুমেন্টেশনের ত্রুটি? কার্যকারণ সম্পর্ক প্রমাণ করতে Book 6 · Chapter 3 (Experimentation & Causal Reasoning)-এর এক্সপেরিমেন্ট ডিজাইন পদ্ধতি ব্যবহার করুন এবং রোলআউটের অপারেশনাল চেকলিস্ট ও ব্যবসায়িক প্রভাবের প্রমাণ দুটিকেই আলাদাভাবে নথিবদ্ধ রাখুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch36_incident",
+      "title": "Incident Response: Mitigate, Verify, Learn",
+      "subtitle": "সমস্যার গভীরতম কারণ (Root Cause) খোঁজার আগেই ব্যবহারকারীর ক্ষতি থামানো জরুরি হতে পারে",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "প্রাথমিক যাচাই (Triage): সমস্যাটি আসলে কতটা বড়?",
+          "body": "মধ্যরাতে পেজার বেজে উঠলে প্রথম কাজ হলো মাথা ঠান্ডা রেখে Triage করা: অ্যালার্টটি কি সত্যিই বৈধ, কোন Population বা সময়ের উইন্ডোতে এটি ঘটছে, ব্যবহারকারীর ওপর এর প্রভাব কতটুকু এবং ঠিক তার আগে কোন Release বা ডেটা সোর্সে পরিবর্তন হয়েছিল? Request Error, Latency, Fallback এবং Feature-এর গুণমান—প্রতিটি সংকেত আলাদাভাবে মিলিয়ে দেখুন। মনে রাখবেন, একটি একক PSI স্পাইক কখনোই নিজে কোনো Root Cause নয়! তদন্তের জন্য লগ ও Metric-এর প্রমাণ (Evidence) সাথে সাথে সংরক্ষণ করুন, কিন্তু নিখুঁত কারণ বের করার আশায় তাৎক্ষণিক ক্ষতি কমানোর পদক্ষেপ (Mitigation) অযথা দেরি করাবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "ক্ষতি নিয়ন্ত্রণ (Containment): আগে রক্তক্ষরণ থামান",
+          "body": "প্রোডাক্টের ধরন অনুযায়ী নিরাপদ তাৎক্ষণিক পদক্ষেপ হতে পারে চলমান Canary Rollout থামিয়ে দেওয়া, যাচাইকৃত আগের Release-এ ফিরে যাওয়া, অতিরিক্ত ট্রাফিক ছাঁটাই করা (`Traffic Shedding`) কিংবা সীমিত Fallback চালু করা। তবে আগেই যেমন দেখেছি, আপস্ট্রিম থেকে আসা ডেটার একক (Units) ভুল হয়ে গেলে শুধু Model Rollback করে কাজ হবে না! আর Baseline-এ ফেরার আগে অবশ্যই নিশ্চিত হয়ে নিন যে Baseline নিজে তার স্বাধীন Contract পরীক্ষায় পাশ করছে। বাস্তব প্রোডাকশনে এর সাথে সুনির্দিষ্ট দায়িত্বপ্রাপ্ত ব্যক্তি (Human Owner) এবং ধাপে ধাপে জানানোর পথ (`Escalation Path`) থাকা বাধ্যতামূলক।"
+        },
+        {
+          "type": "math",
+          "title": "শৃঙ্খলাবদ্ধ Incident Response চক্র",
+          "body": "\\mathrm{detect}\\to\\mathrm{scope}\\to\\mathrm{mitigate}\\to\\mathrm{verify}\\to\\mathrm{learn}"
+        },
+        {
+          "type": "code",
+          "title": "Candidate ত্রুটিতে Fallback এবং Rollback-এ পূর্ণ পুনরুদ্ধার",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"serving36\", Path(\"assets/datasets/bike_sharing/serving_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/serving_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nfailed = m.serve(lab, 375, candidate_fault=True)\nrecovered = m.replay(lab, rollback=True)\nassert failed[\"served\"] == \"fallback\"\nassert recovered[\"baseline\"] == 182\nprint(failed[\"reason\"], recovered)\n"
+        },
+        {
+          "type": "text",
+          "title": "মহড়ার প্রমাণ বনাম বাস্তব সার্ভিস পুনরুদ্ধার",
+          "body": "অ্যাপের লোকাল Rollback বাটনটি আমাদের প্রকৃত `182`টি ঐতিহাসিক Request পুনরায় চালিয়ে নিশ্চিত করে যে সব ট্রাফিক নিরাপদে Baseline-এ ফিরে গেছে; অন্যদিকে আমাদের SLO প্যানেলের সংখ্যাগুলো এসেছে `20` Row-এর নির্ধারিত Telemetry উদাহরণ থেকে। খেয়াল রাখবেন, এই দুটি একই লাইভ ঘটনার পর্যবেক্ষণ নয়—তাই স্ক্রিনে একটি ক্লিক করলেই বাস্তব সার্ভার মেরামত, নেটওয়ার্ক নিয়ন্ত্রণ বা প্রকৃত রিকভারি সময় মাপা হয়ে গেছে বলে আমরা দাবি করি না।"
+        },
+        {
+          "type": "mlops_incident",
+          "title": "পুনরুদ্ধার যাচাই (Verification): সব কি সত্যিই ঠিক হয়েছে?",
+          "body": "প্রাথমিক Mitigation নেওয়ার পর নিচের প্যানেলে ও সিস্টেমে ক্রমান্বয়ে মিলিয়ে দেখুন: Response-এর সক্রিয় Version, Feature Definition, Error ও Fallback-এর হার, কিউয়ের চাপ এবং আউটপুটের বৈধতা স্বাভাবিক হয়েছে কি না। যেহেতু Mature-Label কোয়ালিটি জানতে সময়ের প্রয়োজন হয়, তাই সেই অপেক্ষমাণ সংকেতটিকে আলাদা রাখুন। কোনো HTTP Error না থাকা মানেই কিন্তু Model অর্থবহ Prediction দিচ্ছে তা নয়! আগে থেকেই সুস্থতার মাপকাঠি (`Recovery Criteria`) লিখে রাখলে সাময়িক শান্ত Metric দেখে সময়ের আগেই Incident বন্ধ ঘোষণা করার ভুল কমে।"
+        },
+        {
+          "type": "text",
+          "title": "দোষারোপমুক্ত Root Cause Review ও স্থায়ী সমাধান",
+          "body": "পরিস্থিতি শান্ত হওয়ার পর একটি Blameless Postmortem বা Root Cause Review সাজান—যেখানে ঘটনার সময়ক্রম (`Timeline`), ট্রিগার, সহায়ক দুর্বলতা, কেন আগে ধরা পড়ল না (`Detection Gap`) এবং প্রতিটি করণীয় কাজের দায়িত্বপ্রাপ্ত ব্যক্তি নির্দিষ্ট থাকবে। কাউকে দোষারোপ করা নয়, বরং সিস্টেমের কাঠামোগত পরিবর্তনই এর লক্ষ্য। Retry Storm, অসামঞ্জস্যপূর্ণ Artifact, ইনপুট Schema পরিবর্তন বা পুরোনো Feature—প্রতিটি সমস্যার প্রতিরোধ ব্যবস্থা আলাদা। অ্যাকশন আইটেমে শুধু 'মনিটরিং বাড়াতে হবে' এমন অস্পষ্ট কথা না লিখে সুনির্দিষ্ট যাচাই পদ্ধতি ও শেষ করার শর্ত লিখে রাখুন।"
+        },
+        {
+          "type": "text",
+          "title": "Interview পরামর্শ: 5xx বাড়ছে কিন্তু MAE অজানা—প্রথম পদক্ষেপ কী?",
+          "body": "ইন্টারভিউতে যদি প্রশ্ন আসে: 'নতুন ডিপ্লয়মেন্টের পরপরই সার্ভারে `5xx` এরর বাড়তে শুরু করেছে, কিন্তু Label না আসায় Model-এর MAE এখনও জানা নেই—আপনি কী করবেন?' স্পষ্টভাবে বলুন: Label ড্যাশবোর্ড আপডেট হওয়া পর্যন্ত অপেক্ষা করে বসে থাকার কোনো সুযোগ নেই, কারণ Service Health এবং Model Quality সম্পূর্ণ ভিন্ন সময়ের স্কেলে (Time Scale) ধরা পড়ে! প্রথম কাজ হলো Contract ও Readiness, সক্রিয় Version, ডেটা সোর্সের সতেজতা এবং সার্ভারের Load পরীক্ষা করা, প্রমাণ সংরক্ষণ করে নিরাপদ Rollback বা Mitigation কার্যকর করা এবং তারপর সার্ভিসের সুস্থতা যাচাই করা।"
+        }
+      ]
+    },
+    {
+      "id": "ch36_retraining",
+      "title": "Retraining Trigger ও Promotion Gate",
+      "subtitle": "Model Retrain করা নিজেই একটি নতুন পরীক্ষা—এটি কখনোই জাদুকরী স্বয়ংক্রিয় মেরামত নয়",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কখন সত্যিকার অর্থে Retraining প্রয়োজন?",
+          "body": "সময়ের সাথে ইনপুটের Distribution, Target-এর সাথে Feature-এর সম্পর্ক, নতুন পরিপক্ব Label কিংবা খোদ প্রোডাক্টের ব্যবসায়িক লক্ষ্য বদলে গেলে Model Retrain করা দারুণ ফলপ্রসূ হতে পারে। কিন্তু শুধু একটি Drift অ্যালার্ম বাজা মানেই যে সাথে সাথে Retrain করতে হবে—এমন কোনো কথা নেই! ভেবে দেখুন, যদি আপস্ট্রিম ডেটা সোর্সে বাগের কারণে ভুল বা নষ্ট ডেটা আসতে থাকে, তবে স্বয়ংক্রিয়ভাবে নতুন Fit চালালে নতুন Model-টি সেই নষ্ট ডেটাকেই নিষ্ঠার সাথে শিখে বসবে! তাই ট্রেনিং শুরু করার আগেই Data Contract, Label Maturity এবং Lineage পুরোপুরি সুস্থ আছে কি না তা যাচাই করে নিন।"
+        },
+        {
+          "type": "text",
+          "title": "নতুন Candidate তৈরির ধাপে ধাপে Promotion Gate",
+          "body": "প্রোডাকশন মানের একটি Retraining পাইপলাইনে প্রতিটি ধাপ সুস্পষ্ট Gate দিয়ে ঘেরা থাকে: যোগ্য ডেটার অপরিবর্তনীয় Snapshot নেওয়া, Split নীতি স্থির রাখা, শুধুমাত্র ট্রেনিং অংশে Preprocessing ও Model Fit করা, ঘোষিত Baseline-গুলোর সাথে তুলনা করা, অপারেশনাল খরচ মাপা, Immutable Artifact প্যাকেজ করা, এরপর Shadow বা Canary হয়ে মনিটরিং ও Rollback প্রস্তুতিসহ প্রমোট করা। খেয়াল রাখবেন, আমাদের এই অধ্যায়ে 2011 সালের `358`টি উদাহরণের Fit-টি স্থির (`Frozen`) রাখা হয়েছে—ইন্টারঅ্যাক্টিভ প্যানেলে আপনি যখন Delay বা Period বদলান, তখন কিন্তু পর্দার আড়ালে নতুন কোনো Model ট্রেন হয় না।"
+        },
+        {
+          "type": "math",
+          "title": "Model Promotion-এর চারটি আবশ্যিক শর্ত",
+          "body": "\\mathrm{promote}\\iff\\mathrm{data\\ ready}\\land\\mathrm{quality\\ gate}\\land\\mathrm{service\\ gate}\\land\\mathrm{recovery\\ ready}"
+        },
+        {
+          "type": "code",
+          "title": "স্থির (Frozen) Model Artifact-এর Parameter যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"serving36\", Path(\"assets/datasets/bike_sharing/serving_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/serving_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nmodel = lab[\"models\"][\"candidate\"]\nassert model[\"alpha\"] == 10 and model[\"train_targets\"] == [7, 364]\nassert model[\"fit_examples\"] == 358\nprint(\"Frozen release;monitoring controls do not refit model\")\n"
+        },
+        {
+          "type": "text",
+          "title": "একই Validation সেট বারবার ব্যবহারের ফাঁদ (Adaptive Overfitting)",
+          "body": "একই `182` দিনের Development অংশে যদি আপনি ডজনখানেক নতুন Model চালিয়ে সেরা Score পাওয়া Model-টি বেছে নিতে থাকেন, তবে ধীরে ধীরে সেই মূল্যায়ন সেটের ওপরই `Adaptive Overfitting` ঘটে যাবে! তখন নতুন Candidate-এর সামান্য ভালো Score-কে আর স্বাধীন নিশ্চিতকরণ বলা চলে না। তাই আগে থেকেই সময়ভিত্তিক বিভাজন (`Temporal Split`), অস্পৃশ্য নিশ্চিতকরণ ডেটা এবং সঠিক Backtesting প্রোটোকল সাজিয়ে রাখতে হয়—ঠিক যে কারণে আমরা Score বাড়ানোর লোভে আমাদের সংরক্ষিত `184`টি ফলাফলের দরজা কখনোই খুলিনি।"
+        },
+        {
+          "type": "text",
+          "title": "কখন ট্রেনিং শুরু হবে: Scheduled, Event-Driven নাকি Manual?",
+          "body": "Retraining ট্রিগার প্রধানত তিন রকমের হতে পারে: নির্দিষ্ট রুটিনে চলা `Scheduled` রিট্রেইনিং (যা খরচ ও সময়ের দিক থেকে পূর্বানুমেয়), Drift বা কোয়ালিটি পতনের সংকেতে চলা `Event-Driven` ট্রিগার (যা দ্রুত সাড়া দেয়), এবং ডোমেইন বিশেষজ্ঞের `Manual` সিদ্ধান্ত। কম্পিউট বাজেট, Label আসার বিলম্ব, ঝুঁকি ও প্রোডাক্টের ধরন বুঝে এদের সমন্বয় করা যায়। তবে সবচেয়ে গুরুত্বপূর্ণ নীতি হলো: একটি ট্রিগার কেবল **নতুন ট্রেনিং জব শুরু** করতে পারে, কিন্তু সেই Model-কে লাইভ ট্রাফিকে **Promote** করার সিদ্ধান্তটি অবশ্যই আলাদা সব বৈধতা পরীক্ষায় পাশ করার পরই হতে হবে!"
+        },
+        {
+          "type": "text",
+          "title": "ট্রেনিং ব্যর্থ হলে চলমান সার্ভিসের নিরাপত্তা",
+          "body": "ধরুন রাতের স্বয়ংক্রিয় Retraining জবটি মাঝপথে ক্র্যাশ করল—তখন আপনার লাইভ সার্ভিসের কী হবে? একটি সুস্থ আর্কিটেকচারে ট্রেনিং ব্যর্থ হলেও বর্তমান বৈধ Release নির্বিঘ্নে সার্ভিস দিয়ে যাবে, কোনো অর্ধসমাপ্ত Artifact পাবলিশ হবে না এবং মূল ডেটার Snapshot থেকে যেকোনো সময় সমস্যাটি পুনরুৎপাদন করা যাবে। মনে রাখবেন, শুধু একটি Model Registry-তে ফাইলের গায়ে `'production'` ট্যাগ লাগিয়ে দিলেই চলমান সার্ভারগুলোতে Atomic পরিবর্তন হয়ে যায় না—সক্রিয় পয়েন্টার, সামঞ্জস্যতা এবং প্রস্তুত Rollback Target আলাদাভাবে নিশ্চিত করতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Interview পরামর্শ: 'সাপ্তাহিক Retrain' কেন সাপ্তাহিক—যুক্তি দিন",
+          "body": "ইন্টারভিউতে কেউ যদি বলে 'আমরা প্রতি সপ্তাহে Model Retrain করব', তখন পাল্টা প্রশ্ন আসে—কেন প্রতিদিন নয়, বা কেন মাসে একবার নয়? আপনার উত্তরে সময়কালটিকে Label Maturity বিলম্ব, ঋতুগত পরিবর্তনের গতি, কম্পিউট বাজেট এবং পরীক্ষিত লাভের মাপকাঠি দিয়ে যৌক্তিকভাবে প্রতিষ্ঠা করুন। পরিষ্কারভাবে আলাদা করুন `Freshness of Weights` (Model কত নতুন) এবং `Freshness of Features` (আজকের ইনপুট ডেটা কত তাজা)—অনেক ক্ষেত্রে রোজ Model ট্রেন না করে কেবল তাজা Feature দিলেই চমৎকার ফল পাওয়া যায়! নতুন Model মানেই স্বয়ংক্রিয়ভাবে ভালো Model নয়; শক্ত প্রমাণ ও নিরাপদ রিকভারি পথই আসল Promotion Gate।"
+        }
+      ]
+    },
+    {
+      "id": "ch36_artifacts",
+      "title": "Artifact Verification ও Supply Boundary",
+      "subtitle": "Checksum বদলে গেলে ফাইল পরিবর্তন ধরা পড়ে ঠিকই, কিন্তু কে বদলেছে তা শুধু Hash দেখে বোঝা যায় না",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "অবিকল বাইট পরিচয় ও Canonical Serialization",
+          "body": "একটি ফাইলের ক্রিপ্টোগ্রাফিক Hash বের করার সময় ভেতরের অর্থ এক থাকলেও যদি কী-গুলোর ক্রম (Key Order), স্পেস বা নতুন লাইনের চিহ্ন (`CRLF` বনাম `LF`) বদলে যায়, তবে সম্পূর্ণ ভিন্ন Hash তৈরি হবে! এজন্য আমাদের Model পরিচয় নির্ধারিত হয় কঠোরভাবে সাজানো সংক্ষিপ্ত UTF-8 JSON এবং `LF` লাইন এন্ডিং দিয়ে (`Canonical Serialization`)। প্রতিটি একক Model ফাইলের Hash তার Manifest-এর `model_sha256`-এর সাথে মেলে, এবং উভয় Model-এর Manifest-এই নির্ভরতা হিসেবে যুক্ত থাকে `feature_definition.json`-এর Hash। এমনকি মূল Dataset-এর নোটিশ ও সোর্স Hash-ও হুবহু বাইটসহ সংরক্ষিত রাখা হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "বহনযোগ্য (Portable) Release Bundle-এর গঠন",
+          "body": "আমাদের একটি পূর্ণাঙ্গ পোর্টেবল বান্ডলে ঠিক ছয়টি মূল Payload ফাইল থাকে: `baseline_model.json`, `ridge_model.json`, `feature_definition.json`, `serving_lab.json`, `SOURCE_README.txt` এবং `ATTRIBUTION.txt`; আর সপ্তম ফাইল হিসেবে আলাদা Index-এ থাকে `checksums.json`। ভেরিফায়ার স্ক্রিপ্টটি পরীক্ষা করে দেখে ছয়টি ফাইলই উপস্থিত কি না, ডিস্কের প্রকৃত বাইটের Hash মেলে কি না এবং Model-এর ভেতরের ক্রসলিংকগুলো অটুট আছে কি না। কমান্ড লাইনে `--bundle` ফ্ল্যাগ দিয়ে এই যাচাইকৃত ফোল্ডার লোড করে সরাসরি নিরাপদ Inference চালানো যায় (এখানে নতুন করে কোনো ট্রেনিং চালানো হয় না)।"
+        },
+        {
+          "type": "math",
+          "title": "SHA-256 পরিচয় বনাম প্রামাণিকতা ও সঠিকতা",
+          "body": "h=SHA256(\\mathrm{exact\\ bytes}),\\quad identity\\ne authenticity\\ne correctness"
+        },
+        {
+          "type": "code",
+          "title": "অস্থায়ী ফোল্ডারে Bundle Export ও Checksum যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"serving36\", Path(\"assets/datasets/bike_sharing/serving_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/serving_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nimport tempfile\n\nwith tempfile.TemporaryDirectory() as folder:\n    m.export_bundle(folder, lab)\n    print(m.verify_bundle(folder))\n    manifest = json.loads((Path(folder) / \"checksums.json\").read_text())\n    assert len(manifest) == 6\n    print(sorted(manifest))\n"
+        },
+        {
+          "type": "text",
+          "title": "নিরাপত্তার সীমানা: কেন শুধু Checksum যথেষ্ট নয়?",
+          "body": "নিরাপত্তার একটি মৌলিক সীমাবদ্ধতা বুঝে রাখুন: কোনো আক্রমণকারী যদি Model ফাইলটি বদলে দেওয়ার পাশাপাশি `checksums.json` ফাইলের ভেতরকার প্রত্যাশিত Hash-টিকেও নিজের মতো আপডেট করে দেয়, তবে সাধারণ Checksum চেক কিন্তু কোনো ত্রুটিই ধরতে পারবে না! তাই প্রোডাকশনের Supply-Chain নিরাপত্তায় বিশ্বস্ত চ্যানেলে Manifest বিতরণ, ক্রিপ্টোগ্রাফিক ডিজিটাল স্বাক্ষর (`Cryptographic Signing`), কঠোর Access Control এবং বিল্ডের উৎস প্রমাণ (`Provenance`) অপরিহার্য। আমাদের এই ডেমো দুর্ঘটনাবশত ফাইল নষ্ট হওয়া বা অমিল ধরা শেখায়—ডিজিটাল সিগনেচার বা অ্যাটেস্টেশন নয়। আর বলাই বাহুল্য, বৈধ Hash কখনোই Model-এর বৈজ্ঞানিক শুদ্ধতা বা Label-এর সত্যতার প্রমাণ দেয় না।"
+        },
+        {
+          "type": "text",
+          "title": "ডেটার লাইসেন্স, কৃতজ্ঞতা স্বীকার ও সংরক্ষিত সীমানা",
+          "body": "এই বান্ডলের ভেতরে Hadi Fanaee-T (2013)-এর তৈরি UCI Bike Sharing Dataset-এর `CC BY 4.0` লাইসেন্সের কৃতজ্ঞতা স্বীকার ও মূল নোটিশ অক্ষত রাখা হয়েছে। মূল ফাইলের তারিখ ও ভাড়ার সংখ্যা অপরিবর্তিত রেখে সেখান থেকে ডিরাইভ করা Feature এবং শেখার উদ্দেশ্যে তৈরি টাইমিং ও SLO উদাহরণগুলো স্পষ্টভাবে আলাদা করে চিহ্নিত করা হয়েছে। খেয়াল করুন: ডিস্কে থাকা মূল `day.csv` ফাইলটির বাইট অবিকৃত আছে কি না তা Hash দিয়ে যাচাই করা আর তার সংরক্ষিত শেষ `184`টি ফলাফল Modeling পরীক্ষায় খুলে দেখা—দুটি সম্পূর্ণ আলাদা কাজ!"
+        },
+        {
+          "type": "text",
+          "title": "প্রমাণের শৃঙ্খল ও Reproducibility",
+          "body": "পুরো প্রজেক্টের নির্ভরযোগ্যতা নিশ্চিত করতে আমরা একই প্রিফিক্স ও রেসিপি থেকে স্বাধীন পুনর্গঠন, Python ও Dart-এর সব Row-তে Parity পরীক্ষা এবং লোকাল HTTP এন্ডপয়েন্টের কার্যকরী টেস্ট সংরক্ষণ করি; পাশাপাশি সফটওয়্যার Version এবং রিলিজ বিল্ডের Hash-ও নথিবদ্ধ থাকে। অন্যদিকে যা আমরা করিনি—যেমন GPU বেঞ্চমার্ক, পাবলিক ক্লাউড ডিপ্লয়মেন্ট বা প্রোডাকশন নেটওয়ার্ক Latency—তার কোনো অতিরঞ্জিত দাবিও আমরা করি না।"
+        },
+        {
+          "type": "text",
+          "title": "কোডিং অনুশীলনের দিকনির্দেশনা",
+          "body": "নিজের মেশিনে একটি অস্থায়ী ডিরেক্টরিতে বান্ডল এক্সপোর্ট করে `verify_bundle` চালান, তারপর যেকোনো একটি ফাইলের মাত্র একটি বাইট বদলে দেখুন কীভাবে ভেরিফায়ার সাথে সাথে সেটি প্রত্যাখ্যান করে! এছাড়া বান্ডলের ভেতরে থাকা এমবেডেড Model আর আলাদা Model ফাইলের অমিলও পরীক্ষা করে দেখুন। নিরাপদ আপডেটের নিয়ম হলো নতুন একটি ডিরেক্টরিতে সম্পূর্ণ Candidate বান্ডল সাজিয়ে আগে যাচাই করা—ব্যবহারকারীর লোকাল SQLite ডেটাবেস মুছে ফেলার কোনো প্রয়োজনই এতে পড়ে না।"
+        }
+      ]
+    },
+    {
+      "id": "ch36_evaluation",
+      "title": "End-to-End Release Review ও Interview Walkthrough",
+      "subtitle": "অনুমান বা মুখস্থ বুলি নয়—ধারাবাহিক প্রমাণের শৃঙ্খল (Evidence Chain) দিয়ে নিজের সিদ্ধান্ত প্রতিষ্ঠা করুন",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "শুরু থেকে শেষ পর্যন্ত পুরো শৃঙ্খলটি মেলান",
+          "body": "একজন দক্ষ ML Systems ইঞ্জিনিয়ারের মতো পুরো ছবিটি একবার প্রথম থেকে শেষ পর্যন্ত মিলিয়ে নিন: মূল ডেটার সোর্স Hash ও প্রথম `547` দিনের পরিধি থেকে শুরু করে Book 6 · Chapter 1 (Data Pipelines & Feature Systems)-এর Point-in-Time Feature চুক্তি, শুধুমাত্র Fit ডেটার Scaler, `alpha = 10` সহ Ridge Model, Immutable Release প্যাকেজ, Deterministic Canary রাউটিং এবং সবশেষে Label Maturity-সচেতন মনিটরিং। আপনি যদি `375`তম দিনের একটি Request-এর স্বাভাবিক গণনা এবং `late_fixture` অবস্থায় তার নিরাপদ Fallback পথ নিখুঁতভাবে ব্যাখ্যা করতে পারেন, তবে বুঝবেন পুরো পাইপলাইনটি আপনার নখদর্পণে চলে এসেছে।"
+        },
+        {
+          "type": "text",
+          "title": "Model-এর গুণমান সংক্রান্ত প্রমাণের সারসংক্ষেপ",
+          "body": "পূর্ণ `182` দিনের ঐতিহাসিক মূল্যায়নে আমাদের Candidate Model-এর MAE এসেছে `811.421`, যেখানে `naive1`-এর MAE হলো `900.604` এবং `seasonal7`-এর MAE হলো `1090.791`। তবে সামগ্রিক গড়ের পাশাপাশি আমরা খণ্ডকালীন ত্রুটি এবং ঋণাত্মক গড় ঝোঁক (`Signed Bias = -199.801`)-ও দেখেছি। সততার সাথে মনে রাখতে হবে: এটি ইতিমধ্যেই পর্যবেক্ষণ করা ঐতিহাসিক Development ডেটার প্রমাণ (সংরক্ষিত `184`টি ফলাফল অস্পৃশ্য রাখা হয়েছে), এবং এই অফলাইন MAE কিংবা Hash রাউটিং বিভাজন কোনোটিই অনলাইনে প্রকৃত ব্যবসায়িক সাফল্য (Causal Lift) প্রমাণ করে না বা এটিই যে সম্ভাব্য সেরা Model তা দাবি করে না।"
+        },
+        {
+          "type": "math",
+          "title": "উৎস থেকে পুনরুদ্ধার পর্যন্ত সম্পূর্ণ MLOps জীবনচক্র",
+          "body": "\\mathrm{source}\\to\\mathrm{features}\\to\\mathrm{fit}\\to\\mathrm{artifact}\\to\\mathrm{route}\\to\\mathrm{observe}\\to\\mathrm{recover}"
+        },
+        {
+          "type": "code",
+          "title": "সব Period-এর MAE, Late Fixture ও Rollback-এর একীভূত যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"serving36\", Path(\"assets/datasets/bike_sharing/serving_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/serving_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nfor period in m.PERIODS:\n    q = m.quality(lab[\"rows\"], period)\n    print(period, {k: round(v[\"mae\"], 3) for k, v in q[\"models\"].items()})\nprint(m.replay(lab, \"late_fixture\", 10000))\nprint(m.replay(lab, rollback=True))\n"
+        },
+        {
+          "type": "text",
+          "title": "সিস্টেমের নির্ভরযোগ্যতা (Reliability) সংক্রান্ত প্রমাণ",
+          "body": "অপারেশনাল দিক থেকে আমরা যাচাই করেছি: `on_time` পরিস্থিতিতে ১০০% Candidate রাউটিংয়ে সবগুলো (`182`টি) Request সফলভাবে সার্ভ হয়; `late_fixture` পরিস্থিতিতে `171`টি Request Candidate দেয় এবং বাকি `11`টি অনুপস্থিত Feature-এর কারণে নিরাপদে Fallback-এ যায়; আর `rollback = True` করলে সব `182`টি Request-ই সরাসরি Baseline-এ চলে যায়। এছাড়া নষ্ট Baseline চুক্তিতে Feature খোঁজার আগেই `BLOCKED` হওয়া, Candidate অমিলে Fallback এবং লোকাল HTTP সার্ভারের GET/POST Counter বাস্তবে পরীক্ষা করা হয়েছে—যদিও ক্লাউড Autoscaling বা বাস্তব নেটওয়ার্ক বিভ্রাট এখানে মাপা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "মনিটরিং স্তরের আলাদা Population ও সংখ্যাগুলো",
+          "body": "মনিটরিংয়ের প্রতিটি সংখ্যার পেছনের Population আলাদা ও সুনির্দিষ্ট: স্থির ট্রেনিং Bucket-এর সাপেক্ষে মাপা হয়েছে প্রকৃত `PSI`, যেখানে Request সংখ্যা `182`; ৭ দিনের বিলম্বে জুটিবদ্ধ কোয়ালিটি তুলনা হয়েছে `175`টি Mature Label-এর ওপর; আর ডিফল্ট SLO উদাহরণে `20`টির মধ্যে `16`টি Good Request, `0.2` বাজেট এবং `20x` Burn Rate হিসাব করা হয়েছে। প্রোডাকশন ড্যাশবোর্ডে কখনোই এই ভিন্ন Population-গুলোকে গুলিয়ে একটি জাদুকরী একক Score বানানোর চেষ্টা করবেন না!"
+        },
+        {
+          "type": "text",
+          "title": "নিজের Portfolio বা Design Doc যেভাবে সাজাবেন",
+          "body": "প্রজেক্ট প্রেজেন্টেশন বা পোর্টফোলিও লেখার সময় স্পষ্ট কাঠামো অনুসরণ করুন: মূল সমস্যা, ডেটা ও সময়ের প্রোটোকল, সুনির্দিষ্ট ইমপ্লিমেন্টেশন, স্বয়ংক্রিয় টেস্ট, প্রকৃত ফলাফল, জানা সীমাবদ্ধতা এবং পরবর্তী যাচাইয়ের ধাপ। আর্কিটেকচার ডায়াগ্রামে যেসব ডিস্ট্রিবিউটেড অংশ এখনো বানানো হয়নি, সেগুলোকে বর্তমান কালের বাস্তব ইমপ্লিমেন্টেশন বলে দাবি করবেন না; ঐচ্ছিক লোকালহোস্ট সার্ভার এবং অফলাইন মোবাইল অ্যাপের সীমানা পরিষ্কার রাখুন এবং মূল Dataset-এর সাইটেশন বজায় রাখুন।"
+        },
+        {
+          "type": "text",
+          "title": "ইন্টারভিউয়ের জন্য প্রস্তুতির প্রশ্নমালা",
+          "body": "নিজেকে এই ছয়টি বাস্তব প্রশ্নের মুখোমুখি দাঁড় করান: (১) Feature সোর্স দেরি করলে কী ঘটবে? (২) Candidate Artifact নষ্ট হলে? (৩) Baseline অসামঞ্জস্যপূর্ণ হলে? (৪) Label এখনো Pending থাকলে? (৫) PSI অনেক বেশি কিন্তু MAE স্থিতিশীল থাকলে? এবং (৬) Schema ঠিক আছে কিন্তু Feature-এর একক (যেমন কিলোমিটার থেকে মাইল) বদলে গেলে? প্রতিটির ক্ষেত্রে কীভাবে তা ধরা পড়বে, কী নীতি চলবে, কীভাবে যাচাই করবেন এবং কোথায় অনিশ্চয়তা থাকবে তা গুছিয়ে বলুন। মনে রাখবেন, ভালো ইন্টারভিউতে বাহারি টুলের নামের চেয়ে আপনার অনুমান, Tradeoff বিশ্লেষণ ও সুনির্দিষ্ট পাল্টা-উদাহরণ (Counterexample) অনেক বেশি মূল্যবান!"
+        }
+      ]
+    },
+    {
+      "id": "ch36_review",
+      "title": "Mastery Review ও Coding Practice Plan",
+      "subtitle": "নিজের হাতে কোড লেখা, নিরীক্ষা করা এবং যুক্তি দিয়ে ব্যাখ্যা করতে পারাই প্রকৃত দক্ষতা",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "প্রথম ধাপ: সূত্রগুলো নিজের ভাষায় প্রতিষ্ঠা করুন (Derive)",
+          "body": "না দেখে খাতায় ও নিজের ভাষায় এই অধ্যায়ের মূল গাণিতিক হিসাবগুলো একবার ঝালিয়ে নিন: Feature Standardization, সমষ্টিগত বর্গ ত্রুটির (`Sum-Loss`) Ridge Normal Equation, Composite SLI, Error Budget, Burn Rate, Linear Sample `p95` এবং Smoothed `PSI`। প্রতিটি সূত্রের হর (`Denominator`), একক, Bucket-এর সীমানার শর্ত (`≤` বনাম `<`) এবং মূল অনুমানগুলো স্পষ্ট করে বলুন; খালি তালিকা (`Empty Sample`) কিংবা শূন্য স্কেলের মতো প্রান্তিক কেসগুলো কখনোই বাদ দেবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "দ্বিতীয় ধাপ: নিজের হাতে কোড লিখুন (Implement)",
+          "body": "এই অধ্যায়ের ১০টি কোডিং অনুশীলনীতে ধাপে ধাপে কভার করা হয়েছে ম্যানুয়াল Prediction, স্থিতিশীল Hash রাউটিং, রাউট গণনা, জুটিবদ্ধ MAE, PSI, `p95` Latency, Good Event গণনা, Error Budget, Artifact Hashing এবং Rollback। সমাধান দেখার আগে নিজের মেশিনে Python চালিয়ে নিজস্ব খসড়া সংরক্ষণ করুন। খেয়াল রাখবেন, অ্যাপের সংখ্যাগত চেকার কেবল চূড়ান্ত আউটপুট সংখ্যাটি মেলায়—ভুল লজিক দিয়ে কাকতালীয়ভাবে সঠিক সংখ্যা প্রিন্ট হলেও তা কিন্তু ভালো কোডের প্রমাণ নয়, তাই নিজের কোড নিজেই রিভিউ করুন!"
+        },
+        {
+          "type": "math",
+          "title": "প্রকৃত দক্ষতার চারটি স্তম্ভ",
+          "body": "\\mathrm{mastery}=\\mathrm{derive}+\\mathrm{implement}+\\mathrm{test}+\\mathrm{defend}"
+        },
+        {
+          "type": "code",
+          "title": "Quiz, Coding ও Interview অনুশীলনের প্রস্তুতি যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"serving36\", Path(\"assets/datasets/bike_sharing/serving_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/serving_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nassert m.valid_model(lab[\"models\"][\"candidate\"])\nassert m.replay(lab, rollback=True)[\"baseline\"] == 182\nassert m.quality(lab[\"rows\"], \"full\", 7)[\"mature_labels\"] == 175\nprint(\"Ready for the quiz,coding practice,and interview discussion\")\n"
+        },
+        {
+          "type": "text",
+          "title": "তৃতীয় ধাপ: কঠোরভাবে পরীক্ষা করুন (Test)",
+          "body": "পূর্ণ `182`টি প্রকৃত Vector, দুটি ভিন্ন ডেটা আগমন সূচি (`on_time` ও `late_fixture`), রাউটিং প্রিসেট, ভাঙা Contract, Label পরিপক্বতার উইন্ডো এবং Telemetry সীমানাগুলো পরখ করে দেখুন। মূল কোডের সাধারণ বাগ ধরতে স্বাধীন NumPy বা SQL রেফারেন্সের সাথে ফলাফল মেলানো দারুণ কার্যকর একটি অভ্যাস। পাশাপাশি অ্যাপের ইন্টারঅ্যাক্টিভ কন্ট্রোল রিসেট এবং লোকাল SQLite স্টেট আপনার শেখার অগ্রগতিকে সুরক্ষিত রাখে।"
+        },
+        {
+          "type": "text",
+          "title": "চতুর্থ ধাপ: যুক্তি দিয়ে নিজের নকশা প্রতিষ্ঠা করুন (Defend)",
+          "body": "সামনের ১০টি মৌলিক ইন্টারভিউ প্রশ্নে সিস্টেম আর্কিটেকচার, কোডিং, ডিবাগিং এবং প্রমাণের সীমাবদ্ধতা নিয়ে আলোচনা করা হয়েছে। যেকোনো প্রশ্নের উত্তর দেওয়ার সময় শুরুতে প্রয়োজনীয় শর্তগুলো পরিষ্কার করে নিন (`Clarifying Requirements`), সীমাবদ্ধতা ও ব্যর্থতার পথগুলো বলুন এবং তারপর সহজ ও যৌক্তিক একটি ডিজাইন প্রস্তাব করুন। উল্লেখ্য, এখানে 'FAANG-style' অনুশীলন বলতে বড় টেক কোম্পানির বাস্তব ইঞ্জিনিয়ারিং মানদণ্ড বোঝানো হয়েছে—কোনো প্রতিষ্ঠানের ফাঁস হওয়া বা অফিশিয়াল প্রশ্ন নয়।"
+        },
+        {
+          "type": "text",
+          "title": "কোথাও আটকে গেলে কোন অধ্যায় ঝালিয়ে নেবেন?",
+          "body": "কোন সংকেতটি সার্ভিস বিভ্রাট আর কোনটি Model-এর গুণমানের সতর্কবার্তা তা আলাদা করতে দ্বিধা হলে এই অধ্যায়ের Metrics, Readiness এবং SLO পাঠগুলো আরেকবার দেখে নিন। Feature-এর সময়ের সীমানা বা Point-in-Time Cutoff নিয়ে সংশয় থাকলে ফিরে যান Book 6 · Chapter 1 (Data Pipelines & Feature Systems)-এ; আর টাইম-সিরিজ মূল্যায়ন বা Ridge Regularization ঝালিয়ে নিতে চাইলে যথাক্রমে Book 2 · Chapter 3 (Model Evaluation & Experiment Design) এবং Book 2 · Chapter 1 (Linear Regression in Depth) দেখে নিন। আপনার সব নোট, বুকমার্ক ও অগ্রগতি সম্পূর্ণ লোকাল ডিভাইসেই সংরক্ষিত থাকে।"
+        },
+        {
+          "type": "text",
+          "title": "পরবর্তী গন্তব্য: Experimentation ও Causal Reasoning",
+          "body": "Serving Contract, Histogram Aggregation, Drift Diagnosis এবং Mature-Label তুলনার প্রতিটি হিসাব নিজের কোড দিয়ে মিলিয়ে নেওয়ার পর এবার আমরা প্রস্তুত পরের বড় প্রশ্নের জন্য: অনলাইনে নতুন Model সত্যিই ব্যবহারকারীর উপকার করছে কি না তা কীভাবে প্রমাণ করব? চলুন, পরের অধ্যায়ে—Book 6 · Chapter 3 (Experimentation & Causal Reasoning)-এ গিয়ে Randomization Unit, Causal Estimand এবং Experiment Integrity সম্পর্কে বিস্তারিত শিখি।"
+        }
+      ]
+    }
+  ],
+  "quizzes": [
+    {
+      "id": "ch36_q1",
+      "question": "একটি নির্ভরযোগ্য Serving Release তৈরি করতে শুধু Model-এর Weights ছাড়াও আর কী কী থাকা অপরিহার্য?",
+      "options": [
+        "সুনির্দিষ্ট ক্রমের Input Schema, শুধুমাত্র Fit ডেটার Scaler, Feature Contract এবং Version তথ্য",
+        "শুধুমাত্র ট্রেনিং Notebook-এর একটি স্ক্রিনশট",
+        "প্রতিটি লাইভ Request থেকে নতুন করে হিসাব করা Scaler",
+        "শুধুমাত্র অফলাইনে পাওয়া সবচেয়ে কম MAE সংখ্যাটি"
+      ],
+      "answer": 0,
+      "explanation": "প্রোডাকশনে অবিকল একই গাণিতিক Function পুনরুৎপাদন করতে হলে Weights-এর পাশাপাশি ডেটা রূপান্তরের নিয়ম (Scaler), ইনপুটের ক্রম (Schema), Feature Contract এবং Version একসাথে প্যাকেজ করা বাধ্যতামূলক।"
+    },
+    {
+      "id": "ch36_q2",
+      "question": "Ridge Regression-এর মূল Objective যদি বর্গ ত্রুটির সমষ্টি (Sum SSE) থেকে বদলে গড় বর্গ ত্রুটি (Mean SSE) করা হয়, তবে অপরিবর্তিত একই alpha মান কী অর্থ বহন করবে?",
+      "options": [
+        "উভয় ক্ষেত্রেই শতভাগ অভিন্ন Weights পাওয়ার নিশ্চয়তা থাকবে",
+        "Model-এর Intercept Parameter-এর ওপরও পেনাল্টি আরোপিত হবে",
+        "ইনপুট Feature-গুলোর আর কোনো Standardization প্রয়োজন হবে না",
+        "Model-এর ওপর প্রযুক্ত কার্যকর Regularization-এর শক্তি বদলে যাবে"
+      ],
+      "answer": 3,
+      "explanation": "সমষ্টিগত Loss-কে Sample সংখ্যা N দিয়ে ভাগ করে গড় নেওয়া হলে একই Model পেতে পেনাল্টি সহগ (alpha)-কেও সামঞ্জস্যপূর্ণভাবে N অনুপাতে রিস্কেল করতে হয়; নইলে কার্যকর Regularization শক্তি পাল্টে যায়।"
+    },
+    {
+      "id": "ch36_q3",
+      "question": "এই অধ্যায়ে আমাদের Candidate Model-টি ট্রেন করার জন্য মোট কতগুলো Fit উদাহরণ ব্যবহার করা হয়েছে?",
+      "options": [
+        "Development অংশের 182টি Label-যুক্ত উদাহরণ",
+        "পুরো পরিধির সবগুলো অর্থাৎ 547টি উদাহরণ",
+        "358টি উদাহরণ (target Index 7 থেকে 364 পর্যন্ত)",
+        "2011 সালের পূর্ণ 365টি উদাহরণ"
+      ],
+      "answer": 2,
+      "explanation": "lag1, lag7 এবং mean7—তিনটি ল্যাগ Feature-ই যেন পূর্ণ থাকে, সেজন্য শুরুর প্রথম ৭টি দিন (0..6) বাদ দেওয়া হয়েছে; ফলে 2011 সালের বাকি 358টি বৈধ উদাহরণ দিয়ে Model-টি Fit করা হয়েছে।"
+    },
+    {
+      "id": "ch36_q4",
+      "question": "আমাদের Rolling One-Step মূল্যায়নে পূর্ববর্তী Development দিনের প্রকৃত ভাড়ার সংখ্যা পরের দিনের বৈধ Feature হিসেবে ব্যবহৃত হতে পারে কেন?",
+      "options": [
+        "কারণ এখানে ১লা জানুয়ারিতে দাঁড়িয়ে একটানা 182 দিনের Fixed-Origin Forecast করা হচ্ছে",
+        "কারণ ঘোষিত দিন-শেষের (on_time) নীতিমালা অনুযায়ী পরের দিনের Prediction করার আগেই আগের দিনের সংখ্যা জানা হয়ে যায়",
+        "কারণ মূল্যায়নের সময় ভবিষ্যতের যেকোনো Outcome ইনপুট হিসেবে নেওয়ার অনুমতি থাকে",
+        "কারণ প্রতিদিন নতুন ডেটা দিয়ে Model-এর Scaler নতুন করে Fit করা হয়"
+      ],
+      "answer": 1,
+      "explanation": "Point-in-Time জ্ঞান অক্ষুণ্ণ থাকলে ইতিমধ্যেই অতীত হয়ে যাওয়া দিনের পর্যবেক্ষণ পরের দিনের বৈধ ল্যাগ ইনপুট হতে পারে; তবে Target দিন বা ভবিষ্যতের কোনো ফলাফল কখনোই ইনপুটে ঢোকে না।"
+    },
+    {
+      "id": "ch36_q5",
+      "question": "375তম দিনের late_fixture পরিস্থিতিতে যখন lag1 Feature-টি অনুপস্থিত থাকে, তখন আমাদের সার্ভিস কী সিদ্ধান্ত নেয়?",
+      "options": [
+        "স্বাধীনভাবে যাচাইকৃত seasonal7 Model-এর মাধ্যমে নিরাপদ Fallback উত্তর দেয়",
+        "সেই দিনের প্রকৃত Target Outcome বসিয়ে অনুপস্থিত ঘরটি পূরণ করে নেয়",
+        "অনুপস্থিত lag1 সংখ্যাটিকে 0 ধরে নিয়ে মূল Model চালায়",
+        "অসম্পূর্ণ ইনপুট দিয়েই জোরপূর্বক Candidate Model সার্ভ করে"
+      ],
+      "answer": 0,
+      "explanation": "তিন Feature-এর Ridge Model চালানোর জন্য সবগুলো ইনপুট থাকা আবশ্যক; lag1 না থাকলে সিস্টেম গায়ের জোরে শূন্য না বসিয়ে বৈধ lag7 ব্যবহারকারী seasonal7 Fallback নীতিতে চলে যায়।"
+    },
+    {
+      "id": "ch36_q6",
+      "question": "কোনো Request প্রক্রিয়াকরণের শুরুতে যদি দেখা যায় খোদ Baseline Model-এর Contract বা Checksum ভুল, তবে সিস্টেমের আচরণ কী হবে?",
+      "options": [
+        "তবুও সেই অসুরক্ষিত Baseline Model-টিই সার্ভ করে দেবে",
+        "Candidate Model-এর ফলাফল দিয়ে Baseline মেরামত করে নেবে",
+        "সার্ভিসের Readiness স্ট্যাটাস সবসময় True দেখাবে",
+        "কোনো Feature খোঁজা বা হিসাব করার আগেই Request-টি BLOCKED করে দেবে"
+      ],
+      "answer": 3,
+      "explanation": "নিরাপদ পুনরুদ্ধারের জন্য Fallback বা Baseline রিলিজকেও তার নিজস্ব Contract পরীক্ষায় পাশ করতে হয়; বৈধ Baseline না থাকলে আমাদের Fail-Closed নীতি অনুযায়ী শুরুতেই কলটি ব্লক করা হয়।"
+    },
+    {
+      "id": "ch36_q7",
+      "question": "সার্ভিসের Liveness Probe সফল হওয়া থেকে আমরা ঠিক কীটুকু নিশ্চিত হতে পারি?",
+      "options": [
+        "সবগুলো ইনপুট Feature শতভাগ নির্ভুলভাবে আসছে",
+        "Model-টি প্রোডাক্টে ইতিবাচক ব্যবসায়িক প্রভাব ফেলছে",
+        "প্রসেসটি বেঁচে আছে ও সাড়া দিচ্ছে; তবে Readiness এবং Model Quality সম্পূর্ণ আলাদা প্রশ্ন",
+        "Model-এর দেওয়া প্রতিটি Prediction ব্যবহারকারীর জন্য উপকারী"
+      ],
+      "answer": 2,
+      "explanation": "প্রসেস Alive থাকা, ট্রাফিক নেওয়ার জন্য Ready হওয়া এবং ব্যবসায়িকভাবে Useful Prediction দেওয়া—তিনটি সম্পূর্ণ স্বতন্ত্র স্তর, একটি দিয়ে অন্যটি প্রমাণিত হয় না।"
+    },
+    {
+      "id": "ch36_q8",
+      "question": "10% Canary Threshold (canary_bp = 1000) সেট করলে আমাদের প্রকৃত 182টি ঐতিহাসিক Request কী-এর মধ্যে কয়টি Candidate Model-এ নির্বাচিত হয়?",
+      "options": [
+        "0টি",
+        "22টি",
+        "কাঁটায় কাঁটায় 18.2টি",
+        "সবগুলো অর্থাৎ 182টি"
+      ],
+      "answer": 1,
+      "explanation": "স্থিতিশীল Hash Function-এর মাধ্যমে ছোট বা সসীম Sample ভাগ করলে বাস্তবে পাওয়া সংখ্যা (22টি) নির্ধারিত শতকরা হারের (18.2) হুবহু সমান হতে বাধ্য নয়।"
+    },
+    {
+      "id": "ch36_q9",
+      "question": "আমাদের ল্যাবের entity + date ভিত্তিক Hash রাউটিংকে কেন একটি প্রকৃত কার্যকারণমূলক A/B Experiment বলা যায় না?",
+      "options": [
+        "এখানে ব্যবহারকারী পর্যায়ে দৈবচয়ন (User Randomization) ও কার্যকারণ প্রোটোকল নেই",
+        "শুধুমাত্র FNV Hash ক্রিপ্টোগ্রাফিক নয়—কেবল এই একটি কারণেই",
+        "কারণ বাইক ভাড়ার Label-গুলো সংখ্যাবাচক মান",
+        "কারণ এখানে ব্যবহৃত Ridge Model-টি আকারে ছোট"
+      ],
+      "answer": 0,
+      "explanation": "তারিখভিত্তিক এই রাউটিং মহড়ায় ঋতুগত প্রভাব (Seasonality), ক্রমিক নির্ভরশীলতা (Serial Correlation) এবং ট্রিটমেন্ট ডিজাইনের সীমাবদ্ধতা রয়েছে; তাই দুই দলের গড় ত্রুটি তুলনা করে অনলাইন Causal Lift দাবি করা যায় না।"
+    },
+    {
+      "id": "ch36_q10",
+      "question": "প্রোডাকশন অপারেশনে Rollback এবং Fallback-এর মূল পার্থক্য কী?",
+      "options": [
+        "দুটি আসলে একই অপারেশনের দুটি ভিন্ন নাম",
+        "দুটিই স্বয়ংক্রিয়ভাবে নতুন ডেটায় Model Retrain করে",
+        "দুটিই সার্ভিসের মূল ডেটাবেস মুছে নতুন করে তৈরি করে",
+        "Rollback হলো সক্রিয় Release নীতি বদলে আগের Version-এ ফেরা, আর Fallback হলো একক Request-এর তাৎক্ষণিক বিকল্প পথ"
+      ],
+      "answer": 3,
+      "explanation": "Rollback সুইচ সব যোগ্য ট্রাফিককে সরাসরি যাচাইকৃত Baseline রিলিজে ফিরিয়ে নেয়; অন্যদিকে Fallback হলো Candidate নির্বাচিত হওয়ার পরও ওই নির্দিষ্ট Request-এ Feature না পাওয়া বা ত্রুটির কারণে ব্যবহৃত নিরাপদ বিকল্প।"
+    },
+    {
+      "id": "ch36_q11",
+      "question": "প্রোডাকশনে Shadow Inference চালানোর সময় প্রধান অবকাঠামোগত বা Resource ঝুঁকি কোনটি?",
+      "options": [
+        "এতে সার্ভারের মোট Throughput সবসময় আপনাআপনি দ্বিগুণ হয়ে যায়",
+        "Shadow কলের জন্য আর কোনো Timeout নির্ধারণ করার প্রয়োজন থাকে না",
+        "বাড়তি কম্পিউট ও I/O চাপ শেয়ার্ড কিউকে স্যাচুরেট করে মূল সার্ভিসকে ধীর করে দিতে পারে",
+        "ব্যবহারকারীকে উত্তর দেখানো হয় না বলে এর কম্পিউট খরচ শূন্য থাকে"
+      ],
+      "answer": 2,
+      "explanation": "Shadow Model-এর ফলাফল ব্যবহারকারীর কাছে না গেলেও পর্দার আড়ালে তার গণনা, Feature লুকআপ ও লগিংয়ের জন্য প্রকৃত CPU/GPU ও মেমরি খরচ হয়, যা সঠিক Isolation না থাকলে মূল সার্ভিসকে বাধাগ্রস্ত করতে পারে।"
+    },
+    {
+      "id": "ch36_q12",
+      "question": "আমাদের SLO উদাহরণে সাধারণ Availability হলো 18/20, কিন্তু Composite Good Rate কমে 16/20 হলো কেন?",
+      "options": [
+        "কারণ বাকি ২টি Request-এর প্রকৃত Label তখনও এসে পৌঁছায়নি",
+        "কারণ সফল হওয়া কিছু Request নির্ধারিত 100 ms Latency সময়সীমা অতিক্রম করেছিল",
+        "কারণ ব্যর্থ Request-গুলোকে মোট হর (Denominator) থেকে বাদ দেওয়া হয়েছে",
+        "কারণ Composite Good Rate সবসময় Availability-র সমান হতে বাধ্য"
+      ],
+      "answer": 1,
+      "explanation": "আমাদের সংজ্ঞায় কোনো Request Good হতে হলে সেটিকে সফল হওয়ার পাশাপাশি duration ≤ 100 ms শর্তটিও মানতে হয়, যেখানে হরে সবগুলো (20টি) যোগ্য Request-ই অন্তর্ভুক্ত থাকে।"
+    },
+    {
+      "id": "ch36_q13",
+      "question": "মোট 20টি যোগ্য Request এবং 99% SLO লক্ষ্যমাত্রা থাকলে অনুমোদিত খারাপ Request-এর বাজেট (Allowed Bad) কত?",
+      "options": [
+        "0.2 Request-সমতুল্য (request-equivalent)",
+        "2টি Request",
+        "20টি Request",
+        "19.8টি Request"
+      ],
+      "answer": 0,
+      "explanation": "সূত্র অনুযায়ী N(1 − S) = 20 × (1 − 0.99) = 20 × 0.01 = 0.2; বাস্তবে আংশিক Request না থাকলেও গাণিতিক হারের বাজেট হিসেবে এই ভগ্নাংশ মানটিই ব্যবহৃত হয়।"
+    },
+    {
+      "id": "ch36_q14",
+      "question": "পর্যবেক্ষণ করা খারাপ Request-এর অনুপাত 0.2 এবং SLO অনুযায়ী অনুমোদিত খারাপ অনুপাত 0.01 হলে Burn Rate কত হবে?",
+      "options": [
+        "0.2x",
+        "2x",
+        "100x",
+        "20x"
+      ],
+      "answer": 3,
+      "explanation": "Burn Rate = (bad / N) / (1 − S) = 0.2 / 0.01 = 20x; খেয়াল রাখবেন এটি বাজেট পোড়ার আপেক্ষিক গতি নির্দেশ করে, সরাসরি আউটেজের মিনিট সংখ্যা নয়।"
+    },
+    {
+      "id": "ch36_q15",
+      "question": "আমাদের 20 Row-এর Telemetry ডেটায় সবগুলো Request মিলিয়ে নিখুঁত Linear Sample p95 সময়কাল কত?",
+      "options": [
+        "100 ms",
+        "প্রতিটি আলাদা সার্ভার ইনস্ট্যান্সের নিজস্ব p95-এর সরল গড়",
+        "152.5 ms",
+        "133 ms"
+      ],
+      "answer": 2,
+      "explanation": "ছোট থেকে বড় ক্রমে সাজানো 20টি মানের ক্ষেত্রে h = 19 × 0.95 = 18.05; ফলে ১৯তম মান 150 ms এবং ২০তম মান 200 ms-এর রৈখিক অন্তর্পাতনে পাওয়া যায় 152.5 ms (যেখানে 133 ms ছিল কেবল সফল Request-গুলোর p95)।"
+    },
+    {
+      "id": "ch36_q16",
+      "question": "একাধিক সার্ভার বা Replica জুড়ে পুরো Cluster-এর (Fleet) সামগ্রিক p95 Latency জানার সঠিক পদ্ধতি কোনটি?",
+      "options": [
+        "কেবল দ্রুত সম্পন্ন হওয়া সফল Request-গুলো গণনায় নেওয়া",
+        "অভিন্ন সীমানার Histogram Bucket Count একত্র (Aggregate) করে সেখান থেকে Quantile প্রাক্কলন করা",
+        "প্রতিটি ইনস্ট্যান্সের নিজস্ব p95 মানগুলোর সরল গড় বের করা",
+        "প্রতিটি ইনস্ট্যান্সের গড় (Mean) সময়কাল যোগ করে ভাগ করা"
+      ],
+      "answer": 1,
+      "explanation": "Quantile একটি অরৈখিক (Nonlinear) পরিসংখ্যান; তাই Replica-গুলোর আলাদা p95 গড় করলে প্রকৃত Distribution হারিয়ে যায়—কাঁচা Sample অথবা সামঞ্জস্যপূর্ণ Histogram Bucket কাউন্ট একত্র করেই এটি বের করতে হয়।"
+    },
+    {
+      "id": "ch36_q17",
+      "question": "এই অধ্যায়ে Feature Drift মাপার জন্য PSI-এর Bucket সীমানাগুলো (Bin Edges) কোথা থেকে নির্ধারণ করা হয়েছে?",
+      "options": [
+        "শুধুমাত্র Training (Fit) ইনপুটগুলোর স্থির Quintile সীমানা থেকে",
+        "প্রতিটি নতুন মনিটরিং উইন্ডোর ডেটা দিয়ে প্রতিবার নতুন করে Fit করে",
+        "ভবিষ্যতের সংরক্ষিত (Reserved) Label-গুলোর Distribution থেকে",
+        "কেবল Model-এর Prediction Error-এর মানগুলো থেকে"
+      ],
+      "answer": 0,
+      "explanation": "সময়ের সাথে Distribution-এর পরিবর্তন সঠিকভাবে তুলনা করতে হলে একটি স্থির Reference Population ও স্থির Bucket সীমানা বজায় রাখা অপরিহার্য; প্রতি উইন্ডোতে সীমানা বদলালে তুলনার ভিত্তিই নষ্ট হয়ে যায়।"
+    },
+    {
+      "id": "ch36_q18",
+      "question": "PSI হিসাব করার সময় প্রতিটি Bucket-এ 0.5 Pseudocount (Smoothing) যোগ করার মূল উদ্দেশ্য কী?",
+      "options": [
+        "ফলাফলটিকে সরাসরি একটি পরিসংখ্যানগত p-value-তে রূপান্তর করা",
+        "ডেটায় যে নিশ্চিতভাবে Concept Drift ঘটেছে তা প্রমাণ করা",
+        "ছোট Sample-এর যাবতীয় পরিসংখ্যানগত অনিশ্চয়তা চিরতরে দূর করা",
+        "কোনো Bucket-এ সংখ্যা শূন্য থাকলেও সসীম লগ অনুপাত এবং সুষমভাবে Normalized Probability Mass নিশ্চিত করা"
+      ],
+      "answer": 3,
+      "explanation": "কোনো Bucket-এ 0 থাকলে শূন্য দিয়ে ভাগ বা log(0) এড়াতে এই Pseudocount Probability-গুলোকে সুশৃঙ্খল রাখে; তবে এটি PSI-কে কোনো p-value বা কার্যকারণের সনদে পরিণত করে না।"
+    },
+    {
+      "id": "ch36_q19",
+      "question": "কোনো একটি ইনপুট Feature-এর PSI মান অনেক বেশি এলে সেখান থেকে আমরা নিশ্চিতভাবে কী বলতে পারি?",
+      "options": [
+        "ইনপুট ও আউটপুটের সম্পর্ক অর্থাৎ P(Y|X) নিশ্চিতভাবে বদলে গেছে",
+        "কোনো তদন্ত ছাড়াই এই মুহূর্তে Model স্বয়ংক্রিয়ভাবে Retrain করতে হবে",
+        "নির্ধারিত Bucket-গুলোর সাপেক্ষে ওই Feature-টির ইনপুট Distribution-এ পরিবর্তন এসেছে",
+        "বর্তমান Model-টি প্রোডাকশনে সম্পূর্ণ অকেজো হয়ে পড়েছে"
+      ],
+      "answer": 2,
+      "explanation": "একক Feature-এর উচ্চ PSI কেবল P(X)-এর Distribution-গত পরিবর্তন জানায়; এটি নিজে থেকে Concept Drift বা Model-এর ব্যর্থতা প্রমাণ করে না—এরপর ডেটার উৎস ও Mature-Label কোয়ালিটি তদন্ত করে দেখতে হয়।"
+    },
+    {
+      "id": "ch36_q20",
+      "question": "পূর্ণ Development সময়ে (182টি Request) যদি delay = 7 দিন ধরা হয়, তবে মূল্যায়নের মুহূর্তে কয়টি Mature Label পাওয়া যাবে?",
+      "options": [
+        "547টি",
+        "175টি",
+        "182টি",
+        "7টি"
+      ],
+      "answer": 1,
+      "explanation": "রিপোর্ট করার ঘড়ি 547-এ স্থির থাকলে target + 1 + 7 ≤ 547 শর্ত অনুযায়ী শেষ ৭টি দিনের ফলাফল তখনও Pending থাকে, ফলে বৈধ Mature Label পাওয়া যায় 182 − 7 = 175টি।"
+    },
+    {
+      "id": "ch36_q21",
+      "question": "যখন 182টি Request-এর মধ্যে 175টির Mature Label হাতে থাকে, তখন Candidate ও Baseline Model-এর ন্যায্য তুলনা কীভাবে করা উচিত?",
+      "options": [
+        "অবিকল একই 175টি Request-এর পরিপক্ব ফলাফলের ওপর উভয় Model-কে Score করে",
+        "Candidate-কে 182টিতে এবং Baseline-কে 175টিতে Score করে",
+        "বাকি ৭টি অজানা Label-এর ত্রুটি শূন্য (0) ধরে 182টিতে গড় করে",
+        "শুধুমাত্র যে দিনগুলোতে Candidate জিতেছে সেগুলো বেছে নিয়ে"
+      ],
+      "answer": 0,
+      "explanation": "জুটিবদ্ধ কোয়ালিটি মূল্যায়নের (Paired Comparison) মৌলিক শর্তই হলো উভয় Model-কে ঠিক একই যোগ্য Population-এর ওপর পরীক্ষা করা এবং অপেক্ষমাণ ৭টি Label-এর সংখ্যা আলাদাভাবে উল্লেখ করা।"
+    },
+    {
+      "id": "ch36_q22",
+      "question": "ফাইল যাচাইয়ের ক্ষেত্রে ক্রিপ্টোগ্রাফিক Checksum (SHA-256) ঠিক কীটুকু নিশ্চয়তা দিতে পারে?",
+      "options": [
+        "কোনো বাড়তি ব্যবস্থা ছাড়াই একাকী লেখকের প্রামাণিকতা (Authenticity) নিশ্চিত করে",
+        "Model-টি বৈজ্ঞানিকভাবে নির্ভুল ও পক্ষপাতমুক্ত হওয়ার গ্যারান্টি দেয়",
+        "প্রোডাকশনে Model-টি যে কোম্পানির আয় বাড়াবে তার নিশ্চয়তা দেয়",
+        "বিশ্বস্ত উৎস থেকে পাওয়া প্রত্যাশিত Hash থাকলে ফাইলটির হুবহু বাইট অভিন্নতা (Exact Byte Identity) নিশ্চিত করে"
+      ],
+      "answer": 3,
+      "explanation": "কেউ যদি Artifact এবং checksums.json দুটিই একসাথে বদলে দেয়, তবে আলাদা ডিজিটাল স্বাক্ষর বা বিশ্বস্ত অ্যাঙ্কর ছাড়া শুধু Hash মিলিয়ে প্রামাণিকতা ধরা যায় না; এটি কেবল বাইট অক্ষত থাকার প্রমাণ।"
+    },
+    {
+      "id": "ch36_q23",
+      "question": "সহযোগী ঐচ্ছিক Python HTTP সার্ভারটি বন্ধ থাকলে আমাদের মোবাইল লার্নিং অ্যাপে কী ঘটবে?",
+      "options": [
+        "অ্যাপ চালানোর জন্য আলাদা API Authentication লগইন চাইবে",
+        "ইন্টারনেট থেকে কুইজের উত্তর ও Label ডাউনলোড হতে থাকবে",
+        "বান্ডল করা অ্যাসেট থেকে অ্যাপের সব পাঠ, কুইজ ও ইন্টারঅ্যাক্টিভ ল্যাব সম্পূর্ণ Offline-এ চলবে",
+        "অধ্যায়ের কোনো Lesson আর খোলা যাবে না"
+      ],
+      "answer": 2,
+      "explanation": "মোবাইল অ্যাপটি সম্পূর্ণ স্বয়ংসম্পূর্ণ ও নেটওয়ার্ক-মুক্তভাবে ডিজাইন করা হয়েছে; সহযোগী Python সার্ভারটি কেবল ডেস্কটপে অনুশীলনের জন্য একটি ঐচ্ছিক ল্যাব।"
+    },
+    {
+      "id": "ch36_q24",
+      "question": "ঐতিহাসিক ডেটায় Candidate Model-এর MAE কম (811.421) হওয়া মানেই কেন সরাসরি প্রোডাকশনে প্রমোট করার চূড়ান্ত প্রমাণ নয়?",
+      "options": [
+        "কারণ আমাদের কাছে তুলনা করার মতো কোনো Baseline Label নেই",
+        "কারণ এটি ইতিমধ্যেই পর্যবেক্ষণ করা Development ডেটার প্রমাণ; সার্ভিস নির্ভরযোগ্যতা ও অনলাইন কার্যকারণ যাচাই তখনও বাকি",
+        "কারণ সংরক্ষিত শেষ 184টি ফলাফল ইতিমধ্যেই ট্রেনিংয়ে ব্যবহৃত হয়ে গেছে",
+        "কারণ এই Ridge Model-টি বাস্তব ডেটার ওপর Fit করা হয়নি"
+      ],
+      "answer": 1,
+      "explanation": "অফলাইনে বাস্তব ডেটায় ভালো Score পাওয়া একটি ইতিবাচক প্রথম ধাপ হলেও এটি ইতিমধ্যেই দেখা Development সেট; প্রোডাকশন প্রমোশনের জন্য সার্ভিস গেট, রিকভারি প্রস্তুতি এবং স্বাধীন অনলাইন প্রমাণও প্রয়োজন।"
+    },
+    {
+      "id": "ch36_q_fleet_quantile_revision",
+      "question": "ধরা যাক একটি Replica-য় 99টি Request-এর সময়কাল 10 ms এবং দ্বিতীয় Replica-য় 1টি Request-এর সময়কাল 1000 ms। সবগুলো Sample একত্র করলে সম্মিলিত Linear Sample p95 কত হবে?",
+      "options": [
+        "505 ms",
+        "19.9 ms",
+        "10 ms",
+        "1000 ms"
+      ],
+      "answer": 2,
+      "explanation": "সাজানো মোট 100টি Sample-এর ক্ষেত্রে h = 99 × 0.95 = 94.05। ৯৫তম ও ৯৬তম—উভয় অবস্থানেই মান রয়েছে 10 ms, তাই প্রকৃত সম্মিলিত p95 হলো 10 ms। Quantile বের করার আগে সবসময় Distribution-গুলোকে একত্র করতে হয়।"
+    },
+    {
+      "id": "ch36_q_mature_selection_revision",
+      "question": "একই Mature Subset-এ তুলনা করে দেখা গেল Candidate Model-এর MAE কম। পুরো Request Population-এর গুণমান সম্পর্কে কোন সিদ্ধান্তটি সবচেয়ে যৌক্তিক?",
+      "options": [
+        "পুরো Population-এও Candidate Model-টি শতভাগ নিশ্চিতভাবে সেরা হবেই",
+        "অপেক্ষমাণ সব Pending Label-এর মান শূন্য ধরে পূর্ণ হিসাব করে ফেলতে হবে",
+        "কভারেজ শতাংশ, Pending সংখ্যা এবং Label পরিপক্বতার ঝোঁক উল্লেখ করে বর্তমান Subset ফলাফলটি রিপোর্ট করতে হবে",
+        "Label আসতে দেরি হলে সার্ভারের সব অপারেশনাল Metric-ও বন্ধ রাখতে হবে"
+      ],
+      "answer": 2,
+      "explanation": "যে Label-গুলো আগে এসেছে সেগুলোর গঠন পুরো Population থেকে আলাদা (যেমন সহজ কেস) হতে পারে; তাই একই Subset-এ তুলনার পাশাপাশি কতগুলো Label বাকি আছে এবং সম্ভাব্য Selection অনুমানগুলো স্পষ্টভাবে প্রকাশ করতে হবে।"
+    }
+  ],
+  "exercises": [
+    {
+      "id": "ch36_ex_predict",
+      "title": "হাতে-কলমে Standardized Inference গণনা",
+      "prompt": "Day 375-এর `on_time` Feature-গুলো এবং প্যাকেজ করা Candidate Model-এর `mean`, `scale`, `weights` ও `intercept` নিন। Helper-এর `predict` Function ব্যবহার না করে সঠিক ক্রমে (`lag1`, `lag7`, `mean7`) Standardization ও Dot Product হিসাব করে চূড়ান্ত নন-নেগেটিভ Prediction মানটি লিখুন।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/serving_lab.json\").read_text(encoding=\"utf-8\")\n)\nmodel = lab[\"models\"][\"candidate\"]\nf = lab[\"rows\"][10][\"features\"]\nstandardized = [\n    (f[k] - mu) / s\n    for k, mu, s in zip(model[\"input_fields\"], model[\"mean\"], model[\"scale\"])\n]\nresult = max(\n    0.0, model[\"intercept\"] + sum(w * z for w, z in zip(model[\"weights\"], standardized))\n)\nprint(result)\n",
+      "expected": 3436.292806611479,
+      "explanation": "চূড়ান্ত Prediction মানটি আসে প্রায় 3436.2928066। এজন্য শুধুমাত্র Training ডেটা থেকে পাওয়া mean ও scale, intercept এবং সবশেষে শূন্যের নিচে না নামার Clipping (max(0, raw)) ক্রমানুসারে প্রয়োগ করতে হয়।"
+    },
+    {
+      "id": "ch36_ex_bucket",
+      "title": "স্থিতিশীল FNV-1a (32-bit) রাউটিং Bucket",
+      "prompt": "`bike-global:2012-01-11` কী-টির UTF-8 বাইটগুলোর ওপর নিজে `FNV1a32` Hash অ্যালগরিদম ইমপ্লিমেন্ট করুন এবং প্রাপ্ত Hash মানটিকে `10000` দিয়ে ভাগশেষ (`modulo 10000`) বের করে Bucket সংখ্যাটি লিখুন।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "value = 2166136261\nfor byte in \"bike-global:2012-01-11\".encode(\"utf-8\"):\n    value = ((value ^ byte) * 16777619) & 0xFFFFFFFF\nresult = value % 10000\nprint(result)\n",
+      "expected": 8222.0,
+      "explanation": "সঠিক Bucket সংখ্যাটি হলো 8222। এজন্য নির্দিষ্ট প্রারম্ভিক অফসেট থেকে শুরু করে প্রতিটি UTF-8 বাইটে ক্রমান্বয়ে XOR, মৌলিক সংখ্যা দিয়ে গুণ এবং 32-bit মাস্ক প্রয়োগ করতে হয়—প্রোগ্রামিং ভাষার নিজস্ব Randomized hash() Function এখানে ব্যবহার করা যাবে না।"
+    },
+    {
+      "id": "ch36_ex_route",
+      "title": "10% Canary-তে বাস্তবে নির্বাচিত Request সংখ্যা",
+      "prompt": "Development সেটের 182টি Request তারিখের প্রতিটির জন্য নিজে Hash Bucket বের করুন। 10% Canary Threshold-এর অর্থ `bucket < 1000` ধরে মোট কয়টি Request Candidate Model-এ নির্বাচিত হয় তা লিখুন (Helper-এর `replay` Function ব্যবহার করবেন না)।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/serving_lab.json\").read_text(encoding=\"utf-8\")\n)\n\n\ndef bucket(key):\n    value = 2166136261\n    for byte in key.encode():\n        value = ((value ^ byte) * 16777619) & 0xFFFFFFFF\n    return value % 10000\n\n\nresult = sum(bucket(\"bike-global:\" + r[\"date\"]) < 1000 for r in lab[\"rows\"])\nprint(result)\n",
+      "expected": 22.0,
+      "explanation": "মোট 22টি কী নির্বাচিত হয়। এখান থেকে স্পষ্ট বোঝা যায় যে নির্ধারিত শতকরা Threshold (10% বা 18.2) এবং সসীম Sample-এ বাস্তবে পাওয়া অনুপাত সবসময় সমান হয় না; পাশাপাশি রাউটিং কী-এর একক ও সময়ের নির্ভরশীলতাও খেয়াল রাখতে হয়।"
+    },
+    {
+      "id": "ch36_ex_mae",
+      "title": "অভিন্ন Population-এ Candidate Model-এর MAE",
+      "prompt": "পূর্ণ 182 Row-এর `on_time` Population-এ সংরক্ষিত Candidate Model-এর Prediction এবং প্রকৃত `outcome` থেকে গড় পরম ত্রুটি (`MAE`) নিজে হিসাব করে লিখুন।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/serving_lab.json\").read_text(encoding=\"utf-8\")\n)\nerrors = [r[\"candidate\"] - r[\"outcome\"] for r in lab[\"rows\"]]\nresult = sum(abs(e) for e in errors) / len(errors)\nprint(result)\n",
+      "expected": 811.4206425486229,
+      "explanation": "Candidate Model-এর MAE আসে প্রায় 811.4206425 rentals/day। এটি সুনির্দিষ্ট ঐতিহাসিক Development Population-এর ফলাফল; Label বিলম্বের কারণে Mature Subset ছোট হয়ে গেলে রিপোর্টে সেই পরিবর্তিত Denominator-ও স্পষ্টভাবে উল্লেখ করতে হবে।"
+    },
+    {
+      "id": "ch36_ex_psi",
+      "title": "পূর্ণ সময়ের lag1 Feature-এর PSI পুনর্গঠন",
+      "prompt": "সংরক্ষিত Fit-only Quintile সীমানাগুলো ব্যবহার করে ট্রেনিং ও মনিটরিং উভয় অংশের কাঁচা `lag1` ইনপুটগুলোকে Bucket-এ ভাগ করুন (সীমানার সমান মান ডান পাশের Bucket-এ যাবে)। প্রতিটি Bucket-এ `0.5` Pseudocount যোগ করে Normalized Probability Mass থেকে পূর্ণ `PSI` মানটি হিসাব করে লিখুন।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/serving_lab.json\").read_text(encoding=\"utf-8\")\n)\nimport bisect, math\n\nedges = lab[\"monitoring\"][\"full\"][\"lag1\"][\"edges\"]\nk = len(edges) + 1\nref = [0] * k\nobs = [0] * k\nfor r in lab[\"training\"]:\n    ref[bisect.bisect_right(edges, r[\"features\"][\"lag1\"])] += 1\nfor r in lab[\"rows\"]:\n    obs[bisect.bisect_right(edges, r[\"features\"][\"lag1\"])] += 1\np = [(v + 0.5) / (358 + 0.5 * k) for v in ref]\nq = [(v + 0.5) / (182 + 0.5 * k) for v in obs]\nresult = sum((b - a) * math.log(b / a) for a, b in zip(p, q))\nprint(result)\n",
+      "expected": 0.8822160717617205,
+      "explanation": "পূর্ণ lag1 PSI আসে প্রায় 0.88221607। খেয়াল রাখবেন, Fit Reference (358টি) এবং মনিটরিং Population (182টি)-এর মোট হর আলাদাভাবে N + 0.5 K দিয়ে Normalize করতে হয়; আর এই সূচকটি কেবল একক Feature-এর Distribution পরিবর্তন মাপে।"
+    },
+    {
+      "id": "ch36_ex_p95",
+      "title": "নিখুঁত Linear Sample p95 গণনা",
+      "prompt": "Telemetry উদাহরণে দেওয়া 20টি সময়কাল (Duration) ছোট থেকে বড় ক্রমে সাজান। এরপর `h = (n - 1) × 0.95` সূত্র দিয়ে রৈখিক অন্তর্পাতন (Linear Interpolation) করে `p95` মানটি লিখুন।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/serving_lab.json\").read_text(encoding=\"utf-8\")\n)\nimport math\n\nx = sorted(r[\"duration_ms\"] for r in lab[\"slo\"][\"rows\"])\nh = (len(x) - 1) * 0.95\nlo = math.floor(h)\nhi = math.ceil(h)\nresult = x[lo] + (h - lo) * (x[hi] - x[lo])\nprint(result)\n",
+      "expected": 152.50000000000003,
+      "explanation": "নিখুঁত Sample p95 হলো 152.5 ms। এটি আমাদের এই নির্দিষ্ট Sample এবং Linear Sample Quantile নিয়মের ফলাফল; কাঁচা Sample ছাড়া Histogram Bucket থেকে প্রাক্কলন করলে তার জন্য আলাদা আসন্নীকরণ ব্যবহৃত হয়।"
+    },
+    {
+      "id": "ch36_ex_good",
+      "title": "Composite Good-Event সংখ্যা গণনা",
+      "prompt": "Telemetry উদাহরণে দেওয়া 20টি Request-এর মধ্যে যেগুলো সফল (`ok`) হয়েছে এবং একই সাথে `duration ≤ 100` ms শর্তটি মেনেছে, সেগুলোর মোট সংখ্যা (`Good-Event Count`) গুনে লিখুন।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/serving_lab.json\").read_text(encoding=\"utf-8\")\n)\nresult = sum(r[\"ok\"] and r[\"duration_ms\"] <= 100 for r in lab[\"slo\"][\"rows\"])\nprint(result)\n",
+      "expected": 16.0,
+      "explanation": "সঠিক সংখ্যাটি হলো 16টি Good Request (এবং বাকি 4টি Bad)। এখানে সবগুলো অর্থাৎ 20টি যোগ্য Request-ই হরে (Denominator) রয়েছে—ফলে সাধারণ Availability (18/20) এবং Composite Good Rate (16/20) দুটি ভিন্ন মান দেয়।"
+    },
+    {
+      "id": "ch36_ex_budget",
+      "title": "Error Budget Allowance হিসাব",
+      "prompt": "মোট 20টি যোগ্য Request এবং 99% (`0.99`) SLO লক্ষ্যমাত্রা দেওয়া থাকলে অনুমোদিত খারাপ Request-এর বাজেট (`Allowed Bad Request-Equivalents`) কত হবে তা লিখুন।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "requests = 20\ntarget = 0.99\nresult = requests * (1 - target)\nprint(result)\n",
+      "expected": 0.20000000000000018,
+      "explanation": "হিসাবটি হলো 20 × (1 − 0.99) = 0.2। বাস্তবে 4টি খারাপ Request ঘটায় অবশিষ্ট বাজেট দাঁড়ায় −3.8 এবং Burn Rate হয় 20x। রেট-ভিত্তিক SLO গাণিতিক হিসাবে এ ধরনের ভগ্নাংশ বাজেট সম্পূর্ণ স্বাভাবিক।"
+    },
+    {
+      "id": "ch36_ex_hash",
+      "title": "Canonical Model Byte Identity ও SHA-256",
+      "prompt": "Candidate Model Dictionary-টিকে সাজানো কী (`sorted keys`), সংক্ষিপ্ত সেপারেটর (`compact separators`) এবং `ensure_ascii=False` দিয়ে UTF-8 JSON String-এ Serialize করুন। শেষে একটি `LF` যোগ করে তার `SHA256` Hash-এর প্রথম আটটি hex digit পূর্ণসংখ্যায় (`integer`) রূপান্তর করে লিখুন।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/serving_lab.json\").read_text(encoding=\"utf-8\")\n)\nimport hashlib\n\nencoded = (\n    json.dumps(\n        lab[\"models\"][\"candidate\"],\n        ensure_ascii=False,\n        sort_keys=True,\n        separators=(\",\", \":\"),\n    )\n    + \"\\n\"\n).encode()\ndigest = hashlib.sha256(encoded).hexdigest()\nassert digest == lab[\"manifests\"][\"candidate\"][\"model_sha256\"]\nresult = int(digest[:8], 16)\nprint(result)\n",
+      "expected": 3727397445.0,
+      "explanation": "পূর্ণসংখ্যায় রূপান্তরিত ফলাফলটি হলো 3727397445। এভাবেই ডিস্কের প্রকৃত বাইটের সাথে প্রত্যাশিত Manifest মেলানো হয়; তবে প্রোডাকশনে Hash মেলার পাশাপাশি Manifest-এর বিশ্বস্ততা এবং অর্থগত সামঞ্জস্যতাও যাচাই করতে হয়।"
+    },
+    {
+      "id": "ch36_ex_rollback",
+      "title": "Rollback রাউটিংয়ের পূর্ণতা যাচাই",
+      "prompt": "`late_fixture` পরিস্থিতিতে `rollback=True` দিয়ে পুরো ডেটা রিপ্লে করুন। `candidate`, `fallback` এবং `blocked`—এই তিনটি সংখ্যা শূন্য (`0`) আছে কি না তা `assert` করে মোট কয়টি Request `baseline` দ্বারা সার্ভ হয়েছে তা লিখুন।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"serving36\", Path(\"assets/datasets/bike_sharing/serving_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/serving_lab.json\").read_text(encoding=\"utf-8\")\n)\ncounts = m.replay(lab, \"late_fixture\", rollback=True)\nassert counts[\"candidate\"] == 0 and counts[\"fallback\"] == 0 and counts[\"blocked\"] == 0\nresult = counts[\"baseline\"]\nprint(result)\n",
+      "expected": 182.0,
+      "explanation": "মোট 182টি Request-ই সরাসরি baseline দ্বারা সার্ভ হয়। এই স্থানীয় মহড়াটি আমাদের রাউটিং কন্ট্রোলারের নির্ভুল আচরণ প্রমাণ করে; তবে বাস্তব সার্ভিসে পূর্ণ পুনরুদ্ধারে কত সময় লাগবে তা জানতে লাইভ অবকাঠামোগত পরিমাপ প্রয়োজন।"
+    }
+  ],
+  "interviews": [
+    {
+      "title": "নোটবুক থেকে নির্ভরযোগ্য Inference Release ডিজাইন",
+      "tag": "System design",
+      "prompt": "শহরের দৈনিক চাহিদা অনুমানের (Daily-Demand) একটি Model-কে সাধারণ Notebook থেকে প্রোডাকশন Serving সিস্টেমে নেওয়ার আর্কিটেকচার ডিজাইন করুন।",
+      "answer": "সবার আগে আমি সিস্টেমের শর্তগুলো পরিষ্কার করে নেব: Prediction-এর একক (এখানে পুরো শহরের দৈনিক সমষ্টি), Forecast Horizon, ডেটা কখন পাওয়া যায়, Latency ও খরচের বাজেট এবং ডেটা না এলে কী Failure Policy চলবে। এরপর সুনির্দিষ্ট ক্রমের Feature তালিকা, শুধুমাত্র ট্রেনিং ডেটার Scaler, Model-এর Weights, Feature Definition এবং মূল ডেটার Hash মিলিয়ে একটি Immutable Release বান্ডল তৈরি করব।\n\nRequest প্রবাহটি চলবে সুশৃঙ্খল ধাপে: `Validate → Lookup → Transform → Predict → Policy`, যেখানে Baseline Model-টি স্বাধীনভাবে যাচাইকৃত থাকবে। এর সাথে আলাদা Liveness ও Readiness Probe, Response-এ Model Version Telemetry, অভিন্ন Mature-Label Population-এ কোয়ালিটি মনিটরিং, নিয়ন্ত্রিত Canary Rollout এবং তাৎক্ষণিক Rollback পথ যুক্ত করব। সবশেষে প্রমাণের সীমানা স্পষ্ট করব—আমাদের 358টি Fit এবং 182টি ঐতিহাসিক উদাহরণের ফলাফল থাকলেও বিশাল প্রোডাকশন স্কেল বা অনলাইন ব্যবসায়িক সাফল্য আলাদাভাবে পরীক্ষা করতে হবে।"
+    },
+    {
+      "title": "নিরাপদ লোকাল Prediction ও Boundary Test ইমপ্লিমেন্টেশন",
+      "tag": "Coding",
+      "prompt": "তিন-ইনপুটের একটি Ridge Inference Function কীভাবে নিরাপদে ইমপ্লিমেন্ট করবেন এবং এর প্রান্তিক কেসগুলোর জন্য কী কী Boundary Test লিখবেন?",
+      "answer": "ইমপ্লিমেন্টেশনের শুরুতে আমি যাচাই করব ইনপুটগুলো ঠিক `['lag1', 'lag7', 'mean7']` ক্রমে আছে কি না, Fit ডেটার `mean` ও `scale` Vector-এর দৈর্ঘ্য মিলছে কি না, প্রতিটি `scale` কঠোরভাবে ধনাত্মক ও সসীম কি না এবং কোনো ইনপুট বা ওয়েটে `NaN`/`Inf` আছে কি না। এরপর `z = (x - mu) / scale` ও `raw = b + dot(w, z)` হিসাব করে ভাড়ার সংখ্যা ঋণাত্মক না হওয়ার শর্তে `max(0, raw)` রিটার্ন করব।\n\nকোনো Candidate Feature অনুপস্থিত থাকলে স্বাধীনভাবে বৈধ `seasonal7` Fallback চলবে, আর Baseline নিজেও অবৈধ বা অসম্পূর্ণ হলে কলটি সরাসরি `BLOCKED` হবে। পরীক্ষার জন্য পূর্ণ 182টি Vector-এ Python ও Dart-এর Parity টেস্ট, ভুল Shape বা শূন্য Scale প্রত্যাখ্যান, Null ইনপুটে Fallback, ঋণাত্মক আউটপুটে শূন্যে Clipping এবং প্রকৃত `outcome` কখনোই ইনপুটে ঢুকছে না—এই সবকটি Boundary Test রাখব।"
+    },
+    {
+      "title": "ডিপ্লয়মেন্টের পর Error ও Fallback বৃদ্ধির তদন্ত",
+      "tag": "Debugging",
+      "prompt": "নতুন Release ডিপ্লয় করার পরপরই ড্যাশবোর্ডে Error এবং Fallback-এর হার বাড়তে শুরু করেছে, কিন্তু প্রকৃত Label এখনো Pending। আপনি কীভাবে পরিস্থিতি সামলাবেন?",
+      "answer": "প্রকৃত Label আসতে দেরি হবে বলে হাত গুটিয়ে বসে থাকার কোনো সুযোগ নেই—কারণ এটি স্পষ্টতই একটি তাৎক্ষণিক Service বা Data স্তরের ঘটনা! আমি প্রথমেই সার্ভিস Telemetry, সময়ের উইন্ডো এবং যোগ্য Request-এর হর (Denominator) যাচাই করব; এরপর সক্রিয় Model Version, আপস্ট্রিম সোর্সের Schema ও সতেজতা (Freshness) এবং সার্ভারের রিসোর্স Saturation পরীক্ষা করব।\n\nCandidate Artifact-এর নিজস্ব ত্রুটি এবং আপস্ট্রিম ডেটা আসতে দেরি হওয়া—দুটি পথ আলাদাভাবে ট্রেস করব। ব্যবহারকারীর ক্ষতি থামাতে আগে লগ ও Metric-এর প্রমাণ সংরক্ষণ করে রোলআউট থামিয়ে দেব অথবা বৈধতা যাচাই সাপেক্ষে নিরাপদ Baseline-এ Rollback করব। পরে যখনই Mature Label হাতে আসবে, তখন অভিন্ন যোগ্য Population-এর ওপর Model-এর গুণমান আলাদাভাবে মূল্যায়ন করব।"
+    },
+    {
+      "title": "কেন Canary Routing মানেই চূড়ান্ত A/B সিদ্ধান্ত নয়",
+      "tag": "Experiment reasoning",
+      "prompt": "10% Canary Threshold দেওয়ায় 182টির মধ্যে 22টি Request Candidate Model-এ গেছে এবং সেগুলোর গড় MAE তুলনামূলক কম এসেছে। শুধু এই তথ্যের ভিত্তিতে কি Model-টি ১০০% প্রমোট করে দেবেন?",
+      "answer": "না, শুধু এই তথ্যের ভিত্তিতে আমি প্রমোট করব না। প্রথমত, ছোট Sample-এ Hash রাউটিংয়ের কারণে 182টির মধ্যে 22টি নির্বাচিত হওয়া স্বাভাবিক হলেও এই সংখ্যাটি খুবই ছোট। দ্বিতীয়ত এবং সবচেয়ে গুরুত্বপূর্ণ হলো, এখানে `entity + date` কী দিয়ে রাউটিং করা হয়েছে—এটি কোনো ব্যবহারকারী-ভিত্তিক দৈবচয়িত (User-Randomized) অনলাইন এক্সপেরিমেন্ট নয়! তারিখভিত্তিক বিভাজনে ঋতুগত ওঠানামা (Seasonality), ক্রমিক নির্ভরশীলতা (Serial Correlation) এবং কোন দিনগুলো Bucket-এ পড়ল তার Selection প্রভাব মিশে থাকে।\n\nModel দুটির নিখুঁত অফলাইন তুলনার জন্য একই Request-এ জুটিবদ্ধ (Paired) ঐতিহাসিক মূল্যায়ন অনেক বেশি অর্থবহ, কিন্তু অনলাইনে প্রকৃত ব্যবসায়িক সুফল (Causal Lift) দাবি করতে হলে সুনির্দিষ্ট এক্সপেরিমেন্ট ডিজাইন, সার্ভিস ও কোয়ালিটি গেট এবং পূর্ণ Rollback প্রস্তুতি নিশ্চিত করে তবেই প্রমোশনের সিদ্ধান্ত নিতে হবে।"
+    },
+    {
+      "title": "অর্থবহ SLO, Error Budget ও Burn Rate গণনা",
+      "tag": "Reliability / mathematics",
+      "prompt": "একটি উইন্ডোতে মোট 20টি যোগ্য Request-এর মধ্যে 18টি সফল হয়েছে, 16টি সফল ও দ্রুত (≤ 100 ms), এবং আপনার SLO লক্ষ্যমাত্রা 99%। সবকটি নির্ভরযোগ্যতা সূচক হিসাব করে ব্যাখ্যা করুন।",
+      "answer": "হিসাবগুলো ক্রমানুসারে এরকম: সাধারণ Availability হলো `18 / 20 = 0.9`, কিন্তু সফল ও সময়সীমার ভেতরে থাকা Composite SLI হলো `16 / 20 = 0.8` (যেখানে ব্যর্থ Request-গুলো অবশ্যই হরের ভেতরে থাকবে)। ফলে মোট খারাপ Request `bad = 4`টি। `99%` লক্ষ্যমাত্রায় অনুমোদিত খারাপ বাজেট হলো `20 × 0.01 = 0.2` Request-সমতুল্য, তাই অবশিষ্ট বাজেট দাঁড়ায় `0.2 - 4 = -3.8` (অর্থাৎ বাজেট ইতিমধ্যেই অতিক্রান্ত)। আর বাজেট পোড়ার হার বা Burn Rate হলো `(4 / 20) / 0.01 = 0.2 / 0.01 = 20x`।\n\nপ্রোডাকশনে এর সাথে আমি সময়ের উইন্ডো, কোন Request যোগ্য, Retry কীভাবে গোনা হবে এবং কেন `100 ms` ও `99%` প্রোডাক্টের জন্য যৌক্তিক তা সংজ্ঞায়িত করব। পাশাপাশি মনে রাখব যে মাত্র 20টি Request-এর উদাহরণ কেবল গাণিতিক স্বচ্ছতার জন্য, এবং `20x` Burn থেকে কত মিনিটে বাজেট শেষ হবে তা বলতে হলে ভবিষ্যৎ ট্রাফিকের হার সম্পর্কেও স্পষ্ট অনুমান প্রয়োজন।",
+      "prerequisiteLessons": [
+        "ch36_slo"
+      ]
+    },
+    {
+      "title": "Cluster জুড়ে সঠিকভাবে Latency Quantile একত্রীকরণ",
+      "tag": "Observability",
+      "prompt": "প্রতিটি সার্ভার Replica-র নিজস্ব p95 গড় করলে কি পুরো Cluster-এর Global p95 পাওয়া সম্ভব?\n\nধরুন প্রথম Replica-য় 99টি Request-এর সময়কাল 10 ms এবং দ্বিতীয় Replica-য় 1টি Request-এর সময়কাল 1000 ms। Replica-গুলোর p95-এর গড় এবং সম্মিলিত Sample-এর প্রকৃত p95 হিসাব করে দেখান।",
+      "answer": "না, Replica-র আলাদা `p95` গড় করে কখনোই প্রকৃত Global `p95` পাওয়া যায় না—কারণ Quantile একটি অরৈখিক (Nonlinear) হিসাব এবং আলাদা গড় করলে ট্রাফিকের পরিমাণ ও প্রান্তিক মানের ক্রম হারিয়ে যায়। প্রোডাকশনে সঠিক অনুমানের জন্য অভিন্ন সীমানার ক্রমযোজিত Histogram Bucket কাউন্ট (`Cumulative Histogram Buckets`) যোগ করতে হয়, অথবা কাঁচা Sample থাকলে সরাসরি একত্র করে নির্দিষ্ট সূত্রে হিসাব করতে হয়। খেয়াল রাখতে হবে, আমাদের উদাহরণের সব Request-এর `p95` (`152.5 ms`) এবং কেবল সফল Request-এর `p95` (`133 ms`) দুটি ভিন্ন Population, আর Histogram আসন্নীকরণ ও Sample ইন্টারপোলেশনও এক নয়।\n\nপ্রদত্ত সংখ্যায় প্রথম Replica-র নিজস্ব `p95 = 10 ms` এবং দ্বিতীয়টির `p95 = 1000 ms`। এদের সরল গড় করলে আসে `505 ms` এবং Request-ওজনযুক্ত গড় করলে আসে `19.9 ms`। অথচ সব 100টি Sample একত্র করে Linear Sample Quantile বের করলে প্রকৃত Cluster `p95` হয় মাত্র `10 ms`! অর্থাৎ Quantile বের করার আগেই Distribution একত্র করা বাধ্যতামূলক।",
+      "prerequisiteLessons": [
+        "ch36_histogram"
+      ]
+    },
+    {
+      "title": "MAE স্থিতিশীল থাকা সত্ত্বেও উচ্চ PSI দেখা দিলে করণীয়",
+      "tag": "ML reasoning",
+      "prompt": "মনিটরিং ড্যাশবোর্ডে কোনো Feature-এর PSI অনেক বেশি দেখাচ্ছে, কিন্তু Mature Label-এ Model-এর MAE বেশ স্থিতিশীল রয়েছে। আপনি কী পদক্ষেপ নেবেন?",
+      "answer": "তড়িঘড়ি করে Model Retrain না করে আমি প্রথমেই ডেটার ভিত্তি যাচাই করব: Reference Population, Bucket-এর সীমানা, Feature-এর Version, একক (Units) ও কভারেজ ঠিক আছে কি না এবং ঋতুগত বৃদ্ধির মতো স্বাভাবিক প্রেক্ষাপট ও Label Maturity কতটুকু। মনে রাখতে হবে, `PSI` কেবল একক ইনপুট Feature-এর $P(X)$ Distribution পরিবর্তন মাপে—এটি কোনো `p-value` বা নিশ্চিত `Concept Drift` নয়!\n\nযদি নতুন ইনপুট পরিসরেও Model-এর রৈখিক সম্পর্ক অটুট থাকে, তবে PSI বাড়লেও MAE স্থিতিশীল থাকতে পারে। তবুও আমি অভিন্ন Mature Population-এর ভেতরকার বিভিন্ন Slice, Signed Bias ও অপারেশনাল খরচ পরীক্ষা করে নিশ্চিত হব যে কোনো আপস্ট্রিম ডেটা ত্রুটি লুকিয়ে নেই (এখানে ইনপুট সংখ্যা `182` এবং ৭ দিনের বিলম্বে Label সংখ্যা `175` আলাদা হরে থাকবে)। ডেটার প্রস্তুতি ও স্বাধীন উন্নতির প্রমাণ ছাড়া কেবল PSI দেখে স্বয়ংক্রিয় Retrain চালাব না।",
+      "prerequisiteLessons": [
+        "ch36_drift",
+        "ch36_book_shift_taxonomy"
+      ]
+    },
+    {
+      "title": "বিলম্বিত Label ও Model তুলনার ন্যায্যতা রক্ষা",
+      "tag": "Evaluation",
+      "prompt": "ধরুন Candidate Model-এর 182টি Prediction তৈরি আছে, কিন্তু Label বিলম্বের কারণে বর্তমানে প্রকৃত Outcome জানা আছে 175টির। আপনি Candidate ও Baseline Model-এর MAE কীভাবে তুলনা করবেন?",
+      "answer": "ন্যায্য জুটিবদ্ধ তুলনার (Paired Comparison) জন্য আমি Candidate এবং Baseline—উভয় Model-কেই অবিকল একই যোগ্য `175`টি Mature Request-এর ওপর Score করব এবং বাকি `7`টি Label যে এখনো `Pending` তা স্পষ্টভাবে রিপোর্টে উল্লেখ করব। পাশাপাশি `label_available = target + 1 + delay` নিয়ম এবং রিপোর্টিং ঘড়ির সময়টিও লিখে রাখব।\n\nকখনোই অপেক্ষমাণ ৭টি Request-এর ত্রুটি শূন্য (`0`) ধরে ১৮২ দিয়ে ভাগ করা যাবে না। বাস্তব প্রোডাকশনে জটিল কেসগুলোর Label আসতে যদি বেশি দেরি হয়, তবে এই প্রাথমিক ১৭৫টি উদাহরণে `Selection Bias` থাকতে পারে—সেই সীমাবদ্ধতাটিও আমি তুলে ধরব এবং মনে করিয়ে দেব যে ইতিমধ্যেই দেখা ঐতিহাসিক ডেটার উন্নতি ভবিষ্যতের নতুন অন্ধ পরীক্ষার বিকল্প নয়।",
+      "prerequisiteLessons": [
+        "ch36_quality"
+      ]
+    },
+    {
+      "title": "Checksum পাশ করার পরও অসুরক্ষিত Model ঢোকার ঝুঁকি",
+      "tag": "Packaging / security",
+      "prompt": "ফাইলের SHA-256 Checksum যাচাই সফল হওয়ার পরও কীভাবে একটি অসুরক্ষিত বা ভুল Model প্রোডাকশন সার্ভিসে ঢুকে পড়তে পারে?",
+      "answer": "সাধারণ Checksum কেবল ফাইলের বাইট অভিন্নতা দেখে, লেখকের প্রামাণিকতা (`Authenticity`) নয়। কোনো আক্রমণকারী বা ভুল বিল্ড স্ক্রিপ্ট যদি ক্ষতিকর Model ফাইলের পাশাপাশি `checksums.json` ফাইলের প্রত্যাশিত Hash-টিকেও একসাথে বদলে দেয়, তবে Checksum পরীক্ষা নির্বিঘ্নে পাশ করে যাবে! এটি ঠেকাতে বিশ্বস্ত চ্যানেলে Manifest সংরক্ষণ, ক্রিপ্টোগ্রাফিক ডিজিটাল স্বাক্ষর (Signing) এবং কঠোর Access Control প্রয়োজন।\n\nএছাড়া ফাইল খাঁটি হলেও তার ভেতরের যুক্তি ভুল হতে পারে—তাই আমাদের ছয়টি মূল Payload ফাইল ও Hash Index মেলানোর পাশাপাশি Schema, Feature Definition ও সোর্স Hash-এর ক্রসলিংক, সসীম সংখ্যাগত Vector এবং স্বাধীন সময়ের ক্রম ও Parity টেস্ট চালাতে হবে। একটি বৈধ Hash কখনোই Model-এর বৈজ্ঞানিক শুদ্ধতার গ্যারান্টি দেয় না।"
+    },
+    {
+      "title": "স্বয়ংক্রিয় Retraining ও নিরাপদ Recovery নীতিমালা",
+      "tag": "MLOps synthesis",
+      "prompt": "Drift অ্যালার্ম বাজলেই স্বয়ংক্রিয়ভাবে Model Retrain করে সরাসরি লাইভ প্রোডাকশনে ডিপ্লয় করার পাইপলাইন কি আপনি সমর্থন করবেন? আপনার নীতিমালা ব্যাখ্যা করুন।",
+      "answer": "না, সরাসরি লাইভ ডিপ্লয়মেন্টের অন্ধ স্বয়ংক্রিয়তা আমি সমর্থন করব না। একটি অ্যালার্ম বড়জোর নতুন Candidate ট্রেনিংয়ের **পরীক্ষা শুরু** (Trigger) করতে পারে, কিন্তু প্রোডাকশনে **Promotion** হতে হবে কঠোর ও স্বাধীন Gate পেরিয়ে! কারণ আপস্ট্রিম ডেটা নষ্ট হয়ে Drift অ্যালার্ম বাজলে স্বয়ংক্রিয় ট্রেনিং সেই নষ্ট ডেটাই শিখে ফেলবে।\n\nআমার প্রস্তাবিত পাইপলাইনে প্রথমে সোর্স ডেটা ও Mature Label যাচাই হবে, সময়ভিত্তিক বিভাজন স্থির রেখে শুধুমাত্র ট্রেনিং অংশে Preprocessing Fit হবে, ঘোষিত Baseline-গুলোর সাথে একই Population-এ তুলনা হবে, সার্ভিস Guardrail ও Immutable প্যাকেজ তৈরি হবে এবং তারপর Shadow ও Canary ধাপ পেরিয়ে প্রস্তুত Rollback পথসহ প্রমোট করা হবে। উল্লেখ্য, আমাদের বর্তমান অধ্যায়ের Model-টি 2011 সালের ডেটায় স্থির রাখা হয়েছে এবং শেষ 184টি ফলাফল অস্পৃশ্য রয়েছে; বাস্তব সিস্টেমে Feedback Loop ও অনলাইন কার্যকারণ মূল্যায়নও এর সাথে যুক্ত করতে হবে।"
+    }
+  ],
+  "book": {
+    "order": 43,
+    "part": "Book 6 · ML Systems, MLOps & Interviews",
+    "prerequisites": [
+      "chapter_35",
+      "chapter_17"
+    ],
+    "purpose": "আগের অধ্যায়ে তৈরি করা Feature Pipeline-এর ওপর ভিত্তি করে কীভাবে একটি Model নিরাপদে Serve করতে হয়, অর্থবহভাবে Monitor করতে হয় এবং সমস্যা দেখা দিলে দ্রুত Rollback করে সিস্টেমের নির্ভরযোগ্যতা (Reliability) বজায় রাখতে হয়—তা হাতে-কলমে আয়ত্ত করা।",
+    "outcomes": [
+      "একটি Immutable Inference Release-এর ভেতরকার Input Schema, Model Artifact, Feature Contract এবং Fallback Policy শুরু থেকে শেষ পর্যন্ত Trace করতে পারা।",
+      "SLI, Error Budget Burn Rate, Fleet Quantile এবং PSI-এর সঠিক Denominator ও Aggregation শর্ত মেনে নির্ভুল Monitoring কোড লিখতে পারা।",
+      "Delayed Label এবং Joint Distribution Shift-এর বাস্তব পরিবেশে Service Health এবং Model Quality-কে আলাদাভাবে যাচাই ও বিশ্লেষণ করতে পারা।"
+    ],
+    "recall": [
+      "কোনো Feature-এর PSI বেড়েছে মানেই কি সাথে সাথে ধরে নেওয়া যায় যে Model-এর Accuracy কমে গেছে? কেন এই সিদ্ধান্তটি ভ্রান্ত হতে পারে?",
+      "যদি Feature Distribution অপরিবর্তিত থাকে কিন্তু বাস্তবে Label-এর অর্থ বা সম্পর্ক বদলে যায়, তবে তা ধরার জন্য কোন ধরনের Monitor প্রয়োজন? আর সব ধরনের সমস্যাই কি কেবল আগের Version-এ Rollback করে মিটিয়ে ফেলা সম্ভব?"
+    ],
+    "bridge": "এই অধ্যায়ে Serving Contract, Histogram Aggregation, Drift Diagnosis এবং Mature-Label মূল্যায়নের প্রতিটি ধাপ নিজের কোড দিয়ে মিলিয়ে নিন। এরপর Book 6 · Chapter 3 (Experimentation & Causal Reasoning)-এ আমরা শিখব কীভাবে Randomization Unit, Causal Estimand এবং Experiment Integrity বজায় রেখে প্রোডাকশনে কোনো পরিবর্তনের প্রকৃত প্রভাব মাপতে হয়।",
+    "bookId": "systems",
+    "bookChapter": 2
+  }
+}

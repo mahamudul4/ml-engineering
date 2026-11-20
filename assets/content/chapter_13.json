@@ -1,0 +1,1677 @@
+{
+  "id": "chapter_13",
+  "number": 13,
+  "title": "Anomaly Detection & Time Series Foundations",
+  "shortTitle": "Anomalies & Time Series",
+  "displayTitle": "Anomaly Detection\n& Time Series",
+  "subtitle": "অস্বাভাবিক Signal শনাক্তকরণ এবং সময়ের শৃঙ্খলা মেনে নির্ভরযোগ্য Forecasting।",
+  "description": "From robust scores to chronological forecasts.\nKnow what was available. Measure errors honestly.",
+  "difficulty": "Intermediate · temporal reasoning",
+  "lab": "temporal",
+  "lessons": [
+    {
+      "id": "ch13_questions",
+      "title": "Anomaly Detection: অস্বাভাবিক মানেই কি সমস্যা?",
+      "subtitle": "সমস্যার সংজ্ঞা, Reference Distribution এবং তদন্তের বাস্তবতা",
+      "duration": "28 min",
+      "icon": "timeline",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কোন Observation-কে আমরা অস্বাভাবিক বলব?",
+          "body": "ধরুন কোনো একদিন শহরে বাইক ভাড়ার সংখ্যা হঠাৎ বেশ কমে গেল—শুধু এইটুকু দেখেই কি আমরা ধরে নেব Service Outage হয়েছে? একটু ভাবলেই বুঝবেন, তা মোটেই ঠিক নয়! সাপ্তাহিক ছুটি (Weekend), খারাপ আবহাওয়া, সরকারি ছুটি কিংবা স্রেফ রিপোর্ট জমা পড়তে দেরি হওয়ার কারণেও সংখ্যাটি কমতে পারে। মেশিন লার্নিংয়ে Anomaly বলতে আমরা একটি নির্দিষ্ট Context বা Reference Distribution-এর তুলনায় ব্যতিক্রমী আচরণকে বোঝাই; কিন্তু সেই ব্যতিক্রম আসলেই কোনো ক্ষতিকর ঘটনা কি না, তা নিশ্চিত করতে সবসময় বাড়তি প্রমাণের প্রয়োজন হয়।\n\nতাই কোনো Model বানানোর আগেই আমাদের ঠিক করতে হবে কোন ধরনের অস্বাভাবিকতা পেলে কী ব্যবস্থা নেওয়া হবে এবং একটি False Alert-এর বাস্তব খরচ কত। এরপর এই অধ্যায়ে আমরা সময়ের শৃঙ্খলা মেনে Forecasting, Prediction Interval এবং Residual-ভিত্তিক Alert তৈরির কৌশল শিখব। আর একদম শেষ ভাগে দেখব, Time-to-Event সমস্যায় Censoring কেন সাধারণ Regression-এর চেয়ে সম্পূর্ণ আলাদা গাণিতিক হিসাব দাবি করে।"
+        },
+        {
+          "type": "text",
+          "title": "তিন ধরনের Anomaly ও তাদের প্রেক্ষাপট",
+          "body": "কোনো অস্বাভাবিকতার বিরুদ্ধে কী ব্যবস্থা নেব তা ঠিক করতে হলে আগে চিনতে হবে Dataset-এ Anomaly ঠিক কীভাবে ধরা দেয়। প্রথমত রয়েছে Point Anomaly, যেখানে একটি একক Row-এর মানই বাকি সবগুলোর চেয়ে আলাদা হয়ে চোখে পড়ে। দ্বিতীয়ত Contextual Anomaly—যেখানে মানটি এককভাবে স্বাভাবিক মনে হলেও নির্দিষ্ট সময় বা Season-এর সাপেক্ষে বেমানান; যেমন গ্রীষ্মকালের খুব স্বাভাবিক বাইক ভাড়ার সংখ্যা শীতকালের তীব্র ঠান্ডায় দেখা গেলে তা অবশ্যই অস্বাভাবিক। তৃতীয়ত Collective Anomaly, যেখানে প্রতিটি Observation আলাদাভাবে স্বাভাবিক মনে হলেও পরপর বেশ কয়েকটি মিলে একটি ব্যতিক্রমী Sequence তৈরি করে। বুঝতেই পারছেন, স্রেফ একটি একক Scalar Threshold বসিয়ে এই তিন ধরনের সমস্যাকে সমান দক্ষতায় সমাধান করা সম্ভব নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Outlier Detection বনাম Novelty Detection",
+          "body": "Anomaly-র ধরন চেনার পরের প্রশ্ন হলো—আমাদের হাতের Training Data কতটা পরিষ্কার? Outlier Detection পদ্ধতিতে আমরা ধরে নিই যে আমাদের Training Data-র ভেতরেই কিছু দূষিত Sample বা Contamination মিশে থাকতে পারে। বিপরীতে, Novelty Detection-এ ধরে নেওয়া হয় যে Reference Training Data যথেষ্ট স্বাভাবিক, এবং তার সাপেক্ষে নতুন অদেখা (Unseen) Observation পরীক্ষা করা হয়। তবে সতর্ক থাকবেন—ডেটা আসলেই পরিষ্কার কি না তা যাচাই না করে কেবল Algorithm-এর `novelty` Flag চালু করে দিলেই কিন্তু নিখুঁত Reference তৈরি হয়ে যায় না! আবার নতুন আসা একঝাঁক অস্বাভাবিক ডেটার নিজেদের ভেতর উচ্চ Local Density থাকলেও মূল স্বাভাবিক Distribution-এর সাপেক্ষে তা একটি Novelty হতে পারে।"
+        },
+        {
+          "type": "math",
+          "title": "Score, Threshold ও চূড়ান্ত সিদ্ধান্ত তিনটি আলাদা ধাপ",
+          "body": "s(x)\\in\\mathbb{R},\\qquad \\operatorname{flag}(x)=\\mathbf{1}\\{s(x)>\\tau\\}"
+        },
+        {
+          "type": "text",
+          "title": "Score-এর দিক (Orientation) আগে নিশ্চিত করুন",
+          "body": "উপরের সমীকরণে দেখা যাচ্ছে, একটি বাস্তব Score `s(x)` নির্ণয় করা আর নির্দিষ্ট Threshold `tau`-এর সাপেক্ষে Flag তোলা দুটি আলাদা ধাপ। কিন্তু কোড লেখার আগে শুরুতেই নিশ্চিত হয়ে নিতে হবে কোন দিকে Score বাড়লে অস্বাভাবিকতা বাড়ে! কারণ কিছু API-তে বড় Score মানে স্বাভাবিক আচরণ, আবার কিছু API-তে বড় Score মানে বেশি অস্বাভাবিক। যেমন `scikit-learn`-এর `decision_function` ঋণাত্মক (Negative) হলে সাধারণত সেটিকে Outlier হিসেবে Flag করা হয়; কিন্তু এই মানটিকে কখনোই Anomaly Probability বলা যাবে না। একইভাবে, Training-এর সময় দেওয়া `contamination` Parameter কেবল কোথায় Threshold টানা হবে তা ঠিক করতে সাহায্য করে—এটি বাস্তব ডেটায় প্রকৃত Population Prevalence কিংবা Model-এর Detection Accuracy নির্ধারণ করে না।"
+        },
+        {
+          "type": "code",
+          "title": "Score-এর দিক বোঝার সহজ উদাহরণ",
+          "body": "scores = [-0.2, 0.1, -0.01, 0.5]\nflags = [decision < 0 for decision in scores]\nprint(flags)  # negative decision_function convention, not probabilities\n"
+        },
+        {
+          "type": "text",
+          "title": "এই অধ্যায়ের Dataset ও মূল্যায়নের সততা",
+          "body": "উপরের ছোট কোডটির মতো তাত্ত্বিক ধারণার পাশাপাশি পুরো অধ্যায়ে আমরা কাজ করব আসল UCI Bike Sharing Dataset (`day.csv`) নিয়ে, যেখানে `2011` থেকে `2012` সালের মোট `731` দিনের দৈনিক Observation রয়েছে। আমাদের মূল Workflow-এ `2011` সালের ডেটা ব্যবহৃত হয়েছে Training হিসেবে এবং `2012` সালের প্রথম ছয় মাস রাখা হয়েছে Development অংশে। যেহেতু এই Dataset-এ আগে থেকে যাচাইকৃত কোনো Anomaly Label নেই, তাই আমরা ইঞ্জিনিয়ারিং সততা বজায় রেখে কেবল Model-এর Flag সংখ্যা, Alert Rate এবং বিভিন্ন পরিবর্তনের প্রতি Sensitivity রিপোর্ট করব—কখনোই মনগড়া Precision, Recall বা কোনো ঘটনার কাল্পনিক কারণ উদ্ভাবন করব না।"
+        },
+        {
+          "type": "callout",
+          "title": "Interview শুরু করার অপরিহার্য প্রশ্ন",
+          "body": "যেকোনো Anomaly Detection সমস্যার শুরুতে এই প্রশ্নগুলো পরিষ্কার করে নিন: আমাদের Reference Period কোনটি, ডেটায় কী ধরনের Seasonality প্রত্যাশিত, আসল Label কত দেরিতে পাওয়া যায়, প্রতিটি Alert কে Review করবে, এবং False Alert সামলানোর অপারেশনাল বাজেট কত? অধ্যায়ের কোড উদাহরণগুলো অফলাইনে পড়ার সুবিধার্থে সাজানো হয়েছে; কোডগুলো সরাসরি চালিয়ে ফলাফল পরখ করতে নিজের লোকাল Python Environment ব্যবহার করুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch13_robust",
+      "title": "Median, MAD ও Contextual Residual",
+      "subtitle": "Mean ও Standard Deviation-এর বদলে Robust মাপকাঠি কখন বেশি কার্যকর",
+      "duration": "32 min",
+      "icon": "timeline",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Center ও Scale-কে চরম মানের প্রভাবমুক্ত রাখুন",
+          "body": "আগের পাঠে আমরা দেখেছি, Anomaly ধরার প্রথম কাজ হলো একটি নির্ভরযোগ্য Reference তৈরি করা। কোনো বিন্দু কতটা ব্যতিক্রমী তা মাপার সবচেয়ে চেনা উপায় হলো Mean ও Standard Deviation ব্যবহার করা। কিন্তু সমস্যা হলো, ডেটার ভেতরে আগে থেকেই যদি দু-একটি বিশাল Extreme Value লুকিয়ে থাকে, তবে Mean এবং Standard Deviation দুটোই প্রচণ্ডভাবে টেনে সরে যায়! এর বিপরীতে Median এবং Median Absolute Deviation (সংক্ষেপে MAD) অনেক বেশি স্থিতিশীল বা Robust সারাংশ দেয়। তবে একটি জরুরি সত্য ভুলে গেলে চলবে না: ডেটার অন্তর্নিহিত Seasonality বা Trend উপেক্ষা করে আপনি যতই Robust Scale নিন না কেন, স্বাভাবিক ঋতুগত আচরণকেও তখন অস্বাভাবিক মনে হতে পারে। অর্থাৎ পরিসংখ্যানগতভাবে Robust হওয়া মানেই যে তা Context ছাড়াই সঠিক উত্তর দেবে, তা কিন্তু নয়।"
+        },
+        {
+          "type": "math",
+          "title": "Scaled MAD দিয়ে Robust Score নির্ণয়ের সূত্র",
+          "body": "\\widetilde{x}=\\operatorname{median}(x),\\quad \\operatorname{MAD}=\\operatorname{median}|x_i-\\widetilde{x}|,\\quad s(x)=0.67448975\\frac{|x-\\widetilde{x}|}{\\operatorname{MAD}}"
+        },
+        {
+          "type": "text",
+          "title": "সূত্রে 0.67449 গুণকটি কেন আসে?",
+          "body": "উপরের সমীকরণে `0.67448975` সংখ্যাটি কেন বসানো হলো? আসলে একটি আদর্শ Normal Reference Distribution-এর ক্ষেত্রে তার Population MAD হয় প্রায় `0.67449` গুণ Standard Deviation (`sigma`)। তাই ব্যবধানকে MAD দিয়ে ভাগ করার পর এই গুণকটি ব্যবহার করলে পাওয়া মানটিকে আমাদের চেনা Standard Deviation-এর এককের মতো করে পড়া সহজ হয়। তবে খেয়াল রাখবেন, ডেটা যদি Normal না হয়, তবে এই গুণকটি বসানোর ফলে ডেটা Normal হয়ে যায় না এবং পাওয়া Score-টিও কোনো Probability হয়ে ওঠে না। এছাড়া সূত্রে Absolute Value নেওয়ায় এই Two-Sided Score অতিরিক্ত বেশি ও অতিরিক্ত কম—উভয় দিকের বিচ্যুতিকেই সমানভাবে ধরে; বিচ্যুতির দিকটিও জানতে চাইলে পাশে Signed Residual রেখে দিন।"
+        },
+        {
+          "type": "code",
+          "title": "MAD ও Robust Score হিসাবের উদাহরণ",
+          "body": "from statistics import median\n\nvalues = [-4.0, -2.0, 0.0, 2.0, 20.0]\ncenter = median(values)\nmad = median(abs(x - center) for x in values)\nscore = 0.6744897501960817 * abs(6 - center) / mad\nprint(center, mad, score)\n"
+        },
+        {
+          "type": "text",
+          "title": "Bike Dataset-এ সরাসরি কাঁচা সংখ্যা নয়, সাপ্তাহিক ব্যবধান দেখুন",
+          "body": "উপরের কোডটিতে লক্ষ্য করুন, তালিকায় `20.0`-এর মতো বড় Extreme Value থাকা সত্ত্বেও Median (`0.0`) ও MAD (`2.0`) একদম স্থির রয়েছে। এবার আমাদের আসল Bike Dataset-এ সরাসরি দৈনিক ভাড়ার সংখ্যার ওপর হিসাব না চালিয়ে আমরা সাপ্তাহিক ব্যবধান `r[t] = cnt[t] - cnt[t - 7]` ব্যবহার করি। এর ফলে প্রতিটি দিনকে ঠিক আগের সপ্তাহের একই বারের (Weekday) সাথে তুলনা করা যায়—যদিও এটি সব ধরনের Seasonality বা দীর্ঘমেয়াদি প্রবৃদ্ধিকে পুরোপুরি সরিয়ে দেয় না। `2011` সালের মোট `358`টি সাপ্তাহিক ব্যবধান থেকে আমরা পাই `Median = 54.5` এবং `MAD = 489.5`। নিচের ইন্টারঅ্যাক্টিভ ল্যাবে দ্রুত পর্যবেক্ষণের জন্য প্রথম `42`টি Development তারিখ রাখা হয়েছে, আর মূল রিপোর্টে পুরো `182` দিনের সম্পূর্ণ Alert সংখ্যা দেওয়া হয়েছে—এই দুটি পরিধি আলাদাভাবে খেয়াল রাখবেন।"
+        },
+        {
+          "type": "anomaly_lab",
+          "title": "ইন্টারঅ্যাক্টিভ Robust Alert Lab",
+          "body": "Slider ঘুরিয়ে বিভিন্ন Threshold-এ `score > threshold` শর্তে কোন তারিখগুলো Flag হচ্ছে এবং নির্বাচিত তারিখের প্রকৃত হিসাব কীভাবে হচ্ছে তা দেখুন। মনে রাখবেন, অ্যাপে Threshold বদলানোর সময় Validation Data থেকে নতুন করে Median বা MAD কখনোই পুনরায় Fit করা হয় না।"
+        },
+        {
+          "type": "text",
+          "title": "Zero MAD: একটি স্পষ্ট ইঞ্জিনিয়ারিং চুক্তি দরকার",
+          "body": "ল্যাবে পরীক্ষা করার পর একটি প্রান্তিক পরিস্থিতি ভেবে দেখুন: বাস্তব ডেটায় অর্ধেকের বেশি মান যদি হুবহু অভিন্ন হয় বা হাতে গোনা কয়েকটি বিচ্ছিন্ন সংখ্যায় সীমাবদ্ধ থাকে, তবে `MAD = 0` হয়ে যেতে পারে! তখন ভাগ করার সুবিধার্থে নীরবে ক্ষুদ্র কোনো `epsilon` বসিয়ে দিলে সামান্য বিচ্যুতিতেই অযৌক্তিক বিশাল Score তৈরি হবে। তাই গোঁজামিল না দিয়ে স্পষ্ট নীতি নির্ধারণ করুন—যেমন ডোমেইন-ভিত্তিক বিকল্প Scale, IQR, পুরোনো কোনো Reference Fallback, অথবা স্পষ্টভাবে `undefined` ঘোষণা করা। আমাদের Python ও Dart Helper Function-গুলোতে এই কারণেই শূন্য MAD সরাসরি Reject করা হয়।"
+        },
+        {
+          "type": "callout",
+          "title": "নিজে যাচাই করে নিন",
+          "body": "একই Score-এর তালিকায় আপনি যদি Threshold কমিয়ে আনেন, তবে Flag হওয়া বিন্দুর সংখ্যা কখনোই আগের চেয়ে কমবে না। কিন্তু এর ফলে আসল Precision বা Recall কীভাবে বদলাবে, তা যাচাইকৃত Label ছাড়া আমাদের জানা নেই। তাই বাস্তবে Flag হওয়া কোনো দিন দেখে তাড়াহুড়ো করে কারণ অনুমান করার আগে অবশ্যই ওই তারিখের প্রেক্ষাপট ও বাহ্যিক ঘটনার প্রমাণ (External Incident Evidence) খুঁজে দেখতে হবে।"
+        }
+      ]
+    },
+    {
+      "id": "ch13_isolation",
+      "title": "Isolation Forest: সংক্ষিপ্ত Path ও বিচ্ছিন্ন বিন্দু",
+      "subtitle": "Random Partition থেকে কীভাবে Score আসে এবং কেন এটি Probability নয়",
+      "duration": "32 min",
+      "icon": "timeline",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "মূল স্বজ্ঞা: বিচ্ছিন্ন বিন্দুকে আলাদা করা সহজ",
+          "body": "Median ও MAD একক সংখ্যার Residual সিরিজে চমৎকার কাজ করে; কিন্তু ডেটায় যদি একাধিক Feature থাকে কিংবা Distribution-এর নির্দিষ্ট কোনো প্রতিসম আকৃতি ধরে নেওয়া না যায়, তখন আমরা কী করব? ভেবে দেখুন, ভিড়ের মাঝখানে থাকা একটি বিন্দুকে চারপাশ থেকে আলাদা করতে অনেকবার Split টানতে হয়, কিন্তু ফাঁকা বা প্রান্তিক অঞ্চলে (Sparse/Extreme Region) একা পড়ে থাকা একটি বিন্দু খুব অল্প কয়েকটি এলোমেলো Split-এই আলাদা (Isolate) হয়ে যায়! Isolation Forest ঠিক এই সহজ স্বজ্ঞার ওপর দাঁড়িয়ে আছে। এটি এলোমেলোভাবে একটি Feature বেছে নিয়ে তার সীমার ভেতর এলোমেলো Split বসায়, এবং বহু Random Tree-র Average Path Length নিয়ে একক Tree-র অস্থিরতা কমায়। বিভাজনটি Random বলেই ফলাফল অর্থহীন নয়; আবার কেবল একটিমাত্র Random Seed চালিয়েই অনিশ্চয়তার পুরো মূল্যায়ন শেষ হয়ে যায় না।"
+        },
+        {
+          "type": "math",
+          "title": "Path Length থেকে মূল Score তৈরির সূত্র",
+          "body": "s(x,n)=2^{-E[h(x)]/c(n)},\\qquad c(n)=2H_{n-1}-\\frac{2(n-1)}{n}"
+        },
+        {
+          "type": "text",
+          "title": "Normalization এবং লাইব্রেরিভেদে চিহ্নের দিক",
+          "body": "উপরের সমীকরণে `c(n)` হলো `n` আকারের Sample-এ একটি অসফল Binary Search-এর Expected Path Length, যা দিয়ে Tree-র গভীরতাকে Normalize করা হয়। মূল গবেষণাপত্রের এই সূত্রে Average Path Length যত ছোট হয়, Anomaly Score তত বড় (`1`-এর কাছাকাছি) হয়। কিন্তু কোড লেখার সময় সতর্ক থাকবেন: `scikit-learn`-এর `score_samples`-এর দিক মূল পেপারের Score-এর চেয়ে আলাদা, এবং `decision_function`-এ একটি Threshold Offset যুক্ত থাকে (যেখানে ঋণাত্মক মান মানে বেশি অস্বাভাবিক)। তাই গাণিতিক সূত্রের মূল স্বজ্ঞা বোঝার পাশাপাশি আপনার ব্যবহৃত লাইব্রেরির সংস্করণে API-এর প্রকৃত নিয়মটি অবশ্যই মিলিয়ে নেবেন।"
+        },
+        {
+          "type": "code",
+          "title": "নির্দিষ্ট বাজেটের Isolation Forest-এর উদাহরণ",
+          "body": "import numpy as np\nfrom sklearn.ensemble import IsolationForest\nfrom threadpoolctl import threadpool_limits\n\nX = np.array([[0.0], [0.1], [0.2], [0.3], [4.0]])\nwith threadpool_limits(limits=1):\n    model = IsolationForest(\n        n_estimators=50, max_samples=5, contamination=0.2, random_state=42\n    ).fit(X)\nprint(model.decision_function([[0.15], [10.0]]))\n"
+        },
+        {
+          "type": "text",
+          "title": "Hyperparameter এবং কম্পিউটেশনাল খরচ",
+          "body": "উপরের কোডে ব্যবহৃত প্রধান Hyperparameter-গুলোর ভূমিকা বেশ সুনির্দিষ্ট: `n_estimators` Ensemble-এ Tree-র সংখ্যা বাড়ায়, `max_samples` প্রতিটি Tree-তে ব্যবহৃত Subsample-এর আকার ঠিক করে, আর `max_features` নিয়ন্ত্রণ করে প্রতি ধাপের Feature Subsampling। সাধারণত ছোট Subsample ও অগভীর Tree ব্যবহারের ফলে বড় ডেটায় দ্রুত Fit ও Scoring করার সুবিধা পাওয়া যায়; তবে প্রকৃত রানটাইম নির্ভর করে লাইব্রেরির Implementation ও ডেটার Dimension-এর ওপর। তাই সব পরিস্থিতির জন্য কঠোর Upper-Bound Complexity হিসেবে অন্ধভাবে `O(n log n)` লিখে দেবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "যেসব পরিস্থিতিতে Model-টি দুর্বল হয়ে পড়ে",
+          "body": "গতি ও সরলতার সুবিধা থাকলেও প্রচুর অপ্রাসঙ্গিক (Irrelevant) Feature, হুবহু ডুপ্লিকেট Observation, একসাথে জটলা পাকিয়ে থাকা অস্বাভাবিক বিন্দু (Clustered Anomalies) এবং সময়ের সাথে Context Shift ঘটলে Isolation Forest-এর Score দুর্বল হয়ে পড়তে পারে। যেহেতু এটি Axis-Aligned এলোমেলো Split নেয়, তাই আপনি Feature-গুলোকে কীভাবে উপস্থাপন করছেন তার ওপর ফলাফল নির্ভর করে। প্রতিটি Feature-কে স্বাধীনভাবে রৈখিক স্কেল (Independent Affine Scaling) করলে তাত্ত্বিক ক্রম বজায় থাকার ধারণা থাকলেও, যেকোনো ইচ্ছেমতো রূপান্তরে (Arbitrary Representation Change) কিন্তু হুবহু একই Partition পাওয়া যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের বাস্তব Workflow-এর পরিধি ও ফলাফল",
+          "body": "আমাদের মূল Bike পরীক্ষায় `100`টি Tree, `max_samples = 256`, `contamination = 0.05` এবং `Seed = 42` দিয়ে `2011` সালের সাপ্তাহিক ব্যবধানের ওপর Model Fit করা হয়েছে। এরপর `2012` সালের Development ডেটায় চালালে মোট `17`টি Flag আসে—যাকে আমরা কখনোই '`17`টি প্রমাণিত Anomaly' বলে দাবি করি না। আরেকটি গুরুত্বপূর্ণ পর্যবেক্ষণ হলো, Training-এ `contamination = 0.05` দেওয়া হলেও Development অংশে কিন্তু হুবহু `5%` Flag আসেনি এবং আসার বাধ্যবাধকতাও নেই। নতুন Distribution-এ এই হারের পরিবর্তন কি স্বাভাবিক ঋতুগত বদল নাকি আসল সমস্যার ইঙ্গিত—তা ডোমেইন প্রেক্ষাপট ছাড়া বলা সম্ভব নয়।"
+        },
+        {
+          "type": "callout",
+          "title": "Interview-এর পরবর্তী গভীর প্রশ্ন",
+          "body": "ভেবে দেখুন: একদল সমন্বিত অস্বাভাবিক ঘটনা যদি ডেটায় একটি ঘন জটলা (Dense Coordinated Group) তৈরি করে, তবে তা কেন একক বিচ্ছিন্ন বিন্দুর মতো সংক্ষিপ্ত Path নাও পেতে পারে? পাশাপাশি Model-এর Score-এর সাথে তদন্তের খরচ (Investigation Cost) ও Action Threshold কোথায় এবং কীভাবে যুক্ত করবেন, তা স্পষ্টভাবে ব্যাখ্যা করার প্রস্তুতি রাখুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch13_lof",
+      "title": "Local Outlier Factor: Local Density-র তুলনা",
+      "subtitle": "সামগ্রিক বিরলতার বদলে স্থানীয় প্রতিবেশীদের Density-র সাপেক্ষে অস্বাভাবিকতা বিচার",
+      "duration": "49 min",
+      "icon": "timeline",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন আমাদের Local Neighborhood দেখা প্রয়োজন?",
+          "body": "আগের পাঠে আমরা দেখেছি বিচ্ছিন্ন বিন্দু কীভাবে দ্রুত আলাদা হয়; কিন্তু ধরুন একটি Dataset-এ দুটি সম্পূর্ণ বৈধ অঞ্চল রয়েছে—একটিতে ডেটার Density খুব বেশি, আরেকটি প্রাকৃতিকভাবেই বেশ ফাঁকা (Sparse)। এখন আপনি যদি পুরো ডেটার ওপর একটি একক Global Density Threshold বসান, তবে ওই ফাঁকা অথচ স্বাভাবিক অঞ্চলের বিন্দুগুলোও অন্যায়ভাবে Flag হয়ে যাবে! Local Outlier Factor (LOF) এই সমস্যা এড়াতে প্রতিটি বিন্দুর নিজস্ব Local Reachability Density-কে ঠিক তার আশেপাশের প্রতিবেশীদের Density-র সাথে তুলনা করে। তবে খেয়াল রাখবেন, প্রতিবেশীর সংখ্যা বা Neighborhood Size (`k`) বদলে দিলে 'স্থানীয়' কথাটির অর্থও বদলে যায়।"
+        },
+        {
+          "type": "math",
+          "title": "Reachability Distance-এর সংজ্ঞা",
+          "body": "\\operatorname{reachdist}_k(p,o)=\\max\\{k\\text{-distance}(o),d(p,o)\\}"
+        },
+        {
+          "type": "math",
+          "title": "Local Reachability Density ও LOF অনুপাতের সূত্র",
+          "body": "\\operatorname{lrd}_k(p)=\\left(\\frac{1}{|N_k(p)|}\\sum_{o\\in N_k(p)}\\operatorname{reachdist}_k(p,o)\\right)^{-1},\\quad \\operatorname{LOF}_k(p)=\\frac{1}{|N_k(p)|}\\sum_{o\\in N_k(p)}\\frac{\\operatorname{lrd}_k(o)}{\\operatorname{lrd}_k(p)}"
+        },
+        {
+          "type": "text",
+          "title": "LOF মানের ব্যাখ্যা ও বাস্তব সতর্কতা",
+          "body": "উপরের সমীকরণ দুটি মিলিয়ে দেখুন: কোনো বিন্দুর `LOF` যদি প্রায় `1`-এর কাছাকাছি হয়, তার মানে বিন্দুটির নিজস্ব Density তার প্রতিবেশীদের Density-র সমতুল্য। আর মানটি `1`-এর চেয়ে উল্লেখযোগ্যভাবে বড় হলে বোঝা যায়, প্রতিবেশীদের তুলনায় বিন্দুটি অনেক ফাঁকা জায়গায় ছিটকে আছে। বাস্তবে ডুপ্লিকেট বিন্দু, সমান দূরত্বের টাই (Distance Ties) এবং সীমিত Floating-Point নির্ভুলতার ক্ষেত্রে লাইব্রেরির ভেতরের Implementation রীতি বেশ গুরুত্বপূর্ণ ভূমিকা রাখে। এছাড়া Feature-এর একক ও অপ্রাসঙ্গিক Dimension পুরো Neighborhood নির্বাচনকেই বদলে দিতে পারে; তাই অবশ্যই কেবল Training ডেটার ওপর আপনার Scaler Fit করে নেবেন।"
+        },
+        {
+          "type": "code",
+          "title": "Novelty Mode ব্যবহার করে অদেখা Query-র Score নির্ণয়",
+          "body": "import numpy as np\nfrom sklearn.neighbors import LocalOutlierFactor\nfrom threadpoolctl import threadpool_limits\n\nX = np.array([[0.0], [0.1], [0.2], [0.3], [0.4], [0.5]])\nwith threadpool_limits(limits=1):\n    model = LocalOutlierFactor(n_neighbors=3, novelty=True, contamination=0.2).fit(X)\n    print(model.decision_function([[0.25], [4.0]]))\n"
+        },
+        {
+          "type": "text",
+          "title": "Training Mode এবং Query Mode এক জিনিস নয়",
+          "body": "উপরের কোডে `novelty=True` লেখার পেছনে একটি গুরুত্বপূর্ণ কারণ আছে। `scikit-learn`-এর ডিফল্ট LOF মূলত Outlier Mode-এ কাজ করে, যেখানে `fit_predict` ও `negative_outlier_factor_` কেবল Training Observation-গুলোর জন্যই প্রযোজ্য। নতুন অদেখা ডেটার ওপর `predict` বা `decision_function` চালাতে হলে শুরুতেই `novelty=True` দিয়ে Model তৈরি করতে হয়। একটি সূক্ষ্ম কারিগরি পার্থক্য মনে রাখবেন: আপনি যদি Training ডেটার Row-গুলোকেই আবার নতুন Novelty Query হিসেবে পাঠান, তবে মূল Training LOF-এর সাথে হুবহু একই Score আশা করবেন না—কারণ তখন প্রতিটি বিন্দু নিজেকে প্রতিবেশী হিসেবে বাদ দেবে কি না (Self-Neighbor Treatment), তার নিয়ম বদলে যায়।"
+        },
+        {
+          "type": "text",
+          "title": "উচ্চ Dimension-এ খরচ ও আমাদের Workflow-এর চিত্র",
+          "body": "বড় ও High-Dimensional ডেটায় Nearest-Neighbor খুঁজে বের করা একদিকে যেমন ব্যয়বহুল, তেমনি দূরত্বের পার্থক্যও (Distance Contrast) সেখানে ম্লান হয়ে আসে। গতি বাড়াতে কখনো Approximate Neighbors ব্যবহার করলে তাতে Detector-এর আচরণ ও গুণমান কীভাবে বদলাচ্ছে তা আলাদাভাবে মূল্যায়ন করে নিন। আমাদের মূল Bike Workflow-এ `StandardScaler` ও `LocalOutlierFactor(n_neighbors=20, novelty=True)` দিয়ে Training Residual Fit করলে Development অংশে `19`টি Flag পাওয়া যায়—যাকে আমরা Model-এর Sensitivity হিসেবেই পড়ব, যাচাইকৃত Ground Truth Accuracy হিসেবে নয়।"
+        },
+        {
+          "type": "callout",
+          "title": "হাতে-কলমে কোডিং অনুশীলন",
+          "body": "ছোট একটি Neighborhood-এর জন্য নিজে কোড লিখে Reachability Distance বের করার অভ্যাস করুন এবং ভগ্নাংশের হর (Denominator) শূন্য হয়ে গেলে কী নীতি নেওয়া উচিত তা নিয়ে ভাবুন। পাশাপাশি `k` খুব ছোট হলে Noise-এর প্রতি অতিরিক্ত সংবেদনশীলতা এবং `k` খুব বড় হলে স্থানীয় প্রেক্ষাপট হারিয়ে যাওয়া—উভয় দিকই গুছিয়ে ব্যাখ্যা করতে শিখুন।"
+        },
+        {
+          "type": "text",
+          "title": "তিনটি Row-এর জন্য হাতে-কলমে LOF হিসাব করি",
+          "body": "উপরের অনুশীলনটি একদম স্বচ্ছ করতে চলুন `[0, 1, 4]` স্থানাঙ্কের তিনটি বিন্দু নিয়ে `k = 1` ধরে খাতা-কলমে হিসাবটি মিলিয়ে দেখি, যেখানে Training প্রতিবেশী খোঁজার সময় প্রতিটি বিন্দু নিজেকে বাদ দেবে। এখানে বিন্দু তিনটির নিকটতম প্রতিবেশীর Index যথাক্রমে `[1, 0, 1]` এবং সরাসরি দূরত্ব `[1, 1, 3]`। প্রতিবেশীর নিজস্ব `k-distance` দিয়ে `max` নিলেও আমাদের Reachability Distance থাকে `[1, 1, 3]`। ফলে তাদের Local Density দাঁড়ায় `[1, 1, 1/3]` এবং চূড়ান্ত LOF Score বের হয় `[1, 1, 3]`। এখানে কোনো Distance Tie বা ডুপ্লিকেট নেই বলে হিসাবটি একদম নিখুঁত এসেছে; তবে লাইব্রেরিতে শূন্য হর এড়ানোর ক্ষুদ্র Stabilization ধ্রুবকের কারণে শেষের অঙ্কে সামান্য পার্থক্য দেখা যেতে পারে।"
+        },
+        {
+          "type": "code",
+          "title": "NumPy-এ LOF-এর লব ও হর হিসাব",
+          "body": "import numpy as np\n\npoints = np.array([0., 1., 4.])\ndistances = np.abs(points[:, None] - points[None, :])\nnp.fill_diagonal(distances, np.inf)  # Exclude each training row itself.\nneighbors = distances.argmin(axis=1)\nk_distance = distances[np.arange(3), neighbors]\nreachability = np.maximum(k_distance[neighbors], k_distance)\nlocal_density = 1 / reachability\nlof = local_density[neighbors] / local_density\nprint(*neighbors, *reachability, *lof)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে ভেবে দেখুন",
+          "body": "উপরের উদাহরণে `0` এবং `1` বিন্দু দুটিকে যদি পরস্পরের থেকে আরও দূরে সরিয়ে নেওয়া হয়, তবে বিন্দু `4`-এর LOF কি সবসময় বাড়বে?",
+          "solution": "না, সবসময় বাড়বে এমন কোনো কথা নেই! কারণ LOF একটি Relative Density Ratio। আপনি `0` ও `1`-কে দূরে সরালে বিন্দু `4`-এর নিজের Neighborhood, তার প্রতিবেশীর `k-distance` এবং প্রতিবেশীর নিজস্ব Local Density—সবকিছুই একসাথে বদলে যেতে পারে। তাই কেবল একটি Absolute Distance দেখে পরিবর্তনের দিক বলা সম্ভব নয়; নতুন স্থানাঙ্ক বসিয়ে পুরো অনুপাতটি আবার হিসাব করে দেখতে হবে।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch13_svm",
+      "title": "One-Class SVM, Reconstruction ও অন্তর্নিহিত অনুমান",
+      "subtitle": "স্বাভাবিক অঞ্চলের সীমারেখা আঁকা Model কেন পরিষ্কার প্রেক্ষাপট চায়",
+      "duration": "32 min",
+      "icon": "timeline",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "স্বাভাবিক ডেটার Support অঞ্চল শেখা",
+          "body": "আগের দুটি পাঠে আমরা বিচ্ছিন্নতা ও Local Density দিয়ে Anomaly খুঁজেছি; এবার প্রশ্ন হলো—স্বাভাবিক ডেটাগুলোর চারপাশে একটি আঁটসাঁট সীমানা এঁকে কি ব্যতিক্রম ধরা যায়? One-Class SVM ঠিক এই লক্ষ্যেই একটি Kernel Feature Space-এ মূলবিন্দু (Origin) থেকে Training Data-কে আলাদা করার মতো সীমানা খোঁজে। বিশেষ করে RBF Kernel ব্যবহার করলে ডেটার চারপাশে নমনীয় Nonlinear অঞ্চল তৈরি করা যায়। আমরা এই সীমানাটিকে মূলত স্বাভাবিক Distribution-এর Support অঞ্চলের একটি আনুমানিক রূপ হিসেবে ব্যবহার করি; এটি কোনো Supervised Classifier-এর মতো Calibrated Probability দেয় না।"
+        },
+        {
+          "type": "math",
+          "title": "One-Class SVM-এর Optimization Objective",
+          "body": "\\min_{w,\\rho,\\xi}\\frac12\\|w\\|^2+\\frac{1}{\\nu n}\\sum_i\\xi_i-\\rho,\\quad w^{\\top}\\phi(x_i)\\ge\\rho-\\xi_i,\\quad \\xi_i\\ge0"
+        },
+        {
+          "type": "text",
+          "title": "Hyperparameter nu এবং gamma-র ভূমিকা",
+          "body": "উপরের Optimization সমীকরণে থাকা দুটি প্রধান Hyperparameter-এর অর্থ পরিষ্কার রাখা জরুরি। সাধারণ Optimization শর্তের অধীনে `nu` একদিকে Training Error-এর ভগ্নাংশের Upper Bound এবং অন্যদিকে মোট Sample-এর কত অংশ Support Vector হবে তার Lower Bound-এর গাণিতিক ব্যাখ্যা বহন করে। তবে মনে রাখবেন, এটি ভবিষ্যতের অদেখা ডেটায় প্রকৃত Anomaly Prevalence-এর নিখুঁত অনুমান নয়। আর `gamma` নির্ধারণ করে সীমানাটি কতটা স্থানীয় বা আঁটসাঁট হবে; সঠিক Feature Scaling ছাড়া RBF দূরত্বের এককগুলো অর্থহীন হয়ে পড়তে পারে।"
+        },
+        {
+          "type": "code",
+          "title": "শুধু Training Data-য় Scaling সহ One-Class SVM",
+          "body": "import numpy as np\nfrom sklearn.pipeline import make_pipeline\nfrom sklearn.preprocessing import StandardScaler\nfrom sklearn.svm import OneClassSVM\n\nX = np.array([[0.0], [0.1], [0.2], [0.3], [0.4], [0.5]])\nm = make_pipeline(StandardScaler(), OneClassSVM(nu=0.1, gamma=\"scale\")).fit(X)\nprint(m.decision_function([[0.25], [4.0]]))\n"
+        },
+        {
+          "type": "text",
+          "title": "কম্পিউটেশনাল খরচ ও স্কেলের বাস্তবতা",
+          "body": "উপরের ছোট কোডটি চোখের পলকে চলে গেলেও বড় আকারের Dataset-এ Kernel Matrix গঠন এবং বিপুল সংখ্যক Support Vector মেমোরি ও Query Latency দুটোই বাড়িয়ে দিতে পারে। তাই বড় `n`-এর ক্ষেত্রে Approximate Kernel Representation কিংবা বিকল্প কোনো Detector-এর সাথে Benchmark করে নেওয়া প্রয়োজন হতে পারে। আমাদের পরীক্ষায় ব্যবহৃত `358`টি সাপ্তাহিক ব্যবধানের Training বাজেট বেশ ছোট; এই ছোট পরীক্ষার গতি দেখে কোটি কোটি Event-এর প্রোডাকশন সিস্টেমে একই Serving Throughput দাবি করা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "PCA Reconstruction Detector-এর সাথে যোগসূত্র",
+          "body": "সীমানা আঁকার আরেকটি চেনা বিকল্প আসে আগের অধ্যায় Book 2 · Chapter 7 (Clustering & Dimensionality Reduction) থেকে: সেখানে শেখা PCA-র Residual Norm ব্যবহার করেও স্বাভাবিক Training Subspace থেকে একটি বিন্দুর দূরত্ব মাপা যায়। কিন্তু এখানে সতর্কতা জরুরি: কোনো অস্বাভাবিক আচরণ যদি উচ্চ Variance-এর মূল দিকগুলোর (Retained Directions) সাথে মিলে যায়, তবে তার Reconstruction Error খুব ছোট আসবে! আবার উল্টোদিকে, কম Variance-এর কিন্তু বাস্তবে বৈধ Signal সংকোচনের সময় বাদ পড়ে গেলে অযৌক্তিক False Flag বেড়ে যাবে। তাই Compression Objective এবং Anomaly ধরার Objective সবসময় আলাদাভাবে যাচাই করুন।"
+        },
+        {
+          "type": "text",
+          "title": "Model-গুলোর মতপার্থক্যও মূল্যবান প্রমাণ দেয়",
+          "body": "এবার আমাদের তিনটি Detector-কে একই `2012` Development Dataset-এ পাশাপাশি রাখলে দারুণ একটি চিত্র পাওয়া যায়: One-Class SVM দেয় `41`টি Flag, Isolation Forest দেয় `17`টি এবং LOF দেয় `19`টি! এদের মধ্যে কোনটি বেশি সঠিক, তা মানুষ-যাচাইকৃত Label পর্যালোচনা ছাড়া জানার কোনো উপায় নেই। বরং সংখ্যার এই পার্থক্যগুলো দেখায় যে প্রতিটি Detector-এর নিজস্ব অনুমান ও Threshold-এর প্রতি ফলাফল কতটা সংবেদনশীল। মনে রাখবেন, Alert সংখ্যা কম হওয়া মানেই ভালো Model নয়, আবার বেশি হওয়া মানেই যে বেশি Recall পাওয়া গেছে তাও নয়।"
+        },
+        {
+          "type": "callout",
+          "title": "নিজের সিদ্ধান্তের পক্ষে যুক্তি সাজান",
+          "body": "Interview বা সিস্টেম ডিজাইনে Model নির্বাচনের সময় স্পষ্টভাবে বলুন: আপনি কোন Feature Representation নিচ্ছেন, পরিষ্কার Reference ডেটার অনুমান কতটা যৌক্তিক, Scaling ও Kernel Budget কীভাবে সামলাচ্ছেন, এবং মূল্যায়নের Label কোথা থেকে আসবে। কখনোই `nu = 0.05` দেখে 'নতুন ডেটার `95%` স্বাভাবিক থাকার গ্যারান্টি আছে' বলবেন না।"
+        }
+      ]
+    },
+    {
+      "id": "ch13_thresholds",
+      "title": "Threshold, Label ও বাস্তব Alert Budget",
+      "subtitle": "Score-এর ক্রম তৈরি করা আর অ্যাকশন নেওয়ার নীতি এক বিষয় নয়",
+      "duration": "30 min",
+      "icon": "timeline",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Decision Threshold একটি অপারেশনাল পছন্দ",
+          "body": "আগের পাঠে আমরা দেখেছি ভিন্ন ভিন্ন Detector কীভাবে আলাদা Score ও ভিন্ন সংখ্যক Flag তৈরি করে। যেকোনো Model-এর দেওয়া Score Ranking থেকে বাস্তব পদক্ষেপে যেতে হলে আমাদের একটি Decision Threshold বেছে নিতে হয়। খেয়াল করুন, 'প্রতিদিন শীর্ষ `20`টি ঘটনা টিম দিয়ে যাচাই করাব' এটি একটি মানবসম্পদ বা Capacity Policy; আর '`score > 3.5` হলেই Alert পাঠাব' এটি একটি পরিসংখ্যানগত রীতি—দুটো কখনোই একই গ্যারান্টি দেয় না! একইভাবে Training Percentile দেখে শীর্ষ `5%` বিন্দুকে Flag রাখলে তা দিয়ে প্রকৃত Sample Contamination অনুমান করা যায় না। আবার সিস্টেমে নতুন ট্রাফিকের ভলিউম বদলে গেলে স্থির Threshold-এ প্রতিদিনের Review Load-ও বদলে যাবে।"
+        },
+        {
+          "type": "math",
+          "title": "বিরল ঘটনার ক্ষেত্রে Precision-এর সূত্র",
+          "body": "\\mathrm{Precision}=\\frac{\\mathrm{TPR}\\,\\pi}{\\mathrm{TPR}\\,\\pi+\\mathrm{FPR}(1-\\pi)}"
+        },
+        {
+          "type": "text",
+          "title": "Base Rate কেন ফলাফলকে আমূল বদলে দেয়?",
+          "body": "বিরল ঘটনার ক্ষেত্রে কেন আপাতদৃষ্টিতে চমৎকার দেখানো Metric-ও প্রচুর ভুল সংকেত তৈরি করে, তা উপরের সমীকরণে একটি উদাহরণ বসালেই পরিষ্কার হয়ে যায়। ধরা যাক কোনো সিস্টেমে প্রকৃত ঘটনার হার বা Base Rate `pi = 0.001`, আর আপনার Detector-এর `TPR = 0.9` এবং `FPR = 0.01`। প্রথম দেখায় সংখ্যাগুলো দারুণ মনে হলেও চূড়ান্ত Precision আসে মাত্র `8.26%`-এর কাছাকাছি! কারণ স্বাভাবিক ডেটার পরিমাণ এত বিশাল যে খুব ছোট দেখানো False-Positive Rate-ও অসংখ্য False Alert তৈরি করে ফেলে। আমাদের Bike Dataset-এ আসল Anomaly Label না থাকায় এটি একটি গাণিতিক উদাহরণ হিসেবে নেওয়া হয়েছে, তবে প্রতিটি প্রোডাকশন সিস্টেমেই এই বাস্তবতাটি অনিবার্য: হাতে যাচাইকৃত Label থাকলে PR Curve, Alert Rate ও খরচ একসাথে দেখুন, কারণ একা ROC Curve কখনোই অপারেশনাল বোঝা ফুটিয়ে তুলতে পারে না।"
+        },
+        {
+          "type": "code",
+          "title": "Base Rate থেকে Precision হিসাবের উদাহরণ",
+          "body": "prevalence, tpr, fpr = 0.001, 0.9, 0.01\nprecision = tpr * prevalence / (tpr * prevalence + fpr * (1 - prevalence))\nprint(precision)\n"
+        },
+        {
+          "type": "text",
+          "title": "Label পেতে বিলম্ব এবং যাচাইকরণের পক্ষপাত (Review Bias)",
+          "body": "উপরের Precision হিসাবটি করতে হলেও তো আমাদের আসল Label জানতে হবে! কিন্তু বাস্তবে যদি কেবল উচ্চ Score পাওয়া Alert-গুলোই মানুষ দিয়ে Review করানো হয়, তবে Flag না হওয়া Sample-গুলোর আসল Label অজানা থেকে যায়; ফলে সরলভাবে হিসাব করা Precision বা Recall মারাত্মকভাবে Selection-Biased হয়ে পড়ে। এই সমস্যা এড়াতে কম Score পাওয়া অংশ থেকেও পরিকল্পিত Sampled Low-Score Audit, ঠিক কখন Label পাওয়া গেছে তার Timestamp এবং পক্ষপাতহীন মূল্যায়ন নকশা প্রয়োজন। অজানা Label-কে কখনোই স্বয়ংক্রিয়ভাবে 'স্বাভাবিক' ধরে নিয়ে Metric তৈরি করবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "Event-Level বনাম Row-Level মূল্যায়ন",
+          "body": "Label পাওয়ার পরও আরেকটি সূক্ষ্ম ফাঁদ থেকে যায়: সময়ের ধারাবাহিক ডেটায় একটি একক Outage পরপর `6`টি Row-কে Flag করে দিতে পারে। সেখানে Row-Level True-Positive গুনে যদি দাবি করা হয় যে Model 'ছয়টি স্বতন্ত্র দুর্ঘটনা' শনাক্ত করেছে, তবে তা হবে সম্পূর্ণ ভুল! তাই মূল্যায়ন শুরুর আগেই Event Matching Window, Detection Delay, Duplicate Alert Suppression এবং একটি Event-এর সুনির্দিষ্ট সংজ্ঞা ঠিক করে নিন। পাশাপাশি সতর্ক থাকবেন, একটি ঘটনার ভেতর মাত্র একটি বিন্দু ধরা পড়লেই পুরো ঘটনার সব Row-কে সঠিক ধরে নেওয়ার কৌশল (Point Adjustment) আপনার Metric-কে কৃত্রিমভাবে ফুলিয়ে-ফাঁপিয়ে দেখাতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "Threshold Calibration ও মূল্যায়নের শৃঙ্খলা",
+          "body": "সব মিলিয়ে নিয়মটি খুব পরিষ্কার: হাতে যদি Label-যুক্ত Chronological Validation Data থাকে, তবে কাজের প্রকৃত খরচ অনুযায়ী সেখান থেকে Threshold বেছে নিয়ে তা স্থির (Freeze) করুন এবং চূড়ান্ত মূল্যায়নের জন্য সম্পূর্ণ অস্পৃশ্য Test Data আলাদা রাখুন। আর Label-বিহীন ডেটায় False Alarm সম্পর্কে কোনো তাত্ত্বিক গ্যারান্টি না থাকলে আপনার Alert Policy-কে স্পষ্টভাবে একটি ব্যবহারিক Heuristic হিসেবেই অভিহিত করুন। মনে রাখবেন, একই Development Curve বারবার দেখে দেখে Threshold পাল্টানোও কিন্তু এক ধরনের বাড়তি Selection।"
+        },
+        {
+          "type": "callout",
+          "title": "অ্যাপের ল্যাব ব্যবহারের বাস্তব সীমা",
+          "body": "অ্যাপের Threshold Slider সরালে নতুন করে Flag-গুলো হিসাব করা হয় ঠিকই, কিন্তু যাচাইকৃত Label না থাকায় এটি কোনো Precision বা Recall দেখায় না। ল্যাবের প্রথম `42`টি তারিখ মূলত প্রাথমিক পর্যবেক্ষণের (Exploratory Inspection) জন্য রাখা হয়েছে, এবং Flag হওয়া কোনো তারিখের জন্যই কাল্পনিক কোনো ঘটনার কারণ বানিয়ে বলা হয়নি।"
+        }
+      ]
+    },
+    {
+      "id": "ch13_time",
+      "title": "Time Series: যখন Timestamp কেবল সাধারণ একটি Feature নয়",
+      "subtitle": "Event Time, তথ্যের প্রাপ্যতা এবং নিরবচ্ছিন্ন ক্যালেন্ডারের শৃঙ্খলা",
+      "duration": "30 min",
+      "icon": "timeline",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "সময়ের ক্রম কেন ভাঙা যাবে না?",
+          "body": "আগের পাঠগুলোতে আমরা দেখেছি প্রেক্ষাপট ছাড়া কাঁচা সংখ্যা দেখে Anomaly বিচার করা কতটা ঝুঁকিপূর্ণ। এখন আমরা প্রবেশ করছি সরাসরি Time Series ও Forecasting-এর জগতে। সাধারণ Tabular ডেটায় আমরা প্রায়ই প্রতিটি Observation-কে পরস্পর Exchangeable ধরে এলোমেলোভাবে Shuffle করি। কিন্তু Time Series ডেটায় চোখ বন্ধ করে Random Shuffle করা বেশিরভাগ সমস্যার ক্ষেত্রেই মারাত্মক ভুল! কারণ দীর্ঘমেয়াদি Trend, সময়ের নিজের সাথে সম্পর্ক (Autocorrelation), ঋতুগত ছন্দ (Seasonality) এবং Structural Change-এর কারণে ভবিষ্যতের Distribution অতীতের চেয়ে আলাদা হয়ে যেতে পারে। অবশ্য সব সময়ভিত্তিক Dataset-এ নির্ভরশীলতার ধরনও এক রকম নয়; তাই কাজ শুরুর আগেই আপনার Forecasting Target, কত দূরের ভবিষ্যৎ দেখছেন (Horizon) এবং নির্দিষ্ট মুহূর্তে প্রাপ্য তথ্যের পরিধি (Information Set) স্পষ্টভাবে লিখে ফেলুন।"
+        },
+        {
+          "type": "math",
+          "title": "Forecast Origin-এ প্রাপ্য তথ্যের সেট",
+          "body": "\\widehat{y}_{t+h|t}=f_h(\\mathcal{I}_t),\\qquad \\mathcal{I}_t=\\{\\text{information actually available by }t\\}"
+        },
+        {
+          "type": "text",
+          "title": "একটি ঘটনার পেছনে থাকা তিনটি ভিন্ন Timestamp",
+          "body": "উপরের সমীকরণে `I_t` বলতে বোঝানো হয়েছে সময় `t`-এর মধ্যে সত্যিকার অর্থে যে তথ্যগুলো হাতে এসে পৌঁছেছে। বাস্তব সিস্টেমে একটি ঘটনা কখন ঘটেছে (Event Date), সেই Observation কখন সিস্টেমে জমা হয়েছে, এবং পরে কোনো সংশোধন হলে তা কখন ঘটেছে—এই তিনটি সময় কিন্তু এক নয়! আজকের চূড়ান্ত হিসাব যদি আগামীকাল সকালে আসে, অথচ আপনি এমন Protocol বানালেন যেন দিন শেষ হওয়ার সাথে সাথেই তা দিয়ে আজ রাতের Prediction চলছে, তবে তথ্যের প্রাপ্যতায় বড় ধরনের অমিল (Availability Mismatch) তৈরি হবে। আমাদের এই অধ্যায়ের Workflow-এ ধরে নেওয়া হয়েছে যে দিন শেষ হলেই দৈনিক সংখ্যা পাওয়া যায়; বাস্তব অপারেশনাল বিলম্ব এখানে আলাদাভাবে মাপা হয়নি।"
+        },
+        {
+          "type": "code",
+          "title": "ক্যালেন্ডারের ধারাবাহিকতা পরীক্ষার উদাহরণ",
+          "body": "import pandas as pd\n\ndates = pd.Series(pd.to_datetime([\"2020-01-01\", \"2020-01-02\", \"2020-01-04\"]))\nexpected = pd.date_range(dates.min(), dates.max(), freq=\"D\")\nprint(expected.difference(pd.DatetimeIndex(dates)))  # missing Jan 3\n"
+        },
+        {
+          "type": "text",
+          "title": "Missing Day বনাম শূন্য চাহিদা (Zero Demand)",
+          "body": "উপরের কোডটির মতো ক্যালেন্ডার পরীক্ষা করতে গিয়ে কোনো তারিখের Row নিখোঁজ পেলে সাবধান হোন: Table-এ কোনো দিনের Row না থাকার অর্থ মোটেও এই নয় যে সেদিন চাহিদা `0` ছিল! তাই পূর্ণাঙ্গ ক্যালেন্ডারে Reindex করার সময় অবশ্যই একটি আলাদা Missing Flag রেখে দিন; আর ফাঁকা স্থান পূরণে যদি ভবিষ্যতের Observation ব্যবহার করে Interpolation চালান, তবে লাইভ Forecasting-এ সরাসরি Data Leakage ঘটবে। ডুপ্লিকেট Timestamp একত্র (Aggregate) করার আগে Timezone, সোর্সের সংশোধন এবং ব্যবসার একক ঠিক করে নিন। ক্যালেন্ডারের নিয়মিত Frequency যাচাই না করলে কোডের `lag 7` মানে কেবল 'সাতটি Row পেছনে' হয়ে দাঁড়াবে—সত্যিকারের 'সাত দিন আগে' নাও হতে পারে!"
+        },
+        {
+          "type": "text",
+          "title": "Bike Daily Series-এর ক্যালেন্ডার ও ডেটা বিভাজন",
+          "body": "আমাদের ব্যবহৃত মূল `day.csv` ফাইলের ক্যালেন্ডার `Jan 1, 2011` থেকে `Dec 31, 2012` পর্যন্ত সম্পূর্ণ নিরবচ্ছিন্ন, যেখানে মোট `731`টি Row রয়েছে (`2012` লিপ ইয়ার হওয়ায় সে বছর দিন ছিল `366`টি)। এর মধ্যে `2011` সালের `365` দিন রাখা হয়েছে Training অংশে, `Jan–Jun 2012`-এর `182` দিন Development অংশে, এবং `Jul–Dec 2012`-এর বাকি `184` দিন Reserved হিসেবে আলাদা রাখা হয়েছে। মূল ফাইলটি প্রজেক্টে যুক্ত থাকায় এই Reserved অংশটি সম্পূর্ণ গোপন কোনো বাহ্যিক Test সেট নয়, তবে আমাদের কোনো Plot বা Model নির্বাচনের পরীক্ষায় এর ফলাফল একবারও ব্যবহার করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "Trend এবং Seasonality আলাদা করে চেনা",
+          "body": "সময়ের ধারাবাহিক ডেটা পড়ার সময় তিনটি উপাদান আলাদা করে চেনা খুব কাজে দেয়: দীর্ঘমেয়াদি স্তরের পরিবর্তন হলো Trend (`T`), ক্যালেন্ডার মেনে নির্দিষ্ট বিরতিতে ফিরে আসা ছন্দ হলো Seasonality (`S`), আর বাকি অনিয়মিত ওঠানামা হলো Remainder (`R`)। আবহাওয়া ও ছুটির দিনগুলোও ডেটায় প্রত্যাশিত পরিবর্তন আনতে পারে। তবে মনে রাখবেন, যোগফল আকারের `y = T + S + R` কিংবা গুণফল আকারের `y = T * S * R` মূলত বিশ্লেষণের সুবিধার্থে তৈরি Working Decomposition—এগুলো বাস্তব জগতের কার্যকারণ প্রক্রিয়াকে (Causal Mechanisms) এককভাবে চিহ্নিত করে না।"
+        },
+        {
+          "type": "callout",
+          "title": "Interview-এর শুরুতে যা পরিষ্কার করে নেবেন",
+          "body": "ঠিক কোন মুহূর্তে দাঁড়িয়ে Forecast তৈরি হবে, কত দূর ভবিষ্যতের জন্য, সময়ের Frequency ও Update Cadence কী, কোন Covariate-গুলো আগে থেকেই জানা থাকে এবং মূল্যায়নের Label কখন পাওয়া যায়—এসব তথ্য নিশ্চিত না করে কখনোই Random Split বা Metric নির্বাচন করবেন না।"
+        }
+      ]
+    },
+    {
+      "id": "ch13_features",
+      "title": "Causal Lag, Rolling Window ও Target Leakage",
+      "subtitle": "Prediction-এর মুহূর্তে তথ্যের প্রাপ্যতা দিয়ে প্রতিটি Column পরীক্ষা করুন",
+      "duration": "34 min",
+      "icon": "timeline",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Target Leakage চেনার সহজ ও স্পষ্ট উদাহরণ",
+          "body": "আগের পাঠে আমরা দেখেছি Forecast Origin-এ দাঁড়িয়ে কেবল প্রাপ্য তথ্যটুকুই (`I_t`) ব্যবহার করা বৈধ। এই নিয়ম ভাঙলে কীভাবে নীরবে Target Leakage ঘটে, তার দারুণ একটি উদাহরণ আমাদের Bike Dataset-এই রয়েছে! সেখানে মোট ভাড়ার হিসাব হলো `cnt = casual + registered`। আপনি যদি একই দিনের `casual` বা `registered` সংখ্যা জেনে যান, তবে মোট সংখ্যা প্রায় সরাসরিই বেরিয়ে আসে—কিন্তু আগামীকালের Day-Ahead Forecast করার সময় তো আগামীকালের এই ফলাফলগুলো পাওয়া অসম্ভব! ঠিক একইভাবে, ঐতিহাসিক Table-এ থাকা ভবিষ্যতের প্রকৃত তাপমাত্রা বা আর্দ্রতাও কিন্তু সে সময়ের Weather Forecast নয়, বরং ঘটনা ঘটে যাওয়ার পর মাপা Realized Outcome। তাই পুরোনো Table-এ কোনো Column আছে দেখেই ধরে নেওয়া যাবে না যে Prediction করার মুহূর্তেও সেটি হাতে ছিল।"
+        },
+        {
+          "type": "math",
+          "title": "কেবল অতীতের তথ্য দিয়ে গঠিত Feature Vector",
+          "body": "x_t=\\left[y_{t-1},y_{t-7},y_{t-14},\\frac17\\sum_{j=1}^{7}y_{t-j},\\sin(2\\pi d_t/7),\\cos(2\\pi d_t/7)\\right]"
+        },
+        {
+          "type": "text",
+          "title": "আগে Shift করুন, তারপরে Rolling হিসাব নিন",
+          "body": "উপরের সমীকরণের মতো অতীতনির্ভর Feature বানানোর সময় কোডের একটি ছোট্ট ভুলেই মারাত্মক Data Leakage ঘটে যেতে পারে। খেয়াল করুন, `t`-তম Target Row-এর জন্য Rolling Mean বের করার সময় যদি বর্তমান মান `y[t]` তার ভেতর ঢুকে পড়ে, তবে Target নিজেই সরাসরি আপনার Input-এ মিশে যাবে! তাই `values.shift(1).rolling(7).mean()` লিখে আগে এক ধাপ পিছিয়ে নিন, যাতে শুধুমাত্র অতীতের সাতটি পর্যবেক্ষিত মান থেকেই Rolling Mean হিসাব হয়। একই কারণে Centered Rolling, Backward Fill এবং পুরো সিরিজের ওপর চালানো Interpolation ভবিষ্যতের তথ্য ব্যবহার করে ফেলতে পারে। এছাড়া শুরুর দিকের প্রান্তিক Row-গুলোর `NaN` মান না বুঝে অন্ধভাবে শূন্য (`0`) বসিয়ে দেবেন না।"
+        },
+        {
+          "type": "code",
+          "title": "কেবল অতীত ব্যবহার করে Rolling Mean নেওয়ার যাচাই",
+          "body": "import pandas as pd\n\ny = pd.Series([10.0, 20.0, 30.0, 40.0, 50.0])\npast3 = y.shift(1).rolling(3).mean()\nassert past3.iloc[3] == 20.0\nchanged = y.copy()\nchanged.iloc[3:] = [400.0, 500.0]\nassert changed.shift(1).rolling(3).mean().iloc[3] == 20.0\nprint(past3.tolist())\n"
+        },
+        {
+          "type": "text",
+          "title": "ক্যালেন্ডারভিত্তিক Feature ও বৃত্তাকার রূপান্তর",
+          "body": "অতীতের Lag ছাড়াও কিছু তথ্য ভবিষ্যতের ক্যালেন্ডার থেকে আগেভাগেই নিশ্চিতভাবে জানা যায়—যেমন আগামী সপ্তাহের কোন তারিখ কী বার (Weekday) হবে। বারের ক্রমকে `sin` ও `cos` দিয়ে প্রকাশ করলে বৃত্তাকার নৈকট্য (Circular Adjacency) বজায় থাকে, ফলে রবিবার ও সোমবারের মাঝখানের কৃত্রিম সংখ্যার দূরত্ব দূর হয়। বাস্তব প্রোডাকশন সিস্টেমে ছুটির দিনের ক্যালেন্ডার কোন উৎস থেকে কবে প্রকাশিত হয়েছে তাও নথিবদ্ধ রাখা দরকার; আমাদের এই অধ্যায়ের ক্যালেন্ডার Feature-এ কেবল বারের হিসাবই রাখা হয়েছে, কোনো বাহ্যিক Holiday API বা ভবিষ্যতের Weather Service যুক্ত করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "One-Step Validation-এ আগের দিনের প্রকৃত মানের ব্যবহার",
+          "body": "এবার একটি সূক্ষ্ম প্রশ্ন ভাবুন: Validation চলাকালে আগের Development দিনের প্রকৃত সংখ্যা কি পরের দিনের Lag বানাতে ব্যবহার করা বৈধ? যদি বাস্তবেই পরের দিনের সিদ্ধান্ত নেওয়ার মুহূর্তে আগের দিনের সংখ্যা হাতে চলে আসে, তবে One-Step Forecast-এ তা ব্যবহার করা শতভাগ বৈধ! কিন্তু একটি নির্দিষ্ট Origin-এ দাঁড়িয়ে একটানা `14` দিনের Forecast দিতে হলে ভবিষ্যতের ওই Validation দিনগুলোর প্রকৃত Lag পাওয়া অসম্ভব। তাই এই দুটি ভিন্ন Protocol-এর জন্য একই Precomputed Feature Matrix কখনোই ব্যবহার করা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "Preprocessing এবং Scaler ব্যবহারের নিয়ম",
+          "body": "Feature তৈরির মতোই Preprocessing-এও সময়ের সীমানা মানতে হবে। প্রতিটি Cross-Validation Fold-এ শুধুমাত্র ওই Fold-এর Training Row দিয়েই Scaler Fit করুন এবং তা দিয়ে Validation অংশকে Transform করুন। অবশ্য Validation সীমানার শুরুর দিনগুলোর Lag বানাতে সীমানার ঠিক আগের কিছু ঐতিহাসিক মান (Boundary-Context Data) প্রয়োজন হতে পারে—তথ্যগুলো ওই সময়ে প্রাপ্য হয়ে থাকলে তা ব্যবহার করা মোটেও Data Leakage নয়। তবে Target Window-এর ওভারল্যাপ, Label পেতে বিলম্ব বা পরবর্তী সংশোধন থাকলে Timestamp ও Embargo লজিক আরও কঠোর করতে হবে।"
+        },
+        {
+          "type": "callout",
+          "title": "প্রতিটি Column-এর জন্য Feature Audit লিখুন",
+          "body": "Model-এ দেওয়ার আগে প্রতিটি Column-এর `event_time`, `available_time`, সোর্সের Snapshot এবং Transform Fit করার পরিধি স্পষ্টভাবে লিখে ফেলুন। আর ভবিষ্যতের অংশটুকু ইচ্ছেমতো পরিবর্তন (Perturb) করলে যদি নির্দিষ্ট Origin-এর Feature বা Prediction বদলে যায়, তবে সাথে সাথে Data Leakage-এর সন্দেহ পরীক্ষা করুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch13_baselines",
+      "title": "Naive, Seasonal Naive ও Drift Baseline",
+      "subtitle": "শক্তিশালী অথচ সরল Baseline ছাড়া জটিল Model-এর সাফল্যের দাবি সবসময় অসম্পূর্ণ",
+      "duration": "34 min",
+      "icon": "timeline",
+      "blocks": [
+        {
+          "type": "math",
+          "title": "Fixed-Origin থেকে সাধারণ Baseline-গুলোর সূত্র",
+          "body": "\\widehat{y}_{T+h|T}^{naive}=y_T,\\qquad \\widehat{y}_{T+h|T}^{drift}=y_T+h\\frac{y_T-y_1}{T-1}"
+        },
+        {
+          "type": "text",
+          "title": "Naive পদ্ধতি দেখতে সরল হলেও অত্যন্ত গুরুত্বপূর্ণ",
+          "body": "জটিল কোনো Machine Learning Model বানানোর আগে আমাদের দেখতে হবে সবচেয়ে সরল নিয়মগুলো কতটা ভালো কাজ করে। উপরের সমীকরণে দেখানো সাধারণ Naive পদ্ধতিতে সর্বশেষ দেখা মান `y_T`-কেই ভবিষ্যতের সব Horizon-এ পুনরাবৃত্তি করা হয়; স্থিতিশীল স্তরের ডেটায় এটি দারুণ শক্তিশালী একটি Benchmark হতে পারে। একইভাবে Seasonal Naive পদ্ধতি `m` দৈর্ঘ্যের সর্বশেষ দেখা ঋতুচক্রটিকে বারবার রিপিট করে—এমনকি `h > m` হলেও এটি কখনো ভবিষ্যতের প্রকৃত মান ছুঁয়ে দেখে না। আর Drift পদ্ধতি পুরো Training Window-এর দুই প্রান্তের Slope ধরে সামনের দিকে সরলরেখায় বাড়িয়ে দেয়; তবে প্রান্তিক বিন্দুতে Outlier থাকলে বা মাঝপথে Trend বদলে গেলে এটি বেশ ভঙ্গুর (Fragile) হয়ে পড়ে।"
+        },
+        {
+          "type": "code",
+          "title": "Modulo Index দিয়ে ঋতুচক্র পুনরাবৃত্তির উদাহরণ",
+          "body": "import numpy as np\n\nhistory = np.arange(1.0, 8.0)\nhorizon = 10\nprediction = history[-7:][np.arange(horizon) % 7]\nprint(prediction.tolist())  # 1..7, then 1,2,3\n"
+        },
+        {
+          "type": "forecast_lab",
+          "title": "ইন্টারঅ্যাক্টিভ Fixed-Origin Forecast Lab",
+          "body": "ল্যাবে Origin, পদ্ধতি এবং Horizon বদলে পরীক্ষা করুন। ধূসর রঙের প্রকৃত মানগুলো কেবল Error মাপার জন্য রাখা হয়েছে, আর উজ্জ্বল রঙের Prediction তৈরি হয়েছে শুধুমাত্র নির্বাচিত Origin পর্যন্ত দেখা ইতিহাস থেকে। বিশেষ করে `Horizon = 28`-এ ঋতুচক্রটি কীভাবে বারবার ফিরে আসে তা খেয়াল করুন।"
+        },
+        {
+          "type": "text",
+          "title": "মাঝখানে অদেখা বিরতি (Gap) থাকলে Lead কীভাবে বাড়ে?",
+          "body": "ল্যাব থেকে এবার বাস্তব প্রটোকলের আরেকটি গুরুত্বপূর্ণ দিক দেখা যাক: Training শেষ হওয়ার পর যদি মাঝখানে `g` সংখ্যক অদেখা দিন থাকে, তবে মূল্যায়িত Horizon `h`-এর প্রথম ধাপটির প্রকৃত দূরত্ব বা Lead হবে `g + 1`। তখন Seasonal Baseline-এর Modulo Index-এ এই Gap যোগ হয় এবং Drift পদ্ধতি `g + h` দূরত্ব ব্যবহার করে হিসাব করে। মনে রাখবেন, মাঝখানের ওই Gap দিনগুলোর ফলাফল দিয়ে ইতিহাস আপডেট করে ফেললে আপনার Fixed-Origin Protocol ভেঙে যাবে।"
+        },
+        {
+          "type": "text",
+          "title": "ঋণাত্মক Forecast পেলে কী নীতি নেবেন?",
+          "body": "নিম্নমুখী Slope থাকলে Drift সূত্র কখনো কখনো ঋণাত্মক সংখ্যা (Negative Count) দিয়ে বসতে পারে! তখন কোডে নীরবে শূন্যে কেটে দিলে (`clip`) আসলে মূল Model বা নীতিই বদলে যায়—তাই তেমন কিছু করলে সেটিকে একটি Modified Baseline হিসেবে স্পষ্টভাবে রিপোর্ট করুন। উপরের ল্যাবে কোনো আলাদা Count Model Fit না করে হুবহু মূল গাণিতিক সূত্রগুলোর আচরণ দেখানো হয়েছে, কারণ সূত্র না ঢেকে তার চরম বা অদ্ভুত আউটপুট স্বচক্ষে দেখাও ইঞ্জিনিয়ারিং বিচারবুদ্ধি গড়ে তোলার অংশ।"
+        },
+        {
+          "type": "text",
+          "title": "ন্যায্য তুলনার শর্ত (Metric Comparability)",
+          "body": "বিভিন্ন পদ্ধতির তুলনা সবসময় একই Origin, একই Horizon এবং একই তারিখগুলোর ওপর করতে হবে। খেয়াল করুন, `Horizon = 7` বনাম `Horizon = 28`-এ ভবিষ্যতের লক্ষ্য তারিখগুলোই বদলে যায়, তাই সেখানে Error-এর পার্থক্য কেবল দূরত্বের প্রভাব নয়। সংবেদনশীলতা বোঝার জন্য একাধিক Origin এবং প্রতি ধাপের আলাদা (Lead-Wise) Metric দেখুন। আর নামের সাথে 'Seasonal Baseline' থাকলেই যে এই Dataset-এ তা সাধারণ Naive-এর চেয়ে ভালো করবে, এমন কোনো নিশ্চয়তা নেই।"
+        },
+        {
+          "type": "callout",
+          "title": "নিজে কোড লিখে যাচাই করুন",
+          "body": "আপনার Implementation-এ ভবিষ্যতের Actual Array পরিবর্তন করলেও স্থির Origin-এর Forecast অবশ্যই অপরিবর্তিত থাকতে হবে। পাশাপাশি অপর্যাপ্ত ইতিহাস, `period = 0`, `horizon = 0` এবং মাত্র একটি Observation দিয়ে Drift চালানোর প্রান্তিক শর্তগুলোও পরীক্ষা করুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch13_stationarity",
+      "title": "Stationarity, ACF ও Differencing",
+      "subtitle": "সময়ের ছন্দ ও সম্পর্ক খুঁজুন, কিন্তু পরিসংখ্যান দেখেই কার্যকারণ গল্প বানাবেন না",
+      "duration": "32 min",
+      "icon": "timeline",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Weak Stationarity: একটি কার্যকর অনুমান",
+          "body": "সরল Baseline-এর পর এবার দেখা যাক একটি Time Series-এর ভেতরের ছন্দকে পরিসংখ্যানের ভাষায় কীভাবে পড়া হয়। সময়ের সাথে Mean ও Variance স্থির থাকবে এবং যেকোনো দুটি সময়ের Covariance কেবল তাদের মধ্যবর্তী ব্যবধান বা Lag-এর ওপর নির্ভর করবে—এটিই Weak Stationarity-এর প্রচলিত সংজ্ঞা। ডেটায় স্পষ্ট Trend বা Seasonality থাকলে কাঁচা সিরিজ এই অনুমান ভেঙে ফেলে। তবে খেয়াল রাখবেন, চোখে দেখে স্থির মনে হওয়া কোনো Plot কিন্তু পরিসংখ্যানগত প্রমাণ নয়; সীমিত Sample আকার এবং ভবিষ্যতের Structural Change সবসময়ই আমাদের ব্যাখ্যাকে সীমিত রাখে।"
+        },
+        {
+          "type": "math",
+          "title": "Autocorrelation এবং প্রথম ও সাপ্তাহিক ব্যবধানের সূত্র",
+          "body": "\\rho(k)=\\frac{\\operatorname{Cov}(Y_t,Y_{t-k})}{\\operatorname{Var}(Y_t)},\\qquad \\Delta y_t=y_t-y_{t-1},\\qquad \\Delta_7 y_t=y_t-y_{t-7}"
+        },
+        {
+          "type": "text",
+          "title": "Autocorrelation Function (ACF) আমাদের কী বলে?",
+          "body": "উপরের সমীকরণের প্রথম অংশটি হলো Autocorrelation। কোনো নির্দিষ্ট Lag-এ ধনাত্মক সম্পর্ক ডেটার ধারাবাহিক রেশ (Persistence) বা যৌথ Seasonality-র ইঙ্গিত দেয়, কিন্তু এটি সরাসরি কোনো কার্যকারণ সম্পর্কের (Causal Lag Effect) প্রমাণ নয়। বিভিন্ন লাইব্রেরিতে Sample ACF হিসাবের Normalization রীতি কিছুটা ভিন্ন হতে পারে। নিচের কোডে আমরা ধারণাটি পরিষ্কার করতে ভগ্নাংশের হর হিসেবে Mean বাদ দেওয়া মানগুলোর বর্গের যোগফল (`z @ z`) ব্যবহার করেছি—এটি হিসাবের মূল কাঠামোটি দেখায়, কোনো আনুষ্ঠানিক Confidence Band বা Hypothesis Test নয়।"
+        },
+        {
+          "type": "code",
+          "title": "Sample ACF ও ক্রমিক ব্যবধানের সহজ উদাহরণ",
+          "body": "import numpy as np\n\ny = np.array([1.0, 2.0, 1.0, 2.0, 1.0, 2.0, 1.0, 2.0])\nz = y - y.mean()\nenergy = z @ z\nacf1 = None if energy == 0 else float(z[1:] @ z[:-1] / energy)\nprint(acf1)\nprint(np.diff(y))\n"
+        },
+        {
+          "type": "text",
+          "title": "Differencing-এর সুবিধা ও অতিরিক্ত করার ঝুঁকি",
+          "body": "কোডের শেষ লাইনে `np.diff(y)` দিয়ে যেমন পরপর দুটি মানের ব্যবধান নেওয়া হয়েছে, বাস্তবে রৈখিক Trend কমাতে তেমনই First Difference এবং স্থির চক্রের প্রভাব কমাতে Seasonal Difference নেওয়া যায়। কিন্তু প্রয়োজনের অতিরিক্ত Differencing করলে ডেটায় Noise বেড়ে যেতে পারে কিংবা কৃত্রিম ঋণাত্মক Autocorrelation তৈরি হতে পারে! এছাড়া Differenced স্কেলের Forecast-কে মূল স্কেলে ফিরিয়ে আনতে কেবল Origin পর্যন্ত জানা মানগুলোই ব্যবহার করুন; কখনোই Validation অংশের প্রকৃত মান বসিয়ে ক্রমিক যোগফল (Cumulative Reconstruction) তৈরি করবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "Nonlinear Transform ও মূল এককে ফলাফল প্রকাশ",
+          "body": "ব্যবধান নেওয়ার পাশাপাশি অঋণাত্মক সংখ্যার (Nonnegative Counts) চরম তারতম্য সংকুচিত করতে অনেকেই `log(1 + y)` রূপান্তর ব্যবহার করেন। কিন্তু মনে রাখবেন, প্রত্যাশিত লগ-মানকে উল্টো রূপান্তর (Inverse Transform) করলে সরাসরি মূল এককের প্রত্যাশিত সংখ্যা পাওয়া যায় না; নিখুঁত Bias Correction করতে আলাদা Distribution-সংক্রান্ত অনুমান লাগে। রূপান্তরিত স্কেলে MAE কম আসা মানেই আসল বাইক ভাড়ার সংখ্যার Error কম হওয়া নয়—তাই সবসময় ব্যবসার প্রকৃত এককে ফলাফল রিপোর্ট করুন।"
+        },
+        {
+          "type": "text",
+          "title": "Bike Dataset-এ সাপ্তাহিক Residual-এর সীমা",
+          "body": "আমাদের পরিচিত সাপ্তাহিক ব্যবধান `r[t] = cnt[t] - cnt[t - 7]` একই বারের প্রত্যাশিত মিলকে কাজে লাগায় ঠিকই, কিন্তু এতে বার্ষিক ঋতুগত ওঠানামা (Seasonal Amplitude) ও দীর্ঘমেয়াদি প্রবৃদ্ধি রয়ে যায়। ফলে Robust পদ্ধতিতে ধরা পড়া কিছু Flag আসলে বৈধ চাহিদার পরিবর্তনও হতে পারে। আর পুরো Dataset-এর ওপর Centered Seasonal Decomposition চালিয়ে সেটিকে লাইভ Origin-এর Predictor হিসেবে ব্যবহার করলে ভবিষ্যতের মান মিশে গিয়ে সরাসরি Data Leakage ঘটতে পারে।"
+        },
+        {
+          "type": "callout",
+          "title": "Interview-এর জন্য অনুশীলন প্রশ্ন",
+          "body": "কোনো ডেটায় `Lag 7`-এর সম্পর্ক বেশ বড় এলে সেটিকে সরাসরি 'সাপ্তাহিক কারণ' বলার বদলে আপনি কী কী বিকল্প ব্যাখ্যা পরীক্ষা করবেন? Seasonal Differencing, স্পষ্ট ক্যালেন্ডার Feature এবং সময়-সচেতন Residual Diagnostics তুলনা করে উত্তর সাজান।"
+        }
+      ]
+    },
+    {
+      "id": "ch13_models",
+      "title": "Smoothing, ETS ও ARIMA-র গাণিতিক ভিত্তি",
+      "subtitle": "কোনো Model পরিবার বেছে নেওয়ার আগে তার অন্তর্নিহিত অনুমানগুলো বুঝুন",
+      "duration": "34 min",
+      "icon": "timeline",
+      "blocks": [
+        {
+          "type": "math",
+          "title": "Simple Exponential Smoothing-এর সমীকরণ",
+          "body": "\\ell_t=\\alpha y_t+(1-\\alpha)\\ell_{t-1},\\qquad \\widehat{y}_{t+h|t}=\\ell_t,\\qquad 0\\le\\alpha\\le1"
+        },
+        {
+          "type": "text",
+          "title": "Level আপডেটের স্বজ্ঞা ও alpha-র ভূমিকা",
+          "body": "সর্বশেষ মানটিকে হুবহু রিপিট করার (Naive) এবং পুরো ইতিহাসের Mean নেওয়ার মাঝামাঝি একটি চমৎকার পথ হলো উপরের Simple Exponential Smoothing সমীকরণটি। এখানে সাম্প্রতিক মানকে বেশি ওজন দিতে চাইলে `alpha` বড় রাখা হয়—ফলে Model নতুন পরিবর্তনে দ্রুত সাড়া দেয়, কিন্তু সাময়িক Noise-এর প্রতি সংবেদনশীলতাও বেড়ে যায়। বিপরীতে `alpha` ছোট হলে রেখাটি বেশ মসৃণ থাকে, তবে বাস্তব Level Shift ধরতে দেরি করে। মনে রাখবেন, Simple Exponential Smoothing নিজে থেকে কোনো Trend বা Seasonality শেখে না। এর প্রারম্ভিক মান (Initialization) ও সেরা `alpha` নির্বাচন অবশ্যই কেবল Training অংশের Chronological Validation দিয়ে করতে হবে।"
+        },
+        {
+          "type": "code",
+          "title": "এক ধাপে চলা Level Smoother-এর উদাহরণ",
+          "body": "def smooth(values, alpha):\n    if not values or not 0 <= alpha <= 1:\n        raise ValueError(\"valid series and alpha\")\n    level = float(values[0])\n    for value in values[1:]:\n        level = alpha * value + (1 - alpha) * level\n    return level\n\n\nprint(smooth([10.0, 20.0, 30.0], 0.5))  # 22.5\n"
+        },
+        {
+          "type": "text",
+          "title": "Holt, Holt-Winters এবং ETS পরিবার",
+          "body": "উপরের সরল Level Smoother-কে ধাপে ধাপে সম্প্রসারিত করলেই পাওয়া যায় চেনা ক্লাসিক্যাল পরিবারগুলো: Holt-এর পদ্ধতিতে Level-এর পাশাপাশি Trend State যুক্ত হয়, আর Holt-Winters তার সাথে যোগ করে Seasonality। আরও বিস্তৃত ETS পরিবার সুনির্দিষ্ট করে দেয় Error, Trend ও Seasonality উপাদানগুলো Additive নাকি Multiplicative কাঠামোয় কাজ করবে। Multiplicative কাঠামো ব্যবহারের আগে ডেটায় শূন্য বা ঋণাত্মক Observation থাকলে তার সামঞ্জস্য অবশ্যই পরীক্ষা করুন। ভেতরের State Update ও Forecast সমীকরণ পরিষ্কার না বুঝে কেবল সংক্ষিপ্ত নাম মুখস্থ করলে বাস্তব সমস্যা ডিবাগ করা কঠিন হয়ে পড়ে।"
+        },
+        {
+          "type": "math",
+          "title": "AR এবং MA উপাদানের সম্মিলিত গাণিতিক রূপ",
+          "body": "y_t=c+\\sum_{i=1}^{p}\\phi_i y_{t-i}+\\epsilon_t+\\sum_{j=1}^{q}\\theta_j\\epsilon_{t-j}"
+        },
+        {
+          "type": "text",
+          "title": "ARIMA আসলে কী যোগ করে?",
+          "body": "State-ভিত্তিক ETS-এর পাশাপাশি আরেকটি প্রধান ধ্রুপদী পরিবার হলো `ARIMA(p, d, q)`, যেখানে `d` বার Differencing নেওয়ার পর উপরের সমীকরণের মতো AR (Autoregressive) ও MA (Moving Average) কাঠামো বসানো হয়, এবং ঋতুগত পদ যোগ করলে পর্যায়ক্রমিক Lag-ও ধরা পড়ে। এখানে একটি জরুরি পার্থক্য খেয়াল রাখুন: ARIMA-র MA উপাদান অতীতের অপ্রত্যাশিত Forecast Error বা Innovation ব্যবহার করে—এটি কিন্তু সাধারণ Feature Engineering-এর Rolling Mean নয়! Stationarity, Invertibility এবং Residual-গুলো White Noise কি না তা পরীক্ষা করা এই Model-এর অনুমানের অবিচ্ছেদ্য অংশ; অতীতে সুন্দর Fit হওয়াই ভবিষ্যতের বৈধ Extrapolation নিশ্চিত করে না।"
+        },
+        {
+          "type": "text",
+          "title": "এই অধ্যায়ে আমাদের বাস্তবায়নের পরিধি",
+          "body": "অ্যাপের অফলাইন ইন্টারফেসে নতুন করে কোনো বাহ্যিক লাইব্রেরির (`statsmodels`) ARIMA বা ETS Model আলাদাভাবে Train করা হয়নি; আমাদের সরাসরি চালানোযোগ্য (Executable) Forecasting Benchmark-এ রাখা হয়েছে Causal Lag-ভিত্তিক `Ridge` এবং স্বচ্ছ Baseline পদ্ধতিগুলো। তবে এই গাণিতিক ভিত্তিগুলো পরিষ্কার থাকলে পরবর্তী প্রজেক্টে বিভিন্ন Model পরিবারের আচরণ ও অনুমান তুলনা করা অনেক সহজ হবে।"
+        },
+        {
+          "type": "callout",
+          "title": "Model নির্বাচনের শৃঙ্খলা",
+          "body": "Training ডেটার Fit বা AIC Score, সময়ানুক্রমিক ভবিষ্যৎমুখী Validation এবং অপারেশনাল জটিলতা—এই তিনটি সম্পূর্ণ আলাদা মাপকাঠি। Hyperparameter Search-এর পরিধি বাড়ালে তার Selection Budget স্পষ্টভাবে লিখে রাখুন। ছোট ঐতিহাসিক সিরিজে বড় Model ভালো দেখালেই তা ভবিষ্যতের চাহিদার সঠিক Forecast দেওয়ার গ্যারান্টি দেয় না।"
+        }
+      ]
+    },
+    {
+      "id": "ch13_horizons",
+      "title": "One-Step, Recursive ও Direct Multi-Step Forecasting",
+      "subtitle": "ভবিষ্যতের কোন ধাপে দাঁড়িয়ে কোন প্রকৃত মানটি আপনার হাতে জানা আছে?",
+      "duration": "47 min",
+      "icon": "timeline",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "One-Step Rolling Origin কীভাবে এগোয়?",
+          "body": "যেকোনো Forecasting Model হাতে নেওয়ার পরই আমাদের ঠিক করতে হয় ভবিষ্যতের ধাপগুলো আমরা কীভাবে এগোব। ধরুন দিন `t` শেষ হওয়ার পর `y[t]` আমাদের জানা আছে, এবং তা ব্যবহার করে আমরা ঠিক পরের দিন `t + 1`-এর Forecast তৈরি করলাম। পরের দিন শেষ হয়ে প্রকৃত মান হাতে এলে ইতিহাস আপডেট করে আবার তার পরের দিনের হিসাব করা হয়। খেয়াল করুন, এখানে Model-এর শেখা Weight স্থির থাকলেও Lag Feature-গুলো কিন্তু প্রতিদিন নতুন পর্যবেক্ষিত সত্য দিয়ে আপডেট হচ্ছে! আমাদের মূল Development অংশের `182`টি Prediction ঠিক এই Protocol-এই তৈরি; এর অর্থ কিন্তু `182` বার Model Refit করা নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Fixed-Origin থেকে বহু ধাপের (Multi-Step) হিসাব",
+          "body": "কিন্তু যদি একটি নির্দিষ্ট Origin `T`-তে দাঁড়িয়ে আজই `T + 1` থেকে `T + H` পর্যন্ত সবকটি দিনের Prediction একসাথে দিতে হয়? তখন তো ভবিষ্যতের প্রকৃত মানগুলো পাওয়ার কোনো সুযোগ নেই! এ অবস্থায় Recursive পদ্ধতি নিজের আগের ধাপের Prediction-কেই পরের ধাপের Input হিসেবে ব্যবহার করে; আর Direct পদ্ধতি প্রতিটি নির্দিষ্ট Horizon-এর জন্য আলাদা ম্যাপিং শেখে (এছাড়া একসাথে সব ধাপ বের করার Multi-Output Model-ও সম্ভব)। এই পদ্ধতিগুলোতে Error জমে ওঠার ধরন (Error Propagation) এবং Training Target সাজানোর নিয়ম সম্পূর্ণ আলাদা।"
+        },
+        {
+          "type": "math",
+          "title": "Recursive বনাম Direct পদ্ধতির সমীকরণ",
+          "body": "\\widehat{y}_{T+2|T}=f(\\widehat{y}_{T+1|T},y_T,\\ldots),\\qquad \\widehat{y}_{T+h|T}=f_h(\\mathcal{I}_T)"
+        },
+        {
+          "type": "code",
+          "title": "নিজের Prediction ব্যবহার করে Recursive আপডেটের উদাহরণ",
+          "body": "history = [10.0, 12.0, 14.0]\npredictions = []\nfor _ in range(3):\n    estimate = sum(history[-2:]) / 2\n    predictions.append(estimate)\n    history.append(estimate)\nprint(predictions)\n"
+        },
+        {
+          "type": "text",
+          "title": "Direct পদ্ধতিতে Target সাজানো ও সীমানার ফাঁদ",
+          "body": "উপরের কোডে Recursive পদ্ধতিতে নিজের Prediction ইতিহাসেই যোগ হতে দেখলাম। অন্যদিকে Direct পদ্ধতিতে যখন আপনি Row `t`-এর Feature দিয়ে সরাসরি `y[t + h]` অনুমান করতে শেখাবেন, তখন মনে রাখতে হবে যে ওই Training Label-টি বাস্তবে হাতে আসে আরও `h` ধাপ পরে! ফলে Split Boundary-র কাছাকাছি থাকা Sample-এর Label সরাসরি Validation সময়ের ভেতর ঢুকে পড়তে পারে। তাই সীমানায় কতটুকু Purge বা Gap রাখবেন তা মনগড়া Row গুনে নয়—বরং Origin, Target Window এবং `available_time` থেকে হিসাব করে বের করুন।"
+        },
+        {
+          "type": "text",
+          "title": "ভবিষ্যতের জানা Covariate ও Train-Serving সামঞ্জস্য",
+          "body": "বহু ধাপের Forecast-এ আরেকটি বড় প্রশ্ন হলো সহায়ক Feature বা Covariate। ভবিষ্যতের কোন দিন কী বার হবে তা আজই জানা থাকে, কিন্তু ভবিষ্যতের প্রকৃত আবহাওয়া আজ জানা থাকে না! যদি আবহাওয়ার Forecast উপলব্ধ থাকেও, তবে ঠিক ওই মুহূর্তে প্রকাশিত সংস্করণটিই (Issued-at Version) ব্যবহার করুন—ঘটনা ঘটে যাওয়ার পর পাওয়া চূড়ান্ত Realized আবহাওয়া নয়। নইলে Training-এ নিখুঁত আবহাওয়া আর লাইভ Serving-এ ত্রুটিযুক্ত Weather Forecast দিলে মারাত্মক Train-Serving Mismatch তৈরি হবে।"
+        },
+        {
+          "type": "text",
+          "title": "ভিন্ন Protocol-এর ফলাফল এক Table-এ তুলনা নয়",
+          "body": "এই পার্থক্যগুলোর কারণেই আমাদের মূল One-Step Protocol-এ চলা `Ridge` Model-এর MAE (প্রায় `811.28`) এবং নির্দিষ্ট Fixed-Origin-এর `14`-দিনের Baseline Score এক কাতারে ফেলা যাবে না—কারণ দুটি এসেছে ভিন্ন তারিখ ও ভিন্ন তথ্যের শর্ত থেকে। এদের কখনোই এক Ranking Table-এ বসিয়ে 'সেরা Model' ঘোষণা করা চলবে না। ন্যায্য তুলনার জন্য একই Origin, একই Lead Time, একই Covariate প্রাপ্যতা এবং একই Refit ছন্দ থাকা অপরিহার্য।"
+        },
+        {
+          "type": "callout",
+          "title": "তথ্যের সততা যাচাইয়ের পরীক্ষা (Leakage Detection Test)",
+          "body": "নির্দিষ্ট Origin-এর পরের ভবিষ্যৎ অংশটি অন্য সংখ্যা দিয়ে বদলে (Replace) আবার ওই Origin-এর Prediction বের করে দেখুন। স্থির Origin-এর Forecast বদলে গেলে বুঝবেন কোথাও Information Set ভেঙে যাচ্ছে! অবশ্য চলমান One-Step Protocol-এ আগের কোনো পর্যবেক্ষিত সত্য বদলালে পরের ধাপের Prediction বদলানোই স্বাভাবিক।"
+        },
+        {
+          "type": "text",
+          "title": "এক Origin-এর Forecast বনাম নতুন সত্য পাওয়ার পর Forecast",
+          "body": "দুই Protocol-এর পার্থক্য হাতে-কলমে মেলানোর জন্য একটি ছোট ইতিহাস `[10, 20, 30]` নেওয়া যাক, যেখানে আমাদের নিয়ম হলো সর্বশেষ দুটি মানের Mean নেওয়া। একই Origin থেকে দুই ধাপের Recursive Forecast করলে প্রথম ধাপ হবে `25`, আর দ্বিতীয় ধাপ হবে `mean(30, 25) = 27.5`। কিন্তু প্রথম ভবিষ্যৎ দিনের প্রকৃত মান `100` জানার পরে যদি পরবর্তী Rolling Origin থেকে নতুন One-Step Forecast করা হয়, তবে মান আসবে `mean(30, 100) = 65`! যেহেতু দুই Protocol-এর হাতে থাকা Information Set আলাদা, তাই তাদের Error-ও কখনো একই প্রশ্নের উত্তর দেয় না।"
+        },
+        {
+          "type": "code",
+          "title": "Forecast History এবং Observed History আলাদা রাখার কোড",
+          "body": "observed = [10.0, 20.0, 30.0]\nrecursive_history = observed.copy()\nforecasts = []\nfor lead in range(2):\n    prediction = sum(recursive_history[-2:]) / 2\n    forecasts.append(prediction)\n    recursive_history.append(prediction)\n# This actual becomes available only at the later rolling origin.\nlater_observed = observed + [100.0]\nrolling_one_step = sum(later_observed[-2:]) / 2\nassert observed == [10.0, 20.0, 30.0]\nprint(*forecasts, rolling_one_step)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "স্ব-যাচাই: Gap থাকলে Recursive ধাপের হিসাব",
+          "body": "একটি Fixed Origin থেকে মাঝখানে `gap = 2` রেখে পরের তিন দিনের জন্য Score বের করতে হলে মোট কয়টি Recursive Prediction তৈরি করতে হবে?",
+          "solution": "মাঝখানের `2` দিনের Gap-সহ মোট `5`টি Recursive Prediction তৈরি করতে হবে, যার মধ্যে কেবল শেষ `3`টি দিনকে Score করা হবে। মাঝের ওই দুই দিনের প্রকৃত মান দিয়ে যদি Recursive History আপডেট করে ফেলা হয়, তবে মূল Origin-এর Information Set ভেঙে যাবে।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch13_backtest",
+      "title": "Chronological Backtesting, Window ও Gap",
+      "subtitle": "Timeline-এর ওপর সাজিয়ে আপনার Validation নকশাটি যাচাই করুন",
+      "duration": "36 min",
+      "icon": "timeline",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Expanding এবং Rolling Window-এর তুলনা",
+          "body": "আগের পাঠে আমরা দেখেছি নির্দিষ্ট একটি Origin-এ দাঁড়িয়ে কীভাবে ভবিষ্যতের Forecast তৈরি হয়। এবার প্রশ্ন হলো—সময়ের সাথে সাথে আমাদের Model মূল্যায়ন বা Backtesting করার সময় অতীতের কতটুকু ডেটা আমরা ধরে রাখব? Expanding Training পদ্ধতি অতীতের প্রাপ্য সবটুকু ডেটা ব্যবহার করে; এতে Sample-এর পরিমাণ বেশি থাকে, কিন্তু বহু পুরোনো অবস্থার (Old Regime) প্রভাবও Model-এর ভেতর রয়ে যায়। বিপরীতে, নির্দিষ্ট দৈর্ঘ্যের Rolling Window কেবল সাম্প্রতিক ইতিহাস রাখে; ফলে নতুন Drift-এর সাথে খাপ খাওয়ানো সহজ হয়, যদিও Sample কমে যাওয়ায় Variance বেড়ে যেতে পারে। মনে রাখবেন, Window-এর দৈর্ঘ্য ঠিক করাও কিন্তু এক ধরনের Hyperparameter Tuning ও Model Selection—কোন নীতিটি বেশি কার্যকর হবে তা আপনার নির্দিষ্ট সমস্যা এবং Distribution পরিবর্তনের বাস্তব প্রমাণ দেখে বিচার করুন।"
+        },
+        {
+          "type": "math",
+          "title": "Fold সীমানার গাণিতিক প্রকাশ (End-Exclusive Indices)",
+          "body": "\\operatorname{train}=[s,T),\\quad \\operatorname{gap}=[T,T+g),\\quad \\operatorname{valid}=[T+g,T+g+H)"
+        },
+        {
+          "type": "backtest_lab",
+          "title": "ইন্টারঅ্যাক্টিভ Backtest Timeline",
+          "body": "ল্যাবে Origin, `90`-দিনের Rolling Window, Gap এবং Baseline বদলে প্রকৃত তারিখ, Training Row সংখ্যা ও Error-এর পরিবর্তন দেখুন। খেয়াল করুন, `Gap = 7` করলে প্রথম মূল্যায়িত Target-টি Origin-এর `8` দিন পরে শুরু হয়, এবং মাঝখানের ওই Gap দিনগুলোর ফলাফল কখনোই Forecast History-তে যুক্ত হয় না।"
+        },
+        {
+          "type": "code",
+          "title": "সময়ানুক্রমিক Fold Index হিসাবের কোড",
+          "body": "origin, gap, horizon, window = 100, 7, 14, 60\ntrain = range(max(0, origin - window), origin)\nvalidation = range(origin + gap, origin + gap + horizon)\nassert max(train) < min(validation)\nprint(len(train), validation.start, validation.stop)  # 60,107,121\n"
+        },
+        {
+          "type": "text",
+          "title": "Python Training Cross-Validation: একটি আলাদা সিমুলেশন",
+          "body": "উপরের সরল Index হিসাবের পাশাপাশি আমাদের মূল Workflow-এ `351`টি Lagged Training Row-এর ওপর `TimeSeriesSplit` ব্যবহার করে `3`টি Fold, `test_size = 56` এবং `gap = 7` দিয়ে Cross-Validation চালানো হয়েছে। প্রতিটি Fold-এ শুধুমাত্র তার নিজস্ব Training অংশেই Scaler ও `Ridge` Model Fit করা হয়। এখানে Validation অংশের প্রতিটি Prediction হলো One-Step, তাই ওই অংশের ভেতরে আগের পর্যবেক্ষিত ফলাফলগুলো পরবর্তী দিনের Causal Lag তৈরিতে ব্যবহার করা বৈধ ধরা হয়েছে। অর্থাৎ এই CV Gap মূলত Model Fit করার Row-গুলোকে আলাদা রাখে—Validation অংশের সব Forecast একটি একক Origin-এ দাঁড়িয়ে একসাথে বানানো হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "কেবল Row Gap দিলেই সব সমস্যার সমাধান হয় না",
+          "body": "অনেকেই মনে করেন মাঝখানে কয়েকটি Row ফাঁকা রাখলেই সব Data Leakage মিটে যায়—বাস্তবে তা সবসময় সত্যি নয়! আগের Observation-গুলো যদি যথাসময়ে হাতে চলে আসে, তবে কেবল Lag-এর ওভারল্যাপ থাকাই সবসময় Leakage নয়। কিন্তু বাস্তবে Label আসতে দেরি হলে, একাধিক দিনের যোগফলে তৈরি Target পরস্পরকে অতিক্রম করলে কিংবা পরে সংশোধিত (Revised) Feature থাকলে নিছক কয়েকটি Row-এর Gap যথেষ্ট নাও হতে পারে। তাই বিভাজন সীমানা কেবল Index গুনে নয়, প্রকৃত Timestamp ও কাজের Information Set দিয়ে যাচাই করুন।"
+        },
+        {
+          "type": "text",
+          "title": "একাধিক Origin ও অনিশ্চয়তার হিসাব",
+          "body": "একই Forecasting নীতি সময়ের একাধিক Origin-এ চালালে বিভিন্ন ঋতু বা সময়ের প্রতি তার সংবেদনশীলতা ধরা পড়ে। তবে খেয়াল রাখবেন, পরস্পর ওভারল্যাপ করা Forecast Window-গুলোর Error একে অপরের ওপর নির্ভরশীল—সেগুলোকে সম্পূর্ণ স্বাধীন (Independent) Sample ধরে সাধারণ সূত্রে Confidence Interval বানানো ভুল! তাই প্রতি ধাপের আলাদা (Lead-Wise) Score, ঋতুভিত্তিক Slice এবং নির্ভরশীলতা-সচেতন Resampling অনুমানগুলো স্পষ্টভাবে উল্লেখ করুন।"
+        },
+        {
+          "type": "callout",
+          "title": "আমাদের সীমাবদ্ধ Backtest-এর পরিধি",
+          "body": "আমাদের মূল Fixed-Origin মূল্যায়নে Origin `365`, `421` এবং `477`-এ দাঁড়িয়ে `14` দিনের Forecast দেখানো হয়েছে, এবং ডেটার সর্বশেষ অংশটি Reserved রাখা হয়েছে। অ্যাপের Timeline-এ একটি একক Fold খতিয়ে দেখা যায়; তবে Slider ঘুরিয়ে একই ডেটা বারবার দেখা কখনোই চূড়ান্ত Confirmatory Evaluation নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Overlapping Target-এর সীমানা কীভাবে লিখব?",
+          "body": "কেন কেবল Index দেখে সীমানা টানা বিপজ্জনক, তার একটি সুনির্দিষ্ট উদাহরণ দেখা যাক। ধরুন Row `i`-এর Target `y_i` হলো আগামী তিন দিনের মোট চাহিদার যোগফল। সেক্ষেত্রে Training Row `i = 8`-এর Label তৈরিতে দিন `9`, `10` ও `11`-এর তথ্য ব্যবহৃত হচ্ছে। এখন আমাদের Validation Origin যদি দিন `10` হয়, তবে ওই মুহূর্তে ওই Label-টি এখনো পুরোপুরি জানাই যায়নি! তাই নিছক Index `8` সংখ্যাটি `10`-এর চেয়ে ছোট বলেই সেটিকে Fit-এ নেওয়া যাবে না। প্রতিটি Training Label-এর জন্য `available_time <= fit_time` শর্তটি পরীক্ষা করুন, এবং একই কাঁচা ভবিষ্যৎ ফলাফল যুগপৎ Training Label ও Validation Target-এ ভাগাভাগি হচ্ছে কি না তাও কাজের ধরন অনুযায়ী বিচার করুন।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "স্ব-যাচাই: বিলম্বিত Label-এর প্রাপ্যতার সময়",
+          "body": "তিন দিনের অগ্রবর্তী (Forward) Target এবং তার সাথে আরও এক দিনের পর্যবেক্ষণ বিলম্ব (Observation Delay) থাকলে Row `i`-এর Label ঠিক কখন ব্যবহারের জন্য পাওয়া যাবে?",
+          "solution": "Target Window-এর শেষ ফলাফলটি ঘটে দিন `i + 3`-এ, এবং তার সাথে আরও এক দিনের বিলম্ব যোগ হলে `available_time = i + 4` দাঁড়ায়। সুতরাং কোনো Fit কাট-অফ সময় `T`-তে কেবল `i + 4 <= T` শর্ত পূরণকারী Row-গুলোই বৈধভাবে নেওয়া যাবে। নিজের Dataset-এ অবশ্যই Interval-এর প্রান্তবিন্দু ও Timestamp-এর রীতি স্পষ্ট করে নেবেন।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch13_metrics",
+      "title": "MAE, RMSE, MASE ও শূন্য হরের সমস্যা",
+      "subtitle": "পরিমাপের স্কেল, Horizon এবং গড় করার নিয়ম শুরু থেকেই স্পষ্ট রাখুন",
+      "duration": "32 min",
+      "icon": "timeline",
+      "blocks": [
+        {
+          "type": "math",
+          "title": "Point Forecast Error-এর মৌলিক সূত্র",
+          "body": "\\operatorname{MAE}=\\frac1n\\sum_i|y_i-\\widehat y_i|,\\qquad \\operatorname{RMSE}=\\sqrt{\\frac1n\\sum_i(y_i-\\widehat y_i)^2}"
+        },
+        {
+          "type": "text",
+          "title": "কোন Metric কোন ধরনের Error-কে বেশি গুরুত্ব দেয়?",
+          "body": "নির্ভুল Chronological Backtest সাজানোর পর আমাদের ঠিক করতে হবে কোন Metric দিয়ে আমরা Forecast-এর মান বিচার করব। উপরের সমীকরণে দেখানো MAE প্রতিটি Absolute Error-কে সমান রৈখিক (Linear) ওজন দেয়, আর RMSE বর্গ করার কারণে বড় Error-গুলোকে তুলনামূলক অনেক বেশি শাস্তি (Penalize) দেয়; একই সংখ্যার সেটে সবসময়ই `RMSE >= MAE` থাকে। মনে রাখবেন, ভিন্ন ভিন্ন সিরিজ, ভিন্ন Horizon বা ভিন্ন Protocol-এর Score সরাসরি তুলনা করা চলে না। আর একাধিক সিরিজের ওজনযুক্ত গড় (Weighted Aggregate) নিলে তার ওজন ও Target একক আগেই সুনির্দিষ্ট করে নিন।"
+        },
+        {
+          "type": "math",
+          "title": "কেবল Training Data দিয়ে তৈরি Seasonal MASE হর",
+          "body": "D_m=\\frac{1}{T-m}\\sum_{t=m+1}^{T}|y_t-y_{t-m}|,\\qquad \\operatorname{MASE}_m=\\frac{\\operatorname{MAE}_{eval}}{D_m}"
+        },
+        {
+          "type": "text",
+          "title": "Seasonal MASE (m = 7)-এর সঠিক ব্যাখ্যা ও সতর্কতা",
+          "body": "ভিন্ন স্কেলের সিরিজ তুলনা করতে ব্যবহৃত উপরের সূত্রে হর `D_m` হিসাব করা হয় শুধুমাত্র Training অংশের সাপ্তাহিক Seasonal-Naive Absolute Difference থেকে। তাই `MASE < 1` আসার প্রকৃত অর্থ হলো মূল্যায়ন অংশের MAE ওই ঐতিহাসিক Training হরের চেয়ে কম—এর মানে কিন্তু সরাসরি এই নয় যে Model-টি হুবহু ওই একই মূল্যায়ন তারিখগুলোর ওপর চলা Seasonal Baseline-কে হারিয়ে দিয়েছে! আর যদি সম্পূর্ণ স্থির ঋতুচক্রের কারণে Training-এ `D_m = 0` হয়ে যায়, তবে অনুপাতটি Undefined হয়ে পড়ে; আমাদের Metric হিসাব তখন সেটিকে জোড়াতালি দিয়ে শূন্য না সাজিয়ে স্পষ্টভাবে `null` রাখে।"
+        },
+        {
+          "type": "code",
+          "title": "MAE, RMSE এবং Training হর দিয়ে Seasonal MASE (m = 7) হিসাব",
+          "body": "import numpy as np\n\ny = np.array([1.0, 3.0])\np = np.array([2.0, 1.0])\nerror = y - p\nprint(np.abs(error).mean(), np.sqrt(np.mean(error**2)))\ntraining = np.arange(1.0, 9.0)\ndenominator = np.mean(np.abs(training[7:] - training[:-7]))\nprint(\"MASE7\", np.abs(error).mean() / denominator)\n"
+        },
+        {
+          "type": "text",
+          "title": "MAPE Metric-এ শূন্য মানের বিপদ",
+          "body": "অনেকেই স্কেলমুক্ত পরিমাপের আশায় শতাংশভিত্তিক MAPE ব্যবহার করতে চান; কিন্তু প্রকৃত মান শূন্য বা শূন্যের খুব কাছাকাছি হলে MAPE-এর Percentage Error অসীমের দিকে বিস্ফোরিত হয়! বিকল্প sMAPE-এও হরের রীতি লাইব্রেরিভেদে আলাদা হতে পারে এবং প্রকৃত ও অনুমিত উভয় মান শূন্য (`0 + 0`) হলে তা অসংজ্ঞায়িত হয়ে পড়ে। বাস্তব ব্যবসায়িক সংখ্যার এককে MAE, RMSE এবং সরাসরি অপারেশনাল খরচ অনেক বেশি কার্যকর হতে পারে। শূন্য দিয়ে ভাগ ঠেকাতে নীরবে ক্ষুদ্র `epsilon` বসিয়ে কখনোই Metric-এর সংজ্ঞা বদলে ফেলবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের মূল One-Step পরীক্ষার প্রকৃত ফলাফল",
+          "body": "একই `182`টি Development দিনে আমাদের পরীক্ষা চালালে Naive পদ্ধতির MAE আসে প্রায় `900.60`, `Seasonal Naive (period = 7)` পদ্ধতির প্রায় `1090.79`, এবং `Ridge` Model-এর MAE আসে প্রায় `811.28` (যেখানে `Ridge`-এর RMSE প্রায় `1073.12`)। এখানে ব্যবহৃত `alpha = 10` শুধুমাত্র Training Cross-Validation থেকেই বেছে নেওয়া হয়েছে। এগুলো ওই নির্দিষ্ট সময়ের Development সেটের পর্যবেক্ষণমূলক ফলাফল—নতুন কোনো ডেটা সোর্স বা বর্তমান চাহিদার ওপর সরাসরি প্রযোজ্য নয়, এবং আলাদা রাখা Reserved `184` দিনের কোনো Score এখানে হিসাব করা হয়নি।"
+        },
+        {
+          "type": "callout",
+          "title": "Interview-এ যে সূক্ষ্ম প্রশ্নটি আসতে পারে",
+          "body": "প্রতিটি Horizon-এর আলাদা গড় নেওয়া বনাম সব Error একত্রে মিশিয়ে (Pooled) গড় নেওয়া কীভাবে ওজনের ভারসাম্য পাল্টে দেয়? ব্যস্ত বনাম ফাঁকা দিন, ছুটির দিনের Slice, সবচেয়ে বড় Error-এর তারিখ এবং নিখোঁজ ফলাফলের নীতি আলাদাভাবে রিপোর্ট করার অভ্যাস গড়ে তুলুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch13_uncertainty",
+      "title": "Prediction Interval ও Residual Calibration",
+      "subtitle": "একক সংখ্যার Point Forecast-এর পাশে অনিশ্চয়তার মাত্রা কীভাবে বুঝব",
+      "duration": "32 min",
+      "icon": "timeline",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Interval আসলে কোন অনিশ্চয়তাটি প্রকাশ করছে?",
+          "body": "এতক্ষণ আমরা একক সংখ্যার Point Forecast এবং তার গড় Error নিয়ে কথা বলেছি। কিন্তু বাস্তব সিদ্ধান্তে একটি একক সংখ্যার চেয়ে সম্ভাব্য পরিসর জানা অনেক বেশি জরুরি! এখানে শুরুতেই তিনটি ধারণা আলাদা করে নিন: Mean-এর জন্য Confidence Interval, ভবিষ্যতের একক Observation-এর জন্য Prediction Interval, আর অতীতে দেখা Residual-এর সাধারণ Quantile—এই তিনটি কখনোই এক জিনিস নয়। ভবিষ্যতের কোনো নির্দিষ্ট দিনের চাহিদার স্বাভাবিক ওঠানামা কেবল Point Estimate-এর অনিশ্চয়তার চেয়ে অনেক বড় হতে পারে। তাই যেকোনো Interval দেওয়ার আগে তার Target, Horizon, Nominal Level এবং কোন Population-এ এর Coverage মাপা হচ্ছে তা স্পষ্ট করুন।"
+        },
+        {
+          "type": "math",
+          "title": "Gaussian অনুমানের ওপর ভিত্তি করে একটি সাধারণ Interval",
+          "body": "[\\widehat y_{T+h|T}-1.96\\sigma_h,\\;\\widehat y_{T+h|T}+1.96\\sigma_h]"
+        },
+        {
+          "type": "text",
+          "title": "কেন এই সরল সূত্রটি স্বয়ংক্রিয় গ্যারান্টি নয়?",
+          "body": "উপরের চেনা `± 1.96 sigma_h` সমীকরণটি ধরে নেয় যে Conditional Error-গুলো মোটামুটি Normal এবং প্রতিটি ধাপের Standard Deviation `sigma_h` সঠিকভাবে Estimate করা হয়েছে। সব Horizon-এ এই `sigma` স্থির থাকবে—এমন অনুমান ব্যবহারের আগে অবশ্যই যাচাই করা দরকার। তাছাড়া Skewed বা অঋণাত্মক সংখ্যার ডেটায় এমন প্রতিসম Interval ঋণাত্মক নিম্নসীমা দিয়ে বসতে পারে, আর সেটিকে শূন্যে কেটে দিলে (`clip`) মূল Coverage-এর গাণিতিক ব্যাখ্যাও বদলে যায়।"
+        },
+        {
+          "type": "code",
+          "title": "Gaussian Interval-এর সরল গাণিতিক উদাহরণ",
+          "body": "forecast, sigma = 100.0, 20.0\ninterval = (forecast - 1.96 * sigma, forecast + 1.96 * sigma)\nprint(interval)\n"
+        },
+        {
+          "type": "text",
+          "title": "সময়-সচেতন Residual Calibration",
+          "body": "যখন উপরের মতো শক্ত Normal অনুমান খাটে না, তখন একটি আলাদা সময়ানুক্রমিক Calibration অংশের Out-of-Sample Forecast Error ব্যবহার করে বাস্তবসম্মত Quantile Estimate করা যায়। তবে সেই Calibration Label যদি আবার Model Fit বা Threshold টিউনিংয়ে পুনর্ব্যবহার করেন, তবে প্রমাণের নিরপেক্ষতা নষ্ট হয়ে যায়। পাশাপাশি মনে রাখবেন, সাধারণ Exchangeable ডেটার Conformal গ্যারান্টি সময়ের নির্ভরশীলতা বা Drift থাকা সিরিজে অন্ধভাবে প্রযোজ্য হয় না; সেখানে আলাদা অনুমান বা অভিযোজিত পদ্ধতির প্রয়োজন পড়ে।"
+        },
+        {
+          "type": "text",
+          "title": "Coverage এবং Sharpness-এর ভারসাম্য",
+          "body": "একটি ভালো Prediction Interval-এর দুটি দিক থাকে: পর্যাপ্ত Coverage বজায় রেখে সেটি যত সরু বা Sharp হয়, বাস্তব সিদ্ধান্তে তা তত বেশি কাজের। কিন্তু সামগ্রিক গড় Coverage অনেক সময় নির্দিষ্ট কোনো ঋতুর Subgroup বা দূরের Horizon-এর ব্যর্থতা (Miscoverage) আড়াল করে ফেলতে পারে; তাই প্রতি ধাপের আলাদা Coverage, Width এবং উপযুক্ত Interval Score রিপোর্ট করুন। অল্প কয়েকটি পরস্পর-নির্ভরশীল তারিখে কাঙ্ক্ষিত `95%` Coverage হুবহু না পাওয়াটাই কোডের ত্রুটির প্রমাণ নয়—এজন্য সুনির্দিষ্ট মূল্যায়ন Protocol দরকার।"
+        },
+        {
+          "type": "text",
+          "title": "এই অধ্যায়ের ল্যাবগুলোর পরিধি",
+          "body": "অ্যাপের ইন্টারঅ্যাক্টিভ ল্যাবগুলোতে সুনির্দিষ্ট Point Forecast এবং তার Error দেখানো হয়েছে; সেখানে আলাদা কোনো Calibrated Probabilistic Interval বা Coverage গ্যারান্টি রাখা হয়নি, আর উপরের ছোট কোডটি কেবল সূত্রের গাণিতিক গঠনটি দেখায়। পরবর্তী কোনো প্রজেক্টে পূর্ণাঙ্গ Interval পরীক্ষা যোগ করতে চাইলে শুরুতেই তার Calibration Split, অন্তর্নিহিত অনুমান এবং মূল্যায়ন পরিকল্পনা লিখে নিতে হবে।"
+        },
+        {
+          "type": "callout",
+          "title": "Interview-এ যেভাবে স্পষ্টতা চাইবেন",
+          "body": "কারও মুখে '`95%` Interval' কথাটি শুনলেই জিজ্ঞেস করুন: এর পেছনে কোন Repeated-Sampling বা Conditional ব্যাখ্যা কাজ করছে, ডেটা বিভাজন ও Horizon কী, Calibration-এর অনুমানগুলো কী এবং ঠিক কোন ডেটায় এর Coverage মাপা হয়েছে?"
+        }
+      ]
+    },
+    {
+      "id": "ch13_book_conformal",
+      "title": "Split Conformal Interval: Finite-Sample Rank ও অনুমান",
+      "subtitle": "ধাপে ধাপে মূল ধারণা, সূত্র, খাতা-কলমের হিসাব এবং Python কোডে যাচাই",
+      "duration": "33 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন এই পদ্ধতিটি আমাদের দরকার?",
+          "body": "আগের পাঠে আমরা দেখেছি, যেকোনো সাধারণ Residual Quantile বা Gaussian সূত্র নিলেই কিন্তু কাঙ্ক্ষিত Coverage পাওয়ার গ্যারান্টি মেলে না। তাহলে আলাদা কোনো Distribution অনুমান না করেও কীভাবে নির্ভরযোগ্য পরিসর তৈরি করা যায়? ঠিক এখানেই আসে Split Conformal পদ্ধতি! এতে মূল Model Training থেকে সম্পূর্ণ আলাদা একটি Calibration সেটে Nonconformity Score বের করা হয়। নতুন উদাহরণ এবং ওই Calibration Score-গুলো পরস্পর Exchangeable হলে সীমিত আকারের ডেটাতেও (Finite Sample) সঠিক Marginal Coverage পাওয়া যায়।"
+        },
+        {
+          "type": "text",
+          "title": "ধাপে ধাপে হিসাবের নিয়মটি বুঝি",
+          "body": "হিসাবের পদ্ধতিটি চমৎকার ও সুশৃঙ্খল: প্রথমে Calibration সেটের Absolute Residual `s_i = |y_i - f(x_i)|` ছোট থেকে বড় ক্রমে সাজিয়ে নিন। মোট `m`টি Calibration Score থাকলে `1`-ভিত্তিক Rank `k = ceil((m + 1)(1 - alpha))` হিসাব করে ঠিক `k`-তম মানটি Interval-এর অর্ধ-প্রস্থ বা Radius হিসেবে নিন। যদি কখনো `k > m` হয়ে যায়, তবে হাতের সীমিত Calibration ডেটা দিয়ে ওই সূক্ষ্ম স্তরের জন্য সসীম (Bounded) কোনো Interval দেওয়া সম্ভব নয়—তখন অসীম Radius (`q = infinity`) নীতি নিতে হতে পারে। কখনোই চূড়ান্ত Test ফলাফল দেখে এই `q` টিউন করবেন না।"
+        },
+        {
+          "type": "math",
+          "title": "Finite-Sample Rank ও Interval-এর সূত্র",
+          "body": "k=\\lceil(m+1)(1-\\alpha)\\rceil,\\quad C(x)=[f(x)-s_{(k)},f(x)+s_{(k)}]"
+        },
+        {
+          "type": "text",
+          "title": "খাতা-কলমে একটি পরিষ্কার উদাহরণ",
+          "body": "উপরের সমীকরণে Rank কীভাবে কাজ করে তা খাতা-কলমে মেলানোর জন্য ধরা যাক আমাদের চারটি Calibration Score হলো `0.1, 0.2, 0.4, 0.8` এবং `alpha = 0.2`। সূত্রে মান বসালে পাই `k = ceil(5 * 0.8) = 4`, অর্থাৎ সাজানো তালিকার চতুর্থ মান `q = 0.8` হবে আমাদের Radius। এখন নতুন কোনো বিন্দুতে Model-এর Prediction যদি `3` হয়, তবে আমাদের Interval দাঁড়াবে `[2.2, 3.8]`। এখানে কেবল Rank নির্বাচনের নিয়মটি পরিষ্কারভাবে দেখানোর জন্য চারটি ছোট সংখ্যা নেওয়া হয়েছে—বাস্তব ডেটার Coverage যাচাই করতে অবশ্যই আলাদা ও পর্যাপ্ত Calibration Sample ব্যবহার করতে হবে।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ হিসাবটি নিজে করে দেখি",
+          "body": "import math\n\nscores, alpha, prediction = [0.1, 0.2, 0.4, 0.8], 0.2, 3.0\nrank = math.ceil((len(scores) + 1) * (1 - alpha))\n# A level finer than the calibration sample supports needs an unbounded set.\nradius = sorted(scores)[rank - 1] if rank <= len(scores) else math.inf\nprint(rank, prediction - radius, prediction + radius)\n"
+        },
+        {
+          "type": "text",
+          "title": "কোড চালালে কী ফলাফল আসছে?",
+          "body": "কোডটি চালালে আউটপুট আসে `4 2.2 3.8`। একটি সূক্ষ্ম দিক খেয়াল রাখবেন: লাইব্রেরির সাধারণ Interpolated Percentile Function সরাসরি ব্যবহার করলে এই `(m + 1)`-ভিত্তিক Finite-Sample Rank সংশোধনটি হারিয়ে যেতে পারে! আর সবসময় নিশ্চিত করবেন যেন Model Fit করার ডেটা এবং Calibration Residual বের করার ডেটার মালিকানা সম্পূর্ণ আলাদা থাকে।"
+        },
+        {
+          "type": "text",
+          "title": "কখন এই হিসাব সরাসরি প্রযোজ্য নয়?",
+          "body": "এই পদ্ধতি ব্যবহারের সময় দুটি সীমাবদ্ধতা মনে রাখা অপরিহার্য। প্রথমত, Marginal Coverage মানে কিন্তু প্রতিটি নির্দিষ্ট `x` বা প্রতিটি Subgroup-এ সমান Coverage পাওয়া নয়! দ্বিতীয়ত, Time Series ডেটার ক্রমিক নির্ভরশীলতা ও Drift সরাসরি Exchangeability অনুমানকে ভেঙে দেয়; তাই সাধারণ IID যুক্তির ওপর দাঁড়িয়ে সময়ানুক্রমিক সিরিজে এই গ্যারান্টি দাবি করবেন না। সময়ভিত্তিক ধারার জন্য Adaptive বা Time-Series Conformal পদ্ধতির আলাদা অনুমান ও কৌশল রয়েছে।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "স্ব-যাচাই: সূক্ষ্ম alpha ও অতিরিক্ত চওড়া Interval",
+          "body": "উপরের একই চারটি Score-এ যদি `alpha = 0.05` ধরা হয় তবে কী ঘটবে? আর খুব চওড়া (Wide) একটি Interval উচ্চ Coverage দিলেও বাস্তবে কেন অকেজো হতে পারে?",
+          "solution": "`alpha = 0.05` হলে `k = ceil(5 * 0.95) = ceil(4.75) = 5` হয়, যা আমাদের মোট Calibration সংখ্যা `4`-এর চেয়ে বড় (`5 > 4`); ফলে এই নীতিতে Interval অসীম (Unbounded) হয়ে যাবে। অন্যদিকে কেবল উচ্চ Coverage একাই সিদ্ধান্তের উপযোগিতা বোঝায় না—Interval যদি বাস্তবে কাজ করার অনুপযোগী রকম চওড়া হয় তবে তা অকেজো হয়ে পড়ে; তাই অবশ্যই এর Width এবং Conditional বা Slice পারফরম্যান্স একসাথে রিপোর্ট করুন।",
+          "reference": "https://arxiv.org/abs/2107.07511"
+        },
+        {
+          "type": "text",
+          "title": "পাঁচটি সম্ভাব্য অবস্থানের মাধ্যমে Coverage-এর যুক্তিটি দেখি",
+          "body": "কেন `(m + 1)` সূত্রটি কাজ করে, তার পেছনের Rank Symmetry বুঝতে পাঁচটি ভিন্ন Score `[1, 2, 3, 4, 5]` কল্পনা করুন—যার যেকোনো একটিকে ভবিষ্যতের অদেখা Score এবং বাকি চারটিকে Calibration সেট ধরা হচ্ছে। `alpha = 0.2` নিলে Radius হয় ওই চারটি Calibration সংখ্যার সর্বোচ্চ মান। ফলে অদেখা ভবিষ্যৎ Score-টি কেবল তখনই সীমার বাইরে পড়বে যদি সেটি পাঁচটির মধ্যে সবচেয়ে বড় সংখ্যা (`5`) হয়—অর্থাৎ পাঁচটি সম্ভাব্য অবস্থানের মধ্যে ঠিক চারটিতেই (`80%`) Coverage পাওয়া যাবে! এই গণনাটি মূলত Rank Symmetry-র গাণিতিক স্বজ্ঞা ফুটিয়ে তোলে; তবে বাস্তব কোনো Sequence আসলেই Exchangeable কি না, তা কেবল ডেটা থেকে এভাবে প্রমাণ করা যায় না।"
+        },
+        {
+          "type": "code",
+          "title": "Finite-Sample Rank Correction যাচাইয়ের কোড",
+          "body": "import math\n\nscores = [1., 2., 3., 4., 5.]\ncovered = 0\ncalibration_size = 4\nrank = math.ceil((calibration_size + 1) * (1 - 0.2))\nfor held_out in range(len(scores)):\n    calibration = scores[:held_out] + scores[held_out + 1:]\n    radius = sorted(calibration)[rank - 1]\n    covered += scores[held_out] <= radius\nfiner_rank = math.ceil((calibration_size + 1) * (1 - 0.05))\nfiner_radius = math.inf if finer_rank > calibration_size else 5.0\nprint(rank, covered / len(scores), int(math.isinf(finer_radius)))\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "স্ব-যাচাই: সামগ্রিক বনাম Subgroup Coverage",
+          "body": "সামগ্রিক Coverage যদি `80%` হয়, তবে কি প্রতিটি Subgroup-এর ভেতরেও Coverage `80%` হবে?",
+          "solution": "না, কারণ এটি একটি সামগ্রিক বা Marginal বিবৃতি। নির্দিষ্ট কোনো `x` বা আলাদা কোনো Subgroup-এ প্রকৃত Coverage ভিন্ন হতে পারে। তাই Interval-এর Width, প্রতিটি Subgroup-এর Sample সংখ্যা (Support) এবং Distribution Shift আলাদা করে পরীক্ষা করুন। আর সময়ের ধারাবাহিক নির্ভরশীলতা থাকলে এই Rank-Symmetry যুক্তি প্রয়োগের আগে মূল অনুমানগুলোই পরিবর্তন করতে হয়।",
+          "reference": "https://arxiv.org/abs/2107.07511"
+        }
+      ]
+    },
+    {
+      "id": "ch13_residuals",
+      "title": "Forecast Residual থেকে সময়ভিত্তিক Alert তৈরি",
+      "subtitle": "স্বাভাবিক প্রেক্ষাপট, আকস্মিক Change Point এবং ধীরগতির Drift আলাদা করুন",
+      "duration": "32 min",
+      "icon": "timeline",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কাঁচা সংখ্যার বদলে অপ্রত্যাশিত বিচ্যুতি (Surprise) মাপুন",
+          "body": "এবার চলুন অধ্যায়ের প্রথমার্ধের Anomaly Detection এবং দ্বিতীয়ার্ধের Forecasting-কে এক সুতোয় বাঁধি! আপনার হাতে যদি প্রত্যাশিত চাহিদার একটি ভালো Forecast Model থাকে, তবে তার ব্যবধান `e[t] = y[t] - prediction[t | past]` একটি চমৎকার Contextual Residual বা অপ্রত্যাশিত বিচ্যুতি হিসেবে কাজ করে। তবে সতর্ক থাকবেন: Model নিজেই যদি Biased হয়, তবে এই Residual Alert আসল ঘটনার বদলে স্রেফ Model-এর ব্যর্থতাকেই ধরতে থাকবে! তাছাড়া Training ডেটার ভেতরের Fitted Residual অতিরিক্ত আশাবাদী হয়; তাই Alert Threshold ঠিক করার জন্য Out-of-Sample সময়ানুক্রমিক Calibration Error অনেক ভালো সূচনাবিন্দু।"
+        },
+        {
+          "type": "math",
+          "title": "Standardized Surprise এবং ক্রমপুঞ্জিত পরিবর্তনের (CUSUM) সূত্র",
+          "body": "z_t=\\frac{e_t-\\mu_{cal}}{\\sigma_{cal}},\\qquad S_t=\\max(0,S_{t-1}+z_t-k)"
+        },
+        {
+          "type": "text",
+          "title": "CUSUM সমীকরণের সহজ পাঠ",
+          "body": "এককভাবে ছোট মনে হওয়া ধনাত্মক বিচ্যুতিগুলো একদিনে বড় Alert না তুললেও পরপর কয়েক দিন জমে উপরের সমীকরণের `S_t`-কে নির্দিষ্ট Threshold-এর ওপরে নিয়ে যেতে পারে। এখানে `k` হলো সহনশীলতার ছাড় বা Reference Allowance, আর চূড়ান্ত Threshold নির্ধারণ করে False Alarm বনাম শনাক্তকরণ বিলম্বের ভারসাম্য (Tradeoff)। তবে ডেটায় ক্রমিক নির্ভরশীলতা ও Nonstationary Residual থাকলে তা ধ্রুপদী স্বাধীন Noise-এর অনুমান ভেঙে দিতে পারে। নিচের ছোট কোডটিতে আমরা একটি পূর্ণাঙ্গ Calibrated Change Detector না বানিয়ে স্রেফ এই ক্রমপুঞ্জিত যোগফলের গাণিতিক ছন্দটি কীভাবে বাড়ে তা দেখে নিচ্ছি।"
+        },
+        {
+          "type": "code",
+          "title": "CUSUM হিসাবের সহজ গাণিতিক উদাহরণ",
+          "body": "state, allowance = 0.0, 0.5\npath = []\nfor z in [0.0, 0.2, 1.0, 1.0, 1.0]:\n    state = max(0.0, state + z - allowance)\n    path.append(state)\nprint(path)\n"
+        },
+        {
+          "type": "text",
+          "title": "ক্ষণস্থায়ী Point Anomaly বনাম স্থায়ী Regime Change",
+          "body": "ক্রমপুঞ্জিত বিচ্যুতি ধরা পড়ার পর সবচেয়ে বড় অপারেশনাল প্রশ্ন হলো: এটি কি নিছক এক দিনের সাময়িক ঘটনা (Transient Point Anomaly), নাকি ব্যবসার দীর্ঘস্থায়ী নতুন স্বাভাবিক অবস্থা (New Normal Regime)? আপনি যদি Flag হওয়া সব Row নির্বিচারে মুছে ফেলেন, তবে নতুন স্বাভাবিক সময়ের মূল্যবান বৈধ ডেটাই হারিয়ে যাবে! তাই ডেটার গুণগত ত্রুটি, প্রাসঙ্গিক বাহ্যিক ঘটনা এবং দীর্ঘস্থায়ী Concept বা Data Drift—এই তিনটির জন্য আলাদা তদন্তের পথ থাকা জরুরি।"
+        },
+        {
+          "type": "text",
+          "title": "স্বয়ংক্রিয় ছাঁটাই ও Feedback Loop-এর ঝুঁকি",
+          "body": "আরেকটি বিপজ্জনক ফাঁদ হলো স্বয়ংক্রিয় Feedback Loop: পরের বার Detector পুনরায় Train করার সময় যদি কেবল Flag না হওয়া Sample-গুলোই রাখা হয়, তবে Model-এর ভেতর স্থায়ী Blind Spot তৈরি হতে পারে! আবার বিশ্লেষকদের দেওয়া Label দেরিতে এলে বা পক্ষপাতদুষ্ট হলে স্বয়ংক্রিয়ভাবে ডেটা সরিয়ে ফেলার নিয়ম মূল Reference-কেই বিকৃত করে ফেলে। এজন্য সংস্করণযুক্ত Review সিদ্ধান্ত, পরিকল্পিত Sampled Audit এবং Rollback ব্যবস্থা রাখা খুবই কার্যকর—অ্যাপের Slider ঘুরিয়ে দেখা পরীক্ষামূলক Flag কখনোই স্বয়ংক্রিয় ডেটা পরিষ্কারের নিয়ম হতে পারে না।"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের Bike Residual পরীক্ষার প্রকৃত পরিধি",
+          "body": "আমাদের মূল Benchmark-এ ব্যবহৃত Residual হলো সরল সাপ্তাহিক ব্যবধান—কোনো Fitted `Ridge` Model-এর Out-of-Sample Residual Detector নয়। `2011` সালের এই Residual রেফারেন্স `2012` সালের প্রবৃদ্ধি ও চাহিদার পুরো প্রেক্ষাপট ধরতে পারে না। এমনকি Isolation Forest, LOF এবং One-Class SVM—তিনটি Model একমত হলেও তা কোনো যাচাইকৃত ঘটনার প্রমাণ নয়; এই পার্থক্যগুলো আমাদের রিপোর্টের অনুমান অংশে স্পষ্টভাবে নথিবদ্ধ আছে।"
+        },
+        {
+          "type": "callout",
+          "title": "সিস্টেম ডিজাইনের অনুশীলন",
+          "body": "একটি দৈনিক Alert সিস্টেমে ডুপ্লিকেট সংকেত দমন (Duplicate Suppression), Review Queue, দেরিতে আসা সংশোধন, তীব্রতার মাত্রা (Severity), নিখোঁজ দিনের হিসাব, Latency বাজেট এবং Threshold পরিবর্তনের লগ কীভাবে নকশা করবেন তা সাজান। কখনোই সিস্টেম দিয়ে স্বয়ংক্রিয়ভাবে ঘটনার কাল্পনিক কারণ বর্ণনা করাবেন না।"
+        }
+      ]
+    },
+    {
+      "id": "ch13_book_survival",
+      "title": "Time-to-event targets: censoring ও Kaplan–Meier",
+      "subtitle": "ধাপে ধাপে Censoring-এর ধারণা, Kaplan–Meier সূত্র, উদাহরণ ও Python অনুশীলন",
+      "duration": "33 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন এখানে সাধারণ Regression যথেষ্ট নয়?",
+          "body": "সময়ভিত্তিক সমস্যার আরেকটি অত্যন্ত গুরুত্বপূর্ণ শাখা হলো কোনো ঘটনা ঘটার সময় অনুমান করা—যেমন গ্রাহকের চলে যাওয়া (Churn) কিংবা কোনো যন্ত্রাংশ বিকল হওয়ার সময়। কিন্তু বাস্তবে কাজ করতে গেলেই দেখা যায়, আমাদের পর্যবেক্ষণ শেষ হওয়া পর্যন্ত অনেক Sample-এর ক্ষেত্রে ঘটনাটি এখনো ঘটেনি! এদের গায়ে 'কখনোই বিকল হবে না' Label বসিয়ে দেওয়া মারাত্মক ভুল। Right Censoring-এর অর্থ হলো আমরা কেবল এটুকুই জানি যে প্রকৃত ঘটনার সময় `T` আমাদের পর্যবেক্ষিত সময়সীমা `C`-এর চেয়ে পরে অবস্থিত। ফলে আমাদের হাতে থাকা প্রকৃত ডেটা হলো `min(T, C)` এবং ঘটনাটি সত্যিই ঘটেছে কি না তার একটি Event Indicator।"
+        },
+        {
+          "type": "text",
+          "title": "ধাপে ধাপে Kaplan–Meier হিসাবটি বুঝি",
+          "body": "Censored ডেটা না হারিয়ে Survival Probability হিসাব করার ধ্রুপদী পদ্ধতি হলো Kaplan–Meier Estimator। এটি প্রতিটি ঘটনার সময়ে ঝুঁকিতে থাকা মোট সংখ্যা (At-Risk `n_j`) এবং ঠিক ওই সময়ে ঘটা ঘটনার সংখ্যা (`d_j`) ব্যবহার করে ক্রমিক গুণফল `prod(1 - d_j / n_j)` বের করে। খেয়াল করুন, যেসব Sample Censored হয় তারা কখনোই লবের Event সংখ্যা বাড়ায় না; বরং Censor হওয়ার সময়ের পর থেকে পরবর্তী ধাপগুলোর Risk Set থেকে সরে যায়। এখানে Censoring প্রক্রিয়াটি মূল ঘটনার থেকে স্বাধীন (Non-Informative) হওয়ার অনুমানটি অত্যন্ত গুরুত্বপূর্ণ, এবং একই সময়ে Event ও Censor ঘটলে Event-কে আগে গণনা করার রীতিটি স্পষ্ট রাখতে হয়।"
+        },
+        {
+          "type": "math",
+          "title": "Kaplan–Meier গুণফল ও Event Indicator-এর সূত্র",
+          "body": "\\hat S(t)=\\prod_{t_j\\le t}\\left(1-\\frac{d_j}{n_j}\\right),\\qquad \\delta=\\mathbf1[T\\le C]"
+        },
+        {
+          "type": "text",
+          "title": "খাতা-কলমে একটি পরিষ্কার উদাহরণ",
+          "body": "উপরের সমীকরণটি হাতে-কলমে মেলানোর জন্য ধরা যাক, প্রথম ঘটনার সময়ে ঝুঁকিতে আছে `4` জন এবং ঘটনা ঘটেছে `1` জনের—ফলে টিকে থাকার অনুপাত বা Survival দাঁড়ায় `0.75`। এরপর মাঝপথে একজন Censored হয়ে সরে গেলে পরবর্তী ঘটনার সময়ে আমাদের Risk Set কমে দাঁড়ায় `2` জনে; সেখানে `1`টি ঘটনা ঘটলে নতুন Survival হবে `0.75 * 0.5 = 0.375`। লক্ষ্য করুন, মাঝখানে Censored হওয়া Row-টিকে কিন্তু আমরা কখনোই 'চিরকাল টিকে গেছে' বলে ধরে নিইনি!"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ হিসাবটি নিজে করে দেখি",
+          "body": "risk_sets, event_counts = [4, 2], [1, 1]\nsurvival = 1.0\nfor at_risk, events in zip(risk_sets, event_counts):\n    if not 0 <= events <= at_risk or at_risk <= 0:\n        raise ValueError(\"Invalid event/risk-set counts\")\n    survival *= 1 - events / at_risk\n    # Censoring changes future risk sets, never this event numerator.\nprint(survival)\n"
+        },
+        {
+          "type": "text",
+          "title": "কোড চালালে কী ফলাফল আসছে?",
+          "body": "কোডটির আউটপুট হুবহু আসে `0.375`। এখানে আমরা প্রস্তুতকৃত সংখ্যা দিয়ে গুণফলের মূল ধাপটি দেখেছি; তবে বাস্তব কাঁচা Survival Dataset থেকে এমন Event Table তৈরি করতে হলে আগে সময়গুলোকে ক্রমানুসারে সাজানো, একই সময়ের একাধিক ঘটনা একত্র করা এবং সঠিক সময়ে Censored সদস্যদের বিয়োগ করার কাজটি নিখুঁতভাবে করতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "কখন এই সরল হিসাব প্রযোজ্য নয়?",
+          "body": "যদি ঝুঁকির কারণেই কেউ পর্যবেক্ষণ থেকে ঝরে পড়ে (Informative Dropout), কেউ দেরিতে প্রবেশ করে (Delayed Entry), কিংবা একাধিক পাল্টাপাল্টি ঘটনা (Competing Risks) উপস্থিত থাকে, তবে এই মৌলিক Estimator-এর ব্যাখ্যা বদলে যায়। অন্যদিকে Feature সহায়তায় ঝুঁকি মডেলিংয়ের জন্য পরিচিত Cox Proportional-Hazards Model `h(t | x) = h_0(t) exp(x^T beta)` সময়ের সাথে ঝুঁকির অনুপাত স্থির থাকার (Proportionality) অনুমান করে, এবং এর দেওয়া Risk Ranking সরাসরি কোনো Calibrated Event Probability নয়।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "স্ব-যাচাই: সব Row Censored হলে এবং MAE-র সীমাবদ্ধতা",
+          "body": "যদি ডেটার সবগুলো Row-ই Censored হয়, তবে Survival Curve-টি কেন 'ঘটনার ঝুঁকি শূন্য (`0`)' প্রমাণ করে না? আর Censored ডেটায় সাধারণ MAE দিয়ে প্রকৃত ঘটনার সময় মূল্যায়ন করতে সমস্যা কোথায়?",
+          "solution": "সব Row Censored হওয়ার অর্থ কেবল এটুকুই যে সীমিত পর্যবেক্ষণ সময়ের ভেতর কোনো ঘটনা দেখা যায়নি—পর্যবেক্ষণ শেষ হওয়ার পর কী ঘটে তা সম্পূর্ণ অজানা! আর Censored Sample-এর প্রকৃত ঘটনা ঘটার সময় `T` জানা না থাকায় সাধারণ MAE বের করতে গেলে ভুল বা কাল্পনিক Target বসাতে হবে; তাই এখানে Censor-সচেতন মূল্যায়ন পদ্ধতি ও স্পষ্ট অনুমানের প্রয়োজন হয়।",
+          "reference": "https://www.statlearning.com/"
+        },
+        {
+          "type": "text",
+          "title": "কাঁচা পর্যবেক্ষণ থেকে সরাসরি Risk Table বানাই",
+          "body": "এবার কাঁচা রেকর্ড থেকে পুরো হিসাবটি নিজেরা সাজিয়ে দেখি! ধরা যাক চারটি রেকর্ডের পর্যবেক্ষিত সময় `[1, 2, 2, 3]` এবং তাদের Event Indicator `[1, 1, 0, 1]`। সময় `1`-এ Risk Set হলো `4` এবং Event `1`টি, তাই Survival দাঁড়ায় `3/4`। সময় `2`-এ এসে Risk Set থাকে `3`, যেখানে `1`টি Event ও `1`টি Censor একসাথে ঘটেছে। একই সময়ে Event-কে আগে গণনা করার রীতিতে এই ধাপের গুণক হয় `2/3`, ফলে মোট Survival নামে `1/2`-এ (খেয়াল করুন, সময় `2`-এর Censor কিন্তু লব বাড়ায়নি)। এরপর ওই দুজনই সরে যাওয়ায় সময় `3`-এ Risk Set থাকে `1`, এবং সেই শেষ ঘটনাটির পরে Survival Curve শূন্যে (`0`) নেমে আসে।"
+        },
+        {
+          "type": "code",
+          "title": "একই সময়ে Event ও Censor থাকলে Kaplan–Meier হিসাবের কোড",
+          "body": "import numpy as np\n\ntimes = np.array([1., 2., 2., 3.])\nevents = np.array([1, 1, 0, 1])\nsurvival = 1.0\ntrace = []\nfor time in np.unique(times[events == 1]):\n    at_risk = int(np.sum(times >= time))\n    count = int(np.sum((times == time) & (events == 1)))\n    survival *= 1 - count / at_risk\n    trace.extend([at_risk, count, survival])\nprint(*trace)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "স্ব-যাচাই: শেষ পর্যবেক্ষণটি Censored হলে",
+          "body": "উপরের উদাহরণে শেষ Row-টি যদি Event-এর বদলে Censored হতো, তবে Survival Curve-এর শেষ মান কত থাকত এবং তার পরের Survival সম্পর্কে কী জানা যেত?",
+          "solution": "তখন Survival Curve-টি `0.5`-এ স্থির থাকত। আর সর্বশেষ পর্যবেক্ষণ সময়ের পরে Risk Set সম্পূর্ণ খালি হয়ে যাওয়ায় তার পরবর্তী অংশের (Tail) মান এই ডেটা থেকে আর নির্ধারণ করা সম্ভব নয়। মনে রাখবেন, এই হিসাবের ব্যাখ্যা নির্ভর করছে Non-Informative Censoring এবং এখানে কোনো Delayed Entry না থাকার অনুমানের ওপর।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch13_workflow",
+      "title": "বাস্তব Workflow: ডেটার উৎস, ক্যালেন্ডার ও Helper Function",
+      "subtitle": "মূল সোর্স যাচাই থেকে শুরু করে Causal Feature তৈরি পর্যন্ত চালানোযোগ্য কোড",
+      "duration": "40 min",
+      "icon": "timeline",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "লোকাল পরিবেশে কোড চালানোর নিয়ম",
+          "body": "এতক্ষণ আমরা Anomaly Detection ও Forecasting-এর প্রতিটি তাত্ত্বিক ও গাণিতিক উপাদান আলাদাভাবে শিখেছি; এবার সবগুলোকে একটি বাস্তব, নিরীক্ষাযোগ্য (Auditable) ইঞ্জিনিয়ারিং Pipeline-এ একত্র করার পালা! প্রজেক্টের মূল ফোল্ডারে (Repository Root) একটি লোকাল Python Environment নিয়ে প্রথমে `python -m pip install -r tool/requirements-python-qa.txt` কমান্ডটি চালান। এরপর চালান `python assets/datasets/bike_sharing/temporal_workflow.py --output build/chapter-13-workflow-report.json`। এই Script প্রজেক্টের ভেতরে যুক্ত লোকাল ফাইলগুলোই পড়ে; ইনস্টল করা অ্যাপে কোনো বাহ্যিক নেটওয়ার্ক, API বা লগইন প্রয়োজন হয় না।"
+        },
+        {
+          "type": "text",
+          "title": "মূল ডেটার অখণ্ডতা (Source Integrity) যাচাই",
+          "body": "কাজ শুরুর প্রথম ধাপই হলো কাঁচা ডেটার পরিচয় ও অখণ্ডতা নিশ্চিত করা। আমাদের Dataset-এর উৎস হলো UCI Bike Sharing (Hadi Fanaee-T, `2013`, লাইসেন্স `CC BY 4.0`), যার `day.csv` ফাইলের `SHA-256` Hash হলো `a6bcf826782d3c0fbfdcbeead17cd0884185a0dafe8ff10cd48a874ee7ba18be`। আসল `day.csv` এবং `Readme.txt` ফাইল দুটি সম্পূর্ণ অপরিবর্তিত রাখা হয়েছে, এবং ঘণ্টাভিত্তিক (Hourly) ডেটা এখানে ডাউনলোড বা যুক্ত করা হয়নি। নিচের প্রথম পর্বের কোডটি শুরুতেই ক্যালেন্ডারের সম্পূর্ণতা, অঋণাত্মক সসীম সংখ্যা এবং হুবহু সোর্স Hash মিলিয়ে যাচাই করে নেয়।"
+        },
+        {
+          "type": "code",
+          "title": "পর্ব ১ / ৪: ডেটার উৎস যাচাই এবং Causal Feature তৈরি",
+          "body": "from pathlib import Path\nimport argparse\nimport hashlib\nimport json\nimport platform\nimport numpy as np\nimport pandas as pd\nimport sklearn\nfrom sklearn.preprocessing import StandardScaler\nfrom sklearn.pipeline import make_pipeline\nfrom sklearn.linear_model import Ridge\nfrom sklearn.ensemble import IsolationForest\nfrom sklearn.neighbors import LocalOutlierFactor\nfrom sklearn.svm import OneClassSVM\nfrom sklearn.model_selection import TimeSeriesSplit\nfrom threadpoolctl import threadpool_limits\n\nDATA = Path(\"assets/datasets/bike_sharing\").resolve()\nSOURCE_HASH = \"a6bcf826782d3c0fbfdcbeead17cd0884185a0dafe8ff10cd48a874ee7ba18be\"\n\n\ndef load_source(path):\n    if hashlib.sha256(path.read_bytes()).hexdigest() != SOURCE_HASH:\n        raise ValueError(\"Expected original day.csv\")\n    frame = pd.read_csv(path, parse_dates=[\"dteday\"])\n    expected = pd.date_range(\"2011-01-01\", \"2012-12-31\", freq=\"D\")\n    if not frame.dteday.equals(pd.Series(expected)) or len(frame) != 731:\n        raise ValueError(\"Unique, sorted, complete daily calendar required\")\n    y = frame.cnt.to_numpy(dtype=float, copy=True)\n    if not np.isfinite(y).all() or (y < 0).any():\n        raise ValueError(\"Finite nonnegative daily counts\")\n    return frame, y\n\n\ndef finite_vector(values):\n    values = np.asarray(values, dtype=float)\n    if values.ndim != 1 or not len(values) or not np.isfinite(values).all():\n        raise ValueError(\"Nonempty finite vector\")\n    return values\n\n\ndef lag_features(y, dates):\n    y = finite_vector(y)\n    if len(y) != len(dates) or len(y) < 15:\n        raise ValueError(\"Aligned daily observations, at least 15 rows\")\n    values = pd.Series(y)\n    # shift before rolling: row t may use only targets with index <t.\n    features = pd.DataFrame(\n        {\n            \"lag1\": values.shift(1),\n            \"lag7\": values.shift(7),\n            \"lag14\": values.shift(14),\n            \"past_mean7\": values.shift(1).rolling(7).mean(),\n            \"weekday_sin\": np.sin(2 * np.pi * dates.dt.dayofweek / 7),\n            \"weekday_cos\": np.cos(2 * np.pi * dates.dt.dayofweek / 7),\n        }\n    )\n    return features.iloc[14:].to_numpy(), y[14:].copy(), np.arange(14, len(y))\n"
+        },
+        {
+          "type": "text",
+          "title": "ডেটা ব্যবহারের পরিধি (Fit Scopes) বিশ্লেষণ",
+          "body": "উপরের `load_source` Function-এ শুরুতেই পুরো `731`টি সোর্স Row যাচাই করা হলেও আমাদের সবগুলো পরীক্ষায় ব্যবহৃত হয়েছে কেবল প্রথম `547`টি দিন: যার মধ্যে `2011` সালের `365` দিন Training এবং `Jan–Jun 2012`-এর `182` দিন Development। বাকি `184`টি ফলাফলের ওপর কোনো Metric বা ল্যাব চালানো হয়নি। মূল ফাইলটি প্রজেক্টে যুক্ত থাকায় এই Reserved অংশটি সম্পূর্ণ গোপন কোনো বাহ্যিক Test সেট নয়, তবে Model বা সেটিং নির্বাচনের সময় ওই ফলাফলগুলো একবারও ছোঁয়া হয়নি।"
+        },
+        {
+          "type": "code",
+          "title": "পর্ব ২ / ৪: নিরীক্ষাযোগ্য Score, Forecast ও Metric Helper",
+          "body": "def robust_fit(values):\n    values = finite_vector(values)\n    median = float(np.median(values))\n    mad = float(np.median(np.abs(values - median)))\n    if mad <= 0:\n        raise ValueError(\n            \"Zero MAD: use an explicit alternative scale; no silent epsilon\"\n        )\n    return median, mad\n\n\ndef robust_scores(values, median, mad):\n    values = finite_vector(values)\n    if not np.isfinite(median) or not np.isfinite(mad) or mad <= 0:\n        raise ValueError(\"Finite center and positive MAD\")\n    return 0.6744897501960817 * np.abs(values - median) / mad\n\n\ndef forecast(history, horizon, method, *, period=7, gap=0):\n    history = finite_vector(history)\n    if (\n        any(\n            not isinstance(v, int) or isinstance(v, bool)\n            for v in [horizon, period, gap]\n        )\n        or horizon < 1\n        or period < 1\n        or gap < 0\n    ):\n        raise ValueError(\"Integer positive horizon/period, nonnegative gap\")\n    leads = gap + np.arange(1, horizon + 1)\n    if method == \"naive\":\n        return np.full(horizon, history[-1])\n    if method == \"seasonal\":\n        if len(history) < period:\n            raise ValueError(\"At least one complete season\")\n        return history[-period:][(leads - 1) % period].copy()\n    if method == \"drift\":\n        if len(history) < 2:\n            raise ValueError(\"Drift requires two observations\")\n        return history[-1] + leads * (history[-1] - history[0]) / (len(history) - 1)\n    raise ValueError(\"Unknown baseline\")\n\n\ndef metrics(actual, prediction, scale_history):\n    actual, prediction, history = (\n        finite_vector(actual),\n        finite_vector(prediction),\n        finite_vector(scale_history),\n    )\n    if actual.shape != prediction.shape or len(history) < 8:\n        raise ValueError(\"Aligned predictions and seasonal training denominator\")\n    error = actual - prediction\n    den = float(np.mean(np.abs(history[7:] - history[:-7])))\n    return {\n        \"mae\": float(np.mean(np.abs(error))),\n        \"rmse\": float(np.sqrt(np.mean(error**2))),\n        \"mase7\": None if den == 0 else float(np.mean(np.abs(error)) / den),\n    }\n\n\ndef temporal_fold(n, origin, horizon, *, gap=0, window=None):\n    if (\n        any(\n            not isinstance(v, int) or isinstance(v, bool)\n            for v in [n, origin, horizon, gap]\n        )\n        or origin < 8\n        or horizon < 1\n        or gap < 0\n        or origin + gap + horizon > n\n    ):\n        raise ValueError(\"Bounded chronological fold\")\n    if window is not None and (\n        not isinstance(window, int) or isinstance(window, bool) or window < 8\n    ):\n        raise ValueError(\"Training window >=8\")\n    start = 0 if window is None else max(0, origin - window)\n    return (\n        np.arange(start, origin),\n        np.arange(origin, origin + gap),\n        np.arange(origin + gap, origin + gap + horizon),\n    )\n"
+        },
+        {
+          "type": "text",
+          "title": "প্রান্তিক শর্ত ও Function-এর চুক্তি (Boundary Contracts)",
+          "body": "উপরের প্রতিটি Helper Function-এ প্রান্তিক শর্তগুলো সুস্পষ্ট চুক্তিতে বাঁধা আছে: `MAD = 0` হলে সরাসরি সুনির্দিষ্ট Exception তোলা হয়; Seasonal Baseline চালাতে অন্তত একটি পূর্ণ ঋতুচক্র লাগে; Drift পদ্ধতির জন্য কমপক্ষে `2`টি Observation প্রয়োজন হয়; আর Horizon ধনাত্মক পূর্ণসংখ্যা এবং Gap অঋণাত্মক হতে হয়। এছাড়া MASE হর `0` হলে ফলাফল `null` রাখা হয় এবং `temporal_fold` দেয় End-Exclusive সীমানা। আগের পাঠগুলোর ছোট গাণিতিক উদাহরণগুলো মূলত এই চুক্তিগুলোর আচরণ পরিষ্কার করতেই সাজানো হয়েছিল।"
+        },
+        {
+          "type": "text",
+          "title": "পুনরুৎপাদনযোগ্যতা (Reproducibility)",
+          "body": "আমাদের চূড়ান্ত রিপোর্টে সুনির্দিষ্ট প্যাকেজ সংস্করণ, সোর্স Hash এবং `Seed = 42` সংরক্ষিত থাকে, এবং JSON-এর Prediction Array-গুলোতে কেবল সসীম মান অথবা স্পষ্ট `null` ব্যবহৃত হয়। সাধারণভাবে CLI চালালে কোনো সোর্স Asset পরিবর্তিত হয় না; কেবল `--write-labs` Flag দিলেই ল্যাবের উদ্ভূত Asset নতুন করে তৈরি হয়। আর ফাইলটিকে Module হিসেবে `import` করলে স্বয়ংক্রিয়ভাবে কোনো বিশ্লেষণ চালু হয় না।"
+        },
+        {
+          "type": "callout",
+          "title": "পরবর্তী পাঠের নির্দেশনা",
+          "body": "উপরের দুটি কোড ব্লক নিজের লোকাল Python Environment-এ একই Namespace-এ ধারাবাহিকভাবে চালিয়ে দেখতে পারেন, আর ঠিক পরের পাঠেই পুরো স্বয়ংসম্পূর্ণ কোডটি একসাথে দেওয়া হয়েছে। কোড লেখার পর কেবল দু-একটি সাধারণ সংখ্যার মিল দেখেই সন্তুষ্ট থাকবেন না—প্রান্তিক শর্তগুলোও আলাদাভাবে পরীক্ষা করে নিন।"
+        }
+      ]
+    },
+    {
+      "id": "ch13_experiment",
+      "title": "বাস্তব Workflow: Detector Fit ও সৎ Backtest",
+      "subtitle": "শুধু Training Data-য় নির্বাচন থেকে শুরু করে পূর্ণাঙ্গ Development রিপোর্ট",
+      "duration": "44 min",
+      "icon": "timeline",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "একটি রিপোর্ট, কিন্তু একাধিক স্বতন্ত্র Protocol",
+          "body": "আগের পাঠে তৈরি করা Helper Function-গুলো ব্যবহার করে এবার আমাদের মূল Script একই রিপোর্টে তিনটি আলাদা Protocol-এর হিসাব সাজায়। প্রথমত, Robust, Isolation Forest, LOF এবং One-Class SVM কেবল Training সাপ্তাহিক ব্যবধানের ওপর Fit করে ভবিষ্যতের Development ব্যবধানগুলোকে Score করে। দ্বিতীয়ত, `Ridge` Model-টি Lag Feature-এর ওপর কেবল Training Cross-Validation চালিয়ে সেরা `alpha` বেছে নেয় এবং One-Step Development Prediction দেয়। তৃতীয়ত, তিনটি নির্দিষ্ট Origin-এ দাঁড়িয়ে `14`-দিনের Fixed-Origin Baseline আলাদাভাবে মূল্যায়ন করা হয়। তিনটি ভিন্ন Protocol হওয়ায় এগুলো মিলিয়ে স্বয়ংক্রিয়ভাবে একক কোনো 'বিজয়ী Model' ঘোষণা করা হয় না।"
+        },
+        {
+          "type": "code",
+          "title": "সম্পূর্ণ স্বয়ংসম্পূর্ণ লোকাল Workflow কোড",
+          "body": "from pathlib import Path\nimport argparse\nimport hashlib\nimport json\nimport platform\nimport numpy as np\nimport pandas as pd\nimport sklearn\nfrom sklearn.preprocessing import StandardScaler\nfrom sklearn.pipeline import make_pipeline\nfrom sklearn.linear_model import Ridge\nfrom sklearn.ensemble import IsolationForest\nfrom sklearn.neighbors import LocalOutlierFactor\nfrom sklearn.svm import OneClassSVM\nfrom sklearn.model_selection import TimeSeriesSplit\nfrom threadpoolctl import threadpool_limits\n\nDATA = Path(\"assets/datasets/bike_sharing\").resolve()\nSOURCE_HASH = \"a6bcf826782d3c0fbfdcbeead17cd0884185a0dafe8ff10cd48a874ee7ba18be\"\n\n\ndef load_source(path):\n    if hashlib.sha256(path.read_bytes()).hexdigest() != SOURCE_HASH:\n        raise ValueError(\"Expected original day.csv\")\n    frame = pd.read_csv(path, parse_dates=[\"dteday\"])\n    expected = pd.date_range(\"2011-01-01\", \"2012-12-31\", freq=\"D\")\n    if not frame.dteday.equals(pd.Series(expected)) or len(frame) != 731:\n        raise ValueError(\"Unique, sorted, complete daily calendar required\")\n    y = frame.cnt.to_numpy(dtype=float, copy=True)\n    if not np.isfinite(y).all() or (y < 0).any():\n        raise ValueError(\"Finite nonnegative daily counts\")\n    return frame, y\n\n\ndef finite_vector(values):\n    values = np.asarray(values, dtype=float)\n    if values.ndim != 1 or not len(values) or not np.isfinite(values).all():\n        raise ValueError(\"Nonempty finite vector\")\n    return values\n\n\ndef lag_features(y, dates):\n    y = finite_vector(y)\n    if len(y) != len(dates) or len(y) < 15:\n        raise ValueError(\"Aligned daily observations, at least 15 rows\")\n    values = pd.Series(y)\n    # shift before rolling: row t may use only targets with index <t.\n    features = pd.DataFrame(\n        {\n            \"lag1\": values.shift(1),\n            \"lag7\": values.shift(7),\n            \"lag14\": values.shift(14),\n            \"past_mean7\": values.shift(1).rolling(7).mean(),\n            \"weekday_sin\": np.sin(2 * np.pi * dates.dt.dayofweek / 7),\n            \"weekday_cos\": np.cos(2 * np.pi * dates.dt.dayofweek / 7),\n        }\n    )\n    return features.iloc[14:].to_numpy(), y[14:].copy(), np.arange(14, len(y))\n\n\ndef robust_fit(values):\n    values = finite_vector(values)\n    median = float(np.median(values))\n    mad = float(np.median(np.abs(values - median)))\n    if mad <= 0:\n        raise ValueError(\n            \"Zero MAD: use an explicit alternative scale; no silent epsilon\"\n        )\n    return median, mad\n\n\ndef robust_scores(values, median, mad):\n    values = finite_vector(values)\n    if not np.isfinite(median) or not np.isfinite(mad) or mad <= 0:\n        raise ValueError(\"Finite center and positive MAD\")\n    return 0.6744897501960817 * np.abs(values - median) / mad\n\n\ndef forecast(history, horizon, method, *, period=7, gap=0):\n    history = finite_vector(history)\n    if (\n        any(\n            not isinstance(v, int) or isinstance(v, bool)\n            for v in [horizon, period, gap]\n        )\n        or horizon < 1\n        or period < 1\n        or gap < 0\n    ):\n        raise ValueError(\"Integer positive horizon/period, nonnegative gap\")\n    leads = gap + np.arange(1, horizon + 1)\n    if method == \"naive\":\n        return np.full(horizon, history[-1])\n    if method == \"seasonal\":\n        if len(history) < period:\n            raise ValueError(\"At least one complete season\")\n        return history[-period:][(leads - 1) % period].copy()\n    if method == \"drift\":\n        if len(history) < 2:\n            raise ValueError(\"Drift requires two observations\")\n        return history[-1] + leads * (history[-1] - history[0]) / (len(history) - 1)\n    raise ValueError(\"Unknown baseline\")\n\n\ndef metrics(actual, prediction, scale_history):\n    actual, prediction, history = (\n        finite_vector(actual),\n        finite_vector(prediction),\n        finite_vector(scale_history),\n    )\n    if actual.shape != prediction.shape or len(history) < 8:\n        raise ValueError(\"Aligned predictions and seasonal training denominator\")\n    error = actual - prediction\n    den = float(np.mean(np.abs(history[7:] - history[:-7])))\n    return {\n        \"mae\": float(np.mean(np.abs(error))),\n        \"rmse\": float(np.sqrt(np.mean(error**2))),\n        \"mase7\": None if den == 0 else float(np.mean(np.abs(error)) / den),\n    }\n\n\ndef temporal_fold(n, origin, horizon, *, gap=0, window=None):\n    if (\n        any(\n            not isinstance(v, int) or isinstance(v, bool)\n            for v in [n, origin, horizon, gap]\n        )\n        or origin < 8\n        or horizon < 1\n        or gap < 0\n        or origin + gap + horizon > n\n    ):\n        raise ValueError(\"Bounded chronological fold\")\n    if window is not None and (\n        not isinstance(window, int) or isinstance(window, bool) or window < 8\n    ):\n        raise ValueError(\"Training window >=8\")\n    start = 0 if window is None else max(0, origin - window)\n    return (\n        np.arange(start, origin),\n        np.arange(origin, origin + gap),\n        np.arange(origin + gap, origin + gap + horizon),\n    )\n\n\ndef analyse_source(path):\n    frame, all_y = load_source(path)\n    # Last 184 outcomes stay outside every experiment/asset; source validation only.\n    y = all_y[:547]\n    dates = frame.dteday.iloc[:547]\n    train_end = 365\n    train_residual = y[7:train_end] - y[: train_end - 7]\n    valid_residual = y[train_end:] - y[train_end - 7 : len(y) - 7]\n    median, mad = robust_fit(train_residual)\n    scores = robust_scores(valid_residual, median, mad)\n    detectors = {\n        \"isolation_forest\": IsolationForest(\n            n_estimators=100, max_samples=256, contamination=0.05, random_state=42\n        ),\n        \"lof_novelty\": make_pipeline(\n            StandardScaler(),\n            LocalOutlierFactor(n_neighbors=20, novelty=True, contamination=0.05),\n        ),\n        \"one_class_svm\": make_pipeline(\n            StandardScaler(), OneClassSVM(nu=0.05, gamma=\"scale\")\n        ),\n    }\n    alert_report = []\n    for name, model in detectors.items():\n        model.fit(train_residual[:, None])\n        decision = model.decision_function(valid_residual[:, None])\n        alert_report.append(\n            {\n                \"method\": name,\n                \"development_alerts\": int(np.sum(decision < 0)),\n                \"development_rate\": float(np.mean(decision < 0)),\n                \"score_orientation\": \"negative decision_function = flag, not anomaly probability\",\n            }\n        )\n    X, target, positions = lag_features(y, dates)\n    training = positions < train_end\n    development = ~training\n    candidates = []\n    splits = list(TimeSeriesSplit(n_splits=3, test_size=56, gap=7).split(X[training]))\n    for alpha in [0.1, 10.0, 1000.0]:\n        fold_scores = []\n        for tr, va in splits:\n            model = make_pipeline(StandardScaler(), Ridge(alpha=alpha)).fit(\n                X[training][tr], target[training][tr]\n            )\n            fold_scores.append(\n                float(\n                    np.mean(\n                        np.abs(target[training][va] - model.predict(X[training][va]))\n                    )\n                )\n            )\n        candidates.append(\n            {\"alpha\": alpha, \"training_cv_mae\": float(np.mean(fold_scores))}\n        )\n    selected = min(candidates, key=lambda r: (r[\"training_cv_mae\"], r[\"alpha\"]))\n    ridge = make_pipeline(StandardScaler(), Ridge(alpha=selected[\"alpha\"])).fit(\n        X[training], target[training]\n    )\n    one_step = {\n        \"naive\": y[train_end - 1 : len(y) - 1],\n        \"seasonal7\": y[train_end - 7 : len(y) - 7],\n        \"ridge_lags\": ridge.predict(X[development]),\n    }\n    one_step_report = {\n        name: metrics(y[train_end:], pred, y[:train_end])\n        for name, pred in one_step.items()\n    }\n    # Every forecast origin uses only its training prefix, never subsequent labels.\n    origins = [365, 421, 477]\n    backtests = []\n    for origin in origins:\n        for method in [\"naive\", \"seasonal\", \"drift\"]:\n            pred = forecast(y[:origin], 14, method)\n            backtests.append(\n                {\n                    \"origin_date\": str(dates.iloc[origin - 1].date()),\n                    \"horizon\": 14,\n                    \"method\": method,\n                    **metrics(y[origin : origin + 14], pred, y[:origin]),\n                }\n            )\n    queries = [\n        {\n            \"source_row_1based\": i + 1,\n            \"date\": str(dates.iloc[i].date()),\n            \"actual\": float(y[i]),\n            \"lag7\": float(y[i - 7]),\n            \"residual\": float(y[i] - y[i - 7]),\n            \"robust_score\": float(scores[i - train_end]),\n        }\n        for i in range(365, 407)\n    ]\n    provenance = {\n        \"source\": \"UCI Bike Sharing, Fanaee-T (2013), CC BY 4.0\",\n        \"sha256\": SOURCE_HASH,\n    }\n    asset = {\n        **provenance,\n        \"scope\": \"547 development observations only: 2011 training, Jan-Jun2012 validation; no verified anomaly labels\",\n        \"dates\": [str(d.date()) for d in dates],\n        \"counts\": y.tolist(),\n        \"train_end\": 365,\n        \"anomaly_fit\": {\"median\": median, \"mad\": mad, \"training_residuals\": 358},\n        \"anomaly_queries\": queries,\n        \"forecast_references\": [\n            {\n                \"origin\": o,\n                \"horizon\": h,\n                \"gap\": g,\n                \"method\": m,\n                \"prediction\": forecast(y[:o], h, m, gap=g).tolist(),\n            }\n            for o, h, g, m in [\n                (365, 7, 0, \"naive\"),\n                (365, 14, 0, \"seasonal\"),\n                (421, 14, 7, \"drift\"),\n            ]\n        ],\n    }\n    report = {\n        **provenance,\n        \"versions\": {\n            \"python\": platform.python_version(),\n            \"numpy\": np.__version__,\n            \"pandas\": pd.__version__,\n            \"sklearn\": sklearn.__version__,\n        },\n        \"source_rows\": 731,\n        \"training_rows\": 365,\n        \"development_rows\": 182,\n        \"reserved_outcomes_not_evaluated\": 184,\n        \"training_lag_rows\": int(training.sum()),\n        \"anomaly_training_residuals\": 358,\n        \"robust_fit\": {\"median\": median, \"mad\": mad},\n        \"robust_threshold_3_5_development_alerts\": int((scores > 3.5).sum()),\n        \"detector_flags_without_ground_truth\": alert_report,\n        \"ridge_candidates_training_cv\": candidates,\n        \"selected_alpha\": selected[\"alpha\"],\n        \"one_step_development_metrics\": one_step_report,\n        \"fixed_origin_14day_backtests\": backtests,\n        \"assumptions\": [\n            \"Daily counts available after day close; each one-step prediction can use previous observed validation outcomes.\",\n            \"Fixed-origin multi-step baselines use prefix only; no future outcomes or realized weather features.\",\n            \"casual and registered excluded: they sum to same-day target; weather excluded because future realized values unavailable.\",\n            \"Training CV gaps are row gaps, not an automatic guarantee for delayed labels or multi-step horizons.\",\n            \"Lag features are causal; folds simulate one-step predictions with observed prior outcomes, not one fixed-origin 56-day forecast.\",\n            \"No verified anomaly labels: counts/rates do not establish detection accuracy, event causes or alert utility.\",\n            \"Historical aggregate series, no causal/current-demand/deployment claim; no automated model ranking across distinct protocols.\",\n        ],\n    }\n    return report, asset\n\n\ndef run_analysis(path):\n    with threadpool_limits(limits=1):\n        return analyse_source(path)\n\n\nreport, asset = run_analysis(DATA / \"day.csv\")\nprint(json.dumps(report, indent=2, allow_nan=False))\n"
+        },
+        {
+          "type": "text",
+          "title": "বিভিন্ন Detector-এর আউটপুট তুলনা",
+          "body": "কোডটি চালালে দেখা যায়, সম্পূর্ণ `182`টি Development তারিখে `threshold = 3.5` ধরলে Robust পদ্ধতি দেয় `16`টি Flag; আর Isolation Forest দেয় `17`টি, LOF দেয় `19`টি এবং One-Class SVM দেয় `41`টি Flag। স্বাভাবিক Reference-এর অনুমান, Density বা Kernel-এর Threshold এবং সময়ের সাথে ঘটা Distribution Shift—সবই এই পার্থক্যে ভূমিকা রাখতে পারে। যাচাইকৃত Label না থাকায় এই সংখ্যাগুলো দেখে কোন Model বেশি সঠিক তার Ranking করা যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "Ridge Model Fit করার ধাপগুলোর ব্যবচ্ছেদ",
+          "body": "Forecasting অংশে আমাদের ব্যবহৃত Feature-গুলো হলো `lag 1`, `lag 7`, `lag 14`, এক ধাপ পেছানো সাত দিনের Rolling Mean (`past 7`) এবং বারের `sin/cos` রূপান্তর। শুরুর `14`টি প্রান্তিক Training Row বাদ দেওয়ার পর হাতে থাকে `351`টি বৈধ Fitting Row। এরপর শুধুমাত্র Training অংশের `3`-Fold সময়ানুক্রমিক Cross-Validation-এ `[0.1, 10, 1000]` তুলনা করে `alpha = 10` বেছে নেওয়া হয়। সবশেষে পুরো `351`টি Row-এর ওপর `StandardScaler` ও `Ridge` Fit করে Development অংশের জন্য Weight-গুলো স্থির (Frozen) রাখা হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Metric-গুলোর গভীর পাঠ",
+          "body": "একই One-Step Development Protocol-এ Naive, `Seasonal Naive (period = 7)` ও `Ridge`-এর MAE আসে যথাক্রমে প্রায় `900.60`, `1090.79` এবং `811.28`। অবশ্যই ভালো Development Score পাওয়াই প্রোডাকশন সাফল্যের চূড়ান্ত প্রমাণ নয়। আরেকটি দারুণ শিক্ষণীয় দিক লক্ষ্য করুন: এখানে `Ridge`-এর `Seasonal MASE (m = 7)` এসেছে প্রায় `1.078`—অর্থাৎ `2011` সালের Training Seasonal-Naive হরের চেয়ে `2012` সালের Development Absolute Error কিছুটা বেশি, যদিও ওই একই `2012` Development তারিখগুলোর নিজস্ব Seasonal Baseline (`1090.79`)-এর চেয়ে আমাদের Error অনেক কম!"
+        },
+        {
+          "type": "math",
+          "title": "সাপ্তাহিক ব্যবধান বনাম Model-এর Forecast Error",
+          "body": "r_t=y_t-y_{t-7}\\quad\\text{is not generally}\\quad e_t=y_t-\\widehat y_{t|t-1}^{Ridge}"
+        },
+        {
+          "type": "text",
+          "title": "ল্যাব Asset-এর উৎস ও স্বচ্ছতা",
+          "body": "উপরের সমীকরণটি মনে করিয়ে দেয় যে আমাদের Anomaly অংশের সাপ্তাহিক ব্যবধান এবং `Ridge`-এর Forecast Error এক জিনিস নয়। অ্যাপের `temporal_lab.json` ফাইলে `547`টি প্রকৃত তারিখ ও সংখ্যা, সোর্সের সাথে মেলানো `42`টি Anomaly Query, Training অংশের Median ও MAD এবং Fixed-Origin সংখ্যাসূচক রেফারেন্সগুলো সংরক্ষিত আছে। অ্যাপের ভেতরে Robust Score, Forecast, Metric ও Fold সীমানাগুলো সরাসরি Dart-এ পুনরায় হিসাব করা হয়। Reserved `184`টি Row এই JSON-এ নেই, এবং কোথাও কোনো মনগড়া ঘটনা বা কৃত্রিমভাবে ঢোকানো Anomaly ব্যবহার করা হয়নি।"
+        },
+        {
+          "type": "callout",
+          "title": "রিপোর্ট পর্যালোচনার অনুশীলন",
+          "body": "ডেটার উৎস ও সময়কাল, Fit করার পরিধি, Label-এর প্রাপ্যতা, Forecast Horizon, Gap-এর অর্থ এবং সীমাবদ্ধতাগুলো এক অনুচ্ছেদে সংক্ষেপে লিখুন। আর Validation Metric দেখার পর নতুন কোনো সেটিং চেষ্টা করলে সেটিকে অবশ্যই একটি নতুন Exploratory Run হিসেবে নথিবদ্ধ করুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch13_systems",
+      "title": "Serving, দেরিতে আসা ডেটা, Drift ও Retraining",
+      "subtitle": "সময়-সচেতন Model থেকে নির্ভরযোগ্য প্রোডাকশন Workflow তৈরি",
+      "duration": "34 min",
+      "icon": "timeline",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "তথ্যের প্রাপ্যতার চুক্তি (Availability Contract)",
+          "body": "লোকাল Script থেকে যখন আমরা বাস্তব প্রোডাকশন সিস্টেমে যাই, তখন প্রথম চ্যালেঞ্জ হয়ে দাঁড়ায় সময়ের হিসাব ঠিক রাখা। অনলাইন Feature Store থেকে অতীতের Training Data পুনর্গঠন করতে হলে প্রতিটি ঘটনার `event_time`-এর পাশাপাশি ঠিক কখন তা সিস্টেমে এসেছিল সেই `available_time` বা As-Of Snapshot থাকা জরুরি। পরে সংশোধিত ডেটা (Backfilled Correction) ভবিষ্যতের নতুন Model শেখাতে বৈধ হতে পারে, কিন্তু পুরোনো Backtest-এ তখনো-অজানা সেই সংশোধিত মান বসিয়ে দিলে মূল্যায়ন কৃত্রিমভাবে আশাবাদী হয়ে যায়! অপরিবর্তনীয় কাঁচা লগ (Immutable Raw Log) এবং সংশোধনের ইতিহাস (Revision Lineage) এখানে বড় সহায়ক।"
+        },
+        {
+          "type": "text",
+          "title": "সংস্করণযুক্ত Artifact বান্ডেল (Versioned Artifacts)",
+          "body": "প্রোডাকশনে নিখুঁত সামঞ্জস্য রাখতে Feature-এর ক্রম, Lag-এর সংজ্ঞা, ক্যালেন্ডার ও Timezone, Scaler, Model, Threshold, Window নীতি, ডেটার সময়কাল এবং সংস্করণ নম্বর—সবকিছু একটি একক Artifact বান্ডেল হিসেবে সংরক্ষণ করুন। খেয়াল রাখবেন, Detector-এর কেবল Threshold বদলানো মানে Model Refit করা নয়; দুটির পরিবর্তনের ইতিহাস আলাদা রাখুন। আর পুরোনো সংস্করণে Rollback করার সময় বর্তমান Feature Schema সামঞ্জস্যপূর্ণ কি না তা অবশ্যই যাচাই করে নিন।"
+        },
+        {
+          "type": "math",
+          "title": "Data Drift বনাম Predictive Drift",
+          "body": "P_t(X)\\ne P_{t+1}(X)\\quad\\text{versus}\\quad P_t(Y\\mid X)\\ne P_{t+1}(Y\\mid X)"
+        },
+        {
+          "type": "text",
+          "title": "মনিটরিংয়ে যেসব প্রমাণ নজরে রাখবেন",
+          "body": "উপরের সমীকরণে দেখানো দুটি পরিবর্তনই লাইভ সিস্টেমে ঘটতে পারে: Input-এর নিজস্ব Distribution বদলানো (`P(X)`) কিংবা একই Input-এর সাপেক্ষে ফলাফলের সম্পর্ক বদলানো (`P(Y | X)`)। তাই Input-এর নিখোঁজ হার (Missingness), ডেটা আসার বিলম্ব, Feature Distribution, Forecast Residual ও Error, প্রতিদিনের Alert ভলিউম এবং মানুষের যাচাইয়ের উপযোগিতা—সবকটি একসাথে মনিটর করুন। বাস্তবে Label দেরিতে এলে বর্তমান Model-এর প্রকৃত Accuracy সাথে সাথে জানা যায় না। এছাড়া নিছক কোনো Drift পরিসংখ্যান বড় হলেই যে Retrain করলে সুফল মিলবে তার নিশ্চয়তা নেই; সিদ্ধান্তের জন্য Error ও বাস্তব পদক্ষেপের প্রমাণ দরকার।"
+        },
+        {
+          "type": "code",
+          "title": "প্রাপ্যতার সময় দেখে ডেটা ছাঁকনির (Availability Gate) উদাহরণ",
+          "body": "events = [\n    {\"event\": 3, \"available\": 5, \"value\": 10},\n    {\"event\": 4, \"available\": 4, \"value\": 20},\n]\norigin = 4\nknown = [r for r in events if r[\"available\"] <= origin]\nprint([r[\"value\"] for r in known])  # late first event excluded\n"
+        },
+        {
+          "type": "text",
+          "title": "চলমান Deployment ও নিরাপদ Retraining",
+          "body": "উপরের কোডটির মতো কঠোর Availability Gate বজায় রাখার পাশাপাশি আপনার নির্ধারিত Refit ছন্দ এবং ন্যূনতম কতটুকু ইতিহাস লাগবে তার নীতি আগে থেকেই ঘোষণা করুন। যাচাই না হওয়া Alert বাদ দিয়ে Retrain করলে Model-এর ভেতর Feedback Bias তৈরি হতে পারে। তাই নতুন সংস্করণ চালুর আগে Shadow Evaluation, নতুন সময়ের খণ্ড এবং জরুরি অবস্থার জন্য একটি সরল Fallback Baseline প্রস্তুত রাখুন। নতুন কোনো ঋতুতে Error বেড়ে গেলে সেটি Data Pipeline-এর বাগ নাকি প্রকৃত Distribution পরিবর্তন—তা আলাদাভাবে নির্ণয় করুন।"
+        },
+        {
+          "type": "text",
+          "title": "দৈনিক Batch সিস্টেমের পূর্ণাঙ্গ নকশা",
+          "body": "একটি নির্ভরযোগ্য দৈনিক সিস্টেমের ধারা হতে পারে এমন: দিন শেষে ডেটা গ্রহণ (After-Close Ingestion) → ক্যালেন্ডার ও Schema যাচাই → As-Of নিয়মে Lag Feature তৈরি → স্থির Model-এ Forecast ও Score হিসাব → Alert Queue → এবং বিলম্বিত ফলাফল এলে Error আপডেট। এর সাথে বিরতি ও Latency-এর লক্ষ্যমাত্রা (Service-Level Objective) সুনির্দিষ্ট করে রাখুন। প্রোডাকশন পরিবেশে এর পরের ধাপে যুক্ত হয় মানুষের পর্যালোচনা, ঘটনার নোট সংরক্ষণ এবং অনুমোদিত টিমের কাছে নোটিফিকেশন পাঠানোর ব্যবস্থা (অবশ্য আমাদের এই অফলাইন শিক্ষামূলক অ্যাপটি কেবল লোকাল বিশ্লেষণই দেখায়, বাইরে কোনো বার্তা পাঠায় না)।"
+        },
+        {
+          "type": "callout",
+          "title": "একাধিক Entity থাকলে নিজের সিদ্ধান্তের পক্ষে যুক্তি দিন",
+          "body": "আমাদের বর্তমান Benchmark-টি একটি একক সমন্বিত দৈনিক সিরিজের ওপর তৈরি; কিন্তু বাস্তবে যদি শত শত স্টেশন বা পণ্য (Entities) থাকে, তবে আপনার Entity ও সময়ের বিভাজন এবং নতুন Entity-র Cold-Start নীতি কী হবে? সব মিলিয়ে একটি Global Pooled Model নিলেও এক Entity-র Lag যেন কখনোই অন্য Entity-র সীমানা পার না করে—তাই Preprocessing-এ অবশ্যই `groupby` করে `shift` চালাতে হবে।"
+        }
+      ]
+    },
+    {
+      "id": "ch13_readiness",
+      "title": "অনুশীলন, Interview প্রস্তুতি ও মৌলিক পাঠ্যসূচি",
+      "subtitle": "তাত্ত্বিক ধারণা, নির্ভুল কোড এবং বাস্তব প্রমাণ—তিনটিই একসাথে উপস্থাপন করুন",
+      "duration": "26 min",
+      "icon": "timeline",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "দক্ষতা যাচাইয়ের তালিকা (Mastery Checklist)",
+          "body": "অধ্যায়টি শেষ করার আগে নিজের ভাষায় গুছিয়ে বলার অনুশীলন করুন: Outlier ও Novelty-এর পার্থক্য কী; Robust Score-এ `MAD = 0` কেস কীভাবে সামলাবেন; এবং Isolation Forest-এর Path-Length স্বজ্ঞা, LOF-এর Reachability অনুপাত ও One-Class SVM-এর অন্তর্নিহিত অনুমানগুলো কী। পাশাপাশি কেবল Alert সংখ্যা দেখে কেন Model-এর Accuracy পাওয়া যায় না, তা একটি সংখ্যাসূচক Base-Rate উদাহরণ দিয়ে দেখাতে শিখুন।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে কোডিং অনুশীলন",
+          "body": "রেফারেন্স না দেখে এই অধ্যায়ের `10`টি Exercise নিজের লোকাল Python Environment-এ লিখে সমাধান করুন। ভবিষ্যতের অংশ পরিবর্তন (Suffix Perturbation), ঋতুচক্রের পুনরাবৃত্তি (Seasonal Wraparound), Gap থাকলে Lead সরণ, Drift-এর প্রান্তবিন্দু এবং MASE-এর শূন্য হরের কেসগুলো যত্নসহকারে পরীক্ষা করুন। আপনার খসড়া, কোডের আউটপুট ও নিজের যুক্তি পাশাপাশি রেখে যাচাই করুন।"
+        },
+        {
+          "type": "text",
+          "title": "Forecasting নকশার পক্ষে যুক্তি উপস্থাপন",
+          "body": "One-Step বনাম Fixed-Origin Forecast-এর Information Set স্পষ্ট করে লিখুন। শুধু Training ডেটায় Scaler ও Cross-Validation চালানো, Label আসতে বিলম্ব, আগে `shift` দিয়ে Causal Rolling নেওয়া এবং একই দিনের উপাদান থেকে হওয়া Target Leakage কোডসহ বুঝিয়ে বলুন। আর লক্ষ্য তারিখ, Horizon ও Refit ছন্দ উল্লেখ না করে কোনো Error Table-এ বিভিন্ন Model-এর Ranking করবেন না।"
+        },
+        {
+          "type": "code",
+          "title": "অদেখা ভবিষ্যৎ অংশ বদলালেও Forecast অপরিবর্তিত থাকার যাচাই",
+          "body": "def naive(prefix, horizon):\n    return [prefix[-1]] * horizon\n\n\nseries = [10.0, 20.0, 30.0, 400.0, 500.0]\nfirst = naive(series[:3], 2)\nseries[3:] = [-1.0, -2.0]\nassert naive(series[:3], 2) == first\nprint(first)\n"
+        },
+        {
+          "type": "text",
+          "title": "মৌলিক Interview প্রশ্নগুলোর অনুশীলন",
+          "body": "Practice ট্যাবে দেওয়া `10`টি মৌলিক সিস্টেম ডিজাইন ও কোডিং কেস ঘড়ি ধরে উত্তর দেওয়ার অভ্যাস করুন। একটি শক্তিশালী উত্তরে সমস্যার পরিধি ও অনুমান, গাণিতিক সূত্রায়ন, প্রান্তিক শর্ত (Edge Cases), Computational Complexity, Validation নকশা এবং সম্ভাব্য ব্যর্থতার বিশ্লেষণ—সবকটি দিকই গুছিয়ে তুলে ধরুন।"
+        },
+        {
+          "type": "text",
+          "title": "মৌলিক পাঠ্যসূচি: Anomaly Detection",
+          "body": "scikit-learn Anomaly ও Novelty নির্দেশিকা: https://scikit-learn.org/stable/modules/outlier_detection.html । IsolationForest API: https://scikit-learn.org/stable/modules/generated/sklearn.ensemble.IsolationForest.html । LOF API: https://scikit-learn.org/stable/modules/generated/sklearn.neighbors.LocalOutlierFactor.html । OneClassSVM API: https://scikit-learn.org/stable/modules/generated/sklearn.svm.OneClassSVM.html ।"
+        },
+        {
+          "type": "text",
+          "title": "মৌলিক পাঠ্যসূচি: Forecasting ও Dataset",
+          "body": "Forecasting: Principles and Practice, Forecasting Toolbox: https://otexts.com/fpp3/toolbox.html । TimeSeriesSplit API: https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.TimeSeriesSplit.html । মূল UCI Dataset ও লাইসেন্স: https://archive.ics.uci.edu/dataset/275/bike+sharing+dataset । অধ্যায়ের প্রয়োজনীয় সব ডেটা ও কনটেন্ট লোকালভাবেই যুক্ত আছে; বাড়তি গভীরতার জন্য উপরের লিংকগুলো ঐচ্ছিক রেফারেন্স হিসেবে দেখতে পারেন।"
+        },
+        {
+          "type": "callout",
+          "title": "চূড়ান্ত পর্যালোচনা ও পরবর্তী অধ্যায়",
+          "body": "Forecast Origin, Feature-এর প্রাপ্যতা, Anomaly Score এবং অনিশ্চয়তা পরিমাপের পেছনের অনুমানগুলো লিখে অনুশীলন করুন। এরপর পরের অধ্যায় Book 2 · Chapter 9 (Classical ML Capstone)-এ গিয়ে এ পর্যন্ত শেখা মূল্যায়ন ও Model তৈরির ধাপগুলো একসাথে প্রয়োগ করুন।"
+        }
+      ]
+    }
+  ],
+  "quizzes": [
+    {
+      "id": "ch13_q1",
+      "question": "কোনো Observation-এর Anomaly Score বেশি এলেই আমরা নিশ্চিতভাবে কোন দাবিটি করতে পারি?",
+      "options": [
+        "এখানে জালিয়াতি বা Fraud প্রমাণিত হয়েছে",
+        "নির্বাচিত Reference Distribution-এর তুলনায় মানটি অস্বাভাবিক হতে পারে",
+        "সিস্টেমে নিশ্চিতভাবে কার্যকারণ বিভ্রাট (Causal Outage) ঘটেছে",
+        "মানুষের যাচাই বা আসল Label-এর আর কোনো প্রয়োজন নেই"
+      ],
+      "answer": 1,
+      "explanation": "Anomaly Score সবসময় Model-এর নির্বাচিত Reference-এর সাপেক্ষে আপেক্ষিক। ঘটনাটি আসলেই ক্ষতিকর কি না, এর কারণ কী এবং পদক্ষেপ নেওয়া কতটা ফলপ্রসূ হবে—তা জানার জন্য আলাদা প্রমাণের প্রয়োজন হয়।"
+    },
+    {
+      "id": "ch13_q2",
+      "question": "Novelty Detection পদ্ধতি ব্যবহারের পেছনে কোন অনুমানটি সবচেয়ে গুরুত্বপূর্ণ?",
+      "options": [
+        "ভবিষ্যতের অদেখা ডেটাকেও আগেভাগে Training-এ Fit করে নিতে হবে",
+        "Training সেটের সবগুলো Sample-ই অস্বাভাবিক (Anomalous)",
+        "আমাদের Reference Training Data যথেষ্ট স্বাভাবিক ও দূষণমুক্ত",
+        "ভবিষ্যতের প্রতিটি নতুন বিন্দুই একা ও বিচ্ছিন্ন থাকবে"
+      ],
+      "answer": 2,
+      "explanation": "Novelty Detection-এ একটি স্বাভাবিক Reference সেটের সাপেক্ষে নতুন অদেখা ডেটার বিচ্যুতি খোঁজা হয়; ডেটা যাচাই না করে কেবল `novelty=True` লিখে দিলেই Training Data-র ভেতরের Contamination সরে যায় না।"
+    },
+    {
+      "id": "ch13_q3",
+      "question": "পরিসংখ্যানে MAD বলতে ঠিক কী বোঝায়?",
+      "options": [
+        "Mean Squared Error",
+        "Maximum Distance",
+        "Mean Absolute Error",
+        "Median থেকে Absolute Deviation-গুলোর Median (Median Absolute Deviation)"
+      ],
+      "answer": 3,
+      "explanation": "প্রথমে ডেটার কেন্দ্র হিসেবে Median নেওয়া হয়, তারপর সেই কেন্দ্র থেকে প্রতিটি মানের Absolute Deviation-এর Median বের করা হয়। ডেটায় `MAD = 0` হলে ভাগ করার আগে সুনির্দিষ্ট বিকল্প নীতি প্রয়োজন।"
+    },
+    {
+      "id": "ch13_q4",
+      "question": "একই স্থির Robust Absolute Score-এর তালিকায় যদি আমরা Threshold কমিয়ে দিই, তবে Flag হওয়া বিন্দুর সংখ্যার কী হবে?",
+      "options": [
+        "আগের চেয়ে কখনোই কমবে না (সমান থাকবে বা বাড়বে)",
+        "সবগুলো Flag অবশ্যই অদৃশ্য হয়ে যাবে",
+        "Model-এর প্রকৃত Precision সবসময় বাড়বে",
+        "কোনো Label ছাড়াই নিখুঁত Recall জানা যাবে"
+      ],
+      "answer": 0,
+      "explanation": "কঠোর `score > threshold` নিয়মে Threshold কমালে Flag সেটের আকার কখনো ছোট হয় না। তবে যাচাইকৃত Label ছাড়া এর ফলে আসল Precision বা Recall কীভাবে বদলাচ্ছে তা অজানাই থাকে।"
+    },
+    {
+      "id": "ch13_q5",
+      "question": "Scaled MAD সূত্রে `0.67449` গুণকটি কী কাজ করে?",
+      "options": [
+        "কাঁচা Score-কে সরাসরি Calibrated Anomaly Probability বানিয়ে দেয়",
+        "আদর্শ Normal Reference-এর Standard Deviation এককের সাথে সামঞ্জস্যপূর্ণ স্কেল দেয়",
+        "ডেটার ভেতর থেকে সব ধরনের Seasonality সরিয়ে দেয়",
+        "ঘটনার কার্যকারণ প্রভাব (Causal Effect) Estimate করে"
+      ],
+      "answer": 1,
+      "explanation": "একটি আদর্শ Normal Distribution-এর Population MAD হলো প্রায় `0.67449` গুণ `sigma`; তবে ডেটা Normal না হলে এই গুণকটি বসানোর ফলে ডেটা Normal হয়ে যায় না বা Score-ও Probability হয় না।"
+    },
+    {
+      "id": "ch13_q6",
+      "question": "Isolation Forest Algorithm-এর মূল স্বজ্ঞা কোনটি?",
+      "options": [
+        "যার নিকটতম Euclidean প্রতিবেশী সবচেয়ে কাছে, সেটিই সবসময় Anomaly",
+        "কেবল উচ্চ Variance থাকলেই সেখানে জালিয়াতি নিশ্চিত",
+        "যে বিন্দু খুব অল্প কয়েকটি Random Split-এই আলাদা (Isolate) হয়ে পড়ে, তা অস্বাভাবিক হতে পারে",
+        "Model-এর দেওয়া Score সবসময় একটি Calibrated Probability"
+      ],
+      "answer": 2,
+      "explanation": "এলোমেলো বিভাজনের Average Path Length দিয়ে একটি বিন্দু কত দ্রুত বিচ্ছিন্ন হচ্ছে তা মাপা হয়; তবে চূড়ান্ত Score-এর চিহ্নের দিক ব্যবহৃত লাইব্রেরির ওপর নির্ভর করে।"
+    },
+    {
+      "id": "ch13_q7",
+      "question": "Training-এর সময় `contamination = 0.05` সেট করলে ভবিষ্যতের Development ডেটায় Flag-এর হার কেমন হবে?",
+      "options": [
+        "অবশ্যই হুবহু 5% হবে",
+        "অবশ্যই 0% হবে",
+        "অবশ্যই 95% হবে",
+        "নতুন ডেটার Distribution বদলালে হারটি 5% থেকে ভিন্ন হতে পারে"
+      ],
+      "answer": 3,
+      "explanation": "Training ডেটায় Threshold বসানোর নিয়ম ভবিষ্যতের অদেখা ডেটায় প্রকৃত Anomaly Prevalence বা Model-এর Accuracy-র কোনো গ্যারান্টি দেয় না।"
+    },
+    {
+      "id": "ch13_q8",
+      "question": "LOF Model-এ `novelty=True` অবস্থায় `predict` বা `decision_function` প্রধানত কোথায় ব্যবহৃত হয়?",
+      "options": [
+        "নতুন অদেখা Query Row-গুলোর Score নির্ণয় করতে",
+        "মূল Training ডেটার Outlier Score হুবহু প্রতিস্থাপন করতে",
+        "স্বয়ংক্রিয়ভাবে মানুষ-যাচাইকৃত Label বানাতে",
+        "সরাসরি ভবিষ্যতের Seasonal Forecast তৈরি করতে"
+      ],
+      "answer": 0,
+      "explanation": "মূল Training LOF এবং Novelty Query মোডে Neighborhood খোঁজার আচরণ আলাদা; তাই Training Row আবার নতুন Query হিসেবে পাঠালে হুবহু একই Score পাওয়ার অনুমান করা যাবে না।"
+    },
+    {
+      "id": "ch13_q9",
+      "question": "`OneClassSVM`-এ `nu = 0.05` দেওয়ার প্রকৃত গাণিতিক অর্থ কী?",
+      "options": [
+        "ভবিষ্যতের ডেটার 95% স্বাভাবিক থাকার গ্যারান্টি",
+        "Optimization-এ Training Error-এর Upper Bound ও Support Vector ভগ্নাংশের Lower Bound; ভবিষ্যতের প্রকৃত হার নয়",
+        "5% Calibrated Anomaly Probability",
+        "RBF Kernel-এর `gamma` স্বয়ংক্রিয়ভাবে অপ্রাসঙ্গিক হয়ে যাওয়া"
+      ],
+      "answer": 1,
+      "explanation": "সাধারণ শর্তের অধীনে `nu` কেবল Training Error-এর Upper Bound এবং Support Vector ভগ্নাংশের Lower Bound বোঝায়; এটি ভবিষ্যতের অদেখা ডেটায় Anomaly Prevalence-এর নিখুঁত Estimate নয়।"
+    },
+    {
+      "id": "ch13_q10",
+      "question": "যাচাইকৃত Label ছাড়া একই ডেটায় Isolation Forest-এর `17`টি এবং LOF-এর `19`টি Flag পাওয়া থেকে কী বোঝা যায়?",
+      "options": [
+        "LOF Model-এর Accuracy নিশ্চিতভাবেই বেশি",
+        "Isolation Forest Model-এর Precision নিশ্চিতভাবেই বেশি",
+        "Detector দুটির অনুমান ও Sensitivity-র পার্থক্য দেখা যায়, কিন্তু কে বেশি সঠিক তার Ranking নয়",
+        "ডেটায় ঠিক 19 টি সত্যিকারের দুর্ঘটনা ঘটেছে তা নিশ্চিত"
+      ],
+      "answer": 2,
+      "explanation": "কেবল Flag সংখ্যা থেকে উপযোগিতা, Precision বা Recall পাওয়া যায় না। কোন Model কতটা সঠিক তা জানতে যাচাইকৃত Review Label এবং সুস্পষ্ট Event Protocol প্রয়োজন।"
+    },
+    {
+      "id": "ch13_q11",
+      "question": "আগামীকালের দৈনিক মোট ভাড়ার (`cnt`) Forecast করতে একই দিনের `casual` ও `registered` ব্যবহার করলে মূল সমস্যা কী?",
+      "options": [
+        "Column দুটি সম্পূর্ণ কাল্পনিক Feature",
+        "এতে কখনোই কোনো ক্ষতি নেই",
+        "এতে Model আকারে খুব ছোট হয়ে যায়",
+        "`cnt` হলো ওই দুটিরই যোগফল এবং Forecast করার মুহূর্তে একই দিনের এই ফলাফলগুলো অজানা থাকে"
+      ],
+      "answer": 3,
+      "explanation": "ঐতিহাসিক Table-এ কোনো Column থাকা মানেই যে Prediction করার মুহূর্তে তা প্রাপ্য ছিল এমন নয়। একই দিনের এই উপাদান দুটি সরাসরি মোট Target ফাঁস (Leak) করে দেয়।"
+    },
+    {
+      "id": "ch13_q12",
+      "question": "Target Row `t`-এর জন্য কেবল অতীতের সাতটি মানের Rolling Mean নেওয়ার সঠিক কোড কোনটি?",
+      "options": [
+        "y.shift(1).rolling(7).mean()",
+        "সব ক্ষেত্রে সরাসরি y.rolling(7).mean()",
+        "y.shift(-1)",
+        "পুরো সিরিজের ওপর একসাথে Backward Fill"
+      ],
+      "answer": 0,
+      "explanation": "প্রথমে `shift(1)` দিলে বর্তমানের Target মান `y[t]` বাদ পড়ে যায় এবং শুধুমাত্র অতীতের পর্যবেক্ষিত সাতটি মানের Rolling Mean নেওয়া হয়।"
+    },
+    {
+      "id": "ch13_q13",
+      "question": "নিরবচ্ছিন্ন দৈনিক ক্যালেন্ডার যাচাই না করে সরাসরি `lag 7` হিসাব করলে কী সমস্যা হতে পারে?",
+      "options": [
+        "তা সবসময়ই নিখুঁত সাত ক্যালেন্ডার দিন নির্দেশ করবে",
+        "তা কেবল সাতটি Row পেছনে যেতে পারে, প্রকৃত সাত ক্যালেন্ডার দিন নাও হতে পারে",
+        "তা ভবিষ্যতের সাতটি Label নিয়ে আসবে",
+        "তা স্বয়ংক্রিয়ভাবে Stationarity নিশ্চিত করবে"
+      ],
+      "answer": 1,
+      "explanation": "মাঝখানে নিখোঁজ তারিখ বা ডুপ্লিকেট Timestamp থাকলে নিছক Row Index সরানোর ক্যালেন্ডারগত অর্থ ভেঙে যায়।"
+    },
+    {
+      "id": "ch13_q14",
+      "question": "Fixed Origin থেকে `period = 7` এবং `horizon = 10` নিয়ে Seasonal Naive পদ্ধতি চালালে সেটি কী করবে?",
+      "options": [
+        "অষ্টম দিনের প্রকৃত মান (Actual) Input হিসেবে ব্যবহার করবে",
+        "সপ্তম দিনের পর হঠাৎ শূন্য হয়ে যাবে",
+        "Origin পর্যন্ত দেখা সর্বশেষ সাত দিনের প্যাটার্নটিই পুনরাবৃত্তি করবে",
+        "Validation অংশের Mean আগে থেকে Fit করে নেবে"
+      ],
+      "answer": 2,
+      "explanation": "Fixed-Origin Protocol-এ সবগুলো ভবিষ্যৎ ধাপ একই Origin থেকে হিসাব করা হয়; ভবিষ্যতের কোনো প্রকৃত মান এখানে Input হিসেবে আসে না।"
+    },
+    {
+      "id": "ch13_q15",
+      "question": "একটি Fixed Origin-এর পরে `gap = 7` রাখলে প্রথম মূল্যায়িত দিনটির Lead কত হবে?",
+      "options": [
+        "1",
+        "7",
+        "0",
+        "8"
+      ],
+      "answer": 3,
+      "explanation": "মাঝখানে `g` দিনের বিরতি থাকলে প্রথম মূল্যায়িত দিনের Lead হয় `g + 1` (অর্থাৎ `8`), এবং Gap অংশের ফলাফল কখনোই ইতিহাস আপডেট করতে ব্যবহৃত হয় না।"
+    },
+    {
+      "id": "ch13_q16",
+      "question": "One-Step Moving-Origin মূল্যায়নে আগের Validation দিনের প্রকৃত ফলাফল পরবর্তী দিনের Lag হিসেবে ব্যবহার করা কখন বৈধ?",
+      "options": [
+        "যদি পরের দিনের Prediction তৈরির মুহূর্তে ওই মানটি বাস্তবেই পর্যবেক্ষিত ও উপলব্ধ থাকে",
+        "কখনোই বৈধ নয়, এটি সবসময়ই Future Leakage",
+        "একই স্থির Origin-এর সব বহু-ধাপের Horizon-এ",
+        "শুধুমাত্র ডেটা Random Split করা হলে"
+      ],
+      "answer": 0,
+      "explanation": "এখানে তথ্যের প্রাপ্যতার চুক্তিই (Availability Contract) আসল কথা। প্রতিদিনের শেষে আসল মান পাওয়া গেলে পরের এক ধাপের জন্য তা বৈধ, কিন্তু Fixed-Origin বহু-ধাপের Protocol-এ ওই ভবিষ্যৎ মান অজানা থাকে।"
+    },
+    {
+      "id": "ch13_q17",
+      "question": "`90`-দিনের Rolling Window বনাম Expanding Window ব্যবহারের প্রধান ভারসাম্য (Tradeoff) কোনটি?",
+      "options": [
+        "দুটি পদ্ধতি সবসময় একই দৈর্ঘ্যের Training ইতিহাস রাখে",
+        "সাম্প্রতিক Regime-এর সাথে মানিয়ে নেওয়া বনাম মোট ইতিহাসের পরিমাণ ও Variance",
+        "এতে মূল্যায়নের জন্য আর কোনো Label দরকার হয় না",
+        "এতে সব ধরনের Data Leakage স্বয়ংক্রিয়ভাবে দূর হয়"
+      ],
+      "answer": 1,
+      "explanation": "সাম্প্রতিক Window পুরোনো অপ্রাসঙ্গিক Regime-এর প্রভাব কমাতে সাহায্য করে, কিন্তু Sample কমে যাওয়ায় Variance বাড়তে পারে; তাই বাস্তব প্রমাণ দেখে নীতি বেছে নেওয়া উচিত।"
+    },
+    {
+      "id": "ch13_q18",
+      "question": "`TimeSeriesSplit`-এর `gap` আর্গুমেন্টটি একাই কেবল কী নিশ্চিত করে?",
+      "options": [
+        "বিলম্বিত সব Label-এর Data Leakage সম্পূর্ণ বন্ধ হওয়া",
+        "ভবিষ্যতের Distribution অতীতের সমান থাকা",
+        "শুধুমাত্র নির্দিষ্ট সংখ্যক Row বাদ পড়া; তথ্যের প্রাপ্যতার পূর্ণ অডিট তখনো আলাদাভাবে প্রয়োজন",
+        "প্রতিটি Interval-এ 95% Coverage পাওয়া"
+      ],
+      "answer": 2,
+      "explanation": "ওভারল্যাপ করা দীর্ঘ Target, ঘটনা-পরবর্তী Realized Covariate এবং পরবর্তী ডেটা সংশোধনগুলো আলাদা Data Leakage-এর পথ; নিছক Row বাদ দিলেই সেগুলো মিটে যায় না।"
+    },
+    {
+      "id": "ch13_q19",
+      "question": "হুবহু একই Observation সেটে RMSE এবং MAE-এর গাণিতিক সম্পর্ক কী?",
+      "options": [
+        "RMSE সবসময় ছোট হয়",
+        "তারা সবসময় সমান হয়",
+        "তাদের মধ্যে কোনো সম্পর্ক নেই",
+        "RMSE >= MAE"
+      ],
+      "answer": 3,
+      "explanation": "Absolute Error-গুলোর Root Mean Square মান কখনোই তাদের Arithmetic Mean (অর্থাৎ MAE)-এর চেয়ে ছোট হতে পারে না।"
+    },
+    {
+      "id": "ch13_q20",
+      "question": "Seasonal MASE Metric-এর হর (Denominator) কোন ডেটা থেকে হিসাব করা হয়?",
+      "options": [
+        "শুধুমাত্র Training ইতিহাস থেকে",
+        "ভবিষ্যৎসহ সম্পূর্ণ ডেটা সিরিজ থেকে",
+        "Validation Error থেকে ইচ্ছেমতো",
+        "Reserved Test অংশের Target Mean থেকে"
+      ],
+      "answer": 0,
+      "explanation": "শুধুমাত্র Training অংশের Seasonal-Naive Absolute Difference-গুলোর Mean দিয়ে এই হর তৈরি হয়; আর হর শূন্য হলে Metric-টি Undefined থাকে।"
+    },
+    {
+      "id": "ch13_q21",
+      "question": "কোনো Model-এর মূল্যায়নে `MASE < 1` পাওয়ার সুনির্দিষ্ট অর্থ কী?",
+      "options": [
+        "Model-টি 95% নির্ভুল",
+        "মূল্যায়ন অংশের MAE ঐতিহাসিক Training স্কেলের হরের চেয়ে কম",
+        "একই মূল্যায়ন তারিখগুলোর নিজস্ব Seasonal Baseline অবশ্যই পরাজিত হয়েছে",
+        "সবগুলো Anomaly Label নিশ্চিত হওয়া গেছে"
+      ],
+      "answer": 1,
+      "explanation": "ঐতিহাসিক Training হর এবং নতুন মূল্যায়ন সময়ের নিজস্ব Seasonal Baseline Error এক নয়; তাই একই মূল্যায়ন তারিখগুলোর Baseline Score আলাদাভাবে তুলনা করুন।"
+    },
+    {
+      "id": "ch13_q22",
+      "question": "PCA Reconstruction বা Forecasting Model-এর Residual বড় হলে তার অর্থ কী হতে পারে?",
+      "options": [
+        "নিশ্চিতভাবেই একটি দুর্ঘটনা ঘটেছে",
+        "ওই Row-টিকে স্বয়ংক্রিয়ভাবে মুছে ফেলতে হবে",
+        "বাস্তব ঘটনার পাশাপাশি Model Misspecification বা প্রত্যাশিত পরিবর্তনও হতে পারে",
+        "ঘটনার কার্যকারণ প্রক্রিয়া পুরোপুরি জানা গেছে"
+      ],
+      "answer": 2,
+      "explanation": "বড় Residual পেলে সময়ের প্রেক্ষাপট, ডেটার গুণমান এবং Model-এর নিজস্ব Bias তদন্ত করে দেখতে হয়; অস্বাভাবিক Error মানেই স্বয়ংক্রিয়ভাবে সত্যিকারের দুর্ঘটনা নয়।"
+    },
+    {
+      "id": "ch13_q23",
+      "question": "সময়ের ওপর নির্ভরশীল ও পরিবর্তনশীল (Drifting) সিরিজে সাধারণ Split Conformal Interval-এর গ্যারান্টি সম্পর্কে কোনটি সঠিক?",
+      "options": [
+        "কোনো শর্ত ছাড়াই অন্ধভাবে প্রযোজ্য",
+        "সবসময় নিখুঁত 95% Coverage দেয়",
+        "এর পেছনে কোনো অনুমানই নেই",
+        "Exchangeability অনুমান যাচাই করা এবং প্রয়োজনে সময়-উপযোগী অভিযোজন (Adaptation) দরকার"
+      ],
+      "answer": 3,
+      "explanation": "সময়ের ধারাবাহিক নির্ভরশীলতা ও Drift সরাসরি Exchangeability অনুমান ভেঙে দেয়; তাই Nominal Level এবং বাস্তবে মাপা Coverage আলাদাভাবে বিচার করতে হয়।"
+    },
+    {
+      "id": "ch13_q24",
+      "question": "এই অধ্যায়ের Bike Sharing Workflow-এ শেষ `184` দিনের ফলাফল কীভাবে রাখা হয়েছে?",
+      "options": [
+        "কোনো পরীক্ষা বা ল্যাবে ব্যবহৃত হয়নি, যদিও মূল কাঁচা সোর্স ফাইলে তা উপস্থিত আছে",
+        "ওই অংশের Score দেখেই সেরা `alpha` বাছা হয়েছে",
+        "সেখান থেকে কৃত্রিম Anomaly Label বানানো হয়েছে",
+        "অ্যাপের সব Plot-এ ওই অংশটি দেখানো হয়েছে"
+      ],
+      "answer": 0,
+      "explanation": "আমাদের পরীক্ষায় `365` দিন Training এবং `182` দিন Development হিসেবে ব্যবহৃত হয়েছে; Reserved অংশের কোনো Score বের করা হয়নি, তবে ফাইলটি উন্মুক্ত থাকায় একে গোপন বাহ্যিক মূল্যায়ন বলা হচ্ছে না।"
+    },
+    {
+      "id": "ch13_q_survival_revision",
+      "question": "পর্যবেক্ষিত সময় `[1, 2, 2, 3]` এবং Event Indicator `[1, 1, 0, 1]` হলে, একই সময়ে Event-কে Censor-এর আগে গণনা করার রীতিতে সময় `2`-এর ঠিক পরে Kaplan–Meier Survival কত?",
+      "options": [
+        "0.25",
+        "0.375",
+        "0.5",
+        "0.75"
+      ],
+      "answer": 2,
+      "explanation": "সময় `1`-এর গুণক `3/4`। সময় `2`-এ ঝুঁকিতে থাকে `3` জন এবং Event `1`টি, তাই গুণক `2/3`। দুটির গুণফল `1/2` (`0.5`)। একই সময়ের Censor কখনোই লবের Event সংখ্যা বাড়ায় না।"
+    },
+    {
+      "id": "ch13_q_conformal_revision",
+      "question": "Calibration সেটের আকার `4` ও `alpha = 0.05` হলে, `k = ceil((m + 1)(1 - alpha))` এবং অসীম-সেট নীতিতে Radius কী হবে?",
+      "options": [
+        "সবচেয়ে ছোট Score",
+        "Median Score",
+        "চতুর্থ Score",
+        "Infinity"
+      ],
+      "answer": 3,
+      "explanation": "এখানে `k = ceil(4.75) = 5`, কিন্তু আমাদের Calibration Score আছে মাত্র `4`টি। তাই এই Finite-Sample Rank নীতিতে Radius `Infinity` দরকার; সাধারণ Interpolated Percentile বসিয়ে একই Coverage দাবি করা যাবে না।"
+    }
+  ],
+  "exercises": [
+    {
+      "id": "ch13_ex_mad",
+      "title": "বিচ্যুতি থেকে Robust MAD নির্ণয়",
+      "prompt": "প্রদত্ত Residual তালিকা `[-4, -2, 0, 2, 20]`-এর Median এবং Median Absolute Deviation (MAD) হিসাব করুন। চূড়ান্ত MAD মানটি একক সংখ্যা (Scalar) হিসেবে `answer`-এ রাখুন।",
+      "starter": "from statistics import median\n\nvalues = [-4.0, -2.0, 0.0, 2.0, 20.0]\nanswer = 0.0\n",
+      "solution": "from statistics import median\n\nvalues = [-4.0, -2.0, 0.0, 2.0, 20.0]\ncenter = median(values)\nanswer = median(abs(x - center) for x in values)\nprint(answer)\n",
+      "expected": 2,
+      "explanation": "তালিকাটির Median হলো `0`। সেখান থেকে Absolute Deviation `[4, 2, 0, 2, 20]` নিলে তার Median অর্থাৎ MAD হয় `2`। চরম মান `20` সাধারণ Mean-কে যেভাবে টেনে নেয়, Median বা MAD-কে সেভাবে বিচ্যুত করতে পারে না।"
+    },
+    {
+      "id": "ch13_ex_score",
+      "title": "Scaled MAD দিয়ে Robust Anomaly Score",
+      "prompt": "কোনো Observation-এর মান `6`, এবং Training থেকে পাওয়া `Median = 0` ও `MAD = 2`। গুণক `0.6744897501960817` ব্যবহার করে Absolute Scaled-MAD Score হিসাব করে `answer`-এ রাখুন।",
+      "starter": "value, center, mad = 6.0, 0.0, 2.0\nanswer = 0.0\n",
+      "solution": "value, center, mad = 6.0, 0.0, 2.0\nif mad <= 0:\n    raise ValueError(\"positive MAD required\")\nanswer = 0.6744897501960817 * abs(value - center) / mad\nprint(answer)\n",
+      "expected": 2.0234692505882452,
+      "explanation": "সূত্র অনুযায়ী Score হবে `0.6744897501960817 * 6 / 2`, যার মান প্রায় `2.0234693`। এটি কোনো Probability নয়, এবং বাস্তবে `MAD = 0` হলে ভাগ করার আগেই সুনির্দিষ্ট নীতি দরকার।"
+    },
+    {
+      "id": "ch13_ex_path",
+      "title": "Isolation Forest-এর Path Normalization",
+      "prompt": "মূল Isolation Forest সূত্রে Average Path `h = 4` এবং Normalizer `c = 4` হলে, `s = 2^(-h / c)`-এর মান হিসাব করে `answer`-এ রাখুন।",
+      "starter": "path, normalizer = 4.0, 4.0\nanswer = 0.0\n",
+      "solution": "path, normalizer = 4.0, 4.0\nanswer = 2 ** (-path / normalizer)\nprint(answer)\n",
+      "expected": 0.5,
+      "explanation": "হিসাব অনুযায়ী Score আসে `0.5`। মনে রাখবেন, লাইব্রেরির `score_samples` বা `decision_function`-এর চিহ্নের দিক ও Offset এই মূল সূত্র থেকে আলাদা হতে পারে।"
+    },
+    {
+      "id": "ch13_ex_seasonal",
+      "title": "Seasonal Forecast-এর চক্রাকার পুনরাবৃত্তি",
+      "prompt": "পর্যবেক্ষিত ইতিহাস `[1, 2, 3, 4, 5, 6, 7]` এবং ঋতুচক্র `period = 7`। একটি Fixed Origin থেকে আগামী দশ (`10`) দিন Forecast করলে দশম মানটি কত হবে তা `answer`-এ রাখুন।",
+      "starter": "history = list(range(1, 8))\nhorizon, period = 10, 7\nanswer = 0.0\n",
+      "solution": "history = list(range(1, 8))\nhorizon, period = 10, 7\npredictions = [history[-period + i % period] for i in range(horizon)]\nanswer = predictions[-1]\nprint(answer)\n",
+      "expected": 3,
+      "explanation": "দেখা সাত দিনের প্যাটার্নটি পুনরাবৃত্তি করলে দিন `8, 9, 10`-এর Forecast হয় যথাক্রমে `1, 2, 3`; তাই উত্তর `3`। এখানে ভবিষ্যতের কোনো প্রকৃত মান ব্যবহৃত হয়নি।"
+    },
+    {
+      "id": "ch13_ex_drift",
+      "title": "Drift Baseline দিয়ে বহু ধাপের হিসাব",
+      "prompt": "পর্যবেক্ষিত ইতিহাস `[2, 4, 6]`। প্রান্তবিন্দুর Slope ব্যবহার করা Endpoint Drift Baseline দিয়ে ওই Origin থেকে তিন ধাপ সামনের (`3`-step-ahead) Forecast হিসাব করে `answer`-এ রাখুন।",
+      "starter": "history = [2.0, 4.0, 6.0]\nhorizon = 3\nanswer = 0.0\n",
+      "solution": "history = [2.0, 4.0, 6.0]\nhorizon = 3\nslope = (history[-1] - history[0]) / (len(history) - 1)\nanswer = history[-1] + horizon * slope\nprint(answer)\n",
+      "expected": 12,
+      "explanation": "`Slope = (6 - 2) / (3 - 1) = 2`। ফলে Forecast দাঁড়ায় `6 + 3 * 2 = 12`। মূল্যায়িত Horizon-এর আগে কোনো Gap থাকলে মোট Lead দূরত্বে সেটিও ধরতে হয়।"
+    },
+    {
+      "id": "ch13_ex_rolling",
+      "title": "কেবল অতীতের মান নিয়ে Rolling Mean",
+      "prompt": "`y = [10, 20, 30, 40]` দেওয়া আছে। Index `3`-এর Target অনুমান করার সময় ঠিক আগের তিনটি পর্যবেক্ষিত মানের Mean বের করে `answer`-এ রাখুন।",
+      "starter": "y = [10.0, 20.0, 30.0, 40.0]\nt = 3\nanswer = 0.0\n",
+      "solution": "y = [10.0, 20.0, 30.0, 40.0]\nt = 3\npast = y[t - 3 : t]\nanswer = sum(past) / len(past)\nprint(answer)\n",
+      "expected": 20,
+      "explanation": "অতীতের তিনটি মান হলো `[10, 20, 30]`, যাদের Mean `20`। বর্তমানের Target `40` কখনোই এই Feature-এর ভেতর ঢুকবে না।"
+    },
+    {
+      "id": "ch13_ex_mae",
+      "title": "সমান দৈর্ঘ্যের ফলাফলে MAE নির্ণয়",
+      "prompt": "প্রকৃত মান `[1, 3]` এবং Prediction `[2, 1]` হলে তাদের MAE হিসাব করে `answer`-এ রাখুন।",
+      "starter": "actual, prediction = [1.0, 3.0], [2.0, 1.0]\nanswer = 0.0\n",
+      "solution": "actual, prediction = [1.0, 3.0], [2.0, 1.0]\nanswer = sum(abs(a - p) for a, p in zip(actual, prediction)) / len(actual)\nprint(answer)\n",
+      "expected": 1.5,
+      "explanation": "Absolute Error দুটি হলো `1` ও `2`, যাদের Mean `1.5`। সাধারণ Implementation-এ অবশ্যই Array দুটি অশূন্য ও সমান দৈর্ঘ্যের কি না তা যাচাই করে নেবেন।"
+    },
+    {
+      "id": "ch13_ex_rmse",
+      "title": "বড় Error-এ RMSE-এর বাড়তি ওজন",
+      "prompt": "প্রকৃত মান `[1, 3]` এবং Prediction `[2, 1]` হলে তাদের RMSE হিসাব করে `answer`-এ রাখুন।",
+      "starter": "from math import sqrt\n\nactual, prediction = [1.0, 3.0], [2.0, 1.0]\nanswer = 0.0\n",
+      "solution": "from math import sqrt\n\nactual, prediction = [1.0, 3.0], [2.0, 1.0]\nanswer = sqrt(sum((a - p) ** 2 for a, p in zip(actual, prediction)) / len(actual))\nprint(answer)\n",
+      "expected": 1.5811388300841898,
+      "explanation": "Mean Squared Error `2.5`, তাই `RMSE = sqrt(2.5)`, যার মান প্রায় `1.5811388`। এই একই উদাহরণে MAE ছিল `1.5`।"
+    },
+    {
+      "id": "ch13_ex_mase",
+      "title": "কেবল Training হর দিয়ে Seasonal MASE (m = 7) হিসাব",
+      "prompt": "Training সিরিজ `[1, 2, 3, 4, 5, 6, 7, 8]` এবং ঋতুচক্র `period = 7`। নতুন অংশে প্রকৃত মান `[2, 4]` ও Prediction `[1, 1]`-এর MASE হিসাব করে `answer`-এ রাখুন।",
+      "starter": "training = list(range(1, 9))\nactual, prediction = [2.0, 4.0], [1.0, 1.0]\nanswer = 0.0\n",
+      "solution": "training = list(range(1, 9))\nactual, prediction = [2.0, 4.0], [1.0, 1.0]\nden = sum(abs(training[i] - training[i - 7]) for i in range(7, len(training))) / (\n    len(training) - 7\n)\nmae = sum(abs(a - p) for a, p in zip(actual, prediction)) / len(actual)\nanswer = mae / den\nprint(answer)\n",
+      "expected": 0.2857142857142857,
+      "explanation": "Training অংশের ঋতুগত হর `|8 - 1| = 7`। আর Forecast অংশের `MAE = 2`, তাই `MASE = 2 / 7` (দশমিকে প্রায় `0.2857143` দেওয়া যায়)। হর শূন্য হলে অবশ্যই সুস্পষ্ট Undefined নীতি প্রয়োজন।"
+    },
+    {
+      "id": "ch13_ex_fold",
+      "title": "সময়ানুক্রমিক Validation-এর শুরুর Index",
+      "prompt": "Training অংশের End-Exclusive Origin Index `100`, মাঝখানের `gap = 7` এবং Validation `horizon = 14` হলে প্রথম Validation Index কত হবে তা `answer`-এ রাখুন।",
+      "starter": "origin, gap, horizon = 100, 7, 14\nanswer = 0.0\n",
+      "solution": "origin, gap, horizon = 100, 7, 14\nvalidation = range(origin + gap, origin + gap + horizon)\nanswer = validation.start\nprint(answer)\n",
+      "expected": 107,
+      "explanation": "Training শেষ হয় Index `99`-এ। মাঝখানের Gap হলো Index `100–106`, এবং Validation অংশ `107–120`। ফলে প্রথম মূল্যায়িত Target-এর Index `107`, যা Origin-এর শেষ পর্যবেক্ষিত Row থেকে `lead = 8` ধাপ দূরে।"
+    }
+  ],
+  "interviews": [
+    {
+      "title": "কোনো Label ছাড়াই দৈনিক চাহিদার Anomaly Detector নকশা",
+      "tag": "PROBLEM FORMULATION · 25 MIN",
+      "prompt": "দৈনিক চাহিদা মনিটরিং সিস্টেমে আগে থেকে যাচাইকৃত কোনো Anomaly Label নেই। আপনি কীভাবে Detector, Threshold এবং মূল্যায়ন নকশা শুরু করবেন?",
+      "answer": "শুরুতেই পরিষ্কার করে নেব কোন ধরনের অস্বাভাবিকতা পেলে কী ব্যবস্থা (Intended Action) নেওয়া হবে, একটি False Alert-এর বাস্তব খরচ কত, এবং আমাদের Reference Period ও প্রত্যাশিত Seasonality কী। এরপর প্রথমে একটি স্বচ্ছ Robust Contextual Residual (যেমন সাপ্তাহিক ব্যবধানের ওপর Median ও MAD) দিয়ে Baseline গড়ব এবং তার সাথে Isolation Forest, LOF ও One-Class SVM-এর অন্তর্নিহিত অনুমানগুলো তুলনা করব—যেখানে সব Reference ও Scaler শুধুমাত্র Training Data-য় Fit হবে এবং Score-এর দিক ও একক সুস্পষ্ট থাকবে।\n\nযেহেতু শুরুতে কোনো Label নেই, তাই দলের সক্ষমতা অনুযায়ী দৈনিক রিভিউ বাজেট (Capacity Threshold) নির্ধারণ করা যেতে পারে, কিন্তু কখনোই মনগড়া Accuracy দাবি করা যাবে না। বরং Score-এর বিভিন্ন স্তর থেকে পরিকল্পিত Stratified Score-Range Audit, বিশ্লেষকদের পর্যালোচনা এবং বিলম্বিত ঘটনার Label সংগ্রহের একটি Protocol চালু করব। পরবর্তীতে পর্যাপ্ত Label জমলে Event-Level শনাক্তকরণ বিলম্ব, Duplicate Alert দমন, ঋতু বা Subgroup কভারেজ এবং রিভিউ খরচের নিরিখে সিস্টেম মূল্যায়ন করব ও ঐতিহাসিক Drift-এর সীমাবদ্ধতা রিপোর্ট করব।",
+      "prerequisiteLessons": [
+        "ch13_robust"
+      ]
+    },
+    {
+      "title": "নিরাপদভাবে Median ও MAD Scoring Implementation",
+      "tag": "ML CODING · 25 MIN",
+      "prompt": "একটি Robust Anomaly Score Function লিখুন এবং ব্যাখ্যা করুন কীভাবে `MAD = 0`, `NaN`, Threshold-এর সমান মান (Ties) এবং চরম Input-গুলো নিরাপদভাবে সামলাবেন?",
+      "answer": "প্রথমে শুধুমাত্র Reference Training Data থেকে কেন্দ্র `median` এবং Scale `MAD = median(|x - median|)` Fit করে নেব। এরপর নতুন মানের জন্য Absolute Score `score = 0.67448975 * |x - median| / MAD` হিসাব করব—যা একটি স্কেল-সম্মত দূরত্ব মাত্র, কোনো Probability নয়। Function-এর শুরুতেই সব Input সসীম (Finite, কোনো `NaN` বা `inf` নেই) কি না, ধনাত্মক MAD আছে কি না এবং সম্ভাব্য গাণিতিক Overflow হচ্ছে কি না তা যাচাই করব। বিশেষ করে `MAD = 0` হলে নীরবে ক্ষুদ্র `epsilon` বসিয়ে গোঁজামিল না দিয়ে সুস্পষ্ট Exception তুলব অথবা আগে থেকে সংজ্ঞায়িত ডোমেইন Fallback Scale ব্যবহার করব।\n\nসিদ্ধান্ত নেওয়ার নিয়ম যদি কঠোর `score > threshold` হয়, তবে সমান মান (`score == threshold`) স্বাভাবিক দিকে থাকবে—Unit Test-এ এই সীমানাটি সরাসরি পরীক্ষা করব। এছাড়া মূল Input Array অপরিবর্তিত (Immutable) রেখে অশূন্য স্কেলে Shift ও Scale Invariance এবং 'Threshold কমালে Flag সেটের আকার কখনো কমে না' এই Monotonicity ধর্ম পরীক্ষা করব। সাধারণ সর্টিংভিত্তিক Median-এর Time Complexity `O(n log n)` হলেও প্রয়োজনে Selection Algorithm দিয়ে ভিন্ন কম্পিউটেশনাল বাজেটে নামানো সম্ভব।"
+    },
+    {
+      "title": "Isolation Forest বনাম LOF বনাম One-Class SVM-এর মতপার্থক্য",
+      "tag": "MODEL CHOICE · 25 MIN",
+      "prompt": "তিনটি ভিন্ন Detector একই তারিখগুলোর ওপর আলাদা আলাদা সংখ্যক Flag দিচ্ছে। আপনি এর কী ব্যাখ্যা দেবেন এবং পরবর্তী কোন পরীক্ষাটি প্রস্তাব করবেন?",
+      "answer": "তিনটি Model সম্পূর্ণ ভিন্ন জ্যামিতিক অনুমান থেকে অস্বাভাবিকতা শেখে: Isolation Forest দেখে এলোমেলো বিভাজনে Average Path Length কতটা সংক্ষিপ্ত, LOF তুলনা করে স্থানীয় প্রতিবেশীদের সাপেক্ষে Relative Density অনুপাত, আর One-Class SVM আঁকে একটি Kernel Feature Space-এর Support সীমানা। ফলে Feature Representation, Scaling, প্রতিবেশী সংখ্যা বা Kernel Width এবং `contamination` বনাম `nu`-এর Threshold ব্যাখ্যার পার্থক্যের কারণে তাদের আউটপুট আলাদা হওয়াই স্বাভাবিক। যেমন ফাঁকা প্রান্তিক বিন্দু ধরতে Isolation Forest পটু, Density-র তারতম্য থাকলে LOF সংবেদনশীল (যেখানে অদেখা ডেটার `novelty=True` মোড মূল Training Outlier মোডের হুবহু প্রতিরূপ নয়), আর One-Class SVM চায় পরিষ্কার Reference, নিখুঁত Scaling ও পর্যাপ্ত Kernel Budget।\n\nতাই কেবল Flag সংখ্যা (`17`, `19` কিংবা `41`) দেখে কোনোটিকে সেরা ঘোষণা না করে আমরা যে তারিখগুলোতে Model-গুলোর মতপার্থক্য ঘটছে সেগুলো খতিয়ে দেখব, মানুষ-যাচাইকৃত Label ও অপারেশনাল উপযোগিতার পরীক্ষা সাজাব, এবং Random Seed, সময়ের Window ও ঋতুগত প্রেক্ষাপটের প্রতি প্রতিটি Model-এর Sensitivity আলাদা প্রমাণ হিসেবে পরিমাপ করব।"
+    },
+    {
+      "title": "বিরল ঘটনায় উচ্চ TPR ও কম FPR সত্ত্বেও Precision ধসে পড়ার কারণ",
+      "tag": "STATISTICS · 20 MIN",
+      "prompt": "কোনো Detector-এর `TPR = 90%`, `FPR = 1%` এবং প্রকৃত ঘটনার হার (Prevalence) `0.1%`। অপারেশনস টিম তবুও কেন এত বেশি False Alert পাচ্ছে?",
+      "answer": "এর উত্তর লুকিয়ে আছে Bayes-এর সূত্রে Base Rate-এর প্রভাবে। সংখ্যাগুলো বসালে পাই: `Precision = (0.9 * 0.001) / (0.9 * 0.001 + 0.01 * 0.999) ≈ 0.0826`, অর্থাৎ মাত্র `8.26%`! যেহেতু স্বাভাবিক ঘটনার ভলিউম (`99.9%`) বিশাল, তাই দৃশ্যত খুব ছোট `1%` False-Positive Rate-ও আসল ঘটনার তুলনায় এগারো গুণের বেশি False Alert তৈরি করে Review Queue ভাসিয়ে দেয়।\n\nএ কারণে বিরল ঘটনায় একা ROC Curve কখনোই অপারেশনাল বোঝা ফুটিয়ে তুলতে পারে না; আমাদের দেখতে হবে Precision-Recall Curve, দৈনিক মোট Alert সংখ্যা, রিভিউ করার খরচ, ঘটনা ধরার বিলম্ব এবং টিমের প্রকৃত সক্ষমতা। সমাধান হিসেবে সময়ানুক্রমিক Label-যুক্ত Validation সেটে ব্যবসার খরচ অনুযায়ী Threshold টিউন করে স্থির (Freeze) করতে হবে এবং নতুন অস্পৃশ্য ডেটায় চূড়ান্ত মূল্যায়ন করতে হবে। পাশাপাশি কেবল Flag হওয়া Row রিভিউ করলে যে Selection Bias তৈরি হয়, তা কাটাতে কম Score পাওয়া অংশ থেকেও পরিকল্পিত Sampled Audit ও Label বিলম্বের হিসাব রাখতে হবে।",
+      "prerequisiteLessons": [
+        "ch13_thresholds"
+      ]
+    },
+    {
+      "title": "Forecasting নোটবুকে লুকানো Data Leakage খুঁজে বের করা",
+      "tag": "DEBUGGING · 30 MIN",
+      "prompt": "একটি Forecasting নোটবুকে Random Split, Centered Rolling Mean, পুরো সিরিজের ওপর Fit করা Scaler এবং একই দিনের উপাদান Feature ব্যবহার করা হয়েছে। নোটবুকটি অডিট করে ত্রুটি ও সমাধান বলুন।",
+      "answer": "অডিটের শুরুতেই প্রতিটি Row-এর জন্য নির্দিষ্ট Prediction Origin এবং `available_time` লিখে নেব। এখানে চারটি গুরুতর Data Leakage ঘটেছে: ১) Random Split সময়ের ক্রম ভেঙে ভবিষ্যতের প্রবণতা ও Autocorrelation সরাসরি Training-এ দেখিয়ে দিচ্ছে; ২) Centered Rolling Mean বর্তমান ও ভবিষ্যতের Observation-কে সরাসরি Rolling Mean-এর ভেতর টেনে আনছে; ৩) পুরো সিরিজের ওপর Scaler Fit করায় ভবিষ্যতের Mean ও Variance Training-এ ফাঁস হচ্ছে—Scaler অবশ্যই প্রতিটি সময়ানুক্রমিক Fold-এর কেবল Training অংশেই Fit করতে হবে; ৪) Bike ডেটায় একই দিনের `casual` ও `registered` যোগ করলেই মোট `cnt` পাওয়া যায়, যা Forecast করার মুহূর্তে সম্পূর্ণ অজানা (ঠিক যেমন ভবিষ্যতের Realized আবহাওয়া অজানা থাকে; কেবল Origin মুহূর্তে প্রকাশিত Weather Forecast থাকলে তা আলাদা চুক্তিতে ব্যবহার্য)।\n\nসমাধান হিসেবে `shift(1)` করার পর Rolling হিসাব নিয়ে নিখুঁত Causal Lag তৈরি করব (যেখানে বিভাজন সীমানার আগের পর্যবেক্ষিত ইতিহাস বৈধ প্রেক্ষাপট হিসেবে থাকতে পারে)। এরপর ভবিষ্যতের অংশ ইচ্ছেমতো পরিবর্তন (Suffix Mutation) করে পরীক্ষা করব নির্দিষ্ট Origin-এর Feature অপরিবর্তিত থাকছে কি না। আর Target Window ওভারল্যাপ বা Label বিলম্ব থাকলে নিছক Row Gap-এর ভরসায় না থেকে প্রকৃত Timestamp-ভিত্তিক Purge ও Gap প্রয়োগ করব।"
+    },
+    {
+      "title": "মাঝখানে Gap রেখে Fixed-Origin Seasonal Naive Implementation",
+      "tag": "ML CODING · 30 MIN",
+      "prompt": "ঋতুচক্র `period = 7`, স্থির `origin = T`, মাঝখানের বিরতি `gap = g` এবং মূল্যায়িত `horizon = H` দেওয়া আছে। শুধুমাত্র পর্যবেক্ষিত অতীতটুকু (Prefix) ব্যবহার করে কীভাবে Prediction তৈরি করবেন?",
+      "answer": "প্রথমেই যাচাই করব যেন পর্যবেক্ষিত ইতিহাসের দৈর্ঘ্য কমপক্ষে `period`-এর সমান হয়, `H` ও `period` ধনাত্মক পূর্ণসংখ্যা হয় এবং `gap` অঋণাত্মক পূর্ণসংখ্যা হয়। এরপর শুধুমাত্র Origin পর্যন্ত দেখা সর্বশেষ পূর্ণ ঋতুচক্র `history[-m:]` নিয়ে `i = 0 .. H - 1`-এর জন্য Modulo Index `(g + i) % m` বসিয়ে সরাসরি মানগুলো তুলে আনব। (তুলনায় Drift পদ্ধতিতে প্রথম মূল্যায়িত ধাপের Lead হয় `g + 1`, আর সাধারণ Naive শেষ দেখা মানটিকেই স্থির রাখে।) কোনো অবস্থাতেই মাঝখানের Gap বা পরবর্তী Validation ফলাফল দিয়ে ইতিহাস আপডেট করব না।\n\nUnit Test-এ আমরা পরীক্ষা করব: `H > m` অবস্থায় চক্রের পুনরাবৃত্তি (Wraparound), `g` যখন `period`-এর গুণিতক নয়, অপর্যাপ্ত ইতিহাস, অবৈধ Horizon, ধ্রুবক সিরিজ, ভবিষ্যতের অংশ বদলে দিলেও ফলাফল অপরিবর্তিত থাকা এবং Input Array-এর অপরিবর্তনীয়তা (Immutability)। এই হিসাবের Time Complexity `O(H)` এবং অতিরিক্ত আউটপুট Space Complexity-ও `O(H)`; আর মূল এককে Drift কখনো ঋণাত্মক মান দিলে তার নীতি আলাদাভাবে স্পষ্ট রাখতে হবে।"
+    },
+    {
+      "title": "অফলাইন One-Step Score চমৎকার, কিন্তু প্রোডাকশনের 14-দিনের Forecast ব্যর্থ",
+      "tag": "EVALUATION · 25 MIN",
+      "prompt": "অফলাইন মূল্যায়নে Model-টি Validation অংশের প্রকৃত Lag পেয়েছে, কিন্তু প্রোডাকশনে দাঁড়িয়ে একসাথে পুরো দুই সপ্তাহের (`14`-day) Forecast দিতে হচ্ছে। মূল সমস্যাটি কোথায়?\n\nপাশাপাশি ইতিহাস `[10, 20, 30]` এবং শেষ দুটি মানের Mean নেওয়া Predictor-এর জন্য দুই ধাপের Fixed-Origin Forecast এবং প্রথম ভবিষ্যৎ প্রকৃত মান `100` জানার পরের Rolling Forecast বের করুন।",
+      "answer": "এখানে মূল সমস্যা হলো অফলাইন মূল্যায়নের Moving-Origin One-Step Protocol-এর সাথে প্রোডাকশনের Fixed-Origin Multi-Step Protocol-এর Information Set-এর অমিল! প্রতিদিন শেষে প্রকৃত সংখ্যা হাতে এলে পরের এক দিনের জন্য তা ব্যবহার করা বৈধ; কিন্তু প্রোডাকশনে দাঁড়িয়ে যখন একসাথে আগামী `14` দিনের Forecast দিতে হয়, তখন মাঝখানের ভবিষ্যৎ দিনগুলোর প্রকৃত মান অজানা থাকে। তাই প্রোডাকশনের প্রকৃত ছন্দ অনুকরণ করতে হলে আমাদের হয় নিজের Prediction ব্যবহার করা Recursive পদ্ধতি, নয়তো প্রতিটি দূরত্বের জন্য আলাদা Direct Model কিংবা Multi-Output পদ্ধতি সাজাতে হবে এবং একই Origin, লক্ষ্য তারিখ, Covariate প্রাপ্যতা ও Refit ছন্দে Baseline-এর সাথে তুলনা করতে হবে। পাশাপাশি ধাপে ধাপে Error Propagation, Lead-Wise Metric এবং একাধিক Origin-এর Sensitivity আলাদাভাবে রিপোর্ট করতে হবে—কারণ অজানা ভবিষ্যৎ প্রকৃত মানকে উপলব্ধ ধরে নেওয়া কোনো ছোট টিউনিং ত্রুটি নয়, এটি একটি মৌলিক Protocol Error।\n\nপ্রদত্ত সংখ্যার উদাহরণে `[10, 20, 30]` ইতিহাস থেকে দুই ধাপের Fixed-Origin Recursive Forecast হবে যথাক্রমে `25` এবং `mean(30, 25) = 27.5`, অর্থাৎ `[25, 27.5]`। বিপরীতে প্রথম ভবিষ্যৎ প্রকৃত মান `100` হাতে চলে আসার পর পরের দিনের Rolling One-Step Forecast হবে `mean(30, 100) = 65`। Forecast Origin ও তথ্যের প্রাপ্যতার এই পার্থক্যই দুটি Protocol-কে সম্পূর্ণ আলাদা করে দেয়।",
+      "prerequisiteLessons": [
+        "ch13_horizons",
+        "ch13_backtest"
+      ]
+    },
+    {
+      "title": "সঠিক Metric নির্বাচন এবং MASE > 1 হওয়ার আপাত ধাঁধার ব্যাখ্যা",
+      "tag": "METRICS · 20 MIN",
+      "prompt": "কোনো Model-এর `MASE = 1.08` এসেছে, অথচ একই Validation তারিখগুলোতে চলা Seasonal Naive পদ্ধতির চেয়ে Model-টি ভালো করেছে! এটি কি কোনো স্ববিরোধিতা (Contradiction)?",
+      "answer": "না, এতে কোনো স্ববিরোধিতা নেই! কারণ MASE Metric-এর হর হিসাব করা হয় শুধুমাত্র ঐতিহাসিক Training অংশের Seasonal-Naive Mean Absolute Difference (`n - m` জোড়া) থেকে—Validation সময়ের Seasonal Error থেকে নয়। তাই `MASE = 1.08` আসার অর্থ কেবল এটুকুই যে আমাদের Model-এর Validation MAE ঐতিহাসিক Training স্কেলের তুলনায় `8%` বেশি; অথচ ওই নতুন ভবিষ্যৎ সময়ে ডেটার নিজস্ব ওঠানামা বেড়ে যাওয়ায় সেখানকার Seasonal Baseline আরও অনেক খারাপ করেছে!\n\nরিপোর্ট করার সময় আমরা হরটিকে কঠোরভাবে Training-ভিত্তিক রাখব এবং স্থির ডেটায় হর শূন্য হলে ফলাফল সুস্পষ্টভাবে Undefined (`null`) রাখব। একই মূল্যায়ন তারিখগুলোর ওপর MAE, RMSE এবং Baseline-এর তুলনামূলক দক্ষতা পাশাপাশি দেখাব, শূন্যের কাছাকাছি মানে MAPE বিস্ফোরিত হওয়ার অসুবিধা ও বহু-Horizon একত্র করার ওজন ব্যাখ্যা করব, এবং ভিন্ন ভিন্ন Protocol-এর ফলাফলকে কখনোই এক Ranking Table-এ মেশাব না।"
+    },
+    {
+      "title": "সময়ের নির্ভরশীলতা ও Drift-এর মাঝে নির্ভরযোগ্য Prediction Interval",
+      "tag": "UNCERTAINTY · 25 MIN",
+      "prompt": "টিম Forecast-এর সাথে '`95%` Interval' চাইছে, কিন্তু সিরিজে সময়ের নির্ভরশীলতা আছে এবং মাঝে মাঝে Regime বদলাচ্ছে। আপনি কীভাবে সাড়া দেবেন?",
+      "answer": "প্রথমেই পরিষ্কার করে নেব টিম ভবিষ্যতের একক Observation-এর পরিসর (Prediction Interval) চাইছে নাকি Mean অনুমানের অনিশ্চয়তা (Confidence Interval)। এরপর Model Fit, Calibration এবং চূড়ান্ত মূল্যায়নের ডেটা খণ্ড সম্পূর্ণ আলাদা রেখে সময়ানুক্রমিক Out-of-Sample Calibration Residual এবং প্রতিটি Lead দূরত্বের আলাদা Error বিশ্লেষণ দিয়ে কাজ শুরু করব।\n\nযেহেতু সিরিজে সময়ের নির্ভরশীলতা ও Regime Drift রয়েছে, তাই সাধারণ স্থির Variance-এর Gaussian সূত্র কিংবা সাধারণ Exchangeable ডেটার Split Conformal গ্যারান্টি এখানে চোখ বন্ধ করে দাবি করা যাবে না। এর বদলে আমরা সময়-উপযোগী পদ্ধতি ব্যবহার করে বাস্তবে পরিমাপকৃত প্রতি ধাপের (Lead-Wise) ও ঋতুভিত্তিক Subgroup Coverage, Interval-এর Width এবং উপযুক্ত Interval Score রিপোর্ট করব এবং সীমিত পরস্পর-নির্ভরশীল Sample-এর অনিশ্চয়তা মাথায় রাখব। পাশাপাশি অঋণাত্মক সংখ্যার ঋণাত্মক নিম্নসীমা কেটে শূন্য (`clip`) করলে Coverage-এর অর্থ কীভাবে বদলায় তা স্পষ্ট করব—এবং যাচাইকৃত Calibration ছাড়া কেবল Point Forecast সিস্টেম থেকে কখনোই কোনো Coverage গ্যারান্টি দাবি করব না।",
+      "prerequisiteLessons": [
+        "ch13_book_conformal"
+      ]
+    },
+    {
+      "title": "দেরিতে আসা ডেটা ও Drift সামলে দৈনিক Forecasting ও Alerting Pipeline",
+      "tag": "ML SYSTEM DESIGN · 35 MIN",
+      "prompt": "বাস্তব সিস্টেমে বিলম্বিত সংখ্যা, পরবর্তী সংশোধন, Drift এবং রিভিউ ফিডব্যাক রয়েছে। এর জন্য একটি নির্ভরযোগ্য প্রোডাকশন Pipeline নকশা করুন।",
+      "answer": "সিস্টেমের ভিত্তি হিসেবে প্রতিটি রেকর্ডে `event_time`, `available_time` এবং সংশোধনের লগ (Revision Lineage) রেখে অপরিবর্তনীয় কাঁচা ডেটা সংরক্ষণ করব, যাতে যেকোনো সময়ের নিখুঁত As-Of Training ও Backtest Snapshot তৈরি করা যায়। প্রতিদিনের Pipeline-এ ক্যালেন্ডার ও Schema যাচাই, প্রতিটি Entity-এর নিজস্ব সীমানায় (`groupby` করে) Causal Lag তৈরি, সংস্করণযুক্ত Preprocessing/Model/Threshold বান্ডেল এবং জরুরি অবস্থার জন্য একটি সরল Fallback Baseline থাকবে। দিনের ডেটা চূড়ান্তভাবে আসার বাস্তব চুক্তি অনুযায়ীই Forecast Origin ও Alert পাঠানোর সময়সীমা (SLA) বাঁধা হবে।\n\nমনিটরিং স্তরে আমরা ডেটার নিখোঁজ হার, আসার বিলম্ব, Feature Distribution পরিবর্তন, বিলম্বিত ফলাফলের Error, দৈনিক Alert সংখ্যা ও মানুষের যাচাইয়ের উপযোগিতা নজরে রাখব—মনে রেখে যে Label দেরিতে এলে তাৎক্ষণিক Accuracy অজানা থাকে। নিরাপদ আপডেটের জন্য নতুন সময়ের ডেটায় Shadow Refit মূল্যায়ন, দ্রুত Rollback এবং Duplicate Event সংকেত দমন ব্যবস্থা রাখব। আর কেবল Flag না হওয়া Row দিয়ে বারবার Retrain করলে যে Feedback Bias তৈরি হয় তা ঠেকাতে কম Score পাওয়া অংশের Sampled Audit ও মানব রিভিউয়ের ইতিহাস যুক্ত করব; পাশাপাশি মনে রাখব যে একটি একক সমন্বিত ঐতিহাসিক সিরিজের পরীক্ষা কখনোই বিশাল বহু-Entity প্যানেল প্রোডাকশনের চূড়ান্ত প্রমাণ নয়।"
+    }
+  ],
+  "book": {
+    "order": 13,
+    "part": "Book 2 · Classical Machine Learning",
+    "prerequisites": [
+      "chapter_05",
+      "chapter_08",
+      "chapter_12"
+    ],
+    "purpose": "বাস্তব Dataset-এ কোনটি সত্যিকারের Anomaly আর কোনটি স্বাভাবিক Seasonality তা আলাদা করতে শেখা, এবং সময়ের ধারাবাহিকতা (Temporal Constraints) ও Data Leakage এড়িয়ে নির্ভরযোগ্য Forecast ও Prediction Interval তৈরি করা।",
+    "outcomes": [
+      "Contextual Residual, Isolation Forest, Local Outlier Factor ও One-Class SVM-এর গাণিতিক ভিত্তি বুঝে বাস্তব অপারেশনাল সীমাবদ্ধতা অনুযায়ী Alert Threshold ও Chronological Backtest সঠিকভাবে বাস্তবায়ন করতে পারা।",
+      "গাণিতিক উদাহরণ, কোড ও হাতে-কলমের যাচাইয়ের মাধ্যমে Split Conformal Prediction Interval-এর Finite-Sample Rank ও Exchangeability অনুমান এবং Censoring-সহ Time-to-Event হিসাব স্পষ্টভাবে ব্যাখ্যা করতে পারা।"
+    ],
+    "recall": [
+      "Rolling One-Step Forecasting এবং Fixed-Origin Multi-Step Forecasting-এর মধ্যে নির্দিষ্ট মুহূর্তে প্রাপ্য তথ্যের (Information Set) মূল পার্থক্য কোথায়?",
+      "একই Calibration Score-এর তালিকায় alpha = 0.05 ধরলে Prediction Interval কীভাবে বদলাবে, এবং খুব চওড়া (Wide) Interval উচ্চ Coverage দিলেও বাস্তবে কেন কার্যকর নাও হতে পারে?"
+    ],
+    "bridge": "পরের অধ্যায় Book 2 · Chapter 9 (Classical ML Capstone)-এ আমরা পুরো বইয়ের শেখা ধারণাগুলোকে একটি পূর্ণাঙ্গ প্রজেক্টে একত্র করব। নতুন অধ্যায়ে যাওয়ার আগে এই অধ্যায়ের Quiz, Coding Exercise এবং Interview প্রশ্নগুলো দিয়ে নিজের প্রস্তুতি যাচাই করে নিন।",
+    "bookId": "classical",
+    "bookChapter": 8
+  }
+}

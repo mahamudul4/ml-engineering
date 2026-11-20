@@ -1,0 +1,1622 @@
+{
+  "id": "chapter_35",
+  "number": 35,
+  "title": "ML Data Pipelines & Feature Systems",
+  "shortTitle": "Data Pipelines & Features",
+  "displayTitle": "Data Pipelines & Features\nDefine. Materialize. Trust.",
+  "subtitle": "কোন তথ্য ঠিক কোন সময়ে জানা ছিল—সেই কঠোর Contract মেনে নির্ভরযোগ্য ও পুনরুত্পাদনযোগ্য Feature Pipeline গড়ে তুলুন।",
+  "description": "Trace the data. Respect the cutoff.\nReplay safely. Keep features consistent.",
+  "difficulty": "Advanced · data & feature engineering",
+  "lab": "feature_systems",
+  "lessons": [
+    {
+      "id": "ch35_contract",
+      "title": "Pipeline Contract: সাধারণ Row থেকে নির্ভরযোগ্য Feature",
+      "subtitle": "Data Pipeline কেবল সহায়ক স্ক্রিপ্ট নয়, এটি পুরো ML System-এর একটি অবিচ্ছেদ্য ও কার্যকর অংশ",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন শুধুমাত্র Notebook-এর কোড যথেষ্ট নয়?",
+          "body": "Book 5 (Recommender Systems)-এর Recommender Capstone শেষ করে আমরা এখন প্রবেশ করছি বাস্তব জগতের ML Systems ও MLOps-এর জগতে। ভেবে দেখুন, আপনি একটি দারুণ Model তৈরি করেছেন, যার Feature-গুলো আপনার নিজের কম্পিউটারের Notebook-এ চমৎকার কাজ করছে। কিন্তু বাস্তব সিস্টেমে শুধু হিসাব মেলানোই যথেষ্ট নয়—ঠিক কোন মুহূর্তে কোন তথ্য সিস্টেমের কাছে উপলব্ধ ছিল, নেটওয়ার্ক সমস্যার কারণে একই Event দ্বিতীয়বার এলে কী ঘটবে, কিংবা পুরোনো হিসাব পুনরায় তৈরি (Recompute) করতে হলে ফলাফল হুবহু এক থাকবে কি না, তার প্রতিটি ধাপ সুনির্দিষ্ট নিয়মে বাঁধা থাকতে হয়।\n\nএই অধ্যায়ে আমরা দৈনিক বাইক চাহিদার (Daily Bike Demand) বাস্তব ডেটা ব্যবহার করে ঠিক এমনই একটি নির্ভরযোগ্য Feature Pipeline তৈরি করব। এখানে আমাদের লক্ষ্য কোনো নতুন Model-এর Accuracy বাড়ানো নয়; বরং `lag 1`, `lag 7`, ৭ দিনের `rolling mean`, দেখা গেছে এমন দিনের সংখ্যা (`observed-window count`) এবং ডেটার সতেজতা (`freshness`) নিখুঁতভাবে হিসাব করা—যাতে Schema যাচাই, Idempotency, `SQLite`-এ সংরক্ষণ এবং Training ও Serving-এর মধ্যে একই Feature Definition শতভাগ অটুট থাকে।"
+        },
+        {
+          "type": "text",
+          "title": "Model-এর আগেই কেন Pipeline-এর শুদ্ধতা জরুরি?",
+          "body": "পৃথিবীর সবচেয়ে শক্তিশালী Model-ও ভুল আউটপুট দেবে যদি তার ইনপুটে ভুল Timestamp, দুবার যোগ হওয়া (Duplicate) সংখ্যা কিংবা অসামঞ্জস্যপূর্ণ Feature Definition ঢুকে পড়ে। আরও বিপজ্জনক বিষয় হলো, Offline মূল্যায়নে আপনার Metric হয়তো দারুণ দেখাবে, কিন্তু Training-এর সময় যদি এমন কোনো তথ্য ব্যবহৃত হয়ে থাকে যা বাস্তবে ওই দিন জানা সম্ভব ছিল না, তবে Production-এ Deployment-এর পর Model কখনোই সেই একই মানের ইনপুট পাবে না। তাই যেকোনো Model Fitting শুরু করার আগেই Feature-এর নির্ভুলতা নিশ্চিত করা একজন ML Engineer-এর প্রথম শর্ত।"
+        },
+        {
+          "type": "math",
+          "title": "একটি আদর্শ Feature Pipeline-এর ধাপসমূহ",
+          "body": "\\mathrm{source}\\to\\mathrm{validate}\\to\\mathrm{deduplicate}\\to\\mathrm{materialize}\\to\\mathrm{lookup}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Pipeline Lab-এর প্রাথমিক তথ্য যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/pipeline_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nassert lab[\"report\"][\"used_rows\"] == 547\nassert lab[\"report\"][\"reserved_outcomes_used\"] == 0\nprint(lab[\"definition\"])\nprint(lab[\"statistics\"][\"late_fixture\"][\"retrospective_mismatch_snapshots\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব ইমপ্লিমেন্টেশনের কাঠামো",
+          "body": "উপরের প্রবাহচিত্র এবং কোড কীভাবে বাস্তবে কাজ করে তা পরিষ্কারভাবে জেনে রাখা ভালো। আমাদের Companion Python কোড সত্যিকারের `SQLite` টেবিল, `Transaction`, `Point-in-Time SQL` কুয়েরি এবং পোর্টেবল ডেটাবেস এক্সপোর্ট পরিচালনা করে। অন্যদিকে অ্যাপের ইন্টারফেস `Dart` ভাষায় একই উৎস থেকে আসা `Window` এবং Replay নিয়ন্ত্রণগুলো নতুন করে হিসাব করে দেখায়। অ্যাপের ভেতরে শিক্ষার্থীর অগ্রগতির তথ্য আগের মতোই আলাদা `sqflite` ডেটাবেসে সংরক্ষিত থাকে—অর্থাৎ বাইরের এই পোর্টেবল Feature Store ডেটাবেস এবং অ্যাপের নিজস্ব ডেটাবেস সম্পূর্ণ পৃথক।"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব ডেটা বনাম সিমুলেটেড পরিস্থিতির সীমারেখা",
+          "body": "এই ল্যাবে ব্যবহৃত UCI Dataset-এর মূল তারিখ এবং বাইক ভাড়ার সংখ্যা (`count`) একদম অপরিবর্তিত রাখা হয়েছে। তবে মূল Dataset-এ ডেটা কখন সার্ভারে এসে পৌঁছেছে তার কোনো Ingestion Timestamp নেই। তাই দেরিতে ডেটা আসা (Late Arrival Schedule) কিংবা ঋণাত্মক সংখ্যার (`negative count`) ত্রুটিপূর্ণ রেকর্ড পাঠানোর ঘটনাগুলো আমরা সুস্পষ্টভাবে নিয়ন্ত্রিত উদাহরণ হিসেবে তৈরি করেছি, যাতে সিস্টেমের আচরণ হাতে-কলমে পরীক্ষা করা যায়। মনে রাখবেন, এখানে কোনো ডিস্ট্রিবিউটেড `Kafka` ক্লাস্টার, প্রোডাকশন Latency বা বাস্তব সার্ভারের নেটওয়ার্ক বিলম্ব মাপা হচ্ছে না।"
+        },
+        {
+          "type": "text",
+          "title": "ডেটার পরিসর ও সংরক্ষিত অংশের শৃঙ্খলা",
+          "body": "পূর্ববর্তী অধ্যায়গুলোর ধারাবাহিকতা বজায় রেখে এই ওয়ার্কফ্লোতে আমরা শুধুমাত্র প্রথম `547 days` (অর্থাৎ পুরো `2011` সাল এবং `2012` সালের জানুয়ারি থেকে জুন পর্যন্ত) ব্যবহার করছি। Dataset-এর শেষের সংরক্ষিত `184`টি দিনের ফলাফল (`reserved outcomes`) এখানে স্পর্শই করা হয়নি (`reserved_outcomes_used == 0`)। এখানে নতুন কোনো Blind Benchmark চালানো হচ্ছে না এবং ভবিষ্যতের আবহাওয়ার ডেটার ওপর কোনো নতুন Model-ও ফিট করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "এই পাঠ শেষে আপনার দক্ষতার লক্ষ্যমাত্রা",
+          "body": "এই অধ্যায়টি আয়ত্ত করার পর আপনি যেকোনো একটি Feature-এর মানের পেছনের মূল `Raw Row`, তার উপলব্ধতার শর্ত (`Availability Predicate`), ভগ্নাংশের হর (`Denominator`), `Null Policy` এবং `Definition Version` আঙুল দিয়ে দেখিয়ে দিতে পারবেন। একই ডেটা বারবার Replay বা Backfill করার পরও কোন কোন শর্ত (`Invariant`) অপরিবর্তিত থাকে, তা স্পষ্টভাবে ব্যাখ্যা করতে শেখাই আমাদের আসল লক্ষ্য—কেবল বড় বড় টুলের নাম মুখস্থ করা নয়, বরং কখন একটি ডেটা Contract ভেঙে পড়তে পারে তার নিখুঁত `Counterexample` ধরতে পারা।"
+        }
+      ]
+    },
+    {
+      "id": "ch35_source",
+      "title": "Source Provenance ও Entity Grain",
+      "subtitle": "শহরের সামগ্রিক দৈনিক হিসাব আর প্রতিটি স্টেশনের আলাদা ঘটনা এক জিনিস নয়",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "মূল ডেটার উৎস ও গ্রানুলারিটি (Entity Grain)",
+          "body": "আগের পাঠে আমরা দেখেছি যে একটি নির্ভরযোগ্য Pipeline শুরু হয় মূল উৎস (`source`) থেকে। কিন্তু উৎস ফাইল হাতে পাওয়ার পর প্রথম প্রশ্ন হওয়া উচিত: প্রতিটি Row আসলে কার কথা বলছে? আমরা এখানে Fanaee-T (2013)-এর তৈরি করা সুপরিচিত UCI Bike Sharing Dataset (`CC BY 4.0` লাইসেন্সের আওতায়) ব্যবহার করছি এবং কাজ শুরুর আগেই মূল `day.csv` ও `Readme.txt` ফাইলের `Hash` যাচাই করে নিচ্ছি। লক্ষ্য করুন, এই উৎস ফাইলটি পুরো সিস্টেমের দৈনিক সম্মিলিত হিসাব দেয়—এখানে আলাদা কোনো স্টেশন বা ব্যবহারকারীর ID নেই। তাই আমরা কাল্পনিক কোনো স্টেশন বা ইউজার তৈরি না করে পুরো সিস্টেমের জন্য `bike-global` নামক একমাত্র `Entity Key` ব্যবহার করব।"
+        },
+        {
+          "type": "text",
+          "title": "Natural Key ও পরিচয়ের স্বাতন্ত্র্য",
+          "body": "আমাদের সিস্টেমে একটি নির্দিষ্ট তারিখের সামগ্রিক পর্যবেক্ষণই হলো একটি একক `Event`, যার `Natural Key` হবে `bike-global:YYYY-MM-DD` ফরম্যাটে। ফাইলের ক্রমিক ইনডেক্স কেবল ক্যালেন্ডারের দিনের হিসাব মেলানোর সুবিধার্থে ব্যবহৃত হয়, ব্যবসায়িক সত্তার (`Business Entity`) পরিচয় হিসেবে নয়। এই `Natural Key` থাকার সবচেয়ে বড় সুবিধা হলো, একই তারিখের ডেটা ভুলবশত দুইবার চলে এলেও সিস্টেম চিনে ফেলবে এবং বাইকের সংখ্যা কখনোই দুবার যোগ করবে না।"
+        },
+        {
+          "type": "math",
+          "title": "প্রতিটি Event-এর গাণিতিক রূপ",
+          "body": "e=(entity,date,count),\\quad entity=\\text{bike-global}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Source Event ও Unique Key যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"pipeline35\", Path(\"assets/datasets/bike_sharing/pipeline_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/pipeline_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nevents = m.load()\nassert len(events) == 547 and events[-1][\"date\"] == \"2012-06-30\"\nassert len({r[\"event_key\"] for r in events}) == 547\nprint(events[0], events[-1])\n"
+        },
+        {
+          "type": "text",
+          "title": "পর্যবেক্ষণের অর্থ ও Label Leakage-এর ঝুঁকি",
+          "body": "কোডে লোড হওয়া প্রতিটি Row-এর Column-গুলোর অর্থ পরিষ্কারভাবে বোঝা দরকার। এখানে `cnt` হলো ওই দিনের মোট বাইক ভাড়ার প্রকৃত সংখ্যা, আর `casual` এবং `registered` হলো তার দুটি অংশ—অর্থাৎ সবসময় `cnt = casual + registered` সম্পর্কটি সত্য হবে। ডেটা গ্রহণ করার সময় এই সমীকরণটি দিয়ে আমরা তথ্যের অভ্যন্তরীণ সামঞ্জস্য (`Consistency Check`) পরীক্ষা করতে পারি। কিন্তু সাবধান! যে দিনের `cnt` আমরা অনুমান (`Target`) করতে চাই, সেই একই দিনের `casual` বা `registered` Column-কে যদি ভুল করে Feature হিসেবে ব্যবহার করি, তবে সাথে সাথে চরম `Label Leakage` ঘটবে। অর্থাৎ তথ্যের বৈধতা যাচাইয়ের প্রমাণ এবং Prediction-এর ইনপুট—দুটির ভূমিকা সম্পূর্ণ আলাদা।"
+        },
+        {
+          "type": "text",
+          "title": "Prefix সীমারেখা ও মূল ফাইলের সুরক্ষা",
+          "body": "কোডে খেয়াল করুন, আমরা `islice` ব্যবহার করে ঠিক প্রথম `547`টি Row পার্স করছি, যার শেষ তারিখ হলো `2012-06-30`, এবং প্রতিটি রেকর্ডের `event_key` সম্পূর্ণ স্বতন্ত্র। মূল ফাইলের `Hash` দিয়ে পুরো ফাইলের বাইট-পর্যায়ের অখণ্ডতা যাচাই করা গেলেও, সংরক্ষিত পরের `184`টি দিনের ফলাফল আমাদের কোনো Feature, পরীক্ষা বা ডেটাবেস এক্সপোর্টে প্রবেশ করে না। পাশাপাশি মূল উৎস ফাইলগুলো কখনোই পরিবর্তন বা Overwrite করা হয় না।"
+        },
+        {
+          "type": "text",
+          "title": "লাইসেন্স, Lineage এবং প্রাসঙ্গিক সীমাবদ্ধতা",
+          "body": "উৎস থেকে তৈরি করা প্রতিটি Derived Feature-এর সাথে মূল Dataset-এর সাইটেশন, `CC BY 4.0` লাইসেন্সের লিংক এবং মূল বিজ্ঞপ্তি সংযুক্ত রাখা প্রকৌশলগত নৈতিকতার অংশ। তবে মনে রাখতে হবে, ফাইলের ক্রিপ্টোগ্রাফিক `Hash` মেলার অর্থ কেবল এই যে ফাইলটি মূল উৎস থেকে অবিকল এসেছে—এটি কিন্তু ডেটাটির বাস্তব সত্যতা কিংবা বর্তমান সময়ের জনসংখ্যার প্রতিনিধিত্ব (`Population Representativeness`) প্রমাণ করে না। একটি পুরোনো পাবলিক Dataset কখনোই আজকের প্রোডাকশন চাহিদার প্রকৃত আচরণ মাপতে পারে না।"
+        },
+        {
+          "type": "text",
+          "title": "অনুশীলন: নিজের Data Contract লিখে ফেলুন",
+          "body": "হাতে-কলমে অনুশীলনের জন্য এই সিস্টেমের `Entity Grain`, `Natural Key`, তারিখের একক, `Count`-এর ধরন, `Duplicate Policy` এবং অনুমোদিত আউটকামগুলোর একটি সংক্ষিপ্ত তালিকা তৈরি করুন। ভাবুন তো, কাল যদি প্রোডাক্ট টিম এসে বলে যে তাদের প্রতিটি স্টেশনের আলাদা `Station-level Prediction` চাই, তখন আপনি কী করবেন? তখন স্পষ্টভাবে জানাতে হবে যে এই দৈনিক সামগ্রিক উৎস দিয়ে সেই কাজ সম্ভব নয়—তার জন্য নতুন স্টেশন-ভিত্তিক Data Contract প্রয়োজন; সামগ্রিক যোগফল থেকে অনুমান করে স্টেশনের ডেটা বানানো যাবে না।"
+        }
+      ]
+    },
+    {
+      "id": "ch35_clocks",
+      "title": "Event Time, Availability Time ও Prediction Time",
+      "subtitle": "কোনো ঘটনা অতীতে ঘটেছে মানেই এই নয় যে তখনই সিস্টেম তা জানত",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "তিনটি ভিন্ন সময়ের ঘড়ি (Three Clocks)",
+          "body": "আগের পাঠে আমরা দেখেছি প্রতিটি দৈনিক পর্যবেক্ষণ একটি নির্দিষ্ট তারিখের সাথে যুক্ত। কিন্তু বাস্তব ডেটা পাইপলাইনে একটি তারিখের পেছনে আসলে তিনটি ভিন্ন সময়ের হিসাব লুকিয়ে থাকে। প্রথমত, `Event Time` (বা `Event Date`) বলে ঘটনাটি বাস্তবে কোন দিনে ঘটেছে। দ্বিতীয়ত, `Availability Time` বলে আমাদের ডেটা প্রসেসিং সিস্টেম ঠিক কোন দিনে সেই তথ্যটি হাতে পেয়েছে ও ব্যবহারের উপযোগী করেছে। আর তৃতীয়ত, `Prediction Time` ও `As-of` সীমারেখা ঠিক করে দেয় আমরা কোন মুহূর্তের দাঁড়ানো জ্ঞান থেকে Feature তৈরি করতে চাই। অতীতের কোনো ঘটনা দেরিতে এসে পৌঁছালে নিছক `Event Time` দেখা যথেষ্ট নয়—তখন `Event Time` এবং `Availability Time` উভয় শর্তই পূরণ হতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "নির্ধারিত সময়সূচি: On-time বনাম Late Arrival",
+          "body": "বিষয়টি হাতে-কলমে পরীক্ষা করার জন্য আমাদের পাইপলাইনে দুটি স্পষ্ট সময়সূচি (`Schedule`) সংজ্ঞায়িত করা হয়েছে। স্বাভাবিক `on_time` সূচিতে ধরা হয়, দিন `d` শেষ হওয়ার পর পরের দিন `d + 1` থেকেই ওই দিনের মোট বাইক ভাড়ার হিসাব সিস্টেমে পাওয়া যায়। অন্যদিকে বিলম্বিত ডেটার প্রভাব বোঝার জন্য তৈরি `late_fixture` সূচিতে যখনই `d % 17 == 0` হয়, তখন ওই দিনের তথ্য পৌঁছাতে আরও `3` ক্যালেন্ডার দিন দেরি হয় (অর্থাৎ `d + 4` দিনে উপলব্ধ হয়)। এখানে মূল ঘটনা ও বাইকের সংখ্যা একদম অপরিবর্তিত থাকে, কেবল সিস্টেমে তথ্য পৌঁছানোর সময়টি বদলে যায়।"
+        },
+        {
+          "type": "math",
+          "title": "তথ্য ব্যবহারের যুগপৎ সময়-শর্ত",
+          "body": "t_{event}<t_{prediction},\\quad t_{available}\\le t_{asof}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ বিলম্বিত তথ্যের বাস্তব উদাহরণ পরীক্ষা",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"pipeline35\", Path(\"assets/datasets/bike_sharing/pipeline_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/pipeline_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nevents = m.scheduled(m.load(), \"late_fixture\")\nrow = events[374]\nassert row[\"event_day\"] == 374 and row[\"available_day\"] == 378\nassert row[\"event_day\"] < 375 < row[\"available_day\"]\nprint(row, \"prediction day\", 375)\n"
+        },
+        {
+          "type": "text",
+          "title": "একটি বাস্তব Counterexample: কেন Day 375-এ Lag 1 অনুপস্থিত?",
+          "body": "উপরের কোডের আউটপুটটি খুব মনোযোগ দিয়ে দেখুন। `event_day = 374`-এর বাইক ভাড়ার সংখ্যাটি নিঃসন্দেহে `prediction day = 375`-এর আগের দিনের ঘটনা (`374 < 375`)। আপনি যদি আজকের সম্পূর্ণ ডেটাবেস খুলে সাধারণভাবে আগের দিনের Row খুঁজতে যান, তবে `day 374`-এর মান অনায়াসেই পেয়ে যাবেন। কিন্তু আমাদের `late_fixture` অনুযায়ী (`374 = 17 × 22`), এই তথ্যটি সিস্টেমে এসে পৌঁছেছে `available_day = 378`-এ! ফলে `day 375`-এ দাঁড়িয়ে Prediction দেওয়ার সময় `day 374`-এর তথ্য তখনো অজানা ছিল, তাই তখনকার সঠিক `lag 1` Feature-টি অবশ্যই `Missing` (বা `Null`) হতে হবে। পরে জানা গেছে বলে পুরোনো Training ডেটায় এই মান বসিয়ে দেওয়াটাই হলো ক্ল্যাসিক `Availability Leakage`।"
+        },
+        {
+          "type": "text",
+          "title": "ক্যালেন্ডারের হিসাব ও Timezone প্রসঙ্গ",
+          "body": "এই পাইপলাইনে দিনের হিসাব রাখার জন্য আমরা পূর্ণসংখ্যা ইনডেক্স (`Integer Day Index`) এবং সাধারণ ক্যালেন্ডার তারিখ ব্যবহার করেছি। মূল Dataset-এ যেহেতু সুনির্দিষ্ট `UTC` ঘড়ি, `Timezone` বা `Daylight Saving Time (DST)` পরিবর্তনের লগ নেই, তাই আমরাও সেসব অনুমান করে নিইনি। কোডের ভেতরে তারিখের ফরম্যাট স্থিতিশীল রাখার সুবিধার্থে `UTC` কনস্ট্রাক্টর ব্যবহার করা হলেও এটি মূল ঘটনার প্রকৃত `Timezone` নির্দেশ করে না।"
+        },
+        {
+          "type": "text",
+          "title": "পরবর্তী সংশোধন (Corrections) ও Bitemporal ধারণা",
+          "body": "অনেক বাণিজ্যিক সিস্টেমে একটি সংখ্যা প্রথমে জমা পড়ার কয়েক দিন পর আবার সংশোধিত (`Mutable Correction`) হতে পারে। সেরকম ক্ষেত্রে ঘটনাটি কবে ঘটেছিল (`Valid Time`) এবং সিস্টেম কোন সংস্করণে কী জানত (`System Knowledge History`)—এই দুই সময়ের পূর্ণ ইতিহাস বা `Bitemporal` Model বজায় রাখতে হয়। আমাদের বর্তমান পাইপলাইনটি তুলনামূলকভাবে সরল ও কঠোর: এটি একবার গৃহীত দৈনিক ঘটনাকে অপরিবর্তনীয় (`Immutable`) রাখে এবং একই তারিখে ভিন্ন সংখ্যার সাংঘর্ষিক ডেটা এলে তা সরাসরি প্রত্যাখ্যান (`Reject`) করে।"
+        },
+        {
+          "type": "text",
+          "title": "ইন্টারভিউ প্রস্তুতি: সময়ের সূক্ষ্ম ফাঁদ",
+          "body": "ইন্টারভিউতে প্রায়ই প্রশ্ন করা হয়: 'গতকালের ঘটনা হওয়া সত্ত্বেও আজকের Prediction-এ সেই ডেটা কেন অনুপলব্ধ থাকতে পারে—একটি বাস্তব উদাহরণ দিন।' উত্তরে অফলাইন ব্যাচ আপলোডের বিলম্ব, পেমেন্ট সেটেলমেন্ট দেরি বা সেন্সর সিঙ্ক আটকে যাওয়ার কথা বলার পাশাপাশি ব্যাখ্যা করুন যে কেবল `Event Time` মিলিয়ে করা Join এবং `Availability-aware` Join-এর অনুমান সম্পূর্ণ আলাদা। ডেটাবেসে একটি `created_at` বা `ingested_at` Column থাকলেই যে ঐতিহাসিক ফিল্টার আপনা-আপনি সঠিক হয়ে যাবে তা নয়—যদি কোনো ব্যাকফিল স্ক্রিপ্ট সেই Column-টি Overwrite করে দেয়, তবে পুরো ইতিহাসই দূষিত হয়ে যায়।"
+        }
+      ]
+    },
+    {
+      "id": "ch35_schema",
+      "title": "Schema ও Semantic Contracts",
+      "subtitle": "ডেটার Type সঠিক হলেও অর্থগত শর্ত ভাঙলে পুরো Feature ভুল হতে পারে",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কাঠামোগত যাচাই (Structural Checks)",
+          "body": "সময়ের ঘড়ি ঠিক রাখার পাশাপাশি ডেটা পাইপলাইনের প্রবেশদ্বারেই প্রতিটি রেকর্ডের গঠন পরীক্ষা করা জরুরি। আমাদের চুক্তিতে `event_day`, `available_day`, `count` (`cnt`) এবং `weekday`—এই সবকটি ফিল্ড অবশ্যই প্রকৃত পূর্ণসংখ্যা (`Integer`) হতে হবে। এখানে একটি সূক্ষ্ম Python ফাঁদ লক্ষ্য করুন: Python-এ `bool` হলো `int`-এর সাবক্লাস, তাই সাধারণ টাইপ চেক করলে `True` মানটি `1` হিসেবে গলে যেতে পারে! আমাদের ভ্যালিডেটর তাই সুস্পষ্টভাবে `boolean` মানকে পূর্ণসংখ্যা হিসেবে গ্রহণ করতে অস্বীকার করে। এ ছাড়া প্রয়োজনীয় সব `Key` উপস্থিত থাকা, তারিখের সঠিক ফরম্যাট এবং `Natural Key`-এর মিল থাকা বাধ্যতামূলক—কেবল `JSON` পার্স হতে পারলেই কোনো রেকর্ড বৈধ হয়ে যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "অর্থগত যাচাই (Semantic Checks)",
+          "body": "কাঠামোগত দিক থেকে সব ফিল্ড পূর্ণসংখ্যা হলেও ডেটা অর্থহীন হতে পারে। তাই দ্বিতীয় ধাপে দরকার অর্থগত যাচাই বা `Semantic Contract`: বাইক ভাড়ার সংখ্যা কখনোই ঋণাত্মক হতে পারে না (`count >= 0`), দিনের ক্রমিক সংখ্যার সাথে ক্যালেন্ডারের তারিখ ও সপ্তাহের বার (`weekday`) গাণিতিকভাবে মিলতে হবে, এবং কোনো দিনের ডেটা ওই দিন শেষ হওয়ার আগেই উপলব্ধ হতে পারবে না (`available >= event + 1`)। পাশাপাশি মূল ডেটার ক্ষেত্রে `cnt = casual + registered` শর্তটিও মিলিয়ে দেখা হয়। মনে রাখবেন, বৈধ মানের এই সীমা নির্ধারিত হয় বাস্তব ডোমেইনের অর্থ থেকে—কোনো Model-এর সুবিধার্থে নয়।"
+        },
+        {
+          "type": "math",
+          "title": "বৈধ রেকর্ডের মৌলিক গাণিতিক শর্ত",
+          "body": "count\\in\\mathbb Z_{\\ge0},\\quad available\\ge event+1"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Structural ও Semantic Validator পরীক্ষা",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"pipeline35\", Path(\"assets/datasets/bike_sharing/pipeline_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/pipeline_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nrow = m.scheduled(m.load())[0]\nassert m.validate(row) == []\nbad = dict(row, cnt=-1)\nassert \"negative_count\" in m.validate(bad)\nassert m.validate(dict(row, cnt=True)) == [\"type:cnt\"]\nprint(m.validate(bad))\n"
+        },
+        {
+          "type": "text",
+          "title": "যাচাইয়ের সঠিক ক্রম: আগে Validation, পরে Deduplication",
+          "body": "উপরের কোডে দেখলেন কীভাবে `cnt = -1` দিলে `negative_count` এবং `cnt = True` দিলে `type:cnt` ত্রুটি ধরা পড়ে। কিন্তু পাইপলাইনের নকশায় এই যাচাই ঠিক কোন ধাপে বসবে? নিয়ম হলো: যেকোনো নতুন পেলোড এলে সবার আগে তার বৈধতা যাচাই (`Validate`) করতে হবে, এবং কেবল বৈধ হলেই সেটিকে আগের জমানো ডেটার সাথে তুলনা (`Duplicate Check`) করা যাবে। যদি আগে কী (`Key`) মিলিয়ে দেখেন যে ওই তারিখের ডেটা তো আগেই আছে, আর সেই অজুহাতে একটি ঋণাত্মক সংখ্যার ত্রুটিপূর্ণ রেকর্ডকে নিরীহ ডুপ্লিকেট ভেবে চুপচাপ এড়িয়ে যান, তবে আপস্ট্রিম সিস্টেমের একটি গুরুতর বাগ আপনার চোখ এড়িয়ে যাবে! প্রোডাকশন সিস্টেমে প্রতিটি প্রত্যাখ্যানের সুনির্দিষ্ট কারণ (`Rejection Reason`) লগ করে রাখা অত্যন্ত জরুরি।"
+        },
+        {
+          "type": "text",
+          "title": "Quarantine সীমারেখা ও ত্রুটিপূর্ণ ডেটার ব্যবস্থাপনা",
+          "body": "আমাদের পরবর্তী Replay Lab-এ আপনি একটি ঋণাত্মক সংখ্যার (`negative-count`) রেকর্ড দেখতে পাবেন, যা ভ্যালিডেটর কীভাবে খারাপ ডেটা আটকে দেয় তা দেখানোর জন্য ইচ্ছাকৃতভাবে যোগ করা হয়েছে। আমাদের পাইপলাইন সেটিকে মূল সংরক্ষিত ডেটায় ঢুকতে দেয় না বরং আলাদাভাবে প্রত্যাখ্যানের তালিকায় রাখে (যাকে বাস্তব সিস্টেমে `Quarantine` বা `Dead-letter Queue` বলা হয়)। অবশ্য বাস্তব প্রোডাকশনে ঠিক কত শতাংশ ডেটা এভাবে দূষিত হয়ে আসে, তা কেবল লাইভ সিস্টেম মনিটর করেই জানা সম্ভব।"
+        },
+        {
+          "type": "text",
+          "title": "Schema Evolution ও সংস্করণ ব্যবস্থাপনা",
+          "body": "সময়ের সাথে সাথে ব্যবসার প্রয়োজনে Feature বা Schema-র সংস্করণ বদলাতে পারে। তবে টেবিলে নতুন একটি ঐচ্ছিক `Column` যোগ করা আর বিদ্যমান একটি Column-এর একক (`Units`) বা `Null Policy` বদলে ফেলা এক কথা নয়! অর্থগত সংজ্ঞা বদলে গেলে ডাউনস্ট্রিমের সব Consumer ও Model-কে পরিকল্পিতভাবে মাইগ্রেট করতে হয়। এজন্য আমাদের মেটাডেটা গার্ড Feature পড়ার সময় `version`, `source`, `definition`, `availability` এবং `entity`—সবকটি পরিচয় মিলিয়ে দেখে এবং অমিল পেলে সাথে সাথে ভুল `Lookup` আটকে দেয়।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে অনুশীলন",
+          "body": "নিজে চেষ্টা করে দেখুন: একটি সম্পূর্ণ বৈধ রেকর্ড, একটি ঋণাত্মক `count`, ভুল তারিখ, ভুল `entity`, দিন শেষ হওয়ার আগেই দেওয়া `available_day` এবং ভুল ডেটা টাইপ—এই ছয় ধরনের ইনপুট দিয়ে আপনার ভ্যালিডেটর পরীক্ষা করুন। খেয়াল রাখবেন, কোড যেন কখনোই নীরবে টাইপ রূপান্তর (`Silent Coercion`, যেমন স্ট্রিং বা বুলিয়ানকে জোর করে সংখ্যা বানিয়ে ফেলা) না করে; কারণ নীরব রূপান্তরই সবচেয়ে নীরবে ভুল ডেটাকে বৈধ চেহারা দেয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch35_delivery",
+      "title": "At-least-once Delivery ও Idempotent Sink",
+      "subtitle": "একই Row দুইবার পৌঁছানো মানেই বাইকের চাহিদা দ্বিগুণ হয়ে যাওয়া নয়",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "বাস্তব নেটওয়ার্কে ডেটা পৌঁছানোর Model (Delivery Model)",
+          "body": "আগের পাঠে আমরা অবৈধ ডেটাকে প্রবেশদ্বারেই আটকানোর ব্যবস্থা করেছি। কিন্তু একটি বৈধ রেকর্ড যদি নেটওয়ার্ক টাইমআউট, জব রিস্টার্ট বা সোর্স রিপ্লের কারণে আমাদের পাইপলাইনে একাধিকবার এসে পৌঁছায়, তখন কী হবে? বাস্তব জগতের প্রায় সব ডেটা পাইপলাইনই `At-least-once Delivery` Model-এ কাজ করে—অর্থাৎ ডেটা যাতে হারিয়ে না যায় সেজন্য সিস্টেম প্রয়োজনে আবার পাঠায়, আর গ্রহীতা বা `Sink`-কে সেই ডুপ্লিকেট সামলাতে হয়। আপনি যদি প্রতিবার বার্তা আসার সাথে সাথে অন্ধভাবে বাইক ভাড়ার সংখ্যা যোগ করতে থাকেন, তবে ৭ দিনের `Rolling Aggregate` মুহূর্তেই ভুল হয়ে যাবে! তাই কাজ শুরুর আগেই `Natural Key`, হুবহু একই পেলোডের পুনঃপ্রচেষ্টা (`Retry`) এবং ভিন্ন পেলোডের সংঘর্ষ (`Conflict`) সামলানোর নিয়ম চূড়ান্ত করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "Idempotent Sink কীভাবে কাজ করে?",
+          "body": "একটি Function বা `Sink`-কে তখনই `Idempotent` বলা হয়, যখন একই ইনপুট একবার প্রয়োগ করলে সিস্টেমের যে অবস্থা (`State`) দাঁড়ায়, একাধিকবার প্রয়োগ করলেও ঠিক সেই একই অবস্থা বজায় থাকে। আমাদের নিয়মে: যদি একই সিনারিও এবং একই `Natural Key`-তে হুবহু অভিন্ন পেলোড আবার আসে, তবে সিস্টেম কোনো পরিবর্তন না করে সেটিকে `No-op` হিসেবে গণ্য করবে। কিন্তু যদি দেখা যায় ডেটাবেসে থাকা রেকর্ডের চেয়ে নতুন আসা রেকর্ডের `count` বা `available_day` আলাদা, তবে সিস্টেম নীরবে পুরোনো মান মুছে না দিয়ে সেটিকে সাংঘর্ষিক ইনপুট (`Conflicting Input`) হিসেবে প্রত্যাখ্যান করবে। একইভাবে, তৈরি হওয়া Feature টেবিলেরও স্থির পরিচয় (`Stable Identity`) থাকলে বারবার রিট্রাই করলেও আউটপুট ডুপ্লিকেট হয় না।"
+        },
+        {
+          "type": "math",
+          "title": "Idempotency-র মূল গাণিতিক অভেদ",
+          "body": "apply(apply(S,e),e)=apply(S,e)"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ ডুপ্লিকেট ডেলিভারি সহ Replay পরীক্ষা",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"pipeline35\", Path(\"assets/datasets/bike_sharing/pipeline_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/pipeline_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nevents = m.scheduled(m.load(), \"late_fixture\")\nr = m.replay(events, duplicates=True)\nassert r[\"deliveries\"] == 1094 and r[\"inserted\"] == 547\nassert r[\"duplicates\"] == 547 and r[\"stored\"] == 547\nprint(r)\n"
+        },
+        {
+          "type": "text",
+          "title": "Replay-এর ফলাফল বিশ্লেষণ: ১০৯৪ বনাম ৫৪৭",
+          "body": "কোডের ফলাফলটি দেখুন কী চমৎকারভাবে আমাদের চুক্তি প্রমাণ করছে! `547`টি বাস্তব দিনের ঘটনাকে যখন ডুপ্লিকেট সহ দুইবার পাঠান হলো, তখন মোট ডেলিভারি হলো `1094`টি (`deliveries == 1094`)। এর মধ্যে প্রথমবার আসা `547`টি রেকর্ড ডেটাবেসে যুক্ত হয়েছে (`inserted == 547`), পরের `547`টি অভিন্ন রেকর্ড `No-op` ডুপ্লিকেট হিসেবে চিহ্নিত হয়েছে (`duplicates == 547`), এবং দিনশেষে ডেটাবেসে সংরক্ষিত মোট Row-এর সংখ্যা ঠিক `547`ই রয়ে গেছে (`stored == 547`)। লক্ষ্য করুন, সিস্টেমে কয়বার মেসেজ এসেছে (`Delivery Count`) আর প্রকৃত জগতের কয়টি ঘটনা সংরক্ষিত আছে (`Stored State`)—এই দুটি সংখ্যাকে সবসময় আলাদাভাবে ট্র্যাক করতে হয়।"
+        },
+        {
+          "type": "feature_replay",
+          "title": "ইন্টারেক্টিভ Replay Lab",
+          "body": "নিচের ল্যাবে `Duplicate` টগল, ত্রুটিপূর্ণ রেকর্ডের সুইচ এবং লজিক্যাল `Batch Size` (`1`, `32` বা `128`) পরিবর্তন করে দেখুন। আপনি যেভাবেই ব্যাচের আকার বা ডুপ্লিকেট বদলান না কেন, বৈধ সংরক্ষিত Row-এর সংখ্যা (`Stored Rows`) সবসময় অপরিবর্তিত (`Invariant`) থাকবে—কেবল প্রত্যাখ্যাত, ডুপ্লিকেট এবং ব্যাচের গণনা বদলাবে। এখানে অ্যাপের ইউজার ইন্টারফেস লোকাল `Dart` ম্যাপে তাৎক্ষণিক সিমুলেশন দেখায়, আর আমাদের Companion Python কোড সরাসরি `SQLite` ডেটাবেসে একই লজিক কার্যকর করে।"
+        },
+        {
+          "type": "text",
+          "title": "‘Exactly-once’ দাবির ব্যাপারে সতর্কতা",
+          "body": "অনেকেই ডেটাবেসে একটি `Idempotent Sink` বসিয়েই দাবি করে বসেন যে তাদের পুরো সিস্টেম `Exactly-once` হয়ে গেছে। প্রকৌশলগত দিক থেকে এটি একটি বিপজ্জনক অতিসরলীকরণ! ডেটাবেস টেবিল হয়তো ডুপ্লিকেট আটকাচ্ছে, কিন্তু আপনার পাইপলাইন যদি মাঝপথে কোনো বাহ্যিক API কল করে, ইমেইল পাঠায়, কিংবা কনকারেন্ট প্রসেসের মাঝে `Checkpoint Commit` করার আগেই ক্র্যাশ করে, তবে পুরো ডিস্ট্রিবিউটেড সিস্টেমের সাইড-ইফেক্ট সামলানোর জন্য আলাদা সমন্বয় ও রিকভারি ডিজাইন প্রয়োজন হয়।"
+        },
+        {
+          "type": "text",
+          "title": "নিজের সিদ্ধান্তের পক্ষে যুক্তি সাজান",
+          "body": "একটি মেসেজ রিট্রাই হওয়ার সম্পূর্ণ পথটি মনে মনে অনুসরণ করুন: প্রথমে `Validate` করা → এরপর `Natural Key` খোঁজা → পেলোড মিলিয়ে দেখা → সবশেষে পরিস্থিতি অনুযায়ী `Insert`, `No-op` অথবা `Reject` করা। স্পষ্টভাবে চিন্তা করুন, ঠিক কোন মুহূর্তে ডেটা ডিস্কে স্থায়ী (`Persisted`) হবে এবং কখন কনজিউমারের `Checkpoint` সামনের দিকে এগোবে। সবসময় মনে রাখবেন: নেটওয়ার্কজনিত একই ঘটনার ডুপ্লিকেট এবং ব্যবসায়িক তথ্য সংশোধন (`Business Correction`)—দুটো সম্পূর্ণ ভিন্ন অপারেশন, এদের কখনোই এক পাল্লায় মাপা যাবে না।"
+        }
+      ]
+    },
+    {
+      "id": "ch35_transactions",
+      "title": "SQLite Transactions, Rollback ও Retry",
+      "subtitle": "আংশিক Batch Commit হওয়ার ঝুঁকি এড়াতে Transaction-এর সীমানা স্পষ্ট করুন",
+      "duration": "55 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Transaction-এর একক ও Atomicity",
+          "body": "আগের পাঠে আমরা দেখেছি কীভাবে `Idempotent Sink` ডুপ্লিকেট রেকর্ড সামলায়। কিন্তু ধরুন, ৩২টি রেকর্ডের একটি ব্যাচ ডেটাবেসে লেখার সময় ১৬ নম্বর রেকর্ডে গিয়ে প্রোগ্রামটি হঠাৎ ক্র্যাশ করল—তখন প্রথম ১৫টি রেকর্ডের কী হবে? এই বিশৃঙ্খলা এড়াতেই আমাদের ইমপোর্টার প্রতিটি লজিক্যাল `Batch`-কে একটি একক `SQLite Transaction`-এর ভেতরে আবদ্ধ রাখে। চূড়ান্ত `Commit` হওয়ার আগে যেকোনো `Exception` ঘটলে ওই ব্যাচের সবকটি `Insert` সাথে সাথে `Rollback` হয়ে যায়, অথচ তার আগে সফলভাবে `Commit` হওয়া ব্যাচগুলোর ডেটা একদম অক্ষত থাকে। একজন সিস্টেম ডিজাইনার হিসেবে প্রতিটি ব্যাচের এই `Atomicity`, পুরো জবের রিকভারি এবং সোর্সের `Checkpoint` ঠিক কোথায় সংরক্ষিত হচ্ছে—তা ধাপে ধাপে অনুসরণ করতে পারা জরুরি।"
+        },
+        {
+          "type": "text",
+          "title": "নিয়ন্ত্রিত Crash পরীক্ষা: fail_batch = 0",
+          "body": "বিষয়টি হাতে-কলমে পরখ করার জন্য আমাদের কোডে `fail_batch = 0` নামের একটি নিয়ন্ত্রিত ক্র্যাশ মোড রাখা হয়েছে, যা প্রথম ব্যাচটি ডেটাবেসে লেখার পর কিন্তু `Commit` হওয়ার ঠিক আগমুহূর্তে ইচ্ছাকৃতভাবে একটি `RuntimeError` তৈরি করে। ফলে প্রথম `32`টি ইনসার্ট সম্পূর্ণ `Rollback` হয়ে ডেটাবেসে সংরক্ষিত Row-এর সংখ্যা থাকে `0`। এরপর যখন আমরা একই ব্যাচ আবার `Retry` করি, তখন ঠিক `32`টি Row-ই পরিচ্ছন্নভাবে ডেটাবেসে যুক্ত হয়। এটি কোনো হার্ডওয়্যার পাওয়ার-লস বেঞ্চমার্ক নয়, বরং আমাদের কন্ট্রোল-ফ্লো যে আংশিক ডেটা রেখে দেয় না তার সুনির্দিষ্ট প্রমাণ।"
+        },
+        {
+          "type": "math",
+          "title": "Batch Transaction-এর দ্বিমুখী শর্ত",
+          "body": "\\mathrm{batch}=\\mathrm{all\\ committed}\\;\\lor\\;\\mathrm{rolled\\ back}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ SQLite Rollback ও সফল Retry যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"pipeline35\", Path(\"assets/datasets/bike_sharing/pipeline_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/pipeline_lab.json\").read_text(encoding=\"utf-8\")\n)\n\ndb = m.connect()\nevents = m.scheduled(m.load())[:32]\ntry:\n    m.ingest(db, events, chunk=32, fail_batch=0)\nexcept RuntimeError:\n    pass\nassert db.execute(\"SELECT COUNT(*) FROM events\").fetchone()[0] == 0\nr = m.ingest(db, events, chunk=32)\nassert r[\"inserted\"] == 32\ndb.close()\nprint(r)\n"
+        },
+        {
+          "type": "text",
+          "title": "Checkpoint এগিয়ে নেওয়ার সুবর্ণ নিয়ম",
+          "body": "ডেটা পাইপলাইনে সবচেয়ে ভয়াবহ বাগগুলোর একটি ঘটে ভুল সময়ে সোর্স `Checkpoint` আপডেট করলে। আপনি যদি `Sink`-এ ডেটা স্থায়ীভাবে `Commit` হওয়ার আগেই সোর্সের `Checkpoint` বাড়িয়ে দেন এবং ঠিক তখনই সিস্টেম ক্র্যাশ করে, তবে ওই ব্যাচের ডেটা চিরতরে হারিয়ে যাবে (`Data Loss`)! তাই নিয়ম হলো: আগে `Sink Commit` হবে, তারপর `Checkpoint` এগোবে। এর মাঝখানে যদি `Checkpoint` আপডেট ব্যর্থ হয়, তবে রিস্টার্টের পর ওই ব্যাচটি আবার আসবে ঠিকই, কিন্তু আমাদের `Idempotent Sink` তখন ডুপ্লিকেটগুলো অনায়াসেই সামলে নেবে। মনে রাখবেন, দুই ভিন্ন সিস্টেমের মধ্যে সমন্বিত Atomicity ছাড়া কখনোই ঢালাওভাবে `Exactly-once` দাবি করা যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "SQLite-এর অভ্যন্তরীণ নকশা ও সূক্ষ্ম সতর্কতা",
+          "body": "আমাদের `SQLite` টেবিলে `PRIMARY KEY(scenario, event_key)`, কঠোর `CHECK` কনস্ট্রেইন্ট এবং `ON CONFLICT DO NOTHING` ব্যবহার করা হয়েছে। তবে তার আগেই অ্যাপ্লিকেশন স্তরে পেলোড মিলিয়ে দেখে সাংঘর্ষিক ডেটা (`Conflicting Payload`) প্রত্যাখ্যান করা হয়। কেন এটি জরুরি? কারণ আপনি যদি ঢালাওভাবে `INSERT OR IGNORE` চালিয়ে সব ধরনের কনস্ট্রেইন্ট লঙ্ঘনকে চুপচাপ ধামাচাপা দিয়ে দেন, তবে ডেটার গুণগত মান নষ্ট হওয়ার মূল্যবান প্রমাণগুলো চিরতরে আড়ালে চলে যাবে।"
+        },
+        {
+          "type": "text",
+          "title": "Concurrency ও প্রোডাকশন সীমারেখা",
+          "body": "এখানে আমরা একজন একক লোকাল রাইটার (`Single Local Writer`) দিয়ে লজিকটি যাচাই করেছি। বাস্তব প্রোডাকশনে যখন একাধিক প্রসেস একসাথে লিখতে চায়, তখন মাল্টি-রাইটার কনটেনশন, `SQLITE_BUSY` এরর সামলানোর `Retry/Backoff` কৌশল, `WAL (Write-Ahead Logging)` মোড, ডিস্ট্রিবিউটেড লক এবং নেটওয়ার্ক ফাইলসিস্টেমের আচরণ বিবেচনায় নিয়ে উপযুক্ত `Transaction` ও `Isolation` মোড বেছে নিতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "নিজে অনুশীলন করুন",
+          "body": "কোডটি একটু ঘুরিয়ে দ্বিতীয় ব্যাচে (`fail_batch = 1`) ব্যর্থতা ঘটিয়ে দেখুন প্রথম ব্যাচের `32`টি Row ডেটাবেসে অক্ষত থাকছে কি না। এরপর পুরো ডেটা আবার `Retry` করে নিশ্চিত হোন যে দিনশেষে মোট স্বতন্ত্র Row-এর সংখ্যা ঠিক `547` হচ্ছে। পাশাপাশি খেয়াল রাখবেন, আপনার এরর হ্যান্ডলিং কোড যেন কখনোই ব্যর্থ হওয়া `Commit`-কে সফল ইনসার্ট হিসেবে রিপোর্ট না করে!"
+        },
+        {
+          "type": "text",
+          "title": "একই Transaction-এ ডেটা Row এবং Checkpoint সংরক্ষণ",
+          "body": "এবার একটি চমৎকার প্যাটার্ন দেখা যাক: যদি আমাদের ইভেন্ট টেবিল এবং সোর্সের `Checkpoint` একই ডেটাবেসের ভেতরে থাকে, তাহলে কী সুবিধা পাওয়া যায়? নিচের ইন-মেমরি `SQLite` উদাহরণে অপরিবর্তনীয় ইভেন্ট আইডি `A` ও `B` এবং তাদের সোর্স অফসেট `1` ও `2` দেওয়া আছে। প্রথমবার ব্যাচের Row লেখার পর কিন্তু `Checkpoint` আপডেট হওয়ার ঠিক আগে ক্র্যাশ ঘটলে দুটি Row-ই একসাথে `Rollback` হয়ে যায় (`rolled_back == 0`, `initial_offset == 0`)। পরেরবার `Retry` করলে দুটি Row এবং `position = 2` একসাথে একটি একক `Transaction`-এ `Commit` হয়। এরপর একই ব্যাচ আবার পাঠালে সিস্টেমের অবস্থা অপরিবর্তিত থাকে, কিন্তু ইভেন্ট `A`-এর জন্য ভিন্ন মান (`99`) পাঠালে সাথে সাথে কনফ্লিক্ট ধরা পড়ে। লক্ষ্য করুন, এখানে ধরে নেওয়া হয়েছে যে `Sink` এবং `Checkpoint` একই ডেটাবেসে রয়েছে এবং প্রদত্ত ব্যাচটি সোর্সের সম্পূর্ণ ব্যাচ।"
+        },
+        {
+          "type": "code",
+          "title": "একই Transaction-এ Crash, Retry ও Conflicting Replay পরীক্ষা",
+          "body": "import sqlite3\n\ndatabase = sqlite3.connect(\":memory:\")\ndatabase.executescript(\"\"\"\n    CREATE TABLE events (event_id TEXT PRIMARY KEY, payload INTEGER NOT NULL CHECK(payload >= 0));\n    CREATE TABLE checkpoint (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), position INTEGER NOT NULL);\n    INSERT INTO checkpoint VALUES (1, 0);\n\"\"\")\n\n\ndef apply_batch(rows, crash=False):\n    if not rows:\n        return\n    with database:\n        for offset, event_id, payload in rows:\n            stored = database.execute(\n                \"SELECT payload FROM events WHERE event_id=?\", (event_id,)\n            ).fetchone()\n            if stored is not None and stored[0] != payload:\n                raise ValueError(\"Conflicting immutable payload\")\n            if stored is None:\n                database.execute(\n                    \"INSERT INTO events VALUES (?, ?)\", (event_id, payload)\n                )\n        if crash:\n            raise RuntimeError(\"Injected failure before checkpoint\")\n        database.execute(\n            \"UPDATE checkpoint SET position=max(position, ?) WHERE singleton=1\",\n            (max(row[0] for row in rows),),\n        )\n\n\nbatch = [(1, \"A\", 10), (2, \"B\", 20)]\ntry:\n    apply_batch(batch, crash=True)\nexcept RuntimeError:\n    pass\nrolled_back = database.execute(\"SELECT count(*) FROM events\").fetchone()[0]\ninitial_offset = database.execute(\"SELECT position FROM checkpoint\").fetchone()[0]\napply_batch(batch)\napply_batch(batch)\nconflict = 0\ntry:\n    apply_batch([(3, \"A\", 99)])\nexcept ValueError:\n    conflict = 1\nstored_rows = database.execute(\"SELECT count(*) FROM events\").fetchone()[0]\nfinal_offset = database.execute(\"SELECT position FROM checkpoint\").fetchone()[0]\ndatabase.close()\nprint(rolled_back, initial_offset, stored_rows, final_offset, conflict)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে যাচাই করুন: বাহ্যিক Broker Checkpoint-এর সীমানা",
+          "body": "ধরুন আপনার সোর্স মেসেজ ব্রোকারের Checkpoint অন্য একটি আলাদা সার্ভারে সংরক্ষিত থাকে—তখন Transaction-এর সীমানায় কী পরিবর্তন আসবে?",
+          "solution": "দুটি আলাদা সিস্টেমে একটি সাধারণ SQLite Transaction দিয়ে একসাথে Commit করা সম্ভব নয়। ফলে আমাদের ডেটাবেস Commit সফল হওয়ার পর যদি ব্রোকারের Checkpoint আপডেট ব্যর্থ হয়, তবে রিস্টার্টের পর একই মেসেজ আবার Replay হয়ে আসবে—এবং আমাদের Idempotent Sink-কে সেই ডুপ্লিকেটগুলো নিরাপদে শোষণ করতে হবে। বিপরীতে, Sink Commit হওয়ার আগেই যদি ব্রোকারের Checkpoint এগিয়ে দেওয়া হয়, তবে ক্র্যাশের ফলে ডেটা চিরতরে হারিয়ে যেতে পারে। তাই সিস্টেম ডিজাইনে এই আন্তঃসিস্টেম রিকভারি প্রোটোকল সুস্পষ্টভাবে লিখে রাখা অপরিহার্য।",
+          "reference": "https://www.sqlite.org/lang_transaction.html"
+        }
+      ]
+    },
+    {
+      "id": "ch35_batch",
+      "title": "Batch Recomputation ও Incremental State",
+      "subtitle": "ডেটা প্রসেসিংয়ের পথ আলাদা হলেও Contract এক হলে ফলাফল হুবহু মিলতে হবে",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Batch Reference: পুরো টেবিল থেকে পুনর্গণনা",
+          "body": "একই Feature আমরা সাধারণত দুটি ভিন্ন উপায়ে হিসাব করে থাকি: একসাথে পুরো ঐতিহাসিক ডেটা স্ক্যান করে (`Batch`), অথবা সময়ের সাথে সাথে নতুন ডেটা আসার তালে ক্রমান্বয়ে (`Incremental`)। আমাদের `Batch Reference` ইমপ্লিমেন্টেশনে শুরু থেকে প্রথম `547`টি দিনের সব ঘটনা নিয়ে প্রতিটি লক্ষ্য তারিখের (`target`) এবং জানার সীমার (`asof`) শর্ত বসিয়ে সরাসরি স্কেলার লুপে Feature হিসাব করা হয়। এই সরল কোডটি আমাদের মূল মানদণ্ড (`Readable Reference`) হিসেবে কাজ করে। এখানে সবচেয়ে বড় শিক্ষা হলো: হাতের কাছে পুরো ডেটা টেবিল সাজানো থাকলেও সঠিক সময়ের কাটঅফ ফিল্টার (`Cutoff Filter`) ছাড়া কোনো তথ্যকেই অতীতের জানা তথ্য বলে ধরে নেওয়া যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "Incremental Reference: ধাপে ধাপে ক্রমবর্ধমান অবস্থা",
+          "body": "অন্যদিকে `Incremental` পদ্ধতিতে ঘটনাগুলোকে তাদের ঘোষিত `Availability` ক্রম অনুযায়ী একে একে গ্রহণ করা হয়। লক্ষ্য তারিখ (`target day`) যত সামনের দিকে এগোয়, সিস্টেমের উপলব্ধ তথ্যের ভাণ্ডার (`Available Prefix State`) তত বড় হয় এবং তার ওপর হুবহু একই `Window` ও ফিল্টার লজিক প্রয়োগ করা হয়। কোনো বিলম্বিত ঘটনা (`Late Event`) যখন অবশেষে সিস্টেমে পৌঁছায়, তখন তা কেবল ভবিষ্যতের `Lookup`-গুলোতেই অংশ নেয়—অতীতের যেসব দিনের `Snapshot` আগেই তৈরি হয়ে গেছে, সেগুলোর তৎকালীন জ্ঞানকে সে কখনোই পেছনে ফিরে বদলে দেয় না।"
+        },
+        {
+          "type": "math",
+          "title": "তিনটি ভিন্ন পথে সমতার শর্ত (Parity Invariant)",
+          "body": "F_{batch}(t)=F_{incremental}(t)=F_{SQL}(t)"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ ৫৪৬টি Snapshot জুড়ে Parity ও Mismatch পরীক্ষা",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"pipeline35\", Path(\"assets/datasets/bike_sharing/pipeline_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/pipeline_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nfor name, stats in lab[\"statistics\"].items():\n    assert stats[\"snapshots\"] == 546 and stats[\"parity_failures\"] == 0\n    print(name, stats[\"retrospective_mismatch_snapshots\"])\nassert lab[\"statistics\"][\"late_fixture\"][\"retrospective_mismatch_snapshots\"] == 98\n"
+        },
+        {
+          "type": "text",
+          "title": "স্বতন্ত্র SQL যাচাই ও অভিন্ন বাগের সতর্কতা",
+          "body": "কোডের আউটপুট লক্ষ্য করুন: আমরা কেবল Python-এর Batch ও Incremental পথই মেলাইনি, পাশাপাশি `SQLite`-এর কন্ডিশনাল অ্যাগ্রিগেট কুয়েরি চালিয়ে স্বতন্ত্রভাবে `lag`, `mean`, `count` এবং সর্বশেষ উপলব্ধ `event_day` হিসাব করেছি। দুটি সময়সূচিতেই (`on_time` এবং `late_fixture`) সবকটি অর্থাৎ `546`টি করে `Snapshot`-এ তিনটি পদ্ধতির ফলাফল শতভাগ মিলেছে (`parity_failures == 0`)! তবে একজন অভিজ্ঞ ইঞ্জিনিয়ারের সতর্কতা মনে রাখুন: তিনটি কোড একমত হওয়া খুবই স্বস্তিদায়ক, কিন্তু মূল Feature Contract-এই যদি কোনো তাত্ত্বিক ভুল থাকে এবং তিনটি কোডই সেই একই ভুল নিয়ম অনুসরণ করে, তবে তিন জায়গাতেই একই ভুল উত্তর আসবে। তাই প্রান্তিক শর্তের (`Boundary Condition`) স্বতন্ত্র টেস্ট সবসময়ই অপরিহার্য।"
+        },
+        {
+          "type": "text",
+          "title": "Availability উপেক্ষা করলে কী ঘটে: ৯৮টি অমিল!",
+          "body": "এবার কোডের দ্বিতীয় সংখ্যাটি দেখুন, যা এই অধ্যায়ের সবচেয়ে চোখ-খুলে-দেওয়া প্রমাণগুলোর একটি। আমরা যদি `Availability Time` উপেক্ষা করে কেবল `Event Time` দেখে অতীতের হিসাব বসাই, তবে `on_time` সূচিতে অমিল হয় `0`টি, কিন্তু `late_fixture` সূচিতে পাক্কা `98`টি ঐতিহাসিক `Snapshot`-এর মান বদলে যায় (`retrospective_mismatch_snapshots == 98`)! বাস্তব বাইক ভাড়ার সংখ্যার ওপর আমাদের `d % 17 == 0` বিলম্বের নিয়মটি ফেললেই দেখা যায় কীভাবে প্রায় প্রতি ছয় দিনে একটি করে ট্রেনিং উদাহরণ নীরবে ভবিষ্যৎ তথ্যে দূষিত হয়ে পড়ছে।"
+        },
+        {
+          "type": "text",
+          "title": "দক্ষতা ও স্কেলের বাস্তব সীমা",
+          "body": "মাত্র `547`টি Row-এর লোকাল Dataset-এ প্রতিবার পুরো তালিকা স্ক্যান করা চোখের পলকে হয়ে যায়। কিন্তু বাস্তব জগতের বিশাল স্ট্রিমিং সিস্টেমে প্রতি সেকেন্ডে লক্ষ লক্ষ ইভেন্ট এলে এভাবে শুরু থেকে স্ক্যান করা অসম্ভব—তখন আলাদা `State Store`, পুরোনো ডেটা সরিয়ে দেওয়ার `Window Eviction` এবং ইনক্রিমেন্টাল `Checkpointing` ডিজাইন করতে হয়। আমাদের ল্যাবে চাঙ্ক সাইজ (`Chunk Size`) বদলানো কেবল লজিক্যাল ব্যাচিং বোঝার জন্য, স্ট্রিমিং থ্রুপুট মাপার জন্য নয়।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে অনুশীলন",
+          "body": "যেকোনো একটি নির্দিষ্ট `target` দিনের জন্য সাধারণ স্কেলার লুপ, `SQLite`-এর `AVG()` কুয়েরি এবং ইনক্রিমেন্টাল স্টেট—এই তিনভাবে হিসাব করে নিজে মিলিয়ে দেখুন। এরপর শুরুর দিকের অনুপস্থিত ইতিহাস (`Missing History`), দেরিতে আসা ডেটা, উইন্ডোর শুরু ও শেষ সীমানা এবং শূন্য হর (`Empty Denominator`)—প্রতিটি পরিস্থিতির জন্য একটি করে ছোট টেস্ট কেস লিখুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch35_windows",
+      "title": "Window Boundaries ও Rolling Denominator",
+      "subtitle": "কেন [target − 7, target) ব্যবধি ভবিষ্যতের ফলাফলকে নিরাপদে বাইরে রাখে",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "উইন্ডোর দুই প্রান্তের চুক্তি (Endpoint Contract)",
+          "body": "সাত দিনের গড় (`7-day rolling mean`) কথাটি শুনতে যতটা সহজ, কোডে লিখতে গেলে একটি ছোট্ট চিহ্নের ভুলে (`<` এর বদলে `<=`) পুরো Model ধ্বংস হয়ে যেতে পারে! আমাদের চুক্তিতে ৭ দিনের উইন্ডো হলো `[target - 7, target)`—অর্থাৎ `target - 7` তারিখ থেকে শুরু করে `target - 1` তারিখ পর্যন্ত মোট সাতটি ক্যালেন্ডার দিন, যেখানে শুরুর বিন্দু অন্তর্ভুক্ত (`Inclusive`) কিন্তু শেষ বিন্দু `target` কঠোরভাবে বহির্ভূত (`Exclusive`)। কেন? কারণ `target` দিনের বাইক চাহিদাটিই তো আমাদের অনুমান করার লক্ষ্য (`Outcome`)! সামান্য `Off-by-one` ভুলে ডান প্রান্ত অন্তর্ভুক্ত হয়ে গেলেই আজকের আসল ফলাফল সরাসরি আজকের গড় Feature-এর ভেতরে ঢুকে ভয়াবহ `Label Leakage` ঘটাবে।"
+        },
+        {
+          "type": "text",
+          "title": "উপলব্ধ উপসেট ও পরিবর্তনশীল হর (Rolling Denominator)",
+          "body": "উইন্ডোর সীমানা ঠিক করার পরের প্রশ্নটি হলো: ওই সাত দিনের সবকটি ডেটা কি Prediction দেওয়ার মুহূর্তে সিস্টেমের কাছে জানা ছিল? সবসময় নাও থাকতে পারে! যেমন আমাদের পরিচিত `target = 375` এবং `late_fixture`-এর কথাই ধরুন: `[368, 375)` ব্যবধির ৭টি দিনের মধ্যে ৬টি দিনের তথ্য সিস্টেমে উপস্থিত আছে, কিন্তু `day 374`-এর তথ্য তখনো এসে পৌঁছায়নি। ফলে এখানকার সঠিক গড় বের করতে হলে ওই ৬টি জানা মানের যোগফলকে `6` দিয়ে ভাগ করতে হবে—মুখস্থ `7` দিয়ে নয়! আর উইন্ডোর ভেতরে কয়টি দিন আসলে পাওয়া গেছে, সেই স্বচ্ছতা বজায় রাখতে `observed7 = 6` আলাদা একটি Column-এ রিপোর্ট করা হয়।"
+        },
+        {
+          "type": "math",
+          "title": "Availability-সচেতন Rolling Window-এর সমীকরণ",
+          "body": "W(t,a)=\\{e:t-7\\le e_d<t,\\;e_{available}\\le a\\},\\quad mean7=\\frac{\\sum_{e\\in W}count_e}{|W|}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Day 375-এর Rolling Mean ও Denominator যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"pipeline35\", Path(\"assets/datasets/bike_sharing/pipeline_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/pipeline_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nevents = lab[\"events\"][\"late_fixture\"]\ntarget = 375\neligible = [\n    r\n    for r in events\n    if target - 7 <= r[\"event_day\"] < target and r[\"available_day\"] <= target\n]\nresult = sum(r[\"cnt\"] for r in eligible) / len(eligible)\nassert len(eligible) == 6\nassert abs(result - m.features(events, target)[\"mean7\"]) < 1e-10\nprint(result)\n"
+        },
+        {
+          "type": "text",
+          "title": "অনুপস্থিত মান বনাম শূন্য চাহিদা (Missing vs Zero)",
+          "body": "অনেকেই গড় হিসাব করার সময় অনুপস্থিত দিনের জায়গায় চট করে `0` বসিয়ে `7` দিয়ে ভাগ করে ফেলেন। একটু ভাবলেই বুঝবেন কেন এটি মারাত্মক ভুল: কোনো দিনের তথ্য এখনো সার্ভারে এসে পৌঁছায়নি (`Unknown Count`) আর প্রচণ্ড ঝড়-বৃষ্টির কারণে সত্যিই সেদিন একটিও বাইক ভাড়া হয়নি (`True Zero Demand`)—দুটোর বাস্তব অর্থ আকাশ-পাতাল আলাদা! না জেনে `0` বসিয়ে দিলে গড় মান কৃত্রিমভাবে কমে গিয়ে সম্পূর্ণ ভিন্ন একটি Feature হয়ে দাঁড়ায়। একইভাবে উইন্ডোর একটি দিনও যদি জানা না থাকে (`observed7 = 0`), তবে আমাদের চুক্তিতে `mean7` হবে `Null` (`None`)। পরবর্তীতে কোনো নির্দিষ্ট Model-এর জন্য Missing Value কীভাবে সামলানো হবে, তা আলাদা ও সুস্পষ্ট নীতির মাধ্যমে ঠিক করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "Lag Feature-এর সুনির্দিষ্ট অর্থ",
+          "body": "একই কথা প্রযোজ্য `lag1` এবং `lag7`-এর ক্ষেত্রেও। আমাদের সংজ্ঞায় `lag1` মানে অবিকল `t - 1` তারিখের মান, এবং `lag7` মানে অবিকল `t - 7` তারিখের মান। যদি `t - 1` তারিখের ডেটা দেরিতে আসার কারণে অনুপস্থিত থাকে, তবে তার বদলে তার আগের দিন `t - 2`-এর সর্বশেষ জানা সংখ্যাটিকে চুপিসারে `lag1` বলে চালিয়ে দেওয়া যাবে না! সর্বশেষ জানা তথ্যটি কত দিন পুরোনো, সেই সংকেত দেওয়ার জন্য আমাদের আলাদা `Freshness` (`age_days`) Feature রয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "সীমানার বাস্তব পরীক্ষা (Boundary Check)",
+          "body": "`target = 375`-এর উদাহরণটি আমাদের আরেকবার মনে করিয়ে দেয় কেন কেবল `event_day < target` শর্তটি যথেষ্ট নয়। `event 374` নিঃসন্দেহে অতীতের ঘটনা, এবং আজকের চূড়ান্ত ডেটাবেস টেবিলে তার মান মজুতও আছে; কিন্তু তার `available_day = 378` হওয়ায় `Point-in-Time Lookup` সেটিকে সযত্নে বাদ দেয়। অতীত ঘটনার শর্ত ঠিক রেখেও কেউ যদি শুধুমাত্র `Availability` শর্তটি বাদ দিয়ে দেয়, তবে ঐতিহাসিক ট্রেনিং ডেটা নিমেষেই কলুষিত হয়ে পড়বে।"
+        },
+        {
+          "type": "text",
+          "title": "কোডিং লক্ষ্যমাত্রা: দুটি আলাদা বাগের বিরুদ্ধে টেস্ট",
+          "body": "কোনো লাইব্রেরির ওপর নির্ভর না করে নিজে হাতে উইন্ডো ফিল্টারিং, জানা Row-এর সংখ্যা গণনা, যোগফল এবং ভাগের Function-টি লিখে ফেলুন। এরপর দুটি সম্পূর্ণ আলাদা ইউনিট টেস্ট তৈরি করুন: প্রথম টেস্টটি ধরবে কেউ ভুল করে ডান প্রান্তকে অন্তর্ভুক্ত (`<= target`) করে `Target Leakage` ঘটাল কি না, আর দ্বিতীয় টেস্টটি ধরবে কেউ অনুপস্থিত ডেটা থাকা সত্ত্বেও হরকে মুখস্থ `7` ধরে ভাগ করল কি না।"
+        }
+      ]
+    },
+    {
+      "id": "ch35_point_in_time",
+      "title": "Point-in-Time Lookup: ঘটনা ও জ্ঞানের দ্বৈত সীমানা",
+      "subtitle": "ঐতিহাসিক Training Example তৈরির সময় সেই তথ্য কি সত্যিই তখন পাওয়া যেত?",
+      "duration": "55 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Training Example তৈরির অলঙ্ঘনীয় চুক্তি",
+          "body": "টাইম-সিরিজ বা যেকোনো প্রোডাকশন ML সিস্টেমে প্রতিটি Training Sample-এর সাথে দুটি সময় অঙ্গাঙ্গিভাবে জড়িত থাকে: কোন দিনের জন্য Prediction তৈরি হচ্ছে (`target date`) এবং ঠিক কোন মুহূর্তের জ্ঞান দাঁড়িয়ে Feature তৈরি হচ্ছে (`as-of knowledge boundary`)। মূল ঘটনার সময় (`event time`) অতীতে হলেও বাস্তবে সেই ডেটা দেরিতে আসতে পারে কিংবা পরে সংশোধিত হতে পারে। তাই অতীতের নিখুঁত ছবি বা `Historical Snapshot` পেতে হলে সবার আগে ওই `as-of` সময়ের মধ্যে উপলব্ধ সংস্করণগুলো (`Eligible Versions`) ছেঁকে নিতে হবে এবং `Availability` ও সংস্করণ নির্বাচনের নিয়মটি সরাসরি Feature Contract-এ লিখে রাখতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "Lookup কুয়েরি যেভাবে কার্যকর হয়",
+          "body": "আমাদের Feature Builder প্রতিটি কুয়েরিতে একসাথে দুটি শর্ত প্রয়োগ করে: `event_day < target` এবং `available_day <= asof` (আর রোলিং উইন্ডোর ক্ষেত্রে সাথে নিচের সীমা `target - 7 <= event_day` যুক্ত হয়)। লক্ষ্য করুন, আপনি যদি `asof`-এর মান বাড়িয়ে ভবিষ্যতের কোনো দিন করে দেন, তবে সিস্টেমের জ্ঞানের পরিধি বদলে যাবে। তাই ঐতিহাসিক ট্রেনিং ডেটা পুনর্গঠন করার সময় প্রতিটি Sample-এর আসল `asof` কাটঅফ অক্ষুণ্ণ রাখা বাধ্যতামূলক।"
+        },
+        {
+          "type": "math",
+          "title": "Point-in-Time যোগ্যতার যৌক্তিক শর্ত",
+          "body": "eligible(e;t,a)=[e_d<t]\\land[e_{available}\\le a]"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Point-in-Time বনাম Latest Retrospective তুলনা",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"pipeline35\", Path(\"assets/datasets/bike_sharing/pipeline_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/pipeline_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nevents = lab[\"events\"][\"late_fixture\"]\npit = m.features(events, 375)\nlatest = m.features(events, 375, latest=True)\nassert pit[\"lag1\"] is None and latest[\"lag1\"] is not None\nprint(pit, latest, m.difference(pit, latest))\n"
+        },
+        {
+          "type": "text",
+          "title": "ল্যাবে পাশাপাশি তুলনা: কোথায় পার্থক্য তৈরি হয়?",
+          "body": "কোডে দেখুন, `latest=True` সুইচটি চালু করলে সিস্টেম `Availability` শর্তটি উপেক্ষা করে সরাসরি সর্বশেষ জমানো ডেটা তুলে আনে—যার ফলে `day 375`-এ `pit['lag1']` যেখানে সঠিকভাবে `None` ছিল, সেখানে `latest['lag1']`-এ ভবিষ্যৎ থেকে আসা সংখ্যা বসে গেছে! এখানে বাইকের মূল সংখ্যা কিন্তু মোটেও বদলায়নি, বদলেছে কেবল তথ্যের সময়ের যোগ্যতা (`Timing Eligibility`)। ল্যাবে `365`, `375`, `409` এবং `545` নম্বর দিনগুলো ঘুরিয়ে দেখুন কীভাবে প্রতিটি ক্ষেত্রে উইন্ডো, উপলব্ধতা ও কভারেজ আচরণ করে।"
+        },
+        {
+          "type": "feature_point_in_time",
+          "title": "ইন্টারেক্টিভ Point-in-Time ভিজ্যুয়াল ট্রেস",
+          "body": "নিচের ভিজ্যুয়াল ট্রেসে প্রতিটি দিনের আসল বাইক সংখ্যার পাশে স্পষ্টভাবে `KNOWN` অথবা `NOT YET AVAILABLE` Label দেওয়া আছে। খেয়াল রাখবেন, অনুপস্থিত `lag1` দেখলেই সেটিকে শূন্য (`0`) দিয়ে পূরণ করবেন না। এখানে `Coverage`, `Freshness` এবং ওই দিনের প্রকৃত ফলাফল (`Retrospective Target Outcome`) আলাদাভাবে চিহ্নিত করা হয়েছে—যাতে স্পষ্ট বোঝা যায় যে লক্ষ্য ফলাফল কখনোই Feature-এর ইনপুট নয়।"
+        },
+        {
+          "type": "text",
+          "title": "রেডিমেড Feature Store টুল ব্যবহারের সতর্কতা",
+          "body": "অনেকেই ভাবেন, প্রজেক্টে একটি জনপ্রিয় ওপেন-সোর্স বা ক্লাউড `Feature Store` লাইব্রেরি যুক্ত করলেই বোধহয় সব `Point-in-Time` সমস্যা জাদুমন্ত্রে মিটে যাবে। বাস্তবে মোটেও তা নয়! যেকোনো টুল ব্যবহারের আগে সূক্ষ্মভাবে পরীক্ষা করতে হয় সেটি `event timestamp`, `created timestamp` এবং `TTL (Time-to-Live)`-কে কীভাবে সংজ্ঞায়িত করছে। আপস্ট্রিম পাইপলাইন যদি সঠিক ইনজেশন সময় সংরক্ষণ না করে, তবে কোনো লাইব্রেরিই নিজে থেকে তখনকার প্রকৃত জ্ঞান উদ্ধার করতে পারে না। এজন্যই আমরা কোনো বাহ্যিক `Feast` ডিপ্লয়মেন্টের আড়ালে না গিয়ে একদম স্বচ্ছ `SQLite` রেফারেন্স ইমপ্লিমেন্টেশন দিয়ে মূল মেকানিজমটি শিখছি।"
+        },
+        {
+          "type": "text",
+          "title": "নিজের প্রকৌশলগত সিদ্ধান্তের পক্ষে যুক্তি দিন",
+          "body": "একটি বিলম্বিত ঘটনার উদাহরণ টেনে সহকর্মীকে বুঝিয়ে বলুন কেন সাধারণ `Latest-state Backfill` চালালে ঐতিহাসিক ট্রেনিং Feature-গুলোকে বাস্তবের চেয়ে কৃত্রিমভাবে বেশি সম্পূর্ণ (`Overly Complete`) দেখায়। যেকোনো Feature রিপোর্টে সবসময় চারটি তথ্য একসাথে উল্লেখ করার অভ্যাস করুন: `Entity Join Key`, `Timestamp Units`, `Window Endpoints` এবং `Availability Assumption`।"
+        },
+        {
+          "type": "text",
+          "title": "সংশোধনী আসার আগে কোন সংস্করণটি জানা ছিল?",
+          "body": "এবার ডেটা সংশোধনের (`Revision`) একটি অত্যন্ত বাস্তবধর্মী টাইমলাইন কল্পনা করুন। ধরুন, `day = 1`-এর প্রাথমিক মান ছিল `value = 10`, যা `day = 2`-এ সিস্টেমে উপলব্ধ হয়েছে। কিন্তু পরে হিসাব মিলিয়ে দেখা গেল আসল মান হবে `value = 12`, এবং এই সংশোধিত সংস্করণটি (`revision = 2`) সিস্টেমে এল `day = 5`-এ। ওদিকে `day = 2`-এর মান `value = 20` যথাসময়ে `day = 3`-এ পাওয়া গেছে। এখন ভাবুন: `prediction day = 4`-এ দাঁড়িয়ে (`as-of = 4`) সিস্টেম গড় কত দেখবে? তখনো `day 5`-এর সংশোধনী আসেনি, তাই `10` এবং `20`-এর গড় হবে `15`! অথচ পরে `day = 6`-এ দাঁড়িয়ে (`as-of = 6`) যদি সংশোধিত রেট্রোস্পেক্টিভ হিসাব দেখেন, তখন `12` এবং `20`-এর গড় হবে `16`। সুতরাং প্রকৃত ঐতিহাসিক অবস্থা ফিরে পেতে হলে আগে `available <= asof` শর্ত দিয়ে যোগ্য সংস্করণগুলো বাছাই করতে হবে, এবং তারপর প্রতিটি ঘটনার সর্বশেষ যোগ্য সংস্করণটি নিতে হবে।"
+        },
+        {
+          "type": "math",
+          "title": "যোগ্য সংস্করণ (Eligible Revision) নির্বাচনের গাণিতিক নিয়ম",
+          "body": "e_{event}<t_{prediction},\\quad e_{available}\\le t_{asof},\\qquad v^*(k)=\\arg\\max_{v\\in eligible(k)}(t_{available},revision)"
+        },
+        {
+          "type": "code",
+          "title": "Historical View ও Corrected Backfill-এর তুলনা",
+          "body": "from statistics import mean\n\nversions = [\n    dict(day=1, available=2, revision=1, value=10.0),\n    dict(day=1, available=5, revision=2, value=12.0),\n    dict(day=2, available=3, revision=1, value=20.0),\n]\n\n\ndef snapshot(target_day, asof):\n    latest = {}\n    for event in sorted(versions, key=lambda row: (row[\"available\"], row[\"revision\"])):\n        if target_day - 7 <= event[\"day\"] < target_day and event[\"available\"] <= asof:\n            latest[event[\"day\"]] = event\n    return latest\n\n\nhistorical = snapshot(4, 4)\ncorrected = snapshot(4, 6)\nassert historical[1][\"value\"] == 10 and corrected[1][\"value\"] == 12\nprint(\n    mean(row[\"value\"] for row in historical.values()),\n    mean(row[\"value\"] for row in corrected.values()),\n    len(historical),\n)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে যাচাই করুন: Revision বাছাইয়ের সঠিক ক্রম",
+          "body": "আপনি যদি উল্টো কাজ করেন—অর্থাৎ সবগুলো Revision থেকে আগে সর্বশেষ সংস্করণটি বেছে নিয়ে তারপর Availability ফিল্টার প্রয়োগ করেন, তবে কী তথ্য হারানোর ঝুঁকি তৈরি হবে?",
+          "solution": "সব সংস্করণের মধ্যে সর্বশেষ সংশোধনীটি (যেমন আমাদের উদাহরণে day 5-এ আসা revision = 2) যদি কাঙ্ক্ষিত as-of সময়ে (যেমন day 4-এ) তখনো উপলব্ধ না হয়ে থাকে, তবে পরের ধাপের ফিল্টার সেটিকে বাদ দিয়ে দেবে—এবং তার ফলে আগে থেকে বৈধভাবে জানা পুরোনো সংস্করণটিও (day 2-এ আসা value = 10) পুরোপুরি হারিয়ে যাবে! তাই সবসময় আগে available <= asof দিয়ে যোগ্য সংস্করণগুলো ছেঁকে নিয়ে তার মধ্য থেকে সর্বশেষটি বেছে নিতে হয়। এ ছাড়া যেকোনো Backfill-এর মেটাডেটায় স্পষ্ট লিখে রাখা উচিত যে আপনি তৎকালীন জানা ডেটা (Historical-known View) তৈরি করছেন, নাকি সংশোধিত ডেটা (Corrected-retrospective View)।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch35_nulls",
+      "title": "Missing Values, Freshness ও Coverage",
+      "subtitle": "তথ্যের ঘাটতি বা হর লুকিয়ে না রেখে আলাদা সংকেত হিসেবে প্রকাশ করুন",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Null সংরক্ষণের স্পষ্ট চুক্তি (Null Contract)",
+          "body": "আগের পাঠগুলোতে আমরা বারবার দেখেছি যে সময়মতো ডেটা না পৌঁছালে বা শুরুর দিনগুলোতে ইতিহাস না থাকলে Feature অনুপস্থিত থাকতে পারে। আমাদের চুক্তিতে কোনো নির্দিষ্ট `Lag` জানা না থাকলে সেটিকে অকৃত্রিমভাবে `Null` (`None`) রাখা হয়; এমনকি ৭ দিনের উইন্ডো সম্পূর্ণ খালি থাকলেও `mean7` থাকে `Null`। উইন্ডোর ভেতরে কয়টি বৈধ পর্যবেক্ষণ পাওয়া গেছে তা জানায় `observed7`—এবং `observed7 = 0` হওয়ার মানে কখনোই এটি নয় যে শহরের বাইক চাহিদা শূন্য ছিল! একইভাবে অতীতের একটি দিনও যদি তখনো জানা না থাকে, তবে ডেটার বয়স বা `age_days` ফিল্ডটিও `Null` থাকবে। মূল কথা হলো: `Coverage`, `Freshness` এবং পরবর্তীতে `Imputation` করার সিদ্ধান্ত—এই তিনটি বিষয়কে একসাথে গুলিয়ে না ফেলে আলাদা Column-এর মাধ্যমে স্বচ্ছভাবে প্রকাশ করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "Freshness বা তথ্যের সতেজতার সংজ্ঞা",
+          "body": "আমাদের পাইপলাইনে তথ্যের বয়স (`age_days`) কীভাবে মাপা হয়? ধরুন আজ আমাদের লক্ষ্য দিন হলো `t`, আর সিস্টেমে উপলব্ধ অতীতের সর্বশেষ ঘটনাটির তারিখ হলো `d`। তাহলে `age_days = t - 1 - d`। অর্থাৎ গতকালের (`t - 1`) বাইক সংখ্যা যদি যথাসময়ে আজ জানা থাকে, তবে `age_days = 0` (ডেটা একদম তাজা); আর যদি গতকালের ডেটা না এসে পরশুদিনের (`t - 2`) ডেটাই সর্বশেষ জানা তথ্য হয়, তবে `age_days = 1`। খেয়াল রাখবেন, এটি ক্যালেন্ডার দিনের হিসাবের ব্যবধান—নেটওয়ার্কের মিলিসেকেন্ড Latency বা অনলাইন ক্যাশের `TTL` নয়।"
+        },
+        {
+          "type": "math",
+          "title": "Coverage এবং Freshness Age-এর সূত্র",
+          "body": "coverage=\\frac{observed7}{7},\\quad age=t-1-\\max e_d"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ শুরুর দিন ও বিলম্বিত দিনে Null ও Freshness পরীক্ষা",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"pipeline35\", Path(\"assets/datasets/bike_sharing/pipeline_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/pipeline_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nlate = lab[\"events\"][\"late_fixture\"]\nempty = m.features(late, 1)\nassert empty == dict(lag1=None, lag7=None, mean7=None, observed7=0, age_days=None)\npoint = m.features(late, 375)\nassert point[\"observed7\"] == 6 and point[\"age_days\"] == 1\nprint(empty, point)\n"
+        },
+        {
+          "type": "text",
+          "title": "Coverage বনাম Age: কেন একটি দিয়ে অন্যটি বোঝা যায় না?",
+          "body": "অনেকেই ভাবেন, `age_days = 0` হলেই বোধহয় আমাদের ৭ দিনের পুরো উইন্ডোটি শতভাগ সম্পূর্ণ আছে। এটি একটি চমৎকার ভ্রান্ত ধারণা—চলুন আমাদের ডেটা থেকেই এর প্রমাণ দেখি! আমরা দেখেছি `day 375`-এ `day 374` অনুপস্থিত থাকায় `observed7 = 6` এবং `age_days = 1` ছিল। কিন্তু এর ঠিক পরের দিন অর্থাৎ `day 376`-এ কী ঘটবে? `day 375`-এর ডেটা যথাসময়ে পরের দিনই চলে আসায় `day 376`-এ সর্বশেষ জানা দিন হলো গতকাল (`375`), তাই `age_days` কমে `0` হয়ে যাবে! কিন্তু `day 374`-এর ডেটা তো আসবে `day 378`-এ—তাই ৭ দিনের উইন্ডোর ভেতরে সেটি তখনো অনুপস্থিত, ফলে `observed7` তখনো `6`! অর্থাৎ কেবল তাজা ডেটা (`Freshness`) দেখেই পুরো উইন্ডো পূর্ণ আছে বলা যাবে না; `Coverage` সম্পূর্ণ ভিন্ন কিন্তু সমান গুরুত্বপূর্ণ একটি প্রশ্নের উত্তর দেয়।"
+        },
+        {
+          "type": "text",
+          "title": "Imputation নীতি ও প্রচ্ছন্ন Leakage",
+          "body": "ডাউনস্ট্রিমের কোনো Model যদি সরাসরি `Null` গ্রহণ করতে না পারে এবং সংখ্যাসূচক ইনপুট চায়, তবে Modeling স্তরে শুধুমাত্র ট্রেনিং অংশের ওপর ফিট করা ইমপিউটার (`Fit-only Imputation`), অনুপস্থিতির আলাদা নির্দেশক Column (`Missing Indicator`), অথবা ঝুঁকিপূর্ণ ক্ষেত্রে Prediction না দেওয়ার নীতি (`Rejection Policy`) ব্যবহার করা যেতে পারে। এখানেও সতর্ক থাকতে হবে: শুরুর দিকের ঐতিহাসিক উদাহরণগুলোর খালি ঘর পূরণ করতে গিয়ে যদি ভবিষ্যতের পুরো ট্রেনিং সেটের গড় (`Global Fit Mean`) বসিয়ে দেন, তবে সেটিও এক ধরনের সূক্ষ্ম `Data Leakage`! তাই আমাদের মূল Feature টেবিলে কোনো সংখ্যা কৃত্রিমভাবে পূরণ করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "অপারেশনাল সিদ্ধান্ত ও ড্যাশবোর্ডের স্বচ্ছতা",
+          "body": "কত দিন পুরোনো ডেটা (`age_days`) বা কতটুকু কম `Coverage` হলে Model-টি Prediction দেওয়া বন্ধ করে নিরাপদ ফলব্যাক নেবে, সেই সীমারেখা (`Guardrails`) নির্ধারিত হবে সংশ্লিষ্ট প্রোডাক্ট ও Model-এর ঝুঁকির মাত্রা থেকে। আর যেকোনো মনিটরিং ড্যাশবোর্ড বা ইউজার ইন্টারফেসে `Null` (তথ্য অজানা) এবং `0` (শূন্য চাহিদা)—এই দুটিকে দৃশ্যমানভাবে আলাদা রাখা অপরিহার্য।"
+        },
+        {
+          "type": "text",
+          "title": "অনুশীলন: বিলম্বিত ডেটার পরের কয়েক দিনের গতিপথ",
+          "body": "খাতা-কলমে বা Python-এ `late_fixture`-এর `day 374` ঘটনার পরের কয়েকটি দিন (`375`, `376`, `377`, `378` ও `379`) ধাপে ধাপে ট্রেস করুন। ব্যাখ্যা করুন কেন নতুন দিনের তথ্য এসে `age_days = 0` হয়ে যাওয়ার পরও পুরোনো সেই অনুপস্থিত Row-টি পরে উপলব্ধ হলে `mean7`-এর মান বদলে দেয়, এবং ঠিক কোন তারিখে গিয়ে ৭ দিনের উইন্ডোটি আবার শতভাগ পূর্ণ (`observed7 = 7`) হয় তা বের করুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch35_late",
+      "title": "Late Data, Out-of-order Events ও Watermark ধারণা",
+      "subtitle": "স্ট্রিমিং সিস্টেমের Watermark একটি অগ্রগতির অনুমান মাত্র, মূল তথ্যের পূর্ণতার গ্যারান্টি নয়",
+      "duration": "55 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ঘটনার ক্রম বনাম পৌঁছানোর ক্রম (Out-of-order Arrival)",
+          "body": "আগের পাঠে আমরা দেখেছি `day 374`-এর ডেটা দেরিতে পৌঁছানোর কারণে `day 375`-এ তা অনুপস্থিত ছিল। এবার মুদ্রার উল্টো পিঠটি দেখুন: `event 374` সার্ভারে পৌঁছানোর আগেই কিন্তু `event 375`-এর ডেটা যথাসময়ে (`day 376`-এ) চলে এসেছে, আর `event 374` এসেছে তারও দুই দিন পর (`day 378`-এ)! অর্থাৎ বাস্তব জগতে ঘটনা ঘটার ক্রম (`Event Order`) এবং পাইপলাইনে ডেটা হাতে আসার ক্রম (`Arrival Order`) মোটেও এক থাকে না। এজন্যই একটি সঠিক Incremental প্রসেসর তথ্য উপলব্ধ হওয়ার ক্রম (`Availability Order`) মেনে নিজের গৃহীত অবস্থা (`Accepted State`) সাজায়, আর `Natural Key` দেখে চিনে নেয় কোন ডেটাটি আসলে কোন তারিখের।\n\nএই দুই ক্রমের পার্থক্য ধরে না রাখলে দেরিতে আসা তথ্য পুরোনো দিনের হিসাবকে নীরবে বদলে দিতে পারে—অথচ বাস্তবে Prediction দেওয়ার মুহূর্তে সেই তথ্য জানার কোনো উপায়ই ছিল না।"
+        },
+        {
+          "type": "text",
+          "title": "স্ট্রিমিং সিস্টেমে Watermark-এর মূল ধারণা",
+          "body": "বাস্তব স্ট্রিমিং ইঞ্জিনগুলোতে (যেমন `Flink` বা `Dataflow`) অবিরাম আসতে থাকা ডেটার ভিড়ে সিস্টেম কীভাবে বুঝবে যে একটি সময়ের উইন্ডোর হিসাব এখন চূড়ান্ত (`Finalize`) করা যায়? এই কাজের জন্য ব্যবহৃত হয় `Watermark`—যা মূলত `Event Time` কতদূর এগিয়েছে তার একটি চলমান অনুমান। তবে শুধু `Watermark` থাকলেই কাজ শেষ হয় না; তার সাথে কতটুকু বিলম্ব মেনে নেওয়া হবে (`Allowed Lateness`), পুরোনো হিসাব সংশোধনের নিয়ম (`Retractions`) এবং মেমোরি পরিষ্কারের নীতি (`State Cleanup`) সুনির্দিষ্ট করতে হয়। আমাদের এই ল্যাবে কোনো আলাদা `Kafka` বা `Flink` ক্লাস্টার না চালিয়ে সরাসরি Python কোডেই এই মৌলিক যুক্তিটি পরিষ্কারভাবে তুলে ধরা হয়েছে।"
+        },
+        {
+          "type": "math",
+          "title": "অসম ক্রম ও বিলম্বিত উপলব্ধতার সম্পর্ক",
+          "body": "eventOrder\\ne arrivalOrder,\\quad available(d)=d+1+delay(d)"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Out-of-order Arrival ও Coverage পুনরুদ্ধার পরীক্ষা",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"pipeline35\", Path(\"assets/datasets/bike_sharing/pipeline_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/pipeline_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nevents = lab[\"events\"][\"late_fixture\"]\norder = sorted(events, key=lambda r: (r[\"available_day\"], r[\"event_day\"]))\nassert [r[\"event_day\"] for r in order] != list(range(547))\nassert m.features(events, 375)[\"observed7\"] == 6\nassert m.features(events, 378)[\"observed7\"] == 7\nprint(\n    [\n        (r[\"event_day\"], r[\"available_day\"])\n        for r in order\n        if 373 <= r[\"event_day\"] <= 377\n    ]\n)\n"
+        },
+        {
+          "type": "text",
+          "title": "বিলম্বিত ডেটা অন্তর্ভুক্ত করার নীতি (Late Inclusion Policy)",
+          "body": "উপরের কোডটি দেখায় যে `available_day` অনুযায়ী সাজালে দিনের ক্রম আর `0..546` থাকে না। আমাদের নীতি অত্যন্ত পরিষ্কার: মূল `asof = 375` সময়ে `event 374` অজানা ছিল বলে বাদ পড়েছে (`observed7 == 6`)। কিন্তু `asof = 378`-এ পৌঁছে ডেটাটি বৈধভাবে উপলব্ধ হওয়ার পর থেকে ভবিষ্যতের সমস্ত `Lookup`-এ এটি স্বাভাবিকভাবে অংশ নিচ্ছে (`observed7 == 7`)। অথচ `day 375`-এর ঐতিহাসিক `Snapshot` তার তৎকালীন জ্ঞানই ধরে রাখবে—ভবিষ্যতের তথ্য দিয়ে অতীতকে অদৃশ্যভাবে মুছে ফেলা হবে না।"
+        },
+        {
+          "type": "text",
+          "title": "Allowed Lateness-এর প্রকৌশলগত Trade-off",
+          "body": "স্ট্রিমিং পাইপলাইনে আপনি যদি অনেক বেশি সময় ধরে পুরোনো উইন্ডোর স্টেট মেমোরিতে ধরে রাখেন (`Longer Allowed Lateness`), তবে অনেক দেরিতে আসা ডেটা ও সংশোধনীগুলোকেও নিখুঁতভাবে হিসাবে ধরতে পারবেন; কিন্তু এর বিনিময়ে মেমোরি খরচ ও সিস্টেমের জটিলতা বহুগুণ বেড়ে যাবে। নির্ধারিত সীমার পরে আসা ডেটাকে সরাসরি ফেলে দেওয়া (`Drop`), আলাদা মনিটরিং টেবিলে পাঠানো (`Side-output`), নাকি পুরোনো আউটপুট আপডেট করা হবে—তা সম্পূর্ণ নির্ভর করে ব্যবসার চাহিদা এবং বাস্তব নেটওয়ার্ক বিলম্বের পরিসংখ্যানের ওপর।"
+        },
+        {
+          "type": "text",
+          "title": "চারটি ভিন্ন সময়ের দিগন্ত গুলিয়ে ফেলবেন না",
+          "body": "সিস্টেম ডিজাইনের সময় চারটি সম্পূর্ণ ভিন্ন মেয়াদকে আলাদা রাখতে হয়: (১) ৭ দিনের `Feature Window`, (২) অডিটের জন্য `Lineage Retention`, (৩) সোর্স মেসেজের `Replay Horizon`, এবং (৪) অনলাইন ক্যাশের `TTL`। আপনি যদি ৭ দিনের উইন্ডো শেষ হতেই অষ্টম দিনে মূল `Raw Row` মুছে ফেলেন, তবে ছয় মাস পর নতুন কোনো Feature-এর জন্য ঐতিহাসিক ডেটা পুনর্গঠন (`Historical Reconstruction`) করা একেবারেই অসম্ভব হয়ে পড়বে!"
+        },
+        {
+          "type": "text",
+          "title": "ইন্টারভিউ প্রস্তুতি: Watermark নিয়ে সতর্কতা",
+          "body": "ইন্টারভিউতে কোনো বিলম্বিত ঘটনার উদাহরণ ব্যাখ্যা করার সময় চারটি ধাপ আলাদা করে বলুন: ঘটনাটি কখন সিস্টেমে পৌঁছাল (`Arrival`), কোন কোন উইন্ডোর সদস্য হলো (`Window Membership`), কোন `asof` সময়ে যোগ্য হলো (`Eligibility`), এবং কোন `Snapshot Identity`-তে সংরক্ষিত হলো। কখনোই দাবি করবেন না যে সিস্টেমে `Watermark` থাকলেই সব ডেটা শতভাগ পৌঁছে গেছে বা `Exactly-once` গ্যারান্টি অর্জিত হয়েছে!"
+        },
+        {
+          "type": "text",
+          "title": "Watermark-এর পেছনে পড়া Event হাতে-কলমে চিনে নিই",
+          "body": "বিষয়টি সংখ্যার মাধ্যমে একদম স্বচ্ছ করতে একটি সরল নিয়ম ধরা যাক: `watermark = max_seen_event_time - 2`, এবং `Watermark` কখনোই পেছনের দিকে কমে না (`Monotone`)। ধরুন তিনটি ঘটনার `Event Time` সিস্টেমে এল `[10, 5, 12]` ক্রমে। প্রথমে `10` এলে `Watermark` এগিয়ে হয় `10 - 2 = 8`। ঠিক পরের ঘটনাটি হলো `5`—যা আসার মুহূর্তে বর্তমান `Watermark` (`8`)-এর চেয়ে ছোট (`5 < 8`), অর্থাৎ এটি একটি বিলম্বিত বা `Behind-watermark` ঘটনা! এ সময় সর্বোচ্চ দেখা সময় `10`-ই থাকায় `Watermark` থাকে `8`। এরপর `12` এলে `Watermark` বেড়ে হয় `10`। এখন যদি নতুন করে `event 9` আসে, তবে সেটিও বর্তমান `Watermark` (`10`)-এর পেছনে পড়বে। বাস্তব সিস্টেমে এই অগ্রগতির হিসাবের সাথে উইন্ডো বন্ধের সময়, `Allowed Lateness` এবং রিপেয়ার নীতি মিলিয়ে চূড়ান্ত সিদ্ধান্ত নেওয়া হয়।"
+        },
+        {
+          "type": "code",
+          "title": "Arrival Order থেকে Monotone Watermark ও বিলম্বিত Event শনাক্তকরণ",
+          "body": "maximum_seen = float(\"-inf\")\nwatermark = float(\"-inf\")\nwatermarks, behind = [], []\nfor event_time in [10, 5, 12]:\n    behind.append(int(event_time < watermark))\n    maximum_seen = max(maximum_seen, event_time)\n    watermark = max(watermark, maximum_seen - 2)\n    watermarks.append(int(watermark))\nlater_behind = 9 < watermark\nprint(*watermarks, *behind, int(later_behind))\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে যাচাই করুন: Watermark ও বিলম্বিত Event",
+          "body": "কোনো একটি Event যদি বর্তমান Watermark-এর পেছনে এসে পৌঁছায়, তবে কি সব Window Operator সাথে সাথেই সেটিকে ফেলে দেবে (Drop করবে)?",
+          "solution": "মোটেও না! একটি Event কেবল Watermark-এর পেছনে পড়লেই স্বয়ংক্রিয়ভাবে বাতিল হয়ে যায় না। সংশ্লিষ্ট উইন্ডোর শেষ সময় (Window End), কনফিগার করা Allowed Lateness, মেমোরিতে স্টেট ধরে রাখার মেয়াদ এবং সংশোধন নীতি (Retraction/Repair Policy) মিলিয়ে অপারেটর সিদ্ধান্ত নেয়। মনে রাখবেন, গ্লোবাল Watermark কেবল সময়ের অগ্রগতির একটি আনুমানিক হিসাব—সোর্সের সব ডেটা চলে আসার নিশ্ছিদ্র প্রমাণ নয়। এ ছাড়া দেরিতে আসা ডেটা দিয়ে রিপেয়ার করার সময়ও খেয়াল রাখতে হবে যেন ঐতিহাসিক as-of ট্রেনিং Snapshot-এ ভবিষ্যৎ তথ্য ঢুকে না পড়ে।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch35_backfill",
+      "title": "Backfill ও Historical Snapshot Identity",
+      "subtitle": "আজকের সম্পূর্ণ জ্ঞান দিয়ে পুরোনো দিনের Training Data নতুন করে সাজাবেন না",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন এবং কীভাবে নিরাপদ Backfill করবেন?",
+          "body": "নতুন কোনো Feature যোগ করলে, পুরোনো বাগ সারালে কিংবা সিস্টেম রিকভারির প্রয়োজনে আমাদের প্রায়ই অতীতের পুরো ডেটার ওপর নতুন করে হিসাব চালাতে হয়—যাকে বলা হয় `Backfill`। কিন্তু এখানেই লুকিয়ে থাকে সবচেয়ে বড় ফাঁদ! নিরাপদ `Backfill` করতে হলে প্রতিটি `target date`-এর সাথে তার তৎকালীন `as-of` সীমানা, `availability schedule` এবং `feature version` আবশ্যিকভাবে সংরক্ষণ করতে হবে। ‘তখন সিস্টেমের কাছে কী জানা ছিল’ আর ‘পরে সব ডেটা ও সংশোধনী আসার পর আজ আমরা কী জানি’—এই দুটি প্রশ্নের উত্তর আলাদা রাখার জন্য স্বতন্ত্র `Snapshot Identity` ব্যবহার করা অপরিহার্য।"
+        },
+        {
+          "type": "text",
+          "title": "দুটি বৈধ কিন্তু সম্পূর্ণ ভিন্ন প্রশ্ন",
+          "body": "আমাদের চেনা `day 375`-এর কথাই ভাবুন। প্রথম প্রশ্ন: `day 375`-এ দাঁড়িয়ে সিস্টেম গত সাত দিন সম্পর্কে কী জানত? দ্বিতীয় প্রশ্ন: আজ সব বিলম্বিত ডেটা চলে আসার পর আমরা `day 375`-এর আগের সাত দিন সম্পর্কে কী জানি? প্রকৌশলগত দিক থেকে দুটি প্রশ্নই বৈধ, কিন্তু এদের উদ্দেশ্য সম্পূর্ণ আলাদা! Model-এর ঐতিহাসিক `Training-Serving Parity` বজায় রাখতে হলে আপনার অবশ্যই প্রথম প্রশ্নের উত্তরটি চাই; আর বিজনেস অ্যানালিটিক্স বা রেট্রোস্পেক্টিভ রিপোর্টের জন্য যদি দ্বিতীয় উত্তরটি প্রয়োজন হয়, তবে সেটিকে ভিন্ন `asof` পরিচয়ে সংরক্ষণ করতে হবে।"
+        },
+        {
+          "type": "math",
+          "title": "Snapshot-এর স্বতন্ত্র পরিচয়ের চাবি (Composite Key)",
+          "body": "key=(scenario,target,asof,featureVersion)"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ একই Target দিনের দুটি ভিন্ন As-of Snapshot তুলনা",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"pipeline35\", Path(\"assets/datasets/bike_sharing/pipeline_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/pipeline_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nevents = lab[\"events\"][\"late_fixture\"]\nhistorical = m.features(events, 375, asof=375)\nlater = m.features(events, 375, asof=378)\nassert historical[\"lag1\"] is None and later[\"lag1\"] is not None\nassert m.features(events, 375) == historical\nprint(historical, later)\n"
+        },
+        {
+          "type": "text",
+          "title": "Snapshot টেবিলের গঠন ও অপরিবর্তনীয়তা",
+          "body": "আমাদের এক্সপোর্ট করা ডেটাবেসে `snapshots` টেবিলের `Primary Key` হলো চারটি Column-এর সমন্বয়: `(scenario, target_day, asof_day, feature_version)`। মূল এক্সপোর্টে প্রতিটি শিডিউলের জন্য `asof = target` ধরে মোট `546`টি করে ঐতিহাসিক `Snapshot` রাখা হয়েছে। পরে কেউ যদি `asof = 378` দিয়ে `target = 375`-এর হিসাব চায়, তবে সেটি একটি নতুন `Primary Key` তৈরি করবে—পুরোনো `asof = 375` Row-টিকে নীরবে মুছে বা Overwrite করার কোনো সুযোগ এখানে নেই।"
+        },
+        {
+          "type": "text",
+          "title": "পুনরুত্পাদনযোগ্য Backfill বনাম ফাইল বাইটের পরিচয়",
+          "body": "একই ইনপুট ইভেন্ট, একই Feature Definition এবং একই `asof` কাটঅফ দিলে একটি সঠিক `Backfill` প্রতিবার হুবহু একই লজিক্যাল Feature মান তৈরি করবে। তবে একটি সূক্ষ্ম প্রকৌশলগত পার্থক্য মনে রাখুন: লজিক্যাল ডেটার সমতা (`Logical Feature Parity`) আর ভিন্ন ভিন্ন অপারেটিং সিস্টেম বা `SQLite` সংস্করণে তৈরি হওয়া `.sqlite` ফাইলের কাঁচা বাইটের হুবহু মিল (`File Byte Checksum`) এক জিনিস নয়। পেজ লেআউট বা মেটাডেটার কারণে বাইট আলাদা হতে পারে, তাই এই দুটি যাচাই স্তরকে আলাদাভাবে পরীক্ষা করতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "সংস্করণ রূপান্তর (Migration Boundary)",
+          "body": "ভবিষ্যতে আপনি যদি রোলিং উইন্ডোর দৈর্ঘ্য `7` দিন থেকে বাড়িয়ে `14` দিন করেন, `Null` সামলানোর নিয়ম বদলান কিংবা `Entity Grain` পরিবর্তন করেন, তবে অবশ্যই নতুন `feature_version` এবং নতুন `Definition Hash` তৈরি করতে হবে। মনে রাখবেন, দুটি টেবিলে Column-এর নাম এক হওয়া মানেই তাদের অর্থগত সামঞ্জস্য (`Semantic Compatibility`) থাকা নয়—প্রোডিউসার, কনজিউমার এবং ট্রেনিং Dataset-এর `Lineage` একসাথে সমন্বিত না করলে নীরব বিপর্যয় অনিবার্য।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে অনুশীলন",
+          "body": "যেকোনো একটি বিলম্বিত লক্ষ্য তারিখের জন্য মূল `asof` এবং পরের কোনো `asof` থেকে পাওয়া দুটি Feature Vector পাশাপাশি রেখে তুলনা করুন। নিজের ভাষায় ব্যাখ্যা করুন কেন ঐতিহাসিক ট্রেনিং ডেটাকে আজকের সর্বশেষ ডেটা (`Latest Query`) দিয়ে পূরণ করলে অফলাইন টেস্টের ফলাফল বাস্তবের চেয়ে কৃত্রিমভাবে ভালো (`Optimistic Evaluation`) দেখায়, এবং মূল হিসাবটি ভবিষ্যতে হুবহু ফিরিয়ে আনতে কী কী মেটাডেটা সংরক্ষণ করা আবশ্যক।"
+        }
+      ]
+    },
+    {
+      "id": "ch35_store",
+      "title": "Offline Feature Tables ও Online Lookup ধারণা",
+      "subtitle": "Feature-এর সংজ্ঞা এক হলেও Training ও Live Serving-এ ডেটা তোলার চাহিদা সম্পূর্ণ আলাদা",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Offline Retrieval: ঐতিহাসিক ব্যাচ জয়েন",
+          "body": "একটি পূর্ণাঙ্গ Feature System-কে সাধারণত দুই ধরনের গ্রাহকের সেবা দিতে হয়। প্রথমটি হলো `Offline Retrieval`: যখন আমরা হাজার হাজার ঐতিহাসিক উদাহরণের প্রতিটি `(entity, cutoff)` জোড়ার সাথে তার তৎকালীন সঠিক Feature যুক্ত করে Training বা Validation Dataset তৈরি করি। এখানে প্রধান লক্ষ্য হলো শতভাগ পুনরুত্পাদনযোগ্যতা (`Reproducibility`)—তাই প্রতিটি জয়েনের সাথে `Definition`, `Source Identity` এবং `asof` লিনিয়েজ সংরক্ষিত থাকে এবং কুয়েরিগুলো একসাথে বিপুল পরিমাণ রো ব্যাচ আকারে স্ক্যান করতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "Online Retrieval: স্বল্প Latency-তে তাৎক্ষণিক সেবা",
+          "body": "দ্বিতীয়টি হলো `Online Retrieval`: যখন কোনো ব্যবহারকারী অ্যাপে রিকোয়েস্ট পাঠান এবং কয়েক মিলিসেকেন্ডের মধ্যে নির্দিষ্ট `Entity Key`-এর সর্বশেষ বৈধ অবস্থা (`Latest Allowed State`), ডেটার সতেজতা (`Freshness`) ও Feature Vector তুলে আনতে হয়। অনলাইন ক্যাশ বা কী-ভ্যালু স্টোর সর্বশেষ মান দিতে অত্যন্ত দ্রুতগতির হলেও সে সাধারণত পুরোনো মানগুলো মুছে ফেলে। তাই একটি অনলাইন ক্যাশ থেকে কখনোই অতীতের `Point-in-Time` ট্রেনিং Dataset তৈরি করার চেষ্টা করবেন না!"
+        },
+        {
+          "type": "math",
+          "title": "Offline Dataset বনাম Latest Online State-এর মৌলিক পার্থক্য",
+          "body": "\\mathrm{offlineDataset}\\ne\\mathrm{latestOnlineState}"
+        },
+        {
+          "type": "code",
+          "title": "Python ও SQLite-এ Point-in-Time Feature Lookup যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"pipeline35\", Path(\"assets/datasets/bike_sharing/pipeline_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/pipeline_lab.json\").read_text(encoding=\"utf-8\")\n)\n\ndb = m.connect()\nevents = lab[\"events\"][\"late_fixture\"]\nm.ingest(db, events, \"late_fixture\")\nsql = m.sql_features(db, 375, \"late_fixture\")\nassert m.difference(sql, m.features(events, 375)) == []\nprint(sql)\ndb.close()\n"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের লোকাল Feature Store যেভাবে সাজানো হয়েছে",
+          "body": "উপরের কোডে দেখুন, আমরা লোকাল `SQLite` ডেটাবেসে `events` ও `snapshots` টেবিল, দ্রুত খোঁজার জন্য `Availability Index`, কন্ডিশনাল অ্যাগ্রিগেট কুয়েরি এবং পোর্টেবল ডেটাবেস এক্সপোর্ট তৈরি করেছি—এবং `day 375`-এ `SQL` থেকে পাওয়া ফলাফল Python রেফারেন্সের সাথে শতভাগ মিলে গেছে! অ্যাপটি সরাসরি এই লোকাল Feature, মেটাডেটা ও প্যারিটি রিপোর্ট পরিদর্শন করে; এখানে কোনো বাহ্যিক রিমোট সার্ভার বা ডিস্ট্রিবিউটেড `TTL` সার্ভিস চালানোর ভান করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "SQL কুয়েরির ভেতরের চুক্তি (SQL Contract)",
+          "body": "আমাদের `SQL` কুয়েরির `WHERE event_day < target AND available_day <= asof` অংশটি একাই দুটি সময়ের ঘড়ি পাহারা দেয়। এরপর `CASE` এক্সপ্রেশন দিয়ে অবিকল `target - 1` ও `target - 7` তারিখের মান থেকে `lag1` ও `lag7` তোলা হয়, আর `AVG` Function কেবল জানা দিনগুলোর গড় বের করে। এখানে একটি গুরুত্বপূর্ণ প্রকৌশলগত অভ্যাস হলো: `SQL`-এর `NULL` এবং `COUNT()` Function-এর আচরণ আপনার Python রেফারেন্স কোডের সাথে সব প্রান্তিক অবস্থায় (যেমন খালি উইন্ডোতে) হুবহু মিলছে কি না, তা স্বয়ংক্রিয় টেস্ট দিয়ে যাচাই করা।"
+        },
+        {
+          "type": "text",
+          "title": "দুটি ডেটাবেসের কঠোর পৃথকীকরণ",
+          "body": "সিস্টেম আর্কিটেকচারের স্বচ্ছতার জন্য মনে রাখুন: অ্যাপে আপনার ব্যক্তিগত নোট, বুকমার্ক ও কুইজের অগ্রগতি রাখার ডেটাবেসটি সম্পূর্ণ আলাদা। অন্যদিকে Companion স্ক্রিপ্টের তৈরি করা `feature_store.sqlite` ফাইলটি কেবল একটি ডিরাইভড লার্নিং আর্টিফ্যাক্ট—পাইপলাইন পরীক্ষার সময় যেসব ত্রুটিপূর্ণ বা ঋণাত্মক রেকর্ড পাঠানো হয়, সেগুলো কখনোই অ্যাপের ইউজার ডেটাবেসকে স্পর্শ করে না।"
+        },
+        {
+          "type": "text",
+          "title": "ইন্টারভিউ লক্ষ্যমাত্রা: টুলের আগে চুক্তি",
+          "body": "সিস্টেম ডিজাইন ইন্টারভিউতে কোনো লাইভ Model Request-এর প্রবাহ ব্যাখ্যা করার সময় স্পষ্ট করে বলুন কোন কোন `Feature Definition`, `Version`, `Entity Key` এবং `asof` নিয়ম সেখানে কাজ করবে, এবং কীভাবে অফলাইন ট্রেনিং ও অনলাইন সার্ভিংয়ের মান অভিন্ন রাখা হবে। `Redis`, `Cassandra` বা `Feast`-এর নাম বলার আগেই তথ্যের উপলব্ধতা ও সামঞ্জস্যের শর্তগুলো বোর্ডে পরিষ্কার করে লিখুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch35_lineage",
+      "title": "Feature Definitions, Lineage ও Source Identity",
+      "subtitle": "ক্রিপ্টোগ্রাফিক Hash অত্যন্ত কাজের জিনিস, কিন্তু অর্থগত পর্যালোচনার বিকল্প নয়",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "একটি স্বয়ংসম্পূর্ণ Definition Object",
+          "body": "শুধু `mean7` বা `lag1` নামটুকু শুনলে কি বোঝা যায় এর উইন্ডো কীভাবে ধরা হয়েছে, `Null` থাকলে কী করা হয়েছে, কিংবা কোন সোর্স ফাইল থেকে এটি এসেছে? একদমই না! এজন্য আমরা `version`, `schema`, `entity`, মূল ফাইলের `source SHA`, ফিল্ডের ক্রম, `window` ও `null policy`, `availability` নিয়ম এবং নিষিদ্ধ Feature-গুলোর তালিকা একত্রে একটি সুশৃঙ্খল `Definition Object`-এ বেঁধে রাখি। এরপর সেটিকে নির্দিষ্ট নিয়মে (`Canonical UTF-8`, সাজানো `Key`, বাড়তি স্পেস ছাড়া কমপ্যাক্ট `JSON` এবং শেষে `LF`) সিরিয়ালাইজ করে তার `SHA-256 Hash` তৈরি করা হয়।"
+        },
+        {
+          "type": "text",
+          "title": "শুরু থেকে শেষ পর্যন্ত Lineage ট্রেসিং",
+          "body": "এই কাঠামোর সৌন্দর্য হলো এর নিখুঁত `Lineage`: মূল কাঁচা ফাইলের `Hash` থেকে শুরু করে গৃহীত `event_key`, নির্ধারিত `schedule` ও `asof` কাটঅফ, `Definition Hash` হয়ে চূড়ান্ত `Snapshot Identity` পর্যন্ত প্রতিটি ধাপ পেছনে ফিরে মিলিয়ে দেখা যায়। যেমন কোনো একটি নির্দিষ্ট দিনের `mean7` ঠিক কোন ৬টি বাস্তব সংখ্যার গড় থেকে এসেছে, তা আমরা যেকোনো মুহূর্তে পুনর্গঠন করতে পারি। এটি কোনো বিশাল ক্লাউড ক্যাটালগ সার্ভিস নয়, বরং শতভাগ নির্ভুল ও স্থানীয়ভাবে যাচাইযোগ্য একটি লিনিয়েজ চেইন।"
+        },
+        {
+          "type": "math",
+          "title": "Canonical Definition থেকে Hash তৈরির সমীকরণ",
+          "body": "h_{definition}=SHA256(canonicalDefinition)"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Manifest ও Definition SHA-256 যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"pipeline35\", Path(\"assets/datasets/bike_sharing/pipeline_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/pipeline_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nimport hashlib\n\ndefinition = m.definition()\nexpected = hashlib.sha256(m.payload(definition).encode()).hexdigest()\nassert expected == lab[\"manifests\"][\"late_fixture\"][\"definition_sha256\"]\nprint(lab[\"manifests\"][\"late_fixture\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "প্রত্যাশিত বনাম লোড করা মেটাডেটা পাহারা",
+          "body": "ডেটাবেস বা ফাইল থেকে Feature পড়ার সময় আমাদের সিস্টেম বিশ্বস্ত প্রত্যাশিত চুক্তির (`Expected Contract`) সাথে লোড হওয়া মেটাডেটা মিলিয়ে দেখে। যদি `Definition Hash`, `Source Hash`, `Feature Version`, `Availability` বা `Entity`-র কোনো একটিতেও অমিল পাওয়া যায়, তবে সাথে সাথে `Lookup` ব্লক করে দেওয়া হয়। আর মনে রাখবেন, ম্যানিফেস্ট ফাইলে কেবল একটি হ্যাশ স্ট্রিং লিখে রাখলেই ফাইল বৈধ হয়ে যায় না—আমাদের CLI টুল সরাসরি ডিস্কের বাইট পড়ে নতুন করে হ্যাশ মিলিয়ে দেখে।"
+        },
+        {
+          "type": "text",
+          "title": "Hash আসলে কী প্রমাণ করে আর কী করে না?",
+          "body": "ক্রিপ্টোগ্রাফিক `Hash` নিয়ে একটি প্রচলিত ভুল ধারণা ভাঙা দরকার। `SHA-256` মিললে কেবল এটিই প্রমাণিত হয় যে ফাইল বা সংজ্ঞার বাইটগুলো অবিকল এক আছে—কিন্তু এটি কখনোই কোডের লজিক্যাল নির্ভুলতা, ডেটার গুণগত মান কিংবা নিরাপত্তার সনদ দেয় না! এমনকি যার ডেটা ফাইল বদলানোর ক্ষমতা আছে, সে যদি একই সাথে ম্যানিফেস্টের চেকসামও বদলে দিতে পারে, তবে সাধারণ হ্যাশ তা ঠেকাতে পারবে না; সেক্ষেত্রে আলাদা ক্রিপ্টোগ্রাফিক সিগনেচার (`Signing`) ও ট্রাস্ট মেকানিজম প্রয়োজন হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Consumer Migration ও নীরব Skew প্রতিরোধ",
+          "body": "যখন কোনো Feature প্রোডিউসার সংজ্ঞায় পরিবর্তন আনে, তখন ডাউনস্ট্রিমের প্রতিটি কনজিউমার ও ট্রেনিং জব ঠিক কোন সংস্করণটি চায় তা স্পষ্টভাবে রেকর্ড থাকতে হবে। ভাবুন তো, একই Feature নামের আড়ালে উইন্ডোর নিয়ম বদলে গেল—তখন কিন্তু ইনপুট Vector-এর দৈর্ঘ্য বা `Shape` ভাঙবে না, কোনো ক্র্যাশও হবে না, অথচ নীরবে মারাত্মক `Train-Serving Skew` তৈরি হয়ে Model-এর Prediction নষ্ট করে দেবে!"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে অনুশীলন",
+          "body": "সংজ্ঞা অবজেক্টটিকে আবার সিরিয়ালাইজ করে তার `SHA-256` হ্যাশ মিলিয়ে দেখুন। ব্যাখ্যা করুন কেন সংস্করণের নাম (`Version Label`) এক রেখে ভেতরে `Availability` নিয়ম বদলে ফেললে অর্থগত অমিল তৈরি হয়। পাশাপাশি খেয়াল করুন কেন মূল `day.csv`-এর সম্পূর্ণ ফাইল হ্যাশ এবং আমাদের ব্যবহৃত প্রথম `547`টি Row-এর পরিসর (`used_rows = 547`) দুটি আলাদা মেটাডেটা হিসেবে সংরক্ষণ করা হয়েছে।"
+        }
+      ]
+    },
+    {
+      "id": "ch35_book_privacy",
+      "title": "Privacy by Design: Minimization, Deletion ও Differential Privacy",
+      "subtitle": "ডেটা সংগ্রহ সীমিত রাখা, লিনিয়েজ ধরে মুছে ফেলা এবং গাণিতিক গোপনীয়তার সীমানা",
+      "duration": "18 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "অফলাইন পাইপলাইনেও কেন Privacy সবার আগে ভাবতে হয়?",
+          "body": "অনেকেই ভাবেন, ডেটা তো আমাদের নিজেদের অফলাইন স্টোরেজেই আছে, এখানে আবার গোপনীয়তার ঝুঁকি কোথায়? বাস্তবে ব্যবহারকারীর লেখা নোট, কাঁচা শনাক্তকারী (`Raw User Identifiers`), সার্ভার লগ, এমনকি ডিরাইভড Feature ও Model আর্টিফ্যাক্টের ভেতরেও সংবেদনশীল ব্যক্তিগত তথ্য থেকে যেতে পারে। এজন্যই শুরুতে প্রয়োজন `Data Minimization`—অর্থাৎ কেবল একান্ত প্রয়োজনীয় ফিল্ডটুকুই সংগ্রহ করা এবং নির্দিষ্ট সময়ের পর তা মুছে ফেলার মেয়াদ (`Retention Period`) বেঁধে দেওয়া। আর একটি অত্যন্ত জরুরি সত্য মনে রাখুন: ইমেইল অ্যাড্রেসকে সাধারণ `SHA-256` দিয়ে হ্যাশ (`Hashed Email`) করলেই তা বেনামি বা `Anonymous` হয়ে যায় না! ডিকশনারি অ্যাটাক বা অন্য Dataset-এর সাথে মিলিয়ে (`Cross-dataset Linkage`) খুব সহজেই আসল মানুষটিকে চিনে ফেলা সম্ভব।"
+        },
+        {
+          "type": "text",
+          "title": "Deletion Lineage এবং Differential Privacy-র মূল পার্থক্য",
+          "body": "কোনো ব্যবহারকারী তার ডেটা মুছে ফেলার অনুরোধ করলে (`Right to Erasure`) শুধু মূল টেবিল থেকে একটি Row মুছলেই দায়িত্ব শেষ হয় না; `Raw Data → Derived Features → Online Cache → Backup → Training Snapshot`—এই পুরো লিনিয়েজ ধরে কোথায় কীভাবে ডেটা মুছবে তার সুনির্দিষ্ট পরিধি (`Deletion Scope`) থাকতে হয়।\n\nঅন্যদিকে নিরাপত্তার দুটি স্তর আলাদা করে বুঝুন: `Access Control` এবং `Encryption` নির্ধারণ করে কে ডেটা ফাইল পড়তে পারবে, কিন্তু প্রকাশিত ফলাফল বা অ্যাগ্রিগেট পরিসংখ্যান থেকে কোনো একক ব্যক্তির তথ্য অনুমান করা যাবে কি না তা ঠেকায় `Differential Privacy (DP)`। Pure `ε-DP` গ্যারান্টি দেয় যে দুটি সন্নিহিত Dataset (`Adjacent Datasets`, অর্থাৎ যেখানে কেবল একটি এন্ট্রির পার্থক্য আছে) `D` এবং `D'`-এর ওপর মেকানিজম `M` চালালে যেকোনো আউটপুটের সম্ভাবনার অনুপাত `e^ε`-এর মধ্যে সীমাবদ্ধ থাকবে। তবে এই সন্নিহিত হওয়ার শর্তটি `Record-level` (একটি মাত্র রো) নাকি `User-level` (একজন ব্যবহারকারীর সব Row)—তা ঠিক করাই সবচেয়ে গুরুত্বপূর্ণ প্রকৌশলগত সিদ্ধান্ত!"
+        },
+        {
+          "type": "math",
+          "title": "Pure ε-Differential Privacy ও Laplace Scale-এর সূত্র",
+          "body": "P(M(D)\\in S)\\le e^\\epsilon P(M(D^\\prime)\\in S),\\quad \\mathrm{Laplace\\ scale}=\\Delta f/\\epsilon"
+        },
+        {
+          "type": "text",
+          "title": "খাতা-কলমে Sensitivity ও Noise Scale-এর হিসাব",
+          "body": "চলুন একটি সাধারণ গণনা কুয়েরি (`Counting Query`) দিয়ে পার্থক্যটি হাতে-কলমে দেখি। যদি আমাদের শর্ত হয় Dataset-এ কেবল একটি Row যোগ বা বাদ হতে পারে (`Record-level Adjacency`), তবে যোগফলের সর্বোচ্চ পরিবর্তন বা `Sensitivity` হলো `Δf = 1.0`। তখন `ε = 0.5` বাজেটে প্রয়োজনীয় `Laplace Scale` হবে `Δf / ε = 1.0 / 0.5 = 2.0`। কিন্তু বাস্তবে যদি একজন ব্যবহারকারী একাই সর্বোচ্চ `10`টি Row জমা দিতে পারেন এবং আমরা ইউজার-পর্যায়ের গোপনীয়তা (`User-level Privacy`) দিতে চাই, তবে সেই একজন মানুষ সরে গেলে গণনা বদলে যেতে পারে `10` পর্যন্ত! ফলে `User-level Sensitivity` হবে `Δf = 10.0`, এবং একই `ε = 0.5` বজায় রাখতে `Laplace Scale` দশ গুণ বেড়ে হবে `10.0 / 0.5 = 20.0`।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Record বনাম User-level Laplace Scale ও সম্ভাবনার সীমা গণনা",
+          "body": "import math\n\nepsilon, row_sensitivity, user_sensitivity = 0.5, 1.0, 10.0\nrow_scale = row_sensitivity / epsilon\nuser_scale = user_sensitivity / epsilon\n# Scale calculation is not a complete DP implementation or privacy release.\nprobability_ratio_bound = math.exp(epsilon)\nprint(row_scale, user_scale, round(probability_ratio_bound, 6))\n"
+        },
+        {
+          "type": "text",
+          "title": "কোডের আউটপুট ও বাস্তব DP সিস্টেমের শর্তাবলি",
+          "body": "কোডটি চালালে আউটপুট আসে যথাক্রমে `2.0`, `20.0` এবং সম্ভাবনার অনুপাতের উচ্চসীমা `e^0.5 ≈ 1.648721`। তবে খেয়াল রাখবেন, নিছক এই স্কেলটুকু ভাগ করে বের করাই একটি পূর্ণাঙ্গ `Differential Privacy` সিস্টেম নয়! বাস্তব প্রোডাকশনে নিশ্ছিদ্র গোপনীয়তা দিতে হলে প্রতি ইউজারের অবদান সীমিত করা (`Contribution Bounding/Clipping`), ক্রিপ্টোগ্রাফিকভাবে নিরাপদ র‍্যান্ডম নম্বর জেনারেটর (`CSPRNG`) থেকে নয়েজ তোলা, ফ্লোটিং-পয়েন্ট সাইড-চ্যানেল এড়ানো এবং মোট প্রাইভেসি বাজেটের নিখুঁত হিসাব (`Privacy Accounting & Composition`) বজায় রাখা অপরিহার্য।"
+        },
+        {
+          "type": "text",
+          "title": "সীমাবদ্ধতা: ডেটা মুছলেই কি Model ভুলে যায়?",
+          "body": "আরেকটি বাস্তব সীমাবদ্ধতা সবসময় মাথায় রাখতে হবে: আপনি ডেটাবেস থেকে কোনো ব্যবহারকারীর ট্রেনিং ডেটা মুছে ফেললেও ইতিমধ্যে ট্রেন হওয়া `Model`-এর Parameter বা Weights-এর ভেতর থেকে তার গাণিতিক প্রভাব কিন্তু আপনা-আপনি মুছে যায় না! ব্যাকআপ ফাইলের মেয়াদ উত্তীর্ণ হওয়া এবং Model থেকে প্রভাব মোছার কৌশল (`Periodic Retraining` বা `Machine Unlearning`) আলাদাভাবে পরিকল্পনা করতে হয়। আর অবশ্যই মনে রাখবেন, এই প্রকৌশলগত আলোচনাটি কারিগরি ভিত্তি গড়ার জন্য—কোনো আইনি পরামর্শ বা কমপ্লায়েন্স সনদ নয়।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে যাচাই করুন: Privacy Composition ও পাবলিক Seed-এর ঝুঁকি",
+          "body": "একই Dataset-এর ওপর ε = 0.5 বাজেটের একটি Pure-DP মেকানিজম পরপর দুইবার চালিয়ে ফলাফল প্রকাশ করলে Basic Composition অনুযায়ী মোট Privacy বাজেটের সীমা কত হবে? আর পরীক্ষার সুবিধার্থে নির্দিষ্ট একটি পাবলিক Seed ফিক্স করে Noise যোগ করলে গোপনীয়তার কী সর্বনাশ ঘটবে?",
+          "solution": "Pure-DP-র Basic Composition উপপাদ্য অনুযায়ী দুটি রিলিজের বাজেট সরাসরি যোগ হয়: ε_total = ε_1 + ε_2 = 0.5 + 0.5 = 1.0 (ফলে সম্ভাবনার অনুপাতের সীমা বেড়ে দাঁড়ায় e^1.0 ≈ 2.718)। আর কেউ যদি পাবলিকলি জানা একটি নির্দিষ্ট Seed ব্যবহার করে র‍্যান্ডম Noise তৈরি করে, তবে যে কেউ ঠিক সেই একই Seed চালিয়ে অবিকল সেই Noise সংখ্যাটি পুনর্গঠন করতে পারবে এবং প্রকাশিত উত্তর থেকে তা বিয়োগ করে Dataset-এর একদম আসল ও গোপন সংখ্যাটি বের করে ফেলবে! তাই ডিটারমিনিস্টিক Seed কেবল সফটওয়্যার টেস্টের জন্য বৈধ, বাস্তব প্রাইভেসি মেকানিজমের জন্য কখনোই নয়।",
+          "reference": "https://www.cis.upenn.edu/~aaroth/Papers/privacybook.pdf"
+        }
+      ]
+    },
+    {
+      "id": "ch35_consistency",
+      "title": "Train-Serving Skew ও Shared Logic-এর সীমাবদ্ধতা",
+      "subtitle": "একই কোড শেয়ার করলেও ভুল চুক্তির কারণে অভিন্ন বাগ রয়ে যেতে পারে",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Train-Serving Skew আসলে কীভাবে জন্মায়?",
+          "body": "প্রোডাকশন ML সিস্টেমের সবচেয়ে নীরব ঘাতক হলো `Train-Serving Skew`—যখন Training-এর সময় Model যে নিয়মে তৈরি ইনপুট দেখেছিল, লাইভ `Serving`-এর সময় তার চেয়ে ভিন্ন সংজ্ঞা, ভিন্ন উৎস, ভিন্ন `asof` কাটঅফ বা ভিন্ন `Null Policy` থেকে আসা ইনপুট পায়। এমনকি ফ্লোটিং-পয়েন্ট প্রিসিশন, `Timezone` রূপান্তর, এককের অমিল, ক্যাটাগরিক্যাল ভোকাবুলারির ক্রম কিংবা `Availability` ফিল্টারের সামান্য ত্রুটিও পুরো ইনপুট Vector-কে বদলে দিতে পারে। মনে রাখবেন, দুই জায়গায় Column-এর নাম এক থাকা মানেই কখনোই `Parity` বা সমতা নয়!"
+        },
+        {
+          "type": "text",
+          "title": "ইতিবাচক মানদণ্ড: কখন প্রকৃত PARITY মেলে?",
+          "body": "আমাদের ঐতিহাসিক রেফারেন্স বিল্ডার এবং লোকাল সার্ভিং বিল্ডার যখন হুবহু একই ইভেন্ট, একই `Feature Definition` এবং একই `asof` কাটঅফ ব্যবহার করে, তখন তাদের আউটপুট শতভাগ মিলে যায় (`PARITY`)। শুধু তাই নয়, শেয়ার করা কোডের ভেতরেও যেন কোনো লুকানো বাগ না থাকে, তার অতিরিক্ত প্রমাণ হিসেবে আমরা স্বতন্ত্র `SQL`, ডিরেক্ট `Batch` এবং `Incremental`—তিনটি ভিন্ন পথে হিসাব মিলিয়ে দেখেছি।"
+        },
+        {
+          "type": "math",
+          "title": "ঐতিহাসিক ও সার্ভিং Feature-এর সমতার শর্ত",
+          "body": "F_{historical}(entity,t,a,v)=F_{serve}(entity,t,a,v)"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Metadata Guard এবং Latest-state Skew পরীক্ষা",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"pipeline35\", Path(\"assets/datasets/bike_sharing/pipeline_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/pipeline_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nevents = lab[\"events\"][\"late_fixture\"]\nexpected = m.manifest(\"late_fixture\")\ngood = m.guarded_features(events, 375, expected, dict(expected))\nbad = m.guarded_features(events, 375, expected, dict(expected, feature_version=\"wrong\"))\nassert good == m.features(events, 375) and bad is None\nprint(m.difference(good, m.features(events, 375, latest=True)))\n"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে ধরা পড়া SKEW: Day 375-এর উদাহরণ",
+          "body": "কোডের আউটপুটটি দেখুন: সার্ভিং বা ব্যাকফিল লুকআপে যদি ভুলবশত `Availability` উপেক্ষা করে সর্বশেষ অবস্থা (`latest=True`) নেওয়া হয়, তবে এক ধাক্কায় `lag1`, `mean7`, `observed7` এবং `age_days`—চারটি Feature-ই বদলে যায়! কারণ `day 375`-এ যে `day 374`-এর Row-টি বাস্তবে অজানা ছিল, পরে জানা যাওয়ার কারণে তা ভুল করে ভেতরে ঢুকে পড়েছে। অ্যাপের ইন্টারফেস এই অসামঞ্জস্যকে স্পষ্টভাবে `SKEW` হিসেবে চিহ্নিত করে এবং ঠিক কোন কোন ফিল্ডে পার্থক্য হয়েছে তা আঙুল দিয়ে দেখিয়ে দেয়।"
+        },
+        {
+          "type": "feature_consistency",
+          "title": "হিসাব শুরুর আগেই পাহারা (Guard Before Computation)",
+          "body": "উপরের কোডে `guarded_features` Function-টির নকশা লক্ষ্য করুন: প্রত্যাশিত এবং লোড করা মেটাডেটায় সামান্য অমিল (`feature_version='wrong'`) দেখলেই এটি কোনো হিসাব করার আগেই সরাসরি `None` ফিরিয়ে দেয়! ভুল `Entity` বা ভুল `Availability` নিয়মে পুরো Vector হিসাব করে কেবল ইউজার ইন্টারফেসে লুকিয়ে রাখা কোনো নিরাপদ ডিজাইন নয়। আমাদের ইউনিট টেস্টগুলো এমনকি খালি ইনপুট তালিকা পাঠিয়েও পরীক্ষা করে নিশ্চিত হয় যে এই মেটাডেটা গার্ড সবার আগে কার্যকর হচ্ছে।"
+        },
+        {
+          "type": "text",
+          "title": "ইন্টারেক্টিভ Consistency Lab",
+          "body": "ল্যাবে `Fault` ড্রপডাউন এবং `Latest` টগল পরিবর্তন করে দেখুন কীভাবে সিস্টেম সাড়া দেয়। একটি গভীর শিক্ষা খেয়াল করবেন: মেটাডেটা হেডার শতভাগ মিলে যাওয়ার পরও ভেতরের ভুল লুকআপ লজিকের কারণে মারাত্মক `SKEW` তৈরি হতে পারে! অর্থাৎ চুক্তির মেটাডেটা সমতা (`Contract Equality`) এবং ফলাফলের অর্থগত সমতা (`Semantic Parity`) দুটি আলাদা প্রতিরক্ষা স্তর। শেষে `Reset` চাপলে আবার মূল রেফারেন্স প্রোটোকল ফিরে আসবে।"
+        },
+        {
+          "type": "text",
+          "title": "ইন্টারভিউতে যেভাবে উত্তর সাজাবেন",
+          "body": "ইন্টারভিউতে কেউ যদি জিজ্ঞেস করে কীভাবে আপনি `Train-Serving Skew` ঠেকাবেন, তবে শুধু ‘আমরা ট্রেনিং ও সার্ভিংয়ে একই Python লাইব্রেরি শেয়ার করব’ বলে থেমে যাবেন না! স্পষ্টভাবে বলুন যে কোড শেয়ার করা প্রথম ধাপ মাত্র—এর পাশাপাশি Feature-এর মান, `Definition` ও `Source Version`, `Entity Lookup Key`, `asof` কাটঅফ ও `Freshness` লগ করে তুলনা করতে হয় এবং স্বতন্ত্র বাউন্ডারি ও `Null` টেস্ট দিয়ে বাস্তব কেস যাচাই করতে হয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch35_labels",
+      "title": "Labels, Delayed Feedback ও Leakage-safe Joins",
+      "subtitle": "লক্ষ্য দিনের উপাদানগুলো Feature-এ ঢুকে পড়লে Pipeline নিখুঁত হলেও পুরো ML Task ভুল হয়ে যায়",
+      "duration": "55 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "একই Column: কখনো বৈধ Feature, কখনো নিষিদ্ধ Label!",
+          "body": "টাইম-সিরিজ ডেটার একটি দারুণ বৈশিষ্ট্য হলো, একই `cnt` Column অতীতের উপলব্ধ তারিখে একটি বৈধ `Feature` হিসেবে কাজ করে, আবার `target` তারিখে সেটিই হয়ে ওঠে আমাদের অনুমান করার লক্ষ্য বা `Label` (`Outcome`)! আমাদের বিল্ডার তাই অতীতের বৈধ দিনগুলো থেকে Feature তৈরি করে এবং লক্ষ্য দিনের ফলাফলকে সম্পূর্ণ আলাদা Label হিসেবে রাখে। মনে রাখবেন, এই Label-টি বাস্তবে কবে জানা যায় (`Label Availability`) এবং জয়েন করার পর প্রতিটি Training Sample-এর বিপরীতে কয়টি করে রো থাকছে—তা-ও আপনার Training Contract-এর অবিচ্ছেদ্য অংশ।"
+        },
+        {
+          "type": "text",
+          "title": "Target-এর উপাদানগুলোর মরণফাঁদ (Components Trap)",
+          "body": "শুরুর দিকে আমরা দেখেছিলাম মূল ডেটায় `casual + registered = cnt` সম্পর্কটি থাকে। ডেটা ইনজেশনের সময় এই যোগফল মিলিয়ে দেখা একটি চমৎকার Integrity Check। কিন্তু আপনি যদি লক্ষ্য দিনের `cnt` Prediction দেওয়ার জন্য ওই একই দিনের `casual` বা `registered` সংখ্যাকে ইনপুট Feature হিসেবে Model-কে দিয়ে দেন, তবে তা হবে সরাসরি `Target Leakage`! মূল CSV ফাইলে একটি Column পাশে বসে আছে মানেই এই নয় যে Prediction দেওয়ার মুহূর্তে তার মান জানা সম্ভব ছিল।"
+        },
+        {
+          "type": "math",
+          "title": "Target উপাদান বর্জনের গাণিতিক যুক্তি",
+          "body": "cnt=casual+registered\\quad\\Rightarrow\\quad\\mathrm{targetComponents\\ excluded}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ নিষিদ্ধ Feature তালিকা (Excluded Features) যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"pipeline35\", Path(\"assets/datasets/bike_sharing/pipeline_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/pipeline_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nassert \"target_cnt\" in lab[\"definition\"][\"excluded_features\"]\nassert \"casual\" in lab[\"definition\"][\"excluded_features\"]\nassert \"registered\" in lab[\"definition\"][\"excluded_features\"]\nprint(lab[\"cases\"][0][\"date\"], lab[\"cases\"][0][\"outcome\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "ঘটে যাওয়া আবহাওয়ার ফাঁদ (Realized Weather Trap)",
+          "body": "একই ধরনের আরেকটি সূক্ষ্ম ভুল ঘটে আবহাওয়ার ডেটা নিয়ে। ঐতিহাসিক CSV ফাইলে যে তাপমাত্রা বা বৃষ্টির পরিমাণ লেখা থাকে, তা হলো সারাদিন ধরে ঘটে যাওয়া প্রকৃত আবহাওয়া (`Realized Weather`)—যা দিনের শুরুতে Prediction দেওয়ার মুহূর্তে হুবহু জানা ছিল না! প্রোডাকশনে আবহাওয়া ব্যবহার করতে হলে আপনাকে অবশ্যই প্রকাশিত `Weather Forecast` নামের আলাদা একটি সোর্স আনতে হবে, যার নিজস্ব প্রকাশের সময় (`Forecast Issue Timestamp`) ও `Availability Contract` থাকবে। সে কারণেই আমাদের এই পাইপলাইনে কোনো আবহাওয়া Feature রাখা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "বিলম্বিত ফলাফল (Delayed Feedback) ও Label পরিপক্বতা",
+          "body": "বাস্তব প্রোডাকশন সিস্টেমে (যেমন ক্রেডিট কার্ড জালিয়াতি ধরা বা ৩০ দিনের সাবস্ক্রিপশন রিটেনশন) আসল `Label` বা ফলাফল চূড়ান্ত হতে দিন বা সপ্তাহ লেগে যেতে পারে। যে ঘটনার ফলাফল এখনো অপেক্ষমাণ (`Pending Label`), সেটিকে ভুলেও শূন্য বা `True Negative` ধরে ট্রেনিংয়ে ঢুকিয়ে দেবেন না! Label তৈরির মেয়াদ (`Attribution Window`), পরবর্তী সংশোধন এবং ট্রেনিং Dataset জমানোর সময়সীমা (`Dataset Freeze`) সবসময় সুস্পষ্টভাবে লিখে রাখতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Join Cardinality: নীরবে রো দ্বিগুণ হওয়ার বিপদ",
+          "body": "একটি একক Training Sample-এর Feature তৈরি করতে ভেতরে ভেতরে হয়তো অনেকগুলো কাঁচা ইভেন্ট রো অ্যাগ্রিগেট করা হয়; কিন্তু চূড়ান্ত Feature ও Label জয়েন করার সময় যদি জয়েন কী-তে ডুপ্লিকেট থাকে, তবে একই Training Sample একাধিকবার কপি হয়ে (`Join Fan-out`) Row-এর সংখ্যা বাড়িয়ে দেয়! এতে Model-এর Sample Weight এবং ক্লাসের অনুপাত নীরবে বিকৃত হয়ে যায়। তাই জয়েনের আগে ও পরে `Cardinality`, `Uniqueness` এবং `Row Grain` অডিট করা বাধ্যতামূলক।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে অনুশীলন",
+          "body": "Dataset-এর সবকটি Column-কে চারটি স্পষ্ট ভাগে ভাগ করে ফেলুন: (১) অনুমোদিত `Feature`, (২) লক্ষ্য `Label`, (৩) শুধুমাত্র ইনজেশন যাচাইয়ে ব্যবহার্য Column, এবং (৪) সম্পূর্ণ নিষিদ্ধ (`Excluded`) Column। একটি সুনির্দিষ্ট `asof` কাটঅফ উদাহরণ দিয়ে দেখান কেন অতীতের `cnt` একটি বৈধ ইনপুট হওয়া সত্ত্বেও লক্ষ্য দিনের `casual` মারাত্মক Leakage ঘটায়।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে প্রমাণ: কীভাবে ভুল Join ট্রেনিং Row গুণিতক করে ফেলে",
+          "body": "চলুন একটি ছোট্ট উদাহরণ দিয়ে এই `Join Fan-out` সমস্যাটি চিরতরে পরিষ্কার করি। ধরুন একই সত্তা `'A'`-এর তিনটি Prediction Sample (`sample_id = 1, 2, 3`) নেওয়া হয়েছে যথাক্রমে `asof = 1, 3, 5` সময়ে। ওদিকে Feature টেবিলে `'A'`-এর দুটি Snapshot আছে: সময় `2`-এ উপলব্ধ `value = 10`, এবং সময় `4`-এ উপলব্ধ `value = 20`। আপনি যদি সময়ের শর্ত ছাড়া কেবল `entity` মিলিয়ে সাধারণ `JOIN` চালান, তবে `3 × 2 = 6`টি Row তৈরি হয়ে যাবে! অথচ প্রতিটি Prediction-এর জন্য তার `asof` সময়ের মধ্যে সর্বশেষ যোগ্য Snapshot-টি নিলে Row থাকবে ঠিক `3`টি, এবং তাদের Feature মান হবে `[NULL, 10.0, 20.0]`। খেয়াল করুন, প্রথম Sample-এর (`asof = 1`) জন্য কোনো Feature তখনো উপলব্ধ না থাকায় `NULL` অক্ষুণ্ণ রাখা হয়েছে—শূন্য বসানো হয়নি!"
+        },
+        {
+          "type": "code",
+          "title": "SQLite-এ Correlated As-of Lookup এবং NULL সংরক্ষণ",
+          "body": "import sqlite3\n\ndatabase = sqlite3.connect(\":memory:\")\ndatabase.executescript(\"\"\"\n    CREATE TABLE samples (sample_id INTEGER PRIMARY KEY, entity TEXT, asof INTEGER);\n    CREATE TABLE feature_versions (entity TEXT, available_at INTEGER, version INTEGER, value REAL,\n                                   PRIMARY KEY(entity, available_at, version));\n    INSERT INTO samples VALUES (1, 'A', 1), (2, 'A', 3), (3, 'A', 5);\n    INSERT INTO feature_versions VALUES ('A', 2, 1, 10), ('A', 4, 2, 20);\n\"\"\")\nmultiplied = database.execute(\n    \"SELECT count(*) FROM samples s JOIN feature_versions f ON s.entity=f.entity\"\n).fetchone()[0]\nrows = database.execute(\"\"\"\n    SELECT s.sample_id,\n           (SELECT f.value FROM feature_versions f\n            WHERE f.entity=s.entity AND f.available_at<=s.asof\n            ORDER BY f.available_at DESC, f.version DESC LIMIT 1) AS value\n    FROM samples s ORDER BY s.sample_id\n\"\"\").fetchall()\ndatabase.close()\nassert rows == [(1, None), (2, 10.0), (3, 20.0)]\nprint(\n    multiplied,\n    len(rows),\n    sum(value is None for sample_id, value in rows),\n    rows[1][1],\n    rows[2][1],\n)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে যাচাই করুন: As-of Predicate-এর সীমা",
+          "body": "উপরের SQL কুয়েরির available_at <= s.asof শর্তটি থাকলেই কি পৃথিবীর সব ধরনের Feature Leakage আপনা-আপনি বন্ধ হয়ে যাবে?",
+          "solution": "একেবারেই না! এই শর্তটি কেবল নিশ্চিত করে যে Snapshot Row-টি ওই asof সময়ের আগে টেবিলে লেখা হয়েছিল। কিন্তু ওই Snapshot-টি তৈরি করার সময় ভেতরের Feature সংজ্ঞায় সঠিক Event-time কাটঅফ মানা হয়েছিল কি না কিংবা আপস্ট্রিমের কোনো জয়েনে ভবিষ্যৎ তথ্য ঢুকেছিল কি না—তা আলাদাভাবে যাচাই করতে হবে। পাশাপাশি Label-এর নিজস্ব উপলব্ধতা, প্রতি Sample-এ ঠিক একটি Row থাকা (1-to-1 Cardinality) এবং সুনির্দিষ্ট Missing-value নীতির জন্যও আলাদা Assertion থাকা আবশ্যক।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch35_quality",
+      "title": "Quality Checks, Freshness Monitors ও SLAs",
+      "subtitle": "কোনো সিস্টেমে সরাসরি পরিমাপ না করে আন্দাজে নির্ভরযোগ্যতার হার দাবি করবেন না",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ডেটার গুণগত মানের বহুমাত্রিক দিক",
+          "body": "‘আমাদের ডেটার মান ভালো’—এই কথাটির আসলে কোনো প্রকৌশলগত অর্থ নেই যতক্ষণ না আপনি এর প্রতিটি মাত্রা আলাদাভাবে মাপছেন! `Schema Validity`, `Uniqueness`, ডোমেইনের সীমা (`Domain Constraints`), `Entity Key`, `Coverage`, `Freshness` এবং `Lineage`—এদের প্রতিটি আলাদা মাত্রা। সবকটি পরীক্ষাকে গড় করে একটি মাত্র সংখ্যার ‘হেলথ স্কোরে’ লুকিয়ে ফেললে কোথায় ফাটল ধরেছে তা কখনোই খুঁজে পাবেন না। তা ছাড়া পরিসংখ্যানগত `Distribution Drift` এবং কাঠামোগতভাবে অবৈধ রেকর্ড (`Invalid Record`) সম্পূর্ণ ভিন্ন দুটি সমস্যা।"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের ল্যাবে পরিমাপ করা প্রকৃত সংখ্যাগুলো",
+          "body": "আমাদের `late_fixture` শিডিউলের `546`টি Snapshot পরীক্ষা করে সুনির্দিষ্টভাবে পাওয়া গেছে: মোট `33`টি Snapshot-এ `lag1` অনুপস্থিত (`missing_lag1 == 33`), এবং `Availability` উপেক্ষা করলে `98`টি Snapshot-এ অমিল দেখা দেয় (`retrospective_mismatch_snapshots == 98`)। এ ছাড়া `1095`টি ডেলিভারির ত্রুটিপূর্ণ রিপ্লে পরীক্ষায় ঠিক `1`টি ঋণাত্মক রেকর্ড প্রত্যাখ্যাত হয়েছে (`rejected == 1`)। মনে রাখতে হবে, এই সংখ্যাগুলো আমাদের নির্ধারিত টেস্ট শিডিউলের নিখুঁত ফলাফল—বাস্তব প্রোডাকশন সার্ভারে ডেটা কতটা দেরি করে বা কত শতাংশ ফাইল নষ্ট হয়, তা কেবল লাইভ সিস্টেমে মনিটর করেই জানা সম্ভব।"
+        },
+        {
+          "type": "math",
+          "title": "ডেটা কোয়ালিটির পাঁচটি মৌলিক স্তম্ভ",
+          "body": "quality=\\{validity,uniqueness,coverage,freshness,lineage\\}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Pipeline Quality ও Rejection পরিসংখ্যান যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/pipeline_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nstats = lab[\"statistics\"][\"late_fixture\"]\nassert stats[\"missing_lag1\"] == 33 and stats[\"retrospective_mismatch_snapshots\"] == 98\nassert lab[\"replays\"][\"invalid\"][\"rejected\"] == 1\nprint(stats[\"snapshots\"], stats[\"missing_lag1\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "Freshness SLA কীভাবে ডিজাইন করবেন?",
+          "body": "প্রোডাকশনে একটি Model সর্বোচ্চ কত দিন পুরোনো ডেটা (`age_days`) বা সর্বনিম্ন কতটুকু `Coverage` নিয়ে নিরাপদে কাজ করতে পারবে, সেই `SLA (Service Level Agreement)` নির্ধারিত হবে সংশ্লিষ্ট প্রোডাক্টের ঝুঁকি ও Model-এর সংবেদনশীলতা থেকে। ডিজাইনের সময় তিনটি ভিন্ন রাশিকে গুলিয়ে ফেলবেন না: অনলাইন ক্যাশের মেয়াদ (`Cache TTL`), সর্বশেষ ঘটনার বয়স (`Feature Event Age`) এবং সোর্স পাইপলাইনের বিলম্ব (`Source Ingestion Delay`)। আমাদের `age_days` ক্যালেন্ডার দিনের ব্যবধান মাপে, সেকেন্ড-পর্যায়ের সার্ভার মনিটর নয়।"
+        },
+        {
+          "type": "text",
+          "title": "অ্যালার্ট পাঠানোর শৃঙ্খলা (Alert Discipline)",
+          "body": "নির্ধারিত সময়ে ব্যাচ না আসা, হঠাৎ ডুপ্লিকেট মেসেজের সংখ্যা লাফিয়ে বাড়া, অপরিচিত `Source Hash`, Schema ভেঙে যাওয়া বা অচেনা `Entity Key`—এগুলো প্রোডাকশন অ্যালার্টের জন্য চমৎকার সংকেত। তবে মনে রাখবেন, কোনো একটি থ্রেশহোল্ড অতিক্রম করা মানেই সমস্যার মূল কারণ (`Root Cause`) প্রমাণ হয়ে যাওয়া নয়; এটি তদন্ত শুরুর সংকেত মাত্র। আমাদের পরের অধ্যায়ে অর্থাৎ `Book 6 · Chapter 2 (Serving, Monitoring & MLOps)`-এ আমরা লাইভ মনিটরিং ও অ্যালার্টিং নিয়ে আরও গভীরভাবে আলোচনা করব।"
+        },
+        {
+          "type": "text",
+          "title": "Feature অনুপস্থিত থাকলে সিস্টেমের আচরণ (Response Contract)",
+          "body": "লাইভ রিকোয়েস্টের সময় যদি কোনো অত্যাবশ্যকীয় Feature অনুপস্থিত থাকে বা অতিরিক্ত পুরোনো হয়ে যায়, তখন সিস্টেম কী করবে? পরীক্ষিত কোনো ডিফল্ট মান বসাবে, সরল কোনো `Baseline` Model-এ ফিরে যাবে (`Validated Fallback`), নাকি Prediction দেওয়া থেকে বিরত থাকবে (`Refuse/Abstain`)? আপনি যে পথই বেছে নিন না কেন, তা একটি সুস্পষ্ট ও সংস্করণযুক্ত নীতি হতে হবে—নীরবে `Null`-কে `0` বানিয়ে চালিয়ে দেওয়া অর্থগত চুক্তির সরাসরি লঙ্ঘন!"
+        },
+        {
+          "type": "text",
+          "title": "পোর্টফোলিও ও ইঞ্জিনিয়ারিং রিপোর্টের সততা",
+          "body": "নিজের প্রজেক্ট বা ইন্টারভিউ পোর্টফোলিও লেখার সময় ‘কোন চেকগুলো সরাসরি কোডে ইমপ্লিমেন্ট করা হয়েছে’ আর ‘কোন মনিটরগুলো ভবিষ্যৎ প্রোডাকশনের জন্য প্রস্তাবিত’—তা স্পষ্ট আলাদা শিরোনামে লিখুন। অফলাইন Dataset-এর Row সংখ্যা দেখিয়ে কখনোই লাইভ সার্ভারের `Uptime` বা `QPS` দাবি করবেন না, এবং প্রতিটি মেট্রিকের সাথে তার সঠিক হর (`Denominator`), উইন্ডো ও প্রত্যাখ্যানের কারণ উল্লেখ করুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch35_artifacts",
+      "title": "Portable SQLite Feature Store ও Byte Verification",
+      "subtitle": "উৎস থেকে তৈরি করা ডেটাবেসও একটি স্বয়ংসম্পূর্ণ ও নিরীক্ষণযোগ্য প্রকৌশল Artifact",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "এক্সপোর্ট করা বান্ডেলে কী কী থাকে?",
+          "body": "একটি নির্ভরযোগ্য পাইপলাইনের ফলাফল এমনভাবে প্যাকেজ করা উচিত যেন অন্য যেকোনো ইঞ্জিনিয়ার তা খুলে স্বাধীনভাবে যাচাই করতে পারেন। আমাদের এক্সপোর্ট বান্ডেলে মোট ছয়টি ফাইল তৈরি হয়: `feature_store.sqlite`, `feature_definition.json`, `pipeline_lab.json`, মূল Dataset-এর `SOURCE_README.txt`, লাইসেন্সের `ATTRIBUTION.txt` এবং সব ফাইলের চেকসাম সংবলিত `checksums.json`। দুটি শিডিউল (`on_time` ও `late_fixture`) মিলিয়ে এতে `1094`টি (`547 × 2`) ক্যানোনিকাল ইভেন্ট রো এবং `1092`টি (`546 × 2`) সংস্করণযুক্ত ঐতিহাসিক `Snapshot` থাকে—আর মূল সোর্স CSV ফাইলটি থাকে সম্পূর্ণ অক্ষত।"
+        },
+        {
+          "type": "text",
+          "title": "স্বয়ংক্রিয় যাচাইকারী (Bundle Verifier) ঠিক কী পরীক্ষা করে?",
+          "body": "আমাদের ভেরিফায়ার CLI পাঁচটি পেলোড ফাইলের প্রতিটির `SHA-256` হ্যাশ, মূল নোটিশের হ্যাশ, `Definition` ও `Manifest`-এর আন্তঃসংযোগ, Snapshot-এর সংস্করণ, `SQLite`-এর অভ্যন্তরীণ অখণ্ডতা (`Integrity Check`) এবং প্রতিটি টেবিলের Row সংখ্যা নিখুঁতভাবে মিলিয়ে দেখে। তবে আগের পাঠের কথাটি মনে রাখবেন: বাইট-পর্যায়ের অখণ্ডতা (`Byte Integrity`) ফাইল নষ্ট বা বিকৃত না হওয়ার প্রমাণ দেয়, কিন্তু এটি অর্থগত প্যারিটি টেস্টের (`Semantic Feature Parity`) বিকল্প নয়—দুটোই একসাথে প্রয়োজন।"
+        },
+        {
+          "type": "math",
+          "title": "পোর্টেবল Feature Artifact বান্ডেলের উপাদানসমূহ",
+          "body": "\\mathrm{bundle}=\\{SQLite,definition,lab,notices,checksums\\}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ অস্থায়ী ফোল্ডারে Bundle Export ও Verification পরীক্ষা",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"pipeline35\", Path(\"assets/datasets/bike_sharing/pipeline_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/pipeline_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nimport tempfile\n\nwith tempfile.TemporaryDirectory() as folder:\n    m.export_bundle(folder, lab)\n    result = m.verify_bundle(folder)\n    assert result[\"event_rows\"] == 1094 and result[\"snapshots\"] == 1092\n    print(result)\n"
+        },
+        {
+          "type": "text",
+          "title": "নিরাপদ ও পোর্টেবল CLI আচরণ",
+          "body": "টুলিং ডিজাইনের একটি চমৎকার নিয়ম হলো: সাধারণভাবে মডিউল ইমপোর্ট করলে বা ডিফল্ট CLI চালালে প্রজেক্টের কোনো অ্যাসেট ফাইলে হাত পড়ে না; কেবল সুস্পষ্টভাবে `--artifact-dir` ফ্ল্যাগ দিলেই নতুন ডিরাইভড এক্সপোর্ট তৈরি হয় এবং `--verify-dir` দিলে রিড-অনলি মোডে বান্ডেল যাচাই হয়। মডিউল-রিলেটিভ পাথ ব্যবহার করার কারণে যেকোনো ওয়ার্কিং ডিরেক্টরি (`cwd`) থেকে এটি নির্ভুলভাবে চলে এবং এক্সপোর্টের সময় কেবল নিজের নির্দিষ্ট ডিরাইভড ডেটাবেসটিকেই আপডেট করে।"
+        },
+        {
+          "type": "text",
+          "title": "SQLite ফাইল বাইটের সূক্ষ্ম সীমারেখা",
+          "body": "একটি নির্দিষ্ট লোকাল পরিবেশে আমাদের লজিক্যাল রো এবং Snapshot-গুলো শতভাগ অভিন্নভাবে পুনরুৎপাদিত হয়। তবে জেনে রাখা ভালো, ভিন্ন অপারেটিং সিস্টেম বা `SQLite`-এর ভিন্ন সংস্করণে পেজ অ্যালোকেশনের পার্থক্যের কারণে `.sqlite` ফাইলের কাঁচা বাইট কিছুটা আলাদা হতে পারে। আমাদের রিড-অনলি ভেরিফায়ার ডেটাবেসে বিন্দুমাত্র পরিবর্তন না করে এক্সপোর্ট করা বান্ডেলের নিজস্ব বাইট চেকসাম ও লজিক্যাল Row সংখ্যা দুটোই পরীক্ষা করে।"
+        },
+        {
+          "type": "text",
+          "title": "সঠিক Attribution ও উৎসের স্বচ্ছতা",
+          "body": "এক্সপোর্ট করা প্রতিটি বান্ডেলের ভেতর UCI Dataset-এর পূর্ণ সাইটেশন, `DOI`, `CC BY 4.0` লাইসেন্সের লিংক, ব্যবহৃত `547` দিনের পরিসর এবং সিমুলেটেড `Availability` শিডিউলের পরিধি স্পষ্টভাবে লেখা থাকে—এবং মূল `Readme.txt` ফাইলের বাইটগুলো অবিকল কপি করা হয়। কখনোই সিমুলেটেড টেস্ট ফিক্সচারকে মূল Dataset-এর আসল ইনজেশন লগ হিসেবে চালিয়ে দেবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "নিজে যাচাই করার অনুশীলন",
+          "body": "একটি অস্থায়ী ফোল্ডারে বান্ডেল এক্সপোর্ট করে তার ভেতরের ইভেন্ট ও Snapshot কী, `Definition` এবং `checksums.json` খুলে মিলিয়ে দেখুন। এরপর কৌতূহলবশত অস্থায়ী কপির কোনো একটি ফাইলে একটি মাত্র বাইট বদলে (`Byte Tampering`) ভেরিফায়ার চালিয়ে দেখুন সেটি সাথে সাথে বিকৃতি ধরতে পারছে কি না! খেয়াল রাখবেন, মূল সোর্স ফাইল বা অ্যাপের ইউজার ডেটাবেসের ওপর কখনোই ফল্ট ইনজেকশন চালাবেন না।"
+        }
+      ]
+    },
+    {
+      "id": "ch35_evaluation",
+      "title": "Evidence Card: Parity, ফাঁকফোকর ও অপরিমাপিত সীমানা",
+      "subtitle": "Pipeline-এর গাণিতিক নির্ভুলতা অপরিহার্য ভিত্তি, কিন্তু সেটিই চূড়ান্ত Model Quality নয়",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কোন কোন বিষয় পরীক্ষায় শতভাগ উত্তীর্ণ হয়েছে?",
+          "body": "পুরো অধ্যায়ের কাজগুলো এবার একজন নিরীক্ষকের চোখে মিলিয়ে দেখা যাক। দুটি ভিন্ন `Availability` শিডিউল (`on_time` ও `late_fixture`) জুড়ে `546`টি করে লক্ষ্য তারিখে—অর্থাৎ মোট `1092`টি ঐতিহাসিক `Snapshot`-এ আমাদের ডিরেক্ট `Batch`, `Incremental` প্রিফিক্স এবং `SQLite` কুয়েরির ফলাফল একটিও ব্যর্থতা ছাড়া (`failures == 0`) হুবহু মিলেছে! ডুপ্লিকেট ডেলিভারির পরীক্ষায় `1094`টি বার্তা এসে পৌঁছালেও ডেটাবেসে ক্যানোনিকাল Row থেকেছে ঠিক `547`টি। পাশাপাশি অবৈধ ঋণাত্মক রেকর্ড প্রত্যাখ্যান, `SQLite Transaction Rollback` ও `Retry`, এবং মেটাডেটা `Contract Guard`—প্রতিটি অংশ স্বতন্ত্র টেস্টে উত্তীর্ণ হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "ইচ্ছাকৃতভাবে ঘটানো ব্যর্থতা (Negative Control)-এর শিক্ষা",
+          "body": "একই সাথে আমাদের নেগেটিভ কন্ট্রোল পরীক্ষাটি প্রমাণ করেছে যে `Availability Time` উপেক্ষা করলে `on_time` শিডিউলে `0`টি অমিল হলেও `late_fixture` শিডিউলে পাক্কা `98`টি ঐতিহাসিক `Snapshot`-এর মান বিকৃত হয়ে যায়! এটি হাতেনাতে প্রমাণ করে কেন কেবল `event_time < target` ফিল্টার দিয়ে বাস্তব জগতের `Point-in-Time` নির্ভুলতা নিশ্চিত করা সম্ভব নয়।"
+        },
+        {
+          "type": "math",
+          "title": "পুরো Pipeline পরীক্ষার সামগ্রিক সংখ্যাসূচক সারসংক্ষেপ",
+          "body": "1092\\;\\mathrm{snapshots},\\quad failures=0,\\quad retrospectiveMismatch=98"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ ১০৯২টি Snapshot-এর চূড়ান্ত Parity ও সংরক্ষিত ডেটা যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/pipeline_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nassert sum(s[\"snapshots\"] for s in lab[\"statistics\"].values()) == 1092\nassert sum(s[\"parity_failures\"] for s in lab[\"statistics\"].values()) == 0\nprint(\n    \"late fixture mismatch\",\n    lab[\"statistics\"][\"late_fixture\"][\"retrospective_mismatch_snapshots\"],\n)\nprint(\"reserved outcomes used\", lab[\"report\"][\"reserved_outcomes_used\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "কোন বিষয়গুলো এখানে মাপা হয়নি (What Remains Unknown)?",
+          "body": "একজন পরিপক্ক ML Systems Engineer সবসময় জানেন তার পরীক্ষা কী প্রমাণ করেছে আর কী করেনি। এখানে বাস্তব প্রোডাকশন সার্ভারের ডেটা পৌঁছানো বা সংশোধনের ঘড়ি, ডিস্ট্রিবিউটেড ব্রোকারের Checkpoint, লাইভ সার্ভিসের `QPS` বা টেইল `Latency`, অনলাইন ক্যাশের `TTL` কিংবা এই Feature-গুলো যোগ করার পর কোনো নতুন Model-এর ব্যবসায়িক উপযোগিতা মাপা হয়নি। আর শহরের সামগ্রিক দৈনিক যোগফল কখনোই স্টেশন-ভিত্তিক রিয়েল-টাইম সিস্টেমের প্রমাণ হিসেবে দাঁড়াতে পারে না।"
+        },
+        {
+          "type": "text",
+          "title": "উৎসের শৃঙ্খলা ও মূল্যায়নের সততা",
+          "body": "আমরা কঠোরভাবে প্রথম `547`টি দিনের ডেটা ব্যবহার করেছি এবং শেষের সংরক্ষিত `184`টি ফলাফল একদম অস্পৃশ্য রেখেছি (`reserved_outcomes_used == 0`)। মনে রাখবেন, পাইপলাইনে শতভাগ `Feature Parity` থাকা মানে আপনার ডেটার ভিত্তি মজবুত—কিন্তু চূড়ান্ত Model-এর সাফল্যের জন্য উৎসের গুণমান, সঠিক টাস্ক সংজ্ঞা এবং Model-এর নিজস্ব অনুমানও সমানভাবে যাচাই করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "পরবর্তী প্রকৌশলগত পদক্ষেপ",
+          "body": "বাস্তব প্রজেক্টে নামার সময় প্রোডাক্টের চাহিদা থেকে সোর্স ডেটার `SLA`, `Backfill` নীতি, `Lineage Retention` মেয়াদ এবং কনজিউমার কম্প্যাটিবিলিটির নিয়ম চূড়ান্ত করুন ও প্রতিটি সম্ভাব্য ব্যর্থতার জন্য একটি করে `Recovery Invariant` লিখে ফেলুন। এরপর ঠিক এই নিশ্ছিদ্র `Feature Contract`-টি হাতে নিয়ে আমরা প্রবেশ করব `Book 6 · Chapter 2 (Serving, Monitoring & MLOps)`-এ, যেখানে এই Feature-গুলোকে লাইভ সার্ভিং ও মনিটরিং প্রবাহে যুক্ত করা হবে।"
+        },
+        {
+          "type": "text",
+          "title": "আপনার নিজস্ব Evidence Card তৈরি করুন",
+          "body": "অধ্যায়টি শেষ করার আগে একটি এক পৃষ্ঠার `Evidence Card` সাজিয়ে লিখুন—যেখানে টাস্কের সংজ্ঞা, `Entity Grain`, `Source Hash`, `Availability` অনুমান, `Window` ও `Null Policy`, ডুপ্লিকেট ও প্রত্যাখ্যানের নিয়ম, প্যারিটি পরীক্ষার সংখ্যা, আর্টিফ্যাক্ট চেকসাম এবং সিস্টেমের সীমাবদ্ধতাগুলো পরপর সাজানো থাকবে। খেয়াল রাখবেন, মূল Dataset-এর প্রকৃত পর্যবেক্ষণ এবং পরীক্ষার জন্য তৈরি সফটওয়্যার ফিক্সচারের তথ্য যেন স্পষ্ট আলাদা Label-এ চিহ্নিত থাকে।"
+        }
+      ]
+    },
+    {
+      "id": "ch35_review",
+      "title": "Interview Rehearsal ও নিজের হাতে ইমপ্লিমেন্টেশন",
+      "subtitle": "Data Contract, SQL কুয়েরি এবং কোডিং যুক্তি—তিনটিকেই একসাথে আত্মবিশ্বাসের সাথে ডিফেন্ড করুন",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "হোয়াইটবোর্ড মহড়া (Whiteboard Derivation)",
+          "body": "বই বা নোট না দেখে সাদা বোর্ডে বা খাতায় শুরু থেকে শেষ পর্যন্ত লিখে ফেলুন: তিনটি সময়ের ঘড়ি (`Event`, `Availability`, `Prediction`), `[target - 7, target)` উইন্ডোর দুই প্রান্তের শর্ত, পরিবর্তনশীল হর (`Rolling Denominator`), `Idempotent Sink`-এর স্টেট পরিবর্তন এবং চার অংশের `Snapshot Identity`। একটি বিলম্বিত অতীত Row-এর উদাহরণ এঁকে দেখান কীভাবে `Hindsight` বা `Availability Leakage` ঘটে, এবং পরিষ্কার যুক্তি দিন কেন অজানা পর্যবেক্ষণ (`Null`) ও শূন্য চাহিদা (`0`) কখনোই এক জিনিস নয়।"
+        },
+        {
+          "type": "text",
+          "title": "নিজের হাতে কোডিং চর্চা",
+          "body": "রেফারেন্স কোড না দেখে নিজে হাতে লিখুন: উইন্ডো বিল্ডার, `Nullable Lag` হিসাব, কন্ডিশনাল `SQL Aggregate`, ডুপ্লিকেট ও সাংঘর্ষিক পেলোড যাচাইকারী, `SQLite Rollback` হ্যান্ডলার এবং মেটাডেটা `Contract Guard`। কেবল রেফারেন্স কোড কপি করে চালানো যথেষ্ট নয়—প্রকৃত দক্ষতার প্রমাণ হলো প্রতিটি মধ্যবর্তী ভ্যারিয়েবল ও আউটপুট কেন এমন হলো তা নিখুঁতভাবে ব্যাখ্যা করতে পারা।"
+        },
+        {
+          "type": "math",
+          "title": "প্রকৃত প্রকৌশল দক্ষতার সমীকরণ",
+          "body": "\\mathrm{mastery}=\\mathrm{contract}+\\mathrm{counterexample}+\\mathrm{code}+\\mathrm{evidence}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ চূড়ান্ত সংস্করণ ও পরবর্তী অধ্যায়ের প্রস্তুতি যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/pipeline_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nassert lab[\"definition\"][\"feature_version\"] == \"bike-features35-v1\"\nassert lab[\"replays\"][\"duplicates\"][\"stored\"] == 547\nprint(\"Next after review: Chapter36 Serving, Monitoring & MLOps\")\n"
+        },
+        {
+          "type": "text",
+          "title": "SQL কুয়েরি মহড়া (SQL Drill)",
+          "body": "ইন্টারভিউয়ের SQL রাউন্ডের প্রস্তুতির জন্য প্রতিটি অংশের ব্যাখ্যা তৈরি রাখুন: টেবিলের `Primary Key Grain`, যুগপৎ সময়ের শর্ত (`WHERE` ক্লজ), `NULL` মানের ওপর `AVG()` ও `COUNT()`-এর আচরণ, ইনডেক্সের ভূমিকা এবং `Transaction Commit`-এর সীমানা। ভেবে দেখুন, একই ইভেন্ট ভুলবশত দুইবার ডেলিভারি হলে আপনার জয়েন কুয়েরিতে Training Sample-এর সংখ্যা দ্বিগুণ হয়ে যাচ্ছে কি না, এবং অপরিচিত `Entity` এলে সিস্টেমের ডিফল্ট নীতি কী হবে।"
+        },
+        {
+          "type": "text",
+          "title": "সিস্টেম ডিজাইন মহড়া (System Design Drill)",
+          "body": "ব্যাচ বনাম স্ট্রিমিং পাইপলাইনের ডেটার সতেজতা (`Freshness`), অবকাঠামোগত খরচ, `Replay` ও `Backfill` দিগন্ত, `Lineage Retention` এবং কনজিউমার মাইগ্রেশনের প্রকৌশলগত `Trade-off`-গুলো মুখে মুখে বলার চর্চা করুন। আপনি লোকালি যতটুকু কোড করেছেন এবং বড় স্কেলের প্রোডাকশনের জন্য কী আর্কিটেকচার প্রস্তাব করছেন—দুটির সীমানা পরিষ্কার রাখুন এবং কখনোই জাদুকরী ‘সব জায়গায় `Exactly-once`’ দাবি করবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "দক্ষতার চূড়ান্ত মানদণ্ড (Mastery Gate)",
+          "body": "এই অধ্যায়ের শেষে থাকা ১০টি `Coding Exercise`, ১০টি `Interview` প্রশ্ন এবং ২৬টি `Quiz` (`26/26`) সম্পূর্ণ নিজের চেষ্টায় সমাধান করুন। একটি সামান্য `Off-by-one` সীমানার ভুল কিংবা একটি অনুপলব্ধ `Lag` Feature কীভাবে পুরো ML সিস্টেমের ইনপুটকে নীরবে ভ্রষ্ট করে দেয়, তা নিখুঁত উদাহরণসহ বোঝাতে পারাই আপনার প্রস্তুতির আসল মাপকাঠি।"
+        },
+        {
+          "type": "text",
+          "title": "পরবর্তী অধ্যায়ের সেতুবন্ধন",
+          "body": "সময়ের ঘড়ি, `Idempotency`, `Transaction Recovery`, `Leakage-safe Historical Join` এবং `Differential Privacy`-র মৌলিক হিসাবগুলো নিজের হাতে কোড করে যাচাই করা শেষ হলে আপনি পুরোপুরি প্রস্তুত! এবার চলুন `Book 6 · Chapter 2 (Serving, Monitoring & MLOps)`-এ, যেখানে আমরা দেখব কীভাবে এই নির্ভরযোগ্য Feature ও Model-কে বাস্তব ব্যবহারকারীদের কাছে নিরাপদে পৌঁছে দেওয়া এবং সার্বক্ষণিক পর্যবেক্ষণে রাখা হয়।"
+        }
+      ]
+    }
+  ],
+  "quizzes": [
+    {
+      "id": "ch35_q1",
+      "question": "এই অধ্যায়ে ব্যবহৃত মূল UCI Bike Sharing Dataset-টির Entity Grain আসলে কী?",
+      "options": [
+        "শহরের সামগ্রিক দৈনিক বাইক ভাড়ার হিসাব (Global Daily Bike Counts)",
+        "প্রতিটি স্টেশনের আলাদা ক্লিক ইভেন্ট",
+        "ব্যবহারকারীর ব্যক্তিগত অ্যাপ সেশন লগ",
+        "প্রতিটি একক বাইক ট্রিপের রাইড রেকর্ড"
+      ],
+      "answer": 0,
+      "explanation": "মূল day.csv ফাইলে কোনো স্টেশন বা ব্যবহারকারীর ID নেই; এটি পুরো সিস্টেমের দৈনিক সম্মিলিত সংখ্যা দেয়, যার Natural Key হলো bike-global:YYYY-MM-DD।"
+    },
+    {
+      "id": "ch35_q2",
+      "question": "এই পাইপলাইনে ব্যবহৃত ডেটা পৌঁছানোর সময়সূচি (Arrival Schedule) কোথা থেকে এসেছে?",
+      "options": [
+        "UCI Dataset-এর আসল সার্ভার ইনজেশন লগ থেকে",
+        "লাইভ প্রোডাকশন সিস্টেমের পরিমাপ করা SLA থেকে",
+        "বাস্তব Kafka ব্রোকারের মেসেজ Timestamp থেকে",
+        "পরীক্ষার উদ্দেশ্যে সুস্পষ্টভাবে সংজ্ঞায়িত একটি Software Fixture থেকে"
+      ],
+      "answer": 3,
+      "explanation": "মূল Dataset-এ বাইক ভাড়ার সংখ্যা ও তারিখ বাস্তব হলেও ডেটা কখন সার্ভারে পৌঁছেছে তার কোনো ঘড়ি নেই; তাই দেরিতে ডেটা আসার আচরণ পরীক্ষার জন্য সুনির্দিষ্টভাবে নির্ধারিত শিডিউল ব্যবহার করা হয়েছে।"
+    },
+    {
+      "id": "ch35_q3",
+      "question": "কোনো পর্যবেক্ষণ Point-in-Time যোগ্য (Eligible) হওয়ার জন্য কোন দুটি শর্ত একসাথে পূরণ হতে হয়?",
+      "options": [
+        "কেবল বাইক ভাড়ার সংখ্যা অঋণাত্মক (Non-negative) হওয়া",
+        "সর্বশেষ ডেটাবেস টেবিলে Row-টির অস্তিত্ব থাকা",
+        "ঘটনাটি অতীতের হওয়া (event < prediction) এবং জানার সীমার মধ্যে উপলব্ধ হওয়া (available <= asof)",
+        "কেবল ঘটনাটির তারিখ লক্ষ্য দিনের আগে হওয়া"
+      ],
+      "answer": 2,
+      "explanation": "কোনো ঘটনা অতীতে ঘটলেও নেটওয়ার্ক বা ব্যাচ বিলম্বের কারণে তা Prediction দেওয়ার মুহূর্তের (asof) পরে এসে পৌঁছাতে পারে; তাই দুটি সময়ের শর্তই একসাথে যাচাই করা আবশ্যক।"
+    },
+    {
+      "id": "ch35_q4",
+      "question": "সাত দিনের রোলিং উইন্ডো [t − 7, t)-এর দুই প্রান্ত কীভাবে সংজ্ঞায়িত?",
+      "options": [
+        "শুধুমাত্র লক্ষ্য দিন t অন্তর্ভুক্ত",
+        "শুরুর বিন্দু অন্তর্ভুক্ত (Start Inclusive) এবং শেষ বিন্দু বহির্ভূত (End Exclusive)",
+        "শুরু ও শেষ উভয় বিন্দুই অন্তর্ভুক্ত (Both Inclusive)",
+        "শুরু ও শেষ উভয় বিন্দুই বহির্ভূত (Both Exclusive)"
+      ],
+      "answer": 1,
+      "explanation": "বাম প্রান্ত t − 7 অন্তর্ভুক্ত থাকায় lag 7 উইন্ডোতে থাকে, আর ডান প্রান্ত t বহির্ভূত থাকায় লক্ষ্য দিনের ফলাফল (Target Outcome) গড়ের ভেতর ঢুকে Label Leakage ঘটাতে পারে না।"
+    },
+    {
+      "id": "ch35_q5",
+      "question": "বিলম্বিত শিডিউলে (late_fixture) Day 375-এর সাত দিনের গড় (mean7) বের করার সময় ভগ্নাংশের হর (Denominator) কত হবে?",
+      "options": [
+        "উপলব্ধ ৬টি জানা Row (6 known rows)",
+        "সবসময় মুখস্থ 7",
+        "পুরো প্রিফিক্সের 547",
+        "লক্ষ্য দিনের ফলাফলসহ 8"
+      ],
+      "answer": 0,
+      "explanation": "Day 374-এর ডেটা Day 378-এর আগে উপলব্ধ নয় বলে Day 375-এ উইন্ডোর ভেতর ৬টি বৈধ Row জানা থাকে; তাই গড় বের করতে ৬টি জানা মানের যোগফলকে 6 দিয়ে ভাগ করতে হয়।"
+    },
+    {
+      "id": "ch35_q6",
+      "question": "কোনো দিনে lag1 অনুপস্থিত (Null) থাকার অর্থ কি সেদিন প্রকৃত বাইক চাহিদা শূন্য (Zero Demand) ছিল?",
+      "options": [
+        "হ্যাঁ, অনুপস্থিত মানেই শূন্য ভাড়া",
+        "না, এর মানে চাহিদা ঋণাত্মক ছিল",
+        "কেবল বছরের প্রথম দিনে এটি শূন্য বোঝায়",
+        "না, অজানা পর্যবেক্ষণ (Null) এবং প্রকৃত শূন্য চাহিদা (0) সম্পূর্ণ আলাদা"
+      ],
+      "answer": 3,
+      "explanation": "ডেটা না পৌঁছানোর কারণে তথ্য অজানা থাকা (Null) এবং বাস্তবে একটিও বাইক ভাড়া না হওয়া (Count = 0)—এই দুটির অর্থ সম্পূর্ণ ভিন্ন; এদের এক করে ফেললে Feature-এর সংজ্ঞা নষ্ট হয়ে যায়।"
+    },
+    {
+      "id": "ch35_q7",
+      "question": "আমাদের পাইপলাইনে age_days Feature-টি আসলে কী পরিমাপ করে?",
+      "options": [
+        "অনলাইন ক্যাশের মেয়াদ (Cache TTL) কত সেকেন্ড বাকি আছে",
+        "Model-এর Prediction-এর গড় ত্রুটি",
+        "সর্বশেষ জানা অতীত ঘটনার তারিখের সাথে গতকালের ক্যালেন্ডার দিনের ব্যবধান",
+        "নেটওয়ার্কের প্রকৃত মিলিসেকেন্ড Latency"
+      ],
+      "answer": 2,
+      "explanation": "age_days = t − 1 − max(known event_day) সূত্রটি ক্যালেন্ডার দিনের হিসাবে তথ্যের বাসি ভাব মাপে; এটি সার্ভারের মিলিসেকেন্ড নেটওয়ার্ক Latency নয়।"
+    },
+    {
+      "id": "ch35_q8",
+      "question": "কোনো দিনে age_days = 0 দেখলেই কি নিশ্চিতভাবে বলা যায় যে ৭ দিনের পুরো উইন্ডোটি সম্পূর্ণ আছে?",
+      "options": [
+        "কেবল ভ্যালিডেশন পাস করলেই হ্যাঁ বলা যায়",
+        "না, গতকালের ডেটা জানা থাকলেও উইন্ডোর ভেতরের পুরোনো কোনো বিলম্বিত দিন অনুপস্থিত থাকতে পারে",
+        "হ্যাঁ, সবসময় ৭টি Row-ই উপস্থিত থাকবে",
+        "কেবল কর্মদিবসের ক্ষেত্রে এটি সত্য"
+      ],
+      "answer": 1,
+      "explanation": "যেমন Day 376-এ গতকালের (375) ডেটা যথাসময়ে চলে আসায় age_days = 0 হয়, অথচ উইন্ডোর ভেতরের Day 374 তখনো অনুপস্থিত থাকায় observed7 = 6 থাকে।"
+    },
+    {
+      "id": "ch35_q9",
+      "question": "হুবহু একই বৈধ Event যদি নেটওয়ার্ক রিট্রাইয়ের কারণে দুইবার এসে পৌঁছায়, তবে ডেটাবেসে কয়টি Row সংরক্ষিত থাকা উচিত?",
+      "options": [
+        "একটি মাত্র ক্যানোনিকাল Row (One Canonical Row)",
+        "যোগফল দ্বিগুণ করে দুটি Row",
+        "যেকোনো একটি র‍্যান্ডম সংখ্যার রো",
+        "সংঘর্ষ ভেবে সব Row মুছে ফেলা উচিত"
+      ],
+      "answer": 0,
+      "explanation": "Natural Key এবং অভিন্ন পেলোড মিলিয়ে Idempotent Sink দ্বিতীয় ডেলিভারিটিকে নিরাপদ No-op হিসেবে গণ্য করে, ফলে একটি মাত্র ক্যানোনিকাল Row অক্ষত থাকে।"
+    },
+    {
+      "id": "ch35_q10",
+      "question": "একই Natural Key-তে যদি আগের চেয়ে ভিন্ন সংখ্যার সাংঘর্ষিক পেলোড (Conflicting Payload) আসে, তবে আমাদের পাইপলাইন কী করে?",
+      "options": [
+        "নীরবে পুরোনো মান মুছে নতুনটি বসিয়ে দেয়",
+        "পুরোনো ও নতুন সংখ্যা দুটি যোগ করে দেয়",
+        "ভ্যালিডেশন উপেক্ষা করে এগিয়ে যায়",
+        "সাংঘর্ষিক ইনপুট হিসেবে সেটিকে প্রত্যাখ্যান (Reject) করে"
+      ],
+      "answer": 3,
+      "explanation": "আমাদের অপরিবর্তনীয় (Immutable) সোর্স চুক্তিতে নীরব Overwrite নিষিদ্ধ; বৈধ ব্যবসায়িক সংশোধনের প্রয়োজন হলে তার জন্য আলাদা সংস্করণযুক্ত ওয়ার্কফ্লো থাকতে হয়।"
+    },
+    {
+      "id": "ch35_q11",
+      "question": "একই তারিখের কী থাকা সত্ত্বেও ঋণাত্মক সংখ্যার (Negative Count) একটি অবৈধ কপি ঠিক কোন ধাপে প্রত্যাখ্যান করতে হবে?",
+      "options": [
+        "কেবল Model Training চালানোর সময়",
+        "কখনোই প্রত্যাখ্যান করার দরকার নেই",
+        "ডুপ্লিকেট কী খোঁজার (Duplicate Lookup) আগেই ভ্যালিডেশন ধাপে",
+        "ডেটাবেসে একবার সংরক্ষণ করার পরে"
+      ],
+      "answer": 2,
+      "explanation": "আগে কী মিলিয়ে দেখে নিরীহ ডুপ্লিকেট ভেবে এড়িয়ে গেলে আপস্ট্রিমের ডেটা দূষণের প্রমাণ হারিয়ে যায়; তাই সবার আগে পেলোড Validate করা বাধ্যতামূলক।"
+    },
+    {
+      "id": "ch35_q12",
+      "question": "কোনো ব্যাচ Commit হওয়ার ঠিক আগমুহূর্তে Exception ঘটলে ওই ব্যাচের ইনসার্টগুলোর কী পরিণতি হয়?",
+      "options": [
+        "সোর্স Checkpoint তবুও সামনের দিকে এগিয়ে যায়",
+        "ওই ব্যাচের সব ইনসার্ট সম্পূর্ণ Rollback হয়ে যায়",
+        "সফল ইনসার্ট হিসেবে রিপোর্টে যোগ হয়",
+        "অর্ধেক ব্যাচ স্থায়ীভাবে ডেটাবেসে থেকে যায়"
+      ],
+      "answer": 1,
+      "explanation": "SQLite Transaction-এর Atomicity নিশ্চিত করে যে Commit-এর আগে ব্যর্থ হলে পুরো ব্যাচটি Rollback হবে, অথচ আগে Commit হওয়া ব্যাচগুলো অক্ষত থাকবে।"
+    },
+    {
+      "id": "ch35_q13",
+      "question": "ডেটাবেস Sink-এ স্থায়ীভাবে Commit হওয়ার আগেই যদি সোর্সের Checkpoint এগিয়ে দেওয়া হয়, তবে প্রধান ঝুঁকি কী?",
+      "options": [
+        "ক্র্যাশ ঘটলে স্থায়ীভাবে ডেটা হারিয়ে যাওয়ার (Data Loss) ঝুঁকি",
+        "সর্বত্র স্বয়ংক্রিয়ভাবে Exactly-once নিশ্চিত হওয়া",
+        "কেবল সামান্য নেটওয়ার্ক Latency বেড়ে যাওয়া",
+        "কেবল নিরাপদ ডুপ্লিকেট তৈরি হওয়া"
+      ],
+      "answer": 0,
+      "explanation": "Sink Commit ব্যর্থ হওয়ার পর সোর্স যদি মনে করে ওই অফসেট পড়া শেষ হয়ে গেছে, তবে রিস্টার্টের পর সেই ইভেন্টগুলো আর কখনোই পাঠানো হবে না।"
+    },
+    {
+      "id": "ch35_q14",
+      "question": "ডেটাবেসে একটি Idempotent Sink বসালেই কি পুরো ডিস্ট্রিবিউটেড সিস্টেমে স্বয়ংক্রিয়ভাবে সার্বজনীন Exactly-once গ্যারান্টি পাওয়া যায়?",
+      "options": [
+        "হ্যাঁ, সব সিস্টেমেই পাওয়া যায়",
+        "কেবল SQLite ব্যবহার করলেই পাওয়া যায়",
+        "Batch Size 32 রাখলে পাওয়া যায়",
+        "না, বাহ্যিক সাইড-ইফেক্ট, ব্রোকার Checkpoint ও কনকারেন্সির জন্য আলাদা ডিজাইন লাগে"
+      ],
+      "answer": 3,
+      "explanation": "ডেটাবেস টেবিল ডুপ্লিকেট Row ঠেকালেও বাহ্যিক API কল, মেসেজ ব্রোকারের অফসেট এবং কনকারেন্ট প্রসেসের সমন্বয় ছাড়া সার্বজনীন Exactly-once দাবি করা যায় না।"
+    },
+    {
+      "id": "ch35_q15",
+      "question": "আমাদের পরীক্ষায় মোট কতটি ঐতিহাসিক Snapshot জুড়ে Batch, Incremental এবং SQL—তিনটি পদ্ধতির ফলাফল শতভাগ মিলেছে?",
+      "options": [
+        "মোট 731টি Snapshot-এ",
+        "মোট 184টি Snapshot-এ",
+        "মোট 1092টি Snapshot-এ",
+        "মোট 547টি Snapshot-এ"
+      ],
+      "answer": 2,
+      "explanation": "প্রথম 547 দিনের ডেটায় দুটি শিডিউলের প্রতিটিতে 546টি করে লক্ষ্য তারিখ (2 × 546 = 1092) যাচাই করা হয়েছে; সংরক্ষিত 184টি দিন ব্যবহৃত হয়নি।"
+    },
+    {
+      "id": "ch35_q16",
+      "question": "Availability Time উপেক্ষা করে কেবল Event Time দেখলে late_fixture শিডিউলে কয়টি ঐতিহাসিক Snapshot-এ অমিল ধরা পড়ে?",
+      "options": [
+        "প্রোডাকশনের 98% রিকোয়েস্টে",
+        "98টি Snapshot-এ",
+        "0টি Snapshot-এ",
+        "547টি Snapshot-এ"
+      ],
+      "answer": 1,
+      "explanation": "আমাদের নির্ধারিত d % 17 == 0 বিলম্বের নিয়মে ঠিক 98টি ঐতিহাসিক Snapshot-এ ভবিষ্যৎ তথ্য ঢুকে ফলাফল বদলে দেয়, যা Availability ফিল্টারের অপরিহার্যতা প্রমাণ করে।"
+    },
+    {
+      "id": "ch35_q17",
+      "question": "ঐতিহাসিক Backfill-এর প্রতিটি Snapshot-কে স্বতন্ত্রভাবে চেনার জন্য Primary Key-তে কোন তথ্যগুলো থাকা দরকার?",
+      "options": [
+        "Scenario, Target, As-of এবং Feature Version—এই চারটির সমন্বয়",
+        "কেবলমাত্র Target তারিখ",
+        "চলমান প্রোগ্রামের Process ID",
+        "কেবলমাত্র Feature-এর নাম"
+      ],
+      "answer": 0,
+      "explanation": "তৎকালীন জানা অবস্থা এবং পরে সংশোধিত অবস্থাকে আলাদা রাখতে হলে target-এর পাশাপাশি scenario, asof এবং feature_version সংরক্ষণ করা অপরিহার্য।"
+    },
+    {
+      "id": "ch35_q18",
+      "question": "অনলাইন ক্যাশের সর্বশেষ অবস্থা (Latest Online State) কি ঐতিহাসিক Training Join-এর বিকল্প হিসেবে ব্যবহার করা যায়?",
+      "options": [
+        "হ্যাঁ, সবসময়ই ব্যবহার করা যায়",
+        "কেবল Column-এর নাম এক হলেই চলে",
+        "কেবল সংখ্যার ডেটা টাইপ এক হলেই চলে",
+        "সবসময় নয়, কারণ অনলাইন ক্যাশ অতীতের as-of জ্ঞান ও পুরোনো সংস্করণ ধরে নাও রাখতে পারে"
+      ],
+      "answer": 3,
+      "explanation": "অনলাইন স্টোর সাধারণত সর্বশেষ মান দিয়ে পুরোনো মান মুছে দেয়; অথচ নির্ভুল ট্রেনিং Dataset গড়তে প্রতিটি Sample-এর তৎকালীন Point-in-Time অবস্থা পুনর্গঠন করতে হয়।"
+    },
+    {
+      "id": "ch35_q19",
+      "question": "এই অধ্যায়ের রেফারেন্স পাইপলাইনটি কি পরিবর্তনশীল সংশোধনের জন্য পূর্ণাঙ্গ Bitemporal Corrections Engine বাস্তবায়ন করেছে?",
+      "options": [
+        "হ্যাঁ, সব ধরনের পরিবর্তনশীল সংশোধন সরাসরি সমর্থিত",
+        "যেকোনো ডেটাবেসে এটি আপনা-আপনিই থাকে",
+        "না, এখানে গৃহীত ইভেন্ট অপরিবর্তনীয় থাকে এবং সংশোধনের ধারণাটি তাত্ত্বিক ও ছোট উদাহরণে শেখানো হয়েছে",
+        "হ্যাঁ, কেবল ছুটির দিনগুলোর জন্য"
+      ],
+      "answer": 2,
+      "explanation": "মূল পাইপলাইনটি Immutable ইভেন্ট গ্রহণ করে ও সাংঘর্ষিক পেলোড প্রত্যাখ্যান করে; আর মাল্টি-Version রিভিশন নির্বাচনের নিয়মটি আলাদা উদাহরণ দিয়ে দেখানো হয়েছে।"
+    },
+    {
+      "id": "ch35_q20",
+      "question": "প্রত্যাশিত চুক্তির সাথে লোড করা Metadata-র অমিল পেলে আমাদের Guard Function-টি কী করে?",
+      "options": [
+        "সব Feature শূন্য দিয়ে পূরণ করে দেয়",
+        "কোনো Feature হিসাব শুরুর আগেই Lookup ব্লক করে None ফিরিয়ে দেয়",
+        "ভেতরে হিসাব শেষ করে কেবল স্ক্রিনে লুকিয়ে রাখে",
+        "Label বদলে সার্ভিং চালিয়ে যায়"
+      ],
+      "answer": 1,
+      "explanation": "ভুল Entity, Version বা Availability নিয়মে Vector তৈরি হওয়া ঠেকাতে হিসাব শুরুর আগেই Fail-fast নীতিতে লুকআপ আটকে দেওয়া হয়।"
+    },
+    {
+      "id": "ch35_q21",
+      "question": "দুটি আলাদা কোড ইমপ্লিমেন্টেশন একই ফলাফল দিলেই কি প্রমাণিত হয় যে Feature-টি শতভাগ নির্ভুল?",
+      "options": [
+        "না, কারণ দুটি কোডের ভেতরেই অভিন্ন চুক্তিগত ভুল (Shared Bug) থাকতে পারে",
+        "হ্যাঁ, এটিই চূড়ান্ত গাণিতিক প্রমাণ",
+        "কেবল Python ভাষায় লেখা হলেই প্রমাণিত হয়",
+        "কেবল একই লাইব্রেরি ব্যবহার করলেই প্রমাণিত হয়"
+      ],
+      "answer": 0,
+      "explanation": "শেয়ার করা সংজ্ঞায় ভুল থাকলে সব ইমপ্লিমেন্টেশন একই ভুল উত্তর দেবে; তাই স্বতন্ত্র SQL/Batch/Incremental পথের পাশাপাশি প্রান্তিক ও Null শর্তের টেস্ট অপরিহার্য।"
+    },
+    {
+      "id": "ch35_q22",
+      "question": "লক্ষ্য দিনের Prediction দেওয়ার সময় ওই দিনেরই casual বা registered Column-কে Feature হিসেবে নিলে কেন ভয়াবহ Leakage হয়?",
+      "options": [
+        "কারণ Column দুটি টেক্সট স্ট্রিং ফরম্যাটে থাকে",
+        "কারণ ওই Column দুটির মান সবসময় অনুপস্থিত থাকে",
+        "কেবল সাপ্তাহিক ছুটির দিনে এতে সমস্যা হয়",
+        "কারণ ওই দুটি সংখ্যার যোগফলই হলো আমাদের অনুমান করার লক্ষ্য Target Count (cnt)"
+      ],
+      "answer": 3,
+      "explanation": "ডেটা ইনজেশনের সময় casual + registered = cnt মিলিয়ে দেখা বৈধ হলেও Prediction দেওয়ার মুহূর্তে লক্ষ্য দিনের এই উপাদান দুটি অজানা থাকে এবং এদের নিলে সরাসরি উত্তর ফাঁস হয়ে যায়।"
+    },
+    {
+      "id": "ch35_q23",
+      "question": "এক্সপোর্ট করা পোর্টেবল Feature Store ডেটাবেসে মোট কয়টি ক্যানোনিকাল Event রো এবং কয়টি ঐতিহাসিক Snapshot Row থাকে?",
+      "options": [
+        "731টি Event এবং 731টি Snapshot",
+        "1095টি Event এবং 547টি Snapshot",
+        "1094টি Event এবং 1092টি Snapshot",
+        "547টি Event এবং 184টি Snapshot"
+      ],
+      "answer": 2,
+      "explanation": "দুটি শিডিউলের প্রতিটিতে 547টি বৈধ ইভেন্ট (2 × 547 = 1094) এবং 546টি করে ঐতিহাসিক Snapshot (2 × 546 = 1092) সংরক্ষিত থাকে; ত্রুটিপূর্ণ টেস্ট কপিটি মূল টেবিলে ঢোকে না।"
+    },
+    {
+      "id": "ch35_q24",
+      "question": "এই অধ্যায়ের পরীক্ষাগুলো থেকে প্রামাণ্যভাবে (Empirically) ঠিক কোন দাবিটি করা যায়?",
+      "options": [
+        "বাস্তব শহরের সার্ভারের প্রকৃত বিলম্বের হার",
+        "লোকাল পাইপলাইনের Batch/Incremental/SQL Parity এবং নির্ধারিত ফিক্সচারের অধীনে চুক্তির আচরণ",
+        "ক্লাস্টারের লাইভ প্রোডাকশন Throughput",
+        "অনলাইন ব্যবহারকারীদের চাহিদা বৃদ্ধির হার"
+      ],
+      "answer": 1,
+      "explanation": "এখানে কোনো নতুন Model ট্রেনিং, লাইভ সার্ভার বেঞ্চমার্ক বা অনলাইন A/B টেস্ট চালানো হয়নি; বরং ডেটা পাইপলাইনের চুক্তি ও প্যারিটি নিখুঁতভাবে যাচাই করা হয়েছে।"
+    },
+    {
+      "id": "ch35_q_revision_revision",
+      "question": "কোনো ইভেন্টের একাধিক সংশোধনী (Revisions) থাকলে ঐতিহাসিক as-of Snapshot তৈরির সময় কোন সংস্করণটি বেছে নিতে হবে?",
+      "options": [
+        "Availability পরীক্ষা করার আগেই সব সংস্করণের মধ্যে সর্বশেষটি",
+        "Availability শর্তে উত্তীর্ণ (available <= asof) যোগ্য সংস্করণগুলোর মধ্য থেকে সর্বশেষটি",
+        "যেই সংস্করণে সংখ্যার মান সবচেয়ে বড় সেটি",
+        "নতুন Model যেই সংস্করণে ভালো স্কোর দেয় সেটি"
+      ],
+      "answer": 1,
+      "explanation": "আগে event_time এবং available <= asof দিয়ে যোগ্য সংস্করণগুলো ছেঁকে নিয়ে তার মধ্য থেকে সর্বশেষ রিভিশনটি নিতে হয়; নইলে ভবিষ্যতে আসা সংশোধনী ফিল্টারে বাদ পড়ে আগের জানা মানটিও হারিয়ে যেতে পারে।"
+    },
+    {
+      "id": "ch35_q_transaction_revision",
+      "question": "একই SQLite Transaction-এর ভেতরে ডেটা Row এবং Checkpoint একসাথে আপডেট করার সময় Commit-এর আগে Exception ঘটলে কী হবে?",
+      "options": [
+        "ওই ব্যাচের সমস্ত ডেটা রাইট এবং Checkpoint আপডেট একসাথে Rollback হয়ে যাবে",
+        "ডেটা মুছে গেলেও শুধু Checkpoint স্থায়ীভাবে Commit হয়ে যাবে",
+        "ভবিষ্যতের বাকি সব ব্যাচ স্বয়ংক্রিয়ভাবে বাতিল হয়ে যাবে",
+        "একই ইভেন্ট ডেটাবেসে দুইবার গণনা হয়ে যাবে"
+      ],
+      "answer": 0,
+      "explanation": "একই Transaction-এ থাকায় Commit-এর আগে ত্রুটি ঘটলে ডেটা ও Checkpoint দুটোই একসাথে পূর্বাবস্থায় ফিরে যায়; তবে বাহ্যিক ব্রোকারে Checkpoint থাকলে আলাদা রিকভারি প্রোটোকল প্রয়োজন হয়।"
+    }
+  ],
+  "exercises": [
+    {
+      "id": "ch35_ex_mean",
+      "title": "বাস্তব রো থেকে Point-in-Time গড় নির্ণয়",
+      "prompt": "late_fixture শিডিউলে লক্ষ্য দিন 375 (target = 375, asof = 375)-এর জন্য ৭ দিনের উইন্ডোর [368, 375) যোগ্য Row-গুলো সরাসরি ফিল্টার করুন। উপলব্ধ পর্যবেক্ষণের সংখ্যা দিয়ে যোগফলকে ভাগ করে গড় (mean7) বের করে লিখুন (সংরক্ষিত রেফারেন্স গড় না দেখে নিজে হিসাব করুন)।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/pipeline_lab.json\").read_text(encoding=\"utf-8\")\n)\ntarget = 375\neligible = [\n    r\n    for r in lab[\"events\"][\"late_fixture\"]\n    if target - 7 <= r[\"event_day\"] < target and r[\"available_day\"] <= target\n]\nresult = sum(r[\"cnt\"] for r in eligible) / len(eligible)\nprint(result)\n",
+      "expected": 3343.3333333333335,
+      "explanation": "Day 374 অনুপস্থিত থাকায় উইন্ডোতে ৬টি বৈধ Row পাওয়া যায়, যাদের গড় আসে 3343.3333333333335 (প্রায় 3343.3333333)। অনুপলব্ধ lag 1 এবং লক্ষ্য দিনের নিজস্ব ফলাফল উভয়ই এই হিসাবের বাইরে থাকে।"
+    },
+    {
+      "id": "ch35_ex_coverage",
+      "title": "উইন্ডোর প্রকৃত Coverage গণনা",
+      "prompt": "একই কেসে (late_fixture-এ target = 375) ৭ দিনের উইন্ডোতে জানা Row-এর সংখ্যা (observed7) বের করুন এবং observed7 / 7 সূত্র দিয়ে উইন্ডোর সম্পূর্ণতার অনুপাত (Coverage) লিখুন।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/pipeline_lab.json\").read_text(encoding=\"utf-8\")\n)\nrows = lab[\"events\"][\"late_fixture\"]\nt = 375\nresult = sum(t - 7 <= r[\"event_day\"] < t and r[\"available_day\"] <= t for r in rows) / 7\nprint(result)\n",
+      "expected": 0.8571428571428571,
+      "explanation": "৭ দিনের মধ্যে ৬টি দিনের ডেটা উপলব্ধ থাকায় Coverage হলো 6 / 7 ≈ 0.8571428571428571। লক্ষ্য করুন, সম্পূর্ণতা মাপার হর 7 দিন হলেও গড় (mean7) হিসাব করার হর হলো উপলব্ধ পর্যবেক্ষণের সংখ্যা (6)।"
+    },
+    {
+      "id": "ch35_ex_fresh",
+      "title": "সর্বশেষ জানা দিনের ব্যবধান (Freshness Age)",
+      "prompt": "late_fixture শিডিউলে Day 375-এ উপলব্ধ অতীতের ইভেন্টগুলোর মধ্য থেকে সর্বশেষ ইভেন্ট দিনটি (max event_day) খুঁজে বের করুন এবং আমাদের age_days = target − 1 − max_event_day নিয়ম অনুযায়ী বয়স লিখুন।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/pipeline_lab.json\").read_text(encoding=\"utf-8\")\n)\nt = 375\nknown = [\n    r[\"event_day\"]\n    for r in lab[\"events\"][\"late_fixture\"]\n    if r[\"event_day\"] < t and r[\"available_day\"] <= t\n]\nresult = t - 1 - max(known)\nprint(result)\n",
+      "expected": 1.0,
+      "explanation": "Day 374 তখনো অনুপলব্ধ থাকায় সর্বশেষ জানা অতীত ইভেন্ট দিন হলো 373। তাই গতকালের (374) তুলনায় ব্যবধান বা age_days = 375 − 1 − 373 = 1।"
+    },
+    {
+      "id": "ch35_ex_dedup",
+      "title": "Natural Key দিয়ে ডুপ্লিকেট দূরীকরণ",
+      "prompt": "প্রথম 547টি ক্যানোনিকাল ইভেন্ট পরপর দুইবার ডেলিভারি (মোট 1094টি ডেলিভারি) করে নিজের হাতে event_key ভিত্তিক একটি Idempotent ম্যাপ তৈরি করুন এবং শেষে সংরক্ষিত মোট স্বতন্ত্র ইভেন্টের সংখ্যা লিখুন।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/pipeline_lab.json\").read_text(encoding=\"utf-8\")\n)\nrows = lab[\"events\"][\"late_fixture\"]\nstore = {}\nfor row in rows + rows:\n    key = row[\"event_key\"]\n    if key not in store:\n        store[key] = row\n    else:\n        assert store[key] == row\nresult = len(store)\nprint(result)\n",
+      "expected": 547.0,
+      "explanation": "অভিন্ন পেলোডের পুনঃপ্রচেষ্টা কোনো নতুন স্টেট যোগ করে না, তাই সংরক্ষিত স্বতন্ত্র ইভেন্টের সংখ্যা ঠিক 547 থাকে—যার ফলে রোলিং অ্যাগ্রিগেটে প্রতিটি দিন কেবল একবারই গণনা হয়।"
+    },
+    {
+      "id": "ch35_ex_rollback",
+      "title": "Crash এবং Transaction Rollback যাচাই",
+      "prompt": "আমাদের SQLite ইমপোর্টারে প্রথম ব্যাচটি (chunk = 32, fail_batch = 0) Commit হওয়ার ঠিক আগে ইচ্ছাকৃত ব্যর্থতা ঘটানোর পর ডেটাবেসের events টেবিলে সংরক্ষিত Row-এর সংখ্যা কত থাকে তা লিখুন।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"pipeline35\", Path(\"assets/datasets/bike_sharing/pipeline_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/pipeline_lab.json\").read_text(encoding=\"utf-8\")\n)\ndb = m.connect()\ntry:\n    m.ingest(db, lab[\"events\"][\"on_time\"][:32], fail_batch=0)\nexcept RuntimeError:\n    pass\nresult = db.execute(\"SELECT COUNT(*) FROM events\").fetchone()[0]\ndb.close()\nprint(result)\n",
+      "expected": 0.0,
+      "explanation": "Commit হওয়ার আগে ব্যর্থতা ঘটায় পুরো প্রথম ব্যাচটি Rollback হয়ে যায় এবং ডেটাবেসে সংরক্ষিত Row-এর সংখ্যা থাকে 0।"
+    },
+    {
+      "id": "ch35_ex_sql",
+      "title": "SQL কুয়েরিতে Rolling Mean সমতা যাচাই",
+      "prompt": "SQLite ডেটাবেসে late_fixture ইভেন্টগুলো ইনজেস্ট করে Day 375-এর জন্য সরাসরি Point-in-Time SQL কুয়েরি চালিয়ে mean7 বের করে লিখুন (WHERE শর্ত ও AVG Function-এর হর মিলিয়ে দেখুন)।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"pipeline35\", Path(\"assets/datasets/bike_sharing/pipeline_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/pipeline_lab.json\").read_text(encoding=\"utf-8\")\n)\ndb = m.connect()\nm.ingest(db, lab[\"events\"][\"late_fixture\"], \"late_fixture\")\nresult = m.sql_features(db, 375, \"late_fixture\")[\"mean7\"]\ndb.close()\nprint(result)\n",
+      "expected": 3343.3333333333335,
+      "explanation": "WHERE event_day >= 368 AND event_day < 375 AND available_day <= 375 শর্তে AVG(cnt) চালালে ৬টি উপলব্ধ Row-এর গড় আসে 3343.3333333333335, যা Python রেফারেন্সের সাথে শতভাগ মেলে।"
+    },
+    {
+      "id": "ch35_ex_leak",
+      "title": "Availability উপেক্ষা জনিত অমিল গণনা",
+      "prompt": "late_fixture শিডিউলের সবকটি অর্থাৎ 546টি ঐতিহাসিক Snapshot-এ সঠিক Point-in-Time Feature-এর সাথে Availability-উপেক্ষাকারী (latest=True) Feature-এর তুলনা করুন এবং মোট কয়টি Snapshot-এ অমিল পাওয়া যায় তা লিখুন।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"pipeline35\", Path(\"assets/datasets/bike_sharing/pipeline_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/pipeline_lab.json\").read_text(encoding=\"utf-8\")\n)\nevents = lab[\"events\"][\"late_fixture\"]\nresult = sum(\n    bool(m.difference(m.features(events, t), m.features(events, t, latest=True)))\n    for t in range(1, 547)\n)\nprint(result)\n",
+      "expected": 98.0,
+      "explanation": "মোট 98টি ঐতিহাসিক Snapshot-এ অন্তত একটি Feature-এর মান বদলে যায়—যা সুস্পষ্টভাবে দেখায় কীভাবে Availability শর্ত বাদ দিলে ঐতিহাসিক ডেটায় Leakage ঢুকে পড়ে।"
+    },
+    {
+      "id": "ch35_ex_guard",
+      "title": "অনুপস্থিত Contract Field শনাক্তকরণ",
+      "prompt": "প্রত্যাশিত late_fixture ম্যানিফেস্টের একটি কপি থেকে 'availability_rule' কী-টি মুছে ফেলুন এবং মেটাডেটা গার্ডে ধরা পড়া অনুপস্থিত বা অমিল রিকোয়ার্ড ফিল্ডের সংখ্যা লিখুন।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"pipeline35\", Path(\"assets/datasets/bike_sharing/pipeline_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/pipeline_lab.json\").read_text(encoding=\"utf-8\")\n)\nexpected = lab[\"manifests\"][\"late_fixture\"]\nloaded = dict(expected)\nloaded.pop(\"availability_rule\")\nresult = len(m.contract_errors(expected, loaded))\nprint(result)\n",
+      "expected": 1.0,
+      "explanation": "অমিল ফিল্ডের সংখ্যা হলো 1। কেবল Column-এর নাম মেলানোই যথেষ্ট নয়, মেটাডেটা গার্ডকে অবশ্যই Availability নিয়মের উপস্থিতি ও সমতা যাচাই করতে হয়।"
+    },
+    {
+      "id": "ch35_ex_invalid",
+      "title": "ডেলিভারি কোয়ালিটি গেট ও অবৈধ রেকর্ড প্রত্যাখ্যান",
+      "prompt": "547টি বাস্তব ইভেন্টের দ্বিগুণ ডেলিভারির (1094) সাথে একটি ঋণাত্মক সংখ্যার (cnt < 0) ত্রুটিপূর্ণ টেস্ট কপি যোগ করে মোট 1095টি ডেলিভারি Replay করুন এবং প্রত্যাখ্যাত (Rejected) রেকর্ডের সংখ্যা লিখুন।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"pipeline35\", Path(\"assets/datasets/bike_sharing/pipeline_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/pipeline_lab.json\").read_text(encoding=\"utf-8\")\n)\nr = m.replay(lab[\"events\"][\"late_fixture\"], duplicates=True, invalid=True)\nassert r[\"stored\"] == 547 and r[\"duplicates\"] == 547\nresult = r[\"rejected\"]\nprint(result)\n",
+      "expected": 1.0,
+      "explanation": "ডেটা গ্রহণের শুরুতেই ভ্যালিডেশন চলায় ঋণাত্মক সংখ্যার টেস্ট কপিটি প্রত্যাখ্যাত হয়, ফলে rejected count হয় 1 এবং মূল 547টি বৈধ Row অক্ষত থাকে।"
+    },
+    {
+      "id": "ch35_ex_hash",
+      "title": "Canonical Feature Definition Hash যাচাই",
+      "prompt": "Feature Definition অবজেক্টটিকে সাজানো কী (Sorted Keys), স্পেসবিহীন কমপ্যাক্ট JSON এবং শেষে একটি লাইনফিড (LF / '\\n') সহ UTF-8 বাইটে সিরিয়ালাইজ করে তার SHA-256 হেক্স ডাইজেস্ট বের করুন। এরপর ডাইজেস্টের প্রথম ৮টি হেক্স ডিজিটকে পূর্ণসংখ্যায় (Base-16 Integer) রূপান্তর করে লিখুন।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/bike_sharing/pipeline_lab.json\").read_text(encoding=\"utf-8\")\n)\nimport hashlib\n\nencoded = (\n    json.dumps(\n        lab[\"definition\"], ensure_ascii=False, sort_keys=True, separators=(\",\", \":\")\n    )\n    + \"\\n\"\n).encode()\ndigest = hashlib.sha256(encoded).hexdigest()\nassert digest == lab[\"manifests\"][\"late_fixture\"][\"definition_sha256\"]\nresult = int(digest[:8], 16)\nprint(result)\n",
+      "expected": 4263526350.0,
+      "explanation": "প্রথম ৮টি হেক্স ডিজিটকে পূর্ণসংখ্যায় রূপান্তর করলে পাওয়া যায় 4263526350, যা সংজ্ঞাটির বাইট-পর্যায়ের অভিন্ন পরিচয় নিশ্চিত করে।"
+    }
+  ],
+  "interviews": [
+    {
+      "title": "একটি পূর্ণাঙ্গ Feature Contract প্রতিষ্ঠা ও ডিফেন্ড করা",
+      "tag": "System design",
+      "prompt": "দৈনিক বাইক চাহিদার Prediction দেওয়ার জন্য একটি সম্পূর্ণ ও নিশ্ছিদ্র Feature Contract কীভাবে সাজাবেন?",
+      "answer": "আমি চুক্তির শুরুতেই সাতটি মৌলিক স্তম্ভ সুনির্দিষ্ট করব: (১) `Entity Grain` হবে শহরের সামগ্রিক দৈনিক হিসাব (`bike-global`), এবং মূল CSV ফাইলের `SHA-256 Hash` রেকর্ড থাকবে; (২) `Natural Key` হবে `bike-global:YYYY-MM-DD`; (৩) রোলিং উইন্ডোর সীমানা হবে `[target − 7, target)`, যাতে লক্ষ্য দিনের ফলাফল কখনোই ভেতরে না ঢোকে; (৪) যুগপৎ সময়ের শর্ত হবে `event_day < target` এবং `available_day <= asof`; (৫) অনুপস্থিত মানের ক্ষেত্রে শূন্য না বসিয়ে স্পষ্ট `Null` রাখা হবে এবং `observed7` ও `age_days` আলাদা Column-এ থাকবে; (৬) লক্ষ্য দিনের `cnt`, `casual`, `registered` এবং ঘটে যাওয়া আবহাওয়া নিষিদ্ধ তালিকায় থাকবে; এবং (৭) পুরো সংজ্ঞার সংস্করণ ও হ্যাশ সংরক্ষিত থাকবে। পাশাপাশি আমি স্পষ্টভাবে আলাদা রাখব কোনটি মূল ডেটার বাস্তব পর্যবেক্ষণ আর কোনটি আমাদের পরীক্ষার শিডিউল, এবং `Batch`, `Incremental` ও `SQL`-এর ত্রিপক্ষীয় প্যারিটি, ডুপ্লিকেট শোষণ ও রোলব্যাক টেস্ট দিয়ে এর প্রমাণ হাজির করব।"
+    },
+    {
+      "title": "অতীতের বিলম্বিত ডেটা থেকে ঘটা Availability Leakage",
+      "tag": "Data reasoning",
+      "prompt": "গতকালের ঘটনা হওয়া সত্ত্বেও কোনো ঐতিহাসিক দিনে lag 1 Feature-টি কেন অনুপলব্ধ থাকতে পারে, এবং তা জোর করে বসালে কী ক্ষতি হবে?",
+      "answer": "ধরুন আমাদের লক্ষ্য দিন হলো `375`। ক্যালেন্ডারের হিসাবে `day 374` নিঃসন্দেহে গতকালের অতীত ঘটনা (`374 < 375`)। কিন্তু ব্যাচ আপলোড বা সেন্সর সিঙ্ক বিলম্বের কারণে যদি `day 374`-এর ডেটা সার্ভারে এসে পৌঁছায় `day 378`-এ, তবে `day 375`-এ দাঁড়িয়ে বাস্তবে সেই সংখ্যাটি জানার কোনো উপায় ছিল না! কেবল `event_time < target` ফিল্টার দিয়ে আজকের পূর্ণ ডেটাবেস থেকে ব্যাকফিল করলে ওই অজানা সংখ্যাটি ট্রেনিং ডেটায় ঢুকে পড়বে—যাকে বলা হয় `Availability Leakage`। এতে অফলাইন মূল্যায়নে Model-কে যতটা নির্ভুল মনে হবে, বাস্তব প্রোডাকশনে Model কখনোই ততটা পূর্ণ ইনপুট পাবে না। তাই সবসময় `available <= asof` শর্তটি যোগ করা অপরিহার্য।",
+      "prerequisiteLessons": [
+        "ch35_point_in_time",
+        "ch35_clocks"
+      ]
+    },
+    {
+      "title": "হাতে-কলমে Rolling Feature ও প্রান্তিক শর্ত ইমপ্লিমেন্টেশন",
+      "tag": "Coding",
+      "prompt": "আপনি কীভাবে lag 1, lag 7 এবং ৭ দিনের rolling mean কোডে লিখবেন এবং কোন কোন প্রান্তিক শর্তের (Boundary/Null Cases) টেস্ট রাখবেন?",
+      "answer": "প্রথমে ডুপ্লিকেটমুক্ত ক্যানোনিকাল ইভেন্টগুলো থেকে `event_day < target` এবং `available_day <= asof` শর্তে বৈধ অতীত ডেটা ছেঁকে নেব। এরপর অবিকল `target − 1` ও `target − 7` তারিখে উপলব্ধ মান থেকে যথাক্রমে `lag1` ও `lag7` বসাব—ওই নির্দিষ্ট তারিখ অনুপস্থিত থাকলে পুরোনো অন্য কোনো দিন না বসিয়ে সরাসরি `None` (`Null`) রাখব। রোলিং উইন্ডোর জন্য `target − 7 <= event_day < target` ব্যবধির উপলব্ধ Row-গুলোর যোগফলকে উপলব্ধ Row-এর সংখ্যা (`observed7`) দিয়ে ভাগ করব; উইন্ডো খালি থাকলে (`observed7 == 0`) গড় হবে `None`। আর সর্বশেষ জানা অতীত দিন থেকে `age_days` বের করব। যাচাইয়ের জন্য আমি শূন্য ইতিহাস (প্রথম দিন), মাত্র একটি Row, দেরিতে আসা Row, উইন্ডোর ডান প্রান্তের `Off-by-one` Leakage এবং স্বতন্ত্র `SQLite` কুয়েরির সাথে সমতার ইউনিট টেস্ট লিখব।"
+    },
+    {
+      "title": "At-least-once রিট্রাই ও Idempotent Sink ডিজাইন",
+      "tag": "Reliability",
+      "prompt": "আপস্ট্রিম সোর্স নেটওয়ার্ক রিট্রাইয়ের কারণে একই ইভেন্ট একাধিকবার পাঠিয়েছে—আপনার ডেটাবেস Sink কীভাবে তা সামলাবে?",
+      "answer": "আমি `(scenario, event_key)` জোড়ার ওপর ইউনিকনেস প্রতিষ্ঠা করব এবং প্রতিটি ইনকামিং রেকর্ডের জন্য চার ধাপের প্রবাহ অনুসরণ করব: সবার আগে কাঠামোগত ও অর্থগত `Validation` চালানো → বৈধ হলে কী খুঁজে দেখা → যদি হুবহু একই পেলোড আগে থেকেই থাকে তবে কোনো পরিবর্তন না করে নিরাপদ `No-op` করা → আর যদি একই কী-তে ভিন্ন সংখ্যার সাংঘর্ষিক পেলোড আসে তবে নীরবে Overwrite না করে কনফ্লিক্ট হিসেবে `Reject` করা। যেমন আমাদের পরীক্ষায় `547`টি ইভেন্ট দুইবার পাঠালে `1094`টি ডেলিভারি হলেও সংরক্ষিত ক্যানোনিকাল Row থেকেছে ঠিক `547`টি। তবে আমি এটিও মনে রাখব যে কেবল ডেটাবেস Sink ইডেমপোটেন্ট হলেই পুরো ডিস্ট্রিবিউটেড পাইপলাইন আপনা-আপনি `Exactly-once` হয়ে যায় না—বাহ্যিক সাইড-ইফেক্ট ও ব্রোকার Checkpoint-এর সীমানা আলাদাভাবে সামলাতে হয়।"
+    },
+    {
+      "title": "Transaction ব্যর্থতা, Rollback এবং Checkpoint রিকভারি",
+      "tag": "SQL / debugging",
+      "prompt": "দ্বিতীয় ব্যাচ Commit হওয়ার ঠিক আগে Exception ঘটলে আপনার Retry পরিকল্পনা কী হবে? আর একই ডেটাবেসে Row লেখার পর কিন্তু Checkpoint আপডেটের আগে ক্র্যাশ ঘটলে এবং পরে সাংঘর্ষিক পেলোড এলে কী অবস্থা দাঁড়াবে?",
+      "answer": "প্রতিটি ব্যাচ আলাদা `SQLite Transaction`-এ আবদ্ধ থাকায় দ্বিতীয় ব্যাচে ক্র্যাশ হলে কেবল দ্বিতীয় ব্যাচের ইনসার্টগুলো `Rollback` হবে, আর প্রথম ব্যাচের ইতিমধ্যে `Commit` হওয়া ডেটা অক্ষত থাকবে। আমার রিকভারি নিয়ম হলো: আগে `Sink Commit` নিশ্চিত হবে, তারপর সোর্স `Checkpoint` এগোবে—কারণ আগে Checkpoint বাড়ালে ক্র্যাশে ডেটা চিরতরে হারিয়ে যাবে। রিট্রাইয়ের সময় প্রথম ব্যাচের Row আবার এলেও `Idempotent Sink` সেগুলোকে `No-op` হিসেবে সামলে নেবে।\n\nআর আমাদের ইন-মেমরি উদাহরণে যেখানে ডেটা Row এবং Checkpoint একই Transaction-এ থাকে, সেখানে প্রথম ব্যাচে Checkpoint-এর আগে ক্র্যাশ হলে দুটি Row-ই রোলব্যাক হয়ে `rows = 0` এবং `checkpoint = 0` থাকে। পরেরবার সফল রিট্রাই ও রিপ্লের পর `rows = 2` এবং `checkpoint = 2` একসাথে কমিট হয়। এরপর একই ইভেন্ট ID-তে সাংঘর্ষিক পেলোড এলে তা প্রত্যাখ্যাত হয় এবং Checkpoint `2`-এই স্থির থাকে। ব্রোকার Checkpoint অন্য সার্ভারে থাকলে এই দুই সিস্টেমের মধ্যবর্তী রিকভারি প্রোটোকল আলাদাভাবে সংজ্ঞায়িত করতে হবে।",
+      "prerequisiteLessons": [
+        "ch35_transactions"
+      ]
+    },
+    {
+      "title": "Backfill-এর অর্থগত সূক্ষ্মতা: বেশি সম্পূর্ণ মানেই কি ভালো?",
+      "tag": "Data engineering",
+      "prompt": "নতুন করে Backfill চালানোর পর দেখা গেল ঐতিহাসিক Training Feature-গুলোতে আগের চেয়ে অনেক কম Null রয়েছে—এটি কি সবসময়ই আনন্দের খবর?",
+      "answer": "মোটেও না! বরং এটি একটি মারাত্মক লাল সংকেত হতে পারে। ঐতিহাসিক ট্রেনিং ডেটায় যদি হঠাৎ `Null` কমে গিয়ে Feature-গুলো অতিরিক্ত সম্পূর্ণ হয়ে ওঠে, তবে সবার আগে দেখতে হবে ব্যাকফিল স্ক্রিপ্টটি আসল `asof` কাটঅফ ও `Availability` শর্ত ভুলে গিয়ে আজকের সম্পূর্ণ ডেটাবেস থেকে পুরোনো শূন্যস্থান পূরণ করে দিয়েছে কি না! ট্রেনিং ও সার্ভিংয়ের সামঞ্জস্য বজায় রাখতে হলে আমাদের ‘তখন সিস্টেম কী জানত’ সেই ভিউটিই দরকার। এজন্য Snapshot টেবিলের চাবি হতে হবে `(scenario, target, asof, feature_version)`, এবং সংজ্ঞায় যেকোনো অর্থগত পরিবর্তন এলে নতুন Version হ্যাশ ও কনজিউমার মাইগ্রেশন পরিকল্পনা বাধ্যতামূলক।",
+      "prerequisiteLessons": [
+        "ch35_backfill"
+      ]
+    },
+    {
+      "title": "Offline বনাম Online Feature Store-এর সামঞ্জস্য",
+      "tag": "Architecture",
+      "prompt": "অফলাইন ট্রেনিং টেবিল এবং অনলাইন সার্ভিং স্টোরে Column-এর নাম হুবহু এক রাখলেই কি দুটির Parity নিশ্চিত হয়ে যায়?",
+      "answer": "একেবারেই না। Column-এর নাম এক রেখেও ভেতরে উইন্ডোর সীমানা, `Null` সামলানোর নিয়ম, `Entity Grain`, `Timezone`, `asof` কাটঅফ বা সোর্স সংস্করণ আলাদা হতে পারে। তা ছাড়া অনলাইন কী-ভ্যালু ক্যাশ কেবল সর্বশেষ অবস্থা (`Latest State`) দ্রুত দেওয়ার জন্য তৈরি—সেটি দিয়ে অতীতের `Point-in-Time` ট্রেনিং ইতিহাস পুনর্গঠন করা যায় না। এমনকি ট্রেনিং ও সার্ভিংয়ে একই Function শেয়ার করলেও ভেতরে অভিন্ন চুক্তিগত বাগ (`Shared Bug`) থাকতে পারে; তাই স্বতন্ত্র স্কেলার, ইনক্রিমেন্টাল ও `SQL` পথের তুলনা এবং প্রান্তিক শর্তের টেস্ট ছাড়া প্রকৃত `Parity` দাবি করা যায় না।",
+      "prerequisiteLessons": [
+        "ch35_labels",
+        "ch35_store"
+      ]
+    },
+    {
+      "title": "Freshness Age, Coverage এবং Cache TTL-এর পার্থক্য",
+      "tag": "Interview defense",
+      "prompt": "মনিটরিং ড্যাশবোর্ডে age_days = 0 দেখেই কি আপনি ঘোষণা করবেন যে Model-এর সব Rolling Feature শতভাগ সম্পূর্ণ আছে?",
+      "answer": "কখনোই না। `age_days = 0` কেবল এটুকুই বলে যে গতকালের (`t − 1`) ডেটা সময়মতো পৌঁছেছে; কিন্তু ৭ দিনের উইন্ডোর ভেতরে তার আগের কোনো একটি দিন (যেমন `day 376`-এর উইন্ডোতে বিলম্বিত `day 374`) তখনো অনুপস্থিত থাকতে পারে, যার ফলে `observed7 = 6` হবে এবং গড় মানও বদলে যাবে! তাই প্রকৌশলগতভাবে চারটি রাশিকে আলাদা রাখতে হবে: সর্বশেষ ঘটনার বয়স (`age_days`), উইন্ডোর পূর্ণতা (`Coverage`), সোর্স ইনজেশন বিলম্ব এবং অনলাইন ক্যাশের মেয়াদ (`Cache TTL`)। আর যেকোনো প্রোডাকশন `SLA` নির্ধারণ করতে হবে বাস্তব সিস্টেমের পরিমাপ ও প্রোডাক্টের চাহিদা থেকে—সিমুলেটেড ফিক্সচার দেখে নয়।"
+    },
+    {
+      "title": "লাইভ Feature Skew ইনসিডেন্ট তদন্ত করা",
+      "tag": "Debugging",
+      "prompt": "ধরুন একই দিনের জন্য অফলাইন Training ডেটায় lag 1 দেখাচ্ছে Null, অথচ সার্ভিং বা রিপ্লে আউটপুটে একটি সংখ্যা দেখা যাচ্ছে—আপনি কীভাবে এই ইনসিডেন্টটি ডিবাগ করবেন?",
+      "answer": "আমি আন্দাজে শূন্য না বসিয়ে ধাপে ধাপে পাঁচটি জায়গা মিলিয়ে দেখব: (১) দুই জায়গায় `Entity Key` ও তারিখের একক এক কি না; (২) সার্ভিং বা নতুন কুয়েরিটি মূল `asof` কাটঅফ উপেক্ষা করে `Latest State` পড়ছে কি না (ঠিক যেমন আমাদের `day 375` উদাহরণে `day 378`-এ আসা ডেটা ভুল করে ঢুকে পড়ে); (৩) দুই পাশের `Feature Version`, `Definition Hash` ও `Null Policy` মেটাডেটা অভিন্ন কি না; (৪) মেটাডেটা গার্ড হিসাব শুরুর আগেই অমিল ব্লক করছে কি না; এবং (৫) মেটাডেটা মেলার পরও কুয়েরির `WHERE` ক্লজে কোনো অর্থগত বাগ রয়ে গেছে কি না। মূল কাঁচা Row-গুলোর `event_day` ও `available_day` ট্রেস করলেই গরমিলের উৎস হাতেনাতে ধরা পড়বে।"
+    },
+    {
+      "title": "এই অধ্যায়ের প্রামাণ্য ফলাফল ও প্রকৌশলগত সীমাবদ্ধতা",
+      "tag": "Synthesis",
+      "prompt": "একজন ইন্টারভিউয়ারকে এই প্রজেক্টের সবচেয়ে শক্তিশালী প্রমাণ (Strongest Evidence) এবং অজানা সীমাবদ্ধতাগুলো কীভাবে সংক্ষেপে তুলে ধরবেন?",
+      "answer": "সবচেয়ে শক্তিশালী প্রমাণ হলো: UCI Dataset-এর প্রথম `547`টি বাস্তব দৈনিক পর্যবেক্ষণের ওপর দুটি শিডিউলের মোট `1092`টি ঐতিহাসিক `Snapshot` জুড়ে আমাদের `Batch`, `Incremental` এবং `SQLite` কুয়েরির ফলাফল শূন্য ব্যর্থতায় মিলেছে। নেগেটিভ কন্ট্রোল হিসেবে `Availability` উপেক্ষা করলে `late_fixture`-এ `98`টি অমিল ও `33`টি অনুপস্থিত `lag 1` ধরা পড়েছে; আর `Idempotent Replay`, ঋণাত্মক রেকর্ড প্রত্যাখ্যান, `SQLite Rollback` এবং পোর্টেবল বান্ডেলের `SHA-256` ও অখণ্ডতা যাচাই সব টেস্টে উত্তীর্ণ হয়েছে—সংরক্ষিত `184`টি ফলাফল একদম অস্পৃশ্য রেখে। অন্যদিকে স্পষ্ট সীমাবদ্ধতা হলো: এখানে বাস্তব সার্ভারের ইনজেশন ঘড়ি, ডিস্ট্রিবিউটেড স্ট্রিমিং ব্রোকারের সমন্বয়, প্রোডাকশন `Latency/QPS` কিংবা নতুন কোনো Model-এর ব্যবসায়িক উন্নতি মাপা হয়নি।"
+    }
+  ],
+  "book": {
+    "order": 42,
+    "part": "Book 6 · ML Systems, MLOps & Interviews",
+    "prerequisites": [
+      "chapter_04",
+      "chapter_06",
+      "chapter_13"
+    ],
+    "purpose": "Book 5 (Recommender Systems)-এর শেষে আমরা পূর্ণাঙ্গ Recommendation System তৈরি করেছি। এবার Book 6 (ML Systems, MLOps & Interviews)-এর এই প্রথম অধ্যায়ে আমরা শিখব কীভাবে Event Time ও Availability Time-এর ঘড়ি, কঠোর Schema, Idempotent Sink, SQLite Transaction, Point-in-Time Join এবং Privacy by Design মিলিয়ে এমন একটি Data ও Feature System গড়া যায়, যা Training এবং Serving উভয় ক্ষেত্রেই শতভাগ বিশ্বস্ত থাকে।",
+    "outcomes": [
+      "Event Time, Availability Time এবং Prediction Time-এর পার্থক্য বুঝে Point-in-Time সঠিক Feature Lookup এবং Rolling Window ডিজাইন করতে পারা।",
+      "At-least-once Delivery, Idempotent Sink, SQLite Transaction, Batch বনাম Incremental Parity এবং Backfill Snapshot-এর Invariant যাচাই করতে পারা।",
+      "Offline ও Online Feature Store-এর সামঞ্জস্য বজায় রাখা, Label Leakage প্রতিরোধ করা এবং Data Minimization, Deletion Propagation ও Differential Privacy-র গাণিতিক শর্ত ব্যাখ্যা করতে পারা।"
+    ],
+    "recall": [
+      "Book 1 · Chapter 5 (Data Preparation & Feature Engineering) এবং Book 2 · Chapter 8 (Anomaly Detection & Time Series Foundations) মনে করে দেখুন: সময়ের ক্রম ভেঙে ভবিষ্যৎ তথ্য ঢুকে পড়লে কীভাবে ভয়াবহ Data Leakage ঘটে?",
+      "যদি কোনো ঘটনার Event Time এবং সিস্টেমে তথ্যটি পৌঁছানোর Availability Time আলাদা হয়, তবে একটি নিখুঁত Point-in-Time Join কোন শর্ত দুটি যাচাই করবে?",
+      "একই Dataset-এর ওপর ε = 0.5 বাজেটের একটি Differential Privacy মেকানিজম পরপর দুইবার চালালে Basic Composition অনুযায়ী মোট Privacy Loss কত হবে, এবং নির্দিষ্ট Seed দিয়ে Noise প্রকাশ করলে কেন গোপনীয়তা ভেঙে পড়ে?"
+    ],
+    "bridge": "এই অধ্যায়ে বিশ্বস্ত Feature তৈরি ও সংরক্ষণের ভিত্তি গড়ার পর আমাদের পরবর্তী গন্তব্য হবে Book 6 · Chapter 2 (Serving, Monitoring & MLOps)—যেখানে আমরা এই Feature ও Model-কে বাস্তব Production পরিবেশে Serve করা, Drift মনিটর করা এবং নিরাপদে পরিচালনা করার কৌশল শিখব।",
+    "bookId": "systems",
+    "bookChapter": 1
+  }
+}

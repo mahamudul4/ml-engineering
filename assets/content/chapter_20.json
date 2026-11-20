@@ -1,0 +1,1624 @@
+{
+  "id": "chapter_20",
+  "number": 20,
+  "title": "Attention & Transformers",
+  "shortTitle": "Attention & Transformers",
+  "displayTitle": "Attention &\nTransformers",
+  "subtitle": "Query, Key ও Value থেকে পূর্ণাঙ্গ Transformer Block: Visibility, Position ও নির্ভরযোগ্য Sequence Prediction-এর ভেতরের গণিত।",
+  "description": "Follow the weights. Respect the mask.\nTrace every residual path.",
+  "difficulty": "Deep learning · attention",
+  "lab": "attention",
+  "lessons": [
+    {
+      "id": "ch20_contract",
+      "title": "Attention: একটিমাত্র State থেকে প্রয়োজনমাফিক Context বাছাই",
+      "subtitle": "কোন Position-এ দাঁড়িয়ে কখন কোন তথ্য ব্যবহার করা যাবে?",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন আমাদের Attention প্রয়োজন?",
+          "body": "আগের অধ্যায়ে (Book 3 · Chapter 5: Sequence Models) আমরা দেখেছি, একটি সাধারণ RNN পুরো অতীতের ইতিহাসকে জোর করে একটিমাত্র নির্দিষ্ট আকারের Hidden State-এর ভেতর চেপে ধরে রাখার চেষ্টা করে। লম্বা Sequence-এর ক্ষেত্রে এতে দূরের দরকারি তথ্য সহজেই ঝাপসা হয়ে যায়। Attention আমাদের সম্পূর্ণ ভিন্ন ও দারুণ কার্যকর একটি পথ দেখায়: সব তথ্য এক জায়গায় গাদাগাদি করে না রেখে, বর্তমান Position-এর Query অনুযায়ী আগের কোন কোন Position-এর তথ্য এখন সবচেয়ে বেশি কাজে লাগবে তা বেছে নিয়ে সরাসরি তাদের Value Vector-গুলোকে আনুপাতিক হারে মেশানো যায়। এর ফলে Sequence-এর অনেক দূরের দুটি Position-এর মধ্যেও সরাসরি যোগাযোগের সেতু তৈরি হয়।\n\nএই অধ্যায়ে আমরা প্রথমে Query (Q), Key (K) এবং Value (V) থেকে Attention-এর মূল সমীকরণটি গড়ে তুলব, আর তারপর ধাপে ধাপে Mask, Positional Encoding এবং পূর্ণাঙ্গ Transformer Block তৈরি করব। তবে শুরুতেই মনে রাখা ভালো—হাতের কাছে বেশি Context থাকা মানেই Model জাদুকরীভাবে সব দরকারি সংকেত উদ্ধার করে ফেলবে তা নয়; কোন সময়ে কোন তথ্য বৈধভাবে পাওয়া যাচ্ছে এবং সেই হিসাবের কম্পিউটেশনাল খরচ কত, দুটি বিষয়ই আমাদের সমান সতর্কতার সাথে বুঝতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "টাস্কের চুক্তি ও Output-এর ধরন",
+          "body": "Attention ব্যবহারের শুরুতেই আমাদের বুঝতে হবে ইনপুটগুলো কোথা থেকে আসছে এবং Output কীভাবে ব্যবহৃত হচ্ছে। যখন Q, K এবং V তিনটিই একই Sequence থেকে তৈরি হয়, তখন তাকে বলা হয় Self-Attention; আর যখন Query আসে একটি Sequence থেকে কিন্তু Key ও Value আসে ভিন্ন কোনো উৎস বা Context থেকে, তখন সেটিকে বলে Cross-Attention। দুটি ক্ষেত্রেই গাণিতিক নিয়ম এক: প্রতিটি Query Position-এর জন্য Output হিসেবে একটি করে নতুন Vector পাওয়া যায়।\n\nকিন্তু সেই Vector দিয়ে আমরা শেষে কী করব, তা নির্ভর করে আমাদের মূল টাস্কের ওপর—Many-to-One Regression, প্রতিটি Token-এর আলাদা Labeling, নাকি একের পর এক Token তৈরির Autoregressive Generation। এদের প্রতিটির Readout এবং Loss হিসাব করার নিয়ম আলাদা। শুধু আর্কিটেকচারের নাম 'Transformer' হলেই তথ্যের সময়কাল (Information Timing) আপনা-আপনি নিরাপদ হয়ে যায় না; আমাদেরই নিখুঁতভাবে ঠিক করে দিতে হয় কখন কোন Position কার দিকে তাকাতে পারবে।"
+        },
+        {
+          "type": "math",
+          "title": "Scaled Dot-Product Attention-এর মূল সমীকরণ",
+          "body": "\\mathrm{Attention}(Q,K,V)=\\mathrm{softmax}\\!\\left({QK^\\top\\over\\sqrt{d_k}}+M\\right)V"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ ছোট একটি উদাহরণ দিয়ে হিসাবটি যাচাই করি",
+          "body": "import torch\n\n# Mathematical illustration, not a fitted empirical benchmark.\nQ = torch.tensor([[1.0, 0.0]], dtype=torch.float64)\nK = torch.tensor([[1.0, 0.0], [0.0, 1.0]], dtype=torch.float64)\nV = torch.tensor([[2.0], [6.0]], dtype=torch.float64)\nA = torch.softmax(Q @ K.T / (2**0.5), dim=-1)\nprint(A, (A @ V).item())\nassert torch.allclose(A.sum(-1), torch.ones(1, dtype=torch.float64))\n"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব Dataset-এ আমাদের কাজের কাঠামো",
+          "body": "উপরের কোডটি ছিল কেবল সমীকরণটি বোঝার জন্য একটি ছোট গাণিতিক উদাহরণ। বাস্তব ডেটার আচরণ বোঝার জন্য আমরা এই অধ্যায়ে UCI Bike Sharing Dataset-এর বিগত 14 দিনের ভাড়ার হিসাব (past 14 counts) দেখে পরের দিনের চাহিদা Prediction করার সমস্যাটি ব্যবহার করব। এখানে 2011 সালের ডেটায় Model ট্রেন (Fit) করা হয়েছে এবং জানুয়ারি থেকে জুন 2012 পর্যন্ত সময়কালকে রাখা হয়েছে Diagnostic Development হিসেবে; চূড়ান্ত 184 দিনের ফলাফল এখানে স্কোর বা এক্সপোর্ট করা হয়নি। যেহেতু এই Dataset-টি আমরা আগেও Book 2 · Chapter 8 (Anomaly Detection & Time Series Foundations) এবং Book 3 · Chapter 5 (Sequence Models)-এ বিশ্লেষণ করেছি, তাই এটিকে সম্পূর্ণ নতুন কোনো স্বাধীন পরীক্ষা হিসেবে দাবি না করে আর্কিটেকচার বোঝার মাধ্যম হিসেবে দেখাই যুক্তিসঙ্গত। এখানে ধরে নেওয়া হয়েছে যে প্রতিদিনের মোট সংখ্যা দিন শেষ হওয়ার পরেই কেবল জানা যায়।"
+        },
+        {
+          "type": "text",
+          "title": "তিনটি ইন্টারেক্টিভ Lab ও ছোট Model-এর গঠন",
+          "body": "পুরো প্রক্রিয়াটি চোখের সামনে স্পষ্টভাবে দেখার জন্য এই অধ্যায়ে তিনটি ইন্টারেক্টিভ Lab রাখা হয়েছে। প্রথমটিতে আমরা ট্রেনিং থেকে শেখা Q, K ও V এবং Attention Heatmap খুঁটিয়ে দেখব; দ্বিতীয়টিতে Causal এবং Key-Padding Mask-এর মাধ্যমে তথ্যের দৃশ্যমানতা (Visibility) পরীক্ষা করব; আর তৃতীয়টিতে Position, Residual Connection এবং FFN মিলিয়ে পুরো Transformer Block-এর Forward Pass ধাপে ধাপে অনুসরণ করব। প্রতিটি সংখ্যা যেন হাতে-কলমে মেলানো যায়, সেজন্য আমরা একটি ছোট ট্রেন করা Model ব্যবহার করছি যার d_model = 4, heads = 2 এবং FFN width = 8। আমাদের স্থানীয় Python পরিবেশে ট্রেন করা এই Weight-গুলো ব্যবহার করে অ্যাপের ভেতর সরাসরি নিখুঁত সংখ্যাগত Inference চালানো হচ্ছে।"
+        },
+        {
+          "type": "text",
+          "title": "এই অধ্যায়ের পরিধি ও সীমাবদ্ধতা",
+          "body": "একটি কথা শুরুতেই পরিষ্কার করে নেওয়া দরকার: একটি Transformer Block-এর ভেতরের কলকব্জা নিখুঁতভাবে বোঝা আর বিশাল কোনো Pretrained LLM তৈরি করা এক জিনিস নয়। এই অধ্যায়ে আমরা কোনো বিশাল টেক্সট কর্পাস, Tokenizer ট্রেনিং, Language Pretraining কিংবা বাইরে থেকে ডাউনলোড করা Weight ব্যবহার করছি না (সেগুলো আমরা Book 4 · Chapter 1: LLM Foundations থেকে বিস্তারিত দেখব)। এখানে টেক্সট বা Token দিয়ে যে ছোট উদাহরণগুলো দেওয়া হয়েছে, সেগুলো নিছক গাণিতিক ধারণা স্পষ্ট করার জন্য; আর বাস্তব পরীক্ষণ অংশটি পুরোপুরি দৈনিক সংখ্যার (Count) ডেটার ওপর ভিত্তি করে তৈরি।"
+        },
+        {
+          "type": "text",
+          "title": "দক্ষতার চূড়ান্ত লক্ষ্য",
+          "body": "এই অধ্যায় শেষে আপনার লক্ষ্য হবে প্রতিটি Tensor Axis, অনুমোদিত Key-এর সীমানা, Normalization-এর Dimension এবং প্রতিটি Residual সমীকরণ আত্মবিশ্বাসের সাথে ব্যাখ্যা করতে পারা। সবসময় মনে রাখবেন, কোনো Position-এ Attention Weight বেশি হওয়া মানেই সেটি চূড়ান্ত ফলাফলের পেছনে সরাসরি কার্যকারণ (Causal Feature Importance) প্রমাণ করে না। সামনের পাঠগুলোতে আমরা Teacher Forcing, KV Cache এবং কম্পিউটেশনাল Complexity শিখব—তবে বাস্তবে একটি আর্কিটেকচার অন্যটির চেয়ে ভালো কি না, সেই দাবি করার জন্য সবসময় আলাদা ও সুনিয়ন্ত্রিত পরীক্ষার প্রয়োজন হয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch20_queries",
+      "title": "Queries, Keys ও Values: তিনটি আলাদা ভূমিকা",
+      "subtitle": "সাধারণ Lookup-এর উপমা থেকে শেখা Linear Projection পর্যন্ত",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Query, Key ও Value আসলে কী কাজ করে?",
+          "body": "আগের পাঠে আমরা দেখেছি Attention আগের Position-গুলো থেকে প্রয়োজনীয় তথ্য বেছে আনে। কিন্তু এই বাছাইয়ের কাজটি ঘটে তিনটি আলাদা ভূমিকার মাধ্যমে—Query, Key এবং Value। সহজভাবে বললে, বর্তমান Position-টি ঠিক কোন ধরনের প্যাটার্ন বা তথ্য খুঁজছে, তার শেখা রূপ হলো Query। বিপরীতে, প্রতিটি সম্ভাব্য Position-এ কী ধরনের তথ্য মেলানোর জন্য মজুত আছে, তার পরিচয় বহন করে Key। আর মেলানোর পর আসলেই কোন ভেতরের তথ্যটুকু মিশিয়ে সামনে পাঠানো হবে, তা ধরে রাখে Value।\n\nযদিও Self-Attention-এ এই তিনটিই একই ইনপুট Sequence থেকে তৈরি হয়, তবুও এদের প্রত্যেকের জন্য আলাদা শেখা Parameter (Projection Matrix) থাকে। তাই এটি ডেটাবেসের হুবহু শর্ত মেলানো (Exact Key Lookup) নয়; বরং অবিচ্ছিন্ন Vector Space-এ নমনীয়ভাবে প্রাসঙ্গিক তথ্য খুঁজে আনার একটি কৌশল।"
+        },
+        {
+          "type": "text",
+          "title": "Linear Projection-এর ভেতরের গণিত ও PyTorch-এর গঠন",
+          "body": "এবার দেখা যাক ইনপুট Vector থেকে এই তিনটি অংশ কীভাবে তৈরি হয়। PyTorch-এর nn.Linear লেয়ারের ভেতর Weight সংরক্ষিত থাকে [out_features, in_features] আকারে; তাই ইনপুট যদি Row-Vector আকারে থাকে, তবে ভেতরের হিসাবটি হয় x @ weight.T + bias। অনেক ফ্রেমওয়ার্কে গতি বাড়ানোর জন্য আলাদা তিনটি লেয়ার না রেখে in_proj_weight নামের একটি একক [3D, D] আকারের Matrix-এ Q, K ও V-এর Weight একত্রে প্যাক করে রাখা হয় এবং পরে Row বরাবর তিন ভাগে কেটে নেওয়া হয়। এখানে Transpose বা প্যাকিংয়ের ক্রম উল্টোপাল্টা হয়ে গেলে অনেক সময় Tensor-এর Shape ঠিকই মিলে যায়, কিন্তু ভেতরের গাণিতিক অর্থ পুরোপুরি বদলে যায়! তাই ফ্রেমওয়ার্কের বাইরে নিজের হাতে লেখা একটি স্বাধীন রেফারেন্স কোডের সাথে মিলিয়ে দেখা অত্যন্ত জরুরি।"
+        },
+        {
+          "type": "math",
+          "title": "ইনপুট X থেকে Q, K ও V তৈরির সমীকরণ",
+          "body": "Q=XW_Q^\\top+b_Q,\\quad K=XW_K^\\top+b_K,\\quad V=XW_V^\\top+b_V"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ একক Projection থেকে Q, K ও V আলাদা করা",
+          "body": "import torch\n\ntorch.manual_seed(20)\nx = torch.tensor(\n    [[[1.0, 2.0, 3.0, 4.0], [4.0, 3.0, 2.0, 1.0]]], dtype=torch.float64\n)  # Illustration.\nprojection = torch.nn.Linear(4, 12, dtype=torch.float64)\nq, k, v = projection(x).chunk(3, dim=-1)\nassert q.shape == k.shape == v.shape == (1, 2, 4)\nprint(q.shape)\n"
+        },
+        {
+          "type": "text",
+          "title": "Cross-Attention-এ দৈর্ঘ্যের হিসাব",
+          "body": "উপরের কোডে Q, K এবং V সবগুলোর দৈর্ঘ্যই ছিল 2, কারণ সেটি ছিল Self-Attention। কিন্তু Cross-Attention-এর বেলায় Query-এর দৈর্ঘ্য T_q এবং উৎস থেকে আসা Key ও Value-এর দৈর্ঘ্য T_k সম্পূর্ণ আলাদা হতে পারে (তবে Key এবং Value যেহেতু একই উৎস Position-গুলোকে নির্দেশ করে, তাই তাদের দুজনের দৈর্ঘ্য অবশ্যই সমান হতে হবে)। এক্ষেত্রে Q @ K.T গুণফলের পর Score Matrix-এর আকার দাঁড়ায় [T_q, T_k], এবং সবশেষে Value মেশানোর পর Output-এর আকার হয় [T_q, d_v]। যেমন, একটি Encoder-Decoder মডেলে Decoder-এর বর্তমান Position-গুলো থেকে আসে Query, আর Encoder-এর তৈরি করা উৎস Context থেকে আসে Key ও Value। তখন উৎসের বাড়তি ফাঁকা জায়গা ঢাকার জন্য যে Padding Mask ব্যবহৃত হয়, সেটি প্রয়োগ করতে হয় Key-এর Axis বরাবর।"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের সংখ্যার ডেটায় ইনপুট কীভাবে তৈরি হয়?",
+          "body": "শব্দের বদলে সংখ্যার Time Series-এ এই ধারণাটি কীভাবে কাজ করে? আমাদের Bike Sharing উদাহরণে প্রতিদিনের Standardized সংখ্যার (একটি Scalar মান) ওপর প্রথমে Linear(1 -> 4) প্রয়োগ করে 4-মাত্রার Vector-এ নেওয়া হয়, এবং তার সাথে যোগ করা হয় একটি নির্দিষ্ট Sinusoidal Positional Offset। এরপর Pre-Norm ধাপ পেরিয়ে যে Representation পাওয়া যায়, ঠিক তার থেকেই তৈরি হয় Q, K এবং V। লক্ষ্য করুন, এখানে কোনো শব্দের অভিধান (Token Vocabulary) বা শব্দের অর্থগত Embedding শেখা হচ্ছে না। তাই ডিবাগিংয়ের সময় মূল সংখ্যা (Raw Count), স্কেল করা সংখ্যা (Transformed Count) এবং প্রজেক্ট করা Feature—এই তিনটি স্তরকে মনের ভেতর স্পষ্টভাবে আলাদা রাখুন।"
+        },
+        {
+          "type": "text",
+          "title": "স্কেল, একক ও ব্যাখ্যার সতর্কতা",
+          "body": "একইভাবে মনে রাখতে হবে, প্রজেক্ট করার পর পাওয়া Query, Key ও Value-এর স্থানাঙ্কগুলো হলো Model-এর শেখা নিজস্ব Feature একক—সেগুলো কিন্তু আর সরাসরি সাইকেলের সংখ্যা নয়। দুটি Position-এর গুণফল থেকে আসা Score হলো তাদের মধ্যকার সামঞ্জস্যের Logit মাত্র, আর Value-ও সরাসরি আমাদের কাঙ্ক্ষিত Target বা Label নয়। তদুপরি, Value মেশানোর পরেও Output Projection, Residual যোগফল এবং FFN মিলে চূড়ান্ত Output-কে আমূল বদলে দিতে পারে। কাজেই কেবল একটি সুন্দর Attention Heatmap দেখেই কখনো চূড়ান্ত সিদ্ধান্তে পৌঁছানো যাবে না যে Model ঠিক ওই দিনটির কারণেই এমন Prediction দিয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে কোডিং অনুশীলন",
+          "body": "নিজের দক্ষতা ঝালিয়ে নিতে একটি ছোট পরীক্ষা নিজেই করে দেখতে পারেন: একটি প্যাক করা একক Projection লেয়ারের Weight-গুলো হুবহু কপি করে তিনটি আলাদা Linear লেয়ারে বসান এবং দেখুন দুই পথে একই Q, K ও V আসে কি না। শুধু batch = 1 নয়, একাধিক Batch এবং অসমান T_q ও T_k দিয়েও পরীক্ষা করুন। তবে খেয়াল রাখবেন, যাচাই করার সময় নিজের লেখা একই সমীকরণ কপি-পেস্ট করে নিজের সাথে মেলাবেন না; PyTorch-এর বিল্ট-ইন মডিউলের সাথে নিজের স্বাধীন হিসাবের তুলনা করুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch20_scaled",
+      "title": "Scaled Dot-Product ও Head Dimension-এর ভূমিকা",
+      "subtitle": "কেন গুণফলকে √d_k দিয়ে ভাগ করতে হয়?",
+      "duration": "60 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Dot-Product দিয়ে সামঞ্জস্য মাপা",
+          "body": "Query ও Key হাতে পাওয়ার পর আমাদের পরের কাজ হলো বর্তমান Position-টি কোন কোন Position-এর সাথে কতটা মিলছে তার একটি হিসাব বা Score বের করা। এই কাজের জন্য Transformer ব্যবহার করে সাধারণ Dot-Product। দুটি Vector-এর Dot-Product যদি বড় ধনাত্মক সংখ্যা হয়, তবে তা ইঙ্গিত দেয় যে তারা একই দিকে মুখ করে আছে এবং তাদের মানও প্রবল; আর ঋণাত্মক সংখ্যা বোঝায় বিপরীত প্রবণতা। তবে ভুলে গেলে চলবে না যে Dot-Product কিন্তু কেবল Cosine Similarity নয়, কারণ এখানে কোণের পাশাপাশি Vector দুটির দৈর্ঘ্যও (Norm) সরাসরি প্রভাব ফেলে। এছাড়া শেখা Scaling, Bias এবং Normalization পুরো Score Distribution বদলে দেয়। এই কাঁচা Score-গুলো এখনো কোনো Probability নয়—এরা নিছক আনুপাতিক Logit।"
+        },
+        {
+          "type": "text",
+          "title": "Variance বেড়ে যাওয়ার সমস্যা ও √d_k দিয়ে ভাগের কারণ",
+          "body": "কিন্তু সরাসরি Dot-Product নিলেই একটি বড় সংখ্যাগত সমস্যা দেখা দেয়। ধরা যাক, Query এবং Key-এর প্রতিটি উপাদান পরস্পর স্বাধীন এবং তাদের Mean শূন্য (0) ও Variance এক (1)। তাহলে d_k সংখ্যক উপাদানের গুণফল যোগ করলে সেই যোগফলের Mean শূন্যই থাকবে, কিন্তু তার Variance বেড়ে দাঁড়াবে d_k-এর সমান! ফলে d_k যত বড় হবে, Dot-Product-এর মানগুলো তত বেশি ছড়িয়ে পড়বে (কখনো অনেক বড় ধনাত্মক, কখনো অনেক বড় ঋণাত্মক)। এমন চরম মান Softmax-এ পাঠালে তা প্রায় পুরোপুরি একপেশে (Saturate) হয়ে যায় এবং Gradient অতি ক্ষুদ্র হয়ে পড়ে।\n\nএই স্কেল নিয়ন্ত্রণে রাখতেই প্রতিটি গুণফলকে √d_k দিয়ে ভাগ করা হয়, যাতে Variance আবার 1-এর কাছাকাছি ফিরে আসে। অবশ্য বাস্তবে ট্রেনিংয়ের সময় শেখা Vector-গুলোর উপাদান সবসময় পুরোপুরি স্বাধীন বা Unit-Variance থাকে না; তাই এই ভাগকে কোনো সার্বজনীন নিখুঁত Calibration উপপাদ্য না ভেবে একটি অত্যন্ত কার্যকর সংখ্যাগত স্থিতিশীলতার কৌশল হিসেবে দেখাই শ্রেয়।"
+        },
+        {
+          "type": "math",
+          "title": "Scaled Score এবং Variance-এর সম্পর্ক",
+          "body": "s_{ij}={q_i^\\top k_j\\over\\sqrt{d_k}},\\quad \\operatorname{Var}(q^\\top k)\\approx d_k\\ \\text{under stated assumptions}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Scaled Dot-Product হিসাব করি",
+          "body": "import torch, math\n\nq = torch.tensor([1.0, 2.0], dtype=torch.float64)\nk = torch.tensor([2.0, 0.0], dtype=torch.float64)\nscore = q.dot(k) / math.sqrt(q.numel())\nassert abs(score.item() - math.sqrt(2)) < 1e-12\nprint(score.item())\n"
+        },
+        {
+          "type": "text",
+          "title": "ভাগটি হবে প্রতিটি Head-এর নিজস্ব প্রস্থ অনুযায়ী",
+          "body": "Multi-Head আর্কিটেকচারে কোড লেখার সময় একটি খুব পরিচিত ভুল হলো ভুল সংখ্যা দিয়ে ভাগ করা। যেমন, আমাদের ছোট Model-টিতে মোট প্রস্থ D = 4 এবং Head সংখ্যা H = 2 হলে প্রতিটি Head-এর নিজস্ব প্রস্থ দাঁড়ায় d_k = 4 / 2 = 2। কাজেই এখানে ভাগ করতে হবে √2 দিয়ে—মোট প্রস্থ 4 কিংবা Sequence-এর দৈর্ঘ্য 14-এর বর্গমূল দিয়ে নয়! পাশাপাশি [B, T, D] আকারের Tensor-কে Head অনুযায়ী [B, H, T, d_k] আকারে সাজাতে হলে প্রথমে [B, T, H, d_k]-তে reshape করে তারপর মাঝের দুটি Axis-কে transpose করতে হয়। সরাসরি .view(B, H, T, d_k) লিখে ফেললে আলাদা সময়ের তথ্য ভুল Head-এর ভেতর ঢুকে পড়বে!"
+        },
+        {
+          "type": "text",
+          "title": "Value-এর মাত্রা ও Output-এর জগৎ",
+          "body": "লক্ষ্য করুন, Dot-Product করার জন্য Query এবং Key-এর প্রস্থ (d_k) সমান হওয়া বাধ্যতামূলক, কারণ তাদের উপাদানগুলো একে অপরের সাথে গুণ হয়। কিন্তু Value-এর প্রস্থ (d_v) তাত্ত্বিকভাবে আলাদা হলেও কোনো গাণিতিক বাধা নেই—যদিও প্রচলিত বেশিরভাগ Multi-Head Attention ইমপ্লিমেন্টেশনে সুবিধার জন্য দুটিই সমান রাখা হয়। সবচেয়ে গুরুত্বপূর্ণ অন্তর্দৃষ্টি হলো: Attention Score একটি একক সংখ্যা (Scalar) হলেও, Softmax Weight দিয়ে যোগ করার পর চূড়ান্ত Output-টি পাওয়া যায় Value Vector-এর স্থানাঙ্ক জগতে।"
+        },
+        {
+          "type": "text",
+          "title": "Gradient প্রবাহ ও ডিবাগিংয়ের কৌশল",
+          "body": "Score হিসাব করা থেকে শুরু করে Softmax এবং Value-এর Weighted Sum—পুরো পথটিই সম্পূর্ণ Differentiable। তবে যেমনটি আমরা একটু আগে বলেছি, Score অতিরিক্ত বড় হয়ে Softmax যদি একটিমাত্র Position-এ প্রায় 1.0 ও বাকি সবখানে প্রায় 0.0 হয়ে যায়, তখন তার ভেতর দিয়ে Gradient প্রবাহিত হওয়া কঠিন হয়ে পড়ে। এজন্য বাস্তবে Scaling-এর পাশাপাশি LayerNorm, সঠিক Initialization এবং উপযুক্ত Optimizer একত্রে কাজ করে। নিজের লেখা Attention কোডে কোনো সূক্ষ্ম Transpose বা Mask-এর ভুল লুকিয়ে আছে কি না, তা ধরার সবচেয়ে মোক্ষম উপায় হলো ছোট একটি ইনপুট নিয়ে হাতে করা Derivative বা Finite-Difference পরীক্ষার সাথে মিলিয়ে দেখা।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এর জন্য জরুরি প্রস্তুতি",
+          "body": "ইন্টারভিউ বোর্ডে প্রায়ই একটি ছোট Query এবং দুটি Key দিয়ে কাগজে-কলমে Dot-Product, √d_k দিয়ে ভাগ, Softmax Weight এবং চূড়ান্ত Output বের করতে বলা হয়। একইসাথে প্রশ্ন করা হতে পারে: Head-এর আকার দ্বিগুণ বা অর্ধেক করলে ঠিক কোন কোন Matrix-এর আকার ও স্কেল বদলাবে? উত্তর দেওয়ার সময় গাণিতিক যুক্তিটি পরিষ্কারভাবে বলুন, তবে কখনো দাবি করবেন না যে কোনো Model-এর পারফরম্যান্সের সবটুকু উন্নতি কেবল এই √d_k ভাগের কারণেই ঘটেছে।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে একক Head-এর Backward Pass নির্ণয়",
+          "body": "চলুন এবার ছোট একটি উদাহরণ দিয়ে পুরো Backward Pass নিজের হাতে বের করে দেখি। ধরুন এক মাত্রার (d_k = 1) একটি উদাহরণে q = 1, দুটি Key হলো [0, 1] এবং দুটি Value হলো [2, 4]। তাহলে Score দাঁড়ায় [0, 1], যার ওপর Softmax নিলে Weight p পাওয়া যায় প্রায় [0.268941, 0.731059] এবং Output হয় o = 0.268941 × 2 + 0.731059 × 4 = 3.462117।\n\nএখন যদি আমাদের Loss সরাসরি এই Output o-ই হয়, তবে Value-এর সাপেক্ষে Gradient হবে সরাসরি Attention Weight-এর সমান: dL/dv = p। কিন্তু Score-এর সাপেক্ষে Derivative নেওয়ার সূত্রটি দারুণ সুন্দর: dL/ds_j = p_j (v_j - o)। অর্থাৎ কোনো Position-এর নিজস্ব Value যদি গড় Output-এর চেয়ে বড় হয়, তবে তার Score বাড়াতে বলবে, আর ছোট হলে কমাতে বলবে! এখানে মান বসালে পাই প্রায় [-0.393224, +0.393224]। এরপর সাধারণ Chain Rule খাটিয়ে সহজেই পাওয়া যায় dL/dq = Σ (dL/ds_j) k_j এবং dL/dk_j = (dL/ds_j) q।"
+        },
+        {
+          "type": "math",
+          "title": "Attention Score থেকে ইনপুটগুলোর Gradient সমীকরণ",
+          "body": "\\frac{\\partial L}{\\partial s_j}=p_j(v_j-o),\\quad \\frac{\\partial L}{\\partial q}=\\frac{\\sum_j k_j\\,\\partial L/\\partial s_j}{\\sqrt d},\\quad \\frac{\\partial L}{\\partial v_j}=p_j\\quad (L=o\\text{ scalar})"
+        },
+        {
+          "type": "code",
+          "title": "PyTorch Autograd-এর সাথে হাতে করা Gradient মিলিয়ে দেখি",
+          "body": "import torch\n\nquery = torch.tensor(1.0, dtype=torch.float64, requires_grad=True)\nkeys = torch.tensor([0.0, 1.0], dtype=query.dtype, requires_grad=True)\nvalues = torch.tensor([2.0, 4.0], dtype=query.dtype, requires_grad=True)\nweights = (query * keys).softmax(0)\noutput = weights @ values\ndq, dk, dv = torch.autograd.grad(output, (query, keys, values))\nscore_gradient = weights.detach() * (values.detach() - output.detach())\ntorch.testing.assert_close(dq, score_gradient @ keys.detach())\ntorch.testing.assert_close(dk, score_gradient * query.detach())\ntorch.testing.assert_close(dv, weights.detach())\nprint(round(output.item(), 6), round(dq.item(), 6))\nprint(\n    *[round(value, 6) for value in dk.tolist()],\n    *[round(value, 6) for value in dv.tolist()]\n)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে ভেবে উত্তর দিন",
+          "body": "উপরের উদাহরণে দুটি Value-ই যদি একই সংখ্যা 7 হতো, তাহলে Query এবং Key-এর Gradient কত আসত?",
+          "solution": "যেহেতু Softmax Weight-গুলোর যোগফল সবসময় 1, তাই সবগুলো Value একই মান 7 হলে Weight যাই হোক না কেন চূড়ান্ত Output o সবসময় নিখুঁত 7-ই হবে। ফলে প্রতিটি Position-এর জন্য dL/ds_j = p_j (7 - 7) = 0 হয়ে যাবে, এবং তার সূত্র ধরে Query (dq) ও Key (dk)-এর সব Gradient হুবহু শূন্য (0) হবে! (অবশ্য Value-এর নিজস্ব Gradient dv তখনো Attention Weight p-এর সমানই থাকবে)।",
+          "reference": "https://d2l.ai/"
+        }
+      ]
+    },
+    {
+      "id": "ch20_softmax",
+      "title": "Stable Softmax, Masking ও সম্পূর্ণ ব্লকড Row-এর আচরণ",
+      "subtitle": "Probability Row তৈরির সংখ্যাগত চুক্তি ও প্রান্তিক সতর্কতা",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Overflow এড়াতে সর্বোচ্চ মান বিয়োগের কৌশল",
+          "body": "আগের পাঠে আমরা দেখেছি Scaled Score থেকে Attention Weight বের করতে আমাদের Softmax প্রয়োগ করতে হয়। কিন্তু কম্পিউটারে সরাসরি exp(score) হিসাব করতে গেলে বড় বিপদ ঘটে: যেমন Score যদি 1000 হয়, তবে exp(1000) মুহূর্তেই Floating-Point সীমা ছাড়িয়ে inf (Overflow) হয়ে যাবে! সৌভাগ্যবশত, প্রতিটি Row-এর সব উপাদান থেকে ওই Row-এর সর্বোচ্চ মান (max) বিয়োগ নিলে Softmax-এর গাণিতিক ফলাফল বিন্দুমাত্র বদলায় না, অথচ প্রতিটি ঘাত 0 বা ঋণাত্মক হওয়ায় exp-এর মান সবসময় 1-এর নিচে নিরাপদ থাকে।\n\nএখানে একটি সূক্ষ্ম নিয়ম মনে রাখতে হবে: সর্বোচ্চ মানটি নেওয়ার সময় কেবল বৈধ (Allowed) Key-গুলোর মধ্য থেকেই নিতে হবে, কারণ নিষিদ্ধ বা Masked Position-গুলোতে -inf বসানো থাকে। আর এই চুক্তিটি সচল রাখতে হলে প্রতিটি বৈধ Query Row-তে অন্তত একটি অনুমোদিত Key থাকতেই হবে।"
+        },
+        {
+          "type": "text",
+          "title": "কেন Softmax-এর আগেই Mask বসাতে হয়?",
+          "body": "অনেকের মনে প্রশ্ন জাগে—আগে Softmax বের করে তারপর নিষিদ্ধ Position-গুলোকে শূন্য করে দিলেই তো হয়? না, তাতে মারাত্মক ভুল হবে! আপনি যদি Softmax-এর আগে নিষিদ্ধ Score-গুলোতে -inf বসিয়ে দেন, তবে exp(-inf) = 0 হওয়ার ফলে সেগুলোর Weight যেমন নিখুঁত শূন্য হয়, তেমনি বাকি বৈধ Position-গুলোর Weight আপনা-আপনি পুনরায় ভাগ হয়ে (Renormalize) পুরো Row-এর যোগফল ঠিক 1.0 বজায় রাখে। Softmax-এর পরে শূন্য বসালে আর কখনোই পুরো Row-এর যোগফল 1 থাকবে না।\n\nআরেকটি প্রচলিত ভুল ধারণা হলো: ইনপুটের Padded Position-গুলোতে শূন্য (0) বসিয়ে রাখলে বোধহয় এমনিতেই তাদের Attention Score বা Output শূন্য হয়ে যাবে। বাস্তবে মোটেও তা হয় না! কারণ শূন্য ইনপুটের সাথেও Linear লেয়ারের Bias এবং Positional Encoding যোগ হয়ে অশূন্য Key ও Value তৈরি করে ফেলে। তাই স্পষ্ট Mask ছাড়া নিষিদ্ধ তথ্য থামানো অসম্ভব।"
+        },
+        {
+          "type": "math",
+          "title": "বৈধ সেট A_i-এর ওপর সংখ্যাগতভাবে স্থিতিশীল Softmax",
+          "body": "a_{ij}={\\exp(s_{ij}-m_i)\\over\\sum_{k\\in\\mathcal A_i}\\exp(s_{ik}-m_i)},\\quad m_i=\\max_{k\\in\\mathcal A_i}s_{ik}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ বড় সংখ্যা ও Mask সহ নিরাপদ Softmax",
+          "body": "import torch\n\nscores = torch.tensor([[1000.0, 1000.0, 999.0]], dtype=torch.float64)\nallowed = torch.tensor([[True, True, False]])\nassert allowed.any(-1).all()\na = torch.softmax(scores.masked_fill(~allowed, float(\"-inf\")), dim=-1)\nassert torch.equal(a, torch.tensor([[0.5, 0.5, 0.0]], dtype=torch.float64))\nprint(a)\n"
+        },
+        {
+          "type": "text",
+          "title": "পুরো Row ব্লক হয়ে গেলে কী বিপদ ঘটে?",
+          "body": "এবার ভাবুন তো, কোনো কারণে যদি একটি Query Row-এর সবগুলো Key-ই ব্লক (False) হয়ে যায়, অর্থাৎ পুরো Row জুড়ে কেবল -inf থাকে, তখন কী হবে? তখন max নিজেই হবে -inf, এবং (-inf) - (-inf) থেকে সরাসরি NaN তৈরি হবে! ভিন্ন ভিন্ন ফ্রেমওয়ার্ক, হার্ডওয়্যার Kernel বা API এই পরিস্থিতিতে একেক রকম আচরণ করতে পারে—কেউ নীরবে NaN ছড়িয়ে দেয়, কেউ বা শূন্য রিটার্ন করে। তাই অন্ধভাবে লাইব্রেরির ওপর ভরসা না করে ডেটা পাইপলাইনেই নিশ্চিত করতে হবে যেন প্রতিটি সক্রিয় Query-এর অন্তত একটি বৈধ Key থাকে, অথবা কোডে স্পষ্ট Guard ও নিরাপদ বিকল্প নীতি (Fallback Policy) লিখে রাখতে হবে। আমাদের এই অধ্যায়ের সবগুলো Lab-এই প্রতিটি সক্রিয় Row-তে অন্তত একটি বৈধ Key নিশ্চিত করা হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "Attention Dropout-এর সূক্ষ্ম প্রভাব",
+          "body": "আরেকটি ব্যবহারিক দিক হলো Attention Weight-এর ওপর Dropout প্রয়োগ করা। Dropout প্রয়োগের ঠিক আগমুহূর্তে Softmax Probability-গুলোর যোগফল নিখুঁত 1 থাকে। কিন্তু ট্রেনিং চলাকালীন যখন Attention Dropout কিছু সংযোগকে শূন্য করে দেয় এবং টিকে থাকা Weight-গুলোকে 1 / (1 - p) দিয়ে স্কেল করে, তখন কোনো একটি একক নমুনার ক্ষেত্রে ওই Row-এর যোগফল আর হুবহু 1 নাও থাকতে পারে (যদিও গড় মান বা Expectation ঠিক থাকে)। আমাদের বর্তমান পরীক্ষণগুলোতে সংখ্যাগত হিসাব স্বচ্ছ রাখার জন্য dropout = 0 রাখা হয়েছে, ফলে প্রতিটি Row নিখুঁতভাবে Probability Distribution মেনে চলে। নিজের কোড পরীক্ষা করার সময় মডিউলের eval() মোড এবং ফাংশনাল API-এর dropout_p আর্গুমেন্ট দুটিই খেয়াল করে মেলানো উচিত।"
+        },
+        {
+          "type": "text",
+          "title": "Floating-Point নিখুঁততা ও ডিভাইসের পার্থক্য",
+          "body": "যখন আপনি নিজের লেখা Attention কোডের সাথে ফ্রেমওয়ার্কের তুলনা করবেন, তখন CPU-তে float64 ব্যবহার করা হলো সবচেয়ে নির্ভরযোগ্য উপায়। কারণ GPU-এর Fused Kernel কিংবা float16/bfloat16-এর মতো কম Precision-এ অপারেশনের ক্রম সামান্য বদলে যাওয়ায় বিট-টু-বিট হুবহু মিল পাওয়া যায় না। সেসব ক্ষেত্রে উপযুক্ত ও যুক্তিসঙ্গত Tolerance (atol, rtol), isfinite পরীক্ষা এবং গাণিতিক Invariance টেস্ট ব্যবহার করতে হয়। পাশাপাশি খেয়াল রাখবেন যেন Score, Mask, Probability এবং Value Output—সবগুলোর dtype ও device পরস্পর সামঞ্জস্যপূর্ণ থাকে।"
+        },
+        {
+          "type": "text",
+          "title": "নিজের হাতে করার অনুশীলন",
+          "body": "এই পাঠের ধারণাগুলো পাকা করতে নিজে চারটি প্রান্তিক অবস্থা কোডে লিখে পরীক্ষা করুন: (১) প্রচণ্ড বড় কিন্তু সমান মানের কয়েকটি Score, (২) কেবল একটিমাত্র বৈধ Key থাকা অবস্থা, (৩) সবগুলো Key ব্লক থাকা অবৈধ Row, এবং (৪) প্রচণ্ড বড় ঋণাত্মক Logit। এছাড়া খাতায় Softmax-এর Jacobian Matrix diag(a) - a a^T প্রতিপাদন করে দেখুন এবং চিন্তা করুন—ভুল করে Key Axis (dim = -1)-এর বদলে যদি Batch বা Query Time Axis বরাবর Softmax নিয়ে ফেলেন, তবে আকার (Shape) দেখতে ঠিক থাকলেও ভেতরে কী ভয়াবহ গড়বড় ঘটে যাবে!"
+        }
+      ]
+    },
+    {
+      "id": "ch20_multihead",
+      "title": "Multi-Head Attention: ভাগ করা, মেশানো ও জোড়া লাগানো",
+      "subtitle": "একাধিক সমান্তরাল Head থেকে শেখা Output Projection পর্যন্ত",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "একাধিক সমান্তরাল Subspace-এ মনোযোগ দেওয়া",
+          "body": "একটিমাত্র Attention Head ব্যবহার করলে প্রতিটি Position-এ কেবল একটি নির্দিষ্ট Weight-এর তালিকা তৈরি হয়—ফলে একই সময়ে ভিন্ন ভিন্ন ধরনের সম্পর্ক ধরা কঠিন হতে পারে। এই সীমাবদ্ধতা কাটাতেই ব্যবহার করা হয় Multi-Head Attention। এখানে ইনপুটকে কয়েকটি আলাদা কম-মাত্রার Subspace বা Head-এ প্রজেক্ট করা হয়, যাতে প্রতিটি Head নিজস্ব উপায়ে সামঞ্জস্য মেপে Value মেশাতে পারে।\n\nতবে একটি জনপ্রিয় ভুল ধারণা থেকে সাবধান থাকুন: আলাদা Head মানেই যে তাদের শুরু থেকেই নির্দিষ্ট কোনো অর্থগত দায়িত্ব (যেমন একটি Head কেবল সাপ্তাহিক ঋতুচক্র দেখবে আর অন্যটি কেবল সাম্প্রতিক প্রবণতা দেখবে, কিংবা ভাষার ক্ষেত্রে একটি কেবল ব্যাকরণ দেখবে) ভাগ করে দেওয়া হয়েছে, তা মোটেও নয়! তারা পুরোপুরি ডেটা ও Gradient থেকে নিজেদের মতো করে বৈশিষ্ট্য শেখে, এবং সবশেষে সবগুলো Head-এর Output পাশাপাশি জোড়া লাগিয়ে (Concatenate) একটি শেখা Matrix W_O দিয়ে পুনরায় মিশিয়ে নেওয়া হয়।"
+        },
+        {
+          "type": "text",
+          "title": "প্রতিটি ধাপে Tensor Shape কীভাবে বদলায়?",
+          "body": "কোড লেখার সময় Multi-Head Attention-কে নিখুঁত রাখার মূল চাবিকাঠি হলো প্রতিটি ধাপের Shape পরিষ্কারভাবে অনুসরণ করা। আমাদের উদাহরণের ছোট Model-টিতে D = 4, Head সংখ্যা H = 2 এবং প্রতিটি Head-এর প্রস্থ d = 2। শুরুতে [B, 14, 4] আকারের ইনপুট প্যাক করা Projection পার হয়ে [B, 14, 12] আকার নেয়, যাকে তিন ভাগ করলে Q, K ও V প্রত্যেকে পায় [B, 14, 4]। এরপর প্রতিটি অংশকে Head অনুযায়ী ভেঙে ও Axis অদলবদল করে আনা হয় [B, 2, 14, 2] আকারে। এখন প্রতিটি Head-এর ভেতর আলাদাভাবে হিসাব হয়ে Attention Score ও Weight-গুলোর আকার দাঁড়ায় [B, 2, 14, 14]। সেই Weight দিয়ে Value গুণ করলে আবার পাই [B, 2, 14, 2], যাকে পুনরায় Transpose ও একত্র করলে ফিরে আসে [B, 14, 4]—এবং সবশেষে তার ওপর প্রয়োগ হয় Output Projection।"
+        },
+        {
+          "type": "math",
+          "title": "Multi-Head Attention-এর পূর্ণ সমীকরণ",
+          "body": "\\mathrm{MHA}(X)=\\operatorname{Concat}(Z_1,\\ldots,Z_H)W_O^\\top+b_O,\\quad Z_h=A_hV_h"
+        },
+        {
+          "type": "code",
+          "title": "PyTorch MultiheadAttention-এ Shape ও Parameter যাচাই",
+          "body": "import torch\n\ntorch.manual_seed(20)\nm = torch.nn.MultiheadAttention(4, 2, dropout=0, batch_first=True, dtype=torch.float64)\nx = torch.zeros(1, 14, 4, dtype=torch.float64)  # Shape illustration.\nblocked = torch.triu(torch.ones(14, 14, dtype=torch.bool), diagonal=1)\nout, w = m(x, x, x, attn_mask=blocked, need_weights=True, average_attn_weights=False)\nassert out.shape == (1, 14, 4) and w.shape == (1, 2, 14, 14)\nassert sum(p.numel() for p in m.parameters()) == 80\nprint(out.shape, w.shape)\n"
+        },
+        {
+          "type": "text",
+          "title": "Parameter-এর বাজেট কীভাবে স্থির থাকে?",
+          "body": "উপরের কোডে খেয়াল করেছেন কি, মোট Parameter সংখ্যা এসেছে ঠিক 80? হিসাবটি খুব সহজ: প্যাক করা Q, K ও V-এর Weight 12 × 4 = 48 এবং তাদের Bias 12; আর শেষের Output Projection-এর Weight 4 × 4 = 16 এবং তার Bias 4—সব মিলিয়ে 48 + 12 + 16 + 4 = 80। এখানে একটি চমৎকার বিষয় লক্ষ্য করুন: মোট প্রস্থ D স্থির রেখে আপনি যদি Head সংখ্যা 1, 2 বা 4 যাই করুন না কেন (যতক্ষণ D নিঃশেষে ভাগ যাচ্ছে), মোট Parameter-এর সংখ্যা কিন্তু হুবহু এই 80-ই থাকবে! কারণ Head বাড়ানোর সাথে সাথে প্রতিটি Head-এর নিজস্ব প্রস্থ d = D / H আনুপাতিক হারে কমে যায়। অর্থাৎ বেশি Head নেওয়া মানেই স্বয়ংক্রিয়ভাবে বেশি Projection Parameter যোগ হওয়া নয়।"
+        },
+        {
+          "type": "attention_weights_lab",
+          "title": "ইন্টারেক্টিভ Lab: বাস্তব ডেটায় ট্রেন করা Attention Weight পর্যবেক্ষণ",
+          "body": "নিচের ইন্টারেক্টিভ Lab-এ বাস্তব Dataset-এর তিনটি 14-দিনের উইন্ডোর ওপর আমাদের ট্রেন করা Model-এর দুটি Head-এর Weight সরাসরি পরীক্ষা করে দেখুন। যেকোনো Query Row বা Key ঘর নির্বাচন করলে সেই Position-এর সুনির্দিষ্ট অবদান a_ij × v_j, মিশ্রিত Head Vector এবং Causal ত্রিভুজাকার গঠন দেখতে পাবেন। মূল সাইকেল সংখ্যার সাথে এই Weight-গুলোর আচরণ মিলিয়ে দেখুন—তবে মনে রাখবেন, দেখতে সুন্দর একটি Heatmap মানেই কিন্তু কার্যকারণের চূড়ান্ত প্রমাণ নয়।"
+        },
+        {
+          "type": "text",
+          "title": "ফ্রেমওয়ার্ক API ব্যবহারের সূক্ষ্ম দিক",
+          "body": "PyTorch-এর nn.MultiheadAttention ব্যবহার করে Weight পরিদর্শন করার সময় একটি ছোট ফ্ল্যাগের দিকে বিশেষ নজর দিতে হয়। আপনি যদি average_attn_weights=False না লেখেন, তবে PyTorch ডিফল্টভাবে সবগুলো Head-এর Weight গড় করে [B, T, T] আকারে ফেরত দেবে—ফলে কোন Head আলাদাভাবে কোথায় তাকাচ্ছে তা আপনি আর দেখতেই পাবেন না! এছাড়া need_weights=True দিলে ফ্রেমওয়ার্ক অনেক সময় দ্রুতগতির Fused Kernel ছেড়ে সাধারণ পথে হিসাব করে। আমাদের এই অধ্যায়ের উদ্দেশ্য যেহেতু গতি মাপা নয় বরং প্রতিটি সংখ্যা নিখুঁতভাবে যাচাই করা, তাই আমরা এখানে স্পষ্টভাবে প্রতিটি Head-এর Weight বের করে নিচ্ছি।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে কোডিং অনুশীলন",
+          "body": "এবার একটি চমৎকার অনুশীলন করুন: PyTorch-এর MultiheadAttention মডিউলের ভেতরকার Weight-গুলো নিয়ে সম্পূর্ণ নিজের হাতে ধাপে ধাপে Q/K/V আলাদা করা, Scaled Logit, Mask, Softmax, Weighted Value, Concatenation এবং W_O গুণফল লিখে দেখুন ফ্রেমওয়ার্কের Output-এর সাথে দশমিকের শেষ ঘর পর্যন্ত মেলে কি না। তারপর ইচ্ছা করে Head ভাঙার সময় একটি transpose বাদ দিয়ে দেখুন—Shape ঠিক থাকলেও ঠিক কোন মধ্যবর্তী ধাপ থেকে সংখ্যাগুলো প্রথম আলাদা হয়ে যাচ্ছে!"
+        }
+      ]
+    },
+    {
+      "id": "ch20_causal",
+      "title": "Causal Visibility ও তথ্যের সময়কাল",
+      "subtitle": "আর্কিটেকচারের Mask এবং টাস্কের Data Leakage কেন আলাদা বিষয়",
+      "duration": "60 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ভবিষ্যৎ না দেখার Prefix নিয়ম",
+          "body": "ক্রমান্বয়ে পরের ধাপ Prediction করার (Autoregressive) যেকোনো সমস্যার মৌলিক শর্ত হলো: Position i-তে দাঁড়িয়ে থাকা কোনো Query যেন কখনোই তার পরের Position-গুলোর (j > i) তথ্য দেখতে না পায়, কারণ বাস্তব সময়ে পরের ধাপগুলো তখনো অজানা। তবে কর্ণ বা Diagonal Position (j = i) সাধারণত উন্মুক্ত রাখা হয়, যাতে বর্তমান ইনপুট নিজের Representation নিজে ব্যবহার করতে পারে; আর পরের ধাপের সংখ্যাটিকে Target Label হিসেবে এক ঘর বামে সরিয়ে (Shifted Labels) নিশ্চিত করা হয় যেন বর্তমান ইনপুটের ভেতরেই উত্তরটি লুকিয়ে না থাকে। এখানে একটি প্রান্তিক বিপদ খেয়াল রাখবেন: কোনো বৈধ শুরুর Token ছাড়া যদি কর্ণসহ পুরোটা বন্ধ রেখে কঠোরভাবে নিচের ত্রিভুজ (Strictly Lower Triangular) Mask দেন, তবে প্রথম Row (i = 0)-এর সবগুলো Key ব্লক হয়ে গিয়ে সাথে সাথেই NaN তৈরি হবে!"
+        },
+        {
+          "type": "text",
+          "title": "দুই PyTorch API-তে বিপরীত চিহ্নের ফাঁদ",
+          "body": "বাস্তবে কোড লিখতে গিয়ে প্রকৌশলীরা সবচেয়ে বেশি যে ফাঁদে পড়েন, তা হলো বিভিন্ন API-তে Boolean Mask-এর উল্টো অর্থ (Polarity)! PyTorch-এর ক্লাস-ভিত্তিক nn.MultiheadAttention-এ Boolean Mask-এর True মানে হলো ব্লক করা (অর্থাৎ দেখা নিষেধ)। অথচ PyTorch-এরই ফাংশনাল scaled_dot_product_attention (sdpa)-এ Boolean Mask-এর True মানে হলো অনুমোদিত (অর্থাৎ দেখা যাবে)! কোনো যাচাই ছাড়া একই Boolean Tensor অন্ধভাবে দুই জায়গায় পাঠালে আপনার Causal Model উল্টো কেবল নিষিদ্ধ ভবিষ্যতের দিকেই তাকাতে শুরু করবে! আবার Float ধরনের Additive Mask দিলে সেখানে 0.0 মানে অনুমোদিত এবং -inf মানে ব্লক করা। তাই সবসময় ডকুমেন্টেশন দেখে স্পষ্ট নামের Helper ফাংশন এবং স্বয়ংক্রিয় টেস্ট ব্যবহার করুন।"
+        },
+        {
+          "type": "math",
+          "title": "Causal Mask-এ বৈধ সেট ও Additive Mask M",
+          "body": "\\mathcal A_i=\\{j:0\\le j\\le i\\},\\quad M_{ij}=\\begin{cases}0&j\\le i\\\\-\\infty&j>i\\end{cases}"
+        },
+        {
+          "type": "code",
+          "title": "PyTorch SDPA-তে অনুমোদিত Causal Grid পরীক্ষা",
+          "body": "import torch\nfrom torch.nn.functional import scaled_dot_product_attention as sdpa\n\nq = torch.zeros(1, 1, 4, 2, dtype=torch.float64)\nv = torch.arange(8, dtype=torch.float64).reshape(1, 1, 4, 2)\nallowed = torch.ones(4, 4, dtype=torch.bool).tril()\nout = sdpa(q, q, v, attn_mask=allowed, dropout_p=0.0)  # SDPA True=allowed.\nassert torch.allclose(out[0, 0, 0], v[0, 0, 0])\nprint(out.shape)\n"
+        },
+        {
+          "type": "text",
+          "title": "Data Leakage-এর সূক্ষ্ম পার্থক্য: Window বনাম প্রতি-Position Prediction",
+          "body": "এখানে তথ্যের সময়কাল নিয়ে একটি অত্যন্ত গুরুত্বপূর্ণ সূক্ষ্ম বিষয় পরিষ্কার করা দরকার। আমাদের Bike Sharing সমস্যার কথাই ধরুন: আজ দিন শেষে যখন আমরা আগামীকালের Forecast দিতে বসছি, তখন কিন্তু বিগত 14 দিনের (past 14) প্রতিটি দিনের সংখ্যাই আমাদের হাতে পুরোপুরি জানা। কাজেই কেবল আগামীকালের একটিমাত্র সংখ্যা Prediction করার জন্য যদি ওই 14 দিনের উইন্ডোর ভেতর সবাই সবাইকে দেখতে পায় (Full Attention), তবে সেটি কিন্তু কোনোভাবেই ভবিষ্যতের Target Leakage নয়! কিন্তু আমরা যদি একইসাথে উইন্ডোর ভেতরের প্রতিটি দিন i-তে দাঁড়িয়ে তার পরের দিন i + 1 অনলাইনে Prediction করতে চাই, তখন অবশ্যই দিন i-এর পরের দিনগুলো দেখা নিষিদ্ধ। আমাদের মূল রেসিপিতে এই নিয়ম মেনেই Causal Mask রাখা হয়েছে; আর নিচের Lab-এ Mask সরিয়ে যে পরীক্ষাটি দেখানো হয়েছে, তা কেবল Inference সময়ে সংখ্যার প্রবাহ যাচাই করার একটি Diagnostic পরীক্ষা—দুটি আলাদাভাবে ট্রেন করা আর্কিটেকচারের তুলনা নয়।"
+        },
+        {
+          "type": "attention_mask_lab",
+          "title": "ইন্টারেক্টিভ Prefix Audit Lab: পরের অংশ বদলে পরীক্ষা",
+          "body": "নিচের Lab-এ Position 6 (Query 6) স্থির রেখে তার পরের দিনগুলোর বৈধ মানগুলোকে উল্টে দিয়ে (Reverse) দেখুন কী ঘটে। Causal পথে হিসাব করলে Position 6-এর State এক চুলও বদলাবে না, কারণ পরের দিনগুলোর তথ্য তার কাছে পৌঁছাতেই পারে না; কিন্তু Full Attention পথে হিসাব করলে পরের দিনগুলোর পরিবর্তনের প্রভাবে বর্তমান Output বদলে যাবে। এই পরীক্ষাটি বাস্তব জগতের নতুন কোনো ডেটা নয়, বরং আপনার পাইপলাইনে পরের ধাপের তথ্য চুইয়ে ঢুকছে কি না তা ধরার একটি অকাট্য সংখ্যাগত পরীক্ষা।"
+        },
+        {
+          "type": "text",
+          "title": "একাধিক Layer থাকলে কেন বাড়তি সতর্কতা প্রয়োজন?",
+          "body": "আমাদের এক-ব্লকের ছোট Model-টিতে শেষ Position (Query 14) Causal হোক বা Full Attention—উভয় ক্ষেত্রেই পুরো 14টি Key দেখতে পায়, তাই একক Layer-এ শেষ Position-এর Forecast দুটি ক্ষেত্রেই হুবহু এক থাকে (যদিও শুরুর দিকের Query State আলাদা হয়)। কিন্তু সাবধান! আপনার Model-এ যদি একাধিক Transformer Layer পরপর সাজানো থাকে, তবে প্রথম Layer-এ Full Attention থাকলে শুরুর দিকের Position-গুলো ইতিমধ্যেই শেষের দিকের তথ্য নিজের ভেতর শুষে নেবে এবং পরের Layer-এ সেই মিশ্রিত Context ছড়িয়ে দেবে! তাই বহু-স্তরের Model-এ কখনো এক-স্তরের সরল সমতা ধরে নেবেন না। অনলাইন Prediction টাস্কে প্রতিটি Layer-এর Visibility এবং Shifted Label একসাথে পরীক্ষা করতে হবে; কারণ একবার তথ্য ফাঁস হয়ে গেলে পরের কোনো Residual বা FFN লেয়ার তা আর ধুয়ে মুছে পরিষ্কার করতে পারে না।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে বিষয়টি উপস্থাপন করবেন",
+          "body": "ইন্টারভিউতে আপনাকে যদি জিজ্ঞেস করা হয়—'আপনার Decoder-এ কোনো ভবিষ্যৎ তথ্য ফাঁস হচ্ছে না, তা কীভাবে নিশ্চিত করবেন?'—তখন কেবল একটি ত্রিভুজাকার Attention Heatmap এঁকে থেমে যাবেন না। বোর্ডে পাশাপাশি ট্রেনিংয়ের ইনপুট Token, এক ঘর সরানো Target Label এবং অনুমোদিত Key-এর Grid একসাথে এঁকে দেখান। তারপর ব্যাখ্যা করুন কীভাবে পরের অংশ ইচ্ছাকৃতভাবে বদলে দিয়ে (Counterfactual Future Perturbation Test) আগের Position-গুলোর Output অপরিবর্তিত থাকে কি না তা কোডে স্বয়ংক্রিয়ভাবে যাচাই করা যায়, এবং এই টেস্টটি ঠিক কী প্রমাণ করে আর কী করে না।"
+        },
+        {
+          "type": "text",
+          "title": "দুই ভিন্ন API-তে একই Causal Visibility মিলিয়ে দেখা",
+          "body": "চলুন একটি সুনির্দিষ্ট সংখ্যাগত উদাহরণ দিয়ে sdpa এবং nn.MultiheadAttention-এর Mask মেলানো শিখি। ধরুন আমাদের তিনটি Position-এর Value হলো [2, 4, 8], এবং হিসাব সহজ রাখতে সব Query ও Key শূন্য (0) রাখা হয়েছে (যাতে সব বৈধ Position-এ সমান Weight পড়ে)। তাহলে Causal নিয়মে Row 0 কেবল প্রথম Key দেখে Output দেবে 2, Row 1 প্রথম দুটি Key-এর গড় নিয়ে দেবে (2 + 4) / 2 = 3, এবং Row 2 তিনটি Key-এরই গড় নিয়ে দেবে (2 + 4 + 8) / 3 = 14/3 ≈ 4.666667।\n\nএখন নিচের কোডে দেখুন: sdpa-তে আমরা সরাসরি নিচের ত্রিভুজাকার allowed পাঠানোয় কাজ হয়ে গেছে, কারণ সেখানে True মানে অনুমোদিত। কিন্তু nn.MultiheadAttention-এ হুবহু একই ফলাফল পেতে আমাদের ~allowed পাঠাতে হয়েছে, কারণ সেখানে True মানে ব্লক করা! (মিলিয়ে দেখার সুবিধার্থে এখানে মডিউলের Projection Weight এমনভাবে নির্দিষ্ট করে দেওয়া হয়েছে যেন Q ও K শূন্য হয় এবং V সরাসরি ইনপুটকে পাঠায়)।"
+        },
+        {
+          "type": "code",
+          "title": "MHA এবং SDPA-এর বিপরীত Mask চুক্তি কোডে যাচাই",
+          "body": "import torch\nfrom torch import nn\nfrom torch.nn.functional import scaled_dot_product_attention as sdpa\n\ntokens = torch.tensor([[[2.0], [4.0], [8.0]]], dtype=torch.float64)\nallowed = torch.ones(3, 3, dtype=torch.bool).tril()\nqueries = torch.zeros(1, 1, 3, 1, dtype=tokens.dtype)\nvalues = tokens[:, None]\ndirect = sdpa(queries, queries, values, attn_mask=allowed, dropout_p=0)\nmodule = nn.MultiheadAttention(1, 1, bias=False, batch_first=True, dtype=tokens.dtype)\nwith torch.no_grad():\n    module.in_proj_weight.copy_(torch.tensor([[0.0], [0.0], [1.0]], dtype=tokens.dtype))\n    module.out_proj.weight.fill_(1)\nmodule.eval()\nprojected, _ = module(tokens, tokens, tokens, attn_mask=~allowed, need_weights=False)\ntorch.testing.assert_close(projected[:, None], direct)\nprint(*[round(value, 6) for value in direct.flatten().tolist()])\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে ভেবে উত্তর দিন",
+          "body": "কোনো একটি Row-এর সবগুলো Key যদি ব্লক করা থাকে, তবে উপরের এই Visibility টেস্টটিকে আপনি কীভাবে আরও সমৃদ্ধ করবেন?",
+          "solution": "কোডে প্রথমেই শনাক্ত করতে হবে কোন কোন Row-তে বৈধ Key-এর সংখ্যা শূন্য, এবং আমাদের টাস্কের পূর্বনির্ধারিত নীতি অনুযায়ী সেগুলো বাদ দেওয়া (Skip), এরর তোলা (Error), নাকি নির্দিষ্ট কোনো নিরাপদ মান (Fallback) বসানোর কথা তা পরীক্ষা করতে হবে। কারণ সবগুলো -inf-এর ওপর সাধারণ Softmax চালালে তা গাণিতিকভাবে অসংজ্ঞায়িত (NaN) হয়ে যায়। কোনো নির্দিষ্ট Fused API হয়তো সেক্ষেত্রে শূন্য রিটার্ন করতে পারে, কিন্তু কেবল সেই বাহ্যিক আচরণ দেখে ধরে নেওয়া যাবে না যে পুরো Model-এর Objective বা Loss হিসাব সঠিক আছে।",
+          "reference": "https://docs.pytorch.org/docs/2.15/generated/torch.nn.functional.scaled_dot_product_attention.html"
+        }
+      ]
+    },
+    {
+      "id": "ch20_padding",
+      "title": "Key-Padding Mask বনাম Query ও Loss Mask",
+      "subtitle": "ইনপুটে শূন্য (0) বসানো মানেই কেন স্বয়ংক্রিয়ভাবে Padding বোঝায় না",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Key বাদ দেওয়া মানেই Query মুছে যাওয়া নয়",
+          "body": "বাস্তবে একই Batch-এ ছোট-বড় বিভিন্ন দৈর্ঘ্যের Sequence একত্রে রাখার জন্য ছোট Sequence-গুলোর শেষে বাড়তি জায়গা যোগ (Padding) করতে হয়। তখন key_padding_mask [B, T_k] ফ্রেমওয়ার্ককে বলে দেয় উৎসের কোন কোন Key Position-কে মনোযোগ দেওয়ার হিসাব থেকে বাদ রাখতে হবে। কিন্তু একটি সূক্ষ্ম বিষয় অনেকেই খেয়াল করেন না: এই Mask কেবল নিষিদ্ধ Key-এর দিকে তাকানো বন্ধ করে, কিন্তু Padded Position-গুলোর নিজস্ব Query Row-গুলোকে Output Tensor থেকে মুছে দেয় না!\n\nঅর্থাৎ Padded Position-গুলোতেও অশূন্য (Nonzero) Output তৈরি হতে পারে, কারণ শূন্য ইনপুটের সাথেও Linear Bias, Residual পথ এবং Positional Encoding যোগ হতে থাকে। তাই পরের ধাপে Pooling, নির্দিষ্ট ধাপ বেছে নেওয়া (Gather) কিংবা Loss হিসাব করার সময় কোন Query Position-গুলো আসলেই বৈধ, তার জন্য আলাদা ও সুস্পষ্ট নিয়ম রাখতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Causal ও Key-Padding Mask একত্রে মেশানো",
+          "body": "যখন একটি Autoregressive মডেলে একইসাথে ছোট-বড় দৈর্ঘ্যের Sequence থাকে, তখন Causal শর্ত এবং Key-Padding শর্ত—দুটিকেই একত্রে কাজ করতে হয়। গাণিতিকভাবে বললে, বৈধ Key-এর তালিকা হবে দুটি অনুমোদিত সেটের ছেদ (Intersection); আর ব্লক করার ভাষায় বললে দুটি নিষিদ্ধ সেটের সংযোগ (Union)। কোডে এই দুটি Mask মেশানোর সময় খেয়াল রাখবেন যেন Boolean এবং Float ধরনের Mask একে অপরের সাথে সংঘর্ষ না ঘটায়। আমাদের মূল অ্যাপে 10 ও 14 দৈর্ঘ্যের উদাহরণগুলো প্রকৃত ইতিহাসের ছোট-বড় অংশ (Prefix Truncation) হিসেবে দেখানো হয়েছে; মূল ক্যালেন্ডারের মাঝখান থেকে কৃত্রিমভাবে কোনো দিন গায়েব করে দেওয়া হয়নি।"
+        },
+        {
+          "type": "math",
+          "title": "Causal ও Key-Padding শর্ত একত্র করে বৈধ সেট A_i",
+          "body": "\\mathcal A_i=\\{j:j<\\ell\\}\\cap\\{j:j\\le i\\ \\text{if causal}\\}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Key-Padding Mask প্রয়োগ ও Output যাচাই",
+          "body": "import torch\n\nm = torch.nn.MultiheadAttention(4, 2, dropout=0, batch_first=True, dtype=torch.float64)\nx = torch.zeros(2, 4, 4, dtype=torch.float64)\nlengths = torch.tensor([2, 4])\npadding = torch.arange(4)[None] >= lengths[:, None]\nout, w = m(x, x, x, key_padding_mask=padding, average_attn_weights=False)\nassert torch.equal(w[0, :, :, 2:], torch.zeros_like(w[0, :, :, 2:]))\nprint(out.shape)  # Padded query outputs still exist.\n"
+        },
+        {
+          "type": "text",
+          "title": "সঠিক Readout অবস্থান ও Loss Normalization",
+          "body": "উপরের কোডে আমরা দেখলাম Output-এর আকার এখনো পুরো [2, 4, 4]-ই রয়ে গেছে। কাজেই Many-to-One টাস্কে কোনো Sample-এর বৈধ দৈর্ঘ্য যদি ℓ হয়, তবে তার চূড়ান্ত Readout নিতে হবে state[ℓ - 1] ইনডেক্স থেকে—অন্ধভাবে Tensor-এর শেষ ঘর (যেমন index 13) থেকে নিলে ছোট Sample-এর বেলায় আপনি আসলে Padding ঘরের আবর্জনা পড়ে ফেলবেন! একইভাবে প্রতি-Token Loss হিসাব করার সময় কেবল বৈধ Target-এর সংখ্যা দিয়েই গড় (Normalize) করতে হবে। পুরো B × T দিয়ে ভাগ করলে যেসব Batch-এ ছোট Sample বা বেশি Padding আছে, সেখানে Loss ও Gradient-এর স্কেল কৃত্রিমভাবে ছোট হয়ে যাবে। মনে রাখবেন, Loss Mask এবং Attention-এর ভেতরকার Mask সম্পূর্ণ আলাদা দুটি দায়িত্ব পালন করে।"
+        },
+        {
+          "type": "text",
+          "title": "সংখ্যাগত শূন্য বনাম অর্থগত PAD প্রতীকের পার্থক্য",
+          "body": "আমাদের সংখ্যার Time Series উদাহরণে আরেকটি দারুণ শিক্ষণীয় বিষয় আছে: যেহেতু ডেটাকে Standardized করা হয়েছে, তাই এখানে সংখ্যাগত 0.0 মানে হলো ট্রেনিং সেটের গড় (Mean) সাইকেল সংখ্যা—এটি কিন্তু মোটেও কোনো ফাঁকা বা 'PAD' প্রতীক নয়! ভাষার মডেলের ক্ষেত্রেও Token-এর PAD ID, nn.Embedding-এর padding_idx, Attention Mask এবং Loss-এর ignore_index—এই চারটি চুক্তিকে কখনো গুলিয়ে ফেলবেন না। বিশেষ করে মনে রাখবেন: Embedding লেয়ারে padding_idx দিলে কেবল ওই ঘরের Vector শূন্য থাকে ও তার Gradient বন্ধ হয়, কিন্তু Attention লেয়ার স্বয়ংক্রিয়ভাবে ওই ঘরটিকে এড়িয়ে চলে না!"
+        },
+        {
+          "type": "text",
+          "title": "Bidirectional Attention এবং KV Cache-এ সতর্কতা",
+          "body": "Causal Mask না থাকা পূর্ণ (Bidirectional) Attention-এ যদি Key-Padding Mask দিতে ভুলে যান বা চিহ্ন উল্টে ফেলেন, তবে প্রতিটি বৈধ Query গিয়ে শেষের অর্থহীন Padding ঘরগুলো থেকেও তথ্য টেনে আনবে। আবার দ্রুতগতির KV Cache ব্যবহারের সময় যদি Batch-এর ভেতর বাম বা ডান দিকে Padding থাকে, তবে প্রতিটি Sample-এর প্রকৃত Position Offset এবং Cache-এর কোন ঘরগুলো বৈধ তা নিখুঁতভাবে ট্র্যাক করতে হয়। মেমোরিতে সাজানো Dense Tensor, Packed বা Nested Tensor এবং বাস্তব ডেটার বৈধ দৈর্ঘ্য—এই তিনটি ধারণাকে সবসময় আলাদা করে ভাবুন।"
+        },
+        {
+          "type": "text",
+          "title": "নিজের কোডের জন্য আবশ্যিক পরীক্ষা",
+          "body": "যেকোনো প্রজেক্টে Padding ইমপ্লিমেন্ট করার পর অন্তত পাঁচটি স্বয়ংক্রিয় টেস্ট লিখে নিশ্চিত হোন: (১) Masked Key-গুলোর ওপর পড়া Attention Weight নিখুঁত 0.0 কি না, (২) প্রতিটি বৈধ Query Row-এর যোগফল ঠিক 1.0 কি না, (৩) শেষের Padded অংশের মান ইচ্ছাকৃতভাবে বদলে দিলেও বৈধ Query-গুলোর Output হুবহু অপরিবর্তিত (Invariant) থাকে কি না, (৪) Dense Output-এ Padded Query Row-গুলো ঠিকমতো উপস্থিত আছে কি না এবং state[ℓ - 1] দিয়ে সঠিক ঘরটি তোলা হচ্ছে কি না। পাশাপাশি কোনো Sample যদি দুর্ঘটনাবশত পুরোটাই Padding হয়ে যায়, তখন কোড কীভাবে তা সামলাবে তারও স্পষ্ট নিয়ম লিখে রাখুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch20_positions",
+      "title": "Sinusoidal Positional Encoding ও ক্রমের গণিত",
+      "subtitle": "Transformer-এর ভেতরে সময়ের ক্রম (Order) কোথা থেকে আসে?",
+      "duration": "60 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ক্রমহীন মূল কাঠামো ও Permutation Equivariance",
+          "body": "একটি মজার গাণিতিক সত্য দিয়ে শুরু করা যাক: আপনি যদি কোনো Positional তথ্য বা ক্রম-নির্ভর Mask ছাড়া একটি সাধারণ Self-Attention ও Position-wise FFN চালান এবং ইনপুটের দিনগুলোর ক্রম ইচ্ছেমতো ওলটপালট (Permute) করে দেন, তবে দেখবেন ভেতরের কোনো সংখ্যা বদলায়নি—কেবল Output-এর দিনগুলো ঠিক একই ক্রমে ওলটপালট হয়ে গেছে! এই ধর্মকে বলা হয় Permutation Equivariance (আর শেষে গড় বা যোগফলের মতো সুষম Pooling নিলে তা হয়ে যায় পুরোপুরি Permutation Invariant)।\n\nকিন্তু বাস্তবে গতকাল আর দশ দিন আগের সাইকেলের চাহিদা তো এক কথা নয়! সময়ের এই ক্রম বা প্রতিসাম্য ভাঙার কাজটি করে তিনটি জিনিস: Positional Encoding, Causal Mask এবং নির্দিষ্ট শেষ ঘরের Readout।"
+        },
+        {
+          "type": "text",
+          "title": "Sine ও Cosine তরঙ্গ দিয়ে অবস্থান তৈরি",
+          "body": "মূল Transformer পেপারে সময়ের অবস্থান বোঝাতে ভিন্ন ভিন্ন কম্পাঙ্কের (Frequency) Sine ও Cosine তরঙ্গ ব্যবহার করা হয়েছিল। আমাদের ছোট Model-টিতে প্রস্থ D = 4 হওয়ায় দুটি জোড়ার কম্পাঙ্ক দাঁড়ায় 1 এবং 0.01; ফলে শুরুর অবস্থান offset = 0-তে Vector-টি হয় ঠিক [0, 1, 0, 1]। খেয়াল রাখবেন, এই Positional Vector কিন্তু কাঁচা সাইকেল সংখ্যার সাথে যোগ হয় না—আগে সংখ্যাটিকে Linear লেয়ার দিয়ে D = 4 মাত্রায় প্রজেক্ট করা হয়, তারপর তার সাথে এটি যোগ হয়। আমাদের এই মডেলে প্রতিটি Sample-এর জন্য উইন্ডোর ভেতরকার আপেক্ষিক অবস্থান 0..13 নতুন করে শুরু হয়; এটি ক্যালেন্ডারের নির্দিষ্ট তারিখ বা সপ্তাহের বারের হিসাব নয়।"
+        },
+        {
+          "type": "math",
+          "title": "Sinusoidal Positional Encoding-এর সমীকরণ",
+          "body": "PE_{p,2i}=\\sin\\!\\left({p\\over10000^{2i/D}}\\right),\\quad PE_{p,2i+1}=\\cos\\!\\left({p\\over10000^{2i/D}}\\right)"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ 14টি ধাপের Sinusoidal Position Vector তৈরি",
+          "body": "import torch, math\n\np = torch.arange(14, dtype=torch.float64)[:, None]\nfreq = torch.exp(torch.arange(0, 4, 2, dtype=torch.float64) * (-math.log(10000) / 4))\npe = torch.zeros(14, 4, dtype=torch.float64)\npe[:, 0::2] = torch.sin(p * freq)\npe[:, 1::2] = torch.cos(p * freq)\nassert torch.equal(pe[0], torch.tensor([0.0, 1.0, 0.0, 1.0], dtype=torch.float64))\nprint(pe[:3])\n"
+        },
+        {
+          "type": "text",
+          "title": "অবস্থান বোঝানোর বিকল্প কৌশলগুলো",
+          "body": "অবশ্য সময়ের ক্রম শেখানোর এটিই একমাত্র পথ নয়। আধুনিক বিভিন্ন আর্কিটেকচারে শেখা পরম অবস্থান (Learned Absolute Embeddings), Attention Score-এ সরাসরি আপেক্ষিক দূরত্বের যোগফল (Relative Biases) কিংবা ঘূর্ণন-ভিত্তিক Rotary Position Embedding (RoPE) ব্যাপকভাবে ব্যবহৃত হয়। আমাদের এই অধ্যায়ের মূল ট্রেন করা Model-টি ধ্রুপদী Sinusoidal পদ্ধতিতেই হিসাব করে—এখানে সব বিকল্প পদ্ধতির তুলনামূলক পারফরম্যান্স দাবি করা হচ্ছে না। পরবর্তী বইয়ে (Book 4 · Chapter 1: LLM Foundations) আমরা আধুনিক LLM আর্কিটেকচারের প্রেক্ষাপটে এদের ব্যবহার আরও গভীরভাবে দেখব।"
+        },
+        {
+          "type": "text",
+          "title": "Causal Mask নিজেও কিন্তু ক্রমের তথ্য দেয়!",
+          "body": "এখানে একটি চমৎকার সূক্ষ্ম প্রশ্ন আসে: ধরুন আপনি মডেল থেকে সব ধরনের Positional Encoding পুরোপুরি মুছে দিলেন, কিন্তু Causal ত্রিভুজাকার Mask-টি চালু রাখলেন। মডেলটি কি তখন ক্রমহীন (Permutation-Invariant) হয়ে যাবে? একদমই না! কারণ Causal ত্রিভুজের কারণে প্রথম Position কেবল নিজেকে দেখে, দ্বিতীয়টি দুটিকে দেখে, তৃতীয়টি তিনটিকে দেখে—এই অসম দৃশ্যমানতাই (Asymmetric Visibility) পরোক্ষভাবে মডেলকে অবস্থানের ক্রম চিনিয়ে দেয়! তাই নিখুঁত Equivariance পরীক্ষা করতে হলে সবসময় অবারিত Full Attention ব্যবহার করতে হবে, অথবা ইনপুটের সাথে Mask ও Readout-কেও একই নিয়মে ঘুরিয়ে নিতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "ইন্টারেক্টিভ Lab-এ Position বন্ধ করার পরীক্ষার অর্থ",
+          "body": "অ্যাপের Lab-এ যখন আপনি 'Position Off' সুইচটি চাপেন, তখন আসলে আগে থেকে ট্রেন করা একই Weight-গুলোর ভেতর Positional Vector ছাড়া ইনপুট পাঠানো হয়। এটি কিন্তু শুরু থেকে Position ছাড়া আলাদাভাবে ট্রেন করা কোনো স্বতন্ত্র Baseline Model নয়! ট্রেনিংয়ের সময় যেহেতু Weight-গুলো Positional সংকেত পাওয়ার অভ্যাসে গড়ে উঠেছে, তাই হঠাৎ সেটি বন্ধ করে দিলে Distribution Mismatch তৈরি হয়। কাজেই ওই অবস্থায় Error কতটুকু বাড়ল, কেবল তা দেখেই অবস্থানের নিখুঁত কার্যকারণ গুরুত্ব (Causal Attribution) পরিমাপ করা হয়েছে বলে দাবি করা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "বড় দৈর্ঘ্যে Extrapolation-এর বাস্তব সীমা",
+          "body": "Sinusoidal সমীকরণের একটি গাণিতিক সুবিধা হলো p = 100 বা p = 1000 বসালেই নতুন Vector বেরিয়ে আসে। কিন্তু সমীকরণে মান বসানো যায় মানেই এই নয় যে 14 দিনের উইন্ডোতে ট্রেন করা একটি Model হঠাৎ 100 দিনের লম্বা Sequence দিলে দারুণ কাজ করবে! বাস্তব Context Extrapolation নির্ভর করে ট্রেনিং ডেটার বৈচিত্র্য, Attention Score-এর স্কেল এবং Mask-এর গঠনের ওপর। একইভাবে মনে রাখবেন: KV Cache দিয়ে ধাপে ধাপে এগোনোর সময় ভুল করে নতুন ধাপের Position Offset শূন্য থেকে শুরু (Reset) করে দিলে তা আর মূল Full-Prefix হিসাবের সাথে কখনোই মিলবে না।"
+        },
+        {
+          "type": "text",
+          "title": "RoPE কীভাবে কাজ করে: একটি 2D Rotation উদাহরণ",
+          "body": "আধুনিক মডেলগুলোতে জনপ্রিয় Rotary Position Embedding (RoPE)-এর মূল গাণিতিক সৌন্দর্যটি একটি ছোট দ্বিমাত্রিক উদাহরণ দিয়ে খুব সহজে বোঝা যায়। ধরুন q = [1, 2] এবং k = [3, 4]। আমরা অবস্থান অনুযায়ী q-কে 0.2 রেডিয়ান কোণে এবং k-কে 0.7 রেডিয়ান কোণে ঘোরালাম (Rotate করলাম)। জ্যামিতিক ঘূর্ণন Vector-এর নিজস্ব দৈর্ঘ্য (Norm) অপরিবর্তিত রাখে, এবং সবচেয়ে মজার ব্যাপার হলো (R_m q)^T (R_n k) = q^T R_{n - m} k! অর্থাৎ ঘোরানোর পর তাদের Dot-Product আর আলাদাভাবে 0.2 বা 0.7-এর ওপর নির্ভর করে না, বরং কেবল তাদের আপেক্ষিক ব্যবধান 0.7 - 0.2 = 0.5 কোণের ওপর নির্ভর করে—যার মান এখানে আসে প্রায় 10.612259। বড় মডেলে ফিচারগুলোকে জোড়ায় জোড়ায় ভাগ করে ভিন্ন ভিন্ন কম্পাঙ্কে ঘোরানো হয়। নিচের কোডে এই অভেদটি নিজেই যাচাই করে দেখুন।"
+        },
+        {
+          "type": "math",
+          "title": "2D Rotation থেকে Relative Position পাওয়ার অভেদ",
+          "body": "R(\\theta)=\\begin{bmatrix}\\cos\\theta&-\\sin\\theta\\\\\\sin\\theta&\\cos\\theta\\end{bmatrix},\\qquad (R(m)q)^T R(n)k=q^T R(n-m)k"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ RoPE-এর Relative Rotation অভেদ ও Norm যাচাই",
+          "body": "import math\nimport torch\n\n\ndef rotate(vector, angle):\n    cosine, sine = math.cos(angle), math.sin(angle)\n    rotation = torch.tensor([[cosine, -sine], [sine, cosine]], dtype=vector.dtype)\n    return rotation @ vector\n\n\nquery = torch.tensor([1.0, 2.0], dtype=torch.float64)\nkey = torch.tensor([3.0, 4.0], dtype=query.dtype)\nrotated_query, rotated_key = rotate(query, 0.2), rotate(key, 0.7)\nscore = rotated_query @ rotated_key\ntorch.testing.assert_close(score, query @ rotate(key, 0.5))\ntorch.testing.assert_close(score, rotate(query, 1.2) @ rotate(key, 1.7))\ntorch.testing.assert_close(rotated_query.norm(), query.norm())\nprint(\n    round(score.item(), 6),\n    round(rotated_query.square().sum().item(), 6),\n    round(rotated_key.square().sum().item(), 6),\n)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে ভেবে উত্তর দিন",
+          "body": "KV Cache-এ পুরোনো Key-গুলোকে তাদের নিজ নিজ Position অনুযায়ী Rotate করে সংরক্ষণ করার পর নতুন ধাপের Query-এর Position কি আবার 0 থেকে শুরু (Reset) করা যাবে?",
+          "solution": "একেবারেই না! Full-Prefix হিসাবের সাথে হুবহু মিল রাখতে হলে Query এবং Cached Key উভয়েরই একই Positional নিয়ম ও সঠিক Absolute/Relative Offset বজায় থাকতে হবে। পুরোনো Key-গুলো আগের অবস্থানে ঘোরানো থাকা অবস্থায় কেবল নতুন Query-এর Position শূন্যে নামিয়ে আনলে দুটির মধ্যকার Relative Angle বদলে যাবে, ফলে Dot-Product-ও সম্পূর্ণ ভুল আসবে। তাই Cache-এর ভেতরে Key-গুলো Rotation-এর আগে নাকি Rotation-এর পরে সংরক্ষণ করা হচ্ছে, তা শুরুতেই কোডের চুক্তিতে স্পষ্টভাবে লিখে রাখা জরুরি।",
+          "reference": "https://arxiv.org/abs/2104.09864"
+        }
+      ]
+    },
+    {
+      "id": "ch20_residual",
+      "title": "Transformer Block: দুটি Residual পথ ও Pre-Norm প্রবাহ",
+      "subtitle": "ধাপে ধাপে একটি পূর্ণাঙ্গ Pre-Norm Block-এর ভেতরের হিসাব",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Identity পথ ও ক্রমিক State হালনাগাদ",
+          "body": "এতক্ষণ আমরা বিচ্ছিন্নভাবে Attention ও Position দেখেছি; এবার এদের জুড়ে দিয়ে একটি পূর্ণাঙ্গ Transformer Block গড়ার পালা। এর মেরুদণ্ড হলো Residual বা Skip Connection: যখন কোনো শাখার (Sublayer) ইনপুট এবং Output উভয়েরই আকার [D] সমান হয়, তখন শাখার ফলাফলকে মূল ইনপুটের সাথে সরাসরি যোগ করা হয় (x + branch(x))। কোনো শাখার Output যদি শূন্যও হয়ে যায়, তবুও মূল ইনপুটটি অক্ষত অবস্থায় পরের ধাপে পৌঁছে যায়। এই সরাসরি Identity পথটি Backpropagation-এর সময় Gradient প্রবাহকে অনেক সহজ করে দেয়—যদিও সঠিক Normalization ও Initialization ছাড়া কেবল Residual থাকলেই যে যেকোনো গভীরতার মডেল নির্বিঘ্নে ট্রেন হবে, এমন কোনো গ্যারান্টি নেই। মূল কথা হলো, একটি Transformer Block কেবল বিচ্ছিন্ন Attention নয়; এটি মূল Residual ধারায় একের পর এক সংযোজন।"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের Pre-Norm রেসিপি বনাম ধ্রুপদী Post-Norm",
+          "body": "Normalization ঠিক কোথায় বসবে, তার ওপর ভিত্তি করে দুটি প্রধান ধারা আছে। আমাদের মডেলে ব্যবহার করা হয়েছে আধুনিক Pre-Norm গঠন: প্রথমে ইনপুট X-এর ওপর প্রথম LayerNorm (LN_1) চালিয়ে তার থেকে Multi-Head Attention বের করা হয় এবং মূল X-এর সাথে যোগ করে পাওয়া যায় মধ্যবর্তী U; এরপর U-এর ওপর দ্বিতীয় LayerNorm (LN_2) চালিয়ে FFN পার করে আবার U-এর সাথে যোগ করে পাওয়া যায় চূড়ান্ত Y। এখানে দুটি LayerNorm-এর নিজস্ব আলাদা শেখা Affine Parameter রয়েছে (এবং এই এক-ব্লক মডেলে শেষে বাড়তি আরেকটি Norm রাখা হয়নি)।\n\nমনে রাখবেন, মূল ২০১৭ সালের Transformer পেপারে কিন্তু Post-Norm রীতি—অর্থাৎ যোগ করার পরে Norm—ব্যবহার করা হয়েছিল। এই দুটি গঠনের গাণিতিক সমীকরণ সম্পূর্ণ আলাদা, তাই এক রীতির Weight কখনোই অন্য রীতির সমীকরণে বসিয়ে হিসাব মেলানো যাবে না।"
+        },
+        {
+          "type": "math",
+          "title": "দুই ধাপের Pre-Norm Transformer Block-এর সমীকরণ",
+          "body": "U=X+\\mathrm{MHA}(\\mathrm{LN}_1(X)),\\quad Y=U+\\mathrm{FFN}(\\mathrm{LN}_2(U))"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Residual Identity পথে সরাসরি Gradient প্রবাহ",
+          "body": "import torch\n\nx = torch.tensor([[1.0, 2.0, 3.0, 4.0]], dtype=torch.float64, requires_grad=True)\n# Isolated residual illustration: zero branch retains identity path.\ny = x + torch.zeros_like(x)\ny.sum().backward()\nassert torch.equal(x.grad, torch.ones_like(x))\nprint(x.grad)\n"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব ডেটায় পুরো Block-এর প্রতিটি ধাপ পর্যবেক্ষণ",
+          "body": "নিচের পূর্ণাঙ্গ Block Lab-এ বাস্তব ডেটার একটি উইন্ডো নিয়ে শুরু থেকে শেষ পর্যন্ত প্রতিটি মধ্যবর্তী Tensor নিজের চোখে মিলিয়ে দেখুন: প্রথমে ইনপুট Projection ও Positional Encoding-এর যোগফল, তারপর LN_1, দুটি Head-এর Concatenation, Attention Output Projection, প্রথম Residual যোগফল U, দ্বিতীয় LN_2, FFN-এর ভেতরের প্রসারিত স্তর ও Output, এবং সবশেষে চূড়ান্ত State Y। এরপর শেষ বৈধ অবস্থান থেকে Linear(4 -> 1) পার হয়ে বেরিয়ে আসে Standardized স্কেলের Prediction, যাকে বিপরীত রূপান্তর (Inverse Scaling) করলেই পাওয়া যায় প্রকৃত সাইকেলের সংখ্যা।"
+        },
+        {
+          "type": "transformer_block_lab",
+          "title": "ইন্টারেক্টিভ Block Lab ও Readout-এর পার্থক্য",
+          "body": "নিচের Lab-এ Causal Self-Attention Block প্রতিটি দিনের জন্য একটি করে প্রাসঙ্গিক Vector তৈরি করলেও আমাদের Scalar Readout চূড়ান্ত Prediction-এর জন্য কেবল শেষ বৈধ ধাপটি (Step 14) ব্যবহার করে—এখানে কোনো শব্দের অভিধানের ওপর Softmax Head বা ক্রমিক শব্দ তৈরির Decoder নেই। পাশাপাশি খেয়াল রাখবেন, Lab-এর ভেতরে Full Attention বা Position বন্ধ করার বোতামগুলো মূল ট্রেনিং Objective বদলায়নি; সেগুলো কেবল ট্রেন করা Model-টির ভেতরের আচরণ বোঝার জন্য Inference সময়ের পরীক্ষা।"
+        },
+        {
+          "type": "text",
+          "title": "ভেতরের প্রতিটি স্তরের প্রস্থ ও মাত্রা",
+          "body": "পুরো Block জুড়ে মাত্রার হিসাবটি খেয়াল করুন: শুরুর Embedding প্রস্থ 4, MHA-এর Output 4, প্রথম Residual যোগফল 4, এরপর FFN-এর ভেতরের মধ্যবর্তী প্রস্থ বেড়ে 8 হয় এবং আবার সংকুচিত হয়ে FFN Output হিসেবে 4-এ ফিরে আসে। অর্থাৎ FFN-এর ভেতরে প্রস্থ 8 হলেও মূল Residual মহাসড়কের প্রস্থ কিন্তু বরাবরই 4 থাকছে! আর দুটি Head-এর প্রত্যেকের প্রস্থ 2 হওয়ায় তাদের জোড়া লাগালে 4 হয়, যাকে Output Projection আবার 4-এই ম্যাপ করে। কোডে কেবল এই সংখ্যাগুলো মিলে যাওয়া মানেই কিন্তু হিসাব সঠিক হওয়া নয়; সবসময় বিশ্বস্ত রেফারেন্সের সাথে মধ্যবর্তী মানগুলো মিলিয়ে দেখতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "কোথায় ভুল হচ্ছে তা দ্রুত ধরার কৌশল",
+          "body": "নিজের হাতে পূর্ণ Transformer Block ইমপ্লিমেন্ট করার পর যদি দেখেন চূড়ান্ত Prediction মিলছে না, তবে পুরো মডেলের গড় Error দেখে অনুমান করার চেষ্টা করবেন না। বরং ধাপে ধাপে শুরুর দিক থেকে প্রতিটি মধ্যবর্তী Tensor রেফারেন্সের সাথে তুলনা করে দেখুন ঠিক কোন লাইনে প্রথম অমিলটি (Earliest Diverging Intermediate) দেখা দিচ্ছে! সাধারণত LayerNorm-এর Axis বা eps, Linear Weight-এর Transpose, প্যাক করা Head ভাঙার ক্রম, Mask-এর চিহ্ন কিংবা Activation-এর অবস্থান—এই কয়েকটি জায়গার কোনো একটিতেই সূক্ষ্ম ভুল লুকিয়ে থাকে।"
+        }
+      ]
+    },
+    {
+      "id": "ch20_norm",
+      "title": "LayerNorm: Feature Axis, Epsilon ও Affine স্কেলিং",
+      "subtitle": "কেন LayerNorm-কে কখনোই BatchNorm-এর সাথে গুলিয়ে ফেলা যাবে না",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "প্রতিটি Token-এর নিজস্ব Feature বরাবর হিসাব",
+          "body": "আগের পাঠে আমরা দেখেছি Pre-Norm ব্লকের শুরুতেই রয়েছে LayerNorm। কিন্তু এটি ঠিক কোন দিক বরাবর গড় ও বিস্তার মাপে? LayerNorm(4) প্রতিটি Batch এবং প্রতিটি সময়ের অবস্থান (Token Position)-কে সম্পূর্ণ স্বাধীনভাবে নেয় এবং কেবল তার শেষ Axis-এর 4টি Feature-এর ওপর Mean ও Variance বের করে Normalize করে—কখনোই পুরো Batch বা সময়ের ঘরগুলোর মধ্যে মেশামেশি করে না! এরপর প্রতিটি Feature-এর ওপর আলাদাভাবে শেখা স্কেল (gamma) ও সরণ (beta) প্রয়োগ করা হয়। এই eps এবং শেখা gamma ও beta থাকার কারণে চূড়ান্ত Output-এর গড় আর নিখুঁত 0 বা Variance নিখুঁত 1 থাকে না।"
+        },
+        {
+          "type": "text",
+          "title": "Population Variance (1/D) এবং বর্গমূলের ভেতরে Epsilon",
+          "body": "নিজের হাতে LayerNorm-এর কোড লেখার সময় দুটি সূক্ষ্ম জায়গায় অনেকেই হোঁচট খান। প্রথমত, PyTorch-এর LayerNorm সবসময় D দিয়ে ভাগ করা Population Variance (অর্থাৎ unbiased=False) ব্যবহার করে। আপনি যদি পরিসংখ্যানের অভ্যাসবশত D - 1 দিয়ে ভাগ করা Sample Standard Deviation নেন, তবে ফ্রেমওয়ার্কের সাথে আপনার সংখ্যা কখনোই মিলবে না! দ্বিতীয়ত, ক্ষুদ্র ধ্রুবক eps = 1e-5 যোগ করতে হয় বর্গমূলের ভেতরে—অর্থাৎ sqrt(var + eps); বর্গমূল করার পর বাইরে std + eps যোগ করলে তা গাণিতিকভাবে এক জিনিস নয়। কোনো ইনপুট Vector-এর সব উপাদান যদি হুবহু সমান হয়ে যায় (যখন Variance শূন্য), তখন এই eps-ই শূন্য দিয়ে ভাগের হাত থেকে বাঁচিয়ে ফলাফলকে সসীম রাখে।"
+        },
+        {
+          "type": "math",
+          "title": "LayerNorm-এর গাণিতিক সমীকরণ ও Population Variance",
+          "body": "\\mathrm{LN}(x)_j=\\gamma_j{x_j-\\mu\\over\\sqrt{\\sigma^2+\\epsilon}}+\\beta_j,\\quad \\sigma^2={1\\over D}\\sum_j(x_j-\\mu)^2"
+        },
+        {
+          "type": "code",
+          "title": "PyTorch LayerNorm-এর সাথে নিজস্ব সমীকরণের নিখুঁত মিল যাচাই",
+          "body": "import torch\n\nx = torch.tensor([[1.0, 2.0, 3.0, 4.0]], dtype=torch.float64)\nlayer = torch.nn.LayerNorm(4, eps=1e-5, dtype=torch.float64)\nexpected = (x - x.mean(-1, keepdim=True)) / torch.sqrt(\n    x.var(-1, unbiased=False, keepdim=True) + 1e-5\n)\nassert torch.allclose(layer(x), expected, atol=1e-12)\nprint(layer(x))\n"
+        },
+        {
+          "type": "text",
+          "title": "কোনো Running Statistics না থাকার সুবিধা",
+          "body": "BatchNorm-এর সাথে LayerNorm-এর সবচেয়ে বড় ব্যবহারিক পার্থক্য হলো: এখানে ট্রেনিং চলাকালীন Batch-এর কোনো Running Mean বা Running Variance জমিয়ে রাখা হয় না। প্রতিটি Token যেহেতু নিজের Feature থেকেই নিজের পরিসংখ্যান তাৎক্ষণিক বের করে নেয়, তাই batch_size = 1 হলেও কোনো সমস্যা হয় না এবং train() ও eval() উভয় মোডেই LayerNorm হুবহু একই গাণিতিক নিয়মে কাজ করে। (অবশ্য পুরো মডেলের অন্য কোথাও Dropout থাকলে সামগ্রিক আচরণ তখনো আলাদা হতে পারে; আমাদের রেফারেন্স মডেলে dropout = 0 রেখে CPU float64-এ পরীক্ষা করা হয়েছে)।"
+        },
+        {
+          "type": "text",
+          "title": "Parameter বাজেট বনাম স্থির Buffer",
+          "body": "Parameter গোনার সময়ও সূক্ষ্ম নজর দরকার। প্রস্থ D = 4 হলে প্রতিটি LayerNorm-এ 4টি gamma এবং 4টি beta মিলিয়ে মোট 8টি শেখার যোগ্য (Trainable) Parameter থাকে; ফলে আমাদের ব্লকের দুটি LayerNorm মিলিয়ে যোগ হয় 16টি Parameter। বিপরীতে, 14 × 4 = 56টি মানবিশিষ্ট Sinusoidal Positional Encoding কিন্তু একটি স্থির Buffer হিসেবে সংরক্ষিত থাকে—এটি ট্রেনিংয়ে শেখে না। কাজেই PyTorch-এর state_dict-এর ভেতর কোনো Tensor দেখা মানেই সেটি Trainable Parameter, এমনটি কখনো ধরে নেবেন না!"
+        },
+        {
+          "type": "text",
+          "title": "Pre-Norm ও Post-Norm কেন পরস্পর অদলবদলযোগ্য নয়",
+          "body": "আগেই যেমন ইঙ্গিত দেওয়া হয়েছে, Pre-Norm এবং Post-Norm আর্কিটেকচারে Normalization-এর অবস্থান, Residual মহাসড়কের বৈশিষ্ট্য এবং সর্বশেষ Layer-এর পরে অতিরিক্ত Norm বসানোর রীতি—সবকিছুই আলাদা। তাই একটি রীতিতে ট্রেন করা Checkpoint-এর Weight অন্য রীতির কোডে লোড করে একই মডেল বলে দাবি করা যাবে না। আর গভীর মডেলে কোন রীতি কতটা স্থিতিশীলভাবে ট্রেন হয়, তা নির্ভর করে মডেলের গভীরতা, ডেটাসেট এবং Learning Rate Warmup রেসিপির ওপর।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে বিষয়টি ব্যাখ্যা করবেন",
+          "body": "ইন্টারভিউতে LayerNorm নিয়ে প্রশ্ন এলে ছোট একটি 4-উপাদানের Vector ধরে বোর্ডে ধাপে ধাপে তার Mean, D দিয়ে ভাগ করা Variance, eps যোগ করে বর্গমূল এবং সবশেষে gamma ও beta-এর প্রভাব করে দেখান। সাথে তিনটি প্রান্তিক পরিস্থিতি—batch_size = 1, সব উপাদান সমান থাকা ধ্রুব Vector এবং প্রচণ্ড বড় সংখ্যার ইনপুট—কীভাবে সামলানো হয় তা উল্লেখ করুন। এছাড়া আধুনিক মডেলে ব্যবহৃত RMSNorm-এর কথা বললে শুরুতেই স্পষ্ট করে দিন যে সেখানে গড় বিয়োগ ও beta থাকে না, যাতে দুটির সংজ্ঞা গুলিয়ে না যায়।"
+        }
+      ]
+    },
+    {
+      "id": "ch20_ffn",
+      "title": "Position-wise FFN ও পূর্ণাঙ্গ Parameter হিসাব",
+      "subtitle": "Attention দিয়ে তথ্য মেশানোর পর প্রতিটি Position-এ Nonlinear রূপান্তর",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন একে Position-wise বলা হয়?",
+          "body": "একটি Transformer Block-এ সময়ের বিভিন্ন Position-এর মধ্যে তথ্যের আদান-প্রদান ঘটে কেবল Attention স্তরে। সেই মিশ্রিত Context হাতে পাওয়ার পর পরের ধাপে আসে Position-wise Feed-Forward Network (FFN)। 'Position-wise' কথাটির অর্থ খুব পরিষ্কার: Sequence-এর প্রতিটি সময়ের অবস্থানে থাকা Vector-এর ওপর আলাদাভাবে কিন্তু হুবহু একই শেখা Weight (Shared MLP) প্রয়োগ করা হয়—এখানে পাশের সময়ের ঘরের সাথে কোনো রকমের Convolution বা সরাসরি মেশামেশি হয় না। তবে Weight এক হলেও যেহেতু Attention পার হয়ে আসা প্রতিটি ঘরের ইনপুট Vector আলাদা, তাই FFN-এর Nonlinear রূপান্তরের পর তাদের Output-ও আলাদা হয়।"
+        },
+        {
+          "type": "text",
+          "title": "ভেতরের প্রসারণ ও Activation ফাংশন",
+          "body": "আমাদের ছোট মডেলে FFN-এর গঠন হলো: প্রথমে Linear(4 -> 8) দিয়ে প্রস্থ দ্বিগুণ করা, মাঝখানে ReLU বসিয়ে ঋণাত্মক মানগুলোকে শূন্য করে দেওয়া, এবং শেষে Linear(8 -> 4) দিয়ে আবার মূল প্রস্থে ফিরিয়ে আনা। অনেক আধুনিক মডেলে ReLU-এর বদলে GELU কিংবা Gated SwiGLU ব্যবহৃত হয়; তবে সেগুলো ভিন্ন রেসিপি—ট্রেন করা Weight অপরিবর্তিত রেখে গোপনে Activation বদলে ফেলা চলে না। আরেকটি ব্যবহারিক টিপস: নিজের কোডে সংখ্যাগতভাবে Gradient পরীক্ষা (Finite-Difference Check) করার সময় ইনপুট এমনভাবে বেছে নিন যেন ভিতরের মান ঠিক 0-এর কোণায় (ReLU kink) না পড়ে!"
+        },
+        {
+          "type": "math",
+          "title": "ReLU ভিত্তিক Position-wise FFN-এর সমীকরণ",
+          "body": "\\mathrm{FFN}(x)=\\max(0,xW_1^\\top+b_1)W_2^\\top+b_2"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ FFN ও পুরো Model-এর মোট 185টি Parameter যাচাই",
+          "body": "import torch\n\nff = torch.nn.Sequential(torch.nn.Linear(4, 8), torch.nn.ReLU(), torch.nn.Linear(8, 4))\nassert sum(p.numel() for p in ff.parameters()) == (4 * 8 + 8) + (8 * 4 + 4) == 76\nassert 8 + 80 + 16 + 76 + 5 == 185\nprint(\"185 trainable parameters; fixed position buffer is excluded.\")\n"
+        },
+        {
+          "type": "text",
+          "title": "মোট 185টি Trainable Parameter-এর চুলচেরা হিসাব",
+          "body": "চলুন এবার আমাদের পুরো ছোট Model-টির প্রতিটি শেখার যোগ্য Parameter আঙুলে গুনে মিলিয়ে নিই:\n• শুরুর Input Projection (1 -> 4 এবং Bias): 4 + 4 = 8টি\n• Multi-Head Attention (প্যাক করা QKV ও Output Projection): 80টি\n• দুটি LayerNorm (প্রতিটিতে 8টি করে): 16টি\n• FFN: প্রথম ধাপে (4 × 8 + 8) = 40টি এবং পরের ধাপে (8 × 4 + 4) = 36টি, মোট 76টি\n• শেষের Scalar Readout Head (4 -> 1 এবং Bias): 4 + 1 = 5টি\n\nসব যোগ করলে দাঁড়ায় 8 + 80 + 16 + 76 + 5 = ঠিক 185টি Trainable Parameter! আগে যেমন বলেছি, 14 × 4 = 56টি মানের স্থির Sinusoidal Buffer এই তালিকার বাইরে থাকে, আর সংখ্যার ইনপুট হওয়ায় এখানে কোনো বিশাল শব্দের অভিধান (Vocabulary Embedding Matrix) নেই।"
+        },
+        {
+          "type": "text",
+          "title": "Weight পুনর্ব্যবহার ও Gradient জমা হওয়ার নিয়ম",
+          "body": "যেহেতু একই Linear স্তরের Weight সবগুলো সময়ের অবস্থানে বারবার ব্যবহৃত হয়, তাই Backpropagation-এর সময় প্রতিটি সক্রিয় পথ থেকে আসা Gradient এসে ওই একই যৌথ Parameter-গুলোতে যোগ (Accumulate) হয়। এমনকি আমাদের Many-to-One টাস্কে যেখানে কেবল সর্বশেষ ধাপে Loss মাপা হচ্ছে, সেখানেও Attention-এর সংযোগ বেয়ে শুরুর দিকের অবস্থানগুলোর ভেতর দিয়ে Gradient পৌঁছে যায়—এর জন্য RNN-এর মতো ধাপে ধাপে সময়ের উল্টো দিকে ঘোরার কোনো আলাদা মেকানিজম লাগে না।"
+        },
+        {
+          "type": "text",
+          "title": "প্রস্থ বাড়ানোর লাভ-ক্ষতি ও প্রকৃত Bottleneck",
+          "body": "আপনি যদি FFN-এর ভেতরের প্রস্থ 8 থেকে বাড়িয়ে অনেক বড় করেন, তবে মডেলের ধারণক্ষমতা (Capacity), Parameter সংখ্যা এবং গুণফলের হিসাব বাড়বে ঠিকই, কিন্তু [T, T] আকারের Attention Map-এর মেমোরি কিন্তু এক বিন্দুও বাড়বে না! অর্থাৎ মডেলের প্রস্থ (Width) বাড়ানো এবং Sequence-এর দৈর্ঘ্য (Length) বাড়ানো হার্ডওয়্যারের ওপর সম্পূর্ণ ভিন্ন ধরনের চাপ তৈরি করে। তাই বাস্তব সিস্টেমে প্রোফাইলিং (Profiling) না করে কখনো আন্দাজে বলবেন না যে কোন অংশটি আপনার মডেলকে ধীর করে দিচ্ছে।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে যাচাইয়ের অনুশীলন",
+          "body": "কোড লেখার পর সবসময় model.parameters() লুপ চালিয়ে প্রতিটি স্তরের আকার ও মোট সংখ্যা মিলিয়ে দেখার অভ্যাস করুন। একটি সাধারণ ভুল হলো সাধারণ Python dictionary বা list-এর ভেতর Tensor রেখে দেওয়া—তাতে nn.Module সেগুলোকে চিনতে পারে না এবং Optimizer-ও ট্রেনিংয়ের সময় সেগুলোকে সম্পূর্ণ অদেখা রেখে দেয়! সবশেষে নিজের হাতে লেখা FFN সমীকরণের সাথে ফ্রেমওয়ার্কের মধ্যবর্তী মান মিলিয়ে নিশ্চিত হোন।"
+        }
+      ]
+    },
+    {
+      "id": "ch20_architectures",
+      "title": "Encoder, Decoder ও Cross-Attention আর্কিটেকচার",
+      "subtitle": "টাস্কের ধরন ও তথ্যের প্রাপ্যতা দেখে সঠিক গঠন নির্বাচন",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Encoder-ধাঁচের গঠন: যখন পুরো ইনপুট শুরুতেই জানা",
+          "body": "একই Transformer উপাদান দিয়ে তিনটি প্রধান আর্কিটেকচার সাজানো যায়। প্রথমটি হলো Encoder-ধাঁচের গঠন: যখন পুরো উৎস Sequence শুরুতেই আমাদের হাতে উপস্থিত থাকে, তখন কোনো Causal বাধা ছাড়াই দ্বিমুখী (Bidirectional) Self-Attention চালিয়ে প্রতিটি অবস্থানের জন্য সমৃদ্ধ প্রাসঙ্গিক Representation তৈরি করা যায়। এরপর টাস্ক অনুযায়ী তার মাথার ওপর Classification, Retrieval কিংবা Regression Head বসানো হয়। মনে রাখবেন, মূল্যায়ন প্রোটোকল অনুযায়ী ইনপুটের পুরো অংশ যদি Prediction-এর সময়েই বৈধভাবে জানা থাকে, তবে সামনের ও পেছনের সব দিকে তাকানো মোটেও কোনো নিয়ম লঙ্ঘন নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Decoder-ধাঁচের গঠন: ক্রমিক উৎপাদনের জগৎ",
+          "body": "দ্বিতীয় ধারাটি হলো Decoder-ধাঁচের আর্কিটেকচার: যেখানে একটির পর একটি ধাপ ক্রমান্বয়ে তৈরি (Autoregressive Generation) করতে হয়, সেখানে Causal Self-Attention ব্যবহার করে প্রতিটি অবস্থানকে কেবল তার পূর্ববর্তী Prefix-এর ভেতর সীমাবদ্ধ রাখা হয় এবং এক ঘর সরানো Target Label দিয়ে পরের ধাপ অনুমানের Loss শেখানো হয়। আজকের জনপ্রিয় Decoder-only বৃহৎ ভাষা মডেলগুলো (LLMs) এই পরিবারেরই সদস্য—যদিও বলাই বাহুল্য, আমাদের প্রস্থ 4-এর ছোট Count Regression মডেলটি নিছক ব্লকের গাণিতিক গঠন শেখার উদাহরণ, কোনো ভাষা মডেলের Pretraining নয়।"
+        },
+        {
+          "type": "math",
+          "title": "Cross-Attention-এ Query, Key, Value ও Attention Matrix-এর মাত্রা",
+          "body": "Q\\in\\mathbb R^{T_q\\times d},\\quad K,V\\in\\mathbb R^{T_k\\times d},\\quad A\\in\\mathbb R^{T_q\\times T_k}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ ভিন্ন দৈর্ঘ্যের Query ও Source নিয়ে Cross-Attention",
+          "body": "import torch\n\nm = torch.nn.MultiheadAttention(4, 2, batch_first=True, dtype=torch.float64)\nqueries = torch.zeros(1, 3, 4, dtype=torch.float64)\nsource = torch.zeros(1, 5, 4, dtype=torch.float64)\nout, w = m(queries, source, source, average_attn_weights=False)\nassert out.shape == (1, 3, 4) and w.shape == (1, 2, 3, 5)\nprint(out.shape, w.shape)\n"
+        },
+        {
+          "type": "text",
+          "title": "Encoder-Decoder ও তিন ধরনের Mask-এর সমন্বয়",
+          "body": "তৃতীয় ধারাটি হলো পূর্ণাঙ্গ Encoder-Decoder আর্কিটেকচার (যেমন অনুবাদ বা Sequence-to-Sequence মডেলে দেখা যায়)। এখানে Decoder-এর ভেতরে নিজের আগের অংশ দেখার জন্য থাকে Causal Self-Attention, আর তার ঠিক পরেই Encoder-এর তৈরি করা উৎস তথ্য পড়ার জন্য থাকে একটি Cross-Attention স্তর। এখানে তিনটি আলাদা Mask একসাথে কাজ করতে পারে: উৎসের ফাঁকা জায়গা ঢাকার জন্য Source Key-Padding Mask, লক্ষ্য Sequence-এ ভবিষ্যৎ ঢাকার জন্য Target Causal Mask, এবং লক্ষ্যের ফাঁকা জায়গার জন্য Target Padding/Loss Mask। উপরের কোডে যেমন দেখলেন, এখানে Decoder-এর Query দৈর্ঘ্য (3) এবং উৎসের Key দৈর্ঘ্য (5) সমান হওয়ার কোনোই প্রয়োজন নেই।"
+        },
+        {
+          "type": "text",
+          "title": "এই অধ্যায়ের ট্রেন করা Model-এর সুনির্দিষ্ট পরিধি",
+          "body": "বিভ্রান্তি এড়াতে আমাদের অ্যাপের মূল মডেলটির সীমানা আবারও স্পষ্ট করে নিই: আমরা এখানে ট্রেন করেছি একটি সুস্পষ্ট একক Causal Self-Attention Block এবং তার সাথে একটি সংখ্যার Readout Head। এটি PyTorch-এর পূর্ণাঙ্গ torch.nn.Transformer Encoder-Decoder স্ট্যাক নয়, এতে কোনো Tokenizer বা শব্দ উৎপাদক নেই এবং বাইরে থেকে আনা কোনো Pretrained Checkpoint-ও নেই। আমরা Cross-Attention ও Encoder-এর মাত্রা শিখছি যাতে আপনার গাণিতিক ভিত্তি পূর্ণাঙ্গ হয়, আর আমাদের সব পরীক্ষামূলক ফলাফল কেবল ওই নির্দিষ্ট সাইকেল সংখ্যার ডেটাসেটেই সীমাবদ্ধ।"
+        },
+        {
+          "type": "text",
+          "title": "আর্কিটেকচার বাছাইয়ের আগে তথ্যের প্রাপ্যতা লিখুন",
+          "body": "বাস্তব প্রজেক্টে কোড লেখার আগেই কাগজে দুটি প্রশ্নের উত্তর লিখে ফেলুন: (১) ইনপুট উৎসটি কি শুরুতেই পুরোটা পাওয়া যাচ্ছে, নাকি সময়ের সাথে ধাপে ধাপে স্ট্রিমিং আকারে আসছে? (২) আমাদের কাঙ্ক্ষিত Output কি একক একটি সংখ্যা, নাকি ধাপে ধাপে তৈরি হওয়া আরেকটি Sequence? যেমন, আমাদের Forecast দেওয়ার মুহূর্তে বিগত 14 দিনের পুরো ইতিহাসই জানা থাকে, তাই কেবল আগামীকালের সংখ্যাটি বের করার জন্য একটি Bidirectional Past Encoder ব্যবহার করাও পুরোপুরি যুক্তিসঙ্গত হতে পারত। উল্টো দিকে, আপনি যদি ভুল করে আগামীকালের অজানা আবহাওয়া বা ছুটির তথ্য আজকের ইনপুটে ঢুকিয়ে দেন, তবে ভেতরে যত নিখুঁত Causal Mask-ই বসান না কেন, মারাত্মক Data Leakage ঘটবেই!"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এর জন্য বোর্ড অনুশীলন",
+          "body": "ইন্টারভিউয়ের একটি অত্যন্ত প্রিয় প্রশ্ন হলো: 'একটি অনুবাদ মডেলের তিনটি Attention স্তরের (Encoder Self-Attention, Decoder Self-Attention এবং Cross-Attention) প্রতিটিতে Q, K এবং V ঠিক কোথা থেকে আসে তা এঁকে দেখান।' এর সাথে পরিষ্কারভাবে বলুন উৎসের Padding কে আটকাবে এবং উৎপাদিত লক্ষ্যের Label কীভাবে এক ঘর সরানো থাকবে। উত্তর দেওয়ার সময় একটি ছোট শিক্ষণীয় মডেল এবং বিশাল প্রোডাকশন সিস্টেমের পার্থক্যের জায়গাটিও স্বচ্ছভাবে তুলে ধরুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch20_training",
+      "title": "Tiny Transformer ট্রেনিং: সুনির্দিষ্ট রেসিপি ও ডেটা চুক্তি",
+      "subtitle": "সময়ভিত্তিক Split থেকে শুরু করে স্বচ্ছ Diagnostic মূল্যায়ন",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ডেটাসেটের সময়ভিত্তিক বিভাজন ও সীমানা",
+          "body": "আমাদের মূল দৈনিক CSV ফাইলটিতে মোট 731টি Row রয়েছে, যার মধ্য থেকে মডেলিংয়ের কাজে আমরা কেবল প্রথম 547টি Row ব্যবহার করেছি। হিসাবটি খুব পরিষ্কার: ২০১১ সালের 365টি দিনের সংখ্যা থেকে বিগত 14 দিনের স্লাইডিং নিয়মে তৈরি হয় মোট 351টি Training Window। এরপর জানুয়ারি থেকে জুন ২০১২ পর্যন্ত সময়ের 182টি Target রাখা হয়েছে আমাদের Diagnostic মূল্যায়নের জন্য।\n\nএকেবারে শেষের 184টি দিনের ফলাফল দিয়ে এখানে নতুন কোনো স্কোর হিসাব বা এক্সপোর্ট করা হয়নি। ফাইলের অখণ্ডতা (Integrity) পরীক্ষার জন্য পুরো ফাইলটি পড়া হলেও ভবিষ্যতের ওই অংশটি কোনোভাবেই Scaler, Feature কিংবা Model ট্রেন করার কাজে ছোঁয়া হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "কেবল ২০১১ সালের পরিসংখ্যান দিয়ে Standardization",
+          "body": "Data Leakage ঠেকানোর প্রথম শর্ত হিসেবে কেবল ২০১১ সালের ট্রেনিং অংশ থেকেই গড় (Mean = 3405.7616438356163) এবং পরিমিত ব্যবধান (Std = 1376.8636667749531) বের করা হয়েছে। ইনপুট উইন্ডো এবং Target—উভয়কেই এই একই ধ্রুবক দিয়ে Standardized করা হয়, আর শেষে Model-এর Prediction-কে বিপরীত রূপান্তর করে মূল সাইকেল সংখ্যার এককে ফিরিয়ে আনা হয়। আপনি যদি পুরো আর্কাইভের ওপর একসাথে Scaler বসান কিংবা সময়ের ধারাবাহিকতা ভেঙে এলোমেলোভাবে ওভারল্যাপিং উইন্ডো ভাগ করেন, তবে শুরুতেই সময়ের চুক্তি নষ্ট হয়ে যাবে।"
+        },
+        {
+          "type": "math",
+          "title": "Standardized স্কেলে 351টি উইন্ডোর ওপর MSE Loss",
+          "body": "L={1\\over351}\\sum_t(\\widehat z_t-z_t)^2,\\quad z_t={y_t-\\mu_{2011}\\over s_{2011}}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ ট্রেনিং স্ক্রিপ্ট থেকে CountTransformer লোড ও যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\npath = Path(\"assets/datasets/bike_sharing/attention_workflow.py\")\nspec = importlib.util.spec_from_file_location(\"ch20_budget\", path)\nmodule = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(module)\nmodel = module.CountTransformer()\nassert sum(p.numel() for p in model.parameters()) == 185\nprint(model)\n"
+        },
+        {
+          "type": "text",
+          "title": "আগে থেকেই নির্ধারিত স্থির ট্রেনিং রেসিপি",
+          "body": "পরীক্ষাটি যেন শতভাগ স্বচ্ছ ও পুনরুৎপাদনযোগ্য (Reproducible) থাকে, সেজন্য আমাদের পুরো ট্রেনিং রেসিপি শুরু থেকেই স্থির রাখা হয়েছে: seed = 20, CPU float64, একটিমাত্র Pre-Norm Block, প্রস্থ D = 4, Head সংখ্যা H = 2 এবং FFN প্রস্থ 8। এখানে LayerNorm-এর eps = 1e-5, Activation হিসেবে ReLU, দৃশ্যমানতায় Causal Mask এবং dropout = 0 রাখা হয়েছে।\n\nঅপটিমাইজেশনের জন্য 0.01 Learning Rate-এর Adam ব্যবহার করে পুরো 351টি উইন্ডোর Full Batch নিয়ে মোট 80টি ধাপ (Update) চালানো হয়েছে, যেখানে Gradient Norm Clipping-এর সর্বোচ্চ সীমা 1। আমরা কোনো Hyperparameter খোঁজাখুঁজি, Early Stopping কিংবা সেরা Epoch বেছে নেওয়ার কৌশল খাটাইনি—সরাসরি 80তম ধাপের চূড়ান্ত Checkpoint-টিই ব্যবহার করেছি।"
+        },
+        {
+          "type": "text",
+          "title": "Loss হিসাবের সময় Broadcasting-এর সূক্ষ্ম ফাঁদ",
+          "body": "কোডে Tensor-এর আকারের দিকে তীক্ষ্ণ নজর দিন: ইনপুটের আকার [B, 14, 1], কিন্তু Model-এর Output এবং Target উভয়েরই আকার রাখা হয়েছে এক-মাত্রার [B]। ভুলে যদি Output হয় [B] আর Target রয়ে যায় [B, 1], তবে PyTorch কোনো এরর না দিয়েই নীরবে Broadcasting করে [B, B] আকারের ভুল বিয়োগফল বানিয়ে ফেলবে—যার ফলে পুরো ট্রেনিং ধ্বংস হয়ে যাবে! এখানে শেষ বৈধ অবস্থানের ওপর একটি সাধারণ Scalar Head বসেছে; কোনো শব্দের Probability বা কৃত্রিমভাবে ঋণাত্মক Forecast কেটে শূন্য করার (Silent Clipping) কাজ এখানে করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "Train বনাম Eval মোডের সুঅভ্যাস",
+          "body": "যদিও আমাদের এই নির্দিষ্ট রেসিপিতে dropout = 0 রাখা হয়েছে, তবু পেশাদার কোডে সবসময় ট্রেনিংয়ের আগে model.train() এবং মূল্যায়নের সময় model.eval() ও torch.no_grad() ব্যবহারের অভ্যাস ধরে রাখা জরুরি। বিশেষ করে মনে রাখবেন: ফাংশনাল scaled_dot_product_attention নিজে থেকে মডিউলের training ফ্ল্যাগ পড়ে না—তাই eval সময়ে সেখানে স্পষ্টভাবে dropout_p=0.0 পাঠাতে হয়! আর Weight পরিদর্শন বা এক্সপোর্ট করার সময় অবশ্যই সেগুলোকে Computational Graph থেকে বিচ্ছিন্ন (detach) করে নিতে ভুলবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "ফলাফল মূল্যায়নের সৎ দৃষ্টিভঙ্গি",
+          "body": "ট্রেনিং চলাকালীন MSE কমে আসা মানেই কিন্তু এই নয় যে মডেলটি নতুন ডেটায় দারুণ Generalization করবে। সেজন্য আমরা একই সময়ের সীমানা ও তথ্যের চুক্তিতে সরল Baseline-গুলোর সাথে এর তুলনা করি। একইভাবে মনে রাখবেন, আগের অধ্যায়ে (Book 3 · Chapter 5: Sequence Models) দেখা GRU মডেল এবং বর্তমান Transformer মডেলটি দুটি আলাদা স্থির রেসিপিতে ট্রেন করা হয়েছে—তাই এদের মধ্যে সরাসরি কোনো সুনিয়ন্ত্রিত আর্কিটেকচার প্রতিযোগিতার চূড়ান্ত রায় ঘোষণা করা সমীচীন নয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch20_teacher",
+      "title": "Teacher Forcing ও এক ঘর সরানো Shifted Labels",
+      "subtitle": "কেন কেবল Causal Mask বসালেই Target Alignment আপনা-আপনি ঠিক হয় না",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "সবার আগে ইনপুট ও Label এক ঘর সরান",
+          "body": "ধাপে ধাপে পরের Token অনুমান করার (Autoregressive) ট্রেনিংয়ে সবচেয়ে মারাত্মক ভুলটি ঘটে ডেটা সাজানোর শুরুতেই। মনে রাখবেন: অবস্থান i-তে মডেলের ইনপুট হবে আগের ধাপ পর্যন্ত পাওয়া Token, আর তার কাঙ্ক্ষিত Label হবে ঠিক পরের ধাপের Token! যেহেতু সাধারণ Causal Mask-এ কর্ণ (j = i) খোলা থাকে, তাই আপনি যদি ভুল করে ইনপুট এবং Label একই অবস্থানে রেখে দেন, তবে মডেল কোনো কিছু না শিখেই সরাসরি নিজের ইনপুট কপি করে শতভাগ সঠিক উত্তর দিয়ে দেবে! তাই BOS (শুরু), EOS (শেষ) এবং PAD আইডি স্পষ্টভাবে সংজ্ঞায়িত করে ইনপুট ও Label-এর এই এক ঘরের সরণ (Off-by-one Shift) সবার আগে পরীক্ষা করুন।"
+        },
+        {
+          "type": "text",
+          "title": "Teacher Forcing এবং বাস্তব উৎপাদনের ব্যবধান",
+          "body": "ট্রেনিং দ্রুত ও স্থিতিশীল করার জন্য আমরা সাধারণত Teacher Forcing ব্যবহার করি—অর্থাৎ মডেল আগের ধাপে যাই অনুমান করুক না কেন, পরের ধাপের ইনপুট হিসেবে তাকে আসল (Ground-Truth) পূর্ববর্তী Token-গুলোই দেওয়া হয়। কিন্তু বাস্তবে Inference বা নতুন Sequence তৈরির সময় তো আসল ভবিষ্যৎ আমাদের জানা থাকে না! তখন মডেলকে নিজের তৈরি করা Token-ই আবার পরের ধাপের ইনপুট হিসেবে গিলতে হয়। ট্রেনিং ও বাস্তবের এই তফাৎকে বলা হয় Exposure Bias, যার ফলে শুরুতে একটি ছোট ভুল হলে পরের ধাপগুলোতে সেই ভুল ক্রমেই জমতে পারে। (উল্লেখ্য, আমাদের মূল সাইকেল মডেলটি এক-ধাপের সংখ্যার Regression, কোনো বহু-ধাপের Token উৎপাদক নয়)।"
+        },
+        {
+          "type": "math",
+          "title": "BOS থেকে শুরু হওয়া ইনপুট ও Shifted Label-এর গঠন",
+          "body": "\\mathrm{input}=[BOS,y_1,\\ldots,y_{T-1}],\\quad\\mathrm{label}=[y_1,\\ldots,y_T]"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Shifted Token ও ignore_index সহ Cross-Entropy Loss",
+          "body": "import torch\n\ntokens = torch.tensor(\n    [[1, 4, 7, 2, 0]]\n)  # Mathematical BOS/content/EOS/PAD illustration.\ninputs = tokens[:, :-1]\nlabels = tokens[:, 1:]\nlogits = torch.zeros(1, 4, 8, dtype=torch.float64)\nloss = torch.nn.functional.cross_entropy(\n    logits.reshape(-1, 8), labels.reshape(-1), ignore_index=0\n)\nassert inputs[0, 0] == 1 and labels[0, 0] == 4 and torch.isfinite(loss)\nprint(loss.item())\n"
+        },
+        {
+          "type": "text",
+          "title": "Loss-এ PAD উপেক্ষা করা ও EOS-এর ভূমিকা",
+          "body": "উপরের কোডে দেখুন, Cross-Entropy হিসাব করার সময় ignore_index=0 ব্যবহার করে PAD লক্ষ্যগুলোকে বাদ দেওয়া হয়েছে, যাতে গড় Loss কেবল বৈধ Token-গুলোর সংখ্যা দিয়েই ভাগ হয়। তবে সাবধান: কোনো Batch-এর সবগুলো Label যদি দুর্ঘটনাবশত ignore_index হয়ে যায়, তবে শূন্য দিয়ে ভাগের কারণে গড় Loss মুহূর্তেই NaN হয়ে যেতে পারে! এছাড়া Attention-এর Key-Padding, Loss-এর উপেক্ষিত Label এবং শেষে কোথায় থামতে হবে তা বোঝানোর EOS Token—প্রতিটির ভূমিকা আলাদা। বিশেষ করে EOS Token-টিকে অবশ্যই বৈধ Target হিসেবে স্কোর করতে হবে, নইলে মডেল কখনো থামতেই শিখবে না!"
+        },
+        {
+          "type": "text",
+          "title": "ডিকোডিং কৌশল ও Temperature-এর প্রকৃত কাজ",
+          "body": "ট্রেন করা মডেল থেকে নতুন Sequence তৈরির সময় আমরা Greedy Search, Beam Search কিংবা র‍্যান্ডম Sampling ব্যবহার করতে পারি, যা আউটপুটের বৈচিত্র্য ও গুণমান বদলে দেয়। অনেকে মনে করেন Temperature কমালে মডেল বোধহয় তথ্যগতভাবে বেশি সত্যবাদী (Factual) হয়ে ওঠে—আসলে তা নয়; Temperature কেবল Softmax-এর আগে Logit-গুলোকে স্কেল করে Probability বণ্টনটিকে তীক্ষ্ণ বা চ্যাপ্টা করে মাত্র! ভাষা মডেলের পূর্ণাঙ্গ Tokenization, Pretraining ও ডিকোডিং মূল্যায়ন আমরা পরের বইয়ে (Book 4 · Chapter 1: LLM Foundations) বিস্তারিত শিখব।"
+        },
+        {
+          "type": "text",
+          "title": "সম্পূর্ণ পাইপলাইনে Leakage ধরার জোড়া পরীক্ষা",
+          "body": "আপনার Autoregressive ট্রেনিং সম্পূর্ণ নিরাপদ কি না তা নিশ্চিত করতে দুটি পরীক্ষা একসাথে চালাতে হবে। প্রথমত, ইনপুটের শেষের দিকের অংশ বদলে দিয়ে দেখুন আগের ধাপগুলোর Logit একদম অপরিবর্তিত থাকে কি না—এটি প্রমাণ করবে আপনার Causal Mask ঠিক আছে। দ্বিতীয়ত, ডেটা লোডার থেকে বের হওয়া inputs এবং labels পাশাপাশি প্রিন্ট করে স্বয়ংক্রিয়ভাবে যাচাই করুন যে বর্তমান ধাপের উত্তরটি বর্তমান ইনপুটেই বসে নেই। কেবল মডেলের ভেতরকার Mask টেস্ট করে পুরো ডেটা পাইপলাইনকে নিরাপদ ঘোষণা করা যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে কোডিং অনুশীলন",
+          "body": "ছোট একটি খাতার উদাহরণে BOS, দুটি সাধারণ Token, EOS এবং দুটি PAD নিয়ে একটি পূর্ণাঙ্গ তালিকা সাজান। তারপর সেখান থেকে inputs, এক ঘর সরানো labels, Causal Mask, Key-Padding Mask এবং কোন কোন ঘরে আসলেই Loss গোনা হবে তার তালিকা কোডে তৈরি করুন। একই অবস্থানে Label থেকে যাওয়ার ত্রুটি এবং সঠিকভাবে সরানো Objective-এর পার্থক্যটি সহকর্মীকে বোঝানোর মতো করে গুছিয়ে লিখুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch20_cache",
+      "title": "KV Cache: পুরোনো হিসাবের পুনর্ব্যবহার ও Position Offset",
+      "subtitle": "একক Query ডিকোডিংয়ে কেন বর্গাকার Mask-এর বদলে নিখুঁত Offset জরুরি",
+      "duration": "60 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন আমরা KV Cache ব্যবহার করি?",
+          "body": "ধাপে ধাপে নতুন Token তৈরির সময় একটি বড় অপচয় চোখে পড়ে: ধরা যাক আমরা ১০০তম শব্দের পর ১০১তম শব্দটি তৈরি করছি। আগের ১০০টি শব্দের Key এবং Value তো Causal নিয়মের কারণে একটুও বদলায়নি—তবু কেন প্রতি ধাপে শুরু থেকে পুরো Sequence আবার প্রজেক্ট করতে হবে? এই অপচয় বন্ধ করতেই আগের ধাপগুলোর প্রজেক্ট করা Key ও Value মেমোরিতে জমিয়ে রাখা হয়, যাকে বলা হয় KV Cache। তখন নতুন ধাপে কেবল সর্বশেষ একটিমাত্র Query তৈরি করে জমানো পুরো K ও V-এর ওপর Attention চালানো হয়। মনে রাখবেন, এই Cache মেমোরি কিন্তু Layer সংখ্যা, Batch, Head, প্রস্থ এবং দৈর্ঘ্যের সাথে পাল্লা দিয়ে বাড়তে থাকে—আর এটি ট্রেনিং সময়ের [T, T] Attention Map থেকে সম্পূর্ণ আলাদা একটি Tensor।"
+        },
+        {
+          "type": "text",
+          "title": "সঠিক Position Offset ও সেশন আলাদা রাখার শর্ত",
+          "body": "KV Cache ব্যবহারের প্রথম ও প্রধান শর্ত হলো গাণিতিক সমতা: Cache ব্যবহার করে পাওয়া ফলাফল যেন পুরো Prefix একসাথে চালিয়ে পাওয়া ফলাফলের সাথে হুবহু মেলে! এর জন্য নতুন আসা একক Token-টির পরম বা আপেক্ষিক Position Offset অবশ্যই মূল ধারাবাহিক অবস্থানের সমান হতে হবে। ভুলে যদি প্রতি ধাপে নতুন Token-কে আবার position = 0 ধরে বসান, ভুল কোণে RoPE ঘোরান, কিংবা একই Token দুবার Cache-এ ঢুকিয়ে ফেলেন, তবে আউটপুট সাথে সাথেই নষ্ট হয়ে যাবে। পাশাপাশি প্রতিটি Layer-এর জন্য আলাদা Cache রাখতে হবে এবং প্রোডাকশনে একজন ব্যবহারকারীর অনুরোধের (Session) সাথে অন্যজনের Cache যেন কখনোই মিশে না যায় তা নিশ্চিত করতে হবে।"
+        },
+        {
+          "type": "math",
+          "title": "আগের Cache-এর সাথে নতুন k_t ও v_t যুক্ত করার সমীকরণ",
+          "body": "K_{\\le t}=[K_{<t};k_t],\\quad V_{\\le t}=[V_{<t};v_t]"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ একক শেষ Query ও পূর্ণ Causal হিসাবের সমতা যাচাই",
+          "body": "import torch\nfrom torch.nn.functional import scaled_dot_product_attention as sdpa\n\ntorch.manual_seed(20)\nq = torch.randn(1, 2, 4, 2, dtype=torch.float64)\nk = torch.randn_like(q)\nv = torch.randn_like(q)\nfull = sdpa(q, k, v, is_causal=True, dropout_p=0.0)\nlast = sdpa(\n    q[:, :, -1:], k, v, dropout_p=0.0\n)  # One last query may see all cached keys.\nassert torch.allclose(full[:, :, -1:], last, atol=1e-12)\nprint(last.shape)\n"
+        },
+        {
+          "type": "text",
+          "title": "আয়তাকার Mask-এ is_causal=True দেওয়ার ভয়াবহ ফাঁদ!",
+          "body": "উপরের কোডটিতে একটি অত্যন্ত সূক্ষ্ম কিন্তু জীবন বাঁচানো শিক্ষা লুকিয়ে আছে! যখন আপনার হাতে কেবল সর্বশেষ ১টি Query থাকে কিন্তু Cache-এ ৪টি বৈধ Key জমা আছে, তখন Score Matrix-এর আকার হয় [1, 4]—অর্থাৎ এটি আর বর্গাকার নয়! এই সর্বশেষ Query-টি যেহেতু সবার শেষে দাঁড়িয়ে আছে, তাই তার কিন্তু ৪টি Key-ই দেখার পূর্ণ অধিকার আছে।\n\nকিন্তু আপনি যদি এই [1, 4] আকারের কলের ভেতর অভ্যাসবশত PyTorch SDPA-এর is_causal=True ফ্ল্যাগটি অন করে দেন, তবে ভয়ঙ্কর বিপদ ঘটবে! কারণ অনেক ফ্রেমওয়ার্ক আয়তাকার ক্ষেত্রে উপরের-বাম কোণা (Upper-Left Alignment) ধরে হিসাব করে—ফলে সে ভাববে আপনার একমাত্র Query-টি বুঝি 0-তম অবস্থানে দাঁড়িয়ে আছে এবং বাকি ৩টি Key-কে সে পুরোপুরি ব্লক করে দেবে! তাই ডিকোডিং বা চাঙ্কড প্রিফিলের সময় বর্গাকার ট্রেনিং Mask অন্ধভাবে ব্যবহার না করে সবসময় প্রকৃত Position Offset মিলিয়ে স্পষ্ট Mask তৈরি করুন।"
+        },
+        {
+          "type": "text",
+          "title": "এই উদাহরণের পরিধি",
+          "body": "খেয়াল রাখবেন, উপরের কোডটি কেবল প্রজেক্ট করা Q, K ও V স্তরে গাণিতিক সমতা দেখানোর জন্য লেখা—এটি বহু-স্তরের সম্পূর্ণ প্রোডাকশন সার্ভিং ইঞ্জিন নয়। আমাদের মূল সাইকেল মডেলটি যেহেতু প্রতিবার স্থির 14 দিনের ছোট উইন্ডোতে চলে এবং প্রতি উইন্ডোতে আপেক্ষিক অবস্থান 0..13 নতুন করে শুরু হয়, তাই সেখানে এক উইন্ডোর Cache পরের উইন্ডোতে সরাসরি ব্যবহার করা যাবে না এবং আমরা এখানে কোনো গতির বেঞ্চমার্কও দাবি করছি না।"
+        },
+        {
+          "type": "text",
+          "title": "KV Cache মেমোরির নিখুঁত হিসাব",
+          "body": "ইঞ্জিনিয়ারিং ডিজাইনে KV Cache কতটুকু মেমোরি খাবে তার সূত্রটি মুখস্থ থাকা চাই: প্রতিটি Layer-এ K এবং V দুটি আলাদা Tensor থাকে যাদের প্রত্যেকের আকার [B, H, T, d]। সুতরাং মোট উপাদানের সংখ্যা হলো 2 × L × B × H × T × d, আর একে প্রতিটি সংখ্যার বাইট আকার (যেমন float16 হলে 2 bytes) দিয়ে গুণ করলেই মেমোরির হিসাব বেরিয়ে আসে। (আধুনিক মডেলে মেমোরি বাঁচাতে GQA বা MQA ব্যবহার করলে অবশ্য K ও V-এর Head সংখ্যা Query-এর চেয়ে কম হতে পারে; আর বাস্তব GPU-তে মেমোরি অ্যালোকেটরের সামান্য বাড়তি জায়গা যোগ হয়)।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ KV Cache নিয়ে যেভাবে বলবেন",
+          "body": "ইন্টারভিউতে কখনোই শুধু 'KV Cache দিলে মডেল দ্রুত চলে' বলে থামবেন না। আগে বলুন কীভাবে Full-Prefix রান এবং ধাপে ধাপে Cached রানের আউটপুট সংখ্যাগত Tolerance-এর ভেতর মিলিয়ে সঠিকতা প্রমাণ করবেন। এরপর বাস্তব সার্ভিংয়ের চ্যালেঞ্জগুলো তুলে ধরুন: Cache বড় হতে হতে মেমোরি ফুরিয়ে গেলে Eviction নীতি, Batch-এর ভেতর অসমান Padding থাকলে সঠিক অবস্থান রাখা, Beam Search-এ ক্রম অদলবদল এবং ভিন্ন ভিন্ন ব্যবহারকারীর Cache সম্পূর্ণ বিচ্ছিন্ন রাখা।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে দুই-Token চাঙ্কের আয়তাকার Mask নির্ণয়",
+          "body": "চলুন আয়তাকার Mask-এর ফাঁদটি একটি নিখুঁত সংখ্যার উদাহরণ দিয়ে হাতেনাতে ধরি! ধরুন আমাদের Cache-এ আগে থেকেই 2টি পুরোনো পদ জমা আছে, আর এখন আমরা একসাথে নতুন 2টি Query (যাদের প্রকৃত পরম অবস্থান 2 এবং 3) পাঠাচ্ছি। তাহলে মোট Key হলো 4টি (অবস্থান 0, 1, 2, 3)। নিয়ম অনুযায়ী অবস্থান 2-এর Query দেখতে পাবে প্রথম তিনটি [True, True, True, False], আর অবস্থান 3-এর Query দেখতে পাবে চারটিই [True, True, True, True]। সব Score শূন্য এবং Value [1, 2, 4, 8] হলে সঠিক গড় Output আসবে যথাক্রমে (1 + 2 + 4) / 3 = 7/3 ≈ 2.333333 এবং (1 + 2 + 4 + 8) / 4 = 15/4 = 3.75।\n\nকিন্তু নিচের কোডে দেখুন, ভুল করে সাধারণ is_causal=True দিলে ফ্রেমওয়ার্ক উপরের-বাম কোণা ধরে প্রথমটিকে কেবল Key 0 (Output 1.0) এবং দ্বিতীয়টিকে কেবল প্রথম দুটি Key (Output 1.5) দেখতে দেয়! অর্থাৎ Cache-এর শুরুর দৈর্ঘ্য (Prefix Offset) সবসময় Mask তৈরির অবিচ্ছেদ্য অংশ।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ সঠিক Offset Mask বনাম ভুল Upper-Left Causal ফলাফল",
+          "body": "import torch\nfrom torch.nn.functional import scaled_dot_product_attention as sdpa\n\nqueries = torch.zeros(1, 1, 4, 1, dtype=torch.float64)\nkeys = torch.zeros_like(queries)\nvalues = torch.tensor([1.0, 2.0, 4.0, 8.0], dtype=queries.dtype).reshape(1, 1, 4, 1)\nfull = sdpa(queries, keys, values, is_causal=True, dropout_p=0)\nprefix = 2\nquery_positions = torch.arange(prefix, 4)\nkey_positions = torch.arange(4)\nallowed = key_positions[None, :] <= query_positions[:, None]\ncached = sdpa(queries[:, :, prefix:], keys, values, attn_mask=allowed, dropout_p=0)\nupper_left = sdpa(queries[:, :, prefix:], keys, values, is_causal=True, dropout_p=0)\ntorch.testing.assert_close(cached, full[:, :, prefix:])\nprint(\n    *[round(value, 6) for value in cached.flatten().tolist()],\n    *upper_left.flatten().tolist()\n)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে ভেবে উত্তর দিন",
+          "body": "কেবল প্রজেক্ট করা Q, K ও V দিয়ে উপরের এই সমতা পরীক্ষাটি পাস করলেই কি প্রমাণ হয় যে আপনার পুরো বহু-স্তরের Decoder Cache শতভাগ নির্ভুল আছে?",
+          "solution": "মোটেও না! এটি কেবল একটি স্তরের দৃশ্যমানতা এবং Attention-এর গাণিতিক অংশটুকু যাচাই করে। পুরো Decoder নির্ভুল প্রমাণ করতে হলে প্রতিটি Layer-এর আলাদা Cache সংরক্ষণ, সঠিক Positional Encoding বা RoPE ঘূর্ণন, LayerNorm, Residual যোগফল এবং একাধিক রিকোয়েস্টের সীমানা—সবকিছু মিলিয়ে End-to-End সমতা পরীক্ষা করতে হবে।",
+          "reference": "https://docs.pytorch.org/docs/2.15/generated/torch.nn.functional.scaled_dot_product_attention.html"
+        }
+      ]
+    },
+    {
+      "id": "ch20_book_attention_equivalence",
+      "title": "Attention Equivalence: Mask, Cache ও Position-এর অভেদ",
+      "subtitle": "আগে মূল ধারণাটি বুঝি, তারপর সমীকরণ ও খাতার উদাহরণের সাথে মিলিয়ে Python-এ যাচাই করি",
+      "duration": "18 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "এই গাণিতিক অভেদটি কেন এত জরুরি?",
+          "body": "একটি মৌলিক সত্য সবসময় মনে গেঁথে রাখুন: KV Cache নিছক হিসাবের গতি বাড়ানোর একটি কৌশল—এটি কিন্তু কোনো নতুন মডেল বা ভিন্ন কোনো গাণিতিক উদ্দেশ্য নয়! কাজেই একই পূর্ববর্তী ইতিহাস (Prefix), একই Position Offset, একই Weight এবং একই মূল্যায়ন মোডে চালালে পুরো Sequence একসাথে চালানো আর ধাপে ধাপে Cache দিয়ে চালানো—দুই পথেই সর্বশেষ Token-এর Output সংখ্যাগত সীমার ভেতর হুবহু এক হতেই হবে। কোডে Tensor-এর আকার ঠিক থাকলেও সামান্য Position Offset ভুল হলেই এই পবিত্র অভেদ ভেঙে পড়ে।"
+        },
+        {
+          "type": "text",
+          "title": "ধাপে ধাপে সমতার শর্তগুলো বুঝি",
+          "body": "যেকোনো একক Query Vector q-এর কাজ খুবই সরল: প্রতিটি দৃশ্যমান Key-এর সাথে q · k_j / √d বের করা, কেবল বৈধ Key-গুলোর ওপর Softmax চালানো, এবং সেই Weight দিয়ে সংশ্লিষ্ট Value-গুলোর গড় নেওয়া। এখন পুরোনো ধাপগুলোর Key ও Value যদি আগে থেকে Cache-এ রাখা থাকে এবং তার সাথে বর্তমান ধাপের নতুন k_t ও v_t জোড়া লাগানো হয়, তবে দৃশ্যমান তালিকাটি আগের মতোই অক্ষত থাকে। শুধু খেয়াল রাখতে হবে যেন Causal Mask-টি বর্তমান Query-এর প্রকৃত পরম অবস্থান দেখে তৈরি হয়—একক Query দেখে তাকে 0-তম ঘর ভেবে পুরোনো সব Cache ব্লক করে না দেয়!"
+        },
+        {
+          "type": "math",
+          "title": "একক Query-এর Attention ও Cache সম্প্রসারণের সমীকরণ",
+          "body": "\\mathrm{Attn}(q,K,V)=\\mathrm{softmax}(qK^T/\\sqrt d)V,\\qquad K_{cache}^{new}=[K_{cache};k_t]"
+        },
+        {
+          "type": "text",
+          "title": "খাতা-কলমে ছোট একটি উদাহরণ",
+          "body": "চলুন আগে দেখা সেই সহজ সংখ্যার উদাহরণটিই মেলাই: ধরুন এক মাত্রার (d = 1) ক্ষেত্রে বর্তমান Query হলো q = 1, দুটি Key হলো [0, 1] এবং তাদের Value যথাক্রমে [2, 4]। তাহলে Softmax Weight দাঁড়ায় প্রায় [0.268941, 0.731059] এবং চূড়ান্ত Output আসে প্রায় 3.462117। এখন আপনি পুরো তালিকা [0, 1] একসাথে দিন, কিংবা পুরোনো জমানো [0]-এর সাথে নতুন আসা [1] জোড়া লাগিয়ে দিন—দুই ক্ষেত্রেই উত্তরটি চুলচেরা একই হতে হবে।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Full হিসাব ও Cached হিসাবের শূন্য পার্থক্য যাচাই",
+          "body": "import math\n\n\ndef attend(query, keys, values):\n    logits = [query * key for key in keys]\n    maximum = max(logits)\n    weights = [math.exp(x - maximum) for x in logits]\n    return sum(w * v for w, v in zip(weights, values)) / sum(weights)\n\n\nfull = attend(1.0, [0.0, 1.0], [2.0, 4.0])\ncached_keys, cached_values = [0.0], [2.0]\ncached = attend(1.0, cached_keys + [1.0], cached_values + [4.0])\n# Compare semantics before benchmarking any cache optimization.\nprint(round(full, 6), abs(full - cached))\n"
+        },
+        {
+          "type": "text",
+          "title": "কোড চালালে কী দেখতে পাচ্ছি?",
+          "body": "কোডটি চালালে প্রিন্ট হচ্ছে 3.462117 এবং দুটির পার্থক্য নিখুঁত 0.0! বাস্তব বহু-স্তরের Transformer-এ এই একই নিখুঁত মিল ধরে রাখতে হলে প্রতিটি Layer-এর নিজস্ব Cache, তাদের Absolute বা Rotary Position এবং Padding-এর নিয়ম শতভাগ এক রাখতে হবে। আর অবশ্যই তুলনা করার সময় Dropout বন্ধ (eval মোড) রাখতে হবে, নইলে র‍্যান্ডম ড্রপআউটের কারণে প্রতিবার সংখ্যা বদলে যাবে।"
+        },
+        {
+          "type": "text",
+          "title": "কখন হুবহু সমতা আশা করা যাবে না?",
+          "body": "তিনটি বাস্তব পরিস্থিতিতে এই সরল সমতার ব্যতিক্রম ঘটতে পারে। এক, কোনো Row-এর সবগুলো Key ব্লক হয়ে গেলে সাধারণ Softmax অসংজ্ঞায়িত হয়ে পড়ে। দুই, মেমোরি বাঁচাতে লম্বা Cache-এর শুরুর দিকের পুরোনো অংশ কেটে ফেলে দিলে (Sliding Window / Truncation) যেহেতু দৃশ্যমান ইতিহাসই বদলে যায়, তাই পূর্ণ ইতিহাসের সাথে তার উত্তর আর মিলবে না। তিন, CPU float64-এর সাথে GPU-এর কম Precision বা ভিন্ন Fused Kernel মেলাতে গেলে বিট-টু-বিট মিল না চেয়ে যুক্তিসঙ্গত ক্ষুদ্র Tolerance ব্যবহার করতে হবে।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে ভেবে উত্তর দিন",
+          "body": "সবগুলো Value যদি একই মান 7 হয়, তবে Key যাই হোক না কেন বৈধ Attention-এর Output কত আসবে? আর আপনার লেখা Cache সংস্করণের উত্তর যদি Full সংস্করণের সাথে না মেলে, তবে সবার আগে কোন তিনটি জায়গা পরীক্ষা করবেন?",
+          "solution": "বৈধ Normalized Attention-এ যেহেতু সব Weight-এর যোগফল 1, তাই সব Value 7 হলে Output সবসময় ঠিক 7-ই হবে। আর Cache ও Full সংস্করণের অমিল খুঁজতে গেলে সবার আগে পরীক্ষা করতে হবে: (১) Sequence ও Position Offset-এর সামঞ্জস্য ঠিক আছে কি না, (২) দৃশ্যমান Key-এর Mask (বিশেষত আয়তাকার ক্ষেত্রে) ঠিক আছে কি না, এবং (৩) উভয় ক্ষেত্রে একই eval() মোড, শূন্য Dropout ও অভিন্ন Weight ব্যবহৃত হচ্ছে কি না।",
+          "reference": "https://d2l.ai/chapter_attention-mechanisms-and-transformers/attention-scoring-functions.html"
+        }
+      ]
+    },
+    {
+      "id": "ch20_complexity",
+      "title": "Attention-এর কম্পিউটেশনাল Complexity ও বাস্তব সীমা",
+      "subtitle": "দ্বিঘাত (Quadratic) Score Matrix থেকে আধুনিক দক্ষ Kernel পর্যন্ত",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ঘন Score Matrix ও খরচের দুটি ভিন্ন উৎস",
+          "body": "Attention যেমন দূরের তথ্যের মধ্যে সরাসরি সেতু গড়ে দেয়, তেমনি এর একটি বড় গাণিতিক মূল্যও আছে। প্রতিটি Query যখন সবগুলো Key-এর সাথে নিজেকে তুলনা করে, তখন প্রতিটি Head-এ T × T আকারের একটি Score তালিকা তৈরি হয়। ফলে সাধারণ উপায়ে পুরো Attention Map মেমোরিতে সাজিয়ে রাখলে জায়গা লাগে B × H × T^2 সংখ্যক উপাদানের সমান, এবং হিসাবের সময়ও বাড়ে T^2-এর সাথে পাল্লা দিয়ে (Quadratic)! অন্যদিকে Q, K, V ও Output Projection-এর খরচ হলো O(B T D^2) এবং FFN-এর খরচ O(B T D D_ff)। লক্ষ্য করুন: Sequence ছোট কিন্তু প্রস্থ D বিশাল হলে Linear স্তরগুলোই আসল সময় নেয়; কিন্তু Sequence অনেক লম্বা হলে T^2 অংশটিই প্রধান গলার কাঁটা হয়ে দাঁড়ায়!"
+        },
+        {
+          "type": "text",
+          "title": "ট্রেনিংয়ের সমান্তরাল গতি বনাম উৎপাদনের ক্রমিক বাধ্যবাধকতা",
+          "body": "RNN-এর চেয়ে Transformer-এর বড় সুবিধা হলো ট্রেনিংয়ের সময় পুরো Sequence একসাথে জানা থাকে বলে সবগুলো সময়ের অবস্থানের হিসাব GPU-তে সমান্তরালে (Parallel) চালানো যায়। কিন্তু একটি সাধারণ ভুল ধারণা হলো: বোধহয় Inference বা নতুন টেক্সট তৈরির সময়ও সব শব্দ একসাথে বেরিয়ে আসে! মোটেও তা নয়—Autoregressive উৎপাদনে ১০ম শব্দটি না আসা পর্যন্ত ১১তম শব্দের ইনপুটই তৈরি হয় না, তাই উৎপাদন তখনো ধাপে ধাপে ক্রমিকই থাকে। তাই RNN বনাম Attention-এর গতির তুলনা করতে হলে সবসময় দৈর্ঘ্য T, প্রস্থ D, Batch আকার, হার্ডওয়্যার এবং KV Cache-এর নিয়ম স্পষ্ট করে বলতে হবে।"
+        },
+        {
+          "type": "math",
+          "title": "Attention Score উপাদানের সংখ্যা ও কম্পিউটেশনাল ক্রম",
+          "body": "\\mathrm{score\\ elements}=BHT^2,\\quad\\mathrm{attention\\ compute}=O(BT^2D)"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ আমাদের মডেলের Score ও Cache উপাদানের সংখ্যা গণনা",
+          "body": "B, H, T, d, L = 1, 2, 14, 2, 1\nscore_elements = B * H * T * T\ncache_elements = 2 * L * B * H * T * d\nassert score_elements == 392 and cache_elements == 112\nprint(score_elements, cache_elements)\n"
+        },
+        {
+          "type": "text",
+          "title": "আধুনিক IO-Aware ও Fused Kernel কী বদলায় আর কী বদলায় না?",
+          "body": "সাম্প্রতিক বছরগুলোতে FlashAttention-এর মতো Fused এবং IO-Aware পদ্ধতিগুলো দারুণ বিপ্লব এনেছে। তারা পুরো [T, T] আকারের বিশাল Score Matrix-টিকে ধীরগতির মূল GPU মেমোরিতে লিখে না রেখে ছোট ছোট টুকরো (Tile) করে দ্রুতগতির অন-চিপ মেমোরিতেই Softmax ও গড়ের কাজ সেরে ফেলে—ফলে মেমোরির খরচ নাটকীয়ভাবে কমে যায়! কিন্তু মনে রাখবেন: এটি নিখুঁত গাণিতিক Attention হওয়ায় ভেতরের জোড়ায় জোড়ায় তুলনার মোট গাণিতিক অপারেশন কিন্তু জাদুকরীভাবে রৈখিক (Linear) হয়ে যায় না। অন্যদিকে Sparse বা Sliding-Window Attention হিসাব কমালেও মূল দৃশ্যমানতার নিয়মই বদলে দেয়। আর আমাদের অ্যাপের CPU কোডটি প্রতিটি ওজন পরিদর্শনের জন্য সব সংরক্ষণ করে—এটি কোনো গতির বেঞ্চমার্ক নয়।"
+        },
+        {
+          "type": "text",
+          "title": "ওজন চাওয়ার (need_weights) লুকানো খরচ",
+          "body": "ডিবাগিং বা আমাদের Lab-এর মতো ওজন পরিদর্শনের জন্য যখন আপনি ফ্রেমওয়ার্কের কাছে পুরো Attention Weight Matrix ফেরত চান (need_weights=True), তখন লাইব্রেরি বাধ্য হয়ে পুরো [B, H, T, T] মেমোরিতে তৈরি করে এবং অনেক সময় দ্রুতগতির Fused Kernel ব্যবহার করতে পারে না। তাই অডিট বা ভিজ্যুয়ালাইজেশন মোডে কোড চালিয়ে সেই সময় দেখে প্রোডাকশন সিস্টেমের গতির রায় দেবেন না। এছাড়া কোন ডেটা টাইপ, Mask বা Dropout দিলে কোন ব্যাকএন্ড Kernel চালু হবে, তা সবসময় ফ্রেমওয়ার্কের ডকুমেন্টেশন দেখে নিশ্চিত হওয়া উচিত।"
+        },
+        {
+          "type": "text",
+          "title": "লম্বা Context মানেই কি নির্ভরযোগ্য যুক্তিবোধ?",
+          "body": "হার্ডওয়্যারে বেশি মেমোরি যোগ করা বা লম্বা Positional সমীকরণ থাকা মানেই কিন্তু এই নয় যে মডেল হাজার হাজার ধাপ আগের সূক্ষ্ম সংকেত নির্ভুলভাবে কাজে লাগাতে পারবে! কার্যকর Long-Context পারফরম্যান্স নির্ভর করে মডেলটি কত লম্বা ডেটায় ট্রেন হয়েছে, টাস্কের প্রকৃতি কী, মাঝখানের তথ্যের ভিড়ে আসল সংকেত হারিয়ে যাচ্ছে কি না এবং মূল্যায়ন কীভাবে সাজানো হয়েছে তার ওপর। বলাই বাহুল্য, আমাদের মাত্র 14 ধাপের ছোট মডেলটি কোনো দীর্ঘ-প্রেক্ষাপটের প্রমাণ বহন করে না।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এর জন্য চটপট হিসাবের প্রস্তুতি",
+          "body": "ইন্টারভিউতে প্রায়ই চটপট জিজ্ঞেস করা হয়: 'অন্য সব মাত্রা স্থির রেখে যদি Context-এর দৈর্ঘ্য T দ্বিগুণ করা হয়, তবে মেমোরিতে কী প্রভাব পড়বে?' উত্তরটি খুব স্পষ্ট: পূর্ণ Score Matrix-এর উপাদান বাড়বে 4 গুণ (2^2), আর KV Cache-এর উপাদান বাড়বে 2 গুণ! তবে সাথে এই বাস্তব অভিজ্ঞতাটিও যোগ করতে ভুলবেন না যে আসল GPU Peak Memory কেবল এই দুটির যোগফল নয়—ট্রেনিং ও সার্ভিংয়ে মধ্যবর্তী Activation, Gradient, Optimizer State এবং অস্থায়ী Workspace মিলিয়ে মোট মেমোরি নির্ধারিত হয়; তাই কেবল খাতার সূত্র দেখে কখনো হার্ডওয়্যার কেনা বা প্রোডাকশন SLA চূড়ান্ত করা উচিত নয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch20_workflow",
+      "title": "Offline ডেটা যাচাই ও স্বচ্ছ Attention ইমপ্লিমেন্টেশন",
+      "subtitle": "মূল ডেটাসেট যাচাই থেকে শুরু করে PyTorch ও NumPy-এ সমান্তরাল Forward হিসাব",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "স্থানীয় Python পরিবেশ ও Offline প্রস্তুতি",
+          "body": "এতক্ষণ আমরা Attention ও Transformer-এর তাত্ত্বিক ভিত্তি, সমীকরণ ও মেমোরির হিসাব জেনেছি। এবার চলুন কাঁচা ডেটা থেকে শুরু করে পুরো পাইপলাইনটি কোডে কীভাবে নির্ভুলভাবে চলে তা দেখি। নিজের কম্পিউটারে যাচাই করার জন্য `python -m pip install -r tool/requirements-pytorch-qa.txt` চালালে প্রয়োজনীয় CPU প্যাকেজগুলো ইনস্টল হয়ে যাবে। আমাদের ডেটাসেট, সোর্স Helper এবং ওয়ার্কফ্লো স্ক্রিপ্ট সবই প্রজেক্টের ভেতর Offline অবস্থায় যুক্ত আছে; অ্যাপের নিজস্ব রানটাইম কোনো বাইরের Python প্যাকেজের ওপর নির্ভর করে না। এখানে স্থানীয় যাচাইয়ের কাজটি `Python 3.12` ও `PyTorch 2.15`-এর CPU পথে সম্পন্ন করা হয়েছে—এটি গাণিতিক শুদ্ধতা পরীক্ষার পরিবেশ, কোনো হার্ডওয়্যার গতির বেঞ্চমার্ক নয়।"
+        },
+        {
+          "type": "text",
+          "title": "মূল ডেটাসেটের অখণ্ডতা ও সময়ের সীমানা",
+          "body": "আমাদের মূল `day.csv` ফাইলটির SHA-256 হ্যাশ এবং ক্যালেন্ডারের ধারাবাহিকতা আমরা আগে Book 2 · Chapter 8 (Anomaly Detection & Time Series Foundations) এবং Book 3 · Chapter 5 (Sequence Models)-এ ব্যবহৃত Helper ফাংশন দিয়েই যাচাই করি, আর মূল দৈনিক ফাইলটি সম্পূর্ণ অপরিবর্তিত থাকে। মডেলিং ও এক্সপোর্টের কাজে ব্যবহৃত হয় কেবল প্রথম 547টি দিনের পর্যবেক্ষণ; শেষের সংরক্ষিত 184টি দিন কোনোভাবেই Model ট্রেনিং (Fit) কিংবা স্কোরিংয়ের কাজে ছোঁয়া হয় না। পাশাপাশি মূল ডেটাসেটের উৎস UCI Bike Sharing (Fanaee-T, 2013) এবং এর `CC BY 4.0` লাইসেন্সের স্বীকৃতি যথাযথভাবে বজায় রাখা হয়েছে।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ মূল ডেটা লোড ও Causal Window তৈরির ফাংশন",
+          "body": "from pathlib import Path\nimport argparse, hashlib, importlib.util, json, platform, sys\nimport numpy as np\nimport torch\nfrom torch import nn\n\nDATA = Path(\"assets/datasets/bike_sharing\").resolve()\n\n\ndef prepare(path):\n    spec = importlib.util.spec_from_file_location(\n        \"ch20_sequence_source\", path.with_name(\"sequence_workflow.py\")\n    )\n    module = importlib.util.module_from_spec(spec)\n    sys.modules[spec.name] = module\n    spec.loader.exec_module(module)\n    return module.prepare(path)\n\n\ndef windows(y, mean, scale, start, end):\n    y = np.asarray(y, dtype=float)\n    if (\n        y.ndim != 1\n        or not np.isfinite(y).all()\n        or not np.isfinite(mean)\n        or not np.isfinite(scale)\n        or scale <= 0\n        or start < 14\n        or end > len(y)\n        or start >= end\n    ):\n        raise ValueError(\"Finite causal windows\")\n    ids = np.arange(start, end)\n    return (\n        torch.tensor(\n            np.stack([(y[t - 14 : t] - mean) / scale for t in ids])[:, :, None],\n            dtype=torch.float64,\n        ),\n        torch.tensor((y[ids] - mean) / scale, dtype=torch.float64),\n        ids,\n    )\n"
+        },
+        {
+          "type": "code",
+          "title": "Pre-Norm PyTorch মডিউল ও স্বতন্ত্র NumPy Forward হিসাব",
+          "body": "def positions():\n    pos = torch.arange(14, dtype=torch.float64)[:, None]\n    freq = torch.exp(\n        torch.arange(0, 4, 2, dtype=torch.float64) * (-np.log(10000.0) / 4)\n    )\n    pe = torch.zeros(14, 4, dtype=torch.float64)\n    pe[:, 0::2] = torch.sin(pos * freq)\n    pe[:, 1::2] = torch.cos(pos * freq)\n    return pe\n\n\nclass CountTransformer(nn.Module):\n    def __init__(self):\n        super().__init__()\n        self.input = nn.Linear(1, 4, dtype=torch.float64)\n        self.norm1 = nn.LayerNorm(4, eps=1e-5, dtype=torch.float64)\n        self.attn = nn.MultiheadAttention(\n            4, 2, dropout=0.0, batch_first=True, dtype=torch.float64\n        )\n        self.norm2 = nn.LayerNorm(4, eps=1e-5, dtype=torch.float64)\n        self.ff1 = nn.Linear(4, 8, dtype=torch.float64)\n        self.ff2 = nn.Linear(8, 4, dtype=torch.float64)\n        self.head = nn.Linear(4, 1, dtype=torch.float64)\n        self.register_buffer(\"position\", positions())\n\n    def inspect(self, X, causal=True, valid=14, use_position=True):\n        if (\n            X.ndim != 3\n            or X.shape[1:] != (14, 1)\n            or not torch.isfinite(X).all()\n            or not isinstance(valid, int)\n            or not 1 <= valid <= 14\n        ):\n            raise ValueError(\"Finite X[B,14,1], valid1..14\")\n        x = self.input(X) + (self.position if use_position else 0)\n        n = self.norm1(x)\n        blocked = (\n            torch.triu(torch.ones(14, 14, dtype=torch.bool), diagonal=1)\n            if causal\n            else torch.zeros(14, 14, dtype=torch.bool)\n        )\n        padding = (torch.arange(14)[None] >= valid).expand(X.shape[0], -1)\n        out, w = self.attn(\n            n,\n            n,\n            n,\n            attn_mask=blocked,\n            key_padding_mask=padding,\n            need_weights=True,\n            average_attn_weights=False,\n        )\n        residual = x + out\n        n2 = self.norm2(residual)\n        hidden = torch.relu(self.ff1(n2))\n        ff = self.ff2(hidden)\n        state = residual + ff\n        return {\n            \"embedding\": x,\n            \"norm1\": n,\n            \"attention\": out,\n            \"weights\": w,\n            \"residual1\": residual,\n            \"norm2\": n2,\n            \"ff_hidden\": hidden,\n            \"ff_output\": ff,\n            \"state\": state,\n            \"prediction\": self.head(state[:, valid - 1]).squeeze(-1),\n        }\n\n    def forward(self, X):\n        return self.inspect(X)[\"prediction\"]\n\n\ndef weights(model):\n    return {k: v.detach().tolist() for k, v in model.state_dict().items()}\n\n\ndef manual(sequence, p, causal=True, valid=14, use_position=True):\n    s = np.asarray(sequence, dtype=float)\n    if (\n        s.shape != (14,)\n        or not np.isfinite(s).all()\n        or not isinstance(valid, int)\n        or not 1 <= valid <= 14\n    ):\n        raise ValueError(\"Finite14-step sequence, valid1..14\")\n\n    def array(key):\n        return np.asarray(p[key], dtype=float)\n\n    def linear(x, key):\n        return x @ array(key + \".weight\").T + array(key + \".bias\")\n\n    def norm(x, key):\n        return (x - x.mean(-1, keepdims=True)) / np.sqrt(\n            x.var(-1, keepdims=True) + 1e-5\n        ) * array(key + \".weight\") + array(key + \".bias\")\n\n    x = linear(s[:, None], \"input\") + (array(\"position\") if use_position else 0)\n    n = norm(x, \"norm1\")\n    Q, K, V = np.split(\n        n @ array(\"attn.in_proj_weight\").T + array(\"attn.in_proj_bias\"), 3, axis=-1\n    )\n    q, k, v = [a.reshape(14, 2, 2).transpose(1, 0, 2) for a in [Q, K, V]]\n    scores = q @ k.transpose(0, 2, 1) / np.sqrt(2.0)\n    allowed = np.broadcast_to(np.arange(14)[None, :] < valid, (14, 14)).copy()\n    if causal:\n        allowed &= np.arange(14)[None, :] <= np.arange(14)[:, None]\n    logits = np.where(allowed[None], scores, -np.inf)\n    ex = np.exp(logits - logits.max(-1, keepdims=True))\n    w = ex / ex.sum(-1, keepdims=True)\n    mixed = w @ v\n    concat = mixed.transpose(1, 0, 2).reshape(14, 4)\n    out = linear(concat, \"attn.out_proj\")\n    r1 = x + out\n    n2 = norm(r1, \"norm2\")\n    hidden = np.maximum(0, linear(n2, \"ff1\"))\n    ff = linear(hidden, \"ff2\")\n    state = r1 + ff\n    return {\n        \"embedding\": x.tolist(),\n        \"norm1\": n.tolist(),\n        \"q\": q.tolist(),\n        \"k\": k.tolist(),\n        \"v\": v.tolist(),\n        \"scores\": scores.tolist(),\n        \"weights\": w.tolist(),\n        \"mixed\": mixed.tolist(),\n        \"concat\": concat.tolist(),\n        \"attention\": out.tolist(),\n        \"residual1\": r1.tolist(),\n        \"norm2\": n2.tolist(),\n        \"ff_hidden\": hidden.tolist(),\n        \"ff_output\": ff.tolist(),\n        \"state\": state.tolist(),\n        \"prediction\": float(linear(state[valid - 1], \"head\")[0]),\n    }\n"
+        },
+        {
+          "type": "text",
+          "title": "Causal Window তৈরির নিয়ম ও ক্রমিক নির্ভরশীলতা",
+          "body": "প্রথম কোড ব্লকের `windows()` ফাংশনটির দিকে তাকালে দেখবেন, Index 14 থেকে 364 পর্যন্ত মোট 351টি Target নিয়ে তৈরি হয়েছে আমাদের Fit বা Training সেট, আর Index 365 থেকে 546 পর্যন্ত মোট 182টি Target নিয়ে গঠিত হয়েছে Development সেট। প্রতিটি ইনপুট উইন্ডোতে কেবল আগের 14 দিনের তথ্য ঢোকে—ফলে বর্তমান Target বা ভবিষ্যতের কোনো মান ভুল করেও ইনপুটে আসার সুযোগ নেই। ক্যালেন্ডার ও সুনির্দিষ্ট Index সীমানার কারণে ট্রেনিং ও মূল্যায়নের ভূমিকা গুলিয়ে যাওয়ার (Data Leakage) পথ বন্ধ থাকে। তবে মনে রাখবেন, পাশাপাশি দুটি দিনের ঐতিহাসিক উইন্ডোর ভেতর স্বভাবতই ১৩ দিনের তথ্য অভিন্ন থাকে—তাই এই উইন্ডোগুলোকে পরিসংখ্যানগতভাবে পরস্পর স্বাধীন (Independent) Sample ধরে নেওয়া যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "স্বচ্ছ PyTorch মডিউল ও সমান্তরাল NumPy যাচাই",
+          "body": "দ্বিতীয় কোড ব্লকে আমরা পাশাপাশি দুটি ইমপ্লিমেন্টেশন রেখেছি: একটি হলো Pre-Norm গঠনের `CountTransformer` PyTorch মডিউল, আর অন্যটি হলো কোনো ডিপ লার্নিং লাইব্রেরি ছাড়াই নিরেট NumPy দিয়ে লেখা `manual()` ফাংশন। নিজে পরীক্ষা করার সময় এই পাঠের দুটি কোড ব্লক একই Python সেশনে পরপর চালান (পরের পাঠেই আমরা পুরো স্বয়ংসম্পূর্ণ স্ক্রিপ্টটি একত্রে দেখব)। এখানে ভেতরের কোনো হিসাবই লুকানো নেই—`LayerNorm`-এর Axis, একত্রে প্যাক করা প্রজেকশন থেকে `Q`, `K`, `V` আলাদা করা, Head-এর বিন্যাস, Mask প্রয়োগের নিয়ম এবং দুটি Residual পথের যোগফল সবই চোখের সামনে ধাপে ধাপে লেখা হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "নিরাপদ Artifact সংরক্ষণ ও Offline Inference",
+          "body": "স্থানীয়ভাবে ফাইল সংরক্ষণ করলে তিনটি Artifact তৈরি হয়: `transformer.pt`, `schema.json` এবং `checksums.json`। নিরাপত্তার নিয়ম মেনে সবসময় কেবল নিজের তৈরি বিশ্বস্ত ও সামঞ্জস্যপূর্ণ `state_dict` লোড করা উচিত; আমাদের যাচাইকরণ স্ক্রিপ্টেও তাই স্পষ্টভাবে `weights_only=True` এবং `map_location=\"cpu\"` ব্যবহার করা হয়। অন্যদিকে আমাদের অ্যাপটি সরাসরি সংখ্যার JSON ফাইল থেকে Weight পড়ে নিজস্ব Dart কোডে Inference চালায়—বাইরের কোনো রিমোট Model, API কল বা Authentication-এর এখানে কোনো প্রয়োজন নেই।"
+        },
+        {
+          "type": "text",
+          "title": "সংখ্যাগত নির্ভুলতা বনাম আর্কিটেকচারের শ্রেষ্ঠত্ব",
+          "body": "আমাদের NumPy রেফারেন্স ফাংশনটি PyTorch মডিউলের ভেতরের প্রতিটি মধ্যবর্তী Tensor-এর সাথে সূক্ষ্মভাবে মিলিয়ে দেখা হয়। একই ট্রেন করা Weight-এর ওপর Position বন্ধ করা, পুরো উইন্ডো উন্মুক্ত রাখা কিংবা বৈধ দৈর্ঘ্য ছোট করে দেওয়া (`valid = 10`)—এগুলো সবই মডেলটির আচরণ বোঝার জন্য ঘোষিত হস্তক্ষেপ (Inference Intervention)। তবে একটি মৌলিক পার্থক্য সবসময় মনে রাখবেন: দুটি ভিন্ন কোডের সংখ্যাগত ফলাফল হুবহু মিলে যাওয়ার অর্থ হলো আমাদের ইমপ্লিমেন্টেশন গাণিতিকভাবে নির্ভুল—এটি কিন্তু বাস্তব সমস্যায় এই আর্কিটেকচারটিই অন্য সবার চেয়ে সেরা, এমন কোনো অভিজ্ঞতালব্ধ শ্রেষ্ঠত্ব প্রমাণ করে না।"
+        }
+      ]
+    },
+    {
+      "id": "ch20_experiment",
+      "title": "পূর্ণাঙ্গ Transformer এক্সপেরিমেন্ট ও ফলাফল যাচাই",
+      "subtitle": "ট্রেনিং, মধ্যবর্তী Tensor পরিদর্শন, Baseline তুলনা ও স্বয়ংক্রিয় Audit",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "একটিমাত্র স্বচ্ছ ও পুনরুৎপাদনযোগ্য ট্রেনিং রান",
+          "body": "আগের পাঠে প্রস্তুত করা ডেটা ও মডেল নিয়ে এবার আমরা পুরো ট্রেনিং ও মূল্যায়ন প্রক্রিয়াটি একত্রে চালাব। কেবল ২০১১ সালের ট্রেনিং অংশ থেকে পাওয়া স্কেলিং ধ্রুবক, স্থির `seed = 20`, ঠিক 80টি অপটিমাইজার আপডেট, সময়ের ক্রম মেনে এক-ধাপ পরের (One-step) মূল্যায়ন এবং তিনটি বাস্তব উইন্ডোর (`t = 365, 400, 540`) পূর্ণাঙ্গ রেফারেন্স ট্রেস—সবকিছুই একটিমাত্র সুনির্দিষ্ট রান থেকে তৈরি হয়। এখানে কোনো Validation Search, Early Stopping, সুবিধাজনক সেরা Epoch বাছাই কিংবা ভালো ফলাফল দেখে বেছে নেওয়া Seed রিপোর্ট করা হয়নি; কোডে আগে থেকে ঘোষিত চূড়ান্ত রেসিপিটিই হুবহু ব্যবহৃত হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "পাঁচটি রেফারেন্স মোডে নিখুঁত ক্রস-চেক",
+          "body": "বেছে নেওয়া প্রতিটি বাস্তব উইন্ডোর জন্য আমরা মোট পাঁচটি ভিন্ন রেফারেন্স মোড পরীক্ষা করি: Causal ও Full দৃশ্যমানতার সাথে বৈধ দৈর্ঘ্য `valid = 14` ও `valid = 10`-এর চারটি সমন্বয়, এবং তার সাথে পঞ্চম মোড হিসেবে Position ছাড়া `causal = True, valid = 14, use_position = False`। প্রতিটি মোডেই সবগুলো প্রধান মধ্যবর্তী State, প্রতিটি Head-এর `Q`, `K`, `V`, `scores`, `weights`, মিশ্রিত আউটপুট এবং চূড়ান্ত Scalar Prediction স্বতন্ত্রভাবে NumPy হিসাবের সাথে `2e-11` সীমার ভেতর মিলিয়ে দেখা হয়। তবে মূল ট্রেন করা মডেলের পারফরম্যান্স মাপার সময় কেবল আসল চুক্তিটিই (`causal = True`, `valid = 14` এবং Positional Encoding সহ) ব্যবহৃত হয়।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ পূর্ণাঙ্গ ট্রেনিং, ক্রস-চেক ও রিপোর্ট তৈরির স্ক্রিপ্ট",
+          "body": "from pathlib import Path\nimport argparse, hashlib, importlib.util, json, platform, sys\nimport numpy as np\nimport torch\nfrom torch import nn\n\nDATA = Path(\"assets/datasets/bike_sharing\").resolve()\n\n\ndef prepare(path):\n    spec = importlib.util.spec_from_file_location(\n        \"ch20_sequence_source\", path.with_name(\"sequence_workflow.py\")\n    )\n    module = importlib.util.module_from_spec(spec)\n    sys.modules[spec.name] = module\n    spec.loader.exec_module(module)\n    return module.prepare(path)\n\n\ndef windows(y, mean, scale, start, end):\n    y = np.asarray(y, dtype=float)\n    if (\n        y.ndim != 1\n        or not np.isfinite(y).all()\n        or not np.isfinite(mean)\n        or not np.isfinite(scale)\n        or scale <= 0\n        or start < 14\n        or end > len(y)\n        or start >= end\n    ):\n        raise ValueError(\"Finite causal windows\")\n    ids = np.arange(start, end)\n    return (\n        torch.tensor(\n            np.stack([(y[t - 14 : t] - mean) / scale for t in ids])[:, :, None],\n            dtype=torch.float64,\n        ),\n        torch.tensor((y[ids] - mean) / scale, dtype=torch.float64),\n        ids,\n    )\n\n\ndef positions():\n    pos = torch.arange(14, dtype=torch.float64)[:, None]\n    freq = torch.exp(\n        torch.arange(0, 4, 2, dtype=torch.float64) * (-np.log(10000.0) / 4)\n    )\n    pe = torch.zeros(14, 4, dtype=torch.float64)\n    pe[:, 0::2] = torch.sin(pos * freq)\n    pe[:, 1::2] = torch.cos(pos * freq)\n    return pe\n\n\nclass CountTransformer(nn.Module):\n    def __init__(self):\n        super().__init__()\n        self.input = nn.Linear(1, 4, dtype=torch.float64)\n        self.norm1 = nn.LayerNorm(4, eps=1e-5, dtype=torch.float64)\n        self.attn = nn.MultiheadAttention(\n            4, 2, dropout=0.0, batch_first=True, dtype=torch.float64\n        )\n        self.norm2 = nn.LayerNorm(4, eps=1e-5, dtype=torch.float64)\n        self.ff1 = nn.Linear(4, 8, dtype=torch.float64)\n        self.ff2 = nn.Linear(8, 4, dtype=torch.float64)\n        self.head = nn.Linear(4, 1, dtype=torch.float64)\n        self.register_buffer(\"position\", positions())\n\n    def inspect(self, X, causal=True, valid=14, use_position=True):\n        if (\n            X.ndim != 3\n            or X.shape[1:] != (14, 1)\n            or not torch.isfinite(X).all()\n            or not isinstance(valid, int)\n            or not 1 <= valid <= 14\n        ):\n            raise ValueError(\"Finite X[B,14,1], valid1..14\")\n        x = self.input(X) + (self.position if use_position else 0)\n        n = self.norm1(x)\n        blocked = (\n            torch.triu(torch.ones(14, 14, dtype=torch.bool), diagonal=1)\n            if causal\n            else torch.zeros(14, 14, dtype=torch.bool)\n        )\n        padding = (torch.arange(14)[None] >= valid).expand(X.shape[0], -1)\n        out, w = self.attn(\n            n,\n            n,\n            n,\n            attn_mask=blocked,\n            key_padding_mask=padding,\n            need_weights=True,\n            average_attn_weights=False,\n        )\n        residual = x + out\n        n2 = self.norm2(residual)\n        hidden = torch.relu(self.ff1(n2))\n        ff = self.ff2(hidden)\n        state = residual + ff\n        return {\n            \"embedding\": x,\n            \"norm1\": n,\n            \"attention\": out,\n            \"weights\": w,\n            \"residual1\": residual,\n            \"norm2\": n2,\n            \"ff_hidden\": hidden,\n            \"ff_output\": ff,\n            \"state\": state,\n            \"prediction\": self.head(state[:, valid - 1]).squeeze(-1),\n        }\n\n    def forward(self, X):\n        return self.inspect(X)[\"prediction\"]\n\n\ndef weights(model):\n    return {k: v.detach().tolist() for k, v in model.state_dict().items()}\n\n\ndef manual(sequence, p, causal=True, valid=14, use_position=True):\n    s = np.asarray(sequence, dtype=float)\n    if (\n        s.shape != (14,)\n        or not np.isfinite(s).all()\n        or not isinstance(valid, int)\n        or not 1 <= valid <= 14\n    ):\n        raise ValueError(\"Finite14-step sequence, valid1..14\")\n\n    def array(key):\n        return np.asarray(p[key], dtype=float)\n\n    def linear(x, key):\n        return x @ array(key + \".weight\").T + array(key + \".bias\")\n\n    def norm(x, key):\n        return (x - x.mean(-1, keepdims=True)) / np.sqrt(\n            x.var(-1, keepdims=True) + 1e-5\n        ) * array(key + \".weight\") + array(key + \".bias\")\n\n    x = linear(s[:, None], \"input\") + (array(\"position\") if use_position else 0)\n    n = norm(x, \"norm1\")\n    Q, K, V = np.split(\n        n @ array(\"attn.in_proj_weight\").T + array(\"attn.in_proj_bias\"), 3, axis=-1\n    )\n    q, k, v = [a.reshape(14, 2, 2).transpose(1, 0, 2) for a in [Q, K, V]]\n    scores = q @ k.transpose(0, 2, 1) / np.sqrt(2.0)\n    allowed = np.broadcast_to(np.arange(14)[None, :] < valid, (14, 14)).copy()\n    if causal:\n        allowed &= np.arange(14)[None, :] <= np.arange(14)[:, None]\n    logits = np.where(allowed[None], scores, -np.inf)\n    ex = np.exp(logits - logits.max(-1, keepdims=True))\n    w = ex / ex.sum(-1, keepdims=True)\n    mixed = w @ v\n    concat = mixed.transpose(1, 0, 2).reshape(14, 4)\n    out = linear(concat, \"attn.out_proj\")\n    r1 = x + out\n    n2 = norm(r1, \"norm2\")\n    hidden = np.maximum(0, linear(n2, \"ff1\"))\n    ff = linear(hidden, \"ff2\")\n    state = r1 + ff\n    return {\n        \"embedding\": x.tolist(),\n        \"norm1\": n.tolist(),\n        \"q\": q.tolist(),\n        \"k\": k.tolist(),\n        \"v\": v.tolist(),\n        \"scores\": scores.tolist(),\n        \"weights\": w.tolist(),\n        \"mixed\": mixed.tolist(),\n        \"concat\": concat.tolist(),\n        \"attention\": out.tolist(),\n        \"residual1\": r1.tolist(),\n        \"norm2\": n2.tolist(),\n        \"ff_hidden\": hidden.tolist(),\n        \"ff_output\": ff.tolist(),\n        \"state\": state.tolist(),\n        \"prediction\": float(linear(state[valid - 1], \"head\")[0]),\n    }\n\n\ndef analyse_source(path, artifact_dir=None):\n    dates, y, mean, scale = prepare(path)\n    X, target, ids = windows(y, mean, scale, 14, 365)\n    V, _, dev = windows(y, mean, scale, 365, 547)\n    torch.manual_seed(20)\n    model = CountTransformer()\n    opt = torch.optim.Adam(model.parameters(), lr=0.01, foreach=False)\n    history = []\n    for epoch in range(81):\n        model.eval()\n        with torch.no_grad():\n            history.append(\n                {\n                    \"epoch\": epoch,\n                    \"train_mse_scaled\": nn.functional.mse_loss(model(X), target).item(),\n                }\n            )\n        if epoch == 80:\n            break\n        # Gradients accumulate: clear them at the intended optimizer-step boundary.\n        model.train()\n        opt.zero_grad(set_to_none=True)\n        nn.functional.mse_loss(model(X), target).backward()\n        nn.utils.clip_grad_norm_(model.parameters(), 1.0, error_if_nonfinite=True)\n        opt.step()\n    model.eval()\n    p = weights(model)\n    queries = []\n    with torch.no_grad():\n        pred = model(V).numpy() * scale + mean\n    scores = {\n        name: {\n            \"mae\": float(np.abs(v - y[dev]).mean()),\n            \"rmse\": float(np.sqrt(np.mean((v - y[dev]) ** 2))),\n        }\n        for name, v in {\n            \"naive\": y[dev - 1],\n            \"seasonal7\": y[dev - 7],\n            \"transformer\": pred,\n        }.items()\n    }\n    for t in [365, 400, 540]:\n        seq = ((y[t - 14 : t] - mean) / scale).tolist()\n        refs = []\n        for causal, valid, pos in [\n            (True, 14, True),\n            (False, 14, True),\n            (True, 10, True),\n            (False, 10, True),\n            (True, 14, False),\n        ]:\n            m = manual(seq, p, causal, valid, pos)\n            with torch.no_grad():\n                actual = model.inspect(\n                    torch.tensor(seq, dtype=torch.float64).reshape(1, 14, 1),\n                    causal,\n                    valid,\n                    pos,\n                )\n            for key in actual:\n                np.testing.assert_allclose(\n                    m[key], actual[key][0].numpy(), atol=2e-11, rtol=2e-11\n                )\n            refs.append(\n                {\"causal\": causal, \"valid\": valid, \"use_position\": pos, \"trace\": m}\n            )\n        queries.append(\n            {\n                \"target_index\": t,\n                \"target_date\": dates[t],\n                \"history_dates\": dates[t - 14 : t],\n                \"counts\": y[t - 14 : t].tolist(),\n                \"standardized\": seq,\n                \"outcome\": float(y[t]),\n                \"references\": refs,\n            }\n        )\n    count = sum(v.numel() for v in model.parameters())\n    assert count == 185\n    provenance = {\n        \"source\": \"UCI Bike Sharing, Fanaee-T (2013), CC BY4.0\",\n        \"sha256\": \"a6bcf826782d3c0fbfdcbeead17cd0884185a0dafe8ff10cd48a874ee7ba18be\",\n    }\n    report = {\n        **provenance,\n        \"versions\": {\n            \"python\": platform.python_version(),\n            \"torch\": torch.__version__,\n            \"numpy\": np.__version__,\n        },\n        \"device\": \"cpu\",\n        \"dtype\": \"float64\",\n        \"train_days\": 365,\n        \"train_windows\": 351,\n        \"development_windows\": 182,\n        \"reserved_outcomes_used\": 0,\n        \"mean\": mean,\n        \"scale\": scale,\n        \"parameters\": count,\n        \"seed\": 20,\n        \"updates\": 80,\n        \"learning_rate\": 0.01,\n        \"initial_train_mse_scaled\": history[0][\"train_mse_scaled\"],\n        \"final_train_mse_scaled\": history[-1][\"train_mse_scaled\"],\n        \"rolling_one_step\": scores,\n        \"assumptions\": [\n            \"Counts known after day close; only past14 counts enter next-day input.\",\n            \"2011-only scaling; Jan-Jun2012 development already explored in Chapters13/19, not fresh confirmation.\",\n            \"One explicit pre-norm block: d_model4,heads2,d_head2,FF8,ReLU,LayerNorm eps1e-5,causal attention,dropout0; no final norm.\",\n            \"One fixed seed20/80-update full-batch Adam.01 recipe, clipping1; no architecture/seed/rate search.\",\n            \"Window-relative sinusoidal positions reset0..13; this is not calendar encoding or an LLM.\",\n            \"Full-attention/no-position/prefix-length references are inference interventions on the same trained weights, not separately trained models.\",\n            \"Every query has at least one allowed key; valid10 is a declared prefix truncation, not missing source days.\",\n            \"Final184 outcomes are neither scored nor exported. Integrity checks may read the full original CSV.\",\n            \"Attention weights are mixing coefficients, not established feature importance or causal explanation.\",\n        ],\n    }\n    asset = {\n        **provenance,\n        \"mean\": mean,\n        \"scale\": scale,\n        \"dtype\": \"float64\",\n        \"lookback\": 14,\n        \"width\": 4,\n        \"heads\": 2,\n        \"ff_width\": 8,\n        \"parameter_count\": 185,\n        \"train_end\": \"2011-12-31\",\n        \"development_end\": \"2012-06-30\",\n        \"weights\": p,\n        \"queries\": queries,\n        \"train_history\": history,\n        \"rolling_metrics\": scores,\n    }\n    if artifact_dir:\n        folder = Path(artifact_dir)\n        folder.mkdir(parents=True, exist_ok=True)\n        torch.save(model.state_dict(), folder / \"transformer.pt\")\n        (folder / \"schema.json\").write_text(\n            json.dumps(\n                {\n                    \"input\": [\"B\", 14, 1],\n                    \"mean\": mean,\n                    \"scale\": scale,\n                    \"causal\": True,\n                    \"position\": \"window-relative sinusoidal0..13\",\n                    \"source_sha256\": provenance[\"sha256\"],\n                    \"parameters\": 185,\n                },\n                indent=2,\n            )\n            + \"\\n\"\n        )\n        (folder / \"checksums.json\").write_text(\n            json.dumps(\n                {\n                    n: hashlib.sha256((folder / n).read_bytes()).hexdigest()\n                    for n in [\"transformer.pt\", \"schema.json\"]\n                },\n                indent=2,\n            )\n            + \"\\n\"\n        )\n    return report, asset\n\n\ndef run_analysis(path, artifact_dir=None):\n    threads = torch.get_num_threads()\n    try:\n        torch.set_num_threads(1)\n        with torch.random.fork_rng(devices=[]):\n            return analyse_source(path, artifact_dir)\n    finally:\n        torch.set_num_threads(threads)\n\n\nreport, asset = run_analysis(DATA / \"day.csv\")\nprint(report)\n"
+        },
+        {
+          "type": "code",
+          "title": "প্যারামিটার সংখ্যা, উইন্ডোর সীমানা ও Baseline স্কোর যাচাই",
+          "body": "assert report[\"parameters\"] == 185 and report[\"train_windows\"] == 351\nassert report[\"reserved_outcomes_used\"] == 0\nprint(report[\"rolling_one_step\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "সংরক্ষিত State-এর কাঠামো ও কঠোর যাচাই চুক্তি",
+          "body": "মডেলের সংরক্ষিত `state_dict`-এর ভেতরে থাকে Input Projection, দুটি `LayerNorm`-এর Affine প্যারামিটার জোড়া, একত্রে প্যাক করা `QKV` ও Output Projection, `FFN` ও `head` স্তরের প্যারামিটার এবং স্থির Positional Buffer। খেয়াল রাখবেন, মডেলের ট্রেনযোগ্য Parameter সংখ্যা 185টি হলেও স্থির Positional Buffer-এর 56টি মান (`14 × 4`) এর থেকে আলাদা অ-ট্রেনযোগ্য State হিসেবে সংরক্ষিত থাকে। লোড করার সময় Tensor-এর Shape, `dtype`, Positional মান বা Schema-তে সামান্যতম গরমিল থাকলে অ্যাপ সাথে সাথে সেই ফাইল প্রত্যাখ্যান করে।"
+        },
+        {
+          "type": "text",
+          "title": "সুশৃঙ্খল CLI আচরণ ও নিরাপদ ফাইল লিখন",
+          "body": "স্ক্রিপ্টটি সাধারণভাবে চালালে কেবল রিপোর্ট প্রিন্ট করে এবং প্রজেক্টের কোনো Asset ফাইলে হাত দেয় না। কেবল স্পষ্টভাবে `--write-labs` ফ্ল্যাগ দিলেই `attention_lab.json` নতুন করে লেখা হয়, আর `--artifact-dir` দিলে নির্দিষ্ট ফোল্ডারে স্থানীয় Checkpoint, `schema.json` ও `checksums.json` তৈরি হয়। ভালো ইঞ্জিনিয়ারিং অভ্যাস মেনে ফাইলটি কেবল `import` করলে আপনা-আপনি ট্রেনিং শুরু হয় না, যেকোনো বাইরের ডিরেক্টরি থেকেই মূল ডেটাসেট খুঁজে নেয় এবং রান শেষে কলকারী কোডের র‍্যান্ডম সিড অবস্থা (`fork_rng`) ও CPU থ্রেড সংখ্যা অবিকল আগের অবস্থায় ফিরিয়ে দেয়।"
+        },
+        {
+          "type": "text",
+          "title": "প্রমাণের পরিধি ও মূল্যায়নের সততা",
+          "body": "এই এক্সপেরিমেন্টের ঐতিহাসিক সাইকেল সংখ্যাগুলো সম্পূর্ণ বাস্তব ডেটা থেকে নেওয়া, আর শেষের অংশ ব্লক করা বা Position চালু-বন্ধ করার সুবিধাগুলো রাখা হয়েছে মডেলের ভেতরের আচরণ সরাসরি পরখ করার জন্য। গ্রাফে বা টেবিলে প্রকৃত ফলাফল (`outcome`) দেখানো হয় কেবল Prediction-এর সাথে তুলনা করার সুবিধার্থে—এটি কখনোই Model-এর ইনপুটে প্রবেশ করে না। যেহেতু জানুয়ারি–জুন ২০১২ সময়ের এই Development ডেটা আগের অধ্যায়গুলোতেও বিশ্লেষিত হয়েছে, তাই একে সম্পূর্ণ অদেখা চূড়ান্ত পরীক্ষা কিংবা বিভিন্ন আর্কিটেকচারের নিরপেক্ষ প্রতিযোগিতার রায় হিসেবে দাবি করা সমীচীন নয়।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে যাচাইয়ের অনুশীলন",
+          "body": "নিজের দক্ষতা ঝালিয়ে নিতে রিপোর্টের মেট্রিকগুলো আলাদাভাবে হিসাব করে মেলান, সংরক্ষিত Checkpoint পুনরায় লোড করুন এবং পুরো Block-এর মধ্যবর্তী Tensor-গুলো ধাপে ধাপে মিলিয়ে দেখুন। সবসময় মনে রাখবেন, ট্রেনিং Loss কমে যাওয়া আর Baseline-কে পরাজিত করা এক কথা নয়—দুটি দাবিকে আলাদাভাবেই যাচাই করতে হয়। পাশাপাশি মূল ডেটার Index সীমানা পরীক্ষা করে নিজেই নিশ্চিত হোন যে শেষের সংরক্ষিত 184টি দিনের ফলাফল মডেলিং বা এক্সপোর্টের কোথাও ব্যবহৃত হয়নি।"
+        }
+      ]
+    },
+    {
+      "id": "ch20_evaluation",
+      "title": "মূল্যায়ন: Baseline তুলনা, Intervention ও সীমাবদ্ধতার সৎ পাঠ",
+      "subtitle": "আমাদের Development ফলাফল আসলে কী বলে, আর কী বলে না?",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "তিনটি পদ্ধতির প্রকৃত MAE ও RMSE তুলনা",
+          "body": "মূল সাইকেল সংখ্যার এককে ১৮২টি Development দিনের Rolling One-step Forecast-এ তিনটি পদ্ধতির ফলাফল খুব শিক্ষণীয় একটি চিত্র তুলে ধরে: সরল `naive` পদ্ধতিতে `MAE = 900.604396` ও `RMSE = 1273.461291`, সাপ্তাহিক `seasonal7` পদ্ধতিতে `MAE = 1090.791209` ও `RMSE = 1469.171726`, আর আমাদের স্থির রেসিপির `Transformer` মডেলে `MAE = 967.508168` ও `RMSE = 1191.254609`। লক্ষ্য করুন, বড় ত্রুটির প্রতি সংবেদনশীল `RMSE`-তে `Transformer` এগিয়ে থাকলেও গড় পরম ত্রুটি (`MAE`)-তে কিন্তু সাধারণ `naive` Baseline-ই কম ত্রুটি দিয়েছে! মনে রাখবেন, এটি কেবল আমাদের এই নির্দিষ্ট রানের ফলাফল—কোনো সার্বজনীন আর্কিটেকচার র‍্যাঙ্কিং নয়।"
+        },
+        {
+          "type": "text",
+          "title": "ট্রেনিং Loss হ্রাসের প্রকৃত অর্থ",
+          "body": "Standardized স্কেলে আমাদের ট্রেনিং সেটের `MSE` শুরুর `1.123252928` থেকে ৮০ ধাপ শেষে কমে `0.273072650`-এ নেমে এসেছে। এই Learning Curve প্রমাণ করে যে আমাদের গ্রেডিয়েন্ট প্রবাহ ও সংখ্যাগত অপটিমাইজেশন ঠিকঠাক কাজ করছে; কিন্তু ট্রেনিং Loss কমা বা পরিচিত Development সেটের স্কোর কখনোই নতুন অদেখা ডেটায় সাফল্যের চূড়ান্ত নিশ্চয়তা দেয় না। তাছাড়া একাধিক স্বাধীন Seed কিংবা সমান টিউনিং বাজেটের নিয়ন্ত্রিত আর্কিটেকচার তুলনাও এখানে চালানো হয়নি।"
+        },
+        {
+          "type": "math",
+          "title": "MAE ও RMSE নির্ণয়ের সমীকরণ",
+          "body": "\\mathrm{MAE}={1\\over N}\\sum_t|\\widehat y_t-y_t|,\\quad\\mathrm{RMSE}=\\sqrt{{1\\over N}\\sum_t(\\widehat y_t-y_t)^2}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ সংরক্ষিত Lab ফাইল থেকে Rolling মেট্রিক পরিদর্শন",
+          "body": "from pathlib import Path\nimport json\n\na = json.loads(Path(\"assets/datasets/bike_sharing/attention_lab.json\").read_text())\nfor name, metrics in a[\"rolling_metrics\"].items():\n    print(name, metrics)\nassert len(a[\"train_history\"]) == 81\n"
+        },
+        {
+          "type": "text",
+          "title": "Baseline তুলনার ন্যায্যতা ও One-step নিয়ম",
+          "body": "তুলনাটি যেন শতভাগ ন্যায্য হয়, সেজন্য প্রতিটি পদ্ধতিই একই ১৮২টি Development দিনের ঠিক পরের দিনের চাহিদা মূল সংখ্যার এককে অনুমান করে। এখানে `naive` পদ্ধতি আগের দিনের সর্বশেষ জানা সংখ্যাটিকে এবং `seasonal7` পদ্ধতি ঠিক সাত দিন আগের সংখ্যাটিকে Prediction হিসেবে নেয়। যেহেতু দিন শেষে ওই দিনের প্রকৃত চাহিদা জানা হয়ে যায়, তাই পরের দিনের One-step Forecast করার সময় আগের Development দিনগুলোর প্রকৃত মান বৈধভাবেই ইনপুট উইন্ডোতে ঢুকতে পারে। তবে টানা সাত দিন সামনে অনুমান করার (`Recursive 7-step`) প্রোটোকল এই রিপোর্টের বিষয় নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Inference Intervention ও Attention Heatmap-এর সীমা",
+          "body": "অ্যাপে Position বন্ধ করা, পুরো উইন্ডোর Mask খুলে দেওয়া কিংবা `valid = 10` করে দেওয়া—এগুলো সবই ইতিমধ্যে ট্রেন হওয়া স্থির Parameter-এর ওপর চালানো Inference-সময়ের পরীক্ষা। এগুলোকে শুরু থেকে আলাদাভাবে ট্রেন করা Ablation Study কিংবা কোনো উপাদানের প্রকৃত কার্যকারণ গুরুত্বের (Causal Importance) মাপকাঠি ভাবা চলবে না। একইভাবে মনে রাখবেন, Attention Heatmap কেবল তথ্য মেশানোর অনুপাত (Mixing Coefficients) দেখায়; `Value` Vector, দুটি Residual পথ, `FFN`-এর রূপান্তর এবং পরস্পর সম্পর্কিত ইনপুটগুলোর প্রভাব বিবেচনায় না নিয়ে কেবল উজ্জ্বল Attention ঘর দেখে চূড়ান্ত Feature Attribution দাবি করা গুরুতর ভুল।"
+        },
+        {
+          "type": "text",
+          "title": "ফলাফল ভালো বা খারাপ—উভয় ক্ষেত্রেই করণীয় Audit",
+          "body": "মডেলের ফলাফল হতাশাজনক হোক কিংবা চমকপ্রদ—উভয় ক্ষেত্রেই একজন প্রকৌশলীর প্রথম দায়িত্ব হলো তথ্যের প্রাপ্যতা, স্কেলিং, Position Offset ও Mask, Baseline তুলনা এবং সময়ের সাথে ডেটার প্রকৃতি পরিবর্তন (Data Shift) খতিয়ে দেখা। ভবিষ্যতে অতিরিক্ত Feature, বাড়তি Layer বা Hyperparameter Search নিয়ে নতুন পরীক্ষা সাজানো যেতে পারে; তবে এই অধ্যায়ে সংরক্ষিত শেষ 184টি ফলাফল টিউনিংয়ে একদমই ছোঁয়া হয়নি। কোনো Development সেট বারবার দেখা হয়ে গেলে চূড়ান্ত সিদ্ধান্তের জন্য অবশ্যই নতুন ও স্বতন্ত্র Confirmation প্রোটোকল নকশা করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ ফলাফল উপস্থাপনের পেশাদার কাঠামো",
+          "body": "ইন্টারভিউ বা কারিগরি রিভিউতে ফলাফল ব্যাখ্যা করার সময় একটি সুশৃঙ্খল ছন্দ মেনে কথা বলুন: প্রথমে বাস্তব পর্যবেক্ষণ (Observation), এরপর ডেটা চুক্তির যাচাই (Contract Audit), সংখ্যাগত শুদ্ধতা পরীক্ষা, Baseline তুলনা, অনিশ্চয়তা ও সীমাবদ্ধতা এবং সবশেষে পরবর্তী পরীক্ষার সুনির্দিষ্ট প্রস্তাব। কেবল 'আমরা Transformer ব্যবহার করেছি'—নামের এই চাকচিক্যের ওপর ভর করে প্রোডাকশন প্রস্তুতি, কার্যকারণ দাবি কিংবা বর্তমান বাজারের চাহিদা সম্পর্কে সিদ্ধান্ত টানবেন না; কারণ ঐতিহাসিক পর্যবেক্ষণমূলক ডেটার ফলাফল আর বাস্তব Deployment-এর বৈধতা এক জিনিস নয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch20_readiness",
+      "title": "Attention কোডিং ও Interview প্রস্তুতির চূড়ান্ত যাচাই",
+      "subtitle": "গাণিতিক সমীকরণ থেকে নির্ভুল ইমপ্লিমেন্টেশন ও ফলাফল ব্যাখ্যার সক্ষমতা",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "না দেখে সমীকরণ ও মূল ধারণা ব্যাখ্যার সক্ষমতা",
+          "body": "অধ্যায়ের শেষ প্রান্তে এসে প্রথমেই নিশ্চিত করুন যে আপনি খাতা-কলমে `Q`, `K`, `V` Projection, `√d_k` দিয়ে ভাগ করার গাণিতিক যুক্তি, সংখ্যাগতভাবে স্থিতিশীল (Stable) Masked Softmax, Multi-Head-এর জোড়া লাগানো ও `W_O` প্রজেকশন এবং Pre-Norm Residual পথের সমীকরণগুলো না দেখেই প্রতিপাদন করতে পারছেন। পাশাপাশি `LayerNorm`-এ কেন Population Variance ব্যবহৃত হয় এবং বর্গমূলের ভেতরে `epsilon` কোথায় বসে, তা পরিষ্কারভাবে ব্যাখ্যা করার প্রস্তুতি রাখুন। বিশেষ করে খেয়াল রাখবেন, ক্রমের সংকেত দেওয়া Positional Encoding এবং দৃশ্যমানতা নিয়ন্ত্রণকারী Mask-এর ভূমিকা যেন কখনোই একে অপরের সাথে গুলিয়ে না যায়।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে কোডিং ও প্রান্তিক পরিস্থিতি পরীক্ষা",
+          "body": "এই অধ্যায়ের 10টি Coding Exercise কোনো সমাধান না দেখেই নিজের স্থানীয় Python পরিবেশে লিখে ফেলুন। কোড লেখার সময় প্রান্তিক পরিস্থিতিগুলো (Edge Cases) আলাদাভাবে পরীক্ষা করুন: কেবল একটি বৈধ Key খোলা থাকা, অতি বড় বা ছোট চরম Logit মান, শেষে ব্লক করা অংশ, Padded Query অবস্থান, অ-বর্গাকার (Non-square) KV Cache ও তার Position Offset, `Batch = 1` আকার, ভুল Shape এবং `NaN` বা `Inf` ইনপুট। মনে রাখবেন, আমাদের অ্যাপটি আপনার হিসাব করা সংখ্যার আউটপুট ও খসড়া নোট যাচাই করে—এটি যেকোনো ইচ্ছেমতো Python কোড চালানোর অটো-গ্রেডার নয়, তাই নিজের মেশিনে টেস্ট চালিয়ে হাত পাকা করাই সেরা উপায়।"
+        },
+        {
+          "type": "math",
+          "title": "নির্ভরযোগ্য Transformer চুক্তির পাঁচটি স্তম্ভ",
+          "body": "\\mathrm{contract}=\\mathrm{shape}+\\mathrm{visibility}+\\mathrm{position}+\\mathrm{normalization}+\\mathrm{objective}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ চূড়ান্ত Lab কনফিগারেশন ও সীমানা যাচাই",
+          "body": "from pathlib import Path\nimport json\n\na = json.loads(Path(\"assets/datasets/bike_sharing/attention_lab.json\").read_text())\nassert a[\"width\"] == 4 and a[\"heads\"] == 2 and a[\"parameter_count\"] == 185\nassert a[\"train_end\"] == \"2011-12-31\" and a[\"development_end\"] == \"2012-06-30\"\nprint(\"Defend projection, mask polarity, residual paths and evidence scope.\")\n"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব এক্সপেরিমেন্টের প্রতিটি সিদ্ধান্তের যুক্তি",
+          "body": "আমাদের বাস্তব রানটি নিয়ে প্রশ্ন করা হলে যেন প্রতিটি সিদ্ধান্তের পেছনের কারণ স্পষ্টভাবে তুলে ধরতে পারেন: কেন কেবল ২০১১ সালের ডেটা দিয়ে স্কেলিং করা হয়েছে, কীভাবে বিগত 14 দিনের Causal ইনপুট সাজানো হয়েছে, 185টি Parameter কোন স্তরে কয়টি করে আছে, কেন স্থির Seed ও Update সংখ্যা নেওয়া হয়েছে এবং Development সেট পুনর্ব্যবহারের সীমাবদ্ধতা কী। Baseline ত্রুটিগুলো অনুমান থেকে না বলে সরাসরি রিপোর্টের প্রকৃত সংখ্যা থেকে উল্লেখ করুন। মনে রাখবেন—ট্রেনিং Loss হ্রাস, রেফারেন্স কোডের সাথে সংখ্যাগত মিল, Intervention-এর আচরণ এবং বাস্তব Prediction-এর কার্যকারিতা চারটি সম্পূর্ণ ভিন্ন প্রমাণ।"
+        },
+        {
+          "type": "text",
+          "title": "মৌলিক গবেষণাপত্র ও প্রামাণ্য রেফারেন্স",
+          "body": "মূল উৎস হিসেবে Vaswani ও সহলেখকদের কালজয়ী গবেষণাপত্র Attention Is All You Need (https://arxiv.org/abs/1706.03762) অবশ্যই পড়ে দেখতে পারেন। এছাড়া `PyTorch 2.15`-এর অফিশিয়াল `MultiheadAttention`, `scaled_dot_product_attention` (SDPA) ও `LayerNorm` ডকুমেন্টেশন এবং UCI Bike Sharing ডেটাসেটের উৎস ও লাইসেন্স সংক্রান্ত তথ্য আমাদের README ফাইলে যুক্ত রয়েছে। তবে এই অধ্যায়ের সমস্ত পাঠ, উদাহরণ ও প্রয়োজনীয় ডেটা সম্পূর্ণ Offline অবস্থায় অ্যাপের ভেতরেই বান্ডেল করা আছে।"
+        },
+        {
+          "type": "text",
+          "title": "Interview প্রস্তুতির বাস্তবমুখী অনুশীলন",
+          "body": "অধ্যায়ের শেষে থাকা মৌলিক FAANG-ধাঁচের প্রশ্নগুলো এমনভাবে নকশা করা হয়েছে যেন কোডিং, সূক্ষ্ম বাগ খুঁজে বের করা, সিস্টেম পর্যায়ের Trade-off এবং বৈজ্ঞানিক যুক্তিবোধ একসাথে অনুশীলন করা যায়। এগুলো কোনো প্রতিষ্ঠানের ফাঁস হওয়া প্রশ্ন নয় কিংবা মুখস্থ করলে চাকরির নিশ্চয়তা দেয় না; বরং Tensor-এর Shape ও Mask নির্ভুলভাবে লেখা, সময়ের Causal চুক্তি রক্ষা করা এবং Baseline-এর সাপেক্ষে পরিমিত যুক্তি দেওয়ার প্রকৃত প্রকৌশলগত অভ্যাস গড়তেই এগুলো অনুশীলন করুন।"
+        },
+        {
+          "type": "text",
+          "title": "পরবর্তী অধ্যায়ে যাওয়ার প্রস্তুতি",
+          "body": "চূড়ান্ত অনুশীলনীতে নামার আগে Attention-এর Gradient প্রবাহ, Mask-এর Polarity, Positional Encoding এবং পূর্ণ হিসাবের সাথে KV Cache-এর গাণিতিক সমতা আরেকবার ঝালিয়ে নিন। এরপর পরের অধ্যায়ে—Book 3 · Chapter 7 (Deep Learning Capstone)-এ আমরা এ পর্যন্ত শেখা মডেল গঠন, নির্ভরযোগ্য ট্রেনিং এবং নিখুঁত মূল্যায়নের সবগুলো ধাপ একটি পূর্ণাঙ্গ প্রজেক্টে একত্রে প্রয়োগ করব।"
+        }
+      ]
+    }
+  ],
+  "quizzes": [
+    {
+      "id": "ch20_q1",
+      "question": "Self-Attention স্তরে Query (Q), Key (K) এবং Value (V) কোথা থেকে তৈরি হয়?",
+      "options": [
+        "সবসময় একটিমাত্র স্থির Scalar মান থেকে",
+        "একই ইনপুট Sequence-এর ওপর শেখা তিনটি আলাদা Linear Projection থেকে",
+        "ভবিষ্যতের অদেখা Target Label থেকে",
+        "কেবল স্থির Position ID থেকে, ইনপুটের তথ্য ছাড়া"
+      ],
+      "answer": 1,
+      "explanation": "Self-Attention-এ একই ইনপুট Sequence থেকে আলাদা আলাদা শেখা Linear Projection-এর মাধ্যমে Q, K ও V তৈরি হয়, যাতে প্রতিটি পদ তিনটি ভিন্ন ভূমিকায় কাজ করতে পারে (অন্যদিকে Cross-Attention-এ Q এবং K/V ভিন্ন উৎস থেকে আসতে পারে)।"
+    },
+    {
+      "id": "ch20_q2",
+      "question": "মডেলের মোট প্রস্থ D = 4 এবং সমান ভাগে ভাগ করা Head সংখ্যা H = 2 হলে Scaled Dot-Product Attention-এ কোন সংখ্যাটি দিয়ে ভাগ করতে হবে?",
+      "options": [
+        "√4",
+        "14",
+        "√2",
+        "2²"
+      ],
+      "answer": 2,
+      "explanation": "প্রতিটি Head-এর নিজস্ব Key Dimension হলো d_k = D / H = 4 / 2 = 2। তাই Dot-Product Score-এর Variance নিয়ন্ত্রণে রাখতে √d_k = √2 দিয়ে ভাগ করতে হয়।"
+    },
+    {
+      "id": "ch20_q3",
+      "question": "Softmax হিসাবের সময় সংখ্যার Overflow এড়ানোর গাণিতিকভাবে বৈধ উপায় কোনটি?",
+      "options": [
+        "চূড়ান্ত Probability-গুলোকে বর্গ (Square) করে নেওয়া",
+        "সবগুলো কাঁচা Score-এর ওপর সরাসরি exp() চালানো",
+        "Score-এর সাথে Target-এর গড় মান যোগ করা",
+        "প্রতিটি Row-এর বৈধ (Allowed) Logit-গুলোর সর্বোচ্চ মান বিয়োগ করে নেওয়া"
+      ],
+      "answer": 3,
+      "explanation": "Softmax ফাংশনে সব বৈধ Logit থেকে একই ধ্রুবক বিয়োগ করলে চূড়ান্ত Probability একটুও বদলায় না (Shift Invariance)। তাই বৈধ Row-এর সর্বোচ্চ মান বিয়োগ করলে exp()-এর ভেতরের সর্বোচ্চ ঘাত 0 হয় এবং Overflow রোধ হয় (অবশ্যই Row-টিতে অন্তত একটি বৈধ Key থাকতে হবে)।"
+    },
+    {
+      "id": "ch20_q4",
+      "question": "PyTorch-এর nn.MultiheadAttention মডিউলে Boolean ধরনের attn_mask-এ True মানের অর্থ কী?",
+      "options": [
+        "সংশ্লিষ্ট Query-Key সংযোগটি ব্লক করা (অনুমোদিত নয়)",
+        "সংশ্লিষ্ট সংযোগটি দেখার অনুমতি আছে",
+        "ওই অবস্থানে কেবল Dropout চালু আছে",
+        "ওই অবস্থানের Target Label বৈধ"
+      ],
+      "answer": 0,
+      "explanation": "সতর্ক থাকুন: PyTorch-এর nn.MultiheadAttention-এ Boolean Mask-এর True মানে অবস্থানটি ব্লক করা হবে, কিন্তু ফাংশনাল scaled_dot_product_attention-এ Boolean Mask-এর True মানে অবস্থানটি অনুমোদিত! দুটির Polarity গুলিয়ে ফেললে ফলাফল উল্টে যাবে।"
+    },
+    {
+      "id": "ch20_q5",
+      "question": "আমাদের 14-ধাপের 2-Head মডেলে average_attn_weights=False রেখে ওজন ফেরত নিলে Attention Weight Tensor-এর Shape কী হয়?",
+      "options": [
+        "[B, 14, 4]",
+        "[B, 2, 14, 14]",
+        "[2, B, 4]",
+        "[B, 185]"
+      ],
+      "answer": 1,
+      "explanation": "average_attn_weights=False দিলে Head-গুলোর ওপর গড় না করে প্রতিটি Head-এর নিজস্ব 14 × 14 Attention Map আলাদা রাখা হয়, ফলে আকার দাঁড়ায় [B, 2, 14, 14]।"
+    },
+    {
+      "id": "ch20_q6",
+      "question": "Dropout = 0 থাকা অবস্থায় অন্তত একটি বৈধ Key-বিশিষ্ট কোনো Row-তে Mask প্রয়োগের পর Attention Weight-গুলোর আচরণ কেমন হবে?",
+      "options": [
+        "সবগুলো 14টি ঘরে সমান 1/14 ওজন বসবে",
+        "পুরো Row-এর সব ওজনের যোগফল 0 হবে",
+        "ব্লক করা ঘরে ঠিক 0 বসবে এবং অনুমোদিত ওজনগুলোর যোগফল 1 হবে",
+        "অনুমোদিত ঘরে ঋণাত্মক Probability তৈরি হবে"
+      ],
+      "answer": 2,
+      "explanation": "Softmax Normalization-এর আগেই ব্লক করা অবস্থানগুলোকে −∞ করা হয় বলে তাদের ওজন ঠিক 0 হয়ে যায়, আর বাকি অনুমোদিত অবস্থানগুলোর ওজনের যোগফল নিখুঁতভাবে 1 হয়।"
+    },
+    {
+      "id": "ch20_q7",
+      "question": "কোনো একটি Query Row-এর জন্য সবগুলো Key যদি একসাথে ব্লক হয়ে যায়, তবে নির্ভরযোগ্য কোডে আমাদের কী করা উচিত?",
+      "options": [
+        "নিজে থেকে সব ঘরে সমান (Uniform) ওজন বসিয়ে দেব",
+        "উৎপন্ন হওয়া NaN মানগুলো নীরবে উপেক্ষা করব",
+        "ধরে নেব যেকোনো ফ্রেমওয়ার্ক সবসময় আপনা-আপনি 0 বসিয়ে দেবে",
+        "বৈধ Query সীমানা ও ফাঁকা Row সামলানোর জন্য সুস্পষ্ট চুক্তি (Explicit Contract) নির্ধারণ করব"
+      ],
+      "answer": 3,
+      "explanation": "সব Key ব্লক হলে Softmax-এর হর গাণিতিকভাবে 0/0 বা অসংজ্ঞায়িত হয়ে পড়ে। ভিন্ন ভিন্ন ব্যাকএন্ডের অলিখিত আচরণের ওপর ভরসা না করে কোডে স্পষ্টভাবে বৈধ Query ও ফাঁকা Row সামলানোর নিয়ম লিখে দিতে হয়।"
+    },
+    {
+      "id": "ch20_q8",
+      "question": "Attention স্তরে key_padding_mask সরাসরি কোন অবস্থানগুলোকে হিসাব থেকে বাদ দেয়?",
+      "options": [
+        "প্যাড করা Key অবস্থানগুলোকে, যাতে অন্য কেউ সেগুলোর ওপর ভর না করে",
+        "স্বয়ংক্রিয়ভাবে সবগুলো Padded Query Row-এর আউটপুটকে",
+        "সম্পূর্ণ Batch Dimension-কে",
+        "মডেলের ট্রেনযোগ্য Parameter-গুলোকে"
+      ],
+      "answer": 0,
+      "explanation": "key_padding_mask কেবল Padded Key-গুলোতে যাওয়া Attention ব্লক করে; কিন্তু Padded Query অবস্থানগুলো তখনো বৈধ Key দেখে অশূন্য আউটপুট তৈরি করতে পারে—তাই Pooling বা Loss হিসাবের সময় Query ও Loss Mask আলাদাভাবে প্রয়োগ করতে হয়।"
+    },
+    {
+      "id": "ch20_q9",
+      "question": "14 ঘরের একটি উইন্ডোতে বৈধ উপসর্গের দৈর্ঘ্য valid = 10 হলে 0-ভিত্তিক গণনায় সর্বশেষ বৈধ Readout Index কোনটি হবে?",
+      "options": [
+        "সবসময় 13",
+        "9",
+        "10",
+        "সবসময় 0"
+      ],
+      "answer": 1,
+      "explanation": "0-ভিত্তিক ইন্ডেক্সিংয়ে 10টি বৈধ উপাদান থাকে 0 থেকে 9 নম্বর ঘরে (valid - 1 = 9)। পুরো অ্যারের শেষ ঘর 13 থেকে পড়লে অবৈধ অংশ থেকে Prediction নেওয়া হয়ে যাবে।"
+    },
+    {
+      "id": "ch20_q10",
+      "question": "Feature প্রস্থ D = 4 হলে প্রতিটি অবস্থানের LayerNorm হিসাবের সময় Variance বের করতে কোন সংখ্যা দিয়ে ভাগ করা হয়?",
+      "options": [
+        "3",
+        "Batch Size",
+        "4",
+        "Sequence Length"
+      ],
+      "answer": 2,
+      "explanation": "LayerNorm প্রতিটি অবস্থানের নিজস্ব Feature Axis বরাবর Population Variance হিসাব করে, তাই D = 4 হলে হর হয় ঠিক 4 (D - 1 = 3 নয়), এবং সংখ্যার স্থিতিশীলতার জন্য বর্গমূলের ভেতরে ক্ষুদ্র epsilon যোগ করা হয়।"
+    },
+    {
+      "id": "ch20_q11",
+      "question": "Pre-Norm Transformer Block-এ প্রথম Attention উপস্তরের সঠিক Residual সমীকরণ কোনটি?",
+      "options": [
+        "U = LN(X + MHA(X))",
+        "U = MHA(X)",
+        "U = X × MHA(X)",
+        "U = X + MHA(LN(X))"
+      ],
+      "answer": 3,
+      "explanation": "Pre-Norm গঠনে মূল Residual শাখা X অক্ষত থাকে এবং উপস্তরে ঢোকার আগে LayerNorm বসে: U = X + MHA(LN(X))। অন্যদিকে LN(X + MHA(X)) হলো Post-Norm গঠন—দুটিকে নীরবে মিলিয়ে ফেলা যাবে না।"
+    },
+    {
+      "id": "ch20_q12",
+      "question": "আমাদের অধ্যায়ের CountTransformer মডেলটিতে মোট ট্রেনযোগ্য (Trainable) Parameter কয়টি?",
+      "options": [
+        "185",
+        "241",
+        "80",
+        "56"
+      ],
+      "answer": 0,
+      "explanation": "হিসাবটি হলো: Input Projection (8) + Multi-Head Attention (80) + দুটি LayerNorm (16) + FFN (76) + Scalar Head (5) = মোট 185টি ট্রেনযোগ্য Parameter। স্থির Positional Buffer-এর 56টি মান ট্রেনযোগ্য নয় বলে এর বাইরে থাকে।"
+    },
+    {
+      "id": "ch20_q13",
+      "question": "প্রস্থ D = 4 হলে শুরুর অবস্থান (offset = 0)-এর জন্য Sinusoidal Positional Encoding ভেক্টরটি কী হবে?",
+      "options": [
+        "[1, 0, 1, 0]",
+        "[0, 1, 0, 1]",
+        "[0, 0, 0, 0]",
+        "[1, 1, 1, 1]"
+      ],
+      "answer": 1,
+      "explanation": "offset = 0 বসলে যেকোনো কম্পাঙ্কের (এখানে 1 এবং 0.01) জন্যেই জোড় ঘরের sin(0) = 0 এবং বিজোড় ঘরের cos(0) = 1 হয়, ফলে ভেক্টরটি দাঁড়ায় [0, 1, 0, 1]।"
+    },
+    {
+      "id": "ch20_q14",
+      "question": "Positional Encoding বন্ধ করে দিলে কি একটি Causal Self-Attention স্তর ইনপুটের ক্রমের সাপেক্ষে পুরোপুরি Permutation Invariant হয়ে যায়?",
+      "options": [
+        "হ্যাঁ, সবসময়ই ক্রমহীন হয়ে যায়",
+        "সব আউটপুট স্বয়ংক্রিয়ভাবে শূন্য হয়ে যায়",
+        "না, কারণ ত্রিভুজাকার Causal Mask নিজেই কোন অবস্থান কাকে দেখতে পাবে তার অসমমিত ক্রম তৈরি করে",
+        "কোনো Gradient আর প্রবাহিত হতে পারে না"
+      ],
+      "answer": 2,
+      "explanation": "সম্পূর্ণ Unmasked Attention-এ Position ছাড়া যে প্রতিসাম্য থাকে, Causal Mask থাকলে তা ভেঙে যায়—কারণ শুরুর অবস্থান কেবল নিজেকে দেখে আর পরের অবস্থানগুলো ক্রমান্বয়ে বড় ইতিহাস দেখে।"
+    },
+    {
+      "id": "ch20_q15",
+      "question": "মডেলের মোট প্রস্থ D স্থির রেখে সমান ভাগে Head-এর সংখ্যা বাড়ালে সাধারণ Q, K, V ও Output Projection-এর মোট Parameter সংখ্যায় কী প্রভাব পড়ে?",
+      "options": [
+        "Parameter সংখ্যা সবসময় দ্বিগুণ হয়ে যায়",
+        "Parameter সংখ্যা কমে শূন্য হয়ে যায়",
+        "Parameter সংখ্যা Sequence দৈর্ঘ্যের বর্গ (T²)-এর সমান হয়",
+        "মোট Parameter সংখ্যা সাধারণত একই থাকে, কেবল প্রতিটি Head-এর প্রস্থ (d_k) ছোট হয়ে যায়"
+      ],
+      "answer": 3,
+      "explanation": "সাধারণ Multi-Head গঠনে একত্রে প্যাক করা ইনপুট প্রজেকশন (D → 3D) ও আউটপুট প্রজেকশন (D → D)-এর মোট আকার D-এর ওপরই নির্ভর করে; তবে অবশ্যই D-কে Head সংখ্যা H দিয়ে নিঃশেষে বিভাজ্য হতে হয়।"
+    },
+    {
+      "id": "ch20_q16",
+      "question": "কেবল Attention Heatmap-এ কোনো দিনের ওজন সবচেয়ে বেশি দেখলেই কি প্রমাণিত হয় যে ওই দিনটিই Prediction-এর প্রধান কার্যকারণ চালক (Causal Driver)?",
+      "options": [
+        "না, Attention ওজন কেবল মিশ্রণের অনুপাত দেখায়, এককভাবে কার্যকারণ গুরুত্ব প্রমাণ করে না",
+        "হ্যাঁ, সবসময়ই সেটি চূড়ান্ত প্রমাণ",
+        "সর্বোচ্চ ওজনের দিনটিই সরাসরি প্রকৃত Label হয়ে যায়",
+        "কেবল সর্বোচ্চ Head-টির ওজন দেখলেই কার্যকারণ সম্পর্ক প্রমাণিত হয়"
+      ],
+      "answer": 0,
+      "explanation": "Attention Weight হলো Value মেশানোর সহগ মাত্র; Value Vector-এর মান, Residual পথ, FFN রূপান্তর এবং ইনপুটগুলোর পারস্পরিক সহসম্পর্ক (Correlation) ও নিয়ন্ত্রিত পরীক্ষা ছাড়া কেবল Heatmap দেখে কার্যকারণ দাবি করা যায় না।"
+    },
+    {
+      "id": "ch20_q17",
+      "question": "Forecast করার মুহূর্তে (Forecast Origin) যদি বিগত 14 দিনের পুরো ইতিহাস বৈধভাবে জানা থাকে, তবে সেই অতীত উইন্ডোর ভেতর Full Attention চালানো কি স্বয়ংক্রিয়ভাবে Target Leakage ঘটায়?",
+      "options": [
+        "হ্যাঁ, এটি সবসময় ভবিষ্যতের Target ফাঁস করে দেয়",
+        "না, পুরো ইনপুট উইন্ডোটি অতীতের জানা তথ্য হলে কেবল তাদের নিজেদের মধ্যে Full Attention চালানো Target Leakage নয়",
+        "এটি চালাতে ভবিষ্যতের অদেখা Label ইনপুটে দিতে হয়",
+        "এমন ক্ষেত্রে কেবল GRU ব্যবহারের অনুমতি থাকে"
+      ],
+      "answer": 1,
+      "explanation": "প্রতিটি ধাপে অনলাইনে দাঁড়িয়ে Prediction দেওয়ার শর্ত আর নির্দিষ্ট একটি মুহূর্তে দাঁড়িয়ে বিগত পুরো জানা ইতিহাস একসাথে দেখার শর্ত আলাদা—অতীতের জানা 14 দিনের তথ্য নিজেদের মধ্যে কথা বললে ভবিষ্যতের অজানা Target ফাঁস হয় না।"
+    },
+    {
+      "id": "ch20_q18",
+      "question": "PyTorch-এর ফাংশনাল scaled_dot_product_attention ব্যবহার করার সময় মূল্যায়ন (Eval) মোডে কীভাবে নিশ্চিত করবেন যে Dropout বন্ধ আছে?",
+      "options": [
+        "কেবল বাইরের যেকোনো মডিউলে .eval() কল করলেই আপনা-আপনি বন্ধ হয়ে যাবে",
+        "Mask-এর সব মান শূন্য করে দিলেই হবে",
+        "কল করার সময় স্পষ্টভাবে dropout_p=0.0 (যেমন self.training অনুযায়ী শর্ত দিয়ে) পাঠাতে হবে",
+        "Key-এর দৈর্ঘ্য কমিয়ে 1 করে দিতে হবে"
+      ],
+      "answer": 2,
+      "explanation": "ফাংশনাল scaled_dot_product_attention নিজে থেকে বাইরের nn.Module-এর self.training ফ্ল্যাগ পড়তে পারে না; তাই মূল্যায়নের সময় স্পষ্টভাবে dropout_p=0.0 না পাঠালে র‍্যান্ডম আচরণ থেকে যাবে।"
+    },
+    {
+      "id": "ch20_q19",
+      "question": "Autoregressive Decoder ট্রেনিংয়ে Teacher Forcing করার সময় ইনপুট এবং Target Label-কে এক ঘর সরিয়ে (Shifted) সাজানো হয় কেন?",
+      "options": [
+        "মডেলের Parameter সংখ্যা কমানোর জন্য",
+        "যেন আর কোনো Causal Mask ব্যবহার করতে না হয়",
+        "শব্দভাণ্ডার (Vocabulary) বর্ণানুক্রমে সাজানোর জন্য",
+        "বর্তমান ধাপের যে উত্তরটি অনুমান করতে হবে, সেটি যেন সরাসরি সেই ধাপের ইনপুটেই ঢুকে না পড়ে"
+      ],
+      "answer": 3,
+      "explanation": "কেবল Causal Mask বসালে ডানদিকের পরের ঘরগুলো লুকানো যায়, কিন্তু একই ঘরে যদি উত্তরটিই ইনপুট হিসেবে দেওয়া থাকে তবে মডেল বিনা পরিশ্রমে তা নকল করে ফেলে! তাই ইনপুট ও Target-এর এক ঘর সরানো Alignment অপরিহার্য।"
+    },
+    {
+      "id": "ch20_q20",
+      "question": "KV Cache ব্যবহার করে ডিকোডিংয়ের সময় সর্বশেষ একক Query-টি যদি জমানো সব বৈধ Prefix Key এবং বর্তমান নতুন Key দেখতে পায়, তবে সেখানে কোন Mask নীতিটি সঠিক?",
+      "options": [
+        "সঠিক Position Offset মেনে তৈরি Mask দেওয়া, অথবা সব বৈধ Cached Key-ই অনুমোদিত রাখা",
+        "না বুঝেই অ-বর্গাকার আকারে অন্ধভাবে is_causal=True বসিয়ে দেওয়া",
+        "কেবল একদম প্রথম Key-টি দেখার অনুমতি দেওয়া",
+        "প্রতি ধাপে Cache-এর সব Position আবার 0 থেকে রিসেট করা"
+      ],
+      "answer": 0,
+      "explanation": "অ-বর্গাকার [1, T_cache] আকারে সাধারণ বাম-উপর কোণভিত্তিক (Upper-left) is_causal নিয়ম বসালে একক Query নিজেকে 0-তম অবস্থান ভেবে কেবল প্রথম Key-টিকে দেখে; অথচ সর্বশেষ অবস্থানের Query হিসেবে তার পুরো বৈধ ইতিহাস দেখার কথা।"
+    },
+    {
+      "id": "ch20_q21",
+      "question": "অন্য সব মাত্রা অপরিবর্তিত রেখে Sequence দৈর্ঘ্য T দ্বিগুণ করলে পূর্ণ (Dense) Attention Score Matrix-এর উপাদান সংখ্যা কত গুণ বাড়বে?",
+      "options": [
+        "2 গুণ",
+        "4 গুণ",
+        "অপরিবর্তিত থাকবে",
+        "8 গুণ"
+      ],
+      "answer": 1,
+      "explanation": "Dense Score Matrix-এর আকার B × H × T² হওয়ায় দৈর্ঘ্য T দ্বিগুণ হলে উপাদানের সংখ্যা 2² = 4 গুণ বাড়ে (অন্যদিকে KV Cache-এর আকার T-এর সমানুপাতিক হওয়ায় তা সাধারণত 2 গুণ বাড়ে)।"
+    },
+    {
+      "id": "ch20_q22",
+      "question": "আমাদের Lab-এ ইতিমধ্যে ট্রেন হওয়া মডেলে Positional Encoding বন্ধ করে ফলাফল বদলে যাওয়া আসলে কী ধরনের প্রমাণ দেয়?",
+      "options": [
+        "শুরু থেকে আলাদাভাবে ট্রেন করা একটি পূর্ণাঙ্গ Ablation মডেলের প্রমাণ",
+        "বৃহৎ ভাষা মডেলের Pretraining দক্ষতার প্রমাণ",
+        "একই ট্রেন করা Weight-এর ওপর একটি Inference-সময়ের হস্তক্ষেপের (Intervention) আচরণগত প্রমাণ",
+        "প্রতিটি দিনের চূড়ান্ত কার্যকারণ গুরুত্বের (Causal Importance) প্রমাণ"
+      ],
+      "answer": 2,
+      "explanation": "Position সহ ট্রেন হওয়া মডেলে হঠাৎ Inference সময়ে Position সরিয়ে নিলে ইনপুটের গঠন ট্রেনিং Distribution থেকে সরে যায়; এটি মডেলের সংবেদনশীলতা দেখায়, কিন্তু আলাদা করে ট্রেন করা Position-হীন মডেলের ক্ষমতা প্রমাণ করে না।"
+    },
+    {
+      "id": "ch20_q23",
+      "question": "আমাদের মূল ডেটাসেটের একেবারে শেষের 184টি দিনের ফলাফল এই অধ্যায়ে কীভাবে ব্যবহার করা হয়েছে?",
+      "options": [
+        "Scaler-এর গড় ও পরিমিত ব্যবধান বের করার কাজে",
+        "সেরা Checkpoint বেছে নেওয়ার টিউনিংয়ে",
+        "অ্যাপের Lab কুয়েরির সরাসরি Target হিসেবে",
+        "মডেল ট্রেনিং, স্কোরিং বা এক্সপোর্টের কোনো কাজেই ব্যবহার করা হয়নি"
+      ],
+      "answer": 3,
+      "explanation": "মূল ফাইলের অখণ্ডতা পরীক্ষার সময় পুরো CSV পড়া হলেও মডেলিং, মূল্যায়ন ও এক্সপোর্টের সীমানা প্রথম 547টি দিনের মধ্যেই কঠোরভাবে সীমাবদ্ধ রাখা হয়েছে।"
+    },
+    {
+      "id": "ch20_q24",
+      "question": "এই অধ্যায়ে পাওয়া Development সেটের (জানুয়ারি–জুন ২০১২) স্কোরকে কি সম্পূর্ণ নতুন ও স্বাধীন চূড়ান্ত Test ফলাফল বলা যাবে?",
+      "options": [
+        "না, কারণ এই সময়কালটি আগের অধ্যায়গুলোতেও Diagnostic হিসেবে বিশ্লেষিত হয়েছে",
+        "হ্যাঁ, কারণ সংখ্যাগুলো বাস্তব জগতের ডেটা",
+        "হ্যাঁ, কারণ এখানে নতুন একটি র‍্যান্ডম Seed দেওয়া হয়েছে",
+        "হ্যাঁ, কারণ এবার আমরা ভিন্ন একটি আর্কিটেকচার ব্যবহার করেছি"
+      ],
+      "answer": 0,
+      "explanation": "একই ডেটা খণ্ড আগের অধ্যায়গুলোতে বারবার দেখা ও বিশ্লেষণ করা হয়ে গেলে কেবল মডেল বা Seed বদলানোর ফলে সেই ডেটা আবার নতুন অদেখা পরীক্ষায় পরিণত হয় না।"
+    },
+    {
+      "id": "ch20_q_cache_offset_revision",
+      "question": "ধরুন KV Cache-এ আগে থেকেই 2টি পুরোনো পদ আছে, আর এবার পরম অবস্থান 2 ও 3-এ থাকা দুটি নতুন Query এল (মোট Key অবস্থান 0, 1, 2, 3)। এদের সঠিক অনুমোদিত (Allowed) Causal Mask Row দুটি কোনটি?",
+      "options": [
+        "[1, 0, 0, 0] এবং [1, 1, 0, 0]",
+        "[1, 1, 1, 0] এবং [1, 1, 1, 1]",
+        "দুটি Row-তেই সবগুলো Key ব্লক থাকবে",
+        "দুটি Row-তেই কেবল সর্বশেষ Key-টি অনুমোদিত থাকবে"
+      ],
+      "answer": 1,
+      "explanation": "Causal নিয়মে পরম অবস্থান 2-এর Query দেখতে পায় 0, 1, 2 নম্বর Key ([1, 1, 1, 0]), আর পরম অবস্থান 3-এর Query দেখতে পায় 0, 1, 2, 3 সবগুলো Key ([1, 1, 1, 1])। এভাবে Offset হিসাব রাখলেই পূর্ণ Prefix হিসাবের সাথে ফলাফল হুবহু মিলে যায়।"
+    },
+    {
+      "id": "ch20_q_rope_revision",
+      "question": "Rotary Positional Embedding (RoPE)-এ দুটি অবস্থান m ও n উভয়ের সাথেই যদি একই কোণ বা দূরত্ব যোগ করা হয়, তবে সংশ্লিষ্ট Query ও Key জোড়ার Dot-Product অপরিবর্তিত থাকে কেন?",
+      "options": [
+        "কারণ ঘূর্ণনের ফলে দুটি ভেক্টরই শূন্য হয়ে যায়",
+        "কারণ যেকোনো ভেক্টরের দৈর্ঘ্য সবসময় জোর করে 1 বানিয়ে ফেলা হয়",
+        "কারণ অর্থোগোনাল ঘূর্ণন মেট্রিক্সের সাধারণ অংশটি কাটাকাটি গিয়ে কেবল আপেক্ষিক দূরত্ব (n − m) অবশিষ্ট থাকে",
+        "কারণ এতে Softmax-এর হর হিসাব থেকে বাদ পড়ে যায়"
+      ],
+      "answer": 2,
+      "explanation": "অর্থোগোনাল রোটেশন মেট্রিক্সের ক্ষেত্রে R(m)ᵀ R(n) = R(n − m) অভেদটি খাটে; ফলে m ও n উভয়ের সাথে একই ধ্রুবক যোগ করলে তাদের বিয়োগফল (n − m) একটুও বদলায় না। তবে মনে রাখবেন, কেবল এই গাণিতিক অভেদ থাকলেই মডেল ট্রেনিংয়ের চেয়ে অনেক লম্বা Context-এ নিখুঁত কাজ করবে—সেটির জন্য আলাদা অভিজ্ঞতালব্ধ প্রমাণ প্রয়োজন।"
+    }
+  ],
+  "exercises": [
+    {
+      "id": "ch20_ex_mix",
+      "title": "ওজনযুক্ত Value মিশ্রণ হিসাব",
+      "prompt": "ধরুন দুটি পদের Attention Weight যথাক্রমে [0.25, 0.75] এবং তাদের Value হলো [2, 6]। log(weights)-এর ওপর সংখ্যাগতভাবে স্থিতিশীল (Stable) Softmax চালিয়ে ওজনগুলো পুনরুদ্ধার করুন এবং চূড়ান্ত মিশ্রিত Scalar মানটি হিসাব করে answer-এ রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "import torch\n\nlogits = torch.log(torch.tensor([0.25, 0.75], dtype=torch.float64))\nanswer = (\n    torch.softmax(logits, dim=-1) @ torch.tensor([2.0, 6.0], dtype=torch.float64)\n).item()\n",
+      "expected": 5,
+      "explanation": "ওজনযুক্ত যোগফল দাঁড়ায় 0.25 × 2 + 0.75 × 6 = 0.5 + 4.5 = 5। লক্ষ্য করুন, Normalized Attention-এর চূড়ান্ত আউটপুট সবসময় Value-এর এককই বহন করে।"
+    },
+    {
+      "id": "ch20_ex_scale",
+      "title": "Scaled Dot-Product Score নির্ণয়",
+      "prompt": "ধরুন একটি Query ভেক্টর q = [1, 2], একটি Key ভেক্টর k = [2, 0] এবং ওই Head-এর নিজস্ব প্রস্থ d_k = 2। এদের Scaled Dot-Product Score হিসাব করে answer-এ রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "import math\n\nanswer = (1 * 2 + 2 * 0) / math.sqrt(2)\n",
+      "expected": 1.4142135623730951,
+      "explanation": "প্রথমে সাধারণ Dot-Product করলে পাওয়া যায় 1 × 2 + 2 × 0 = 2। এরপর প্রতি-Head প্রস্থের বর্গমূল দিয়ে ভাগ করলে Score আসে 2 / √2 = √2 ≈ 1.4142136। মনে রাখবেন, সবসময় প্রতি-Head Key Dimension দিয়েই স্কেল করতে হয়।"
+    },
+    {
+      "id": "ch20_ex_softmax",
+      "title": "অতি বড় সমান Logit-এ Stable Softmax",
+      "prompt": "ধরুন দুটি বৈধ পদের কাঁচা Logit হলো [1000, 1000]। সরাসরি exp(1000) না চালিয়ে Stable Softmax পদ্ধতিতে হিসাব করলে দ্বিতীয় পদের Probability কত আসবে, তা answer-এ রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "import torch\n\nanswer = torch.softmax(torch.tensor([1000.0, 1000.0], dtype=torch.float64), -1)[\n    1\n].item()\n",
+      "expected": 0.5,
+      "explanation": "সর্বোচ্চ মান 1000 বিয়োগ করে নিলে পরিবর্তিত Logit দাঁড়ায় [0, 0], যাদের সূচক মান [1, 1]। যোগফল 2 দিয়ে ভাগ করলে Probability পাওয়া যায় [0.5, 0.5]; তাই দ্বিতীয় পদের উত্তর 0.5।"
+    },
+    {
+      "id": "ch20_ex_mask",
+      "title": "বৈধ Causal জোড়ার সংখ্যা গণনা",
+      "prompt": "Sequence দৈর্ঘ্য 4 হলে এবং নিজের অবস্থানসহ (মূল কর্ণ বা Diagonal অন্তর্ভুক্ত রেখে) সাধারণ নিম্ন-ত্রিভুজাকার Causal Mask প্রয়োগ করলে মোট কয়টি অনুমোদিত Query-Key জোড়া থাকবে, তা answer-এ রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "import torch\n\nanswer = float(torch.ones(4, 4, dtype=torch.bool).tril().sum())\n",
+      "expected": 10,
+      "explanation": "চারটি Query Row-তে ক্রমান্বয়ে 1, 2, 3 ও 4টি করে Key দেখার অনুমতি থাকে, তাই মোট বৈধ জোড়ার সংখ্যা 1 + 2 + 3 + 4 = 10। কোড লেখার সময় ব্যবহৃত API অনুযায়ী Boolean Mask-এর True/False অর্থ মিলিয়ে নিতে ভুলবেন না।"
+    },
+    {
+      "id": "ch20_ex_head",
+      "title": "প্রতিটি Head-এর নিজস্ব প্রস্থ (Head Dimension)",
+      "prompt": "মডেলের মোট প্রস্থ D = 4 এবং সমান ভাগে ভাগ করা Head সংখ্যা H = 2 হলে প্রতিটি Head-এর নিজস্ব Key Dimension কত হবে, তা answer-এ রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "answer = float(4 // 2)\n",
+      "expected": 2,
+      "explanation": "মোট প্রস্থকে সমান দুই ভাগে ভাগ করলে প্রতিটি Head-এর প্রস্থ হয় 4 / 2 = 2, এবং এই 2-এর বর্গমূল (√2) দিয়েই প্রতিটি Head-এর Score স্কেল করা হয়।"
+    },
+    {
+      "id": "ch20_ex_norm",
+      "title": "LayerNorm-এর Population Variance হিসাব",
+      "prompt": "ধরুন একটি অবস্থানের Feature ভেক্টর হলো [−1, 1]। LayerNorm-এর নিয়মে epsilon যোগ করার ঠিক আগের Population Variance কত হবে, তা হিসাব করে answer-এ রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "import torch\n\nanswer = torch.tensor([-1.0, 1.0], dtype=torch.float64).var(unbiased=False).item()\n",
+      "expected": 1,
+      "explanation": "ভেক্টরটির গড় 0, গড় থেকে বিচ্যুতির বর্গ [1, 1] এবং উপাদানের সংখ্যা 2 দিয়ে ভাগ করলে Population Variance পাওয়া যায় (1 + 1) / 2 = 1। বাস্তব LayerNorm-এ এরপর বর্গমূলের ভেতরে epsilon যোগ করে শেষে শেখা Affine স্কেল ও শিফট বসানো হয়।"
+    },
+    {
+      "id": "ch20_ex_loss",
+      "title": "কেবল বৈধ Token-এর গড় Loss নির্ণয়",
+      "prompt": "দুটি Sequence-এর প্রতি-পদের কাঁচা Loss যথাক্রমে [[1, 3, 99], [2, 4, 6]] এবং তাদের বৈধ দৈর্ঘ্য যথাক্রমে [2, 3]। কেবল বৈধ Token-গুলোর সার্বিক গড় (Global Valid-Token Mean) হিসাব করে answer-এ রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "import torch\n\nloss = torch.tensor([[1.0, 3.0, 99.0], [2.0, 4.0, 6.0]], dtype=torch.float64)\nmask = torch.tensor([[1.0, 1.0, 0.0], [1.0, 1.0, 1.0]], dtype=torch.float64)\nanswer = ((loss * mask).sum() / mask.sum()).item()\n",
+      "expected": 3.2,
+      "explanation": "প্রথম সিকোয়েন্সের 2টি বৈধ মান (1 + 3 = 4) এবং দ্বিতীয় সিকোয়েন্সের 3টি বৈধ মান (2 + 4 + 6 = 12) যোগ করলে মোট বৈধ যোগফল 16, আর বৈধ পদের সংখ্যা 5। তাই প্রকৃত গড় 16 / 5 = 3.2। মনে রাখবেন, Loss Mask এবং Attention-এর Key/Query দৃশ্যমানতা আলাদাভাবে যাচাই করতে হয়।"
+    },
+    {
+      "id": "ch20_ex_position",
+      "title": "শূন্যতম অবস্থানের Positional Encoding",
+      "prompt": "প্রস্থ D = 4 বিশিষ্ট Sinusoidal Positional Encoding-এ শুরুর অবস্থান (offset = 0)-এর ভেক্টরটির দ্বিতীয় স্থানাঙ্ক (দ্বিতীয় Coordinate) কত হবে, তা answer-এ রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "import math\n\nanswer = math.cos(0 / 10000**0)\n",
+      "expected": 1,
+      "explanation": "জোড় ঘরে sin ও বিজোড় ঘরে cos বসানোর নিয়মে offset = 0-এ পূর্ণ ভেক্টরটি হয় [0, 1, 0, 1]। ফলে দ্বিতীয় স্থানাঙ্কটির মান cos(0) = 1।"
+    },
+    {
+      "id": "ch20_ex_cache",
+      "title": "KV Cache-এর মোট উপাদান সংখ্যা",
+      "prompt": "ধরুন একটি মডেলে Layer সংখ্যা 1, Batch আকার 1, KV Head সংখ্যা 2, জমানো সময়ের ধাপ 14 এবং প্রতিটি Head-এর প্রস্থ 2। সাধারণ K এবং V উভয় Cache মিলিয়ে মোট কয়টি সংখ্যাগত উপাদান (Total Element Count) জমা থাকবে, তা answer-এ রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "answer = float(2 * 1 * 1 * 2 * 14 * 2)\n",
+      "expected": 112,
+      "explanation": "K ও V দুটি আলাদা Tensor থাকায় মোট উপাদানের সংখ্যা 2 × 1 × 1 × 2 × 14 × 2 = 112। মোট বাইট বের করতে এর সাথে ডেটা টাইপের আকার গুণ করতে হবে (মেমোরি অ্যালোকেটরের ওভারহেড ও অস্থায়ী বাফার এর বাইরে থাকে)।"
+    },
+    {
+      "id": "ch20_ex_count",
+      "title": "পূর্ণাঙ্গ মডেলের Parameter বাজেট",
+      "prompt": "আমাদের এই স্থির আর্কিটেকচারে Input Projection-এ 8টি, Multi-Head Attention-এ 80টি, দুটি Normalization স্তরে মোট 16টি, FFN অংশে 76টি এবং আউটপুট Head-এ 5টি ট্রেনযোগ্য Scalar রয়েছে। সর্বমোট ট্রেনযোগ্য Parameter সংখ্যাটি answer-এ রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "answer = float(8 + 80 + 16 + 76 + 5)\n",
+      "expected": 185,
+      "explanation": "সবগুলো স্তর যোগ করলে মোট ট্রেনযোগ্য Parameter দাঁড়ায় 8 + 80 + 16 + 76 + 5 = 185টি। স্থির Sinusoidal Positional Buffer-এর 56টি মান ট্রেনযোগ্য না হওয়ায় এই হিসাবের অন্তর্ভুক্ত নয়।"
+    }
+  ],
+  "interviews": [
+    {
+      "title": "শূন্য থেকে ফ্রেমওয়ার্ক-সমতুল্য Masked Multi-Head Attention তৈরি",
+      "tag": "ATTENTION · ML CODING · 35 MIN",
+      "prompt": "হোয়াইটবোর্ডে বা খালি ফাইলে দাঁড়িয়ে লাইব্রেরির ফলাফলের সাথে হুবহু মিলে যায়—এমন একটি Masked Multi-Head Attention ফাংশন কীভাবে ধাপে ধাপে ইমপ্লিমেন্ট ও যাচাই করবেন?",
+      "answer": "শুরুতেই আমি ইনপুট ও মধ্যবর্তী Tensor-গুলোর প্রতিটি Axis স্পষ্টভাবে লিখে নেব: [B, T, D], Head সংখ্যা H এবং প্রতি-Head প্রস্থ d = D / H। এরপর ফ্রেমওয়ার্কের স্টোরেজ বিন্যাস অনুযায়ী ইনপুট প্রজেকশন গুণ করে Q, K, V আলাদা করব এবং [B, T, H, d] আকারে ভেঙে Transpose করে [B, H, T, d]-এ আনব। পরের ধাপে q @ k.transpose(-2, -1) / √d দিয়ে Scaled Logit বের করব, এবং কেবল অনুমোদিত Key-গুলো রেখে ব্লক করা ঘরে −∞ বসিয়ে প্রতিটি Row-এর বৈধ সর্বোচ্চ মান বিয়োগ করে Stable Softmax চালাব। অবশ্যই আগে নিশ্চিত করব যেন কোনো বৈধ Query Row-এর সবগুলো Key ব্লক না থাকে—ফলে Dropout-এর আগে ব্লক করা ঘরের ওজন হবে ঠিক 0 এবং বৈধ ঘরের যোগফল 1। এরপর weights @ v করে প্রাপ্ত আউটপুট পুনরায় [B, T, D] আকারে জোড়া লাগিয়ে সর্বশেষ Output Projection (W_O) গুণ করব।\n\nকোড লেখার পর আমি PyTorch-এর নিজস্ব মডিউলের প্রতিটি মধ্যবর্তী ধাপের সাথে সূক্ষ্মভাবে মিলিয়ে টেস্ট লিখব—যার ভেতরে Batch = 1, অসম Query ও Key দৈর্ঘ্য, একক বৈধ Key এবং NaN/Inf ইনপুট ধরার পরীক্ষা থাকবে। সবশেষে মনে করিয়ে দেব যে ফ্রেমওয়ার্কের সাথে সংখ্যাগত মিল কেবল ইমপ্লিমেন্টেশনের শুদ্ধতা প্রমাণ করে, কোনো নির্দিষ্ট টাস্কে মডেলটির বাস্তব কার্যকারিতা নয়।",
+      "prerequisiteLessons": [
+        "ch20_scaled",
+        "ch20_multihead"
+      ]
+    },
+    {
+      "title": "প্রোডাকশনে Mask Polarity উল্টে যাওয়ার সূক্ষ্ম বাগ ডিবাগিং",
+      "tag": "ATTENTION · ML CODING · 35 MIN",
+      "prompt": "আপনার টিম আগে nn.MultiheadAttention-এর জন্য লেখা একটি Boolean Mask Helper ফাংশন সরাসরি ফাংশনাল scaled_dot_product_attention (SDPA)-তে পুনর্ব্যবহার করেছে, আর তারপর থেকেই মডেলের আউটপুট অদ্ভুতভাবে বদলে গেছে। সমস্যাটি কীভাবে ধরবেন ও সমাধান করবেন?",
+      "answer": "প্রথম সন্দেহেই আমি দুটি API-এর Boolean প্রথা বা Polarity যাচাই করব: PyTorch-এর nn.MultiheadAttention-এ Boolean True মানে সংযোগটি ব্লক করা, অথচ ফাংশনাল scaled_dot_product_attention-এ Boolean True মানে সংযোগটি অনুমোদিত! ফলে একই Mask সরাসরি বসিয়ে দিলে দৃশ্যমানতা পুরোপুরি উল্টে যায়—বৈধ অতীত ব্লক হয়ে ভবিষ্যতের নিষিদ্ধ পদ ও Padding উন্মুক্ত হয়ে পড়ে।\n\nএটি স্থায়ীভাবে সমাধান করতে আমি কোডে অস্পষ্ট নাম বাদ দিয়ে allowed_mask বা blocked_mask নামের সুস্পষ্ট Helper লিখব এবং ছোট হাতে-গোনা গ্রিডে ইউনিট টেস্ট বসাব: (১) কেবল একটি বৈধ Key খোলা রেখে আউটপুট সেই Value-এর সমান হয় কি না, (২) ভবিষ্যতের পদ বদলে দিলেও Causal আউটপুট অপরিবর্তিত (Prefix Invariant) থাকে কি না, এবং (৩) Padded Key-এর ওজন ঠিক 0 হয় কি না। একইসাথে অডিট করব যেন ফাংশনাল SDPA কলে মূল্যায়ন মোডে স্পষ্টভাবে dropout_p=0.0 পাঠানো হয় এবং অ-বর্গাকার Mask-এর Broadcasting ও Alignment নির্ভুল থাকে। দুটি ফাংশনের প্যারামিটারের নাম এক দেখেই ভেতরের আচরণ এক ধরে নেওয়া যাবে না।",
+      "prerequisiteLessons": [
+        "ch20_causal"
+      ]
+    },
+    {
+      "title": "Key Mask থাকা সত্ত্বেও Padded Query-এর কারণে Pooling নষ্ট হওয়া",
+      "tag": "ATTENTION · ML CODING · 35 MIN",
+      "prompt": "ইনপুটের Padded অবস্থানগুলোতে সঠিকভাবে key_padding_mask বসানো হয়েছে; তবু দেখা যাচ্ছে শেষে শুধু বাড়তি শূন্য Padding যোগ করলেই গড় নেওয়া (Pooled) চূড়ান্ত Prediction বদলে যাচ্ছে! কেন এমন হচ্ছে এবং এর প্রতিকার কী?",
+      "answer": "এর মূল কারণ হলো key_padding_mask কেবল Padded অবস্থানগুলোকে Key হিসেবে দেখা থেকে থামায়, কিন্তু Padded অবস্থানগুলোতে থাকা Query Row-গুলোর আউটপুট মোটেও নিজে থেকে শূন্য করে দেয় না! সেই Padded Query-গুলো বৈধ Key-দের ওপর Attention চালিয়ে, নিজেদের Positional Encoding, Bias, Residual শাখা ও FFN-এর ভেতর দিয়ে গিয়ে সম্পূর্ণ অশূন্য ভেক্টর তৈরি করে। এরপর যদি পুরো Sequence দৈর্ঘ্য জুড়ে সাধারণ গড় নেওয়া হয়, তবে ওই বাড়তি Padded Row-গুলো লবে যোগ হয়ে এবং হরে মোট দৈর্ঘ্য বাড়িয়ে চূড়ান্ত Prediction-কে দূষিত করে ফেলে।\n\nপ্রতিকার হিসেবে আমাদের স্পষ্টভাবে বৈধ Query সীমানা (valid_mask) ব্যবহার করে কেবল আসল পদগুলো বেছে নিতে হবে (অথবা গড় নেওয়ার সময় Padded ঘরগুলো শূন্য করে হরে কেবল বৈধ পদের সংখ্যা বসাতে হবে), এবং পুরো সিকোয়েন্সই যদি ফাঁকা হয় তার জন্য সুনির্দিষ্ট নীতি রাখতে হবে। যাচাইয়ের জন্য একই বৈধ ইনপুটের শেষে 0, 2 ও 5টি বাড়তি Pad জুড়ে দিয়ে পরীক্ষা করব যেন প্রতিবার চূড়ান্ত আউটপুট হুবহু অভিন্ন থাকে। পাশাপাশি মনে রাখব যে কেবল Loss ফাংশনে ignore_index দেওয়া আর মডেলের ভেতরে Pooling ঠিক রাখা এক বিষয় নয়।"
+    },
+    {
+      "title": "Pre-Norm Transformer Block-এর সমীকরণ ও Parameter বাজেট প্রতিপাদন",
+      "tag": "ATTENTION · ML CODING · 35 MIN",
+      "prompt": "একটি পূর্ণাঙ্গ Pre-Norm Transformer Block-এর গাণিতিক সমীকরণ লিখুন এবং আমাদের অধ্যায়ের ক্ষুদ্র মডেলটির প্রতিটি স্তরের নিখুঁত Parameter হিসাব করে দেখান।",
+      "answer": "Pre-Norm গঠনে মূল Residual পথটি কোনো Normalization ছাড়াই সোজা চলে যায় এবং প্রতিটি উপস্তরের ঠিক মুখে LayerNorm বসে: U = X + MHA(LN_1(X)) এবং Y = U + FFN(LN_2(U))।\n\nএবার আমাদের অধ্যায়ের আর্কিটেকচারের (D = 4, H = 2, d_k = 2, D_ff = 8, একটি একক ইনপুট ও একটি Scalar আউটপুট) নিখুঁত Parameter বাজেট মিলিয়ে দেখা যাক:\n১. Input Projection (1 → 4, Bias সহ): 1 × 4 + 4 = 8\n২. Multi-Head Attention: একত্রে প্যাক করা QKV প্রজেকশন (4 × 12 + 12 = 60) এবং Output Projection W_O (4 × 4 + 4 = 20) মিলিয়ে মোট 80\n৩. দুটি LayerNorm স্তর: প্রতিটিতে স্কেল ও শিফট মিলিয়ে 4 + 4 = 8 করে দুটিতে মোট 16\n৪. Position-wise FFN: প্রথম স্তর (4 × 8 + 8 = 40) ও দ্বিতীয় স্তর (8 × 4 + 4 = 36) মিলিয়ে মোট 76\n৫. চূড়ান্ত Scalar head (4 → 1, Bias সহ): 4 × 1 + 1 = 5\nসব মিলিয়ে ট্রেনযোগ্য Parameter দাঁড়ায় 8 + 80 + 16 + 76 + 5 = 185টি (স্থির Sinusoidal Positional Buffer-এর 14 × 4 = 56টি মান ট্রেনযোগ্য নয়)। এখানে প্রতিটি LayerNorm শেষ Axis বরাবর Population Variance ও বর্গমূলের ভেতর eps = 1e-5 ব্যবহার করে, এবং এই নির্দিষ্ট রেসিপিতে ব্লকের শেষে কোনো বাড়তি Final Norm রাখা হয়নি। উল্লেখ্য, Post-Norm একটি ভিন্ন রেসিপি, আর Pre-Norm-এ পরিষ্কার Identity Residual পথ থাকলেও সেটি একাই নিখুঁত ট্রেনিংয়ের জাদুকরী নিশ্চয়তা দেয় না।"
+    },
+    {
+      "title": "ট্রেন করা মডেলে Position বন্ধ করার ফলাফল ব্যাখ্যা",
+      "tag": "ATTENTION · ML CODING · 35 MIN",
+      "prompt": "একটি ট্রেন করা Transformer মডেলে Inference-এর সময় Positional Encoding বন্ধ করে দেওয়ায় Prediction-এর ত্রুটি বদলে গেছে। এখান থেকে আপনি কী সিদ্ধান্ত টানবেন, আর কী টানবেন না?",
+      "answer": "সবার আগে আমি স্পষ্ট করব যে এটি ইতিমধ্যে ট্রেন হওয়া একই Weight-এর ওপর চালানো একটি Inference-সময়ের হস্তক্ষেপ (Intervention)—শুরু থেকে Position ছাড়া আলাদাভাবে ট্রেন করা প্রকৃত Ablation মডেল নয়! যে মডেলটি ট্রেনিংয়ের পুরোটা সময় ইনপুটের সাথে নির্দিষ্ট স্কেলের Sinusoidal সংকেত পেতে অভ্যস্ত, হঠাৎ সেই সংকেত সরিয়ে নিলে ভেতরের Activation-এর Distribution বদলে গিয়েই ত্রুটি বাড়তে বা কমতে পারে।\n\nপাশাপাশি গাণিতিক সূক্ষ্মতাটিও তুলে ধরব: সম্পূর্ণ উন্মুক্ত (Unmasked) Attention-এ Position না থাকলে তা ইনপুটের ক্রমের সাপেক্ষে Permutation Equivariant হয় বটে, কিন্তু আমাদের মডেলে ত্রিভুজাকার Causal Mask এবং সর্বশেষ অবস্থান থেকে Readout নেওয়ার নিয়ম থাকায় সেই প্রতিসাম্য এমনিতেই বদলে যায়। তাই সমান টিউনিং বাজেট, একাধিক র‍্যান্ডম Seed দিয়ে নতুন করে ট্রেনিং এবং নতুন সময়ের ডেটায় পরীক্ষা না চালিয়ে কেবল এই টগলটি দেখেই কোনো আর্কিটেকচারাল সিদ্ধান্ত বা Feature Importance দাবি করা সমীচীন হবে না।",
+      "prerequisiteLessons": [
+        "ch20_positions"
+      ]
+    },
+    {
+      "title": "KV Cache ডিকোডিংয়ে অমিল ধরা ও নিখুঁত Offset Mask তৈরি",
+      "tag": "ATTENTION · ML CODING · 35 MIN",
+      "prompt": "পুরো Prefix একসাথে চালিয়ে পাওয়া সর্বশেষ আউটপুটের সাথে KV Cache দিয়ে চালানো পরের ধাপের আউটপুট মিলছে না। কীভাবে ডিবাগ করবেন?\n\nপাশাপাশি ধরুন Prefix Cache-এ আগে থেকেই 2টি পদ আছে, আর এবার পরম অবস্থান 2 ও 3-এ থাকা দুটি নতুন Query এল (মোট 4টি Key)। এদের সঠিক অনুমোদিত Mask লিখুন।",
+      "answer": "ডিবাগিংয়ের শুরুতেই আমি প্রতিটি Layer-এর জমানো K ও V-এর ক্রম, নতুন পদের ডুপ্লিকেট ঢুকে পড়া, সঠিক পরম Position Offset, Batch বা সেশনের ওলটপালট, ডেটা টাইপ এবং eval মোডে শূন্য Dropout আছে কি না তা একে একে পরীক্ষা করব। সবচেয়ে সাধারণ বাগটি ঘটে অ-বর্গাকার [T_new, T_total] আকারে সাধারণ বাম-উপর কোণভিত্তিক is_causal নিয়ম বসালে—কারণ তখন নতুন Query নিজেকে 0-তম অবস্থান ভেবে পুরোনো জমানো Cache ব্লক করে দেয়! আগে একক স্তরের প্রজেক্টেড মানে সমতা মিলিয়ে নিয়ে তারপর পুরো বহু-স্তর ডিকোডারের সংখ্যাগত টেস্ট চালাব (উল্লেখ্য, আমাদের অধ্যায়ের মূল সাইকেল মডেলটিতে কোনো প্রোডাকশন Cache সার্ভিং বেঞ্চমার্ক চালানো হয়নি)।\n\nউদাহরণের হিসাবটি খুব পরিষ্কার: পরম অবস্থান 2 ও 3-এর দুটি নতুন Query-এর জন্য 4টি Key (0, 1, 2, 3)-এর ওপর সঠিক অনুমোদিত Mask Row দুটি হবে যথাক্রমে [1, 1, 1, 0] এবং [1, 1, 1, 1]। ভুল করে স্থানীয় বাম-উপর কোণের Causal Mask দিলে ইতিহাস কেটে যেত! সব বৈধ Logit শূন্য হলে সুষম গড় অনুযায়ী values = [1, 2, 4, 8] থেকে প্রথম নতুন Query-এর আউটপুট আসবে 7/3 এবং দ্বিতীয়টির আউটপুট আসবে 15/4। একই Weight, Position ও শূন্য Dropout রেখে পূর্ণ Prefix হিসাবের সাথে ক্ষুদ্র সংখ্যাগত Tolerance-এ এটি মিলে যেতে হবে।",
+      "prerequisiteLessons": [
+        "ch20_cache",
+        "ch20_book_attention_equivalence"
+      ]
+    },
+    {
+      "title": "নিখুঁত Causal Mask থাকা সত্ত্বেও সন্দেহজনক ভালো Validation স্কোর",
+      "tag": "ATTENTION · ML CODING · 35 MIN",
+      "prompt": "মডেলে ত্রিভুজাকার Causal Attention Mask একদম ঠিকমতো বসানো আছে, তবু Validation ফলাফল অস্বাভাবিক রকমের ভালো আসছে! কোথায় কোথায় Data Leakage লুকিয়ে থাকতে পারে?",
+      "answer": "মনে রাখতে হবে, আর্কিটেকচারের ভেতরে ত্রিভুজাকার Causal Mask থাকা মানে কেবল এই যে ভেতরের অবস্থান i তার ডানদিকের অবস্থান j > i-কে দেখতে পাচ্ছে না; কিন্তু ইনপুট টেবিল তৈরির সময়ই যদি ভবিষ্যতের তথ্য ঢুকে পড়ে, তবে কোনো Mask-ই তা ঠেকাতে পারে না!\n\nতাই আমি সবার আগে অডিট করব: (১) ইনপুট ও Target Label সঠিকভাবে এক ঘর সরানো (Shifted) আছে কি না নাকি বর্তমান দিনের উত্তরই ইনপুটে রয়ে গেছে, (২) Forecast করার প্রকৃত সময়ে (Forecast Issue Time) যেসব তথ্য অজানা থাকার কথা—যেমন ওই দিনের দিন-শেষের আবহাওয়া বা আংশিক কাউন্টের যোগফল—তা Feature হিসেবে ঢুকে গেছে কি না, (৩) ট্রেনিংয়ের বাইরের ভবিষ্যৎ ডেটাসহ পুরো ডেটাসেটের ওপর একসাথে Scaler Fit করা হয়েছে কি না, এবং (৪) সময়ের ক্রম ভেঙে ওভারল্যাপিং উইন্ডোগুলোকে র‍্যান্ডমভাবে Train ও Validation-এ ভাগ করা হয়েছে কি না। বিপরীত দিকটিও পরিষ্কার রাখা দরকার: Forecast করার মুহূর্তে যদি বিগত পুরো ইনপুট উইন্ডো বৈধভাবে জানা থাকে, তবে সেই অতীত উইন্ডোর ভেতর Full Attention চালানো কিন্তু অবৈধ নয়—আসল বিপদ হলো ভবিষ্যতের অজানা Target তথ্য ইনপুটে ঢুকে পড়া।"
+    },
+    {
+      "title": "লম্বা Sequence-এ মেমোরির বাজেট ও সিস্টেম Trade-off",
+      "tag": "ATTENTION · ML CODING · 35 MIN",
+      "prompt": "অন্য সব মাত্রা স্থির রেখে যদি মডেলের Context দৈর্ঘ্য 14 থেকে দ্বিগুণ করে 28 করা হয়, তবে কোন মেমোরি কত গুণ বাড়বে এবং প্রোডাকশন Latency সম্পর্কে আপনি কী বলবেন?",
+      "answer": "অন্য সব মাত্রা (B, L, H, d) স্থির থাকলে Context দৈর্ঘ্য দ্বিগুণ (14 → 28) করার ফলে পূর্ণ (Dense) Attention Score Matrix-এর উপাদান সংখ্যা (B H T²) বাড়বে 4 গুণ (2²), আর জমানো KV Cache-এর উপাদান সংখ্যা (2 L B H T d) বাড়বে 2 গুণ।\n\nতবে বাস্তব GPU মেমোরি বাজেট করার সময় আমি মনে করিয়ে দেব যে মোট Peak মেমোরির ভেতর Q, K, V ও FFN-এর মধ্যবর্তী Activation, ট্রেনিংয়ের সময় Gradient ও Optimizer State এবং ফ্রেমওয়ার্কের অস্থায়ী Workspace-ও যোগ হয়। আধুনিক IO-Aware ও Fused Kernel (যেমন FlashAttention) পুরো [T, T] মেট্রিক্সটি মূল মেমোরিতে সংরক্ষণ না করে মেমোরির চাপ নাটকীয়ভাবে কমাতে পারে, কিন্তু নিখুঁত Attention-এর মোট গাণিতিক অপারেশন কিন্তু এতে জাদুকরীভাবে রৈখিক (Linear) হয়ে যায় না। তাই নির্দিষ্ট হার্ডওয়্যার, ডেটা টাইপ ও ব্যাকএন্ডে সরাসরি প্রোফাইলিং না করে কেবল খাতার সূত্র দেখে আমি কখনোই প্রোডাকশন Latency SLA-এর প্রতিশ্রুতি দেব না।"
+    },
+    {
+      "title": "Attention ওজনকে কি সরাসরি কার্যকারণ ব্যাখ্যা (Causal Explanation) বলা যায়?",
+      "tag": "ATTENTION · ML CODING · 35 MIN",
+      "prompt": "কোনো একটি Prediction-এ বিগত সপ্তাহের মঙ্গলবারের ওপর সর্বোচ্চ Attention Weight পড়েছে দেখে একজন সহকর্মী দাবি করছেন—'ওই মঙ্গলবারের ঘটনাই আজকের চাহিদার আসল কার্যকারণ চালক (Causal Driver)!' আপনি কীভাবে বিষয়টি ব্যাখ্যা করবেন?",
+      "answer": "আমি স্পষ্টভাবে বোঝাব যে Attention Weight মূলত ওই স্তরের Value ভেক্টরগুলোকে মেশানোর গাণিতিক অনুপাত (Mixing Coefficients)—এটি এককভাবে প্রতিষ্ঠিত কার্যকারণ গুরুত্ব (Causal Importance) নয়। চূড়ান্ত Prediction-এ কোনো দিনের প্রকৃত প্রভাব নির্ভর করে সেই অবস্থানের Value ভেক্টরের মান ও দিক, Output Projection (W_O), দুটি শক্তিশালী Residual পথ (যার মাধ্যমে সরাসরি নিজস্ব অবস্থানের তথ্য চলে যায়), FFN-এর অরৈখিক রূপান্তর এবং বিগত দিনগুলোর মধ্যকার পারস্পরিক সহসম্পর্কের (Correlation) ওপর।\n\nআমাদের Lab-এ যেসব Intervention রাখা হয়েছে সেগুলো মডেলের সংখ্যার সংবেদনশীলতা বুঝতে সাহায্য করে, কিন্তু পর্যবেক্ষণমূলক ঐতিহাসিক ডেটা থেকে বাস্তব জগতের কার্যকারণ সম্পর্ক প্রমাণ করে না। যদি সত্যিই Feature Attribution বা কার্যকারণ প্রশ্নের উত্তর দরকার হয়, তবে সেটির জন্য সুনির্দিষ্ট অনুমান, নিয়ন্ত্রিত পরীক্ষা বা উপযুক্ত Causal Inference পদ্ধতি আলাদাভাবে নকশা করতে হবে।"
+    },
+    {
+      "title": "Diagnostic Forecast-এর ফলাফল পেশাদার ও সৎভাবে উপস্থাপন",
+      "tag": "ATTENTION · ML CODING · 35 MIN",
+      "prompt": "ইন্টারভিউয়ার জানতে চাইলেন: 'আপনার Tiny Transformer কি Baseline-কে হারাতে পেরেছে, নাকি পারেনি? এই এক্সপেরিমেন্টের ফলাফল আপনি কীভাবে রিপোর্ট করবেন?' গুছিয়ে উত্তর দিন।",
+      "answer": "আমি কোনো অতিরঞ্জন ছাড়া সরাসরি প্রকৃত সংখ্যা ও শর্তগুলো তুলে ধরব: ২০১১ সালের ডেটায় স্কেলিং করে এবং দিন-শেষের তথ্য প্রাপ্যতার নিয়ম মেনে 182টি Development দিনের (জানুয়ারি–জুন ২০১২) এক-ধাপ পরের Forecast-এ মূল সাইকেল সংখ্যার এককে সরল naive পদ্ধতির MAE = 900.604396 ও RMSE = 1273.461291, সাপ্তাহিক seasonal7 পদ্ধতির MAE = 1090.791209 ও RMSE = 1469.171726, এবং আমাদের স্থির রেসিপির Transformer মডেলের MAE = 967.508168 ও RMSE = 1191.254609। অর্থাৎ বড় ত্রুটি কমানোর মাপকাঠি RMSE-তে Transformer উভয় Baseline-এর চেয়ে ভালো করলেও গড় পরম ত্রুটি (MAE)-তে সরল naive পদ্ধতিই এগিয়ে আছে!\n\nএর সাথে আমি চারটি জরুরি বৈজ্ঞানিক সীমাবদ্ধতা স্পষ্ট করব: (১) এই Development সময়কালটি আগের অধ্যায়গুলোতেও বিশ্লেষিত হয়েছে বলে এটি নতুন অদেখা চূড়ান্ত পরীক্ষা নয়, (২) আগের অধ্যায়ে—Book 3 · Chapter 5 (Sequence Models)-এ দেখা মডেলের রেসিপি আলাদা হওয়ায় এটি সুনিয়ন্ত্রিত আর্কিটেকচার প্রতিযোগিতা নয়, (৩) Position বা Mask টগলগুলো একই ট্রেন করা Weight-এর ওপর চালানো Inference পরীক্ষা—আলাদাভাবে ট্রেন করা মডেল নয়, এবং (৪) শেষের সংরক্ষিত 184টি দিনের ফলাফল আমরা কোনো টিউনিং বা স্কোরিংয়ে ছুঁইনি। ভবিষ্যতে মডেল উন্নত করতে চাইলে সুশৃঙ্খল Validation পরিকল্পনা ও সম্পূর্ণ নতুন Confirmation প্রোটোকল সাজিয়ে এগোতে হবে।"
+    }
+  ],
+  "book": {
+    "order": 20,
+    "part": "Book 3 · Deep Learning & RL",
+    "prerequisites": [
+      "chapter_19",
+      "chapter_07"
+    ],
+    "purpose": "আগের অধ্যায়ে (Book 3 · Chapter 5: Sequence Models) শেখা Sequence মডেলিংয়ের ভিত্তি থেকে এবার আমরা Attention মেকানিজম ও পূর্ণাঙ্গ Transformer Block ধাপে ধাপে গড়ে তুলব, যাতে Causal Inference, Masking এবং KV Cache নিখুঁতভাবে কাজ করে।",
+    "outcomes": [
+      "Query, Key ও Value Projection, বিভিন্ন ধরনের Mask এবং KV Cache ব্যবহার করে পূর্ণ Prefix হিসাবের সঙ্গে Cached Decoding-এর গাণিতিক সমতা (Equivalence) যাচাই করতে পারা।",
+      "হাতে-কলমে উদাহরণ, PyTorch কোড ও স্বয়ংক্রিয় পরীক্ষার মাধ্যমে Attention Equivalence, Masking চুক্তি, Positional Encoding এবং Transformer Block-এর প্রতিটি ধাপ পরিষ্কারভাবে ব্যাখ্যা করতে পারা।"
+    ],
+    "recall": [
+      "শুধু Key-Padding Mask প্রয়োগ করলেই কি Padded Position-এর Query Output নিজে থেকে শূন্য (0) হয়ে যায়?",
+      "সবগুলো Value যদি একই মান 7 হয়, তাহলে Key যাই হোক না কেন Attention Output কত হবে? আর KV Cache ইমপ্লিমেন্টেশনে বাগ খুঁজতে গেলে সবার আগে কোন তিনটি অসামঞ্জস্য (Mismatch) যাচাই করবেন?"
+    ],
+    "bridge": "এর পরের অধ্যায়ে (Book 3 · Chapter 7: Deep Learning Capstone) আমরা পুরো বইয়ের শেখা ধারণাগুলো একত্রে একটি পূর্ণাঙ্গ প্রজেক্টে প্রয়োগ করব। তার আগে এই অধ্যায়ের Quiz, Coding Exercise এবং না-দেখে ব্যাখ্যা করার অনুশীলনীগুলো সম্পন্ন করে নিজের প্রস্তুতি যাচাই করে নিন।",
+    "bookId": "deep_learning",
+    "bookChapter": 6
+  }
+}

@@ -1,0 +1,1687 @@
+{
+  "id": "chapter_22",
+  "number": 22,
+  "title": "LLM Foundations",
+  "shortTitle": "LLM Foundations",
+  "displayTitle": "LLM Foundations\nFrom text to tokens",
+  "subtitle": "Tokenization, Causal Next-Token Objective এবং Decoding-এর মূল কলকব্জা বুঝে তথ্যের ভিত্তিতে Model-এর সক্ষমতা যাচাই করি।",
+  "description": "Trace the tokens. Shift the targets.\nInspect what the model actually generates.",
+  "difficulty": "LLM · foundations",
+  "lab": "llm",
+  "lessons": [
+    {
+      "id": "ch22_contract",
+      "title": "LLM Foundations: Next-Token Prediction থেকে বাস্তব সক্ষমতা",
+      "subtitle": "ছোট শিক্ষামূলক Decoder আর বিশাল Pretrained LLM এক জিনিস নয়",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "পরের Token অনুমানের মূল ধারণা (Autoregressive Objective)",
+          "body": "Book 3-এ আমরা Transformer ও Attention-এর গাণিতিক ভিত্তি দেখে এসেছি। কিন্তু প্রশ্ন হলো, একটি Language Model নিছক টেক্সট পড়ে কীভাবে পূর্ণাঙ্গ বাক্য বা অনুচ্ছেদ তৈরি করতে শেখে? এর মূল কৌশলটি আশ্চর্যজনকভাবে সরল: আগের সবগুলো Token দেখে ঠিক পরের Token-টির Probability Distribution অনুমান করা। এই ছোট কাজটিই একের পর এক পুনরাবৃত্তি করে পুরো একটি Sequence তৈরি করা যায়। Probability-এর Chain Rule ব্যবহার করে আমরা পুরো Sequence-এর সম্ভাবনা বা Probability-কে প্রতিটি ধাপের Conditional Token Probability-এর গুণফল হিসেবে লিখতে পারি। তবে শুরুতেই একটি গুরুত্বপূর্ণ সতর্কতা মনে রাখা দরকার—কোনো Token-এর Probability বেশি হওয়া মানেই যে বাক্যটির তথ্যগত দাবি (Factual Claim) সত্য, তা কিন্তু মোটেও নয়! ঝরঝরে ভাষা তৈরি করা আর নির্ভুল তথ্য দেওয়া দুটি সম্পূর্ণ আলাদা বিষয়, তাই এদের মূল্যায়নও আলাদাভাবে করতে হয়।\n\nএই অধ্যায়ে আমরা একদম গোড়া থেকে দেখব কীভাবে সাধারণ টেক্সট ভেঙে Token তৈরি হয়, কীভাবে Next-Token Loss হিসাব করা হয় এবং কীভাবে একটি Decoder নতুন টেক্সট Generate করে। পাশাপাশি আমরা এটিও বুঝব যে Tokenizer, Context Window বা Evaluation-এর নিয়ম বদলে গেলে দুটি Model-এর Loss বা Perplexity সরাসরি তুলনা করতে কেন বড় ধরনের বিভ্রান্তি তৈরি হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Large Language Model বলতে আসলে কী বোঝায়?",
+          "body": "সাধারণত বিশাল আকারের Text Corpus-এর ওপর লক্ষ-কোটি বা শত শত কোটি Parameter দিয়ে ট্রেন করা Model-কেই আমরা Large Language Model (LLM) বলি। ঠিক কতগুলো Parameter পেরোলে একটি Model-কে 'Large' বলা যাবে, তার কোনো ধরাবাঁধা সীমারেখা আমরা এখানে টানছি না। বরং ভেতরের প্রতিটি কলকব্জা নিখুঁতভাবে বোঝার জন্য এই অধ্যায়ে আমরা মাত্র 5019টি Parameter-বিশিষ্ট একটি ছোট Decoder ব্যবহার করব। এটি আমাদের শেখাবে ভেতরের গাণিতিক প্রক্রিয়া ও মেকানিক্স ঠিক কীভাবে কাজ করে; কিন্তু একে কখনোই কোনো বিশাল Pretrained LLM, কথোপকথনে দক্ষ Assistant কিংবা কোনো Benchmark বিজয়ী Model হিসেবে দাবি করা যাবে না।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "p(x_{1:T})=\\prod_{t=1}^T p_\\theta(x_t\\mid x_{<t})"
+        },
+        {
+          "type": "code",
+          "title": "উৎস ডেটার অখণ্ডতা যাচাই করি",
+          "body": "from pathlib import Path\nimport json\n\nm = json.loads(Path(\"assets/datasets/alice/source_manifest.json\").read_text())\nassert m[\"source_bytes_unchanged\"] and m[\"bytes\"] == 174311\nprint(m[\"source\"], m[\"sha256\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের ব্যবহৃত মূল Text Corpus",
+          "body": "উপরের কোডে আপনি যে ফাইলটি দেখছেন, সেটি হলো Project Gutenberg-এর Ebook 11 থেকে নেওয়া Lewis Carroll-এর বিখ্যাত বই Alice’s Adventures in Wonderland-এর মূল 174311 Byte ও তার আনুষঙ্গিক নোটিশ। মূল ফাইলটিকে একবিন্দুও পরিবর্তন না করে অক্ষত রাখা হয়েছে। শুধুমাত্র Modeling-এর সময় লাইনের শেষের CRLF-কে LF-এ রূপান্তর করা হয় এবং বইয়ের মূল অধ্যায়গুলোর টেক্সট আলাদা করে নেওয়া হয়। বইয়ের শুরুর Header, সূচিপত্র (TOC) কিংবা শেষের License সংক্রান্ত অংশগুলো আমাদের Training Data-এর অন্তর্ভুক্ত নয়।"
+        },
+        {
+          "type": "text",
+          "title": "শেখার ভাষা বনাম ট্রেনিংয়ের ভাষা",
+          "body": "এই বইয়ে আমরা ধারণাগুলো বাংলায় বুঝছি এবং সব Technical Term ইংরেজিতে রাখছি। কিন্তু খেয়াল রাখবেন, আমাদের ছোট Model-টির পুরো Empirical Corpus ইংরেজি ভাষায় লেখা। তাই আমরা বাংলায় ব্যাখ্যা দিচ্ছি বা কোনো উদাহরণে বাংলা শব্দ Encode করে দেখাচ্ছি মানেই এই নয় যে আমাদের Model বাংলা ভাষা বোঝে বা বাংলায় দক্ষ। যেকোনো Unicode ইনপুট আমাদের Byte-level Tokenizer-এ নিখুঁতভাবে Encode ও Decode (Round-trip) করা সম্ভব, কিন্তু নিছক Byte রূপান্তর করতে পারা আর সেই ভাষায় Neural Training পাওয়া সম্পূর্ণ ভিন্ন বিষয়।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে তিনটি Interactive Lab",
+          "body": "তত্ত্বগুলোকে চোখের সামনে জীবন্ত করে তুলতে এই অধ্যায়ে তিনটি অংশে আমরা হাতে-কলমে পরীক্ষা করব। প্রথমে দেখব কীভাবে সাধারণ টেক্সট থেকে UTF-8 Byte এবং BPE Token ID তৈরি হয়; এরপর Shifted Target ও Causal Visibility-এর মাধ্যমে Next-Token Objective কীভাবে কাজ করে তা পরখ করব; আর সবশেষে Temperature, Top-k ও Top-p Sampling চালিয়ে নতুন Byte কীভাবে Generate হয় তা অনুসরণ করব। অ্যাপের ভেতরে এই সম্পূর্ণ ছোট Model-টির Forward Pass সরাসরি Dart-এ চলে—অর্থাৎ অ্যাপ চালানোর সময় পেছনে নতুন করে কোনো Python Training চালানো হয় না।"
+        },
+        {
+          "type": "text",
+          "title": "প্রমাণের সীমানা ও বাস্তব সীমাবদ্ধতা",
+          "body": "আমাদের পুরো পরীক্ষাটি দাঁড়িয়ে আছে একটি নির্দিষ্ট পাবলিক বইয়ের সীমিত আকারের কিছু Source Block এবং একবারের নির্দিষ্ট একটি ছোট Training Run-এর ওপর। তাই এখানকার Test Metric-গুলোকে কেবল মেকানিক্স বোঝার Diagnostic সূচক হিসেবেই দেখতে হবে। Instruction Following, নিখুঁত প্রশ্নোত্তর (Factual QA), RAG, Alignment কিংবা Production পর্যায়ের Safety এখানে মোটেও মূল্যায়ন করা হয়নি। তাছাড়া এই প্রকাশিত Test Split-এর ফলাফল যেহেতু আমরা একবার দেখে ফেলেছি, তাই একই ডেটার ওপর বারবার কোড চালিয়ে সেটিকে নতুন কোনো স্বাধীন প্রমাণ হিসেবে দাবি করার সুযোগ নেই।"
+        }
+      ]
+    },
+    {
+      "id": "ch22_unicode",
+      "title": "Unicode, UTF-8 Byte ও দৃশ্যমান টেক্সট",
+      "subtitle": "স্ক্রিনে দেখা একটি অক্ষর মানেই কিন্তু একটি Token নয়",
+      "duration": "60 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "একই টেক্সটের হরেক রকম দৈর্ঘ্য",
+          "body": "আমরা যখন পর্দায় কোনো শব্দ দেখি, তখন আমাদের চোখ গোনে দৃশ্যমান অক্ষর বা Grapheme Cluster। কিন্তু কম্পিউটারের ভেতরে হিসাবটা এত সরল নয়! একটি টেক্সটের Grapheme Cluster, Unicode Code Point, UTF-16 Code Unit এবং UTF-8 Byte—এই চারটির সংখ্যা একদম আলাদা হতে পারে। বিশেষ করে বাংলার মতো যুক্তবর্ণ ও কার-চিহ্ন (Combining Marks) সমৃদ্ধ ভাষায় কিংবা রঙিন Emoji-এর ক্ষেত্রে এই পার্থক্য অনেক বড় হয়ে দাঁড়ায়। তাই বিভ্রান্তি এড়াতে আমাদের অ্যাপে সরাসরি Code Point-এর সংখ্যা এবং UTF-8 Byte-এর সংখ্যাই উল্লেখ করা হয়—মানুষের চোখে কয়টি অক্ষর মনে হচ্ছে, সেই আনুমানিক হিসাবকে মাপকাঠি ধরা হয় না।"
+        },
+        {
+          "type": "text",
+          "title": "UTF-8 কীভাবে টেক্সটকে সংখ্যায় সাজায়",
+          "body": "UTF-8 এনকোডিংয়ে সাধারণ ইংরেজি বা ASCII চিহ্নগুলো মাত্র 1 Byte জায়গা নেয়। কিন্তু একটু বাঁকানো উদ্ধৃতি চিহ্ন (Curly Quotation Mark) লিখতে লাগে 3 Byte, আর বাংলার একেকটি Code Point প্রকাশ করতে সাধারণত একাধিক Byte প্রয়োজন হয়। প্রতিটি Byte হলো 0 থেকে 255-এর মধ্যে একটি পূর্ণসংখ্যা (Integer)। মজার ব্যাপার হলো, একটি পূর্ণাঙ্গ String-কে UTF-8-এ Encode করে আবার হুবহু আগের টেক্সটে Decode করা গেলেও, মাঝখান থেকে বিচ্ছিন্ন একটিমাত্র Byte তুলে আনলে সেটি নিজে কোনো বৈধ Unicode অক্ষর নাও হতে পারে।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "\\mathrm{text}\\xrightarrow{UTF8}[b_1,\\ldots,b_n],\\quad b_i\\in\\{0,\\ldots,255\\}"
+        },
+        {
+          "type": "code",
+          "title": "বাংলা টেক্সট ও উদ্ধৃতি চিহ্নের Byte গণনা",
+          "body": "# Declared Unicode encoding illustration; not a trained Bangla-model result.\ntext = \"বাংলা ’\"\nraw = text.encode(\"utf-8\")\nassert raw.decode(\"utf-8\") == text\nassert len(\"’\") == 1 and len(\"’\".encode(\"utf-8\")) == 3\nprint(len(text), len(raw), list(raw))\n"
+        },
+        {
+          "type": "text",
+          "title": "Block কাটার সময় অক্ষরের মাঝখানে ভাঙন",
+          "body": "উপরের কোডে দেখুন, 'বাংলা ’' স্ট্রিংটিতে মাত্র 7টি Code Point থাকলেও UTF-8-এ সেটি 19টি Byte তৈরি করেছে, যার মধ্যে কেবল ’ চিহ্নটিই নিয়েছে 3টি Byte! এখন ভাবুন, আমরা যখন ট্রেনিংয়ের জন্য টেক্সটকে নির্দিষ্ট 32-Byte আকারের Block-এ ভাগ করব, তখন সেই কাঁচি অনায়াসেই কোনো বহুবাইট Unicode অক্ষরের ঠিক মাঝখানে পড়ে যেতে পারে। একটি Byte-level Model-এর কাছে এটি সম্পূর্ণ বৈধ একটি Token Boundary, কারণ সে কেবল 0..255 পূর্ণসংখ্যাই চেনে। কিন্তু মানুষের পড়ার পর্দায় সেই অসম্পূর্ণ Byte টুকরোটি দেখাতে গেলে Replacement Character ভেসে উঠতে পারে। তাই শুধুমাত্র কাঁচা Token ID-এর টুকরো দেখে কখনোই তড়িঘড়ি করে টেক্সটের মান বিচার করবেন না।"
+        },
+        {
+          "type": "llm_tokenizer_lab",
+          "title": "Normalization-এর সুনির্দিষ্ট নিয়ম",
+          "body": "আমাদের Source Parser মূল টেক্সট পড়ার সময় কেবল লাইনের শেষের চিহ্নগুলো (CRLF থেকে LF) একরূপ করে নেয়; এর বাইরে লুকিয়ে কোনো Unicode NFC/NFKC রূপান্তর, ছোট-বড় হাতের অক্ষর মেলানো (Case Folding) কিংবা বাড়তি ফাঁকা জায়গা ছাঁটাই (Whitespace Cleanup) করে না। কারণ Normalization-এর নিয়ম বদলে দিলেই মূল টেক্সট ও Token-এর মধ্যকার চুক্তি বা Contract বদলে যায়। আপনার প্রজেক্টে ইনপুট টেক্সট হুবহু আগের অবস্থায় ফিরিয়ে আনা (Exact Round-trip) জরুরি কি না, তা সবসময় কাজের ধরন অনুযায়ী শুরুতেই ঠিক করে নিতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "Tokenizer Lab-এ নিজে পরীক্ষা করুন",
+          "body": "উপরের Interactive Lab-টিতে বইয়ের আসল অংশটি একটু এডিট করে দেখুন কীভাবে Code Point ও Byte Piece-এর হিসাব বদলে যায়। খেয়াল করবেন, BPE-এর খণ্ড খণ্ড টুকরোগুলোর Byte পরপর জোড়া দিলেই আবার মূল String-টি অবিকল ফিরে আসে। কোনো একটি আংশিক Token একা দেখাতে গিয়ে স্ক্রিনে অসম্পূর্ণ চিহ্ন আসা আর পুরো String-এর Round-trip ব্যর্থ হওয়া কিন্তু এক কথা নয়! এছাড়া খুব বড় ইনপুট দিলে যাতে UI ধীর না হয়ে পড়ে, সেজন্য প্রদর্শনের সীমা বা Inspection Budget-ও সেখানে পরিষ্কারভাবে দেখানো থাকে।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে ব্যাখ্যা করবেন",
+          "body": "কোনো Interview-এ টেক্সট প্রসেসিং নিয়ে প্রশ্ন করা হলে একটি Unicode String-এর Code Point সংখ্যা, UTF-8 Byte সংখ্যা এবং চূড়ান্ত Token সংখ্যাকে সবসময় আলাদাভাবে হিসাব করে দেখাবেন। স্পষ্ট করে বলবেন যে ডিসপ্লের সুবিধার জন্য অসম্পূর্ণ Byte-কে Replacement Character দিয়ে দেখানো মানে ডেটা মেরামত করা নয়, কিংবা Model টেক্সটের অর্থ বুঝে ফেলেছে তাও নয়। পাশাপাশি আপনার ডেটা পাইপলাইনের কোন কোন ধাপে Encoding Mismatch ঘটতে পারে, সেটিও গুছিয়ে তুলে ধরবেন।"
+        },
+        {
+          "type": "text",
+          "title": "বাংলা টেক্সট এক Byte করে Stream করলে কী ঘটে?",
+          "body": "চলুন ছোট একটি বাংলা শব্দ “কি” নিয়ে পরীক্ষা করি। এই ছোট্ট শব্দটিতে দুটি Unicode Code Point (ক এবং ি) এবং মোট ছয়টি UTF-8 Byte রয়েছে। আপনি যদি একটি করে Byte আলাদাভাবে UTF-8 অক্ষরে Decode করতে যান, তবে সাথে সাথেই হোঁচট খাবেন—কারণ একক Byte এখানে কোনো পূর্ণ অক্ষরই নয়! বাস্তবে Streaming আউটপুট দেখানোর সময় একটি Incremental Decoder অসম্পূর্ণ Byte-গুলোকে ভেতরের Buffer-এ জমিয়ে রাখে এবং ঠিক যখনই একটি Code Point-এর সব কটি Byte পূর্ণ হয়, কেবল তখনই দৃশ্যমান অক্ষর ফিরিয়ে দেয়। আর স্ট্রিমের একেবারে শেষেও যদি কোনো অসম্পূর্ণ Byte ঝুলে থাকে, তবে Strict মোডে সেটি সাথে সাথে Error ছুড়ে দেয়। অর্থাৎ Code Point সংখ্যা, দৃশ্যমান টেক্সট বিভাজন এবং Tokenizer-এর Token গণনা—প্রতিটিই নিজস্ব নিয়ম মেনে চলে।"
+        },
+        {
+          "type": "code",
+          "title": "Incremental UTF-8 Decoder-এর ব্যবহার",
+          "body": "import codecs\n\ntext = \"কি\"\nraw = text.encode(\"utf-8\")\ndecoder = codecs.getincrementaldecoder(\"utf-8\")(errors=\"strict\")\npieces = [decoder.decode(bytes([value]), final=False) for value in raw]\nresult = \"\".join(pieces) + decoder.decode(b\"\", final=True)\nassert result == text\nrejected = 0\ntry:\n    incomplete = codecs.getincrementaldecoder(\"utf-8\")(errors=\"strict\")\n    incomplete.decode(raw[:-1], final=True)\nexcept UnicodeDecodeError:\n    rejected = 1\nprint(len(text), len(raw), sum(bool(piece) for piece in pieces), rejected)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে ভাবুন",
+          "body": "Model থেকে Generate হওয়া Byte স্ট্রিমের একেবারে শেষ অংশটি যদি কোনো অসম্পূর্ণ UTF-8 অক্ষরে এসে থেমে যায়, তবে সেটিকে পর্দায় দেখানোর নীতিমালা (Display Policy) আপনি সিস্টেমের কোন অংশে নির্ধারণ করবেন?",
+          "solution": "Tokenizer-এর Decode এবং Streaming Finalization-এর নিয়মাবলির (Contract) ভেতরেই আপনাকে স্পষ্টভাবে বলে দিতে হবে—অসম্পূর্ণ Byte পেলে সিস্টেম কি Strict Error দেবে, পরের Byte-এর আশায় Buffer-এ অপেক্ষা করবে, নাকি Replacement Character দেখাবে। তবে খেয়াল রাখবেন, Loss হিসাব করা এবং Byte-level Evaluation-এর জন্য মূল উৎপন্ন Byte-গুলোকেই অবিকল সংরক্ষণ করতে হবে; কারণ ডিসপ্লের Replacement Character দেখে কখনোই মূল Byte Sequence-এর প্রকৃত পরিচয় উদ্ধার করা যায় না।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch22_tokenizers",
+      "title": "Tokenizer Vocabulary ও Special ID-এর চুক্তি",
+      "subtitle": "প্রতিটি Model-এর Tokenizer একটি সুনির্দিষ্ট Versioned Contract",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "টেক্সট ভাঙার বিভিন্ন পথ ও তাদের Trade-off",
+          "body": "আগের পাঠে আমরা দেখেছি টেক্সট কীভাবে Byte-এ রূপান্তরিত হয়। কিন্তু Neural Network-এ ইনপুট দেওয়ার সময় আমরা কি সরাসরি Byte দেব, নাকি অক্ষর (Character), পুরো শব্দ (Word) অথবা শব্দের অংশ (Subword) ব্যবহার করব? প্রতিটি পছন্দেরই নিজস্ব সুবিধা ও সীমাবদ্ধতা আছে। Vocabulary-এর আকার বড় করলে Sequence-এর দৈর্ঘ্য ছোট হয়, কিন্তু বিরল শব্দ (Rare Strings), ফাঁকা জায়গা (Whitespace) এবং বিচিত্র Unicode সামলানো কঠিন হতে পারে; আবার Byte নিলে যেকোনো চিহ্ন প্রকাশ করা যায়, কিন্তু Sequence অনেক লম্বা হয়ে পড়ে। সবচেয়ে বড় কথা হলো, Token মানে প্রকৃতিপ্রদত্ত কোনো সার্বজনীন শব্দের একক নয়—নির্দিষ্ট Model-এর নিজস্ব Tokenizer ছাড়া একটি বাক্যের Token ID কী হবে, তার কোনো একক উত্তর নেই।"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের Model-এর Byte Vocabulary চুক্তি",
+          "body": "আমাদের ছোট Decoder-টি সরাসরি UTF-8 Byte স্তরে কাজ করে। এখানে সাধারণ Byte-গুলোর জন্য বরাদ্দ রয়েছে 0 থেকে 255 পর্যন্ত ID। এর সাথে যোগ হয়েছে তিনটি বিশেষ নিয়ন্ত্রণকারী চিহ্ন বা Special Token: Padding-এর জন্য PAD = 256, শুরুর সংকেত হিসেবে BOS = 257, এবং সমাপ্তির সংকেত হিসেবে EOS = 258। সব মিলিয়ে আমাদের মোট Vocabulary আকার দাঁড়াচ্ছে 259। এর মধ্যে BOS দিয়ে Context শুরু হয়, ছোট Sequence-কে সমান মাপে রাখতে স্টোরেজে PAD বসে, আর Sequence কোথায় শেষ হতে পারে তা অনুমান করতে ব্যবহৃত হয় EOS। Byte ভিত্তিক হওয়ার বড় সুবিধা হলো, এখানে অচেনা অক্ষরের জন্য আলাদা কোনো Unknown Token (UNK) লাগে না; তবে মনে রাখতে হবে, Model যেকোনো Byte ক্রম আউটপুট দিতে পারলেও তার সবগুলোই যে সবসময় বৈধ UTF-8 টেক্সট হবে, এমন কোনো নিশ্চয়তা নেই।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "\\operatorname{encode}:\\mathrm{text}\\to\\mathrm{IDs},\\quad E\\in\\mathbb R^{V\\times d}"
+        },
+        {
+          "type": "code",
+          "title": "BOS ও UTF-8 Byte দিয়ে Token ID যাচাই",
+          "body": "from pathlib import Path\nimport json\n\na = json.loads(Path(\"assets/datasets/alice/llm_lab.json\").read_text())\ns = a[\"samples\"][0]\nassert s[\"ids\"] == [257] + list(s[\"text\"].encode(\"utf-8\"))\nassert a[\"special_ids\"] == {\"pad\": 256, \"bos\": 257, \"eos\": 258}\nprint(s[\"ids\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "Input Vocabulary বনাম বৈধ Output",
+          "body": "একটি সূক্ষ্ম কিন্তু দারুণ গুরুত্বপূর্ণ বিষয় খেয়াল করুন: Model ইনপুট হিসেবে যেসব ID চিনতে পারে, আউটপুটে তার সবকটি তৈরি করার অনুমতি কিন্তু তার নাও থাকতে পারে! আমাদের এই Model-এ PAD (256) এবং BOS (257)-এর Output Logit-গুলোকে ব্লক করে দেওয়া হয়, যাতে পরের Token অনুমানের সময় Model কখনো মাঝপথে নতুন করে BOS বা PAD তৈরি না করে; তবে সমাপ্তি বোঝাতে EOS (258) সম্পূর্ণ বৈধ একটি আউটপুট। ফলে আমাদের Input Vocabulary 259 হলেও বৈধ আউটপুটের সংখ্যা আসলে 257। অবশ্য এই Special Marker নীতিমালা একেক Architecture-এ একেক রকম হয়—সব Pretrained Model একই ID বা একই Suppression নিয়ম মেনে চলে না।"
+        },
+        {
+          "type": "text",
+          "title": "মডেল ও Tokenizer-এর অবিচ্ছেদ্য বন্ধন (Version Coupling)",
+          "body": "বাস্তব প্রোডাকশনে একটি খুব চেনা বাগ হলো—নতুন Model Checkpoint লোড করা হয়েছে, কিন্তু পেছনে রয়ে গেছে পুরোনো বা ভিন্ন কোনো Tokenizer! মনে রাখবেন, Tokenizer-এর ID, Embedding Matrix-এর Row, Output Head, Special Marker এবং Chat Template—সবগুলোকে একসাথে একটি একক প্যাকেজ হিসেবে Version করতে হয়। ভুল Tokenizer ব্যবহার করলেও হয়তো দেখবেন উৎপন্ন ID-গুলো বৈধ সংখ্যার সীমার ভেতরেই আছে বলে কোনো Crash করছে না, কিন্তু ভেতরে ভেতরে সব শব্দের অর্থ পুরোপুরি ওলটপালট হয়ে গেছে! এই নীরব বিপর্যয় ঠেকাতে সবসময় সুনির্দিষ্ট Artifact Schema এবং আগে থেকে মিলিয়ে রাখা কিছু Golden Token Example দিয়ে স্বয়ংক্রিয় পরীক্ষা চালু রাখা উচিত।"
+        },
+        {
+          "type": "text",
+          "title": "সতর্কতা: অ্যাপের BPE Demo আর মূল Neural Model আলাদা",
+          "body": "আমাদের অ্যাপের ভেতরে শেখার সুবিধার্থে 16টি Merge-সহ একটি ছোট BPE Tokenizer-এর ডেমো রাখা আছে, যার Vocabulary গিয়ে পৌঁছায় 275 পর্যন্ত। কিন্তু ভুলেও এই BPE ID-গুলো আমাদের মূল Neural Decoder-এ ইনপুট হিসেবে পাঠাবেন না, কারণ সেই Decoder-টি ট্রেন করা হয়েছে শুধুমাত্র 259 আকারের কাঁচা Byte Vocabulary-এর ওপর! ওই BPE ডেমোটি কেবল দেখায় কীভাবে ঘনঘন আসা Byte জোড়া দিয়ে Token-এর সংখ্যা কমানো (Compression) যায়; এটি কোনো ট্রেন করা BPE Model-এর সাথে মানের তুলনা নয়।"
+        },
+        {
+          "type": "text",
+          "title": "নিজে কোড লিখে যাচাইয়ের অভ্যাস",
+          "body": "Tokenizer নিয়ে কাজ করার সময় প্রথমেই Text → IDs → Bytes → Text পুরো চক্রটি চালিয়ে দেখুন মূল টেক্সট অবিকল ফেরত আসছে কি না, এবং ইনপুটে অবৈধ Special ID ঢুকলে সিস্টেম তা ঠিকমতো আটকাচ্ছে কি না। আরেকটি প্রান্তিক অবস্থা খেয়াল রাখবেন: খালি স্ট্রিং (\"\") একজন সাধারণ Tokenizer-এর কাছে বৈধ ইনপুট হতে পারে, কিন্তু Neural Model-এ প্রেডিকশনের জন্য একদম খালি Prefix (BOS-ও নেই) পাঠানো বৈধ নয়। অর্থাৎ টেক্সট Encoding, Model Input Validation এবং Generation থামানোর নীতিমালা—এই তিনটি ধাপকে সবসময় আলাদা ও স্পষ্ট Contract হিসেবে লিখতে হবে।"
+        }
+      ]
+    },
+    {
+      "id": "ch22_bpe",
+      "title": "হাতে-কলমে Bounded Byte-Pair Encoding (BPE)",
+      "subtitle": "সবচেয়ে ঘনঘন আসা জোড়া থেকে ধাপে ধাপে Deterministic Merge Rank তৈরি",
+      "duration": "60 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "BPE কেন দরকার এবং কোথা থেকে এটি শেখে?",
+          "body": "শুধু কাঁচা Byte দিয়ে কাজ করলে প্রতিটি শব্দের জন্য অনেক লম্বা Sequence তৈরি হয়। কিন্তু আমরা যদি বারবার পাশাপাশি আসা Byte-গুলোকে জোড়া দিয়ে নতুন একেকটি Subword Token বানিয়ে নিই, তবে একই টেক্সট অনেক কম Token-এ প্রকাশ করা সম্ভব। এই কৌশলটিরই জনপ্রিয় নাম Byte-Pair Encoding (BPE)। আমাদের এই পাঠে মেকানিক্সটি স্বচ্ছভাবে বোঝার জন্য আমরা বইয়ের 1 থেকে 8 নম্বর Fit Chapter-এর প্রতিটির প্রথম 256 Byte নিয়ে সেখান থেকে ঠিক 16টি Merge শিখব। এখানে দুটি নিয়ম খুব কড়াকড়িভাবে মানা হয়েছে: প্রথমত, Data Leakage এড়াতে Validation বা Test অধ্যায়ের কোনো টেক্সট এই Merge শেখার কাজে ছোঁয়াও হয়নি; দ্বিতীয়ত, একটি অধ্যায়ের শেষ Byte ও পরের অধ্যায়ের প্রথম Byte মিলিয়ে কোনো কৃত্রিম জোড়া গণনা করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "কোন জোড়াটি আগে Merge হবে?",
+          "body": "BPE শেখার প্রতিটি ধাপে বর্তমান Sequence-গুলোর ভেতরে পাশাপাশি থাকা সব জোড়া (Adjacent Pairs) কয়বার করে এসেছে তা গোনা হয়। যে জোড়াটির সংখ্যা সবচেয়ে বেশি, সেটিই জয়ী হয়; আর যদি একাধিক জোড়ার সংখ্যা সমান (Tie) হয়, তবে ফলাফল শতভাগ সুনির্দিষ্ট (Deterministic) রাখতে তাদের সংখ্যার ক্রম বা Lexicographic Pair ID Order দেখে একটিকে বেছে নেওয়া হয়। এরপর নির্বাচিত জোড়াটিকে বাম থেকে ডানে ওভারল্যাপ না করে (Left-to-right Non-overlapping) নতুন ID দিয়ে প্রতিস্থাপন করা হয়। এই নিয়মের কারণে শুরুতে কোনো জোড়া কয়বার দেখা গেছে আর প্রকৃতপক্ষে কয়বার প্রতিস্থাপিত হয়েছে—সেই দুটি সংখ্যা কিন্তু আলাদা হতে পারে!"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "(a,b)\\mapsto c,\\quad c=259+\\mathrm{merge\\ rank}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ 16টি BPE Merge ও Round-trip পরীক্ষা",
+          "body": "from pathlib import Path\nimport importlib.util\n\np = Path(\"assets/datasets/alice/llm_workflow.py\")\nspec = importlib.util.spec_from_file_location(\"ch22_bpe\", p)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\ndocs = m.load_source(p.with_name(\"pg11.txt\"))\nmerges = m.train_bpe([d.encode(\"utf-8\")[:256] for d in docs[:8]])\nassert len(merges) == 16\npieces = m.vocabulary(merges)\ntext = docs[0][:48]\nids = m.bpe_encode(text, merges)\nassert b\"\".join(pieces[i] for i in ids).decode(\"utf-8\") == text\nprint(merges[:3], ids)\n"
+        },
+        {
+          "type": "text",
+          "title": "Merge Rank যেভাবে নতুন টেক্সট Encode করে",
+          "body": "প্রতিটি নতুন Token আসলে আগের দুটি টুকরোর Byte পরপর জোড়া দিয়েই তৈরি হয়। ট্রেনিং শেষে নতুন কোনো টেক্সট Encode করার সময় (Inference) কিন্তু হুট করে সবচেয়ে লম্বা দৃশ্যমান শব্দ খোঁজা হয় না; বরং ট্রেনিংয়ের সময় ঠিক যে ক্রমে (Merge Rank Order) জোড়াগুলো শেখা হয়েছিল, একের পর এক সেই একই ক্রমে Merge প্রয়োগ করা হয়। আর যেহেতু আমাদের ভিত্তিমূলে 0..255 সব কটি মৌলিক Byte রয়েই গেছে, তাই ট্রেনিংয়ে কখনো না দেখা যেকোনো নতুন Unicode চিহ্ন এলেও আমাদের Tokenizer কখনোই অচল হয়ে পড়বে না।"
+        },
+        {
+          "type": "text",
+          "title": "সংরক্ষিত Special ID ও সীমানার সতর্কতা",
+          "body": "আগের পাঠে দেখা PAD (256), BOS (257) ও EOS (258) ID তিনটি আগে থেকেই সংরক্ষিত থাকে; BPE Trainer কখনোই এগুলোকে সাধারণ টেক্সটের অংশ হিসেবে জোড়া লাগায় না। তাই আমাদের 16টি নতুন Merge Token-এর ID শুরু হয় 259 থেকে এবং চলে 274 পর্যন্ত (মোট আকার 275)। আবারও মনে করিয়ে দিই, আমাদের মূল Neural Decoder-এর Embedding Matrix-এ Row আছে মাত্র 259টি; তাই এই BPE Vocabulary সেই Model-এর সাথে সামঞ্জস্যপূর্ণ নয়। আমরা এখানে কেবল Subword তৈরির অ্যালগরিদমটি শিখছি, মূল Language Model-এর ভেতরে এটি চালাচ্ছি না।"
+        },
+        {
+          "type": "text",
+          "title": "কম Token মানেই কি ভালো Model?",
+          "body": "BPE চালালে একই বাক্য কম সংখ্যক Token-এ সংকুচিত হয়ে আসে ঠিকই, কিন্তু শুধু Token কমে যাওয়া দেখেই সিদ্ধান্ত নেওয়া যাবে না যে এতে Model-এর মান বেড়ে গেছে, তথ্যগত নির্ভুলতা ভালো হয়েছে কিংবা প্রোডাকশন API-এর খরচ কমে গেছে। কারণ যে মুহূর্তে আপনি Vocabulary-এর আকার ও Sequence-এর দৈর্ঘ্য বদলে ফেলেন, সাথে সাথে Perplexity মাপার এককও (Unit) বদলে যায়! একই শর্তে নিয়ন্ত্রিতভাবে নতুন করে Model ট্রেন ও মূল্যায়ন না করা পর্যন্ত কোন Tokenizer বাস্তবে ভালো কাজ করছে, তার কোনো পরীক্ষামূলক র‍্যাঙ্কিং দেওয়া সম্ভব নয়।"
+        },
+        {
+          "type": "text",
+          "title": "অনুশীলনের জন্য যা যা পরীক্ষা করবেন",
+          "body": "নিজে BPE ইমপ্লিমেন্ট করার সময় চারটি প্রান্তিক অবস্থা অবশ্যই টেস্ট করে দেখবেন: সমান সংখ্যকবার আসা জোড়ার Tie-breaking, ওভারল্যাপ থাকা জোড়া, বহুবাইট Unicode-এর নিখুঁত Round-trip এবং অবৈধ Merge Reference। আপনি চাইলে বইয়ের 9 নম্বর Validation অধ্যায়ের কোনো অংশের ওপর এই শেখা Merge-গুলো প্রয়োগ করে দেখতে পারেন, কিন্তু খেয়াল রাখবেন—Validation টেক্সট থেকে যেন আবার নতুন করে Merge শেখানো না হয়!"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে হিসাব: কেন গণনা আর প্রতিস্থাপনের সংখ্যা আলাদা হয়?",
+          "body": "চলুন ওভারল্যাপের ব্যাপারটি একদম ছোট একটি উদাহরণ দিয়ে হাতে হিসাব করি। ধরুন ইংরেজি ছোট হাতের 'a'-এর ASCII Byte ID হলো 97, এবং নতুন দুটি Merge-এর জন্য আমরা 259 ও 260 নম্বর ID হাতে রেখেছি। এখন ইনপুট যদি হয় পাঁচটি 'a' অর্থাৎ “aaaaa”, তবে পাশাপাশি থাকা (97, 97) জোড়া কয়টি পাওয়া যাবে? প্রথম-দ্বিতীয়, দ্বিতীয়-তৃতীয়, তৃতীয়-চতুর্থ ও চতুর্থ-পঞ্চম মিলিয়ে মোট চারটি (occurrences = 4)! কিন্তু আমরা যখন বাম থেকে ডানে ওভারল্যাপ ছাড়া (97, 97) → 259 Merge চালাব, তখন প্রথম দুটি মিলে একটি 259 এবং পরের দুটি মিলে আরেকটি 259 হবে, আর শেষের 97 একা পড়ে থাকবে—ফলে প্রতিস্থাপন ঘটবে মাত্র দুইবার এবং পাওয়া যাবে [259, 259, 97]। পরের ধাপে যদি আমরা (259, 97) → 260 Merge দিই, তবে তালিকাটি ছোট হয়ে দাঁড়াবে [259, 260]। শেষে এই দুটি টুকরোর ভেতরের Byte জোড়া দিলে ঠিকই আমাদের আসল পাঁচটি 'a' (b\"aaaaa\") ফিরে আসবে।"
+        },
+        {
+          "type": "code",
+          "title": "দুটি ক্রমিক Merge ও নিখুঁত Decode",
+          "body": "from collections import Counter\n\ntokens = [97] * 5\npieces = {97: b\"a\"}\n\n\ndef merge(sequence, pair, new_id):\n    output, position = [], 0\n    while position < len(sequence):\n        if tuple(sequence[position : position + 2]) == pair:\n            output.append(new_id)\n            position += 2\n        else:\n            output.append(sequence[position])\n            position += 1\n    return output\n\n\noccurrences = Counter(zip(tokens, tokens[1:]))[(97, 97)]\nfirst = merge(tokens, (97, 97), 259)\npieces[259] = pieces[97] + pieces[97]\nsecond = merge(first, (259, 97), 260)\npieces[260] = pieces[259] + pieces[97]\nassert b\"\".join(pieces[token] for token in second) == b\"aaaaa\"\nprint(occurrences, *first, *second)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে ভাবুন",
+          "body": "ধরুন চূড়ান্ত Vocabulary-তে ঠিক একই টুকরোগুলো রেখে কেবল তাদের শেখার ক্রম (Merge Order) উল্টে দেওয়া হলো। এতে কি নতুন টেক্সটের Encoding একই থাকবে?",
+          "solution": "না, Encoding মোটেও একই থাকবে না! কারণ BPE সবসময় শেখা Merge Rank-এর ক্রম অনুসরণ করে কাজ করে। আগের ধাপের কোনো নির্দিষ্ট Merge হয়ে নতুন টুকরোটি তৈরি না হলে পরের ধাপের জোড়াটি Sequence-এর ভেতরে খুঁজেই পাওয়া যাবে না (যেমন উপরের উদাহরণে আগে 259 তৈরি না হলে (259, 97) জোড়াটি অস্তিত্বই পেত না)। এজন্যই Vocabulary-এর Byte টুকরো, Merge Rank-এর ক্রম এবং Special Token-এর সীমানা—সবকিছু একসাথে Version করতে হয়।",
+          "reference": "https://huggingface.co/learn/llm-course/chapter6/5"
+        }
+      ]
+    },
+    {
+      "id": "ch22_embeddings",
+      "title": "Token Embedding, Position ও Output Head",
+      "subtitle": "পূর্ণসংখ্যার ID Lookup থেকে কীভাবে Contextual Logit তৈরি হয়",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "পূর্ণসংখ্যার ID থেকে Vector পাওয়ার কৌশল",
+          "body": "Tokenizer আমাদের হাতে টেক্সটের বদলে কিছু পূর্ণসংখ্যার ID তুলে দিয়েছে। কিন্তু Neural Network তো এই ID-গুলোর সংখ্যার মান দিয়ে সরাসরি গুণ-ভাগ করতে পারে না—কারণ ID 200 মানে এই নয় যে সেটি ID 100-এর দ্বিগুণ বা অর্থের দিক থেকে কাছাকাছি! তাই প্রতিটি পূর্ণসংখ্যার Token ID আসলে একটি Embedding Matrix-এর নির্দিষ্ট একটি সারি (Row) বেছে নেওয়ার চাবি বা Index হিসেবে কাজ করে। এই সারিতে থাকা ভাসমান সংখ্যাগুলোই (Floating-point Coordinates) হলো ট্রেনিং থেকে শেখা একটি Feature Basis। তবে একটি সতর্কতা মনে রাখবেন—এই Vector-এর কোনো একটি নির্দিষ্ট Dimension-কে একা ধরে সরাসরি 'এটিই Sentiment' বা 'এটিই সত্যতার মাপকাঠি' বলে ধরে নেওয়া যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের ছোট Model-এর মাপজোখ ও Dimension",
+          "body": "আমাদের Decoder-এ মোট Vocabulary 259 এবং প্রতিটি Embedding-এর প্রস্থ বা Dimension 8; ফলে 259 × 8 আকারের এই টেবিলে মোট নিবন্ধিত (Registered) মানের সংখ্যা হলো 2072টি। এর মধ্যে 256 নম্বর সারিটি হলো PAD, যেটি শূন্য (0) দিয়ে শুরু হয় এবং padding_idx ব্যবহারের কারণে ট্রেনিংয়ের সময় কোনো Gradient আপডেট পায় না। আর শব্দের ক্রম বোঝানোর জন্য 0 থেকে 31 পর্যন্ত পজিশনে রয়েছে নির্দিষ্ট (Fixed) 32 × 8 আকারের একটি Sinusoidal Positional Buffer—এটি ট্রেনিংয়ে পরিবর্তনযোগ্য কোনো Parameter টেবিল নয়। প্রতিটি নতুন Source Block শুরু হলে এই পজিশনের গণনা আবার 0 থেকে শুরু হয়।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "x_t=E[ID_t]+PE_t,\\quad\\ell_t=W_{head}\\,h_t+b_{head}"
+        },
+        {
+          "type": "code",
+          "title": "PyTorch-এ Embedding Table ও PAD Row পরীক্ষা",
+          "body": "import torch\n\nembedding = torch.nn.Embedding(259, 8, padding_idx=256, dtype=torch.float64)\nids = torch.tensor([[257, 65, 66]], dtype=torch.long)\nassert embedding(ids).shape == (1, 3, 8)\nassert embedding.weight.numel() == 2072\nassert torch.equal(embedding.weight[256], torch.zeros(8, dtype=torch.float64))\nprint(embedding(ids).shape)\n"
+        },
+        {
+          "type": "text",
+          "title": "স্থির Embedding থেকে কীভাবে Contextual অর্থ তৈরি হয়?",
+          "body": "শুধুমাত্র Embedding Table থেকে একটি সারি তুলে আনলে সেটি কিন্তু আশেপাশের অন্য কোনো Token-কে দেখতে পায় না—যেকোনো বাক্যেই নির্দিষ্ট একটি ID একই প্রাথমিক Vector দেবে। কেবল যখন এই Vector-গুলো পজিশনের সংকেত নিয়ে Attention এবং Feed-Forward Network (FFN) পার হয়ে আসে, তখনই চূড়ান্ত Normalized Hidden Vector-টি আশেপাশের প্রসঙ্গ বা Context-এর ওপর নির্ভরশীল হয়ে ওঠে। এখানে আরেকটি পার্থক্য পরিষ্কার রাখা জরুরি: একটি Autoregressive Model-এর ভেতরের এই Token Embedding আর পুরো বাক্য বা ডকুমেন্ট খোঁজার জন্য তৈরি Sentence/Document Embedding কিন্তু এক জিনিস নয় এবং তাদের শেখার লক্ষ্যও (Objective) আলাদা। Semantic Retrieval-এর জন্য ব্যবহৃত সেই বিশেষ Embedding নিয়ে আমরা বিস্তারিত পড়ব ঠিক পরের অধ্যায়ে—Book 4 · Chapter 2 (Embeddings & Semantic Retrieval)-এ।"
+        },
+        {
+          "type": "text",
+          "title": "Output Projection ও Logit তৈরি",
+          "body": "মডেলের একেবারে শেষ প্রান্তে 8-মাত্রার Contextual Hidden Vector-টিকে একটি Linear Output Head (W_head ও b_head) দিয়ে 259টি Logit-এ প্রসারিত করা হয়, এবং তারপর বৈধ আউটপুটগুলোর ওপর Softmax চালিয়ে পরের Token-এর Probability বের করা হয়। অনেক বড় Architecture-এ Parameter বাঁচাতে Input Embedding এবং Output Head একই Weight Matrix ভাগাভাগি করে (Tied Weights); তবে আমাদের এই ছোট Model-টিতে দুটি সম্পূর্ণ আলাদা বা Untied রাখা হয়েছে। খেয়াল রাখবেন, Weight-এর সংখ্যা বা Tokenizer-এর গঠন একটুও বদলে গেলে পুরোনো Checkpoint-কে কখনোই চুপচাপ সামঞ্জস্যপূর্ণ বলে চালিয়ে দেওয়া যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "ক্রমের সংকেত ও Context দৈর্ঘ্যের সীমা",
+          "body": "Transformer-এ শব্দের ক্রম বোঝার সংকেত আসে দুটি উৎস থেকে: একটি হলো Sinusoidal Positional Vector, আর অন্যটি হলো Causal Visibility বা বাম দিকের সীমাবদ্ধ দৃষ্টি। এখানে একটি সাধারণ ভুল ধারণা ভেঙে দেওয়া দরকার—গাণিতিক সূত্র দিয়ে যেকোনো বড় সংখ্যার Sinusoidal Position তৈরি করা গেলেও, মাত্র 32 Context দৈর্ঘ্যে ট্রেন করা এই Model যে লম্বা অনুচ্ছেদেও (Long Context) দারুণ কাজ করবে, তার কোনো প্রমাণ নেই! এছাড়া দ্রুত আউটপুট তৈরির সময় যখন আগের ধাপগুলো Cache করে রাখা হয়, তখনও নতুন প্রতিটি Token-এ ঠিক সঠিক Position Offset বসানো হচ্ছে কি না, সেদিকে কড়া নজর রাখতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে ডিবাগিংয়ের কৌশল",
+          "body": "নিজে কোড লেখার সময় প্রথমেই ছোট একটি batch = 1 ইনপুট দিয়ে প্রতিটি ধাপের Shape, PAD সারির শূন্য মান এবং সীমার বাইরের (Out-of-range) ID দিলে কী ঘটে তা পরীক্ষা করে নিন। ডিবাগিং সহজ করতে চারটি মধ্যবর্তী রূপকে আলাদাভাবে মিলিয়ে দেখার অভ্যাস করুন: শুরুর Input Embedding, মাঝখানের Contextual Hidden Vector, শেষের কাঁচা Logit এবং চূড়ান্ত Probability। তবে মনে রাখবেন, আপনার কোডের সংখ্যার হিসাব (Numeric Agreement) নিখুঁতভাবে মিলে যাওয়া মানে এই যে আপনার ইমপ্লিমেন্টেশন সঠিক—এর মানে এই নয় যে ছোট এই Model-টি অসাধারণ অর্থপূর্ণ বাক্য লিখতে শিখে গেছে!"
+        }
+      ]
+    },
+    {
+      "id": "ch22_objective",
+      "title": "Shifted Next-Token Objective ও Teacher Forcing",
+      "subtitle": "প্রতিটি Input Prefix-এর ঠিক পরে কোন Label অনুমান করতে হয়?",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "এক ঘর বামে সরানো Target Alignment",
+          "body": "ধরুন আমাদের হাতে পূর্ণ একটি Token Sequence আছে [BOS, a, b, c]। এখান থেকে পরের Token অনুমান শেখাতে হলে ইনপুট ও টার্গেট কীভাবে সাজাতে হবে? খুব সহজ: ইনপুট হিসেবে দেব প্রথম থেকে শেষের আগেরটি পর্যন্ত [BOS, a, b], আর ঠিক এক ঘর বামে সরিয়ে টার্গেট হিসেবে দেব [a, b, c]। অর্থাৎ বর্তমান পজিশনের ইনপুট কখনোই নিজের পজিশনের টার্গেট নয়—বরং বর্তমান পজিশনে দাঁড়িয়ে ঠিক পরের পজিশনের Token-টিকে অনুমান করতে হয়! এই এক ঘর সরানো (Shifted) গঠনের কারণেই Attention-এর প্রধান কর্ণটি (Causal Diagonal) খোলা রাখা সম্পূর্ণ নিরাপদ, কারণ পজিশন t-তে মডেল কেবল x_t দেখতে পাচ্ছে, তার টার্গেট x_{t+1} নয়। তবে সাবধান—কোডে ভুলে যদি Label এক ঘর এদিক-ওদিক (Off-by-one) হয়ে যায়, তবে আপনার Attention Mask শতভাগ নিখুঁত হলেও পুরো শেখার লক্ষ্যটাই (Objective) ভুল হয়ে যাবে!"
+        },
+        {
+          "type": "text",
+          "title": "Teacher Forcing বনাম বাস্তব Generation",
+          "body": "ট্রেনিংয়ের সময় আমরা মডেলকে একটি বাড়তি সুবিধা দিই: আগের ধাপে মডেল কী অনুমান করেছিল তা না দেখে, প্রতি ধাপে আসল ডেটাসেটের সঠিক Token-গুলোকেই Context হিসেবে তার সামনে তুলে ধরা হয়। এই কৌশলকে বলা হয় Teacher Forcing। এতে সমান্তরালভাবে পুরো Sequence-এর Loss একসাথে হিসাব করা সহজ হয়। কিন্তু বাস্তবে নতুন টেক্সট Generate করার সময় তো আর আসল উত্তর পাশে থাকে না—তখন মডেল নিজের তৈরি করা আগের ID-গুলোকেই একের পর এক ইনপুটে জুড়ে নিতে বাধ্য হয়। ফলে শুরুতে ছোট্ট একটি ভুল হলে পরের ধাপগুলোতে সেই ভুলের রেশ ক্রমেই জমতে পারে (Error Accumulation)। এজন্যই শুধু কম Teacher-forced NLL দেখলেই নিশ্চিত হওয়া যায় না যে মডেল একটানা মুক্তভাবে (Free-running) চমৎকার অনুচ্ছেদ লিখতে পারবে।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "L=-{1\\over N_{valid}}\\sum_{t\\in valid}\\log p_\\theta(y_t\\mid x_{\\le t})"
+        },
+        {
+          "type": "code",
+          "title": "Shifted Target ও Cross-Entropy হিসাব",
+          "body": "import torch\n\ntokens = torch.tensor(\n    [[257, 65, 66, 67]], dtype=torch.long\n)  # Declared alignment illustration.\ninputs = tokens[:, :-1]\ntargets = tokens[:, 1:]\nassert inputs.tolist() == [[257, 65, 66]] and targets.tolist() == [[65, 66, 67]]\nlogits = torch.zeros(1, 3, 259, dtype=torch.float64)\nlogits[:, :, 256:258] = -torch.inf\nloss = torch.nn.functional.cross_entropy(logits.reshape(-1, 259), targets.reshape(-1))\nassert torch.isfinite(loss)\nprint(loss.item())\n"
+        },
+        {
+          "type": "text",
+          "title": "Loss Mask ও অবৈধ Logit দমন",
+          "body": "একটি Batch-এর ছোট Sequence-গুলোর শেষে যেসব PAD টার্গেট থাকে, Loss হিসাবের সময় সেগুলোকে বাদ দেওয়া হয় এবং শুধুমাত্র বৈধ (Valid) টার্গেটের সংখ্যা দিয়ে গড় করা হয়। এখানে একটি সূক্ষ্ম গাণিতিক পার্থক্য খেয়াল রাখবেন: cross_entropy-তে ignore_index ব্যবহার করলে সেটি কেবল PAD পজিশনের Target Loss যোগ হওয়া বন্ধ করে; কিন্তু বৈধ পজিশনগুলোতে Softmax-এর হর (Denominator) থেকে PAD ক্লাসটিকে নিজে থেকে সরিয়ে দেয় না! সে কারণেই উপরের কোডে দেখুন, আমাদের মডেল আলাদাভাবে PAD (256) ও BOS (257)-এর Output Logit-গুলোকে -inf করে দেয়, যাতে বৈধ আউটপুটের সম্ভাব্যতার যোগফল পুরোপুরি বাস্তবসম্মত থাকে।"
+        },
+        {
+          "type": "llm_objective_lab",
+          "title": "Objective Lab-এ প্রতিটি পজিশন পরখ করুন",
+          "body": "উপরের Interactive Lab-টিতে বইয়ের আসল একটি অংশের প্রতিটি ইনপুট পজিশন এবং তার এক ঘর সরানো Shifted Target পাশাপাশি মিলিয়ে দেখুন। যেকোনো পজিশনে ক্লিক করে বেছে নেওয়া টার্গেটটির Probability, Negative Log-Likelihood (NLL) এবং ভেতরের Hidden State ঘুরে দেখতে পারেন। খেয়াল করবেন, একেবারে শেষ পজিশনে যে টার্গেটটি দেখানো হচ্ছে, সেটি মূল বইয়ের ঠিক পরের আসল Byte—মডেলকে সেটি কখনোই ইনপুট Feature হিসেবে দেখানো হয় না, কেবল তার অনুমান কতটা ভালো হলো তা মাপার Label হিসেবে ব্যবহৃত হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Loss-এর একক ও তুলনার শর্ত",
+          "body": "PyTorch-এ আমাদের এই Cross-Entropy Loss প্রাকৃতিক লগারিদম (ln) ব্যবহার করে, তাই এর গাণিতিক একক হলো বৈধ টার্গেট প্রতি nats (Nats per valid target token)। সহজেই বোঝা যায়, আমাদের মতো Byte ও EOS ভিত্তিক টার্গেটের সংখ্যা আর কোনো Word বা Subword ভিত্তিক মডেলের টার্গেটের সংখ্যা (Denominator) এক হবে না। তাই দুটি মডেলের Loss বা Perplexity সংখ্যার বিচারে তুলনা করার আগে অবশ্যই নিশ্চিত হয়ে নিতে হবে যে তাদের Tokenizer, Loss Mask, Context দৈর্ঘ্য এবং Corpus-এর নিয়ম হুবহু এক কি না।"
+        },
+        {
+          "type": "text",
+          "title": "নিজে ইমপ্লিমেন্ট করার সময় যা যাচাই করবেন",
+          "body": "নিজে কোড লেখার সময় Tensor-এর আকারের দিকে কড়া নজর রাখুন: আমাদের targets থাকে [B, T] আকারের Long ইনডেক্সে এবং logits থাকে [B, T, V] আকারে, তাই Loss ফাংশনে পাঠানোর আগে সেগুলো সঠিকভাবে Flatten বা Transpose করে নিতে হয়। পাশাপাশি অবশ্যই টেস্ট লিখে পরীক্ষা করবেন—সবগুলো টার্গেট Ignored হলে, টার্গেটে ভুলবশত BOS ঢুকে পড়লে, সীমার বাইরের ID এলে কিংবা ভুল করে একই পজিশনের ইনপুটকে টার্গেটে কপি (Self-copy) করে ফেললে আপনার কোড তা সাথে সাথে ধরতে পারছে কি না।"
+        }
+      ]
+    },
+    {
+      "id": "ch22_blocks",
+      "title": "Text Block, Document Split ও PAD/EOS-এর ভূমিকা",
+      "subtitle": "বাদ পড়া মাঝখানের টেক্সট জুড়ে কখনো কৃত্রিম Sequence বানাবেন না",
+      "duration": "60 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "বইয়ের অধ্যায়গুলোকে তিনটি ভূমিকায় ভাগ করা",
+          "body": "আমাদের মূল বইটির বারোটি অধ্যায়কে তিনটি সুনির্দিষ্ট ভাগে আলাদা করা হয়েছে: 1 থেকে 8 নম্বর অধ্যায় ব্যবহৃত হয়েছে মডেল শেখানোর কাজে (Fit), 9 ও 10 নম্বর অধ্যায় রাখা হয়েছে ট্রেনিংয়ের গতিপ্রকৃতি দেখার জন্য (Diagnostic Validation), আর 11 ও 12 নম্বর অধ্যায় তোলা আছে একেবারে চূড়ান্ত পরীক্ষার জন্য (Terminal Test)। যদিও প্রতিটি ভাগ আলাদা আলাদা অধ্যায় নিয়ে গঠিত, তবু সততার খাতিরে মনে রাখতে হবে যে সবগুলোই একই লেখকের একই বইয়ের অংশ—ফলে চরিত্রদের নাম, লেখার ভঙ্গি ও প্রচলিত বাক্যাংশের মিল সব খানেই রয়েছে। তাই এটিকে কখনোই সম্পূর্ণ ভিন্ন ডোমেইনের বা প্রাক-ট্রেনিং ডেটা থেকে শতভাগ বিচ্ছিন্ন (Contamination-proof) কোনো সার্বজনীন Benchmark বলা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "সীমিত বাজেটে Block নির্বাচন ও মাঝখানের ফাঁক",
+          "body": "হিসাব দ্রুত ও সুনির্দিষ্ট রাখার জন্য আমরা প্রতিটি অধ্যায়ের শুরু থেকে ওভারল্যাপ ছাড়া প্রথম 63টি 32-Input-Token আকারের Block নিই, এবং তার সাথে অধ্যায়ের একেবারে শেষের Final Block-টি যোগ করি (অর্থাৎ প্রতি অধ্যায়ে মোট 64টি Block)। এখানে একটি খুব গুরুত্বপূর্ণ নিয়ম মানা হয়েছে: ৬৩তম Block-এর শেষ আর একদম শেষের Final Block-টির শুরুর মাঝখানে যে টেক্সটটুকু বাদ পড়েছে, সেগুলোর দুই প্রান্তকে টেনে এনে জোড়া লাগিয়ে (Stitch) কোনো কৃত্রিম বাক্য তৈরি করা হয়নি! অধ্যায়ের শেষ Block-টিতে আসল EOS সমাপ্তি চিহ্নটি অক্ষত থাকে। আর শুরুর পরপর থাকা Input Block-গুলো নিজেদের মধ্যে ওভারল্যাপ না করলেও, এক ঘর সরানো Shifted Target নেওয়ার সময় কোনো Block-এর শেষ টার্গেটটি স্বাভাবিকভাবেই মূল অধ্যায়ের ঠিক পরের Byte-টির সাথে মিলে যায়।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "X=s_{j:j+32},\\quad Y=s_{j+1:j+33},\\quad j\\in\\mathcal B_{document}"
+        },
+        {
+          "type": "code",
+          "title": "Fit অধ্যায়গুলো থেকে Block ও বৈধ Target গণনা",
+          "body": "from pathlib import Path\nimport importlib.util\n\np = Path(\"assets/datasets/alice/llm_workflow.py\")\nspec = importlib.util.spec_from_file_location(\"ch22_blocks\", p)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\ndocs = m.load_source(p.with_name(\"pg11.txt\"))\nX, Y, rows = m.blocks(docs, range(1, 9))\nassert X.shape == Y.shape == (512, 32)\nassert int(Y.eq(258).sum()) == 8 and int(Y.ne(256).sum()) == 16322\nprint(rows[0][\"source_chapter\"], rows[0][\"start\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের তিনটি ভাগের প্রকৃত সংখ্যার হিসাব",
+          "body": "উপরের কোডটি চালালে আমরা আমাদের ডেটাসেটের একদম নিখুঁত পরিসংখ্যান পেয়ে যাই: ৮টি Fit অধ্যায়ে রয়েছে মোট 512টি Block, যার ভেতরে বৈধ টার্গেট 16322টি এবং EOS আছে 8টি; ২টি Validation অধ্যায়ে 128টি Block, বৈধ টার্গেট 4057টি ও EOS 2টি; আর ২টি Test অধ্যায়ে 128টি Block, বৈধ টার্গেট 4046টি ও EOS 2টি। প্রতিটি অধ্যায়ের শেষ অংশের দৈর্ঘ্য আলাদা হওয়ার কারণে সেগুলোতে PAD-এর সংখ্যাও আলাদা হয়েছে। খেয়াল রাখবেন, মূল সম্পূর্ণ বইটি অফলাইনে সংরক্ষিত থাকলেও আমাদের এই ছোট ট্রেনিং বাজেটে বইয়ের সব কটি Byte ব্যবহৃত হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "BOS, EOS ও Tail Padding-এর সুনির্দিষ্ট কাজ",
+          "body": "প্রতিটি অধ্যায়ের শুরুতে BOS বসে শুরুর সংকেত হিসেবে, আর একেবারে শেষে EOS বসে সমাপ্তির টার্গেট ও Generation থামানোর চিহ্ন হিসেবে। শেষ Block-টিতে EOS-এর পরে যদি 32 ঘর পূর্ণ না হয়, তবে বাকি ফাঁকা জায়গাটুকু পূরণ করতে বসে Tail Padding (PAD)—যার পরের অংশে আর কোনো Continuation Loss ধরা হয় না। যেহেতু প্রতিটি বৈধ Block-এর অন্তত প্রথম ইনপুটটি কখনোই PAD নয়, তাই Attention হিসাব করার সময় কোনো বৈধ সারিই সম্পূর্ণ মাস্ক হয়ে অচল (All-masked) হয়ে পড়ে না।"
+        },
+        {
+          "type": "text",
+          "title": "সাধারণ Block বনাম আধুনিক Document Packing",
+          "body": "বড় LLM ট্রেনিংয়ে অনেক সময় জায়গা বাঁচাতে একাধিক ছোট ডকুমেন্টকে একই সারিতে পরপর সাজিয়ে রাখা হয়, যাকে বলে Document Packing। সেক্ষেত্রে কিন্তু এক ডকুমেন্টের টোকেন যেন আগের ডকুমেন্টকে দেখতে না পায়, তার জন্য আলাদা সীমানা ও মাস্কিং নীতি দরকার হয়। আমাদের মূল ইমপ্লিমেন্টেশনে প্রতিটি অধ্যায়ের Block আলাদা রাখা হয়েছে, সেখানে জটিল কোনো Packed Masking নেই। আরেকটি সতর্কতা: সম্পূর্ণ টেক্সট থেকে যদি এলোমেলোভাবে (Random Windows) টুকরো কেটে Train ও Test বানানো হতো, তবে আশেপাশের বাক্য মিলে গিয়ে মারাত্মক Context Leakage ঘটত—তাই আমরা পুরো অধ্যায় ধরেই ভাগ করেছি।"
+        },
+        {
+          "type": "text",
+          "title": "নিজে যাচাই করার অনুশীলনী",
+          "body": "অনুশীলনের জন্য প্রতিটি নির্বাচিত Block মূল অধ্যায়ের ঠিক কোন অবস্থান (start) থেকে শুরু হয়েছে এবং তার Shifted Byte-গুলো কী কী, তা স্বাধীনভাবে কোড লিখে মিলিয়ে দেখুন। নিশ্চিত করুন যে তিনটি ভূমিকার (Fit, Validation, Test) ডেটা সম্পূর্ণ আলাদা, শুরুর ইনডেক্সগুলোতে কোনো পুনরাবৃত্তি নেই এবং প্রতিটি অধ্যায়ের শেষ Block-এ EOS ঠিকমতো আছে। আর অবশ্যই মনে রাখবেন—Tokenizer শেখানো কিংবা মৌলিক অক্ষরের প্রাবল্য (Unigram Counts) গোনার কাজটি কেবলমাত্র Fit অংশের ডেটা থেকেই করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে হিসাব: Packed Document-এ দুটি আলাদা সীমানা",
+          "body": "ধরুন আমরা দুটি ছোট স্বাধীন ডকুমেন্টকে এক সারিতে প্যাক করে নিলাম: [BOS, 10, 11, EOS, BOS, 20, 21, EOS]। এক ঘর বামে শিফট করার পর আমাদের হাতে ইনপুট পজিশন থাকবে সাতটি ([BOS, 10, 11, EOS, BOS, 20, 21])। এখন আমরা যদি নিয়ম করি যে প্রতিটি ডকুমেন্ট কেবল নিজের ভেতরের আগের টোকেনগুলোকেই দেখতে পাবে (Same-document Causal Attention), তবে প্রথম ডকুমেন্টের ৪টি পজিশনে বৈধ জোড়া হবে 1 + 2 + 3 + 4 = 10টি এবং দ্বিতীয় ডকুমেন্টের ৩টি পজিশনে বৈধ জোড়া হবে 1 + 2 + 3 = 6টি—অর্থাৎ মোট অনুমোদিত Attention জোড়া হবে 10 + 6 = 16টি! এখানেই শেষ নয়: চতুর্থ ইনপুট পজিশনে থাকা প্রথম ডকুমেন্টের EOS থেকে পরের ডকুমেন্টের শুরুর BOS অনুমান করার টার্গেটটিকেও আমাদের বাদ দিতে হবে, ফলে বৈধ টার্গেট অবশিষ্ট থাকবে ছয়টি। অর্থাৎ প্যাকিং করলে Attention-এর সীমানা এবং Target Loss-এর সীমানা—দুটোকেই আলাদাভাবে সামলাতে হয়। (অবশ্য কেউ যদি ইচ্ছাকৃতভাবে পুরো Corpus Stream শেখাতে চান, তবে সেই নিয়মটি ট্রেনিং রেসিপিতে স্পষ্টভাবে লিখে দিতে হবে।)"
+        },
+        {
+          "type": "math",
+          "title": "ডকুমেন্ট-সচেতন Visibility ও বৈধ Target-এর শর্ত",
+          "body": "A_{ij}=\\mathbf1[j\\le i]\\mathbf1[g_i=g_j],\\qquad m_i=\\mathbf1[g_i=g_{i+1}]"
+        },
+        {
+          "type": "code",
+          "title": "Segment ID দিয়ে Document Packing যাচাই",
+          "body": "import torch\n\ntokens = torch.tensor([1, 10, 11, 2, 1, 20, 21, 2])\nsegments = torch.tensor([0, 0, 0, 0, 1, 1, 1, 1])\ninputs, targets = tokens[:-1], tokens[1:]\ninput_segments = segments[:-1]\ncausal = torch.ones(len(inputs), len(inputs), dtype=torch.bool).tril()\nsame_document = input_segments[:, None] == input_segments[None, :]\nallowed = causal & same_document\nvalid_targets = segments[:-1] == segments[1:]\nassert targets[3].item() == 1 and not valid_targets[3]\nprint(allowed.sum().item(), valid_targets.sum().item(), int(allowed[4, 0]))\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে ভাবুন",
+          "body": "ধরুন আপনি Attention-এ এক ডকুমেন্ট থেকে অন্য ডকুমেন্ট দেখা ঠিকই বন্ধ করেছেন, কিন্তু Target Loss-এর মাস্ক থেকে ডকুমেন্ট পরিবর্তনের সীমানাটি বাদ দিতে ভুলে গেছেন। তাহলে মডেল আসলে কী শিখতে বাধ্য হবে?",
+          "solution": "তখন আগের ডকুমেন্টের একেবারে শেষ অবস্থায় (EOS) দাঁড়িয়ে পরের অসম্পর্কিত ডকুমেন্টের শুরুর টোকেন (BOS) অনুমান করার একটি বাড়তি পদ Loss Objective-এ থেকে যাবে! আপনি যদি সত্যিকারের স্বাধীন ডকুমেন্টের সম্ভাবনা (Independent-document Likelihood) শেখাতে চান, তবে ওই সীমানার Target Loss-টিকেও অবশ্যই বাদ দিতে হবে। এজন্যই প্যাকিং ব্যবহার করলে Position পুনরায় শূন্য থেকে শুরু করা (Reset), Loss Mask এবং Attention Visibility—তিনটিকেই একসাথে পরীক্ষা করতে হয়।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch22_causality",
+      "title": "Causal Mask, Label Leakage ও PAD Key",
+      "subtitle": "ট্রেনিংয়ে তথ্যের গোপনীয়তা রক্ষায় তিনটি ভিন্ন Mask-এর সমন্বয়",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ভবিষ্যৎ দেখা নিষেধ (The Causal Rule)",
+          "body": "ট্রেনিংয়ের সময় আমরা পুরো Sequence-টি একসাথে মডেলের ভেতরে পাঠাই ঠিকই, কিন্তু পজিশন i-তে থাকা Query যদি ডান দিকের ভবিষ্যৎ পজিশনগুলো (j > i) দেখে ফেলে, তবে কী সর্বনাশ হবে ভাবুন তো! আমাদের Shifted ডেটায় পজিশন i-এর আসল উত্তর বা টার্গেটটি বসে আছে ঠিক পরের ইনপুট ঘর input[i+1]-এ। তাই ভবিষ্যতের ঘরগুলো উন্মুক্ত (Full Visibility) রাখলে মডেল না শিখেই পরের ঘর থেকে উত্তর নকল করে নেবে—যাকে আমরা বলি সরাসরি Label Leakage! সুতরাং নিখুঁত Autoregressive ট্রেনিংয়ের জন্য এক ঘর সরানো Label Shift এবং নিশ্ছিদ্র Causal Mask—দুটোই একসাথে থাকা অপরিহার্য।"
+        },
+        {
+          "type": "text",
+          "title": "Key Padding ও তিনটি আলাদা মেকানিজম",
+          "body": "Causal Mask ভবিষ্যতের ঘরগুলো আটকালো, কিন্তু ছোট Sequence-এর শেষে থাকা PAD টোকেনগুলোর কী হবে? কোনো বৈধ টোকেন যেন অর্থহীন PAD পজিশনের ওপর মনোযোগ না দেয়, সেজন্য Attention হিসাব থেকে সব PAD Key বাদ দেওয়া হয়। তবে খেয়াল করুন, এতে কিন্তু PAD পজিশন নিজেরা যখন Query হিসেবে কাজ করে, তখন তাদের আউটপুট আপনাআপনি শূন্য হয়ে যায় না—সেই বাড়তি আউটপুটগুলোকে শেষমেশ থামায় আমাদের Loss-এর Ignore Mask! অনেক সময় শিক্ষার্থীরা তিনটি ভিন্ন জিনিস গুলিয়ে ফেলেন: Embedding টেবিলের padding_idx (যা গ্র্যাডিয়েন্ট থামায়), LayerNorm বা Residual-এর আউটপুট, এবং Attention-এর Key Mask—মনে রাখবেন, এই তিনটি কিন্তু সম্পূর্ণ আলাদা স্তরের মেকানিজম।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "A_{ij}=0\\quad\\text{if }j>i\\text{ or key}_j=PAD"
+        },
+        {
+          "type": "code",
+          "title": "উপরের ত্রিভুজ ব্লক করে Causal Mask তৈরি",
+          "body": "import torch\n\nT = 4\nblocked = torch.ones(T, T, dtype=torch.bool).triu(1)\nallowed = ~blocked\nassert allowed[0].tolist() == [True, False, False, False]\nassert allowed[-1].all()\nprint(blocked)\n"
+        },
+        {
+          "type": "text",
+          "title": "সতর্কতা: ফ্রেমওয়ার্ক ভেদে Boolean Mask-এর উল্টো অর্থ!",
+          "body": "বাস্তবে কোড লেখার সময় একটি মারাত্মক ফাঁদ হলো বিভিন্ন API-তে True এবং False-এর বিপরীত অর্থ (Polarity)। যেমন PyTorch-এর nn.MultiheadAttention-এ বুলিয়ান মাস্কে True মানে হলো পজিশনটি ব্লক করা (blocked); অথচ PyTorch-এরই ফাংশনাল scaled_dot_product_attention (SDPA)-এ True মানে হলো পজিশনটি অনুমোদিত (allowed)! তাই না বুঝে একই মাস্ক ভেরিয়েবল দুই জায়গায় বসিয়ে দিলে পুরো মাস্ক উল্টে গিয়ে নীরবে ভয়ংকর বাগ তৈরি হতে পারে। আমাদের এই অধ্যায়ের স্পষ্ট মডিউলটিতে dropout = 0 রেখে Causal ও Key-Padding মাস্ক দুটিকে একত্র করে সুনির্দিষ্টভাবে প্রয়োগ করা হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "একই Weight রেখে Visibility পরীক্ষা",
+          "body": "আমাদের অ্যাপের ল্যাবে যখন আপনি Full-Visibility সুইচটি অন করেন, তখন সেটি নতুন করে কোনো অনিরাপদ মডেল ট্রেন করে না; বরং বর্তমান মডেলের একই Weight রেখে কেবল নিষিদ্ধ পথগুলো খুলে দিলে আউটপুট কীভাবে বদলে যায় তা দেখায়। মজার ব্যাপার হলো, একটি Causal মডেলে হঠাৎ ভবিষ্যতের দরজা খুলে দিলেই যে প্রতিবার NLL কমে যাবে তার কোনো মানে নেই—কারণ মডেলটি ট্রেন হয়েছে কেবল অতীত দেখার অভ্যাসে! এছাড়া ভবিষ্যতের টোকেন বদলে দিয়ে আগের পজিশনের Logit অপরিবর্তিত থাকে কি না (Prefix Perturbation Invariance), তা কোডের সংখ্যার দৃশ্যমানতা প্রমাণ করলেও পুরো ডেটা পাইপলাইনে অন্য কোনো Leakage নেই—এমন সার্টিফিকেট কিন্তু দেয় না।"
+        },
+        {
+          "type": "text",
+          "title": "শেষ পজিশনের একটি চমৎকার সূক্ষ্মতা",
+          "body": "একটি মজার ধাঁধা খেয়াল করুন: আমাদের এই এক-ব্লক বিশিষ্ট (Single-block) মডেলে কোনো Prefix-এর একেবারে শেষ পজিশনের Query-টির ক্ষেত্রে Causal মোড আর Full-Visibility মোড হুবহু একই Logit দেয়! কেন বলুন তো? কারণ শেষ পজিশনের ডানে তো আর কোনো ভবিষ্যৎ ইনপুট নেই—তাই দুই মোডেই সে বামের সব কটি বৈধ Key দেখতে পায়। তবে মাঝখানের আগের পজিশনগুলোর স্টেট ঠিকই বদলে যাবে। আর সাবধান: মডেলটি যদি একাধিক লেয়ার বা Stacked Block বিশিষ্ট হতো, তবে প্রথম ব্লকের মাঝখানের পরিবর্তিত স্টেট পরের ব্লকে গিয়ে শেষ পজিশনের ফলাফলকেও বদলে দিত—তখন আর শেষ পজিশনেও এই সমতা ধরে নেওয়া যেত না!"
+        },
+        {
+          "type": "text",
+          "title": "নিজে কোড লিখে মাস্কিং পরীক্ষার নিয়ম",
+          "body": "আপনার Causal Mask সত্যিই কাজ করছে কি না তা নিশ্চিত করার সবচেয়ে মোক্ষম উপায় হলো: একটি ইনপুট Sequence-এর পরের দিকের (Future) টোকেনগুলো ইচ্ছামতো বদলে দিন এবং assert করে দেখুন আগের পজিশনগুলোর Logit এক চুলও নড়ছে কি না! একইভাবে শেষের PAD অংশ পরিবর্তন করে দেখুন বৈধ পজিশনগুলোর আউটপুটে কোনো প্রভাব পড়ে কি না। এছাড়া সম্পূর্ণ খালি বা পুরোটাই PAD এমন ইনপুট এবং KV Cache ব্যবহারের সময় আয়তাকার (Non-square) মাস্কের Query Offset আলাদাভাবে সামলানোর অভ্যাস গড়ে তুলুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch22_decoder",
+      "title": "আমাদের Tiny Decoder: পূর্ণাঙ্গ গঠন ও Parameter হিসাব",
+      "subtitle": "মাত্র 5019টি Parameter ও একটি Causal Block-এর ভেতরের নকশা",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "একনজরে পুরো Architecture",
+          "body": "চলুন এবার আমাদের ছোট্ট Decoder মডেলটির ভেতরের প্রতিটি পার্টস খুলে দেখি। এর শুরুতে রয়েছে 259 × 8 আকারের একটি Token Embedding এবং স্থির Sinusoidal Positional সংকেত। এরপর রয়েছে মাত্র একটি Pre-norm Causal Transformer Block—যেখানে মডেলের প্রস্থ D = 8, Attention Head 2টি (প্রতিটির প্রস্থ 4), এবং ভেতরের Feed-Forward (FFN) লেয়ারটি 8 → 16 → 8 আকারের ও ReLU অ্যাক্টিভেশনযুক্ত। ব্লকের শেষে রয়েছে 8 মাত্রার একটি চূড়ান্ত LayerNorm এবং তার ওপরে 259 আকারের একটি Untied Vocabulary Head। হিসাব একদম স্বচ্ছ রাখতে এখানে কোনো Dropout, একাধিক ব্লক, RMSNorm, RoPE কিংবা বাইরে থেকে আনা কোনো Pretrained Weight ব্যবহার করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "কড়ায়-গন্ডায় 5019টি Parameter-এর হিসাব",
+          "body": "একজন দক্ষ ML Engineer সবসময় নিজের মডেলের প্রতিটি Parameter হাতে গুনে মেলাতে পারেন। আমাদের হিসাবটি মিলিয়ে নিন: শুরুর Embedding টেবিলে 259 × 8 = 2072টি; Multi-Head Attention-এ (QKV ও আউটপুট প্রজেকশনের Weight এবং Bias মিলিয়ে) 288টি; ব্লকের ভেতরের দুটি Pre-LayerNorm-এ 16 + 16 = 32টি; FFN-এ (8×16 + 16 এবং 16×8 + 8) 280টি; শেষের Final LayerNorm-এ 16টি; আর সবশেষে Vocabulary Head-এ (8×259 + 259) 2331টি—সব যোগ করলে দাঁড়ায় ঠিক 5019টি Parameter! খেয়াল করবেন, পজিশনের 32 × 8 = 256টি মান স্থির Buffer হিসেবে থাকে বলে সেগুলো শেখার যোগ্য Parameter নয়। আবার নিবন্ধিত 5019টি সংখ্যার মধ্যেও কিছু ঘর (যেমন PAD সারি বা ব্লক করা আউটপুট) Special-token নীতির কারণে শূন্য গ্র্যাডিয়েন্ট পেতে পারে—অর্থাৎ তালিকায় নাম থাকা মানেই প্রতিটি সংখ্যা সমানভাবে শেখে তা নয়।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "U=X+MHA(LN_1(X)),\\quad H=LN_f\\!\\left(U+FFN(LN_2(U))\\right)"
+        },
+        {
+          "type": "code",
+          "title": "ByteDecoder-এর মোট Parameter যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\np = Path(\"assets/datasets/alice/llm_workflow.py\")\nspec = importlib.util.spec_from_file_location(\"ch22_budget\", p)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nmodel = m.ByteDecoder()\nassert sum(p.numel() for p in model.parameters()) == 5019\nassert model.position.numel() == 256\nprint(\"embedding2072 + block600 + final norm16 + head2331 =5019\")\n"
+        },
+        {
+          "type": "text",
+          "title": "Attention-এর ভেতরের Tensor Shape পরিক্রমা",
+          "body": "কোড ডিবাগ করার সময় প্রতি ধাপে Tensor-এর Shape চোখে ভাসা চাই। আমাদের ইনপুট Token ID-এর আকার হলো [B, T], যেখানে এই মডেলে T ≤ 32। শুরুর একত্রিত QKV প্রজেকশনের Weight Matrix-টির আকার 24 × 8। সেখান থেকে Query, Key ও Value আলাদা করে 2টি Head-এ ভাগ করলে প্রতিটির আকার দাঁড়ায় [B, 2, T, 4], আর তাদের ভেতরকার Attention Weight Matrix-এর আকার হয় [B, 2, T, T]।\n\nযেহেতু প্রতিটি Head-এর নিজস্ব প্রস্থ 4, তাই ডট-প্রোডাক্ট স্কোরকে আমরা ভাগ করি √4 = 2 দিয়ে। এরপর দুটি Head পাশাপাশি জোড়া লাগিয়ে আবার আমরা ফিরে পাই প্রস্থ 8, যার ওপর চলে 8 → 8 আউটপুট প্রজেকশন। সবশেষে Vocabulary Head পার হয়ে চূড়ান্ত Logit-এর আকার দাঁড়ায় [B, T, 259]—Loss হিসাবের সময় টার্গেটের সাথে ঠিক এই আকারটি ধরেই মিলিয়ে দেখতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "LayerNorm ঠিক কোন অক্ষ বরাবর কাজ করে?",
+          "body": "আমাদের মডেলে ব্যবহৃত LayerNorm প্রতিটি পজিশনের নিজস্ব 8টি Feature বরাবর গড় ও Population Variance (+ eps = 1e-5) হিসাব করে সেগুলোকে Normalize করে। ব্লকের ভেতরের দুটি Pre-norm এবং বাইরের Final Norm—এই তিন জায়গায় তিনটি সম্পূর্ণ আলাদা শেখার যোগ্য স্কেল ও শিফট (Affine Parameters) থাকে। কখনোই ভুল করে Feature অক্ষের বদলে Context (T) বা Batch (B) অক্ষ বরাবর Normalize করে ফেলবেন না—তাতে পুরো মডেলের আচরণ এবং Causality ভেঙে পড়বে!"
+        },
+        {
+          "type": "text",
+          "title": "Python থেকে অ্যাপ পর্যন্ত নিখুঁত Reference মিলানো",
+          "body": "আমাদের অ্যাপের ভেতরে এই পুরো চেইনটি—অর্থাৎ Embedding, তিনটি LayerNorm, Attention, Residual সংযোগ, FFN-এর ভেতরের ও বাইরের ধাপ এবং সবশেষে 259টি Logit—সবকিছু নতুন করে হিসাব করা হয়। আসল Fit ও Validation প্রিফিক্সগুলোর ওপর চালানো PyTorch-এর আউটপুটগুলোকে এখানে Golden Reference হিসেবে মিলিয়ে দেখা হয়েছে। তবে আবারও মনে করিয়ে দিই, যোগ-বিয়োগ ও ম্যাট্রিক্স গুণের হিসাব শতভাগ মিলে যাওয়া মানে আমাদের ইঞ্জিনিয়ারিং পাইপলাইন নিখুঁত; কিন্তু এর মানে এই নয় যে 5019 প্যারামিটারের এই খুদে মডেলটি মানুষের মতো গভীর ভাষাজ্ঞান অর্জন করে ফেলেছে!"
+        },
+        {
+          "type": "text",
+          "title": "এই নকশার পরিধি ও বাস্তব প্রেক্ষাপট",
+          "body": "স্পষ্টতই আমাদের এই ছোট্ট Decoder-টি কোনো পূর্ণাঙ্গ Encoder-Decoder অনুবাদ সিস্টেম বা কথোপকথনের Chat Assistant নয়। এর মূল উদ্দেশ্য হলো Next-Token প্রেডিকশনের আদ্যোপান্ত আপনার হাতের মুঠোয় নিয়ে আসা। যখন আপনি বাস্তবে বিশাল ডেটাসেট, বহু GPU-তে Distributed Training, Alignment কিংবা লাখো ইউজারের Production Serving নিয়ে কাজ করবেন, তখন এই ভিত্তির ওপরেই আরও বড় ও বিশেষায়িত নকশা দাঁড় করাতে হবে।"
+        }
+      ]
+    },
+    {
+      "id": "ch22_training",
+      "title": "সুনির্দিষ্ট Local Pretraining প্রক্রিয়া",
+      "subtitle": "512টি Fit Block থেকে ঠিক 80টি Minibatch Update-এর স্বচ্ছ হিসাব",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ট্রেনিংয়ের বাঁধাধরা রেসিপি",
+          "body": "আমাদের এই ছোট প্রিট্রেনিং রানটিতে কোনো লুকোচুরি বা আন্দাজের জায়গা রাখা হয়নি। পুরো রানটি চালানো হয়েছে seed = 22, CPU float64 প্রিসিশন, AdamW অপটিমাইজার (lr = 0.01, weight_decay = 0.01), 1.0 মানের Gradient Norm Clipping, batch_size = 64 এবং ঠিক 10টি Epoch ধরে। আমাদের 512টি Fit Block প্রতি Epoch-এ একটি নির্দিষ্ট লোকাল জেনারেটর (seed = 220) দিয়ে শাফল হয়ে 8টি করে Batch তৈরি করে—ফলে 10টি Epoch মিলিয়ে মোট ওজন আপডেট ঘটে ঠিক 10 × 8 = 80 বার! এখানে ইচ্ছাকৃতভাবে কোনো Hyperparameter খোঁজাখুঁজি, বিভিন্ন Seed চেখে দেখা, সেরা Epoch বেছে নেওয়া কিংবা Early Stopping চালানো হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "কোন ডেটা কোন কাজের মালিক?",
+          "body": "ট্রেনিংয়ের প্রতিটি Minibatch কেবলমাত্র Fit অংশের টার্গেট থেকেই গ্র্যাডিয়েন্ট নেয়। শুরুতে আনট্রেনড অবস্থা (Epoch 0) থেকে শুরু করে Epoch 10 পর্যন্ত প্রতিটি ধাপে সমস্ত বৈধ টার্গেটের গড় হিসেবে Train ও Validation NLL রেকর্ড করা হয়। আমরা শেখার গতি বোঝার জন্য Validation রেখাটি পর্যবেক্ষণ করি ঠিকই, কিন্তু চূড়ান্ত মডেল হিসেবে দশম Epoch-এর শেষ অবস্থানটিকেই (Terminal Epoch 10) স্থির রাখা হয়েছে—মাঝখান থেকে সবচেয়ে কম Validation Loss দেখে কোনো সেরা Checkpoint বাছাই করা হয়নি। আর চূড়ান্ত Test সেটটি কেবলমাত্র এই দশম Epoch-এর মডেলের ওপরই একবার মূল্যায়ন করা হয়েছে।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "\\theta\\leftarrow\\operatorname{AdamW}(\\nabla CE),\\quad80\\ \\text{updates}=10\\times8"
+        },
+        {
+          "type": "code",
+          "title": "AdamW ও Gradient Clipping-সহ একটি আদর্শ ট্রেনিং ধাপ",
+          "body": "import torch\n\ntorch.manual_seed(22)\nm = torch.nn.Linear(8, 259, dtype=torch.float64)\nopt = torch.optim.AdamW(m.parameters(), lr=0.01, weight_decay=0.01, foreach=False)\nx = torch.zeros(2, 8, dtype=torch.float64)\ntargets = torch.tensor([65, 66])  # Loop illustration.\n# Gradients accumulate: clear them at the intended optimizer-step boundary.\nopt.zero_grad(set_to_none=True)\nloss = torch.nn.functional.cross_entropy(m(x), targets)\n# Backward accumulates into .grad; the seed or reduction sets the scale.\nloss.backward()\ntorch.nn.utils.clip_grad_norm_(m.parameters(), 1.0, error_if_nonfinite=True)\nopt.step()\nprint(loss.item())\n"
+        },
+        {
+          "type": "text",
+          "title": "স্থিতিশীল Loss ও অপটিমাইজার ধাপের ক্রম",
+          "body": "প্রতিটি আপডেটে কাঁচা Vocabulary Logit থেকে প্রথমেই PAD ও BOS-এর ঘরগুলোকে -∞ করে দিয়ে তারপর Cross-Entropy হিসাব করা হয় এবং টার্গেটের PAD পজিশনগুলো বাদ দেওয়া হয়। কোনো Batch-এ যেন অন্তত একটি বৈধ টার্গেট থাকে, তার জন্য সুরক্ষা যাচাই (Guard) রাখা আছে। উপরের কোডের ক্রমটি খুব ভালো করে লক্ষ্য করুন: প্রথমে পুরোনো গ্র্যাডিয়েন্ট মুছে ফেলা (zero_grad), তারপর backward(), এরপর অসীম বা অস্থিতিশীল মান ঠেকাতে clip_grad_norm_, এবং সবশেষে opt.step()। আরেকটি সূক্ষ্ম বিষয়: AdamW-এর Weight Decay সরাসরি প্যারামিটারের ওপরে কাজ করে, তাই আমাদের দেখানো NLL সংখ্যার ভেতরে কোনো বাড়তি Regularization Penalty যোগ হয়ে নেই।"
+        },
+        {
+          "type": "text",
+          "title": "Train বনাম Eval মোডের শৃঙ্খলা",
+          "body": "আমাদের বর্তমান মডেলে dropout = 0 হলেও ভালো ইঞ্জিনিয়ারিং অভ্যাস হিসেবে ট্রেনিং ও মূল্যায়নের সময় যথাক্রমে model.train(), model.eval() এবং torch.no_grad() নিখুঁতভাবে বজায় রাখা হয়েছে। বিশেষ করে মনে রাখবেন, আপনি যদি কখনো PyTorch-এর ফাংশনাল F.dropout সরাসরি কল করেন, তবে সেটি কিন্তু একা একা module.eval() দেখে বন্ধ হতে পারে না—তাকে training=self.training ফ্ল্যাগটি স্পষ্টভাবে জানিয়ে দিতে হয়! এছাড়া আমাদের এই কোডটি ভেতরের Attention Weight-গুলো পরিদর্শনের জন্য ধরে রাখে; এটি কোনো সর্বোচ্চ গতির (Throughput-optimized) ফ্ল্যাশ কার্নেলের বেঞ্চমার্ক নয়।"
+        },
+        {
+          "type": "text",
+          "title": "শতভাগ Reproducibility ও র‍্যান্ডমনেস নিয়ন্ত্রণ",
+          "body": "পরীক্ষাটি যেন যেকোনো সময় হুবহু মিলিয়ে দেখা যায়, সেজন্য মূল ফাইলের SHA-256 হ্যাশ, পার্সারের নিয়ম, প্রতিটি Block-এর শুরুর অবস্থান, Token ID, সব কটি Seed, লাইব্রেরির ভার্সন এবং ডেটা স্কিমা সবই নথিবদ্ধ করা আছে। এমনকি ফাংশন শেষে কলকারীর মূল PyTorch RNG ও থ্রেড স্টেটও আগের অবস্থায় ফিরিয়ে দেওয়া হয়। আর অ্যাপে ও পাইথনে একই রকম টেক্সট জেনারেশন দেখানোর জন্য আমরা একটি সাধারণ Linear Congruential Generator (LCG) স্ট্রিম ব্যবহার করেছি—এটি কেবল দুই প্ল্যাটফর্মে হুবহু একই Sampling ফল মেলানোর শিক্ষামূলক কৌশল, PyTorch-এর মূল RNG-এর কোনো বিকল্প নয়।"
+        },
+        {
+          "type": "text",
+          "title": "নিজে হাতে যাচাই করার মহড়া",
+          "body": "নিজের লোকাল মেশিনে একই কোড পরপর দুইবার চালিয়ে দেখুন উৎপন্ন রিপোর্ট ও প্রতিটি প্যারামিটারের মান হুবহু এক আসছে কি না, এবং সেভ করা state_dict পুনরায় লোড করে প্রেডিকশন মিলিয়ে নিন। একটি বাস্তব পার্থক্য মনে রাখবেন: সংরক্ষিত ওজন (state_dict) দিয়ে আপনি নিখুঁতভাবে Inference চালাতে পারবেন ঠিকই, কিন্তু মাঝপথ থেকে হুবহু একই ট্রেনিং পুনরায় শুরু (Exact Optimizer Resume) করতে চাইলে এর পাশাপাশি অপটিমাইজারের ভেতরের মোমেন্টাম স্টেট, RNG স্টেট এবং ডেটা লোডারের অবস্থানও সংরক্ষণ করতে হয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch22_perplexity",
+      "title": "NLL, Perplexity ও তুলনা করার একক",
+      "subtitle": "ভিন্ন Tokenizer-এর Perplexity সংখ্যা দিয়ে সরাসরি মডেল র‍্যাঙ্ক করা যায় না",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "NLL ও Perplexity আসলে কী বোঝায়?",
+          "body": "ট্রেনিং ও মূল্যায়নের সময় আমরা দেখি মডেল আসল পরের টোকেনগুলোকে কতটা সম্ভাবনা দিচ্ছে। এই আসল টার্গেটগুলোর Negative Log-Probability-এর গড়ই হলো আমাদের চেনা Negative Log-Likelihood (NLL)। আর সেই গড় NLL-কে সূচকে (exp(mean NLL)) চড়ালেই পাওয়া যায় Perplexity (PPL)—যা একই Tokenizer, একই Objective ও একই Context নিয়মের ভেতরে মডেল কতটা দ্বিধাহীনভাবে পরের টোকেন অনুমান করছে তার চমৎকার একটি মাপকাঠি। তবে এখানে একটি মারাত্মক গাণিতিক ভুল থেকে সবসময় সাবধান থাকবেন: exp ফাংশন করার আগে পুরো ডেটাসেটের সব বৈধ টোকেনের মোট Loss যোগ করে মোট বৈধ টোকেন সংখ্যা দিয়ে ভাগ করতে হয়! প্রতিটি Batch-এর আলাদা Perplexity বের করে সেগুলোর গড় নিলে কিংবা অসমান আকারের Batch-এর গড় Loss সরাসরি গড় করলে পুরো হিসাব ভুল হয়ে যাবে।"
+        },
+        {
+          "type": "text",
+          "title": "ভগ্নাংশের হরে (Denominator) ঠিক কারা থাকছে?",
+          "body": "আমাদের Loss হিসাবে PAD লেবেলগুলো লব (Loss Sum) ও হর (Valid Count)—দুই জায়গা থেকেই সম্পূর্ণ বাদ পড়ে। কিন্তু সমাপ্তি চিহ্ন EOS এখানে একটি বৈধ টার্গেট হিসেবে গণনায় থাকে। অর্থাৎ আমাদের রিপোর্টে যে 'প্রতি টোকেন' হিসাব দেখানো হচ্ছে, সেখানে প্রতিটি টোকেন হলো হয় একটি সাধারণ UTF-8 Byte অথবা একটি EOS মার্কার। কেউ যদি এই সংখ্যাটিকে সরাসরি Bits-per-byte (BPB) হিসেবে প্রকাশ করতে চান, তবে EOS-এর লস ও কাঁচা Byte-এর সংখ্যাকে হরে কীভাবে ধরা হচ্ছে, তার আলাদা ও সুনির্দিষ্ট সংজ্ঞা আগে থেকেই ঠিক করে নিতে হবে।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "\\mathrm{PPL}=\\exp\\!\\left({\\sum\\ell_t\\over N_{valid}}\\right)"
+        },
+        {
+          "type": "code",
+          "title": "অসমান Batch থেকে সঠিক উপায়ে গড় NLL ও Perplexity হিসাব",
+          "body": "import math\n\n# Declared loss-aggregation illustration, not measured model evidence.\nloss_sums = [4.0, 9.0]\nvalid_counts = [2, 3]\nnll = sum(loss_sums) / sum(valid_counts)\nppl = math.exp(nll)\nassert abs(nll - 2.6) < 1e-12\nprint(nll, ppl)\n"
+        },
+        {
+          "type": "text",
+          "title": "Tokenizer বদলালে কেন Perplexity তুলনা অচল হয়ে পড়ে?",
+          "body": "ভাবুন তো, একই বাক্যকে Word, BPE, Character এবং Byte ভিত্তিক চারটি আলাদা Tokenizer তো চারটি ভিন্ন সংখ্যক টোকেনে ভাগ করবে! যেখানে একটি Byte মডেলের সামনে মাত্র ২৫৭টি সম্ভাব্য পথ থাকে, সেখানে একটি বড় Subword মডেলের সামনে থাকতে পারে পঞ্চাশ হাজার পথ—কিন্তু তাকে অনেক কম ধাপে বাক্যটি শেষ করতে হয়। ফলে কেবল সংখ্যায় কম Perplexity দেখেই বলে দেওয়া যায় না যে একটি মডেল অন্যটির চেয়ে ভালো, যদি তাদের Tokenizer আলাদা হয়! ভিন্ন Tokenizer-এর মডেল তুলনা করতে হলে একই মূল টেক্সটের মোট NLL যোগফল (Total NLL) অথবা সুনির্দিষ্টভাবে কাঁচা Byte দিয়ে ভাগ করা সমতুল্য একক ব্যবহার করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "তুলনার ভিত্তি হিসেবে Unigram Baseline",
+          "body": "আমাদের ছোট্ট ট্রান্সফরমারটি আসলেই প্রসঙ্গ (Context) থেকে কিছু শিখল কি না, তা বোঝার জন্য আমরা একটি সরল Unigram Baseline তৈরি করি। শুধুমাত্র Fit অধ্যায়ের বৈধ টার্গেটগুলো কয়বার করে এসেছে তা গুনে তার সাথে 1 যোগ করে (Add-one Smoothing) 257টি বৈধ আউটপুট ক্লাসের ওপর একটি স্থির সম্ভাব্যতা বণ্টন বানানো হয়। ডেটা বিশুদ্ধ রাখতে Validation বা Test অংশের কোনো গণনা এতে নেওয়া হয় না। এই Smoothing থাকার ফলে ট্রেনিংয়ে কখনো না দেখা কোনো Byte বা EOS এলেও সম্ভাব্যতা শূন্য হয়ে লস অসীম হয়ে যায় না, এবং আমরা ঠিক একই টার্গেটের ওপর Context-বিহীন বেসলাইনের সাথে আমাদের মডেলের ন্যায্য তুলনা করতে পারি।"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের পরীক্ষায় পাওয়া প্রকৃত ফলাফল",
+          "body": "দশম Epoch শেষে চূড়ান্ত Test সেটের ওপর আমাদের মডেলের গড় NLL নেমে এসেছে 2.832925-এ (যার Perplexity প্রায় 16.9951), যেখানে Context-বিহীন Unigram Baseline-এর NLL ছিল 3.208245। অর্থাৎ মডেলটি স্পষ্টতই আশেপাশের অক্ষরের ক্রম থেকে অর্থবহ পরিসংখ্যান শিখতে পেরেছে! তবে এই সংখ্যার প্রকৃত অর্থটুকু সততার সাথে মনে রাখতে হবে: এটি একই বইয়ের সীমিত আকারের কিছু ব্লকের ওপর পরের Byte অনুমানের ফলাফল মাত্র। যেহেতু সব অধ্যায় একই লেখকের একই বই থেকে নেওয়া, তাই এই সংখ্যা দিয়ে তথ্যের সত্যতা (Factuality), কথোপকথনের দক্ষতা, বাংলা ভাষার জ্ঞান কিংবা নির্দেশ মানার সক্ষমতা (Instruction Compliance) মোটেও প্রমাণিত হয় না।"
+        },
+        {
+          "type": "text",
+          "title": "নিজে অনুশীলনের কাজ",
+          "body": "ছোট-বড় মিশ্র দৈর্ঘ্যের ডকুমেন্ট এবং শেষে প্রচুর PAD থাকা ডেটার ওপর নিখুঁতভাবে গড় NLL ও Perplexity বের করার ফাংশনটি নিজে লিখে পরীক্ষা করুন। পাশাপাশি স্পষ্ট ভাষায় গুছিয়ে বলার চর্চা করুন—কেন দুটি মডেলের Tokenizer, Loss Mask, Context দৈর্ঘ্য বা ডেটা স্প্লিট আলাদা হলে তাদের Perplexity তুলনা বিভ্রান্তিকর হয়ে ওঠে। আর মনে রাখবেন, একবার প্রকাশিত এই Test সেটের ওপর বারবার হিসাব চালানো কিন্তু নতুন কোনো অদেখা (Held-out) পরীক্ষার সমতুল্য নয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch22_book_tokenization_comparison",
+      "title": "Perplexity, Tokenization ও সমতুল্য Evaluation Unit",
+      "subtitle": "একই টেক্সট ও একই মোট Loss হওয়া সত্ত্বেও কেন Perplexity বদলে যায় এবং কীভাবে তার সমাধান করবেন",
+      "duration": "18 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন সমতুল্য একক (Comparable Unit) এত জরুরি?",
+          "body": "আগের পাঠেই আমরা দেখেছি যে Perplexity হলো গড় টোকেন NLL-এর সূচকীয় মান (exp(mean token NLL))। এখন সমস্যা হলো, দুটি ভিন্ন Tokenizer যদি একই টেক্সটকে কম বা বেশি সংখ্যক টোকেনে টুকরো করে, তবে ভগ্নাংশের হর বদলে যাওয়ার কারণে প্রতি-টোকেন Perplexity রাতারাতি ছোট বা বড় দেখাতে পারে! তাই যেকোনো মূল্যায়ন রিপোর্টে কেবল একটি Perplexity সংখ্যা বসিয়ে দিলেই চলে না—তার সাথে Evaluation Unit, মূল Corpus, টেক্সট Normalization, EOS অন্তর্ভুক্ত আছে কি না এবং Context Budget কতটুকু ছিল, এই সব কটি তথ্য একসাথে উল্লেখ করতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Bits-per-byte (BPB) দিয়ে একক মেলানোর উপায়",
+          "body": "টোকেনের সংখ্যার এই তারতম্য দূর করার একটি চমৎকার উপায় হলো মূল টেক্সটের অপরিবর্তনীয় কাঁচা UTF-8 Byte সংখ্যাকে ভিত্তি ধরা। ধরুন একটি নির্দিষ্ট কাঁচা টেক্সটে মোট B সংখ্যক UTF-8 Byte আছে এবং মডেল পুরো টেক্সটটির জন্য মোট S nats পরিমাণ Negative Log-Likelihood দিয়েছে। তাহলে লগারিদমের ভিত্তি e থেকে 2-এ নিয়ে মোট Byte সংখ্যা দিয়ে ভাগ করলেই আমরা পাই Bits-per-byte = S / (B log 2)। তবে এখানে একটি শর্ত আছে: দুটি মডেলের টোকেন সম্ভাব্যতা থেকে একই মূল টেক্সটের সম্ভাব্যতা দাবি করতে হলে তাদের Tokenization সীমানা ও EOS ধরার নিয়মও পরস্পর সামঞ্জস্যপূর্ণ হতে হবে। আর ভুলেও এখানে UTF-8 Byte সংখ্যার বদলে দৃশ্যমান Unicode অক্ষরের সংখ্যা বসিয়ে দেবেন না!"
+        },
+        {
+          "type": "math",
+          "title": "Perplexity ও Bits-per-byte-এর গাণিতিক সম্পর্ক",
+          "body": "\\mathrm{PPL}=\\exp(S/T),\\qquad \\mathrm{BPB}=\\frac{S}{B\\log2}"
+        },
+        {
+          "type": "text",
+          "title": "খাতা-কলমে একটি চমকে দেওয়া উদাহরণ",
+          "body": "চলুন ছোট একটি সংখ্যার হিসাব মিলিয়ে দেখি। ধরুন B = 4 Byte আকারের একটি ছোট টেক্সটের ওপর দুটি মডেল হুবহু একই মোট লস দিয়েছে: S = 8 nats। কিন্তু প্রথম মডেলটির Tokenizer A ওই টেক্সটটিকে ভেঙেছে T = 2টি টোকেনে—ফলে তার Perplexity দাঁড়াচ্ছে e^(8/2) = e^4 ≈ 54.598! অথচ দ্বিতীয় মডেলটির Tokenizer B সেই একই টেক্সটকে ভেঙেছে T = 4টি টোকেনে—ফলে তার Perplexity হয়ে গেল e^(8/4) = e^2 ≈ 7.389! দেখলেন তো, পুরো বাক্যের মোট সম্ভাবনা একচুল না বদলালেও স্রেফ টোকেন সংখ্যার কারণে একটির Perplexity অন্যটির চেয়ে সাত গুণ ছোট দেখাচ্ছে! অথচ আমরা যদি কাঁচা Byte দিয়ে হিসাব করি, তবে উভয় মডেলেরই BPB ≈ 2.88539—একদম সমান!"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ দুটি ভিন্ন Token Count ও অভিন্ন BPB যাচাই",
+          "body": "import math\n\ntotal_nll, byte_count = 8.0, 4\ntoken_counts = [2, 4]\nperplexities = [math.exp(total_nll / count) for count in token_counts]\n# Normalize by the same raw bytes; token counts are tokenizer-dependent.\nbits_per_byte = total_nll / (byte_count * math.log(2))\nprint(round(perplexities[0], 6), round(perplexities[1], 6), round(bits_per_byte, 6))\n"
+        },
+        {
+          "type": "text",
+          "title": "কোডের আউটপুট আমাদের কী শেখাচ্ছে?",
+          "body": "উপরের কোডটি চালালে আউটপুটে পাওয়া যায় 54.59815, 7.389056 এবং 2.88539। এখান থেকে দুটি স্বর্ণসূত্র মনে গেঁথে নিন: এক, ভিন্ন Tokenizer-এর মধ্যে তুলনা করতে হলে সবসময় কাঁচা Byte-এর মতো একটি সাধারণ ও স্থির এককে ফিরে যেতে হবে; দুই, পুরো Corpus-এর NLL বের করার সময় সব বৈধ টোকেনের মোট লস যোগ করে মোট বৈধ টোকেন সংখ্যা দিয়ে ভাগ করতে হবে—কখনোই আলাদা আলাদা Batch-এর Perplexity গড় করা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "কম Byte Loss হলেও যেসব দাবি করা যাবে না",
+          "body": "মনে রাখবেন, কোনো মডেলের Byte-normalized Loss কম হওয়া মানে কেবল এই যে সে ওই ধরনের টেক্সটের পরিসংখ্যানগত গঠন ভালো অনুমান করতে পারছে। এর মানে কখনোই এই নয় যে মডেলটি গভীর বুদ্ধিমত্তা অর্জন করেছে, সবসময় সত্য কথা বলবে কিংবা ইউজারের নির্দেশ অক্ষরে অক্ষরে পালন করবে। তাছাড়া পরীক্ষার টেক্সটটি যদি কোনোভাবে আগেই ট্রেনিং ডেটায় ঢুকে গিয়ে থাকে (Data Contamination), তবে মুখস্থ করার কারণেও লস কৃত্রিমভাবে অনেক কম আসতে পারে। আর আমাদের এই ছোট পাবলিক-টেক্সট ডিকোডারের স্কোরকে কখনোই বহুভাষিক সক্ষমতার প্রমাণ হিসেবে ধরা যাবে না।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে হিসাব করুন",
+          "body": "ধরুন প্রথম একটি Batch-এ মাত্র 1টি টোকেন আছে যার NLL হলো 10, আর দ্বিতীয় একটি Batch-এ 9টি টোকেন আছে যাদের মোট NLL হলো 0। পুরো Corpus-এর সঠিক Perplexity কত হবে? এবং দুটি Batch-এর আলাদা Perplexity গড় করলে কেন বিরাট ভুল হবে?",
+          "solution": "দুটি Batch মিলিয়ে মোট NLL হলো 10 + 0 = 10, আর মোট বৈধ টোকেন সংখ্যা হলো 1 + 9 = 10টি। সুতরাং গড় NLL হলো 10 / 10 = 1, এবং পুরো Corpus-এর সঠিক Perplexity হলো e^1 ≈ 2.71828! অথচ কেউ যদি প্রথম Batch-এর PPL (e^10 ≈ 22026.47) এবং দ্বিতীয় Batch-এর PPL (e^0 = 1) বের করে গড় করত, তবে উত্তর আসত দশ হাজারেরও বেশি! যেহেতু সূচকীয় ফাংশন (exp) অরৈখিক (Nonlinear) এবং প্রতিটি Batch-এ টোকেনের সংখ্যাও অসমান, তাই সবসময় আগে মোট NLL ও মোট বৈধ টোকেন যোগ করে সবার শেষে একবারই exp করতে হয়।",
+          "reference": "https://d2l.ai/chapter_recurrent-neural-networks/language-model.html"
+        },
+        {
+          "type": "text",
+          "title": "সাবধান: প্রতি-টোকেন র‍্যাঙ্কিং পুরো উল্টেও যেতে পারে!",
+          "body": "আগের উদাহরণে মোট লস সমান ছিল, কিন্তু বাস্তবে তো মোট লসও আলাদা হয়—তখন কী ঘটে দেখুন! ধরুন 8টি কাঁচা Byte-এর একই টেক্সটে মডেল A তৈরি করল 4টি টোকেন এবং তার মোট NLL হলো 4 nats; অন্যদিকে মডেল B তৈরি করল 2টি টোকেন এবং তার মোট NLL হলো 3 nats। এখন প্রতি-টোকেন Perplexity দেখলে মডেল A পাচ্ছে e^(4/4) = e^1 ≈ 2.718, আর মডেল B পাচ্ছে e^(3/2) = e^1.5 ≈ 4.482—দেখে মনে হবে মডেল A বুঝি জিতে গেছে! কিন্তু প্রকৃতপক্ষে পুরো টেক্সটটিকে বেশি সম্ভাবনা দিয়েছে মডেল B (মোট লস 3 < 4), এবং তাদের Byte-normalized Loss হিসাব করলে দেখা যায় মডেল A-এর 0.721348 bits/byte-এর চেয়ে মডেল B-এর 0.541011 bits/byte অনেক ভালো! অর্থাৎ মূল্যায়নের একক ভুল হলে বিজয়ী মডেলের ক্রমই পুরো উল্টে যেতে পারে। তাই তুলনার আগে একই কাঁচা টেক্সট, অভিন্ন Normalization, Special Token-এর নিয়ম এবং সমতুল্য Context সীমানা নিশ্চিত করা বাধ্যতামূলক।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "আরেকটি সূক্ষ্ম প্রশ্ন",
+          "body": "একটি গবেষণাপত্রে Word-level PPL লেখা আছে 45, আর আরেকটিতে Byte-level PPL লেখা আছে 17। শুধু সংখ্যা দুটি দেখেই কি বলা যাবে দ্বিতীয় মডেলটি বেশি ভালো?",
+          "solution": "একদমই না! কারণ একটিতে হরে আছে গোটা শব্দের সংখ্যা আর অন্যটিতে আছে প্রতিটি একক Byte-এর সংখ্যা—তাদের স্কেল ও একক সম্পূর্ণ ভিন্ন। ন্যায্য তুলনা করতে হলে একই অদেখা টেক্সটের ওপর মোট NLL, কাঁচা Byte সংখ্যা, স্কোর করার সীমানা এবং Tokenizer চুক্তি থেকে একটি সমতুল্য একক (যেমন Bits-per-byte) বের করতে হবে, এবং সংখ্যার পাশাপাশি আপনার নির্দিষ্ট কাজের (Task-specific) বাস্তব পারফরম্যান্সও যাচাই করতে হবে।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch22_decoding",
+      "title": "Temperature ও Greedy Decoding",
+      "subtitle": "Probability Distribution-এর আকৃতি বদলানো বনাম সুনির্দিষ্ট টোকেন বাছাই",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Temperature কীভাবে সম্ভাব্যতার বিস্তার নিয়ন্ত্রণ করে?",
+          "body": "মডেলের শেষ মাথা থেকে আমরা প্রতিটি টোকেনের জন্য কাঁচা স্কোর বা Logit পেলাম। কিন্তু সেখান থেকে পরের টোকেনটি বেছে নেওয়ার আগে একটি ধনাত্মক সংখ্যা T (Temperature) দিয়ে Logit-গুলোকে ভাগ করলে সম্ভাব্যতা বণ্টনের আকৃতি দারুণভাবে নিয়ন্ত্রণ করা যায়। T-এর মান 1-এর চেয়ে কমালে (0 < T < 1) বড় স্কোরগুলো আরও তীক্ষ্ণ হয়ে ওঠে (Sharper Distribution), আর T বাড়ালে (T > 1) সম্ভাব্যতা সব টোকেনের মধ্যে কিছুটা সমানভাবে ছড়িয়ে পড়ে (Flatter Distribution)। খেয়াল রাখবেন, নিচের গাণিতিক সূত্রে T = 0 বসানো অবৈধ (শূন্য দিয়ে ভাগ হয় না!)—বাস্তবে T = 0 বলতে আলাদাভাবে সরাসরি সর্বোচ্চ স্কোর বেছে নেওয়ার Greedy নিয়মকে বোঝানো হয়। আর কম্পিউটারে হিসাব করার সময় exp-এর ওভারফ্লো ঠেকাতে সবসময় আগে সর্বোচ্চ Logit (m) বিয়োগ করে নেওয়া হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Greedy Decoding ও অপরিবর্তিত শীর্ষস্থান",
+          "body": "Greedy Decoding-এর নিয়ম অতি সরল: বৈধ আউটপুটগুলোর মধ্যে যে টোকেনটির সম্ভাব্যতা সবচেয়ে বেশি, প্রতি ধাপে চোখ বন্ধ করে সেটিকেই বেছে নাও (আর যদি দুটির মান হুবহু সমান হয়, তবে Tie-breaking হিসেবে ছোট ID-টি নাও)। এখানে একটি চমৎকার গাণিতিক সত্য লুকিয়ে আছে: যেকোনো ধনাত্মক Temperature (T > 0) দিয়ে ভাগ করা হোক কিংবা শীর্ষ টোকেনটিকে অক্ষত রাখে এমন যেকোনো Top-k বা Top-p ফিল্টার চালানো হোক না কেন, কোন টোকেনটি সবার ওপরে (argmax) আছে তা কিন্তু কখনোই বদলায় না! ফলে ভেতরের Probability Distribution চ্যাপ্টা বা তীক্ষ্ণ হয়ে গেলেও Greedy মোডে উৎপন্ন টেক্সটটি হুবহু একই থেকে যায়।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "p_i(T)={e^{(\\ell_i-m)/T}\\over\\sum_j e^{(\\ell_j-m)/T}},\\quad T>0"
+        },
+        {
+          "type": "code",
+          "title": "কম ও বেশি Temperature-এ Softmax বণ্টনের তুলনা",
+          "body": "import torch\n\nscores = torch.tensor(\n    [2.0, 1.0, 0.0], dtype=torch.float64\n)  # Distribution illustration.\ncold = torch.softmax(scores / 0.5, -1)\nwarm = torch.softmax(scores / 2, -1)\nassert cold.argmax() == warm.argmax() == 0 and cold[0] > warm[0]\nprint(cold, warm)\n"
+        },
+        {
+          "type": "text",
+          "title": "র‍্যান্ডম Sampling ও বৈচিত্র্যের বাস্তবতা",
+          "body": "Greedy-এর বদলে আমরা যখন সম্ভাব্যতা বণ্টন থেকে লটারির মতো টোকেন তুলে আনি (Categorical Sampling), তখন আউটপুটে বৈচিত্র্য আসে। তবে একটি ভুল ধারণা থেকে দূরে থাকুন: টেক্সটে বৈচিত্র্য বাড়ানো মানেই যে উত্তরটি তথ্যগতভাবে সঠিক হবে বা সাহিত্যিক মানে অসাধারণ সৃজনশীল হয়ে উঠবে, তার কোনো নিশ্চয়তা নেই! এছাড়া র‍্যান্ডম Sampling একটি অনিশ্চয়তাভিত্তিক (Stochastic) প্রক্রিয়া—তাই হুবহু একই Seed এবং একই Sampling অ্যালগরিদম না থাকলে দুই জায়গায় চালিয়ে বাইটে-বাইটে অভিন্ন আউটপুট আশা করা যাবে না। আমাদের অ্যাপে পাইথন ও ডার্টের ফল মেলানোর জন্য একটি সুনির্দিষ্ট অভিন্ন র‍্যান্ডম স্ট্রিম ব্যবহার করা হয়েছে।"
+        },
+        {
+          "type": "llm_decoding_lab",
+          "title": "ধাপে ধাপে Generation Loop যেভাবে চলে",
+          "body": "উপরের Interactive Decoding Lab-টিতে পুরো জেনারেশন চক্রটি নিজের হাতে চালিয়ে দেখুন: প্রথমে ইনপুট Prefix যায় মডেলে → শেষ পজিশনের Logit বের হয় → অবৈধ আউটপুট (PAD/BOS) ফিল্টার হয় → নির্বাচিত টোকেনটি Prefix-এর শেষে যুক্ত হয় → আবার পরের ধাপ শুরু হয়! যদি মডেল EOS তৈরি করে তবে লুপ সাথে সাথে থেমে যায়, নতুবা সর্বোচ্চ 8টি নতুন টোকেন পর্যন্ত চলে। যেহেতু আমাদের ইনপুট Prefix সর্বোচ্চ 24 টোকেন এবং মডেলের Context সীমা 32, তাই 24 + 8 = 32 ঘরের ভেতরেই পুরো কাজ শেষ হয়ে যায়—মাঝপথে পুরোনো টোকেন কেটে ফেলার (Sliding-window Truncation) কোনো গোপন ঝামেলাই এখানে নেই।"
+        },
+        {
+          "type": "text",
+          "title": "সৎ প্রদর্শন: ভুল বা অর্থহীন আউটপুট লুকানো হয় না",
+          "body": "ল্যাবে বইয়ের আসল কোনো অংশের শুরুটা দিয়ে দেখুন আমাদের খুদে মডেল কোন কোন ID তৈরি করছে এবং তার Escaped টেক্সট কেমন দেখাচ্ছে। খেয়াল রাখবেন, উৎপন্ন অংশটুকু মূল বইয়ের উদ্ধৃতি নয়—এটি মডেলের নিজস্ব অনুমান। যদি অসম্পূর্ণ বা অবৈধ UTF-8 বাইট তৈরি হয় তবে সেটি স্পষ্টভাবে দেখানো হয়, এবং মাত্র 5019 প্যারামিটারের মডেল যখন অসংলগ্ন অক্ষর তৈরি করে, তখন সেটিকে লুকিয়ে বা হাত দিয়ে সাজিয়ে সুন্দর দেখানোর কোনো চেষ্টা এখানে করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এর জন্য জরুরি টিপস",
+          "body": "ইন্টারভিউতে প্রায়ই জিজ্ঞেস করা হয়: 'আমি Temperature 0.2 থেকে বাড়িয়ে 1.5 করলাম, তবু আউটপুট এক চুলও বদলাল না কেন?'—তখন আত্মবিশ্বাসের সাথে বলবেন যে ডিকোডারটি নির্ঘাত Greedy (argmax) মোডে চলছে! পাশাপাশি স্পষ্ট করবেন যে Sampling বা Temperature বদলানো কেবল আউটপুট বাছাইয়ের নীতি বদলায়, এতে মডেলের ভেতরের কোনো Weight আপডেট হয় না; এবং আলাদা Factual মূল্যায়ন ছাড়া শুধু ঝরঝরে বাক্য দেখেই কোনো উত্তরকে নির্ভরযোগ্য বলা যায় না।"
+        }
+      ]
+    },
+    {
+      "id": "ch22_nucleus",
+      "title": "Top-k, Top-p (Nucleus) ও Inverse-CDF Sampling",
+      "subtitle": "সম্ভাব্যতার সীমা অতিক্রমকারী প্রথম Crossing Token-টিকে দলে রাখা কেন অপরিহার্য",
+      "duration": "60 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ফিল্টারিংয়ের ক্রম (Order of Operations) কেন এত গুরুত্বপূর্ণ?",
+          "body": "র‍্যান্ডম Sampling করার সময় খুব কম সম্ভাব্যতার অদ্ভুত সব টোকেন ছাঁটাই করতে আমরা সাধারণত Top-k এবং Top-p (Nucleus) ফিল্টার ব্যবহার করি। আমাদের এই সিস্টেমে কাজের ক্রমটি একদম সুনির্দিষ্ট: প্রথমে Temperature স্কেলিং → তারপর শীর্ষ kটি টোকেন রেখে Top-k ছাঁটাই → অবশিষ্ট সম্ভাব্যতাগুলোকে আবার যোগফল 1 বানানো (Renormalize) → তার ওপর Top-p প্রয়োগ → এবং শেষে আরেক দফা Renormalize! খুব খেয়াল করবেন: এখানে Top-p-এর সীমাটি প্রযুক্ত হচ্ছে Top-k পার হয়ে আসা নতুন বণ্টনটির ওপর। অন্য কোনো লাইব্রেরিতে যদি আগে Top-p করে পরে Top-k করা হয়, তবে একই সংখ্যা বসালেও ফলাফল কিন্তু এক হবে না!"
+        },
+        {
+          "type": "text",
+          "title": "Nucleus (Top-p) নিয়মের মূল রহস্য: Crossing Token",
+          "body": "Top-p বা Nucleus Sampling-এ সম্ভাব্যতাগুলোকে বড় থেকে ছোট ক্রমে (Descending Order) সাজিয়ে প্রথম থেকে যোগ করতে থাকা হয়, যতক্ষণ না ক্রমযোজিত যোগফল (Cumulative Mass) আমাদের দেওয়া সীমা p-কে স্পর্শ বা অতিক্রম করে। যে টোকেনটিতে এসে যোগফল প্রথমবার p ছোঁয় বা পেরিয়ে যায়—সেই Crossing Token-টিকেও অবশ্যই দলে রাখতে হয়! যেমন ধরুন তিনটি টোকেনের সম্ভাব্যতা 0.5, 0.3 ও 0.2, এবং আমাদের সীমা top_p = 0.6। প্রথম টোকেনে যোগফল 0.5 (যা 0.6-এর কম), আর দ্বিতীয়টি যোগ করলেই হয় 0.8 (যা 0.6 অতিক্রম করল)—তাই এখানে প্রথম দুটি টোকেনই টিকে থাকবে। ওই দ্বিতীয় বা Crossing Token-টিকে বাদ দিলে টিকে থাকা সম্ভাব্যতার যোগফল কখনোই আপনার চাওয়া সীমা পূরণ করতে পারত না! আর দুটি টোকেনের সম্ভাব্যতা হুবহু সমান হলে ছোট ID-টি আগে স্থান পায়।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "K_p=\\min\\left\\{k:\\sum_{j=1}^{k}p_{(j)}\\ge p\\right\\}"
+        },
+        {
+          "type": "code",
+          "title": "NumPy-তে Top-p গণনা ও Inverse-CDF বাছাই",
+          "body": "import numpy as np\n\np = np.array([0.5, 0.3, 0.2])\ntop_p = 0.6\ncount = int(np.searchsorted(np.cumsum(p), top_p, side=\"left\")) + 1\nassert count == 2\nu = 0.2\nchoice = int(np.searchsorted(np.cumsum([0.2, 0.3, 0.5]), u, side=\"right\"))\nassert choice == 1\nprint(count, choice)\n"
+        },
+        {
+          "type": "text",
+          "title": "Inverse-CDF দিয়ে র‍্যান্ডম সংখ্যা থেকে টোকেন নির্বাচন",
+          "body": "ফিল্টারিং ও Renormalization শেষে টিকে থাকা টোকেনগুলোর মধ্য থেকে লটারি করার পালা। এজন্য আমরা [0, 1) সীমার ভেতরে একটি সুষম র‍্যান্ডম সংখ্যা u নিই এবং ছোট থেকে বড় Token ID-এর ক্রমে সম্ভাব্যতা যোগ করতে থাকি। যে ঘরে এসে প্রথমবার u < cumulative_mass শর্তটি সত্য হয়, ঠিক সেই টোকেনটিই নির্বাচিত হয় (আর ঠিক সীমানার মান যেমন u = 0.2 হলে সেটি পরের ব্যবধানে চলে যায়, যেজন্য উপরের কোডে side=\"right\" ব্যবহৃত হয়েছে)। যেসব ঘরের সম্ভাব্যতা শূন্য, সেগুলো আপনাআপনি বাদ পড়ে যায়। বোঝাই যাচ্ছে, র‍্যান্ডম ড্র u-এর সুনির্দিষ্ট ধারাটি জানা না থাকলে কোনো Sampling পথকেই হুবহু পুনরুৎপাদন করা সম্ভব নয়।"
+        },
+        {
+          "type": "text",
+          "title": "পাইথন ও ডার্টের অভিন্ন র‍্যান্ডম ধারা (Shared LCG Stream)",
+          "body": "পাইথন স্ক্রিপ্ট এবং ফ্লাটার অ্যাপ—দুই জায়গাতেই যেন আপনি দশমিকে-দশমিকে হুবহু একই Sampling আচরণ মিলিয়ে দেখতে পারেন, সেজন্য আমরা একটি স্বচ্ছ 32-bit Linear Congruential Generator (LCG) ব্যবহার করেছি, যার গুণক a = 1664525, ধ্রুবক c = 1013904223, প্রাথমিক seed = 22, এবং র‍্যান্ডম মান বের হয় u = (state + 0.5) / 2^32 সূত্র দিয়ে। মনে রাখবেন, এটি কেবল দুই প্ল্যাটফর্মের গাণিতিক সমতা (Mechanics Parity) যাচাইয়ের জন্য তৈরি—এটি কোনো ক্রিপ্টোগ্রাফিক নিরাপত্তা দেয় না কিংবা PyTorch-এর নিজস্ব জেনারেটরের সমতুল্য হওয়ার দাবিও করে না।"
+        },
+        {
+          "type": "text",
+          "title": "বৈধ আউটপুটের সুরক্ষা ও ইনপুট যাচাই",
+          "body": "পুরো প্রক্রিয়ায় PAD ও BOS-এর সম্ভাব্যতা সবসময় শূন্য থাকে, তবে সমাপ্তি চিহ্ন EOS বৈধ প্রার্থী হিসেবে ফিল্টারে টিকে থাকতে পারে। সঠিক ইমপ্লিমেন্টেশনে যেকোনো ফিল্টারিংয়ের পরে অন্তত একটি টোকেনের ধনাত্মক সম্ভাব্যতা টিকে থাকতে বাধ্য। পাশাপাশি নেতিবাচক বা শূন্য Temperature, অবৈধ k, p বা u-এর মান, অসীম (NaN/Inf) Logit কিংবা ত্রুটিপূর্ণ সম্ভাব্যতা ভেক্টর এলে সিস্টেম শুরুতেই তা প্রত্যাখ্যান করে।"
+        },
+        {
+          "type": "text",
+          "title": "নিজে কোড লিখে যেসব প্রান্তিক অবস্থা পরখ করবেন",
+          "body": "Sampling কোড লেখার পর অবশ্যই এই কটি Edge Case টেস্ট করবেন: মাত্র একটি টোকেন টিকে থাকা, হুবহু সমান সম্ভাব্যতার Tie, p = 1.0 এবং অতি ক্ষুদ্র p (যেমন 0.0001), মাঝখানে শূন্য সম্ভাব্যতার ঘর থাকা, u = 0 ও 1-এর খুব কাছাকাছি মান, এবং EOS পেলে ঠিকমতো থামা। আর সংখ্যার হিসাব মেলার পর বাস্তবে টেক্সট কেমন আসছে তা বোঝার জন্য গুণগত উদাহরণ (Qualitative Samples) ও কাজ-ভিত্তিক মূল্যায়ন আলাদাভাবে চালাতে ভুলবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে প্রমাণ: কেন আগে Top-k করলে Top-p-এর দল বদলে যায়?",
+          "body": "চলুন আমাদের চেনা সম্ভাব্যতা তিনটির ([0.5, 0.3, 0.2]) ওপর top_k = 2 এবং top_p = 0.6 বসিয়ে ক্রমের প্রভাবটা চোখে দেখি! যদি আমরা আগে Top-k = 2 চালাই, তবে [0.5, 0.3] টিকে থাকে এবং তাদের আবার যোগফল 1 বানালে নতুন সম্ভাব্যতা হয়ে যায় [0.625, 0.375]। এবার এর ওপর top_p = 0.6 চালালে দেখুন—প্রথম টোকেনটি একাই 0.625 হয়ে সীমা পার করে ফেলছে, তাই চূড়ান্ত দলে টিকছে মাত্র ১টি টোকেন! অথচ মূল [0.5, 0.3, 0.2]-এর ওপর যদি আগে top_p = 0.6 চালানো হতো, তবে 0.6 পার করতে প্রথম ২টি টোকেন (0.5 + 0.3 = 0.8) দলে টিকে যেত! এ থেকেই পরিষ্কার বোঝা যায় কেন Sampling কনফিগারেশনে অপারেশনের ক্রম, Renormalization এবং Tie-breaking নিয়ম এতটা নির্ণায়ক ভূমিকা রাখে।"
+        },
+        {
+          "type": "code",
+          "title": "ফিল্টারিংয়ের ক্রম বদলালে টিকে থাকা টোকেন সংখ্যার পার্থক্য",
+          "body": "import numpy as np\n\nprobability = np.array([0.5, 0.3, 0.2])\ntop_k = probability[:2] / probability[:2].sum()\ncount_after_k = np.searchsorted(np.cumsum(top_k), 0.6, side=\"left\") + 1\ncount_before_k = np.searchsorted(np.cumsum(probability), 0.6, side=\"left\") + 1\nfirst_order = top_k[:count_after_k] / top_k[:count_after_k].sum()\nprint(count_after_k, count_before_k, first_order[0])\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে ভাবুন",
+          "body": "ধরুন একটি ফ্রেমওয়ার্কে আপনি top_p = 0.6 এবং একই seed দিলেন। অন্য আরেকটি লাইব্রেরিতেও ঠিক একই top_p = 0.6 ও একই seed দিলেই কি হুবহু এক আউটপুট আসবে?",
+          "solution": "মোটেও নিশ্চিত নয়! দুই জায়গায় হুবহু একই আউটপুট পেতে হলে Temperature ও ফিল্টারগুলোর প্রয়োগের ক্রম, সমান মানের Tie ভাঙার নিয়ম, কোন কোন আউটপুট বৈধ, ভেতরের RNG অ্যালগরিদম এবং সম্ভাব্যতা যোগ করার দিক (Traversal Order)—সবকিছু অক্ষরে অক্ষরে মিলতে হবে। ডিবাগ করার সময় তাই প্রথমে ফিল্টারের পর টিকে থাকা সম্ভাব্যতা বণ্টন দুটি মিলিয়ে দেখুন, তারপর র‍্যান্ডম সংখ্যার সীমানা যাচাই করুন।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch22_context",
+      "title": "Context Window, KV Cache ও রিসোর্সের হিসাব",
+      "subtitle": "আমাদের শিক্ষামূলক কোড প্রতি ধাপে পুরো Prefix নতুন করে হিসাব করে, কিন্তু প্রোডাকশনে লাগে KV Cache",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Context Window বাড়ানো মানে শুধু অ্যারে বড় করা নয়",
+          "body": "আমাদের বর্তমান মডেলটি একবারে সর্বোচ্চ 32টি ইনপুট ID (0 থেকে 31 নম্বর পজিশন) নিতে পারে। অনেকের মনে হতে পারে, পজিশনাল বাফারটি 32 থেকে বাড়িয়ে 4096 করে দিলেই বুঝি মডেল লম্বা প্রবন্ধ বুঝতে শুরু করবে! বাস্তবে বিষয়টি মোটেও এত সহজ নয়। লম্বা Context সাপোর্ট করতে হলে ট্রেনিং ডেটার দৈর্ঘ্য, মাস্কের সামঞ্জস্য, পজিশনাল সংকেতের বিস্তার এবং মেমোরির বাজেট—সবকিছুর আচরণই বদলে যায়। তাই এই অধ্যায়ে আমরা কখনোই লম্বা Context-এ মডেলের সক্ষমতা দাবি করি না।"
+        },
+        {
+          "type": "text",
+          "title": "KV Cache-এর মূল ধারণা বনাম আমাদের সরল কোড",
+          "body": "Autoregressive জেনারেশনে নতুন একটি করে টোকেন যোগ হওয়ার সময় আগের সব টোকেনের Key (K) এবং Value (V) ভেক্টরগুলো কিন্তু Causal মাস্কের কারণে আগের ধাপের মতোই অবিকল থেকে যায়! তাই বড় প্রোডাকশন সিস্টেমে বারবার পুরোনো হিসাব না করে প্রতি লেয়ারের পুরোনো K ও V মেমোরিতে জমিয়ে রাখা হয়—যাকে বলা হয় KV Cache। তবে নিখুঁতভাবে KV Cache চালাতে হলে প্রতি লেয়ারে সঠিক পজিশন অফসেট, এক ইউজারের রিকোয়েস্ট থেকে অন্য ইউজারের রিকোয়েস্ট আলাদা রাখা (Isolation) এবং ব্যাচের ক্রম মেলানো খুব যত্ন করে সামলাতে হয়। শেখার স্বচ্ছতার জন্য আমাদের এই ছোট পাইথন ও ডার্ট কোডে প্রতি ধাপে পুরো Prefix নতুন করে হিসাব করা হয়; এখানে আলাদা কোনো KV-cache সার্ভিং ইঞ্জিন বসানো হয়নি।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "\\mathrm{KV\\ elements}\\approx2LBHTd_h,\\quad\\mathrm{dense\\ scores}\\approx BHT^2"
+        },
+        {
+          "type": "code",
+          "title": "KV উপাদান ও Dense Attention Score-এর সংখ্যা গণনা",
+          "body": "L, B, H, T, d = 1, 1, 2, 32, 4\nkv = 2 * L * B * H * T * d\nscores = B * H * T * T\nassert kv == 512 and scores == 2048\nprint(kv, scores)\n"
+        },
+        {
+          "type": "text",
+          "title": "ক্যাশ ব্যবহারের সময় আয়তাকার (Non-square) মাস্কের ফাঁদ",
+          "body": "যখন আপনি KV Cache ব্যবহার করে নতুন মাত্র একটি শেষ টোকেনকে Query হিসেবে পাঠান এবং ক্যাশে জমে থাকা আগের সব টোকেনকে Key হিসেবে দেন, তখন Attention ম্যাট্রিক্সটি আর বর্গাকার (T × T) থাকে না, হয়ে যায় 1 × T আকারের! যেহেতু এই একমাত্র Query-টি সবার শেষে বসে আছে, তাই আগের সব বৈধ ক্যাশড Key দেখা তার জন্য অনুমোদিত। কিন্তু কেউ যদি না বুঝে সাধারণ বর্গাকার মাস্কের উপরের-বামের প্রথম সারিটি এখানে বসিয়ে দেয়, তবে সে ভুল করে শেষ টোকেনটিকে প্রথম টোকেন ভেবে বাকি সব ইতিহাস ব্লক করে দেবে! এজন্যই ক্যাশবিহীন পূর্ণ হিসাব এবং ক্যাশযুক্ত ধাপে ধাপে হিসাব হুবহু একই উত্তর দিচ্ছে কি না, তার জন্য স্বাধীন সমতা পরীক্ষা (Equivalence Test) লেখা অপরিহার্য।"
+        },
+        {
+          "type": "text",
+          "title": "মেমোরির খাতগুলো আলাদা করে চিনুন",
+          "body": "একটি মডেল চালাতে মেমোরি খরচ হয় বেশ কয়েকটি আলাদা খাতে: মডেলের নিজস্ব Weight, ট্রেনিংয়ের Gradient, অপটিমাইজারের ভেতরের মোমেন্টাম স্টেট (AdamW-এ প্রতি ওজনের জন্য বাড়তি দুটি স্টেট!), মাঝখানের Activation ও [B, T, V] আকারের বিশাল Logit টেনসর এবং সাময়িক ওয়ার্কস্পেস। খেয়াল করুন, মডেলের প্যারামিটার সংখ্যা খুব কম হলেও ব্যাচ (B), দৈর্ঘ্য (T) বা ভোকাবুলারি (V) বড় হলে কেবল Logit ও Attention স্কোরই প্রচুর মেমোরি খেয়ে ফেলতে পারে! এছাড়া নিখুঁত অডিটের জন্য আমরা এখানে CPU-তে float64 ব্যবহার করেছি, যা মোটেও বাস্তব GPU প্রোডাকশনের প্রিসিশন (BF16/FP16/INT8) বা গতির মাপকাঠি নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Context সীমা পেরিয়ে গেলে ছাঁটাইয়ের (Truncation) নীতি",
+          "body": "মডেলের সর্বোচ্চ সীমার চেয়ে লম্বা কথোপকথন চালাতে গেলে যদি পুরোনো টোকেন ফেলে দিয়ে Sliding-window পদ্ধতিতে জেনারেট করতে হয়, তবে ঠিক কীভাবে পুরোনো অংশ বাদ যাবে এবং পজিশন ইনডেক্স কীভাবে নতুন করে বসবে তা স্পষ্টভাবে সংজ্ঞায়িত থাকতে হবে। সবসময় শুরুতেই ইনপুট প্রম্পটের দৈর্ঘ্য, নতুন টোকেন তৈরির বাজেট এবং EOS থামার শর্ত মিলিয়ে যাচাই করে নেবেন। আমাদের ল্যাবে ≤ 24 প্রিফিক্স ও 8 নতুন টোকেনের সুনির্দিষ্ট সীমা (24 + 8 ≤ 32) রাখা হয়েছে, যাতে আড়ালে কোনো গোপন ছাঁটাই ছাড়াই পুরো মেকানিক্স পরিষ্কার দেখা যায়।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ স্কেলিং নিয়ে যেভাবে উত্তর দেবেন",
+          "body": "ইন্টারভিউতে Context দৈর্ঘ্য দ্বিগুণ (2×) করার প্রভাব জানতে চাইলে দুটি হিসাব আলাদা করে বলবেন: অন্য সব স্থির থাকলে পূর্ণ প্রিফিক্সে Dense Attention Score-এর উপাদান বাড়ে চার গুণ (4×, কারণ T^2), আর KV Cache-এর স্টোরেজ বাড়ে আনুপাতিকভাবে দুই গুণ (2×, কারণ T)। তবে বাস্তব প্রোডাকশনে প্রম্পট প্রসেসিং (Prefill) ও টোকেন তৈরির (Decode) প্রকৃত সময় বা SLA প্রতিশ্রুতি দেওয়ার আগে অবশ্যই আসল হার্ডওয়্যার কার্নেল, ব্যাচিং এবং Tokenizer-এর প্রভাব সরাসরি মেপে দেখতে হবে।"
+        }
+      ]
+    },
+    {
+      "id": "ch22_stages",
+      "title": "Pretraining, Instruction Tuning ও Preference Adaptation",
+      "subtitle": "পরের টোকেন অনুমানের ট্রেনিং আর অনুগত Assistant-এর আচরণ এক জিনিস নয়",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "প্রথম ধাপ: Base Pretraining আসলে কী শেখায়?",
+          "body": "বিশাল ও বৈচিত্র্যময় টেক্সট কর্পাসের ওপর Next-Token Prediction চালালে একটি Base Model ভাষার ব্যাকরণ, তথ্যের ধাঁচ ও নানান পরিসংখ্যানগত সম্পর্ক শেখে। আমাদের ছোট্ট একটি বইয়ের ওপর চালানো রানটি কেবল সেই প্রিট্রেনিংয়ের ক্ষুদ্রতম গাণিতিক কঙ্কালটুকুই দেখায়। বাস্তবে বড় স্কেলের প্রিট্রেনিংয়ে ডেটার মান, ডুপ্লিকেট সরানো (Deduplication), টেস্ট বেঞ্চমার্কের সংক্রমণ ঠেকানো, বিভিন্ন ডোমেইনের অনুপাত (Sampling Mix) এবং বিশাল কমপিউট বাজেট সামলানো নিজেই একেকটি বড় ইঞ্জিনিয়ারিং চ্যালেঞ্জ।"
+        },
+        {
+          "type": "text",
+          "title": "দ্বিতীয় ধাপ: কেন লাগে Instruction SFT?",
+          "body": "একটি খাঁটি Base Model-কে আপনি যদি প্রশ্ন করেন, 'ফ্রান্সের রাজধানী কী?', তবে সে হয়তো উত্তর দেওয়ার বদলে পরের লাইনে আরও তিনটি প্রশ্ন লিখে একটি পরীক্ষার প্রশ্নপত্র বানিয়ে ফেলবে—কারণ সে কেবল ডকুমেন্টের ধারাবাহিকতা বজায় রাখতে শিখেছে! একে প্রশ্নের উত্তর দেওয়া শেখাতে করা হয় Supervised Fine-Tuning (SFT), যেখানে নির্দেশ ও আদর্শ উত্তরের (Instruction / Response) উদাহরণ দেখিয়ে শুধুমাত্র উত্তরের অংশটুকুর Loss মিনিমাইজ করা হয়। খুব খেয়াল করুন: এখানে ইউজারের প্রম্পট অংশটুকুর Target Label-গুলোকে মাস্ক (-100) করে লস থেকে বাদ দেওয়া হয় ঠিকই, কিন্তু Attention-এর ভেতরে প্রম্পটটি পুরোপুরি দৃশ্যমান থাকে—যাতে মডেল প্রশ্নটি পড়ে তার সাপেক্ষে উত্তর তৈরি করতে পারে! আমাদের এই অধ্যায়ের বই-ভিত্তিক মডেলটিতে কোনো SFT চালানো হয়নি।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "\\mathrm{base\\ LM}\\xrightarrow{instruction\\ data}\\mathrm{SFT}\\xrightarrow{preferences}\\mathrm{policy\\ adaptation}"
+        },
+        {
+          "type": "code",
+          "title": "প্রম্পট বাদ দিয়ে কেবল Assistant-এর উত্তরে Loss Mask বসানো",
+          "body": "import torch\n\n# Declared assistant-loss-mask illustration; not actual SFT training.\ntargets = torch.tensor([10, 11, 12, 13])\nassistant = torch.tensor([False, False, True, True])\nmasked = targets.masked_fill(~assistant, -100)\nassert masked.tolist() == [-100, -100, 12, 13]\nprint(masked)\n"
+        },
+        {
+          "type": "text",
+          "title": "তৃতীয় ধাপ: মানুষের পছন্দ অনুযায়ী আচরণ ঢালাই (Preference Adaptation)",
+          "body": "SFT-এর পরেও মডেলের উত্তর কখনো রূঢ়, অপ্রাসঙ্গিক বা অনিরাপদ হতে পারে। তাই দুটি সম্ভাব্য উত্তরের মধ্যে কোনটি মানুষের কাছে বেশি গ্রহণযোগ্য ও সহায়ক, সেই তুলনামূলক ডেটা (Preference Comparisons) ব্যবহার করে মডেলের আউটপুট নীতিকে আরও মার্জিত করা হয়—যার উদাহরণ আমরা Book 3 · Chapter 8 (Reinforcement Learning & Bandits)-এর ধারণার ধারাবাহিকতায় RLHF বা DPO-এর মতো পদ্ধতিতে দেখি (এবং Book 4 · Chapter 4: Fine-tuning & Adaptation-এ আরও জানব)। তবে মনে রাখবেন, Preference টিউনিং মানে নতুন করে প্রিট্রেনিং নয় এবং এটি শতভাগ নির্ভুল তথ্যের গ্যারান্টিও দেয় না। এই প্রথম অধ্যায়ে আমরা কোনো Reward Model, RLHF/DPO রান বা Alignment বেঞ্চমার্কের দাবি করছি না।"
+        },
+        {
+          "type": "text",
+          "title": "Chat Template: একই মডেলের আচরণের গোপন চাবি",
+          "body": "আধুনিক চ্যাট মডেলগুলোতে কে কথা বলছে (system, user, নাকি assistant), কথাটি কোথায় শেষ হচ্ছে এবং উত্তর কোথা থেকে শুরু হবে—তা বোঝানোর জন্য সুনির্দিষ্ট কিছু Role Marker ও সীমানা টোকেন থাকে, যাকে বলা হয় Chat Template। এটিও মডেলের Tokenizer চুক্তিরই একটি অবিচ্ছেদ্য অংশ! মডেলের ভেতরের Weight হুবহু এক রেখে কেবল ভুল Chat Template দিয়ে প্রম্পট সাজালে মডেলের আচরণ পুরোপুরি ভেঙে পড়তে পারে। আর আমাদের সাধারণ গল্পের বইয়ের প্রিফিক্সকে কখনোই System/User চ্যাট ইন্টারফেস ভাবা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "In-Context Learning, Fine-tuning ও Retrieval-এর স্পষ্ট পার্থক্য",
+          "body": "ব্যবহারের সময় প্রম্পটের ভেতরেই কয়েকটি উদাহরণ জুড়ে দিলে (Few-shot / In-context Learning) মডেলের সামনে থাকা Context বদলায় এবং সে অনুযায়ী আউটপুটও বদলায়—কিন্তু এই সাধারণ জেনারেশনের সময় মডেলের ভেতরের কোনো Weight আপডেট হয় না! অন্যদিকে Fine-tuning সরাসরি মডেলের Parameter পরিবর্তন করে। আর মডেলকে বাইরের বিশ্বস্ত নথি খুঁজে এনে পড়তে দেওয়া হলো সম্পূর্ণ আলাদা একটি সিস্টেম আর্কিটেকচার (RAG)—যার মূল ভিত্তি Embeddings ও Semantic Retrieval আমরা ঠিক পরের অধ্যায়েই (Book 4 · Chapter 2) গড়ে তুলব।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে সব ধাপ আলাদা করে বলবেন",
+          "body": "ইন্টারভিউতে কেউ যদি জানতে চায় একটি সাধারণ Language Model কীভাবে কাজের উপযোগী Assistant হয়ে ওঠে, তবে Base Pretraining, Chat Template, Instruction SFT, Preference Adaptation, Prompting এবং Retrieval—প্রতিটি স্তরের ভূমিকা পরিষ্কারভাবে আলাদা করে দেখাবেন। স্পষ্ট করে বলবেন যে কেবল 'আরও বেশি টোকেনে প্রিট্রেন করা' কিংবা 'Perplexity আরেকটু কমানো' এককভাবে কখনোই নির্ভরযোগ্যভাবে নির্দেশ পালনের (Instruction-following) প্রমাণ দেয় না।"
+        }
+      ]
+    },
+    {
+      "id": "ch22_limits",
+      "title": "Hallucination, মূল্যায়ন ও ভিত্তিহীন দাবির ঝুঁকি",
+      "subtitle": "বেশি Likelihood মানেই কিন্তু তথ্যের সত্যতা যাচাইকারী (Truth Verifier) নয়",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "আমাদের মডেলের আউটপুটে দেখা বাস্তব দুর্বলতা",
+          "body": "ল্যাবে আমাদের খুদে মডেলটির তৈরি করা টেক্সটগুলো খেয়াল করলে দেখবেন, সেগুলো প্রায়ই একই অক্ষরের পুনরাবৃত্তি করছে, অর্থহীন শব্দ বানাচ্ছে কিংবা অসম্পূর্ণ UTF-8 বাইট দিচ্ছে। এগুলো কিন্তু মডেলেরই প্রকৃত আউটপুট—কোনো সাজানো উদাহরণ নয়। আমাদের চূড়ান্ত Test NLL যদিও Unigram বেসলাইনের চেয়ে অনেকটা কমেছে, তবু এর দ্বারা সাবলীল ভাষা (Fluency), যুক্তিবোধ (Reasoning), সঠিক প্রশ্নোত্তর (Factual QA) কিংবা বাংলা ভাষার দক্ষতা মোটেও প্রতিষ্ঠিত হয়নি। একজন সৎ প্রকৌশলীর দায়িত্ব হলো ভালো Loss সংখ্যার ঠিক পাশেই মডেলের এই বাস্তব ব্যর্থতাগুলোকেও সমান স্পষ্টতায় তুলে ধরা।"
+        },
+        {
+          "type": "text",
+          "title": "সম্ভাব্যতা (Likelihood) বনাম যাচাইকৃত সত্য (Truth)",
+          "body": "ট্রেনিং ডেটার ধাঁচ অনুযায়ী কোনো একটি বাক্যাংশের পরের অংশ হিসেবে শুনতে খুব স্বাভাবিক বা Plausible হওয়া মানেই এই নয় যে তথ্যটি বাস্তবে সত্য! তথ্যের নির্ভরযোগ্যতা নিশ্চিত করতে হলে উৎসের উদ্ধৃতি (Source Attribution), বাইরের প্রমাণ, কাজের সুনির্দিষ্ট সীমাবদ্ধতা এবং মডেল কখন নিশ্চিত নয় তা জানানোর ব্যবস্থা (Uncertainty Communication) দরকার হয়। নিছক একটি গল্পের বইয়ের ওপর ট্রেন করা ছোট্ট এই মডেলটিকে কখনোই তথ্যভিত্তিক সহায়ক (Factual Assistant) হিসেবে ব্যবহার করার দাবি করা যাবে না।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "\\mathrm{high}\\ p(\\mathrm{text}\\mid\\mathrm{context})\\not\\Rightarrow\\mathrm{verified\\ truth}"
+        },
+        {
+          "type": "code",
+          "title": "সংরক্ষিত জেনারেশন আউটপুট ও UTF-8 Replacement পরিদর্শন",
+          "body": "from pathlib import Path\nimport json\n\na = json.loads(Path(\"assets/datasets/alice/llm_lab.json\").read_text())\ns = a[\"samples\"][0]\nids = s[\"generation\"][0][\"ids\"]\nraw = bytes(i for i in ids if i < 256)\nprint(ids, repr(raw.decode(\"utf-8\", errors=\"replace\")))\nassert len(ids) <= 8\n"
+        },
+        {
+          "type": "text",
+          "title": "মূল্যায়ন নকশার (Evaluation Design) সীমাবদ্ধতা",
+          "body": "আমাদের আলাদা করে রাখা Validation ও Test অধ্যায়গুলো কিন্তু শেষ বিচারে একই পাবলিক বই এবং একই লেখকের লেখা। ফলে ঘুরেফিরে আসা বাক্যাংশ, পাবলিক ডেটার পূর্বপরিচয় এবং অত্যন্ত সংকীর্ণ ডোমেইনের সীমাবদ্ধতা এখানে স্পষ্ট। নির্দিষ্ট কাজের সঠিকতা, প্রতিকূল ইনপুটে টিকে থাকা (Robustness), Calibration, হুবহু মুখস্থ করা বা গোপনীয়তা (Privacy) এবং নির্দেশ পালনের সক্ষমতা—এর কোনোটিই এই পরীক্ষায় মাপা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "মডেলের আউটপুটকে সবসময় Untrusted Data হিসেবে দেখুন",
+          "body": "নিরাপত্তার একটি মৌলিক নিয়ম হলো: যেকোনো Language Model থেকে আসা আউটপুটকে সবসময় অবিশ্বস্ত ইনপুট (Untrusted Data) হিসেবে গণ্য করতে হবে। আমাদের অ্যাপ কখনোই মডেলের তৈরি করা কোনো কোড বা নির্দেশ সরাসরি এক্সিকিউট করে না। এছাড়া এই প্রোটোটাইপটিতে বাইরের কোনো টুল চালানো বা নেটওয়ার্ক অথেন্টিকেশন দিয়ে কোনো অ্যাকশন নেওয়ার সুযোগ নেই—এটি শুধুমাত্র টোকেন পরিদর্শন ও উৎপন্ন টেক্সট পর্দায় দেখানোর মধ্যেই সীমাবদ্ধ।"
+        },
+        {
+          "type": "text",
+          "title": "Data Leakage ঠেকানোর সুরক্ষাব্যবস্থা",
+          "body": "পুরো পাইপলাইনে ডেটার বিশুদ্ধতা রক্ষায় কড়া পাহারা রাখা হয়েছে: ডেমো BPE Merge এবং Unigram গণনা দুটোই কেবলমাত্র Fit অধ্যায় থেকে নেওয়া। এমনকি মূল পাবলিক বইটি বান্ডেলে থাকলেও চূড়ান্ত Test অধ্যায়ের কোনো প্রিফিক্স, Logit বা জেনারেশন কেস অ্যাপের ল্যাব অ্যাসেটে রাখা হয়নি। আর মনে রাখবেন, চূড়ান্ত Test ফলাফল একবার রিপোর্ট করার পর সেটি এখন আমাদের দেখা হয়ে গেছে (Observed); ভবিষ্যতে মডেল টিউন করতে গেলে নতুন ও অদেখা মূল্যায়ন নকশা প্রয়োজন হবে।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এর প্রস্তুতি: নির্ভরযোগ্যতা কীভাবে প্রমাণ করবেন?",
+          "body": "ইন্টারভিউতে যদি প্রশ্ন করা হয়, 'মডেল তো দারুণ ঝরঝরে উত্তর দিচ্ছে, একে প্রোডাকশনে দেওয়ার আগে কী কী প্রমাণ দেখবেন?'—তখন একটি পূর্ণাঙ্গ Evidence Plan তুলে ধরবেন। টোকেনের সম্ভাব্যতা স্কোর, স্ট্যান্ডার্ড বেঞ্চমার্ক মেট্রিক এবং বাস্তব ইউজারের কাজের সাফল্য—এই তিনটিকে আলাদা করে দেখাবেন। পাশাপাশি বুঝিয়ে বলবেন যে ব্যর্থ উদাহরণগুলো লুকিয়ে কেবল বাছাই করা সুন্দর আউটপুট (Cherry-picked Samples) দেখালে কীভাবে মারাত্মক মূল্যায়ন পক্ষপাত (Selection Bias) তৈরি হয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch22_workflow",
+      "title": "Offline Corpus ও সম্পূর্ণ Decoder Helper কোড",
+      "subtitle": "মূল টেক্সট যাচাই থেকে শুরু করে Byte-level মডেল ও ডিকোডিংয়ের পূর্ণাঙ্গ ইমপ্লিমেন্টেশন",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "স্বয়ংসম্পূর্ণ লোকাল পরিবেশ",
+          "body": "এই পুরো পরীক্ষাটি চালানোর জন্য প্রয়োজনীয় লোকাল পাইথন CPU ডিপেন্ডেন্সিগুলো tool/requirements-pytorch-qa.txt ফাইলে তালিকাভুক্ত আছে। ইন্টারনেট থেকে ভারী কোনো মডেল বা বাইরের Tokenizer লাইব্রেরি ডাউনলোড না করেই বান্ডেল করা মূল সোর্স ফাইল দিয়ে এটি সম্পূর্ণ অফলাইনে চালানো যায়। আর অ্যাপ চলার সময় কোনো পাইথন রানটাইম লাগে না—সেটি সরাসরি ডার্টের নিজস্ব গাণিতিক হিসাব এবং সংরক্ষিত রেফারেন্স ডেটা ব্যবহার করে।"
+        },
+        {
+          "type": "text",
+          "title": "উৎস টেক্সট যাচাই ও বারোটি অধ্যায় আলাদা করা",
+          "body": "প্রথম কোড ব্লকে দেখুন কীভাবে load_source ফাংশনটি প্রথমেই pg11.txt ফাইলের নিখুঁত SHA-256 হ্যাশ মিলিয়ে দেখে, তারপর CRLF লাইন-এন্ডিংকে LF-এ রূপান্তর করে এবং রেগুলার এক্সপ্রেশন দিয়ে বইয়ের আসল ১২টি অধ্যায়ের মূল অংশ বের করে আনে। শুরুর Header, নোটিশ ও শেষের License অংশ মূল ফাইলে অক্ষত থাকলেও মডেলিংয়ে ঢোকে না, এবং কোন অংশ কোন ভূমিকায় ব্যবহৃত হচ্ছে তা রিপোর্টে পরিষ্কারভাবে লেখা থাকে।"
+        },
+        {
+          "type": "code",
+          "title": "উৎস টেক্সট লোডার, BPE ট্রেইনার ও Block প্রস্তুতির কোড",
+          "body": "from pathlib import Path\nimport argparse, collections, hashlib, json, math, platform, re\nimport numpy as np\nimport torch\nfrom torch import nn\n\nDATA = Path(\"assets/datasets/alice\").resolve()\nHASH = \"01b38ea4c710a84bc18d0bd41271a5a1a92b94e97b2812f4dece97d4a694725e\"\nPAD, BOS, EOS, VOCAB, CONTEXT = 256, 257, 258, 259, 32\n\n\ndef load_source(path):\n    raw = Path(path).read_bytes()\n    if hashlib.sha256(raw).hexdigest() != HASH:\n        raise ValueError(\"Original Gutenberg ebook11 bytes required\")\n    text = raw.decode(\"utf-8-sig\").replace(\"\\r\\n\", \"\\n\")\n    end = text.index(\"*** END OF THE PROJECT GUTENBERG EBOOK\")\n    matches = list(\n        re.finditer(r\"^CHAPTER ([IVX]+)\\.\\s*$\", text[:end], flags=re.MULTILINE)\n    )\n    if len(matches) != 12:\n        raise ValueError(\"Twelve actual source chapter headings\")\n    documents = [\n        text[m.end() : matches[i + 1].start() if i < 11 else end].strip()\n        for i, m in enumerate(matches)\n    ]\n    if any(len(d.encode(\"utf-8\")) < 4096 for d in documents):\n        raise ValueError(\"Expected unabridged chapter bodies\")\n    return documents\n\n\ndef merge_pair(tokens, pair, new_id):\n    out = []\n    i = 0\n    while i < len(tokens):\n        if i + 1 < len(tokens) and (tokens[i], tokens[i + 1]) == tuple(pair):\n            out.append(new_id)\n            i += 2\n        else:\n            out.append(tokens[i])\n            i += 1\n    return out\n\n\ndef train_bpe(chunks, budget=16):\n    sequences = [list(s) for s in chunks]\n    merges = []\n    for index in range(budget):\n        counts = collections.Counter(\n            (a, b) for s in sequences for a, b in zip(s, s[1:])\n        )\n        if not counts:\n            break\n        pair = min(counts, key=lambda p: (-counts[p], p))\n        new_id = 259 + index\n        merges.append({\"pair\": list(pair), \"id\": new_id, \"count\": counts[pair]})\n        sequences = [merge_pair(s, pair, new_id) for s in sequences]\n    return merges\n\n\ndef bpe_encode(text, merges):\n    ids = list(text.encode(\"utf-8\"))\n    for m in merges:\n        ids = merge_pair(ids, m[\"pair\"], m[\"id\"])\n    return ids\n\n\ndef vocabulary(merges):\n    pieces = {i: bytes([i]) for i in range(256)}\n    for m in merges:\n        pieces[m[\"id\"]] = pieces[m[\"pair\"][0]] + pieces[m[\"pair\"][1]]\n    return pieces\n\n\ndef blocks(documents, chapter_ids):\n    rows = []\n    for chapter in chapter_ids:\n        ids = [BOS] + list(documents[chapter - 1].encode(\"utf-8\")) + [EOS]\n        starts = list(range(0, len(ids) - 1, 32))\n        chosen = starts[:63] + [starts[-1]]\n        if len(set(chosen)) != 64:\n            raise ValueError(\"Declared64 distinct source blocks\")\n        for start in chosen:\n            x = ids[start : start + 32]\n            y = ids[start + 1 : start + 33]\n            x = x + [PAD] * (32 - len(x))\n            y = y + [PAD] * (32 - len(y))\n            rows.append({\"source_chapter\": chapter, \"start\": start, \"x\": x, \"y\": y})\n    return (\n        torch.tensor([r[\"x\"] for r in rows]),\n        torch.tensor([r[\"y\"] for r in rows]),\n        rows,\n    )\n"
+        },
+        {
+          "type": "code",
+          "title": "ByteDecoder মডেল, Loss ও Sampling Helper ফাংশন",
+          "body": "def positions():\n    p = torch.arange(CONTEXT, dtype=torch.float64)[:, None]\n    f = torch.exp(torch.arange(0, 8, 2, dtype=torch.float64) * (-math.log(10000.0) / 8))\n    pe = torch.zeros(CONTEXT, 8, dtype=torch.float64)\n    pe[:, 0::2] = torch.sin(p * f)\n    pe[:, 1::2] = torch.cos(p * f)\n    return pe\n\n\nclass ByteDecoder(nn.Module):\n    def __init__(self):\n        super().__init__()\n        self.embedding = nn.Embedding(VOCAB, 8, padding_idx=PAD, dtype=torch.float64)\n        self.norm1 = nn.LayerNorm(8, eps=1e-5, dtype=torch.float64)\n        self.attn = nn.MultiheadAttention(\n            8, 2, batch_first=True, dropout=0.0, dtype=torch.float64\n        )\n        self.norm2 = nn.LayerNorm(8, eps=1e-5, dtype=torch.float64)\n        self.ff1 = nn.Linear(8, 16, dtype=torch.float64)\n        self.ff2 = nn.Linear(16, 8, dtype=torch.float64)\n        self.final_norm = nn.LayerNorm(8, eps=1e-5, dtype=torch.float64)\n        self.head = nn.Linear(8, VOCAB, dtype=torch.float64)\n        self.register_buffer(\"position\", positions())\n\n    def inspect(self, ids, causal=True):\n        if (\n            ids.ndim != 2\n            or not 1 <= ids.shape[1] <= CONTEXT\n            or ids.dtype != torch.long\n            or ((ids < 0) | (ids >= VOCAB)).any()\n            or (ids[:, 0] == PAD).any()\n        ):\n            raise ValueError(\"Token IDs[B,T],T1..32,nonpad first key\")\n        T = ids.shape[1]\n        x = self.embedding(ids) + self.position[:T]\n        n = self.norm1(x)\n        blocked = (\n            torch.ones(T, T, dtype=torch.bool).triu(1)\n            if causal\n            else torch.zeros(T, T, dtype=torch.bool)\n        )\n        out, w = self.attn(\n            n,\n            n,\n            n,\n            attn_mask=blocked,\n            key_padding_mask=ids.eq(PAD),\n            need_weights=True,\n            average_attn_weights=False,\n        )\n        r1 = x + out\n        n2 = self.norm2(r1)\n        hidden = self.ff1(n2).relu()\n        ff = self.ff2(hidden)\n        state = r1 + ff\n        normalized = self.final_norm(state)\n        logits = self.head(normalized)\n        return {\n            \"embedding\": x,\n            \"norm1\": n,\n            \"attention\": out,\n            \"weights\": w,\n            \"residual1\": r1,\n            \"norm2\": n2,\n            \"ff_hidden\": hidden,\n            \"ff_output\": ff,\n            \"state\": state,\n            \"normalized\": normalized,\n            \"logits\": logits,\n        }\n\n    def forward(self, ids):\n        return self.inspect(ids)[\"logits\"]\n\n\ndef predict_logits(logits):\n    out = logits.clone()\n    out[..., PAD] = -torch.inf\n    out[..., BOS] = -torch.inf\n    return out\n\n\ndef token_loss(logits, target):\n    if (\n        logits.shape[:-1] != target.shape\n        or logits.shape[-1] != VOCAB\n        or not torch.isfinite(logits).all()\n        or target.dtype != torch.long\n        or target.eq(BOS).any()\n        or ((target < 0) | (target >= VOCAB)).any()\n        or not target.ne(PAD).any()\n    ):\n        raise ValueError(\n            \"Finite raw logits and aligned next-token targets with a nonempty valid mask\"\n        )\n    return nn.functional.cross_entropy(\n        predict_logits(logits).reshape(-1, VOCAB), target.reshape(-1), ignore_index=PAD\n    )\n\n\ndef distribution(logits, temperature=1.0, top_k=0, top_p=1.0):\n    scores = np.asarray(logits, dtype=float)\n    if (\n        scores.shape != (VOCAB,)\n        or not np.isfinite(scores).all()\n        or not np.isfinite(temperature)\n        or temperature <= 0\n        or not isinstance(top_k, int)\n        or isinstance(top_k, bool)\n        or top_k not in [0, 5, 20]\n        or not np.isfinite(top_p)\n        or not 0 < top_p <= 1\n    ):\n        raise ValueError(\"Finite259 logits,temperature>0,k0/5/20,p(0,1]\")\n    allowed = [i for i in range(VOCAB) if i not in [PAD, BOS]]\n    order = sorted(allowed, key=lambda i: (-scores[i], i))\n    keep = order[:top_k] if top_k else order\n    shifted = np.array([scores[i] for i in keep])\n    shifted = (shifted - shifted.max()) / temperature\n    weights = np.exp(shifted)\n    weights /= weights.sum()\n    count = len(keep)\n    if top_p < 1:\n        count = min(\n            len(keep), int(np.searchsorted(np.cumsum(weights), top_p, side=\"left\")) + 1\n        )\n    result = np.zeros(VOCAB)\n    result[keep[:count]] = weights[:count] / weights[:count].sum()\n    return result\n\n\ndef uniform_draws(seed=22, count=8):\n    if (\n        not isinstance(seed, int)\n        or isinstance(seed, bool)\n        or not 0 <= seed <= 0xFFFFFFFF\n        or not isinstance(count, int)\n        or isinstance(count, bool)\n        or not 1 <= count <= 32\n    ):\n        raise ValueError(\"32-bit seed and count1..32\")\n    state = seed\n    out = []\n    for _ in range(count):\n        state = (1664525 * state + 1013904223) & 0xFFFFFFFF\n        out.append((state + 0.5) / 4294967296.0)\n    return out\n\n\ndef choose(probability, u):\n    probability = np.asarray(probability, dtype=float)\n    if (\n        probability.shape != (VOCAB,)\n        or not np.isfinite(probability).all()\n        or (probability < 0).any()\n        or abs(probability.sum() - 1) > 1e-10\n        or not np.isfinite(u)\n        or not 0 <= u < 1\n    ):\n        raise ValueError(\"Probability259 and uniform draw in[0,1)\")\n    total = 0.0\n    for i, p in enumerate(probability):\n        total += p\n        if u < total:\n            return i\n    return int(np.flatnonzero(np.asarray(probability) > 0)[-1])\n\n\ndef generate(model, prefix, mode=\"sample\", temperature=1.0, top_k=0, top_p=1.0):\n    ids = list(prefix)\n    new = []\n    if (\n        mode not in [\"sample\", \"greedy\"]\n        or not ids\n        or len(ids) > 24\n        or any(not isinstance(i, int) or i < 0 or i >= VOCAB or i == PAD for i in ids)\n    ):\n        raise ValueError(\"Valid prefix<=24,mode sample/greedy\")\n    model.eval()\n    with torch.no_grad():\n        for u in uniform_draws():\n            logits = model(torch.tensor([ids]))[0, -1].numpy()\n            p = distribution(logits, temperature, top_k, top_p)\n            token = int(np.argmax(p)) if mode == \"greedy\" else choose(p, u)\n            new.append(token)\n            ids.append(token)\n            if token == EOS:\n                break\n    return new\n"
+        },
+        {
+          "type": "text",
+          "title": "প্রথম কোড ব্লকের BPE ও Block অংশটির কাজ",
+          "body": "প্রথম কোড ব্লকের train_bpe, bpe_encode ও vocabulary ফাংশনগুলো Fit অধ্যায়গুলোর প্রথম 256 Byte থেকে সম্পূর্ণ সুনির্দিষ্টভাবে 16টি Merge শেখে এবং মূল টেক্সটে নিখুঁত Round-trip নিশ্চিত করে। আবারও খেয়াল রাখবেন, এই শেখা BPE কেবলই টোকেন সংকোচনের ডেমো—পরের অংশের blocks ফাংশনটি মূল মডেলের জন্য কাঁচা UTF-8 Byte এবং BOS/EOS/PAD দিয়ে আলাদাভাবে 64টি করে ব্লক তৈরি করে।"
+        },
+        {
+          "type": "text",
+          "title": "দ্বিতীয় কোড ব্লকের Decoder ও Sampling অংশটির কাজ",
+          "body": "দ্বিতীয় কোড ব্লকে রয়েছে আমাদের পূর্ণাঙ্গ ByteDecoder মডিউল, অবৈধ আউটপুট দমনকারী predict_logits, নিরাপদ token_loss, Temperature/Top-k/Top-p সমন্বয়কারী distribution, অভিন্ন র‍্যান্ডম সংখ্যার uniform_draws এবং চূড়ান্ত generate ফাংশন। নিজের মেশিনে পরীক্ষা করার সময় এই পাঠের দুটি কোড ব্লক একই পাইথন স্কোপে রেখে চালাবেন। পরের পাঠেই আমরা এই হেল্পারগুলো দিয়ে পুরো এক্সপেরিমেন্টটি একসাথে রান করব।"
+        },
+        {
+          "type": "text",
+          "title": "সংরক্ষিত Artifact-এর চুক্তি ও নিরাপত্তা",
+          "body": "এক্সপেরিমেন্ট শেষে সংরক্ষিত বান্ডেলে Byte ও Special ID, 32 Context, 5019টি Parameter-এর ওজন, মূল সোর্স হ্যাশ, ডেটা স্কিমা এবং Golden Prefix-গুলো একসাথে প্যাকেজ করা থাকে। নিরাপত্তার স্বার্থে সবসময় কেবল নিজের তৈরি ও যাচাইকৃত সামঞ্জস্যপূর্ণ state_dict-ই লোড করবেন। মনে রাখবেন, বর্তমান মডেল ফাইলগুলো শুধুমাত্র Inference পুনরায় চালানোর জন্য তৈরি—মাঝপথ থেকে ট্রেনিং রিজিউম করার পূর্ণাঙ্গ অপটিমাইজার চেকপয়েন্ট নয়।"
+        },
+        {
+          "type": "text",
+          "title": "কমান্ড লাইন থেকে চালানোর নিয়ম",
+          "body": "পুরো পাইপলাইনটি টার্মিনাল থেকে চালাতে রান করুন: python assets/datasets/alice/llm_workflow.py --output build/chapter-22-workflow-report.json --artifact-dir build/chapter-22-artifacts। এর জন্য কোনো অনলাইন API কী, লগইন, বাইরের প্রিট্রেনড ওজন কিংবা রিমোট সার্ভারের প্রয়োজন হবে না।"
+        }
+      ]
+    },
+    {
+      "id": "ch22_experiment",
+      "title": "পূর্ণাঙ্গ Tiny Language-Model এক্সপেরিমেন্ট",
+      "subtitle": "Fit → Score → Inspect → Generate → Package: এক নজরে পুরো এন্ড-টু-এন্ড প্রবাহ",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "নির্দিষ্ট বাজেটে মডেল ট্রেনিং ও চূড়ান্ত স্কোরিং",
+          "body": "এবার আগের সব টুকরোকে এক সুতোয় গাঁথার পালা! এখানে 512টি Fit Block-এর ওপর ঠিক 10টি স্থির Epoch জুড়ে 80টি Minibatch Update চালানো হয়। প্রতিটি ধাপের Validation ইতিহাসটি কেবল শেখার প্রবণতা বোঝার ডায়াগনস্টিক হিসেবে রাখা হয়—সেখান থেকে সেরা Epoch, সেরা Seed বা ভিন্ন কোনো আর্কিটেকচার বেছে নেওয়া হয় না। দশম Epoch শেষে প্রাপ্ত চূড়ান্ত মডেলটিকে বইয়ের 11 ও 12 নম্বর Test অধ্যায়ের ওপর স্কোর করা হয়, এবং পুরো রান শেষে র‍্যাপার ফাংশনটি কলকারীর মূল RNG ও থ্রেড স্টেট ঠিক আগের অবস্থায় ফিরিয়ে দেয়।"
+        },
+        {
+          "type": "text",
+          "title": "ল্যাবের জন্য সংরক্ষিত Reference Prefix ও ৯টি জেনারেশন কেস",
+          "body": "অ্যাপের ইন্টারঅ্যাক্টিভ ল্যাবে দেখানোর জন্য বইয়ের আসল 1 ও 3 নম্বর Fit অধ্যায় এবং 9 নম্বর Validation অধ্যায় থেকে 16-Code-point দৈর্ঘ্যের তিনটি প্রিফিক্স নেওয়া হয়। প্রতিটির জন্য এক ঘর সরানো Shifted Target, মূল বইয়ের ঠিক পরের আসল Byte, ডিকোডারের ভেতরের সব মধ্যবর্তী ম্যাট্রিক্স ও Attention Weight (Causal ও Full উভয় মোডে), এবং তিনটি ভিন্ন ডিকোডিং সেটিংসে মোট 9টি জেনারেশন কেস এক্সপোর্ট করা হয়। ডেটা বিশুদ্ধতা রক্ষায় চূড়ান্ত Test অধ্যায়ের কোনো প্রিফিক্স বা নমুনা এই ল্যাব ফাইলে রাখা হয়নি।"
+        },
+        {
+          "type": "code",
+          "title": "সম্পূর্ণ এন্ড-টু-এন্ড এক্সপেরিমেন্ট ও রিপোর্ট তৈরির কোড",
+          "body": "from pathlib import Path\nimport argparse, collections, hashlib, json, math, platform, re\nimport numpy as np\nimport torch\nfrom torch import nn\n\nDATA = Path(\"assets/datasets/alice\").resolve()\nHASH = \"01b38ea4c710a84bc18d0bd41271a5a1a92b94e97b2812f4dece97d4a694725e\"\nPAD, BOS, EOS, VOCAB, CONTEXT = 256, 257, 258, 259, 32\n\n\ndef load_source(path):\n    raw = Path(path).read_bytes()\n    if hashlib.sha256(raw).hexdigest() != HASH:\n        raise ValueError(\"Original Gutenberg ebook11 bytes required\")\n    text = raw.decode(\"utf-8-sig\").replace(\"\\r\\n\", \"\\n\")\n    end = text.index(\"*** END OF THE PROJECT GUTENBERG EBOOK\")\n    matches = list(\n        re.finditer(r\"^CHAPTER ([IVX]+)\\.\\s*$\", text[:end], flags=re.MULTILINE)\n    )\n    if len(matches) != 12:\n        raise ValueError(\"Twelve actual source chapter headings\")\n    documents = [\n        text[m.end() : matches[i + 1].start() if i < 11 else end].strip()\n        for i, m in enumerate(matches)\n    ]\n    if any(len(d.encode(\"utf-8\")) < 4096 for d in documents):\n        raise ValueError(\"Expected unabridged chapter bodies\")\n    return documents\n\n\ndef merge_pair(tokens, pair, new_id):\n    out = []\n    i = 0\n    while i < len(tokens):\n        if i + 1 < len(tokens) and (tokens[i], tokens[i + 1]) == tuple(pair):\n            out.append(new_id)\n            i += 2\n        else:\n            out.append(tokens[i])\n            i += 1\n    return out\n\n\ndef train_bpe(chunks, budget=16):\n    sequences = [list(s) for s in chunks]\n    merges = []\n    for index in range(budget):\n        counts = collections.Counter(\n            (a, b) for s in sequences for a, b in zip(s, s[1:])\n        )\n        if not counts:\n            break\n        pair = min(counts, key=lambda p: (-counts[p], p))\n        new_id = 259 + index\n        merges.append({\"pair\": list(pair), \"id\": new_id, \"count\": counts[pair]})\n        sequences = [merge_pair(s, pair, new_id) for s in sequences]\n    return merges\n\n\ndef bpe_encode(text, merges):\n    ids = list(text.encode(\"utf-8\"))\n    for m in merges:\n        ids = merge_pair(ids, m[\"pair\"], m[\"id\"])\n    return ids\n\n\ndef vocabulary(merges):\n    pieces = {i: bytes([i]) for i in range(256)}\n    for m in merges:\n        pieces[m[\"id\"]] = pieces[m[\"pair\"][0]] + pieces[m[\"pair\"][1]]\n    return pieces\n\n\ndef blocks(documents, chapter_ids):\n    rows = []\n    for chapter in chapter_ids:\n        ids = [BOS] + list(documents[chapter - 1].encode(\"utf-8\")) + [EOS]\n        starts = list(range(0, len(ids) - 1, 32))\n        chosen = starts[:63] + [starts[-1]]\n        if len(set(chosen)) != 64:\n            raise ValueError(\"Declared64 distinct source blocks\")\n        for start in chosen:\n            x = ids[start : start + 32]\n            y = ids[start + 1 : start + 33]\n            x = x + [PAD] * (32 - len(x))\n            y = y + [PAD] * (32 - len(y))\n            rows.append({\"source_chapter\": chapter, \"start\": start, \"x\": x, \"y\": y})\n    return (\n        torch.tensor([r[\"x\"] for r in rows]),\n        torch.tensor([r[\"y\"] for r in rows]),\n        rows,\n    )\n\n\ndef positions():\n    p = torch.arange(CONTEXT, dtype=torch.float64)[:, None]\n    f = torch.exp(torch.arange(0, 8, 2, dtype=torch.float64) * (-math.log(10000.0) / 8))\n    pe = torch.zeros(CONTEXT, 8, dtype=torch.float64)\n    pe[:, 0::2] = torch.sin(p * f)\n    pe[:, 1::2] = torch.cos(p * f)\n    return pe\n\n\nclass ByteDecoder(nn.Module):\n    def __init__(self):\n        super().__init__()\n        self.embedding = nn.Embedding(VOCAB, 8, padding_idx=PAD, dtype=torch.float64)\n        self.norm1 = nn.LayerNorm(8, eps=1e-5, dtype=torch.float64)\n        self.attn = nn.MultiheadAttention(\n            8, 2, batch_first=True, dropout=0.0, dtype=torch.float64\n        )\n        self.norm2 = nn.LayerNorm(8, eps=1e-5, dtype=torch.float64)\n        self.ff1 = nn.Linear(8, 16, dtype=torch.float64)\n        self.ff2 = nn.Linear(16, 8, dtype=torch.float64)\n        self.final_norm = nn.LayerNorm(8, eps=1e-5, dtype=torch.float64)\n        self.head = nn.Linear(8, VOCAB, dtype=torch.float64)\n        self.register_buffer(\"position\", positions())\n\n    def inspect(self, ids, causal=True):\n        if (\n            ids.ndim != 2\n            or not 1 <= ids.shape[1] <= CONTEXT\n            or ids.dtype != torch.long\n            or ((ids < 0) | (ids >= VOCAB)).any()\n            or (ids[:, 0] == PAD).any()\n        ):\n            raise ValueError(\"Token IDs[B,T],T1..32,nonpad first key\")\n        T = ids.shape[1]\n        x = self.embedding(ids) + self.position[:T]\n        n = self.norm1(x)\n        blocked = (\n            torch.ones(T, T, dtype=torch.bool).triu(1)\n            if causal\n            else torch.zeros(T, T, dtype=torch.bool)\n        )\n        out, w = self.attn(\n            n,\n            n,\n            n,\n            attn_mask=blocked,\n            key_padding_mask=ids.eq(PAD),\n            need_weights=True,\n            average_attn_weights=False,\n        )\n        r1 = x + out\n        n2 = self.norm2(r1)\n        hidden = self.ff1(n2).relu()\n        ff = self.ff2(hidden)\n        state = r1 + ff\n        normalized = self.final_norm(state)\n        logits = self.head(normalized)\n        return {\n            \"embedding\": x,\n            \"norm1\": n,\n            \"attention\": out,\n            \"weights\": w,\n            \"residual1\": r1,\n            \"norm2\": n2,\n            \"ff_hidden\": hidden,\n            \"ff_output\": ff,\n            \"state\": state,\n            \"normalized\": normalized,\n            \"logits\": logits,\n        }\n\n    def forward(self, ids):\n        return self.inspect(ids)[\"logits\"]\n\n\ndef predict_logits(logits):\n    out = logits.clone()\n    out[..., PAD] = -torch.inf\n    out[..., BOS] = -torch.inf\n    return out\n\n\ndef token_loss(logits, target):\n    if (\n        logits.shape[:-1] != target.shape\n        or logits.shape[-1] != VOCAB\n        or not torch.isfinite(logits).all()\n        or target.dtype != torch.long\n        or target.eq(BOS).any()\n        or ((target < 0) | (target >= VOCAB)).any()\n        or not target.ne(PAD).any()\n    ):\n        raise ValueError(\n            \"Finite raw logits and aligned next-token targets with a nonempty valid mask\"\n        )\n    return nn.functional.cross_entropy(\n        predict_logits(logits).reshape(-1, VOCAB), target.reshape(-1), ignore_index=PAD\n    )\n\n\ndef distribution(logits, temperature=1.0, top_k=0, top_p=1.0):\n    scores = np.asarray(logits, dtype=float)\n    if (\n        scores.shape != (VOCAB,)\n        or not np.isfinite(scores).all()\n        or not np.isfinite(temperature)\n        or temperature <= 0\n        or not isinstance(top_k, int)\n        or isinstance(top_k, bool)\n        or top_k not in [0, 5, 20]\n        or not np.isfinite(top_p)\n        or not 0 < top_p <= 1\n    ):\n        raise ValueError(\"Finite259 logits,temperature>0,k0/5/20,p(0,1]\")\n    allowed = [i for i in range(VOCAB) if i not in [PAD, BOS]]\n    order = sorted(allowed, key=lambda i: (-scores[i], i))\n    keep = order[:top_k] if top_k else order\n    shifted = np.array([scores[i] for i in keep])\n    shifted = (shifted - shifted.max()) / temperature\n    weights = np.exp(shifted)\n    weights /= weights.sum()\n    count = len(keep)\n    if top_p < 1:\n        count = min(\n            len(keep), int(np.searchsorted(np.cumsum(weights), top_p, side=\"left\")) + 1\n        )\n    result = np.zeros(VOCAB)\n    result[keep[:count]] = weights[:count] / weights[:count].sum()\n    return result\n\n\ndef uniform_draws(seed=22, count=8):\n    if (\n        not isinstance(seed, int)\n        or isinstance(seed, bool)\n        or not 0 <= seed <= 0xFFFFFFFF\n        or not isinstance(count, int)\n        or isinstance(count, bool)\n        or not 1 <= count <= 32\n    ):\n        raise ValueError(\"32-bit seed and count1..32\")\n    state = seed\n    out = []\n    for _ in range(count):\n        state = (1664525 * state + 1013904223) & 0xFFFFFFFF\n        out.append((state + 0.5) / 4294967296.0)\n    return out\n\n\ndef choose(probability, u):\n    probability = np.asarray(probability, dtype=float)\n    if (\n        probability.shape != (VOCAB,)\n        or not np.isfinite(probability).all()\n        or (probability < 0).any()\n        or abs(probability.sum() - 1) > 1e-10\n        or not np.isfinite(u)\n        or not 0 <= u < 1\n    ):\n        raise ValueError(\"Probability259 and uniform draw in[0,1)\")\n    total = 0.0\n    for i, p in enumerate(probability):\n        total += p\n        if u < total:\n            return i\n    return int(np.flatnonzero(np.asarray(probability) > 0)[-1])\n\n\ndef generate(model, prefix, mode=\"sample\", temperature=1.0, top_k=0, top_p=1.0):\n    ids = list(prefix)\n    new = []\n    if (\n        mode not in [\"sample\", \"greedy\"]\n        or not ids\n        or len(ids) > 24\n        or any(not isinstance(i, int) or i < 0 or i >= VOCAB or i == PAD for i in ids)\n    ):\n        raise ValueError(\"Valid prefix<=24,mode sample/greedy\")\n    model.eval()\n    with torch.no_grad():\n        for u in uniform_draws():\n            logits = model(torch.tensor([ids]))[0, -1].numpy()\n            p = distribution(logits, temperature, top_k, top_p)\n            token = int(np.argmax(p)) if mode == \"greedy\" else choose(p, u)\n            new.append(token)\n            ids.append(token)\n            if token == EOS:\n                break\n    return new\n\n\ndef analyse_source(path, artifact_dir=None):\n    documents = load_source(path)\n    X, Y, training = blocks(documents, range(1, 9))\n    V, VY, validation = blocks(documents, [9, 10])\n    T, TY, testing = blocks(documents, [11, 12])\n    torch.manual_seed(22)\n    model = ByteDecoder()\n    assert sum(p.numel() for p in model.parameters()) == 5019\n    optimizer = torch.optim.AdamW(\n        model.parameters(), lr=0.01, weight_decay=0.01, foreach=False\n    )\n    rng = torch.Generator().manual_seed(220)\n    history = []\n\n    def evaluate(x, y):\n        model.eval()\n        with torch.no_grad():\n            return token_loss(model(x), y).item()\n\n    for epoch in range(11):\n        history.append(\n            {\n                \"epoch\": epoch,\n                \"train_nll\": evaluate(X, Y),\n                \"validation_nll\": evaluate(V, VY),\n            }\n        )\n        if epoch == 10:\n            break\n        model.train()\n        for ids in torch.randperm(len(X), generator=rng).split(64):\n            # Gradients accumulate: clear them at the intended optimizer-step boundary.\n            optimizer.zero_grad(set_to_none=True)\n            loss = token_loss(model(X[ids]), Y[ids])\n            loss.backward()\n            nn.utils.clip_grad_norm_(model.parameters(), 1.0, error_if_nonfinite=True)\n            optimizer.step()\n    counts = np.ones(VOCAB)\n    counts[PAD] = counts[BOS] = 0\n    for token in Y[Y.ne(PAD)].tolist():\n        counts[token] += 1\n    unigram = counts / counts.sum()\n\n    def baseline(y):\n        return float(-np.log(unigram[y[y.ne(PAD)].numpy()]).mean())\n\n    test_nll = evaluate(T, TY)\n    weights = {k: v.detach().tolist() for k, v in model.state_dict().items()}\n    merges = train_bpe([d.encode(\"utf-8\")[:256] for d in documents[:8]], 16)\n    samples = []\n    for chapter in [1, 3, 9]:\n        prefix_text = documents[chapter - 1][:16]\n        prefix = [BOS] + list(prefix_text.encode(\"utf-8\"))\n        target = documents[chapter - 1][16:].encode(\"utf-8\")[0]\n        refs = []\n        for causal in [True, False]:\n            with torch.no_grad():\n                trace = model.inspect(torch.tensor([prefix]), causal)\n            refs.append(\n                {\n                    \"causal\": causal,\n                    \"trace\": {k: v[0].tolist() for k, v in trace.items()},\n                }\n            )\n        cases = []\n        for temp, k, p, mode in [\n            (1.0, 0, 1.0, \"greedy\"),\n            (1.0, 0, 1.0, \"sample\"),\n            (0.7, 20, 0.9, \"sample\"),\n        ]:\n            cases.append(\n                {\n                    \"temperature\": temp,\n                    \"top_k\": k,\n                    \"top_p\": p,\n                    \"mode\": mode,\n                    \"ids\": generate(model, prefix, mode, temp, k, p),\n                }\n            )\n        samples.append(\n            {\n                \"source_chapter\": chapter,\n                \"role\": \"fit\" if chapter < 9 else \"validation\",\n                \"text\": prefix_text,\n                \"ids\": prefix,\n                \"targets\": prefix[1:] + [target],\n                \"references\": refs,\n                \"generation\": cases,\n            }\n        )\n    examples = []\n    for chapter in [1, 3, 9]:\n        doc = documents[chapter - 1]\n        start = doc.find(\"“\")\n        start = max(0, start)\n        text = doc[start : start + 48]\n        examples.append(\n            {\n                \"source_chapter\": chapter,\n                \"offset_char\": start,\n                \"text\": text,\n                \"bytes\": list(text.encode(\"utf-8\")),\n                \"bpe_ids\": bpe_encode(text, merges),\n            }\n        )\n    role_counts = {\n        name: {\n            \"chapters\": list(ids),\n            \"blocks\": len(rows),\n            \"targets\": int(y.ne(PAD).sum()),\n            \"eos_targets\": int(y.eq(EOS).sum()),\n        }\n        for name, ids, rows, y in [\n            (\"fit\", range(1, 9), training, Y),\n            (\"validation\", [9, 10], validation, VY),\n            (\"test\", [11, 12], testing, TY),\n        ]\n    }\n    report = {\n        \"source\": \"Alice's Adventures in Wonderland, Lewis Carroll, Project Gutenberg ebook11\",\n        \"sha256\": HASH,\n        \"versions\": {\n            \"python\": platform.python_version(),\n            \"torch\": torch.__version__,\n            \"numpy\": np.__version__,\n        },\n        \"dtype\": \"float64\",\n        \"device\": \"cpu\",\n        \"parameters\": 5019,\n        \"model_vocabulary\": 259,\n        \"allowed_output_ids\": 257,\n        \"context\": 32,\n        \"roles\": role_counts,\n        \"seed\": 22,\n        \"updates\": 80,\n        \"batch_size\": 64,\n        \"epochs\": 10,\n        \"initial_train_nll\": history[0][\"train_nll\"],\n        \"final_train_nll\": history[-1][\"train_nll\"],\n        \"validation\": {\n            \"model_nll\": history[-1][\"validation_nll\"],\n            \"unigram_nll\": baseline(VY),\n        },\n        \"test\": {\n            \"model_nll\": test_nll,\n            \"unigram_nll\": baseline(TY),\n            \"model_perplexity\": math.exp(test_nll),\n        },\n        \"bpe_merges\": 16,\n        \"assumptions\": [\n            \"Original full Gutenberg file retained with source notices; parser normalizes CRLF to LF and excludes header/TOC/license trailer from modeling.\",\n            \"Source chapters1-8 fit,9-10 diagnostic validation,11-12 terminal test; same book/author,public text,not independent-domain or contamination-proof evaluation.\",\n            \"Per chapter only first63 nonoverlap32-token blocks plus final block; omitted middle is never stitched; EOS retained and PAD targets ignored.\",\n            \"Fixed one-block d8,heads2,FF16 pre-norm decoder with final LayerNorm,unshared embedding/head,sinusoidal positions0..31,dropout0;5019 parameters,not a large language model.\",\n            \"Seed22,AdamW.01/decay.01,clip1,batch64,10 epochs/80 updates,shuffle generator220;no hyperparameter/seed/best-epoch search.\",\n            \"Model tokenizer is raw UTF8 bytes plus PAD256/BOS257/EOS258;PAD/BOS logits blocked;EOS may be predicted.\",\n            \"BPE demonstration separately learns16 merges from first256 bytes of each fit chapter;not the model tokenizer or a production tokenizer.\",\n            \"All NLL/perplexity comparisons share byte/EOS vocabulary and target mask;word/BPE perplexities are not directly comparable.\",\n            \"Sampling uses declared shared 32-bit LCG uniforms for reproducible Dart/Python mechanics;not cryptographic or backend-RNG equivalence.\",\n            \"Generated continuations may be invalid UTF8 or nonsense;replacement decoding is explicit,not English/Bangla competency or factual-answer evidence.\",\n            \"Final test outcomes now published;reruns are audits,not fresh confirmation;no instruction tuning,preference optimization,RAG or pretrained LLM claim.\",\n        ],\n    }\n    asset = {\n        \"source\": report[\"source\"],\n        \"sha256\": HASH,\n        \"dtype\": \"float64\",\n        \"parameters\": 5019,\n        \"context\": 32,\n        \"vocab\": 259,\n        \"width\": 8,\n        \"heads\": 2,\n        \"ff_width\": 16,\n        \"special_ids\": {\"pad\": PAD, \"bos\": BOS, \"eos\": EOS},\n        \"weights\": weights,\n        \"merges\": merges,\n        \"examples\": examples,\n        \"samples\": samples,\n        \"history\": history,\n        \"roles\": role_counts,\n        \"unigram\": unigram.tolist(),\n    }\n    if artifact_dir:\n        folder = Path(artifact_dir)\n        folder.mkdir(parents=True, exist_ok=True)\n        torch.save(model.state_dict(), folder / \"byte_decoder.pt\")\n        for name, value in {\n            \"schema.json\": {\n                \"vocab\": 259,\n                \"special_ids\": asset[\"special_ids\"],\n                \"context\": 32,\n                \"parameters\": 5019,\n                \"tokenizer\": \"UTF8 bytes\",\n                \"source_sha256\": HASH,\n            },\n            \"tokenizer_demo.json\": merges,\n            \"model_card.json\": report,\n            \"golden.json\": samples,\n        }.items():\n            (folder / name).write_text(\n                json.dumps(value, indent=2, allow_nan=False) + \"\\n\", encoding=\"utf-8\"\n            )\n        (folder / \"checksums.json\").write_text(\n            json.dumps(\n                {\n                    p.name: hashlib.sha256(p.read_bytes()).hexdigest()\n                    for p in sorted(folder.iterdir())\n                    if p.is_file() and p.name != \"checksums.json\"\n                },\n                indent=2,\n            )\n            + \"\\n\"\n        )\n    return report, asset\n\n\ndef run_analysis(path, artifact_dir=None):\n    threads = torch.get_num_threads()\n    try:\n        torch.set_num_threads(1)\n        with torch.random.fork_rng(devices=[]):\n            return analyse_source(path, artifact_dir)\n    finally:\n        torch.set_num_threads(threads)\n\n\nreport, asset = run_analysis(DATA / \"pg11.txt\")\nprint(report)\n"
+        },
+        {
+          "type": "code",
+          "title": "উৎপন্ন রিপোর্টের মূল সংখ্যাগুলো যাচাই",
+          "body": "assert report[\"parameters\"] == 5019 and report[\"updates\"] == 80\nassert report[\"roles\"][\"test\"][\"targets\"] == 4046\nprint(report[\"validation\"], report[\"test\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "তিনটি ভিন্ন মোডে ডিকোডিংয়ের প্রমাণ",
+          "body": "প্রতিটি রেফারেন্স প্রিফিক্সের ওপর সর্বোচ্চ 8টি নতুন টোকেন পর্যন্ত তিন ধরনের ডিকোডিং চালানো হয়েছে: এক, সম্পূর্ণ সুনির্দিষ্ট Greedy মোড; দুই, ফিল্টারবিহীন সাধারণ র‍্যান্ডম Sample মোড (T = 1.0); এবং তিন, temperature = 0.7, top_k = 20, top_p = 0.9 সেটিংসের নিয়ন্ত্রিত Sample মোড। র‍্যান্ডম সংখ্যার জন্য ব্যবহৃত হয়েছে আমাদের অভিন্ন LCG স্ট্রিম, এবং উৎপন্ন কাঁচা Byte ও Replacement-decoded টেক্সট কোনো রকম হাতের কারসাজি ছাড়াই হুবহু সংরক্ষণ করা হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "কখন ফাইল লেখা হয় এবং কীভাবে অ্যাসেট তৈরি হয়",
+          "body": "সাধারণভাবে মডিউলটি ইমপোর্ট করলে বা সাধারণ CLI চালালে রিপোজিটরির বান্ডেল করা অ্যাসেট ফাইলে কোনো হাত পড়ে না। কেবল --write-labs ফ্ল্যাগ দিলেই নতুন করে llm_lab.json তৈরি হয়। আর --artifact-dir দিলে নির্দিষ্ট ফোল্ডারে byte_decoder.pt, schema.json, tokenizer_demo.json, model_card.json, golden.json এবং সব ফাইলের হ্যাশসহ checksums.json লেখা হয়। অন্য যেকোনো ওয়ার্কিং ডিরেক্টরি থেকে কমান্ড চালালেও স্ক্রিপ্টটি নিজের সাপেক্ষে মূল ডেটাসেট খুঁজে নিতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "স্বাধীনভাবে অডিট করার তালিকা",
+          "body": "একজন নিখুঁত পরীক্ষক হিসেবে আপনি নিজে কোড চালিয়ে মিলিয়ে দেখুন: মূল বইয়ের স্প্যানগুলো ঠিক আছে কি না, ব্লকের লেবেল সঠিক কি না, Unigram ও BPE কেবল Fit ডেটা থেকেই এসেছে কি না, NLL গড় করার নিয়ম নিখুঁত কি না, PAD/BOS ঠিকমতো ব্লক হয়েছে কি না, Causal মাস্ক ভবিষ্যৎ ইনপুট বদলালেও অবিচল থাকে কি না, এবং সেভ করা মডেল রিলোড করলে হুবহু একই Logit ও সম্ভাব্যতা পাওয়া যায় কি না।"
+        },
+        {
+          "type": "text",
+          "title": "তিন ধরনের প্রমাণের স্পষ্ট সীমারেখা",
+          "body": "সবশেষে মনে রাখবেন—গাণিতিক হিসাবের মিল (Numerical Agreement), আলাদা রাখা অধ্যায়ের গড় Loss এবং উৎপন্ন টেক্সটের গুণগত মান—এই তিনটি সম্পূর্ণ ভিন্ন ধরনের প্রমাণ। একটি পাবলিক বইয়ের ওপর ট্রেন করা খুদে মডেল থেকে কখনোই প্রিট্রেনড LLM-এর সক্ষমতা, Alignment, সত্যবাদিতা বা প্রোডাকশনে নামানোর উপযোগিতা দাবি করা যায় না।"
+        }
+      ]
+    },
+    {
+      "id": "ch22_evaluation",
+      "title": "প্রকৃত Loss ফলাফল ও একটি সৎ Model Card",
+      "subtitle": "উন্নত NLL স্কোর এবং দুর্বল টেক্সট জেনারেশন—দুটোই একসাথে সত্য হতে পারে!",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "আমাদের পরীক্ষায় পাওয়া সংখ্যার খতিয়ান",
+          "body": "চলুন দশ Epoch ট্রেনিং শেষে আমাদের হাতে আসা আসল সংখ্যাগুলো দেখি। ট্রেনিং সেটে গড় NLL শুরু হয়েছিল 5.837439 থেকে এবং শেষে নেমে এসেছে 2.836950-এ। ডায়াগনস্টিক Validation সেটে মডেলের NLL দাঁড়িয়েছে 2.865786, যেখানে Unigram বেসলাইনের NLL ছিল 3.315216। আর চূড়ান্ত Test সেটে আমাদের মডেল পেয়েছে 2.832925 NLL (অর্থাৎ Perplexity 16.995099), যেখানে একই সেটে Unigram বেসলাইন পেয়েছিল 3.208245। প্রতিটি তুলনাই করা হয়েছে হুবহু একই বৈধ Byte/EOS আউটপুট এবং একই বৈধ টার্গেট মাস্কের অধীনে।"
+        },
+        {
+          "type": "text",
+          "title": "ফলাফলের সঠিক ও নির্মোহ ব্যাখ্যা",
+          "body": "বেসলাইনের চেয়ে স্পষ্টভাবে কম Next-Token Loss প্রমাণ করে যে আমাদের ছোট্ট ডিকোডারটি এই সীমিত লক্ষ্যে সত্যিই আগের অক্ষরের প্রসঙ্গ কাজে লাগাতে শিখেছে। এখানে একটি মজার প্রশ্ন জাগতে পারে: Test লস (2.832925) কেন Validation লসের (2.865786) চেয়ে সামান্য কম হলো? এর মানে কিন্তু এই নয় যে ডেটা লিক হয়েছে কিংবা মডেল সব ক্ষেত্রে জাদুকরী উন্নতি করেছে—আসলে বইয়ের একেকটি অধ্যায়ের ভাষাগত কাঠিন্য স্বাভাবিকভাবেই একটু কমবেশি হতে পারে! আর অন্যদিকে উৎপন্ন টেক্সটে অর্থহীন শব্দ বা ভাঙা UTF-8 আমাদের চোখে আঙুল দিয়ে দেখিয়ে দেয় যে ভালো NLL মানেই পূর্ণাঙ্গ ভাষার দক্ষতা নয়।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "L_{test}=2.832925,\\quad PPL_{test}=16.995099"
+        },
+        {
+          "type": "code",
+          "title": "প্রথম থেকে দশম Epoch-এ ট্রেনিং NLL কমার প্রমাণ",
+          "body": "from pathlib import Path\nimport json, math\n\na = json.loads(Path(\"assets/datasets/alice/llm_lab.json\").read_text())\nhistory = a[\"history\"]\nassert len(history) == 11\nassert history[-1][\"train_nll\"] < history[0][\"train_nll\"]\nprint(history[0], history[-1])\n"
+        },
+        {
+          "type": "text",
+          "title": "ডেটাসেটের গঠনগত সীমাবদ্ধতা",
+          "body": "প্রতি অধ্যায়ের প্রথম 63টি ও শেষের 1টি ব্লক নেওয়ার কারণে এটি পুরো বইয়ের শতভাগ প্রতিনিধিত্বও করে না। তার ওপর একই লেখক, একই গল্পের বই, পাবলিক টেক্সট এবং ছোট আকারের ডেটাসেট হওয়ায় এখান থেকে সাধারণীকরণের (Generalization) দাবি খুবই সীমিত। বহুভাষিক সক্ষমতা, সাধারণ জ্ঞান, যুক্তিবিদ্যা, চ্যাট কিংবা নিরাপত্তার কোনো পরীক্ষাই এখানে অন্তর্ভুক্ত নয়।"
+        },
+        {
+          "type": "text",
+          "title": "একটি আদর্শ ও সৎ Model Card-এ কী কী লিখবেন?",
+          "body": "প্রফেশনাল ML ইঞ্জিনিয়ারিংয়ে প্রতিটি মডেলের সাথে একটি স্বচ্ছ Model Card থাকা চাই। আমাদের Model Card-এ সুনির্দিষ্টভাবে নথিবদ্ধ করা হয়েছে: মূল বইয়ের উৎস, লাইসেন্স ও হ্যাশ, Normalization নিয়ম, অধ্যায়ের বণ্টন ও ব্লক বাজেট, Special ID চুক্তি, BPE ডেমোর আলাদা পরিচয়, আর্কিটেকচার, Seed ও আপডেট সংখ্যা, অর্জিত মেট্রিক এবং পরিচিত ব্যর্থতাগুলো। পাশাপাশি স্পষ্ট বলা আছে যে এতে কোনো বাইরের Pretrained Weight বা API নেই এবং CPU float64 রানটি কোনো প্রোডাকশন গতির মাপকাঠি নয়।"
+        },
+        {
+          "type": "text",
+          "title": "ভবিষ্যতের নতুন এক্সপেরিমেন্ট কীভাবে সাজাবেন?",
+          "body": "এরপর আপনি যদি ভিন্ন কোনো Tokenizer, আরও বড় কর্পাস, বেশি চওড়া লেয়ার, বড় Context কিংবা একাধিক র‍্যান্ডম Seed নিয়ে গবেষণা করতে চান, তবে সেটিকে একটি নতুন এক্সপেরিমেন্ট হিসেবে ডিজাইন করতে হবে। যেহেতু বর্তমানের প্রকাশিত Test সেটের স্কোর আমরা দেখে ফেলেছি, তাই ভবিষ্যতের টিউনিংয়ে এটিকে আর কখনোই 'অদেখা (Untouched) টেস্ট সেট' বলে দাবি করবেন না। আর একই কোড বারবার চালিয়ে একই সংখ্যা পাওয়া কেবল গাণিতিক অডিট, নতুন কোনো বৈজ্ঞানিক প্রমাণ নয়।"
+        },
+        {
+          "type": "text",
+          "title": "তথ্যপ্রমাণ দেখে যুক্তিসঙ্গত সিদ্ধান্ত নিন",
+          "body": "যেকোনো রিভিউ বা ইন্টারভিউতে তিন ধরনের ফলাফলকে আলাদা খোপে রেখে কথা বলার অভ্যাস করুন: কোনটি কোডের গাণিতিক নির্ভুলতা, কোনটি পরের টোকেন অনুমানের Loss, আর কোনটি বাস্তব জেনারেশনের ব্যর্থতা। কখনোই Perplexity কমে যাওয়ার অজুহাতে মডেল সঠিক তথ্য দেবে বা বাংলায় কথা বলতে পারবে—এমন দাবি করবেন না; যতটুকু প্রমাণ হাতে আছে, দাবিও ঠিক ততটুকুই রাখুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch22_mechanistic_interpretability",
+      "title": "Mechanistic Interpretability: Ablation ও Activation Patching",
+      "subtitle": "মডেলের ভেতরের নির্দিষ্ট একটি মান বদলে আউটপুটে তার কার্যকারণ (Causal) প্রভাব পরিমাপ করি",
+      "duration": "25 min",
+      "icon": "science",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "চোখে দেখা Attention Map বনাম প্রকৃত কার্যকারণ পরীক্ষা",
+          "body": "মডেলের ভেতরে উঁকি দেওয়ার কথা বললেই প্রথমে মনে আসে Attention Map-এর কথা—যেন কোন টোকেনের ওপর কতটা ওজন পড়েছে তা দেখলেই সব রহস্য বোঝা হয়ে গেল! কিন্তু বাস্তবে শুধু ওজন দেখেই বলা যায় না যে ওই টোকেন বা Head-টি মুছে দিলে চূড়ান্ত প্রেডিকশন আসলেই বদলাবে কি না; কারণ এর পরেও Value ভেক্টর, Output Projection এবং Residual Path মিলে পুরো ফলাফল ঘুরিয়ে দিতে পারে। তাই Mechanistic Interpretability-তে (যা নিয়ে আমরা Book 4 · Chapter 7-এ আরও গভীরভাবে পড়ব) আমরা প্রথমে আচরণ মাপার একটি সুনির্দিষ্ট স্কেল ঠিক করি, আর তারপর মডেলের ভেতরের একটিমাত্র অংশে পরিকল্পিত হস্তক্ষেপ (Intervention) করে দেখি আউটপুটের সেই স্কেলে ঠিক কতটা পরিবর্তন ঘটে।"
+        },
+        {
+          "type": "text",
+          "title": "দুটি বাস্তব Prefix ও একটি সুনির্দিষ্ট Intervention",
+          "body": "এই পরীক্ষার জন্য আমরা আমাদের চেনা 5019-প্যারামিটারের Byte Decoder এবং Alice কর্পাসের সংরক্ষিত ট্রেস ব্যবহার করব। বইয়ের ১ নম্বর ও ৩ নম্বর অধ্যায় থেকে নেওয়া প্রথম নমুনা দুটির দৈর্ঘ্য হুবহু সমান। প্রথম নমুনাটির ঠিক পরের আসল Byte হলো ‘H’ (ASCII 72), আর দ্বিতীয়টির পরের আসল Byte হলো ‘d’ (ASCII 100)। আলোচনার সুবিধার্থে আমরা প্রথম প্রিফিক্সটিকে বলছি clean এবং দ্বিতীয়টিকে বলছি donor—তবে খেয়াল রাখবেন, আমাদের খুদে মডেলটি যে প্রথমটিতে সত্যিই ‘H’ অনুমান করেছে এমন কোনো দাবি আমরা করছি না, এবং দ্বিতীয় প্রিফিক্সটি বইয়েরই আরেকটি স্বাভাবিক বাক্য (প্রথম বাক্যটির সামান্য পরিবর্তিত কোনো Minimal Corruption নয়)।"
+        },
+        {
+          "type": "math",
+          "title": "দুটি নির্দিষ্ট Byte-এর মধ্যে Logit Gap",
+          "body": "g(x)=z_{72}(x)-z_{100}(x),\\qquad z=W\\,\\mathrm{LayerNorm}(r+f)+b"
+        },
+        {
+          "type": "text",
+          "title": "মডেলের ঠিক কোন ভেতরের মানটি আমরা বদলে দেখব?",
+          "body": "একেবারে শেষ ইনপুট পজিশনে Attention পার হয়ে আসার পর Residual ভেক্টরটিকে ধরি r, আর তার ওপর FFN যে নতুন আপডেটটুকু যোগ করে সেটিকে ধরি f। আমরা দুটি পরীক্ষা চালাব: প্রথম রানে clean প্রিফিক্সের f-কে শূন্য করে দিয়ে দেখব কী হয় (Zero Ablation); আর দ্বিতীয় রানে donor প্রিফিক্সের নিজস্ব r ঠিক রেখে তার ওপর clean প্রিফিক্সের f বসিয়ে দেব (Activation Patching)! যেহেতু আমরা হস্তক্ষেপ করছি শেষ ব্লকের ভেতরে, তাই সংরক্ষিত ট্রেস থেকে r ও f নিয়ে কেবল শেষের LayerNorm ও Output Head টুকু পুনরায় চালালেই চূড়ান্ত Logit পাওয়া যাবে। মজার গাণিতিক বিষয় হলো, একই দুটি বাইটের (72 ও 100) মধ্যে এই Logit Gap আসলে তাদের Softmax সম্ভাব্যতার অনুপাতের লগারিদমের (log(p_72 / p_100)) হুবহু সমান!"
+        },
+        {
+          "type": "code",
+          "title": "সংরক্ষিত Trace থেকে Ablation ও Activation Patching পরীক্ষা",
+          "body": "import json\nfrom math import isclose, sqrt\nfrom pathlib import Path\n\npath = Path(\"assets/datasets/alice/llm_lab.json\")\nasset = json.loads(path.read_text(encoding=\"utf-8\"))\nweights = asset[\"weights\"]\nclean, donor = asset[\"samples\"][:2]\nassert len(clean[\"ids\"]) == len(donor[\"ids\"])\nclean_target = clean[\"targets\"][-1]\ndonor_target = donor[\"targets\"][-1]\nassert clean_target != donor_target\n\ndef causal_trace(sample):\n    return next(ref[\"trace\"] for ref in sample[\"references\"] if ref[\"causal\"])\n\ndef logit_gap(residual, ff_output):\n    state = [base + update for base, update in zip(residual, ff_output)]\n    mean = sum(state) / len(state)\n    variance = sum((value - mean) ** 2 for value in state) / len(state)\n    scale = sqrt(variance + 1e-5)\n    normalized = [\n        (value - mean) / scale * gain + bias\n        for value, gain, bias in zip(\n            state, weights[\"final_norm.weight\"], weights[\"final_norm.bias\"]\n        )\n    ]\n\n    def logit(token):\n        return weights[\"head.bias\"][token] + sum(\n            value * weight for value, weight in zip(normalized, weights[\"head.weight\"][token])\n        )\n\n    return logit(clean_target) - logit(donor_target)\n\nclean_trace, donor_trace = causal_trace(clean), causal_trace(donor)\nclean_residual, donor_residual = clean_trace[\"residual1\"][-1], donor_trace[\"residual1\"][-1]\nclean_ff, donor_ff = clean_trace[\"ff_output\"][-1], donor_trace[\"ff_output\"][-1]\nclean_gap = logit_gap(clean_residual, clean_ff)\ndonor_gap = logit_gap(donor_residual, donor_ff)\nfor gap, trace in [(clean_gap, clean_trace), (donor_gap, donor_trace)]:\n    logits = trace[\"logits\"][-1]\n    assert isclose(gap, logits[clean_target] - logits[donor_target], abs_tol=1e-10)\n\nablated = logit_gap(clean_residual, [0.0] * len(clean_ff))\npatched = logit_gap(donor_residual, clean_ff)\nprint(clean_gap, ablated, donor_gap, patched)"
+        },
+        {
+          "type": "text",
+          "title": "সংখ্যার ফলাফল আমাদের কী বলছে?",
+          "body": "কোডটি চালালে দারুণ স্পষ্ট চারটি সংখ্যা পাওয়া যায়: প্রথম (clean) প্রিফিক্সে আসল Logit Gap ছিল -2.441243, যা FFN শূন্য করে দিলে (Zero Ablation) দাঁড়ায় -2.382217। অন্যদিকে দ্বিতীয় (donor) প্রিফিক্সে আসল Gap ছিল -2.803345; কিন্তু তার ভেতরে প্রথম প্রিফিক্সের FFN আপডেট বসিয়ে দিলেই (Patching) Gap বেড়ে চলে আসে -2.548836-এ! অর্থাৎ প্রথম প্রিফিক্সের FFN ভেক্টরটি স্পষ্টতই দ্বিতীয় প্রিফিক্সের ফলাফলকে প্রথমটির দিকে প্রায় 0.255 ধাপ ঠেলে দিয়েছে। কিন্তু সাবধান—প্যাচ করার পরেও সংখ্যাটি ঋণাত্মক (-2.548836 < 0), অর্থাৎ এই দুটি বাইটের লড়াইয়ে মডেল এখনও ‘H’-এর চেয়ে ‘d’-কেই বেশি স্কোর দিচ্ছে! তাছাড়া কেবল দুটি বাইটের পার্থক্য দেখে পুরো ২৫৯ ভোকাবুলারির মধ্যে কোন বাইটটি সবার শীর্ষে আছে তা জানা যায় না। আর শুরুতে আসল r ও f বসিয়ে সংরক্ষিত ট্রেসের আসল Gap-এর সাথে মিলিয়ে নেওয়াটাই হলো আমাদের কোডের অপরিহার্য Baseline Check।"
+        },
+        {
+          "type": "text",
+          "title": "হুট করে 'Circuit খুঁজে পেয়েছি' দাবি করার আগে সতর্কতা",
+          "body": "আমাদের ব্যবহৃত প্রিফিক্স দুটি ছিল দুটি ভিন্ন বাক্য—তাদের ভেতরে অনেক কিছুই একসাথে বদলে গেছে। তাই ওই FFN ভেক্টরটির একটি সংখ্যাগত প্রভাব দেখা গেলেও এখান থেকে মোটেও দাবি করা যাবে না যে 'এই ভেক্টরটির ভেতরেই ইংরেজি H অক্ষরের ধারণা লুকিয়ে আছে'! তাছাড়া কোনো ভেক্টরকে হুট করে শূন্য করে দিলে (Zero Ablation) মডেল তার চেনা স্বাভাবিক অ্যাক্টিভেশন জগতের বাইরে চলে যেতে পারে। সত্যিকারের নিখুঁত গবেষণায় মাত্র একটি শব্দ বদলানো Minimal Pair, বহু নমুনার গড়, সব পজিশনের পরীক্ষা এবং উপযুক্ত Control ব্যবহার করতে হয়। একইভাবে মাঝখানের কোনো ভেক্টরকে সরাসরি Output Head দিয়ে পড়ে ফেলা (Logit Lens) কেবলই একটি পর্যবেক্ষণমূলক পাঠ—সেটি কোনো Causal হস্তক্ষেপ নয়; আর Sparse Autoencoder (SAE) দিয়ে সুন্দর নামওয়ালা স্পার্স ফিচার খুঁজে পেলেও আলাদা হস্তক্ষেপ পরীক্ষা ছাড়া তার কার্যকারণ ভূমিকা প্রমাণিত হয় না।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে যাচাই করুন",
+          "body": "Activation Patching করার পর আমাদের Logit Gap প্রায় 0.255 পরিমাণ বেড়েছে। এর মানে কি মডেল এখন আউটপুট হিসেবে ‘H’ বেছে নিচ্ছে? আরেকটি প্রশ্ন: যদি কোনো পরীক্ষায় Clean এবং দ্বিতীয় প্রিফিক্সের শুরুর (Baseline) Gap দুটি প্রায় সমান হয়ে যায়, তবে শতকরা বা Normalized Recovery অনুপাত রিপোর্ট করতে গেলে কী বিপদ হবে?",
+          "solution": "প্রথম প্রশ্নের উত্তর: না! কারণ বাড়ার পরেও Gap এখনও ঋণাত্মক (-2.548836), অর্থাৎ ‘d’-এর স্কোর এখনও ‘H’-এর চেয়ে বেশি, আর বাকি ২৫৫টি বৈধ বাইটের স্কোর তো আমরা এখানে তুলনাই করিনি। দ্বিতীয় প্রশ্নের উত্তর: দুটি বেসলাইন Gap প্রায় সমান হলে তাদের বিয়োগফল (যা ভগ্নাংশের হরে বসে) শূন্যের খুব কাছাকাছি হবে—ফলে সামান্য পরিবর্তনেই Normalized Recovery অনুপাতটি মারাত্মক অস্থির ও বিভ্রান্তিকর সংখ্যায় লাফিয়ে উঠবে! এমন অবস্থায় সবসময় কাঁচা (Raw) Logit Gap, পরিবর্তনের দিক এবং Control পরীক্ষার ফল রিপোর্ট করাই বুদ্ধিমানের কাজ।",
+          "reference": "https://arxiv.org/abs/2404.15255"
+        },
+        {
+          "type": "text",
+          "title": "নিজে অনুশীলন ও Interview প্রস্তুতি",
+          "body": "হাত পাকা করতে কোডটিতে দুটি ছোট পরীক্ষা চালান: প্রথমে donor-এর নিজস্ব FFN ভেক্টরটি আবার donor-এর Residual-এই বসিয়ে দেখুন আসল সংরক্ষিত Gap ফিরে আসে কি না; এরপর উল্টো দিকে—অর্থাৎ clean প্রিফিক্সের Residual-এ donor-এর FFN ভেক্টর বসিয়ে নতুন কাঁচা Gap কত হয় তা বের করুন। আর ইন্টারভিউয়ের জন্য একটি চমৎকার প্রশ্নের উত্তর গুছিয়ে রাখুন: কোনো একটি Head-এর Attention Map দেখা, সেই Head-টি Ablate করা এবং অন্য ইনপুট থেকে সেটিতে Activation Patch করা—এই তিনটি আমাদের ঠিক কী কী ভিন্ন স্তরের প্রমাণ দেয়?"
+        }
+      ]
+    },
+    {
+      "id": "ch22_readiness",
+      "title": "LLM Foundations: কোডিং ও Interview প্রস্তুতির চূড়ান্ত যাচাই",
+      "subtitle": "Tokenizer চুক্তি থেকে শুরু করে সক্ষমতা মূল্যায়ন পর্যন্ত পুরো অধ্যায়ের সারসংক্ষেপ",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "গোড়া থেকে প্রতিটি মেকানিক্স নিজের ভাষায় ব্যাখ্যা করুন",
+          "body": "পরের অধ্যায়ে পা রাখার আগে না দেখে নিজের ভাষায় পুরো শৃঙ্খলটি একবার মিলিয়ে নিন: কীভাবে UTF-8 Byte, Unicode Code Point ও দৃশ্যমান অক্ষর আলাদা হয়; কীভাবে BPE Merge Rank কাজ করে; কীভাবে পূর্ণসংখ্যার ID থেকে Embedding Lookup ও এক ঘর সরানো Shifted Label তৈরি হয়; এবং কেন Causal Mask, Key-Padding Mask ও Loss Ignore Mask—তিনটিকেই আলাদাভাবে সামলাতে হয়। পাশাপাশি স্থিতিশীল Cross-Entropy এবং Perplexity-এর এককও খাতায় লিখে ঝালিয়ে নিন। মনে রাখবেন, আউটপুটে PAD/BOS ব্লক করার নিয়মটি আমাদের এই মডেলের সুনির্দিষ্ট চুক্তি—দুনিয়ার সব Pretrained মডেলের সার্বজনীন নিয়ম নয়।"
+        },
+        {
+          "type": "text",
+          "title": "সমাধান না দেখে ১০টি Coding Exercise সম্পন্ন করুন",
+          "body": "এই অধ্যায়ের শেষে থাকা ১০টি কোডিং অনুশীলনী কোনো সাহায্য ছাড়াই নিজের লোকাল পাইথন পরিবেশে লিখে টেস্ট করুন। বিশেষ করে অচেনা বা সীমার বাইরের ID, বহুবাইট Unicode-এর Round-trip, সমান সংখ্যার Merge Tie, সব টার্গেট Ignored হওয়া, মাস্ক করা ক্লাস, অতি বড় বা ছোট Logit, Nucleus-এর Crossing Token, র‍্যান্ডম ড্র u-এর সীমানা এবং EOS ও Context সীমার মতো প্রান্তিক কেসগুলো পরীক্ষা করতে ভুলবেন না। খেয়াল রাখবেন, আমাদের অ্যাপ আপনার সংখ্যার উত্তর মেলায় ও খসড়া কোড সেভ রাখে, কিন্তু ভেতরে সরাসরি ইচ্ছামাফিক পাইথন কোড রান করে না।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "\\mathrm{contract}=\\mathrm{tokens}+\\mathrm{shift}+\\mathrm{mask}+\\mathrm{objective}+\\mathrm{decoding}+\\mathrm{evidence}"
+        },
+        {
+          "type": "code",
+          "title": "ল্যাব অ্যাসেটের মূল চুক্তিগুলো এক নজরে যাচাই",
+          "body": "from pathlib import Path\nimport json\n\na = json.loads(Path(\"assets/datasets/alice/llm_lab.json\").read_text())\nassert a[\"vocab\"] == 259 and a[\"context\"] == 32 and a[\"parameters\"] == 5019\nassert [s[\"source_chapter\"] for s in a[\"samples\"]] == [1, 3, 9]\nprint(\"Defend tokenizer IDs, causal objective, legal outputs and generation limits.\")\n"
+        },
+        {
+          "type": "text",
+          "title": "Decoding-এর প্রতিটি প্রশ্নের যুক্তি তৈরি রাখুন",
+          "body": "ইন্টারভিউ বোর্ডে যেন আপনি অনায়াসে ব্যাখ্যা করতে পারেন কেন Temperature → Top-k → Top-p ক্রম বদলালে বণ্টন বদলে যায়, কেন Greedy আউটপুট Temperature বদলালেও স্থির থাকে অথচ Sampling আউটপুট বদলায়, কেন দুই প্ল্যাটফর্মে ফল মেলাতে অভিন্ন RNG নীতি লাগে এবং কেন ভাঙা UTF-8 বাইটে Replacement অক্ষর দেখানো হয়। আর সবসময় মনে রাখবেন—মডেলের তৈরি করা নতুন অংশটুকু কখনোই মূল বইয়ের হুবহু উদ্ধৃতি নয়।"
+        },
+        {
+          "type": "text",
+          "title": "ট্রেনিংয়ের ধাপগুলো কখনো গুলিয়ে ফেলবেন না",
+          "body": "Base Pretraining, Instruction SFT, Preference Adaptation, প্রম্পটে উদাহরণ দেওয়া (In-context Conditioning) এবং বাইরের তথ্য খুঁজে আনা (Retrieval)—প্রতিটিই সম্পূর্ণ আলাদা প্রকৌশলগত কৌশল। আমাদের এই অধ্যায়ের এক্সপেরিমেন্টটি শুধুমাত্র ক্ষুদ্র পরিসরের Next-Byte Modeling দেখিয়েছে; এখানে কোনো চ্যাট অ্যাসিস্ট্যান্ট, SFT, Preference টিউনিং বা RAG সিস্টেম তৈরি করা হয়েছে—এমন ভ্রান্ত দাবি কখনোই করবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "মূল রেফারেন্স ও অনুশীলনের উৎস",
+          "body": "গভীরতর অধ্যয়নের জন্য Project Gutenberg-এর Ebook 11, PyTorch-এর অফিশিয়াল Embedding, CrossEntropyLoss ও MultiheadAttention ডকুমেন্টেশন এবং Subword Tokenization-এর মূল গবেষণাপত্র (Sennrich et al., 2016) প্রজেক্টের README-তে যুক্ত করা আছে, এবং পাঠের সব প্রয়োজনীয় ডেটা অফলাইনেই বান্ডেল করা। এখানকার সব ইন্টারভিউ প্রশ্নই মৌলিক অনুশীলনের জন্য তৈরি—কোনো কোম্পানির ফাঁস হওয়া প্রশ্ন নয়।"
+        },
+        {
+          "type": "text",
+          "title": "পরবর্তী গন্তব্যে যাওয়ার প্রস্তুতি",
+          "body": "Byte ও Token-এর সীমানা, প্যাকড ডকুমেন্টের লস ও মাস্ক, এবং Sampling বণ্টনের হিসাবগুলো নিজের হাতে আরেকবার ঝালিয়ে নিন। এই ভিত্তিটি পাকা হয়ে গেলেই আমরা প্রস্তুত পরের ধাপের জন্য—Book 4 · Chapter 2 (Embeddings & Semantic Retrieval), যেখানে আমরা শিখব কীভাবে টেক্সটকে অর্থবহ ভেক্টরে রূপান্তর করে প্রাসঙ্গিক তথ্য খুঁজে বের করতে এবং র‍্যাঙ্কিং মেট্রিক দিয়ে তা মূল্যায়ন করতে হয়!"
+        }
+      ]
+    }
+  ],
+  "quizzes": [
+    {
+      "id": "ch22_q1",
+      "question": "আমাদের এই অধ্যায়ের মূল Neural Decoder-টির মোট Vocabulary আকার কত?",
+      "options": [
+        "275 (BPE Merge সহ)",
+        "259 (256টি Byte + PAD, BOS ও EOS)",
+        "শুধুমাত্র 256টি কাঁচা Byte",
+        "5019 (মোট Parameter সংখ্যা)"
+      ],
+      "answer": 1,
+      "explanation": "মৌলিক UTF-8 Byte আছে 256টি (0..255) এবং তার সাথে PAD (256), BOS (257) ও EOS (258) এই 3টি Special Token যোগ হয়ে মোট Vocabulary দাঁড়ায় 259; অ্যাপের BPE ডেমোটি মূল মডেল থেকে সম্পূর্ণ আলাদা।"
+    },
+    {
+      "id": "ch22_q2",
+      "question": "উৎস টেক্সটে থাকা বাঁকানো উদ্ধৃতি চিহ্ন বা Curly Apostrophe (’) UTF-8 এনকোডিংয়ে কয়টি Byte নেয়?",
+      "options": [
+        "সবসময় 1 Byte",
+        "2 Byte",
+        "3 Byte",
+        "259 Byte"
+      ],
+      "answer": 2,
+      "explanation": "দৃশ্যমানভাবে এটি মাত্র 1টি Unicode Code Point হলেও UTF-8 এনকোডিংয়ে এটি প্রকাশ করতে 3টি Byte প্রয়োজন হয়; আর চূড়ান্ত Token সংখ্যা নির্ভর করে ব্যবহৃত Tokenizer-এর ওপর।"
+    },
+    {
+      "id": "ch22_q3",
+      "question": "এই অধ্যায়ের ডেমো BPE Merge-গুলো ঠিক কোন ডেটা থেকে শেখানো (Fit) হয়েছে?",
+      "options": [
+        "সম্পূর্ণ Test বইয়ের সব অধ্যায় থেকে",
+        "9 ও 10 নম্বর Validation অধ্যায় থেকে",
+        "মডেলের নিজস্ব Generated আউটপুট থেকে",
+        "1 থেকে 8 নম্বর Fit অধ্যায়ের প্রতিটির প্রথম 256 Byte থেকে"
+      ],
+      "answer": 3,
+      "explanation": "Data Leakage এড়াতে শুধুমাত্র 1–8 নম্বর Fit অধ্যায়ের শুরুর 256-Byte অংশ থেকে নির্দিষ্ট 16টি Merge শেখানো হয়েছে; Validation বা Test টেক্সট এখানে ছোঁয়াও হয়নি।"
+    },
+    {
+      "id": "ch22_q4",
+      "question": "ডেমো BPE থেকে তৈরি হওয়া নতুন Token ID-গুলো কি আমাদের মূল Neural Decoder-এ সরাসরি ইনপুট দেওয়া যাবে?",
+      "options": [
+        "না, কারণ মডেলের Embedding টেবিলে ওই ID-গুলোর কোনো ঘর নেই",
+        "হ্যাঁ, যেকোনো সময় সরাসরি দেওয়া যাবে",
+        "হ্যাঁ, Embedding টেবিল আপনাআপনি বড় হয়ে মানিয়ে নেবে",
+        "হ্যাঁ, কারণ Token ID-এর সংখ্যার সীমা এখানে অপ্রাসঙ্গিক"
+      ],
+      "answer": 0,
+      "explanation": "BPE ডেমোর নতুন ID-গুলো হলো 259..274, অথচ আমাদের মডেলের Embedding সারির সীমা কেবল 0..258 পর্যন্ত। মডেল ও তার Tokenizer সবসময় একসাথে Versioned Contract মেনে চলে।"
+    },
+    {
+      "id": "ch22_q5",
+      "question": "আমাদের মডেলে [B, T] আকারের ইনপুট Token ID দিয়ে Embedding Lookup করলে আউটপুট Tensor-এর Shape কী হবে?",
+      "options": [
+        "[B, 259]",
+        "[B, T, 8]",
+        "[T, T]",
+        "[B]"
+      ],
+      "answer": 1,
+      "explanation": "259 × 8 আকারের Embedding টেবিল থেকে প্রতিটি পজিশনের জন্য 8-মাত্রার একটি করে সারি উঠে আসে বলে আকার হয় [B, T, 8]; আর আশেপাশের Context-এর প্রভাব যুক্ত হয় পরের Attention ও FFN ধাপে।"
+    },
+    {
+      "id": "ch22_q6",
+      "question": "মূল Sequence [BOS, A, B, C] থেকে Shifted ইনপুট হিসেবে [BOS, A, B] নেওয়া হলে তার বিপরীতে Target Label কী হবে?",
+      "options": [
+        "[BOS, A, B]",
+        "[PAD, PAD, PAD]",
+        "[A, B, C]",
+        "[C, B, A]"
+      ],
+      "answer": 2,
+      "explanation": "Next-Token Prediction-এ প্রতিটি পজিশনের টার্গেট থাকে ঠিক এক ঘর পরের টোকেনটি—কখনোই একই পজিশনের নিজস্ব ইনপুট টোকেন নয়।"
+    },
+    {
+      "id": "ch22_q7",
+      "question": "cross_entropy ফাংশনে ignore_index=PAD ব্যবহার করলে সেটি ঠিক কী বাদ দেয়?",
+      "options": [
+        "Softmax-এর হর থেকে PAD আউটপুট ক্লাসটিকে আপনাআপনি সরিয়ে দেয়",
+        "Attention-এর ভেতরকার সব PAD Key আপনাআপনি ব্লক করে দেয়",
+        "Embedding টেবিলের মাত্রা কমিয়ে দেয়",
+        "টার্গেটে যেসব পজিশনের Label হিসেবে PAD আছে, কেবল সেগুলোর Loss অবদান বাদ দেয়"
+      ],
+      "answer": 3,
+      "explanation": "ignore_index কেবল PAD টার্গেট পজিশনগুলোর Loss বাদ দেয়; বৈধ পজিশনে PAD ও BOS আউটপুট যেন নির্বাচিত না হয়, সেজন্য আমাদের মডেল তাদের Logit আলাদাভাবে -inf করে দমন করে।"
+    },
+    {
+      "id": "ch22_q8",
+      "question": "আমাদের বর্তমান ডিকোডারটির আউটপুটে Special Marker-গুলোর ক্ষেত্রে কোন নিয়মটি কার্যকর?",
+      "options": [
+        "EOS অনুমোদিত, কিন্তু PAD এবং BOS ব্লক করা",
+        "সব কটি Special Token-ই ব্লক করা",
+        "শুধুমাত্র BOS আউটপুটে অনুমোদিত",
+        "শুধুমাত্র PAD আউটপুটে অনুমোদিত"
+      ],
+      "answer": 0,
+      "explanation": "Output Head থেকে মোট 259টি কাঁচা Logit বের হলেও PAD (256) ও BOS (257) ব্লক করে দেওয়ায় বৈধ আউটপুট ID থাকে মোট 257টি (256টি Byte + EOS)।"
+    },
+    {
+      "id": "ch22_q9",
+      "question": "আমাদের ব্যবহৃত ByteDecoder মডেলটিতে শেখার যোগ্য (Registered) মোট Parameter কয়টি?",
+      "options": [
+        "185টি",
+        "5019টি",
+        "2072টি",
+        "259টি"
+      ],
+      "answer": 1,
+      "explanation": "Embedding (2072) + Transformer Block (600) + Final LayerNorm (16) + Output Head (2331) যোগ করলে মোট 5019টি Parameter হয়; স্থির Sinusoidal Position Buffer এর অন্তর্ভুক্ত নয়।"
+    },
+    {
+      "id": "ch22_q10",
+      "question": "এই অধ্যায়ের লোকাল প্রিট্রেনিং এক্সপেরিমেন্টের নির্দিষ্ট বাজেট কত?",
+      "options": [
+        "80টি Epoch",
+        "দশ লক্ষ Minibatch Step",
+        "batch_size = 64 নিয়ে 10টি Epoch ও মোট 80টি Minibatch Update",
+        "Validation Loss দেখে Early Stopping"
+      ],
+      "answer": 2,
+      "explanation": "মোট 512টি Fit Block-কে 64 আকারের ব্যাচে ভাগ করলে প্রতি Epoch-এ 8টি করে ব্যাচ হয় (seed = 220 দিয়ে শাফল করা), ফলে 10টি স্থির Epoch-এ মোট 80টি আপডেট ঘটে।"
+    },
+    {
+      "id": "ch22_q11",
+      "question": "মূল বইয়ের বারোটি অধ্যায়কে আমাদের পরীক্ষায় কীভাবে ভাগ করা হয়েছে?",
+      "options": [
+        "সব টোকেন একত্র করে এলোমেলোভাবে ভাগ করা হয়েছে",
+        "বারোটি অধ্যায়ই ট্রেনিংয়ে (Fit) ব্যবহৃত হয়েছে",
+        "BPE ভোকাবুলারি অনুযায়ী ভাগ করা হয়েছে",
+        "1–8 নম্বর অধ্যায় Fit, 9–10 Validation এবং 11–12 চূড়ান্ত Test"
+      ],
+      "answer": 3,
+      "explanation": "অধ্যায়গুলো আলাদা রাখা হলেও সবগুলোই একই লেখকের একই পাবলিক বইয়ের অংশ, তাই এটিকে স্বাধীন ডোমেইনের সার্বজনীন বেঞ্চমার্ক বলা যাবে না।"
+    },
+    {
+      "id": "ch22_q12",
+      "question": "প্রতিটি সোর্স অধ্যায় থেকে মডেলিংয়ের জন্য ঠিক কোন Block-গুলো নেওয়া হয়?",
+      "options": [
+        "ওভারল্যাপ ছাড়া প্রথম 63টি 32-Token Block এবং একেবারে শেষের Final Block",
+        "কেবল শুরুর পরপর থাকা প্রথম 64টি Block",
+        "মাঝখানের বাদ পড়া টেক্সট কেটে জুড়ে দেওয়া Block",
+        "ভালো স্কোর পাওয়া এলোমেলো কিছু অংশ"
+      ],
+      "answer": 0,
+      "explanation": "এতে প্রতিটি অধ্যায়ে অনন্য শুরুর অবস্থানসহ 64টি ব্লক পাওয়া যায়, শেষ ব্লকে আসল EOS অক্ষত থাকে এবং ছোট শেষ অংশের PAD লেবেল লস থেকে বাদ পড়ে।"
+    },
+    {
+      "id": "ch22_q13",
+      "question": "পুরো ডেটাসেটের সঠিক Perplexity কীভাবে হিসাব করতে হয়?",
+      "options": [
+        "প্রতিটি Batch-এর আলাদা Perplexity বের করে সেগুলোর গড় নিয়ে",
+        "সব বৈধ টার্গেটের মোট NLL যোগফলকে মোট বৈধ টার্গেট সংখ্যা দিয়ে ভাগ করে শেষে exp করে",
+        "বৈধ টার্গেটের সংখ্যা উপেক্ষা করে সরাসরি যোগ করে",
+        "ট্রেনিং Accuracy-এর সূচকীয় মান নিয়ে"
+      ],
+      "answer": 1,
+      "explanation": "ব্যাচের আকার অসমান হলে বা PAD থাকলে হরের সংখ্যা বদলে যায় এবং exp ফাংশন অরৈখিক হওয়ায় আগে সামগ্রিক গড় NLL বের করে তবেই সূচক নিতে হয়।"
+    },
+    {
+      "id": "ch22_q14",
+      "question": "একটি Byte-level মডেলের Perplexity আর একটি BPE মডেলের Perplexity কি সরাসরি সংখ্যা দেখে তুলনা করা যায়?",
+      "options": [
+        "হ্যাঁ, সবসময় ছোট সংখ্যাটিই সেরা",
+        "হ্যাঁ, যদি কেবল Greedy ডিকোডিং চালানো হয়",
+        "না, কারণ তাদের টোকেন একক ও ভগ্নাংশের হর সম্পূর্ণ আলাদা",
+        "হ্যাঁ, যদি Temperature ঠিক 1.0 রাখা হয়"
+      ],
+      "answer": 2,
+      "explanation": "ন্যায্য তুলনার জন্য Tokenizer, সমতুল্য একক (যেমন Bits-per-byte), Context দৈর্ঘ্য, মূল Corpus এবং Loss Mask একসাথে মেলাতে হয়।"
+    },
+    {
+      "id": "ch22_q15",
+      "question": "ধনাত্মক Temperature (T > 0) পরিবর্তন করলে Greedy Decoding-এর নির্বাচিত টোকেনে (argmax) কী প্রভাব পড়ে?",
+      "options": [
+        "প্রতিবার অবশ্যই নতুন টোকেন নির্বাচিত হয়",
+        "সব টোকেনের সম্ভাব্যতা সমান হয়ে যায়",
+        "যেকোনো ধনাত্মক Temperature গাণিতিকভাবে অবৈধ হয়ে যায়",
+        "শীর্ষ টোকেনটি অক্ষত রাখে এমন ফিল্টারে Greedy নির্বাচন অপরিবর্তিত থাকে"
+      ],
+      "answer": 3,
+      "explanation": "Temperature বদলালে সম্ভাব্যতা বণ্টন তীক্ষ্ণ বা চ্যাপ্টা হয় এবং Sampling আউটপুট বদলাতে পারে, কিন্তু ধনাত্মক স্কেলিং সর্বোচ্চ Logit-এর ক্রম (argmax) বদলায় না।"
+    },
+    {
+      "id": "ch22_q16",
+      "question": "বড় থেকে ছোট ক্রমে সাজানো সম্ভাব্যতা [0.5, 0.3, 0.2]-এর ওপর top_p = 0.6 চালালে কয়টি টোকেন টিকে থাকবে?",
+      "options": [
+        "2টি",
+        "1টি",
+        "সবসময় 3টি",
+        "0টি"
+      ],
+      "answer": 0,
+      "explanation": "প্রথম টোকেনে যোগফল 0.5 (যা 0.6-এর কম); দ্বিতীয়টি যোগ করলে 0.8 হয়ে সীমা অতিক্রম করে—এবং নিয়ম অনুযায়ী এই প্রথম Crossing Token-টিকেও দলে রাখতে হয় বলে মোট 2টি টোকেন টিকে থাকে।"
+    },
+    {
+      "id": "ch22_q17",
+      "question": "আমাদের Inverse-CDF স্যাম্পলিংয়ে সুষম র‍্যান্ডম সংখ্যা u-এর বৈধ সীমা কোনটি?",
+      "options": [
+        "[0, 1] (1 সহ)",
+        "[0, 1) (0 সহ, কিন্তু 1-এর চেয়ে ছোট)",
+        "যেকোনো সসীম বাস্তব সংখ্যা",
+        "শুধুমাত্র ধনাত্মক পূর্ণসংখ্যা"
+      ],
+      "answer": 1,
+      "explanation": "কঠোরভাবে u < cumulative_mass শর্তে তুলনা করা হয় এবং শূন্য সম্ভাব্যতার ঘর বাদ পড়ে; তাই u = 1.0 এখানে অবৈধ।"
+    },
+    {
+      "id": "ch22_q18",
+      "question": "আমাদের ব্যবহৃত অভিন্ন 32-bit LCG র‍্যান্ডম স্ট্রিমটি আসলে কিসের প্রমাণ দেয়?",
+      "options": [
+        "উচ্চমানের ক্রিপ্টোগ্রাফিক নিরাপত্তার",
+        "PyTorch-এর ডিফল্ট GPU র‍্যান্ডম জেনারেটরের সমতুল্যতার",
+        "নির্দিষ্ট Seed-এ Dart এবং Python-এর স্যাম্পলিং মেকানিক্স হুবহু মেলার",
+        "মডেলের গভীর ভাষাজ্ঞানের"
+      ],
+      "answer": 2,
+      "explanation": "এটি কেবল দুই প্ল্যাটফর্মে একই স্যাম্পলিং আচরণ নিরীক্ষা করার জন্য তৈরি একটি সুনির্দিষ্ট শিক্ষামূলক ধারা—অন্যান্য ব্যাকএন্ড RNG-এর সমতুল্যতার দাবি নয়।"
+    },
+    {
+      "id": "ch22_q19",
+      "question": "মডেল যদি জেনারেশনের সময় অসম্পূর্ণ বা অবৈধ UTF-8 বাইট তৈরি করে, তবে আমাদের সিস্টেমে তা কীভাবে দেখানো হয়?",
+      "options": [
+        "হাত দিয়ে এডিট করে অর্থপূর্ণ বাক্যে বদলে দেওয়া হয়",
+        "মূল বইয়ের আসল উদ্ধৃতি বলে চালিয়ে দেওয়া হয়",
+        "গোপনে সেই আউটপুটের ওপর আবার মডেল ট্রেন করা হয়",
+        "মূল বাইট অক্ষত রেখে ডিসপ্লেতে স্পষ্টভাবে Replacement Decoding দেখানো হয়"
+      ],
+      "answer": 3,
+      "explanation": "উৎপন্ন কাঁচা বাইটগুলো অবিকল সংরক্ষণ করা হয় এবং পর্দায় সততার সাথে Escaped/Replacement রূপ দেখানো হয়; মডেলের কোনো আউটপুটই মূল বইয়ের উদ্ধৃতি নয়।"
+    },
+    {
+      "id": "ch22_q20",
+      "question": "আমাদের এক-ব্লক বিশিষ্ট মডেলে কোনো প্রিফিক্সের একেবারে শেষ Query পজিশনে Causal এবং Full-Visibility মোডের আউটপুট একই হয় কেন?",
+      "options": [
+        "কারণ শেষ পজিশনের ডানে কিছু না থাকায় দুই মোডেই আগের সব বৈধ Key দেখা অনুমোদিত",
+        "কারণ এই মডেলে কোনো Attention লেয়ার নেই",
+        "কারণ সব টার্গেটই আসলে PAD",
+        "কারণ শুরুর দিকের প্রতিটি Query পজিশনের স্টেটও দুই মোডে হুবহু এক থাকে"
+      ],
+      "answer": 0,
+      "explanation": "একটিমাত্র ব্লক বলে শেষ পজিশন দুই মোডেই একই ইনপুট ভেক্টরগুলো দেখে; কিন্তু একাধিক ব্লক পরপর থাকলে মাঝখানের পরিবর্তিত স্টেটের কারণে শেষ পজিশনের ফলও বদলে যেত।"
+    },
+    {
+      "id": "ch22_q21",
+      "question": "আমাদের এই অধ্যায়ের ডার্ট বা পাইথন জেনারেশন কোডে কি KV Cache ইমপ্লিমেন্ট করা হয়েছে?",
+      "options": [
+        "হ্যাঁ, পূর্ণাঙ্গ প্রোডাকশন KV Cache রয়েছে",
+        "না, স্বচ্ছতার জন্য প্রতি ধাপে পুরো Prefix নতুন করে হিসাব (Recompute) করা হয়",
+        "কেবল BPE টোকেনের জন্য KV Cache রয়েছে",
+        "মূল সোর্স ফাইলটিই সরাসরি KV Cache হিসেবে কাজ করে"
+      ],
+      "answer": 1,
+      "explanation": "পাঠে KV Cache ও পজিশন অফসেটের তত্ত্ব ও স্কেলিং শেখানো হয়েছে, কিন্তু কোডটি সরল রাখতে প্রতি ধাপে পূর্ণ প্রিফিক্স চালায়—এটি কোনো সার্ভিং গতির বেঞ্চমার্ক নয়।"
+    },
+    {
+      "id": "ch22_q22",
+      "question": "Instruction SFT-তে ইউজারের প্রম্পট অংশের Target Label-গুলোকে Loss Mask দিয়ে বাদ দেওয়া হলে Attention-এ প্রম্পটের অবস্থা কী হয়?",
+      "options": [
+        "প্রম্পট অবশ্যই মডেলের কাছে পুরোপুরি অদৃশ্য হয়ে যায়",
+        "প্রম্পটের Embedding ভেক্টরগুলো মুছে ফেলা হয়",
+        "Attention নীতিমালা অনুযায়ী প্রম্পটটি Context হিসেবে দৃশ্যমান থাকতে পারে",
+        "প্রম্পটের সব টোকেন PAD হয়ে যায়"
+      ],
+      "answer": 2,
+      "explanation": "Loss Mask এবং Attention Mask সম্পূর্ণ আলাদা জিনিস—প্রম্পটের লস বাদ দিলেও উত্তর তৈরির শর্ত হিসেবে মডেলকে প্রশ্নটি দেখতে দিতে হয় (যদিও আমাদের এই মডেলে কোনো SFT করা হয়নি)।"
+    },
+    {
+      "id": "ch22_q23",
+      "question": "আমাদের পরীক্ষায় Unigram বেসলাইনের চেয়ে কম Test NLL পাওয়া নিচের কোন বিষয়টি প্রমাণ করে না?",
+      "options": [
+        "এই সীমিত একই-বইয়ের পরিবেশে পরের বাইট অনুমানের উন্নতি",
+        "একই বৈধ মাস্কের অধীনে বেসলাইনের চেয়ে ভালো স্কোর",
+        "নির্ধারিত Next-Token Objective-এর গাণিতিক পরিমাপ",
+        "সঠিক প্রশ্নোত্তর (Factual QA), বাংলা ভাষার দক্ষতা বা চ্যাটবটের নির্ভরযোগ্যতা"
+      ],
+      "answer": 3,
+      "explanation": "কম NLL সত্ত্বেও আমাদের খুদে মডেলের উৎপন্ন টেক্সট দুর্বল ও অসংলগ্ন—বাস্তব সক্ষমতা দাবির জন্য কাজের ধরন অনুযায়ী আলাদা মূল্যায়ন অপরিহার্য।"
+    },
+    {
+      "id": "ch22_q24",
+      "question": "ইতিমধ্যে প্রকাশিত এই চূড়ান্ত Test সেটটির ওপর একই কোড আবার চালানোকে কী হিসেবে গণ্য করতে হবে?",
+      "options": [
+        "পাইপলাইনের গাণিতিক অডিট মাত্র—নতুন কোনো স্বাধীন প্রমাণ নয়",
+        "সম্পূর্ণ নতুন ও অদেখা ডেটার ওপর পরীক্ষা",
+        "ইচ্ছামতো Hyperparameter টিউন করার ছাড়পত্র",
+        "নতুন একটি ডোমেইনের কর্পাস তৈরি"
+      ],
+      "answer": 0,
+      "explanation": "প্রকাশিত Test ফলাফল যেহেতু এখন আমাদের দেখা হয়ে গেছে, তাই ভবিষ্যতে মডেল পরিবর্তন বা বাছাই করতে গেলে নতুন মূল্যায়ন ডেটা ও নকশা লাগবে।"
+    },
+    {
+      "id": "ch22_q_packing_revision",
+      "question": "একাধিক স্বাধীন ডকুমেন্ট এক সারিতে প্যাক (Document Packing) করে ট্রেনিংয়ের সময় কেবল ডকুমেন্ট সীমানার Target Loss বাদ দিলেই কোন ঝুঁকিটি তখনও যাচাই করা বাকি থাকে?",
+      "options": [
+        "এক ডকুমেন্ট থেকে আগের ডকুমেন্ট দেখে ফেলার Cross-document Attention Visibility",
+        "আর কোনো সীমানা বা মাস্ক দেখার প্রয়োজন নেই",
+        "শুধুমাত্র ভোকাবুলারির মোট সংখ্যা",
+        "শুধুমাত্র অপটিমাইজারের Learning Rate"
+      ],
+      "answer": 0,
+      "explanation": "Target Loss-এর বৈধতা এবং Context দেখার অনুমতি দুটি আলাদা চুক্তি; প্যাকিং সঠিক রাখতে ডকুমেন্ট-ভিত্তিক Attention মাস্ক, পজিশন রিসেট ও Shifted টার্গেট একসাথে পরীক্ষা করতে হয়।"
+    },
+    {
+      "id": "ch22_q_topk_revision",
+      "question": "সম্ভাব্যতা [0.5, 0.3, 0.2]-এর ওপর প্রথমে top_k = 2 চালিয়ে Renormalize করার পর top_p = 0.6 প্রয়োগ করলে কয়টি টোকেন টিকে থাকবে?",
+      "options": [
+        "1টি",
+        "2টি",
+        "3টি",
+        "0টি"
+      ],
+      "answer": 0,
+      "explanation": "Top-k = 2-এর পর [0.5, 0.3]-কে আবার যোগফল 1 বানালে সম্ভাব্যতা দাঁড়ায় [0.625, 0.375]। ফলে প্রথম টোকেনটি একাই 0.625 হয়ে 0.6 সীমা পূর্ণ করে ফেলে এবং মাত্র 1টি টোকেন টিকে থাকে।"
+    }
+  ],
+  "exercises": [
+    {
+      "id": "ch22_ex_shift",
+      "title": "Next-Token Alignment যাচাই",
+      "prompt": "ধরুন একটি শিক্ষামূলক Token Sequence হলো [257, 65, 66, 67] (যেখানে 257 হলো BOS)। এখান থেকে এক ঘর সরানো Input ও Target তৈরি করে দ্বিতীয় টার্গেট পজিশনটির (অর্থাৎ শূন্য-ভিত্তিক ইনডেক্স 1-এর) Token ID answer ভেরিয়েবলে রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "import torch\n\ntokens = torch.tensor([[257, 65, 66, 67]], dtype=torch.long)\ninputs = tokens[:, :-1]\ntargets = tokens[:, 1:]\nassert inputs.shape == targets.shape == (1, 3)\nanswer = float(targets[0, 1])\n",
+      "expected": 66,
+      "explanation": "মূল Sequence থেকে এক ঘর বামে সরিয়ে আমরা পাই Targets [65, 66, 67]। সুতরাং শূন্য-ভিত্তিক ইনডেক্স 1 অর্থাৎ দ্বিতীয় টার্গেটটির ID হলো 66।"
+    },
+    {
+      "id": "ch22_ex_utf8",
+      "title": "UTF-8 Byte সংখ্যা গণনা",
+      "prompt": "মূল বইয়ে ব্যবহৃত বাঁকানো উদ্ধৃতি চিহ্ন বা Curly Apostrophe (’)-কে UTF-8 এনকোডিংয়ে রূপান্তর করলে কয়টি Byte পাওয়া যায়, তা হিসাব করে answer ভেরিয়েবলে রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "answer = float(len(\"’\".encode(\"utf-8\")))\n",
+      "expected": 3,
+      "explanation": "দৃশ্যমানভাবে ’ একটি একক Unicode Code Point হলেও UTF-8 এনকোডিংয়ে এর প্রকাশ করতে ঠিক 3টি Byte লাগে। তাই সঠিক উত্তর 3।"
+    },
+    {
+      "id": "ch22_ex_bpe",
+      "title": "সীমিত বাজেটের BPE Merge শেখানো",
+      "prompt": "বইয়ের 1 থেকে 8 নম্বর Fit অধ্যায়ের প্রতিটির প্রথম 256 Byte নিয়ে বান্ডেল করা হেল্পার ফাংশনের সাহায্যে 16টি BPE Merge ফিট করুন এবং শেখা মোট Merge-এর সংখ্যা answer ভেরিয়েবলে রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "from pathlib import Path\nimport importlib.util\n\np = Path(\"assets/datasets/alice/llm_workflow.py\")\nspec = importlib.util.spec_from_file_location(\"ch22_ex_bpe\", p)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\ndocs = m.load_source(p.with_name(\"pg11.txt\"))\nmerges = m.train_bpe([d.encode(\"utf-8\")[:256] for d in docs[:8]])\nanswer = float(len(merges))\n",
+      "expected": 16,
+      "explanation": "আমাদের সুনির্দিষ্ট ডেমো বাজেটে Fit সোর্স থেকে ঠিক 16টি Merge তৈরি হয়। মনে রাখবেন, মূল Neural Decoder-এর সংরক্ষিত Byte Vocabulary এবং এই BPE ডেমোর Vocabulary দুটি আলাদা চুক্তি।"
+    },
+    {
+      "id": "ch22_ex_embedding",
+      "title": "Embedding টেবিলের মোট উপাদান গণনা",
+      "prompt": "PyTorch-এ nn.Embedding(259, 8) তৈরি করুন এবং এই Embedding Weight ম্যাট্রিক্সে মোট কয়টি স্কেলার সংখ্যা (Scalar Elements) নিবন্ধিত আছে তা answer ভেরিয়েবলে রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "from torch import nn\n\nm = nn.Embedding(259, 8, padding_idx=256)\nanswer = float(m.weight.numel())\n",
+      "expected": 2072,
+      "explanation": "259 × 8 = 2072। ভেতরে কোনো সারি Padding হিসেবে ব্যবহৃত হলেও নিবন্ধিত Weight Tensor-টির আকার ও উপাদানের সংখ্যা 2072-ই থাকে।"
+    },
+    {
+      "id": "ch22_ex_parameters",
+      "title": "সম্পূর্ণ ByteDecoder-এর Parameter গণনা",
+      "prompt": "কোনো ট্রেনিং না চালিয়েই আমাদের ByteDecoder মডেলটির একটি ইনস্ট্যান্স তৈরি করুন এবং এতে মোট কয়টি নিবন্ধিত Parameter আছে তা যোগ করে answer ভেরিয়েবলে রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "from pathlib import Path\nimport importlib.util\n\np = Path(\"assets/datasets/alice/llm_workflow.py\")\nspec = importlib.util.spec_from_file_location(\"ch22_ex_model\", p)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nanswer = float(sum(p.numel() for p in m.ByteDecoder().parameters()))\n",
+      "expected": 5019,
+      "explanation": "মোট নিবন্ধিত Parameter সংখ্যা হলো 5019। স্থির Sinusoidal Positional Buffer শেখার যোগ্য প্যারামিটার নয় বলে এই গণনায় আসে না, আর এখানে Input Embedding ও Output Head আলাদা (Untied) রাখা হয়েছে।"
+    },
+    {
+      "id": "ch22_ex_ce",
+      "title": "স্থিতিশীল Categorical Cross-Entropy হিসাব",
+      "prompt": "দুই ক্লাসের একটি ছোট উদাহরণে কাঁচা Logit [0, 0] এবং সঠিক Target Index 1 দেওয়া আছে। এর প্রাকৃতিক লগারিদম ভিত্তিক Cross-Entropy Loss স্কেলার মানটি answer ভেরিয়েবলে রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "import torch\n\nanswer = torch.nn.functional.cross_entropy(\n    torch.tensor([[0.0, 0.0]], dtype=torch.float64), torch.tensor([1])\n).item()\n",
+      "expected": 0.6931471805599453,
+      "explanation": "দুটি Logit সমান হওয়ায় প্রতিটির Softmax সম্ভাব্যতা হয় 0.5, ফলে Negative Log-Likelihood দাঁড়ায় -ln(0.5) = ln(2) ≈ 0.6931471805599453।"
+    },
+    {
+      "id": "ch22_ex_mask",
+      "title": "শুধুমাত্র বৈধ Target দিয়ে গড় Loss হিসাব",
+      "prompt": "তিনটি পজিশনের Loss যথাক্রমে [1, 3, 99] এবং তাদের বৈধতার মাস্ক [1, 1, 0] (যেখানে 0 মানে Ignored পজিশন)। শুধুমাত্র বৈধ টার্গেটের গড় Loss বের করে answer ভেরিয়েবলে রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "import torch\n\nloss = torch.tensor([1.0, 3.0, 99.0], dtype=torch.float64)\nmask = torch.tensor([1.0, 1.0, 0.0], dtype=torch.float64)\nanswer = ((loss * mask).sum() / mask.sum()).item()\n",
+      "expected": 2,
+      "explanation": "বৈধ দুটি পজিশনের লসের যোগফল 1 + 3 = 4 এবং বৈধ টার্গেটের সংখ্যা 2, তাই সঠিক গড় হলো 4 / 2 = 2। ভুল করে মোট স্টোরেজ দৈর্ঘ্য 3 দিয়ে ভাগ করলে পুরো Objective বিকৃত হয়ে যেত।"
+    },
+    {
+      "id": "ch22_ex_ppl",
+      "title": "গড় NLL থেকে Perplexity নির্ণয়",
+      "prompt": "কোনো মডেলের বৈধ টার্গেটগুলোর গড় Negative Log-Likelihood যদি ln(4) nats হয়, তবে তার Perplexity কত হবে তা হিসাব করে answer ভেরিয়েবলে রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "import math\n\nanswer = math.exp(math.log(4))\n",
+      "expected": 4,
+      "explanation": "সূত্র অনুযায়ী Perplexity = exp(mean NLL) = exp(ln(4)) = 4। মনে রাখবেন, ব্যবহৃত Tokenizer এবং বৈধ টার্গেটের সংজ্ঞা বদলালে এই সংখ্যার এককও বদলে যায়।"
+    },
+    {
+      "id": "ch22_ex_nucleus",
+      "title": "Nucleus Sampling-এ Crossing Token ধরে রাখা",
+      "prompt": "বড় থেকে ছোট ক্রমে সাজানো সম্ভাব্যতা [0.5, 0.3, 0.2] এবং সীমা top_p = 0.6 দেওয়া আছে। প্রথম Crossing Token-টিসহ মোট কয়টি টোকেন দলে টিকে থাকবে তা answer ভেরিয়েবলে রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "import numpy as np\n\nanswer = float(np.searchsorted(np.cumsum([0.5, 0.3, 0.2]), 0.6, side=\"left\") + 1)\n",
+      "expected": 2,
+      "explanation": "প্রথম টোকেনের ভর 0.5 এখনও 0.6 ছোঁয়নি; দ্বিতীয়টি যোগ করলে ক্রমযোজিত ভর হয় 0.8 যা সীমা অতিক্রম করে। এই Crossing Token-টিকেও রাখতে হয় বলে টিকে থাকা টোকেনের সংখ্যা 2।"
+    },
+    {
+      "id": "ch22_ex_sample",
+      "title": "Inverse-CDF সীমানায় টোকেন নির্বাচন",
+      "prompt": "ছোট থেকে বড় ক্রমের Token ID [0, 1, 2]-এর সম্ভাব্যতা যথাক্রমে [0.2, 0.3, 0.5]। র‍্যান্ডম ড্র u = 0.2 এবং কঠোর তুলনা u < cumulative_mass নিয়মে কোন Token ID-টি নির্বাচিত হবে তা answer ভেরিয়েবলে রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "import numpy as np\n\nanswer = float(np.searchsorted(np.cumsum([0.2, 0.3, 0.5]), 0.2, side=\"right\"))\n",
+      "expected": 1,
+      "explanation": "প্রথম টোকেনের ক্রমযোজিত সীমানা 0.2-এ কঠোর শর্ত 0.2 < 0.2 মিথ্যা হয়; পরের ক্রমযোজিত সীমানা 0.5-এ গিয়ে 0.2 < 0.5 সত্য হয়, তাই নির্বাচিত হয় ID 1।"
+    }
+  ],
+  "interviews": [
+    {
+      "title": "Tokenizer ও Unicode সংক্রান্ত প্রোডাকশন বিভ্রাট ডিবাগিং",
+      "tag": "LLM FOUNDATIONS · CODING · 35 MIN",
+      "prompt": "ধরুন প্রোডাকশনে একই টেক্সট দেওয়ার পরেও প্রত্যাশিত Token ID মিলছে না বা অদ্ভুত অক্ষর দেখাচ্ছে। আপনি ধাপে ধাপে কী কী অডিট করবেন?",
+      "answer": "প্রথমেই মূল ইনপুটের কাঁচা UTF-8 Byte, লাইনের শেষের চিহ্ন (CRLF বনাম LF) এবং কোনো গোপন Unicode Normalization (NFC/NFKC) হচ্ছে কি না তা মিলিয়ে দেখব। এরপর লোড করা Tokenizer-এর ভার্সন, শেখা BPE Merge Rank-এর ক্রম, সংরক্ষিত Special ID (PAD/BOS/EOS) এবং Chat Template যাচাই করব। ডিবাগিংয়ের সময় পুরো স্ট্রিংয়ের Round-trip ব্যর্থতা আর মাঝখানের খণ্ডিত Byte টুকরোর ডিসপ্লেতে Replacement অক্ষর আসাকে আলাদা করে দেখব, এবং দৃশ্যমান অক্ষর (Grapheme), Code Point, UTF-16 ইউনিট ও চূড়ান্ত Token সংখ্যাকে কখনোই এক করে ফেলব না। পাশাপাশি নিশ্চিত করব যেন ভিন্ন ভোকাবুলারির (যেমন আমাদের BPE ডেমোর 259..274 ID) কোনো টোকেন ভুল করে 259-সারির Byte মডেলের Embedding টেবিলে পাঠানো না হয়।",
+      "prerequisiteLessons": [
+        "ch22_unicode",
+        "ch22_tokenizers"
+      ]
+    },
+    {
+      "title": "Causal Language Modeling Loss সঠিকভাবে ইমপ্লিমেন্ট করা",
+      "tag": "LLM FOUNDATIONS · CODING · 35 MIN",
+      "prompt": "একটি ছোট Autoregressive Decoder-এর ট্রেনিং Objective ও মাস্কিং কীভাবে নিখুঁতভাবে লিখবেন এবং কোন কোন প্রান্তিক কেস পরীক্ষা করবেন?",
+      "answer": "মূল Sequence s থেকে ইনপুট নেব s[:-1] এবং এক ঘর বামে সরিয়ে টার্গেট নেব s[1:]। ফরোয়ার্ড পাসে Causal Mask ও Key-Padding Mask বসিয়ে [B, T, V] আকারের Logit বের করব এবং [B, T] আকারের Long টার্গেটের সাথে মেলাব। Loss হিসাবের সময় PAD টার্গেটগুলো বাদ দিয়ে শুধুমাত্র বৈধ টার্গেটের সংখ্যা দিয়ে গড় করব। এখানে খুব জরুরি একটি বিষয় হলো—ignore_index=PAD কেবল টার্গেট পজিশনের লস বাদ দেয়, কিন্তু Softmax-এর হর থেকে PAD ক্লাসটিকে নিজে থেকে সরিয়ে দেয় না; তাই আমাদের মডেলের নিয়ম অনুযায়ী ইনপুট-অনলি PAD ও BOS ক্লাসের আউটপুট Logit-গুলোকে আলাদাভাবে -inf করে ব্লক করব। সবশেষে সব টার্গেট Ignored হওয়া, ভুলবশত BOS টার্গেট ঢুকে পড়া কিংবা Off-by-one শিফট বাগ ধরার জন্য আলাদা ইউনিট টেস্ট রাখব।",
+      "prerequisiteLessons": [
+        "ch22_objective",
+        "ch22_blocks"
+      ]
+    },
+    {
+      "title": "নতুন Corpus-এ Data Leakage ছাড়া BPE শেখানো ও যাচাই",
+      "tag": "LLM FOUNDATIONS · CODING · 35 MIN",
+      "prompt": "একটি নতুন টেক্সট কর্পাসের ওপর কীভাবে নিখুঁতভাবে BPE Tokenizer ফিট করবেন এবং তার মান যাচাই করবেন?",
+      "answer": "শুধুমাত্র ট্রেনিং ভূমিকার (Fit) ডকুমেন্ট বা অংশ থেকে পাশাপাশি থাকা জোড়ার সংখ্যা গুনব, সমান সংখ্যার ক্ষেত্রে সুনির্দিষ্ট (Deterministic) Tie-breaking রাখব এবং শেখা র‍্যাঙ্ক অনুযায়ী বাম থেকে ডানে ওভারল্যাপ ছাড়া Merge প্রয়োগ করব—যাতে প্রতিটি টুকরো থেকে মূল কাঁচা Byte অবিকল ফিরিয়ে আনা (Reversible Round-trip) যায়। কোনো অবস্থাতেই Validation বা Test টেক্সট এই Merge শেখার কাজে ব্যবহার করব না এবং আলাদা ডকুমেন্টের সীমানা পার হয়ে জোড়া গুনব না। আর মনে রাখব, কেবল টোকেনের সংখ্যা কমে যাওয়া (Compression) দেখেই একটি মডেলকে সেরা বলা যায় না, এবং Tokenizer ও Neural Model-এর ওজন সবসময় অবিচ্ছেদ্যভাবে একসাথে ভার্সন করতে হয়।",
+      "prerequisiteLessons": [
+        "ch22_bpe"
+      ]
+    },
+    {
+      "title": "Test Loss কমেছে, তবু মডেলের তৈরি টেক্সট অর্থহীন কেন?",
+      "tag": "LLM FOUNDATIONS · CODING · 35 MIN",
+      "prompt": "আপনার মডেলের Test NLL বেসলাইনের চেয়ে স্পষ্টভাবে কমেছে, কিন্তু জেনারেট করা টেক্সট এখনও অসংলগ্ন ও পুনরাবৃত্তিতে ভরা—এই আপাত বৈপরীত্য কীভাবে ব্যাখ্যা করবেন?",
+      "answer": "কারণ ট্রেনিংয়ের Teacher-forced Next-Token Objective আর বাস্তবে মুক্তভাবে (Free-running) দীর্ঘ অর্থপূর্ণ বাক্য তৈরি করার সক্ষমতা এক জিনিস নয়! ট্রেনিংয়ে মডেল প্রতি ধাপে আসল পূর্ববর্তী অক্ষরগুলো দেখতে পায়, কিন্তু জেনারেশনের সময় নিজের তৈরি করা আউটপুটই পরের ইনপুট হওয়ায় সামান্য ভুল দ্রুত জমতে থাকে—বিশেষ করে মাত্র 5019 প্যারামিটার ও 32 কনটেক্সটের ছোট মডেলে। তাই রিপোর্টে একই Tokenizer, Context ও Mask-এর অধীনে বেসলাইনের চেয়ে ভালো NLL দেখানোর পাশেই বাস্তব ব্যর্থতার নমুনা, ভাঙা UTF-8 বাইট, পুনরাবৃত্তি এবং একই পাবলিক বইয়ের সংকীর্ণ ডোমেইনের সীমাবদ্ধতা সততার সাথে তুলে ধরব। আলাদা কাজ-ভিত্তিক মূল্যায়ন ছাড়া শুধু লস কমার অজুহাতে কখনোই Factual QA, নির্দেশ পালন বা বাংলা ভাষার দক্ষতা দাবি করব না।"
+    },
+    {
+      "title": "Temperature বদলালেও Greedy আউটপুট কেন বদলায় না?",
+      "tag": "LLM FOUNDATIONS · CODING · 35 MIN",
+      "prompt": "একজন সহকর্মী দেখলেন Temperature 0.3 থেকে বাড়িয়ে 1.8 করার পরেও মডেলের আউটপুট অক্ষরে অক্ষরে এক থাকছে। এর গাণিতিক কারণ কী?",
+      "answer": "কারণ ডিকোডিং চলছে Greedy (argmax) মোডে! যেকোনো ধনাত্মক Temperature (T > 0) দিয়ে সব Logit-কে ভাগ করলে সম্ভাব্যতা বণ্টনের চ্যাপ্টা বা তীক্ষ্ণ ভাব (Entropy) এবং র‍্যান্ডম Sampling-এর ফল বদলায় ঠিকই, কিন্তু কোন টোকেনটির স্কোর সবার ওপরে আছে সেই ক্রমটি একচুলও বদলায় না—আর শীর্ষ টোকেনটিকে বাঁচিয়ে রাখে এমন Top-k বা Top-p ফিল্টারও সর্বোচ্চ স্থানটিকে নড়াতে পারে না। এছাড়া গাণিতিকভাবে T = 0 দিয়ে ভাগ করা অবৈধ, তাই বাস্তবে Greedy হলো সরাসরি সর্বোচ্চ স্কোর বেছে নেওয়ার একটি আলাদা সুনির্দিষ্ট নিয়ম। কোডে হুবহু সমান স্কোরের Tie ভাঙার নিয়ম এবং ফ্লোটিং-পয়েন্ট প্রিসিশনের পার্থক্যও স্পষ্ট রাখা জরুরি।"
+    },
+    {
+      "title": "হাতে-কলমে Top-p (Nucleus) Sampler ও ক্রমের সূক্ষ্মতা",
+      "tag": "LLM FOUNDATIONS · CODING · 35 MIN",
+      "prompt": "একটি নির্ভুল Nucleus Sampler লেখার ধাপ ও সীমানা পরীক্ষাগুলো বলুন।\n\nপাশাপাশি হিসাব করুন: সম্ভাব্যতা [0.5, 0.3, 0.2], top_k = 2 এবং top_p = 0.6 হলে Top-k-এর পর Renormalize করে Top-p নিলে কয়টি ID টিকে থাকবে?",
+      "answer": "আমাদের নির্ধারিত ক্রম হলো: প্রথমে ধনাত্মক Temperature স্কেলিং → Top-k ছাঁটাই ও Renormalize → বড় থেকে ছোট সম্ভাব্যতার ক্রমে যোগ করে প্রথম যে টোকেনটি p সীমা ছোঁয় বা অতিক্রম করে সেই Crossing Token পর্যন্ত রেখে Top-p ছাঁটাই → এবং পুনরায় Renormalize (সমান মানের ক্ষেত্রে ছোট ID অগ্রাধিকার পাবে)। এরপর ছোট থেকে বড় ID ক্রমে [0, 1) সীমার র‍্যান্ডম সংখ্যা u দিয়ে কঠোর u < cumulative_mass শর্তে Inverse-CDF বাছাই করব। টেস্টে ১টি টোকেন টিকে থাকা, p = 1, অতি ক্ষুদ্র p, শূন্য সম্ভাব্যতা, EOS থামা ও অবৈধ ইনপুট পরীক্ষা করব।\n\nসংখ্যার হিসাব: [0.5, 0.3, 0.2]-এ আগে top_k = 2 চালালে [0.5, 0.3] টিকে থাকে, যা Renormalize করলে হয় [0.625, 0.375]। এবার top_p = 0.6 চালালে প্রথম টোকেনটি একাই 0.625 ≥ 0.6 হওয়ায় মাত্র 1টি ID টিকে থাকবে! অথচ মূল বণ্টনে আগে Top-p নিলে 2টি ID লাগত। তাই ফিল্টারের ক্রম ও RNG ধারা সবসময় Golden Test দিয়ে বেঁধে রাখতে হয়।",
+      "prerequisiteLessons": [
+        "ch22_nucleus"
+      ]
+    },
+    {
+      "title": "PAD লেবেল বাদ দেওয়ার পরেও সম্ভাব্যতার হর ভুল হওয়ার রহস্য",
+      "tag": "LLM FOUNDATIONS · CODING · 35 MIN",
+      "prompt": "Loss ফাংশনে PAD লেবেল ঠিকমতো Ignore করা হয়েছে, তবু বৈধ পজিশনগুলোর সম্ভাব্যতা বণ্টনের যোগফল ও হর (Denominator) ভুল আসছে কেন?",
+      "answer": "কারণ Loss-এর ignore_index কেবল টার্গেটে PAD থাকা পজিশনগুলোর লস বাদ দেয়—কিন্তু বৈধ পজিশনগুলোতে মডেল যখন পরের টোকেন অনুমান করে, তখন Softmax-এর হর থেকে PAD বা BOS-এর মতো ইনপুট-অনলি ক্লাসগুলোকে আপনাআপনি সরিয়ে দেয় না! ফলে মডেলের অনুমোদিত আউটপুট চুক্তি অনুযায়ী Softmax বা Cross-Entropy করার আগেই অবৈধ আউটপুট ক্লাসগুলোর Logit আলাদাভাবে -inf করে দিতে হয়। ডিবাগিংয়ের সময় আমি Embedding-এর padding_idx, Attention-এর Key-Padding Mask, Query পজিশনের আউটপুট এবং Loss-এর বৈধ টার্গেট হর—চারটিকে আলাদাভাবে পরীক্ষা করব এবং নিশ্চিত করব যেন প্রতি সারিতে অন্তত একটি দৃশ্যমান Key থাকে ও EOS ভুল করে ব্লক না হয়ে যায়।"
+    },
+    {
+      "title": "পূর্ণ Prefix হিসাব বনাম KV-Cached ডিকোডিং মেলানো",
+      "tag": "LLM FOUNDATIONS · CODING · 35 MIN",
+      "prompt": "আমাদের বর্তমান কোডের Full-prefix ডিকোডিংয়ের সাথে ভবিষ্যতে একটি KV-Cached ডিকোডার ইমপ্লিমেন্ট করলে কীভাবে দুটির সমতা যাচাই করবেন?",
+      "answer": "আমাদের বর্তমান শিক্ষামূলক কোড প্রতি ধাপে পুরো প্রিফিক্স নতুন করে হিসাব করে—এতে কোনো KV Cache নেই। যদি আমরা ক্যাশ যুক্ত করি, তবে প্রতিটি লেয়ারের সংরক্ষিত K/V টেনসর, নতুন টোকেনের সঠিক পজিশন অফসেট (position[t]), আয়তাকার (1 × T) অ্যাটেনশনের সঠিক মাস্ক অ্যালাইনমেন্ট (যেখানে শেষের একক Query আগের সব বৈধ ক্যাশড Key দেখতে পায়), আলাদা রিকোয়েস্টের আইসোলেশন এবং ব্যাচ পুনর্বিন্যাস পুঙ্খানুপুঙ্খভাবে পরীক্ষা করব। সবচেয়ে বড় পরীক্ষা হবে: একই ইনপুট প্রিফিক্সে ক্যাশবিহীন পূর্ণ রান এবং ক্যাশযুক্ত ধাপে ধাপে রানের প্রতিটি ধাপের Logit যেন দশমিকে-দশমিকে হুবহু মিলে যায়, এবং লম্বা ইনপুটের ছাঁটাই নীতি যেন স্পষ্ট থাকে।"
+    },
+    {
+      "title": "Base Language Model থেকে কর্মক্ষম Assistant হয়ে ওঠার ধাপ",
+      "tag": "LLM FOUNDATIONS · CODING · 35 MIN",
+      "prompt": "Pretraining, Instruction SFT, Preference Adaptation, Prompting এবং Retrieval—এই পাঁচটি ধারণাকে স্পষ্টভাবে আলাদা করে ব্যাখ্যা করুন।",
+      "answer": "প্রথমত, Base Pretraining বিশাল টেক্সট কর্পাসে পরের টোকেন অনুমানের মাধ্যমে ভাষার সাধারণ পরিসংখ্যানগত গঠন শেখে। দ্বিতীয়ত, Instruction SFT সুনির্দিষ্ট প্রশ্ন ও আদর্শ উত্তরের উদাহরণ দিয়ে শুধুমাত্র উত্তরের টোকেনগুলোর লস মিনিমাইজ করে নির্দেশ মানার অভ্যাস গড়ে তোলে। তৃতীয়ত, Preference Adaptation (যেমন RLHF বা DPO) তুলনামূলক পছন্দের ডেটা দিয়ে উত্তরের ভঙ্গি ও নীতিকে মানুষের উপযোগী করে। চতুর্থত, Prompting বা In-context Learning কেবল ইনফারেন্সের সময় মডেলের সামনে থাকা Context বদলায়—এতে মডেলের কোনো Weight আপডেট হয় না। আর পঞ্চমত, Retrieval (RAG) বাইরের বিশ্বস্ত নথি খুঁজে এনে প্রম্পটে যুক্ত করার একটি আলাদা সিস্টেম। আমাদের এই অধ্যায়ের বই-ভিত্তিক খুদে রানটিতে কেবল প্রথম ধাপের মৌলিক মেকানিক্স দেখানো হয়েছে; বাকি কোনোটির মূল্যায়ন এখানে নেই।"
+    },
+    {
+      "title": "পোর্টফোলিও বা রিভিউতে একটি সৎ Model Card উপস্থাপন",
+      "tag": "LLM FOUNDATIONS · CODING · 35 MIN",
+      "prompt": "এই অধ্যায়ের ছোট Language Model এক্সপেরিমেন্টটিকে আপনার ইঞ্জিনিয়ারিং পোর্টফোলিওতে কীভাবে সততা ও নির্ভুলতার সাথে তুলে ধরবেন?",
+      "answer": "আমার Model Card-এ প্রতিটি তথ্য স্বচ্ছভাবে থাকবে: মূল Project Gutenberg ফাইলের পরিচয়, লাইসেন্স ও SHA-256 হ্যাশ, লাইন-এন্ডিং Normalization, অধ্যায়ভিত্তিক Fit (1–8), Validation (9–10) ও Test (11–12) বণ্টন, প্রতি অধ্যায়ে প্রথম 63টি ও শেষের 1টি ব্লকের বাজেট, Byte ও Special ID চুক্তি, মূল মডেল থেকে ডেমো BPE-এর পার্থক্য, 5019 প্যারামিটারের আর্কিটেকচার, 80 আপডেটের স্থির ট্রেনিং রেসিপি এবং অর্জিত NLL ও Perplexity স্কোর (2.832925 বনাম Unigram 3.208245)। একই সাথে আমি কোনো লুকোচুরি না করে প্রকাশ করব এর সীমাবদ্ধতাগুলো—একই পাবলিক বইয়ের সংকীর্ণ ডোমেইন, উৎপন্ন টেক্সটের অসংলগ্নতা ও ভাঙা UTF-8 বাইট—এবং স্পষ্ট উল্লেখ করব যে প্রকাশিত Test সেটটি এখন দেখা হয়ে গেছে বলে ভবিষ্যতের যেকোনো টিউনিংয়ের জন্য নতুন মূল্যায়ন ডেটা প্রয়োজন হবে।"
+    }
+  ],
+  "book": {
+    "order": 24,
+    "part": "Book 4 · LLMs, RAG & Generative AI",
+    "prerequisites": [
+      "chapter_20",
+      "chapter_21"
+    ],
+    "purpose": "Book 3-এ আমরা Attention ও Transformer-এর গঠন এবং Reinforcement Learning-এর ধারণা শিখেছি। Book 4 (LLMs, RAG & Generative AI)-এর এই প্রথম অধ্যায়ে আমরা জানব কীভাবে সাধারণ টেক্সট প্রথমে Byte ও Token-এ রূপান্তরিত হয়, কীভাবে একটি Autoregressive Decoder পরের Token অনুমান করার Loss থেকে শেখে, এবং Decoding-এর নিয়ম কীভাবে আউটপুট তৈরি করে।",
+    "outcomes": [
+      "একটি ছোট Causal Decoder-কে ট্রেন ও মূল্যায়ন করে Token-level NLL, Byte-normalized Loss এবং Model-এর বাস্তব সক্ষমতার দাবির পার্থক্য স্পষ্টভাবে তুলে ধরা।",
+      "হাতে-কলমে উদাহরণ, কোড এবং নিজস্ব যাচাইয়ের মাধ্যমে BPE Tokenization, Perplexity ও সমতুল্য Evaluation Unit-এর সম্পর্ক ব্যাখ্যা করা।"
+    ],
+    "recall": [
+      "Loss গণনা করার সময় PAD Token বাদ দেওয়া হলেও Attention-এর Key Mask-এ সেটিকে আলাদাভাবে ব্লক করা কেন জরুরি হতে পারে?",
+      "ধরুন একটি Batch-এ 1টি Token-এর NLL হলো 10 এবং আরেকটি Batch-এ 9টি Token-এর মোট NLL হলো 0; তাহলে পুরো Corpus-এর Perplexity কত হবে, এবং দুটি Batch-এর Perplexity সরাসরি গড় করলে কেন ভুল হবে?"
+    ],
+    "bridge": "এই অধ্যায়ের ধারণাগুলো পাকা করার পর আমাদের পরবর্তী গন্তব্য Book 4 · Chapter 2 (Embeddings & Semantic Retrieval)। সেখানে যাওয়ার আগে এখানকার Quiz, Coding Exercise এবং না দেখে ব্যাখ্যা করার প্রশ্নগুলো নিজে একবার যাচাই করে নিন।",
+    "bookId": "llm",
+    "bookChapter": 1
+  }
+}

@@ -1,0 +1,1252 @@
+{
+  "domain": "stats_metrics",
+  "label": "Stats & ML Metrics",
+  "problems": [
+    {
+      "id": "dm_covariance_corr",
+      "number": 16,
+      "title": "Sample Covariance & Pearson Correlation Matrix",
+      "category": "stats_metrics",
+      "categoryLabel": "Stats & ML Metrics",
+      "difficulty": "Easy",
+      "chapterRef": "chapter_08",
+      "tags": [
+        "Statistics",
+        "Linear Algebra",
+        "Collinearity",
+        "NumPy"
+      ],
+      "summary": "ডাটা Matrix X থেকে Bessel's correction সহ Sample Covariance Matrix এবং zero-variance নিরাপদ Pearson Correlation Matrix নির্ণয় করুন।",
+      "problemStatement": "যেকোনো Tabular ML বা PCA pipeline-এর শুরুতেই feature-গুলোর পারস্পরিক সম্পর্ক ও multicollinearity যাচাই করা অত্যন্ত জরুরি। নিচের FeatureCollinearityAnalyzer কোডবেসে আপনাকে covariance_and_correlation(X) ফাংশনটি ইমপ্লিমেন্ট করতে হবে।\n\nইনপুট হিসেবে একটি 2D NumPy array X দেওয়া থাকবে যার shape (n, d), যেখানে n হলো sample সংখ্যা (n >= 2) এবং d হলো feature সংখ্যা। আপনাকে দুটি (d, d) shape-এর float64 Matrix রিটার্ন করতে হবে:\n১. Sample Covariance Matrix (cov): প্রতিটি feature-কে তার sample mean দিয়ে center করে (n - 1) দিয়ে ভাগ করতে হবে (Bessel's correction, ddof=1)।\n২. Pearson Correlation Matrix (corr): cov[i, j] / (std[i] * std[j])। যদি কোনো feature constant হয় (অর্থাৎ variance = 0), তবে NaN তৈরি না করে সেই feature-এর পুরো row ও column-এর correlation 0.0 রাখতে হবে এবং floating-point rounding drift এড়াতে মানগুলো [-1.0, 1.0] সীমায় clip করতে হবে।",
+      "mathFormula": "\\Sigma = \\frac{1}{n - 1}(X - \\bar{X})^T(X - \\bar{X}), \\quad R_{ij} = \\frac{\\Sigma_{ij}}{\\sqrt{\\Sigma_{ii}\\,\\Sigma_{jj}}}",
+      "targetFunction": "covariance_and_correlation(X)",
+      "codebaseTemplate": "import numpy as np\n\n\ndef covariance_and_correlation(X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:\n    \"\"\"Compute sample covariance (ddof=1) and safe Pearson correlation matrix.\n\n    Args:\n        X: Feature matrix of shape (n, d) with n >= 2 samples.\n\n    Returns:\n        (cov, corr): Both float64 arrays of shape (d, d). For zero-variance\n        features, the corresponding row and column in `corr` must be 0.0.\n    \"\"\"\n    # TODO: Implement centered sample covariance (ddof=1) and zero-variance safe correlation\n    raise NotImplementedError(\"Implement covariance_and_correlation(X)\")\n\n\nclass FeatureCollinearityAnalyzer:\n    \"\"\"Detects redundant feature pairs before linear modeling or PCA.\"\"\"\n\n    def __init__(self, corr_threshold: float = 0.90) -> None:\n        self.corr_threshold = corr_threshold\n\n    def find_highly_correlated_pairs(\n        self, corr: np.ndarray, feature_names: list[str]\n    ) -> list[tuple[str, str, float]]:\n        d = corr.shape[0]\n        flagged: list[tuple[str, str, float]] = []\n        for i in range(d):\n            for j in range(i + 1, d):\n                if abs(corr[i, j]) >= self.corr_threshold:\n                    flagged.append((feature_names[i], feature_names[j], float(corr[i, j])))\n        return flagged\n\n    def analyze(self, X: np.ndarray, feature_names: list[str]) -> dict:\n        cov, corr = covariance_and_correlation(X)\n        return {\n            \"cov\": cov,\n            \"corr\": corr,\n            \"redundant_pairs\": self.find_highly_correlated_pairs(corr, feature_names),\n        }\n",
+      "examples": [
+        {
+          "input": "X = np.array([[1.0, 2.0], [2.0, 4.0], [3.0, 6.0]])",
+          "output": "cov = [[1.0, 2.0], [2.0, 4.0]], corr = [[1.0, 1.0], [1.0, 1.0]]",
+          "explanation": "দ্বিতীয় feature-টি প্রথমটির ঠিক দ্বিগুণ (x_2 = 2 * x_1)। তাই sample variance যথাক্রমে 1.0 ও 4.0, covariance 2.0, এবং Pearson correlation 1.0।"
+        },
+        {
+          "input": "X = np.array([[1.0, 5.0], [2.0, 5.0], [3.0, 5.0]])",
+          "output": "cov = [[1.0, 0.0], [0.0, 0.0]], corr = [[1.0, 0.0], [0.0, 0.0]]",
+          "explanation": "দ্বিতীয় feature constant হওয়ায় তার standard deviation 0.0। NaN না বানিয়ে safe division-এর মাধ্যমে সংশ্লিষ্ট correlation row ও column 0.0 সেট করা হয়েছে।"
+        }
+      ],
+      "thinkQuestions": [
+        {
+          "question": "Sample Covariance বের করার সময় n-এর বদলে (n - 1) দিয়ে ভাগ করা হয় কেন?",
+          "options": [
+            "কারণ n দিয়ে ভাগ করলে Matrix-টি আর symmetric থাকে না",
+            "কারণ sample mean নিজেই ডাটা থেকে আনুমানিক নির্ণীত, ফলে 1 degree of freedom কমে যায় এবং (n - 1) দিয়ে ভাগ করলে unbiased estimator পাওয়া যায়",
+            "কারণ NumPy-এর matrix multiplication শেষ row-টি বাদ দেয়",
+            "কারণ Pearson correlation কেবল n - 1 হলেই [-1, 1]-এর ভেতরে থাকে"
+          ],
+          "answer": 1,
+          "explanation": "Population mean অজানা থাকায় আমরা sample mean ব্যবহার করি, যা গড়ে প্রকৃত variance-কে (n - 1)/n গুণ ছোট করে দেয়। Bessel's correction হিসেবে (n - 1) দিয়ে ভাগ করলে expected sample covariance প্রকৃত population covariance-এর সমান হয়।"
+        },
+        {
+          "question": "যদি একটি feature-এর সব মান একই হয় (যেমন প্রতিটি sample-এ 5.0), তবে cov / np.outer(std, std) সরাসরি চালালে কী ঘটবে?",
+          "options": [
+            "0.0 / 0.0 হওয়ার কারণে correlation Matrix-এ NaN ঢুকে যাবে",
+            "স্বয়ংক্রিয়ভাবে correlation 1.0 হয়ে যাবে",
+            "NumPy স্বয়ংক্রিয়ভাবে ওই column-টি drop করে দেবে",
+            "Covariance Matrix-এর shape (d-1, d-1) হয়ে যাবে"
+          ],
+          "answer": 0,
+          "explanation": "Constant feature-এর variance ও std উভয়ই 0.0। ফলে outer product denom-এর সংশ্লিষ্ট row ও column শূন্য হয়ে যায় এবং 0.0 / 0.0 করলে IEEE-754 অনুযায়ী NaN তৈরি হয়। তাই np.divide(..., where=denom > 0) বা mask ব্যবহার করতে হয়।"
+        },
+        {
+          "question": "Single-pass সূত্র (X.T @ X - n * outer(mean, mean)) / (n - 1)-এর বদলে আগে X_c = X - X.mean(axis=0) করে দুই-পাসে Covariance বের করা কেন বেশি নিরাপদ?",
+          "options": [
+            "Single-pass সূত্রটি O(n^2 d) সময় নেয়, তাই ধীরগতির",
+            "Centering না করলে outer product-এর shape মিলে না",
+            "Single-pass সূত্র কেবল positive integer feature-এর জন্য কাজ করে",
+            "যখন feature-এর mean অনেক বড় (যেমন 1e9) কিন্তু variance ছোট, তখন দুটি প্রায় সমান বিশাল সংখ্যার বিয়োগে catastrophic cancellation ঘটে এবং নেগেটিভ variance আসতে পারে"
+          ],
+          "answer": 3,
+          "explanation": "Float64-এ ~15-17 significant digits থাকে। Mean 1e9 হলে X^T X প্রায় 1e18-এর ঘরে চলে যায়, ফলে বিয়োগের সময় ছোট variance-এর তথ্য হারিয়ে যায় (catastrophic cancellation)। আগে mean বাদ দিয়ে center করলে এই error সম্পূর্ণ এড়ানো যায়।"
+        }
+      ],
+      "hints": [
+        "Hint 1: প্রথমে X-কে float64 2D array-তে রূপান্তর করে n >= 2 যাচাই করুন। এরপর axis=0 বরাবর mean বের করে X_c = X - mean নির্ণয় করুন এবং (X_c.T @ X_c) / (n - 1) দিয়ে cov হিসাব করুন।",
+        "Hint 2: std = np.sqrt(np.maximum(np.diag(cov), 0.0)) বের করে denom = np.outer(std, std) তৈরি করুন। এরপর corr = np.zeros_like(cov) নিয়ে np.divide(cov, denom, out=corr, where=denom > 0) চালিয়ে [-1.0, 1.0]-এ clip করুন।"
+      ],
+      "solutionCode": "import numpy as np\n\n\ndef covariance_and_correlation(X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:\n    \"\"\"Compute sample covariance (ddof=1) and safe Pearson correlation matrix.\"\"\"\n    X_arr = np.asarray(X, dtype=np.float64)\n    if X_arr.ndim != 2:\n        raise ValueError(f\"Expected 2D array of shape (n, d), got shape {X_arr.shape}\")\n    n, d = X_arr.shape\n    if n < 2:\n        raise ValueError(\"At least 2 samples are required to compute sample covariance.\")\n\n    mean = np.mean(X_arr, axis=0, keepdims=True)\n    X_centered = X_arr - mean\n    cov = (X_centered.T @ X_centered) / (n - 1)\n\n    variances = np.maximum(np.diag(cov), 0.0)\n    std = np.sqrt(variances)\n    denom = np.outer(std, std)\n\n    corr = np.zeros((d, d), dtype=np.float64)\n    np.divide(cov, denom, out=corr, where=denom > 0.0)\n    corr = np.clip(corr, -1.0, 1.0)\n    return cov, corr\n\n\nclass FeatureCollinearityAnalyzer:\n    \"\"\"Detects redundant feature pairs before linear modeling or PCA.\"\"\"\n\n    def __init__(self, corr_threshold: float = 0.90) -> None:\n        self.corr_threshold = corr_threshold\n\n    def find_highly_correlated_pairs(\n        self, corr: np.ndarray, feature_names: list[str]\n    ) -> list[tuple[str, str, float]]:\n        d = corr.shape[0]\n        flagged: list[tuple[str, str, float]] = []\n        for i in range(d):\n            for j in range(i + 1, d):\n                if abs(corr[i, j]) >= self.corr_threshold:\n                    flagged.append((feature_names[i], feature_names[j], float(corr[i, j])))\n        return flagged\n\n    def analyze(self, X: np.ndarray, feature_names: list[str]) -> dict:\n        cov, corr = covariance_and_correlation(X)\n        return {\n            \"cov\": cov,\n            \"corr\": corr,\n            \"redundant_pairs\": self.find_highly_correlated_pairs(corr, feature_names),\n        }\n\n\n# --- Verification Tests ---\n# 1. Worked Example 1: Perfectly linearly correlated features\nX1 = np.array([[1.0, 2.0], [2.0, 4.0], [3.0, 6.0]])\ncov1, corr1 = covariance_and_correlation(X1)\nassert np.allclose(cov1, np.array([[1.0, 2.0], [2.0, 4.0]]))\nassert np.allclose(corr1, np.ones((2, 2)))\n\n# 2. Worked Example 2: Constant (zero-variance) column must not produce NaN\nX2 = np.array([[1.0, 5.0], [2.0, 5.0], [3.0, 5.0]])\ncov2, corr2 = covariance_and_correlation(X2)\nassert np.allclose(cov2, np.array([[1.0, 0.0], [0.0, 0.0]]))\nassert np.allclose(corr2, np.array([[1.0, 0.0], [0.0, 0.0]]))\nassert not np.isnan(corr2).any()\n\n# 3. Agreement with NumPy reference + large-offset numerical stability\nrng = np.random.default_rng(7)\nX3 = rng.normal(loc=0.0, scale=2.0, size=(50, 4)) + np.array([1e9, -1e9, 0.0, 5e8])\ncov3, corr3 = covariance_and_correlation(X3)\nassert np.allclose(cov3, np.cov(X3, rowvar=False, ddof=1), atol=1e-7)\nassert np.allclose(corr3, np.corrcoef(X3, rowvar=False), atol=1e-7)\nassert np.allclose(cov3, cov3.T)\n\n# 4. Pipeline integration & n < 2 guard\nanalyzer = FeatureCollinearityAnalyzer(corr_threshold=0.95)\nreport = analyzer.analyze(X1, [\"height\", \"double_height\"])\nassert len(report[\"redundant_pairs\"]) == 1\ntry:\n    covariance_and_correlation(np.array([[1.0, 2.0]]))\n    raise AssertionError(\"Expected ValueError for n < 2\")\nexcept ValueError:\n    pass\n",
+      "walkthrough": "১. ইনপুট ভ্যালিডেশন ও float64 রূপান্তর: প্রথমে X-কে np.float64-এ convert করে 2D shape ও n >= 2 নিশ্চিত করা হয়েছে, যাতে integer overflow বা (n - 1) = 0 দিয়ে division error না ঘটে।\n\n২. Centering ও Matrix Multiplication: axis=0 বরাবর mean বাদ দিয়ে X_centered তৈরি করা হয়েছে। এরপর (X_centered.T @ X_centered) / (n - 1) দিয়ে পুরো (d, d) Sample Covariance Matrix এক ধাপে BLAS GEMM-এর মাধ্যমে vectorized ভাবে বের করা হয়েছে। আগে centering করায় বড় offset (যেমন 1e9) থাকলেও catastrophic cancellation ঘটে না।\n\n৩. Safe Standard Deviation ও Outer Product: Covariance Matrix-এর diagonal হলো feature variance। Floating-point rounding-এ -1e-18 এড়াতে np.maximum(..., 0.0) করে sqrt নেওয়া হয়েছে। এরপর np.outer(std, std) দিয়ে প্রতিটি জোড়ার হর (std_i * std_j) তৈরি করা হয়েছে।\n\n৪. Zero-Variance Guard ও Clipping: np.zeros দিয়ে corr শুরু করে np.divide(..., where=denom > 0.0) চালানো হয়েছে, ফলে zero-variance feature-এ কোনো Warning বা NaN ছাড়াই মান 0.0 থাকে। শেষে [-1.0, 1.0]-এ clip করা হয়েছে যাতে 1.0000000000000002-এর মতো drift না থাকে।",
+      "complexity": {
+        "time": "O(n * d^2) — centered matrix multiplication X_c.T @ X_c dominate করে",
+        "space": "O(n * d + d^2) — centered copy X_c এবং দুটি (d, d) output matrix-এর জন্য"
+      },
+      "edgeCases": [
+        "Constant (zero-variance) feature থাকলে direct division NaN তৈরি করে; where=denom > 0 ব্যবহার করে শূন্যে সেট করতে হয়।",
+        "n = 1 হলে (n - 1) = 0 হয়ে sample covariance অসংজ্ঞায়িত হয়—তাই স্পষ্ট ValueError ছুড়তে হবে।",
+        "Feature-গুলোর mean অনেক বড় (যেমন timestamp বা 1e9 scale) হলে single-pass সূত্র ব্যর্থ হয়; two-pass centering অপরিহার্য।",
+        "Floating-point precision error-এ diagonal বা perfectly correlated pair-এর মান 1.0000000000000002 হতে পারে; তাই [-1.0, 1.0]-এ clip করা ভালো অভ্যাস।"
+      ]
+    },
+    {
+      "id": "dm_standard_minmax_scaler",
+      "number": 17,
+      "title": "Fit/Transform Scaler Without Data Leakage",
+      "category": "stats_metrics",
+      "categoryLabel": "Stats & ML Metrics",
+      "difficulty": "Easy",
+      "chapterRef": "chapter_04",
+      "tags": [
+        "Preprocessing",
+        "Data Leakage",
+        "Feature Scaling",
+        "Scikit-Learn"
+      ],
+      "summary": "Data Leakage এড়াতে Train split থেকে mean/std শিখে Val/Test-এ প্রয়োগ করার জন্য zero-variance নিরাপদ StandardScaler.fit ও transform তৈরি করুন।",
+      "problemStatement": "প্রোডাকশন ML সিস্টেম ও ইন্টারভিউতে সবচেয়ে পরিচিত কিন্তু ভয়ংকর ভুলগুলোর একটি হলো Preprocessing Data Leakage—অর্থাৎ train ও validation split আলাদা করার আগেই পুরো ডাটাসেটে scaling চালানো। নিচের কোডবেসে রেফারেন্স হিসেবে একটি MinMaxScaler এবং preprocess_train_val pipeline দেওয়া আছে। আপনাকে StandardScaler ক্লাসের fit(self, X) এবং transform(self, X) মেথড দুটি ইমপ্লিমেন্ট করতে হবে।\n\nনিয়মাবলি:\n১. fit(self, X): কেবল প্রদত্ত training matrix X (shape (n, d), n >= 1) থেকে প্রতিটি feature-এর mean (self.mean_) এবং population standard deviation (self.std_, ddof=0) নির্ণয় করবে। কোনো feature-এর std == 0.0 হলে division-by-zero এড়াতে self.scale_-এ সেই column-এর জন্য 1.0 বসাতে হবে, অন্যথায় self.std_।\n২. transform(self, X): fit না করে কল করলে RuntimeError ছুড়বে, feature সংখ্যা (d) না মিললে ValueError ছুড়বে, এবং (X - self.mean_) / self.scale_ রিটার্ন করবে। মনে রাখবেন: transform কখনোই নতুন X থেকে mean বা std পুনরায় হিসাব করবে না!",
+      "mathFormula": "z_{ij} = \\frac{x_{ij} - \\mu_j^{\\mathrm{train}}}{\\tilde{\\sigma}_j^{\\mathrm{train}}}, \\quad \\tilde{\\sigma}_j = \\begin{cases} \\sigma_j & \\text{if } \\sigma_j > 0 \\\\ 1 & \\text{if } \\sigma_j = 0 \\end{cases}",
+      "targetFunction": "StandardScaler.fit(X) & StandardScaler.transform(X)",
+      "codebaseTemplate": "import numpy as np\n\n\nclass MinMaxScaler:\n    \"\"\"Reference scaler scaling each feature to [0, 1] using train statistics.\"\"\"\n\n    def __init__(self) -> None:\n        self.min_: np.ndarray | None = None\n        self.range_: np.ndarray | None = None\n\n    def fit(self, X: np.ndarray) -> \"MinMaxScaler\":\n        X_arr = np.asarray(X, dtype=np.float64)\n        self.min_ = np.min(X_arr, axis=0)\n        span = np.max(X_arr, axis=0) - self.min_\n        self.range_ = np.where(span == 0.0, 1.0, span)\n        return self\n\n    def transform(self, X: np.ndarray) -> np.ndarray:\n        if self.min_ is None or self.range_ is None:\n            raise RuntimeError(\"MinMaxScaler must be fitted before calling transform.\")\n        X_arr = np.asarray(X, dtype=np.float64)\n        return (X_arr - self.min_) / self.range_\n\n\nclass StandardScaler:\n    \"\"\"Zero-mean, unit-variance feature scaler with leak-free fit/transform API.\"\"\"\n\n    def __init__(self) -> None:\n        self.mean_: np.ndarray | None = None\n        self.std_: np.ndarray | None = None\n        self.scale_: np.ndarray | None = None\n\n    def fit(self, X: np.ndarray) -> \"StandardScaler\":\n        \"\"\"Learn per-feature mean and safe scale from training data only.\"\"\"\n        # TODO: Compute self.mean_, self.std_ (ddof=0), and zero-safe self.scale_, then return self\n        raise NotImplementedError(\"Implement StandardScaler.fit(X)\")\n\n    def transform(self, X: np.ndarray) -> np.ndarray:\n        \"\"\"Standardize X using previously fitted training statistics.\"\"\"\n        # TODO: Validate fitted state & feature count, then return (X - self.mean_) / self.scale_\n        raise NotImplementedError(\"Implement StandardScaler.transform(X)\")\n\n    def fit_transform(self, X: np.ndarray) -> np.ndarray:\n        return self.fit(X).transform(X)\n\n    def inverse_transform(self, X_scaled: np.ndarray) -> np.ndarray:\n        if self.mean_ is None or self.scale_ is None:\n            raise RuntimeError(\"StandardScaler must be fitted before inverse_transform.\")\n        return np.asarray(X_scaled, dtype=np.float64) * self.scale_ + self.mean_\n\n\ndef preprocess_train_val(\n    X_train: np.ndarray, X_val: np.ndarray, scaler: StandardScaler\n) -> tuple[np.ndarray, np.ndarray]:\n    \"\"\"Fit ONLY on X_train, then transform both splits consistently.\"\"\"\n    X_train_scaled = scaler.fit_transform(X_train)\n    X_val_scaled = scaler.transform(X_val)\n    return X_train_scaled, X_val_scaled\n",
+      "examples": [
+        {
+          "input": "X_train = [[10, 1], [20, 3], [30, 5]], X_val = [[40, 3]]",
+          "output": "X_val_scaled = [[2.44948974, 0.0]]",
+          "explanation": "X_train-এ mean = [20.0, 3.0] এবং std = [8.1649658, 1.6329932]। X_val-এ একই train statistics প্রয়োগ করায় (40 - 20) / 8.16497 = 2.4495 এবং (3 - 3) / 1.63299 = 0.0 এসেছে।"
+        },
+        {
+          "input": "X_train = [[2, 7], [4, 7], [6, 7]], X_val = [[4, 9]]",
+          "output": "X_train_scaled[:, 1] = [0.0, 0.0, 0.0], X_val_scaled = [[0.0, 2.0]]",
+          "explanation": "দ্বিতীয় feature train-এ constant (7) হওয়ায় std_ = 0.0 এবং scale_ = 1.0 হয়েছে। ফলে train-এ মান 0.0 থাকে এবং validation-এ drift (9 - 7 = 2.0) NaN বা inf না হয়ে সঠিকভাবে ধরা পড়ে।"
+        }
+      ],
+      "thinkQuestions": [
+        {
+          "question": "যদি validation split-এর ওপর আলাদাভাবে scaler.fit_transform(X_val) চালানো হয়, তাহলে মূল সমস্যা কী?",
+          "options": [
+            "কোড রানটাইম এরর দিয়ে ক্র্যাশ করবে",
+            "Validation-এর mean কখনোই 0 হবে না",
+            "Validation-এর নিজস্ব distribution-এ feature-গুলো আলাদা স্কেলে চলে যাবে (Distribution Mismatch) এবং single-sample inference-এ এটি সম্পূর্ণ অসম্ভব",
+            "Gradient Descent দ্রুত converge করবে"
+          ],
+          "answer": 2,
+          "explanation": "Model যে coordinate system-এ (train mean ও std-এর সাপেক্ষে) ওয়েট শিখেছে, validation ও production-এও ঠিক সেই একই transformation ব্যবহার করতে হবে। তাছাড়া প্রোডাকশনে একবারে ১টি sample এলে তার std = 0 হবে!"
+        },
+        {
+          "question": "Zero-variance feature (std == 0)-এর ক্ষেত্রে scale_-এ 1e-8 যোগ না করে scikit-learn-এর মতো 1.0 বসানো কেন বেশি নিরাপদ?",
+          "options": [
+            "1e-8 বসালে NumPy integer array রিটার্ন করে",
+            "1.0 বসালে constant column-এর training output ঠিক 0.0 হয় এবং test-time-এ সামান্য drift এলে 1e8 গুণ বিস্ফোরিত হয় না",
+            "1.0 বসালে inverse_transform কাজ করে না",
+            "1e-8 কেবল GPU-তে কাজ করে"
+          ],
+          "answer": 1,
+          "explanation": "যদি scale = 1e-8 ধরা হয়, তবে training-এ সব মান 7 হলেও test-এ একটি sample 7.01 এলে (7.01 - 7) / 1e-8 = 1,000,000 হয়ে মডেলের prediction ধ্বংস করে দেবে! কিন্তু scale_ = 1.0 রাখলে training মান 0.0 থাকে এবং test drift নিরাপদ স্কেলে থাকে।"
+        },
+        {
+          "question": "X_train (shape: 1000x5) দিয়ে fit করার পর X_test (shape: 20x4) পাস করলে transform-এর কী করা উচিত?",
+          "options": [
+            "স্পষ্ট ValueError ছুড়ে schema mismatch ধরিয়ে দেওয়া উচিত",
+            "পঞ্চম column-এ শূন্য বসিয়ে দেওয়া উচিত",
+            "প্রথম ৪টি feature-এর mean নিয়ে নীরবে transform করা উচিত",
+            "নতুন করে X_test-এর ওপর fit চালানো উচিত"
+          ],
+          "answer": 0,
+          "explanation": "Feature dimension mismatch একটি গুরুতর pipeline bug। Silent broadcasting বা truncation না করে দ্রুত স্পষ্ট ValueError (Fail-Fast) ছুড়ে দেওয়া প্রোডাকশন ML ইঞ্জিনিয়ারিংয়ের মূল নীতি।"
+        }
+      ],
+      "hints": [
+        "Hint 1: fit(self, X)-এ X-কে 2D float64 array নিশ্চিত করুন এবং n >= 1 যাচাই করুন। এরপর axis=0 বরাবর mean_ ও std_ (ddof=0) বের করে np.where(self.std_ == 0.0, 1.0, self.std_) দিয়ে self.scale_ সেট করুন এবং self রিটার্ন করুন।",
+        "Hint 2: transform(self, X)-এ প্রথমে self.mean_ is None কিনা চেক করে RuntimeError দিন। এরপর X_arr.shape[1] != self.mean_.shape[0] হলে ValueError দিন। শেষে (X_arr - self.mean_) / self.scale_ রিটার্ন করুন।"
+      ],
+      "solutionCode": "import numpy as np\n\n\nclass MinMaxScaler:\n    \"\"\"Reference scaler scaling each feature to [0, 1] using train statistics.\"\"\"\n\n    def __init__(self) -> None:\n        self.min_: np.ndarray | None = None\n        self.range_: np.ndarray | None = None\n\n    def fit(self, X: np.ndarray) -> \"MinMaxScaler\":\n        X_arr = np.asarray(X, dtype=np.float64)\n        self.min_ = np.min(X_arr, axis=0)\n        span = np.max(X_arr, axis=0) - self.min_\n        self.range_ = np.where(span == 0.0, 1.0, span)\n        return self\n\n    def transform(self, X: np.ndarray) -> np.ndarray:\n        if self.min_ is None or self.range_ is None:\n            raise RuntimeError(\"MinMaxScaler must be fitted before calling transform.\")\n        X_arr = np.asarray(X, dtype=np.float64)\n        return (X_arr - self.min_) / self.range_\n\n\nclass StandardScaler:\n    \"\"\"Zero-mean, unit-variance feature scaler with leak-free fit/transform API.\"\"\"\n\n    def __init__(self) -> None:\n        self.mean_: np.ndarray | None = None\n        self.std_: np.ndarray | None = None\n        self.scale_: np.ndarray | None = None\n\n    def fit(self, X: np.ndarray) -> \"StandardScaler\":\n        \"\"\"Learn per-feature mean and safe scale from training data only.\"\"\"\n        X_arr = np.asarray(X, dtype=np.float64)\n        if X_arr.ndim != 2 or X_arr.shape[0] == 0:\n            raise ValueError(f\"Expected non-empty 2D array, got shape {X_arr.shape}\")\n        self.mean_ = np.mean(X_arr, axis=0)\n        self.std_ = np.std(X_arr, axis=0, ddof=0)\n        self.scale_ = np.where(self.std_ == 0.0, 1.0, self.std_)\n        return self\n\n    def transform(self, X: np.ndarray) -> np.ndarray:\n        \"\"\"Standardize X using previously fitted training statistics.\"\"\"\n        if self.mean_ is None or self.scale_ is None:\n            raise RuntimeError(\"StandardScaler must be fitted before calling transform.\")\n        X_arr = np.asarray(X, dtype=np.float64)\n        if X_arr.ndim != 2:\n            raise ValueError(f\"Expected 2D array, got shape {X_arr.shape}\")\n        if X_arr.shape[1] != self.mean_.shape[0]:\n            raise ValueError(\n                f\"Expected {self.mean_.shape[0]} features, got {X_arr.shape[1]}.\"\n            )\n        return (X_arr - self.mean_) / self.scale_\n\n    def fit_transform(self, X: np.ndarray) -> np.ndarray:\n        return self.fit(X).transform(X)\n\n    def inverse_transform(self, X_scaled: np.ndarray) -> np.ndarray:\n        if self.mean_ is None or self.scale_ is None:\n            raise RuntimeError(\"StandardScaler must be fitted before inverse_transform.\")\n        return np.asarray(X_scaled, dtype=np.float64) * self.scale_ + self.mean_\n\n\ndef preprocess_train_val(\n    X_train: np.ndarray, X_val: np.ndarray, scaler: StandardScaler\n) -> tuple[np.ndarray, np.ndarray]:\n    \"\"\"Fit ONLY on X_train, then transform both splits consistently.\"\"\"\n    X_train_scaled = scaler.fit_transform(X_train)\n    X_val_scaled = scaler.transform(X_val)\n    return X_train_scaled, X_val_scaled\n\n\n# --- Verification Tests ---\n# 1. Worked Example 1: Leak-free train/val standardization\nX_tr = np.array([[10.0, 1.0], [20.0, 3.0], [30.0, 5.0]])\nX_va = np.array([[40.0, 3.0]])\nscaler = StandardScaler()\nX_tr_s, X_va_s = preprocess_train_val(X_tr, X_va, scaler)\nassert np.allclose(X_tr_s.mean(axis=0), [0.0, 0.0], atol=1e-12)\nassert np.allclose(X_tr_s.std(axis=0), [1.0, 1.0], atol=1e-12)\nassert np.allclose(X_va_s, np.array([[2.449489742783178, 0.0]]))\nassert np.allclose(scaler.inverse_transform(X_va_s), X_va)\n\n# 2. Worked Example 2: Constant (zero-variance) feature guard\nX_const = np.array([[2.0, 7.0], [4.0, 7.0], [6.0, 7.0]])\nX_const_val = np.array([[4.0, 9.0]])\ns2 = StandardScaler()\ntr2, va2 = preprocess_train_val(X_const, X_const_val, s2)\nassert np.allclose(tr2[:, 1], [0.0, 0.0, 0.0])\nassert np.allclose(va2, np.array([[0.0, 2.0]]))\nassert not np.isnan(tr2).any() and not np.isnan(va2).any()\n\n# 3. Unfitted transform must raise RuntimeError\ntry:\n    StandardScaler().transform(X_va)\n    raise AssertionError(\"Expected RuntimeError on unfitted transform\")\nexcept RuntimeError:\n    pass\n\n# 4. Feature count mismatch must raise ValueError\ntry:\n    scaler.transform(np.array([[1.0, 2.0, 3.0]]))\n    raise AssertionError(\"Expected ValueError on feature mismatch\")\nexcept ValueError:\n    pass\n",
+      "walkthrough": "১. Stateless-এর বদলে Stateful Estimator প্যাটার্ন: scikit-learn-এর মতোই StandardScaler ক্লাসে learned attribute-গুলোর শেষে underscore (mean_, std_, scale_) রাখা হয়েছে যাতে বোঝা যায় এগুলো কেবল fit() কল করার পরই তৈরি হয়।\n\n২. fit(self, X)-এ Zero-Variance সুরক্ষা: axis=0 বরাবর প্রতিটি column-এর mean ও population std (ddof=0) বের করা হয়েছে। np.where(self.std_ == 0.0, 1.0, self.std_) ব্যবহার করায় constant feature-এর scale 1.0 হয়—ফলে training-এ ওই column শূন্য হয় এবং validation-এ কোনো drift এলে সংখ্যাটি 1e8 গুণ বিস্ফোরিত হয় না। শেষে return self রাখায় method chaining (scaler.fit(X).transform(X)) সম্ভব হয়।\n\n৩. transform(self, X)-এ Guard ও Broadcasting: প্রথমে fit করা হয়েছে কি না এবং feature সংখ্যা মিলছে কি না যাচাই করা হয়েছে। এরপর (X_arr - self.mean_) / self.scale_ চালালে NumPy broadcasting-এর মাধ্যমে (n, d) ম্যাট্রিক্সের প্রতিটি row থেকে (d,) ভেক্টর বিয়োগ ও ভাগ হয়—নতুন কোনো statistics গণনা না করেই।\n\n৪. Leak-Free Pipeline: preprocess_train_val() দেখায় কীভাবে X_train-এ fit_transform এবং X_val-এ কেবল transform চালিয়ে Data Leakage শতভাগ প্রতিরোধ করা যায়।",
+      "complexity": {
+        "time": "fit: O(n * d), transform: O(m * d) — যেখানে n, m যথাক্রমে train ও eval sample সংখ্যা",
+        "space": "O(d) learned parameters (mean_, std_, scale_) এবং O(m * d) output array"
+      },
+      "edgeCases": [
+        "কোনো feature-এর সব training মান সমান (variance = 0) হলে 0 দিয়ে ভাগ এড়াতে scale_ = 1.0 রাখতে হয়।",
+        "fit() করার আগেই transform() কল করলে অস্পষ্ট TypeError না দিয়ে স্পষ্ট RuntimeError ছুড়তে হবে।",
+        "Inference বা validation-এ মাত্র 1টি row (shape (1, d)) এলেও transform নিখুঁতভাবে কাজ করতে হবে, কারণ তা train statistics ব্যবহার করে।",
+        "Train-এ যে feature count (d) ছিল, test-এ তা না মিললে ValueError দিয়ে pipeline থামিয়ে দেওয়া জরুরি।"
+      ]
+    },
+    {
+      "id": "dm_confusion_f1",
+      "number": 18,
+      "title": "Confusion Matrix, Precision, Recall & F-beta Score",
+      "category": "stats_metrics",
+      "categoryLabel": "Stats & ML Metrics",
+      "difficulty": "Easy",
+      "chapterRef": "chapter_03",
+      "tags": [
+        "Classification",
+        "Confusion Matrix",
+        "F-beta",
+        "Thresholding"
+      ],
+      "summary": "যেকোনো probability threshold ও beta মানের জন্য Confusion Matrix (TP, FP, TN, FN), Precision, Recall, Accuracy এবং F-beta score নির্ণয় করুন।",
+      "problemStatement": "বাস্তব Binary Classification সিস্টেমে (যেমন Spam Filter, Fraud Detection বা Medical Triage) 0.5 কখনোই সর্বদা সেরা threshold নয় এবং Precision ও Recall-এর গুরুত্বও সমান থাকে না। নিচের ThresholdEvaluator কোডবেসে threshold sweep করে সেরা operating point খুঁজতে হয়, যার মূল ইঞ্জিন হলো classification_metrics(y_true, y_prob, threshold=0.5, beta=1.0)।\n\nআপনাকে classification_metrics ইমপ্লিমেন্ট করতে হবে:\n১. y_prob >= threshold হলে predicted class = 1, নতুবা 0।\n২. Confusion Matrix-এর চারটি পূর্ণসংখ্যা গণনা করুন: tp, fp, tn, fn।\n৩. Zero-division নিরাপদভাবে precision, recall, accuracy এবং F-beta (যেখানে beta > 0) বের করে একটি dictionary রিটার্ন করুন: {'tp', 'fp', 'tn', 'fn', 'precision', 'recall', 'f_beta', 'accuracy'}। হর শূন্য হলে সংশ্লিষ্ট metric 0.0 হবে।",
+      "mathFormula": "\\mathrm{Precision} = \\frac{\\mathrm{TP}}{\\mathrm{TP}+\\mathrm{FP}}, \\quad \\mathrm{Recall} = \\frac{\\mathrm{TP}}{\\mathrm{TP}+\\mathrm{FN}}, \\quad F_\\beta = \\frac{(1 + \\beta^2)\\,\\mathrm{Precision}\\cdot\\mathrm{Recall}}{\\beta^2\\,\\mathrm{Precision} + \\mathrm{Recall}}",
+      "targetFunction": "classification_metrics(y_true, y_prob, threshold)",
+      "codebaseTemplate": "import numpy as np\n\n\ndef classification_metrics(\n    y_true: np.ndarray,\n    y_prob: np.ndarray,\n    threshold: float = 0.5,\n    beta: float = 1.0,\n) -> dict[str, int | float]:\n    \"\"\"Compute confusion counts, precision, recall, accuracy, and F-beta score.\n\n    Args:\n        y_true: Binary ground-truth labels (0 or 1) of shape (n,).\n        y_prob: Predicted positive probabilities in [0, 1] of shape (n,).\n        threshold: Decision cutoff; predict 1 iff y_prob >= threshold.\n        beta: Positive weight on recall relative to precision in F-beta.\n\n    Returns:\n        Dict with keys: tp, fp, tn, fn, precision, recall, f_beta, accuracy.\n    \"\"\"\n    # TODO: Compute tp, fp, tn, fn and zero-safe precision, recall, f_beta, accuracy\n    raise NotImplementedError(\"Implement classification_metrics(y_true, y_prob, threshold)\")\n\n\nclass ThresholdEvaluator:\n    \"\"\"Sweeps decision thresholds to choose an optimal F-beta operating point.\"\"\"\n\n    def __init__(self, beta: float = 1.0) -> None:\n        self.beta = beta\n\n    def sweep(\n        self, y_true: np.ndarray, y_prob: np.ndarray, thresholds: list[float]\n    ) -> list[dict[str, int | float]]:\n        return [\n            {\"threshold\": t, **classification_metrics(y_true, y_prob, t, beta=self.beta)}\n            for t in thresholds\n        ]\n\n    def find_best_threshold(\n        self, y_true: np.ndarray, y_prob: np.ndarray, thresholds: list[float]\n    ) -> dict[str, int | float]:\n        results = self.sweep(y_true, y_prob, thresholds)\n        return max(results, key=lambda r: (r[\"f_beta\"], r[\"recall\"]))\n",
+      "examples": [
+        {
+          "input": "y_true = [1, 1, 0, 1, 0, 0], y_prob = [0.9, 0.4, 0.8, 0.7, 0.2, 0.1], threshold = 0.5, beta = 1.0",
+          "output": "{'tp': 2, 'fp': 1, 'tn': 2, 'fn': 1, 'precision': 0.6667, 'recall': 0.6667, 'f_beta': 0.6667, 'accuracy': 0.6667}",
+          "explanation": "y_pred = [1, 0, 1, 1, 0, 0]। এখানে 2টি True Positive, 1টি False Positive, 2টি True Negative ও 1টি False Negative পাওয়া যায়।"
+        },
+        {
+          "input": "y_true = [1, 1, 0, 0], y_prob = [0.8, 0.6, 0.4, 0.1], threshold = 0.95, beta = 1.0",
+          "output": "{'tp': 0, 'fp': 0, 'tn': 2, 'fn': 2, 'precision': 0.0, 'recall': 0.0, 'f_beta': 0.0, 'accuracy': 0.5}",
+          "explanation": "কেউই 0.95 অতিক্রম না করায় TP = 0 ও FP = 0। হর শূন্য হওয়ায় ZeroDivisionError না হয়ে precision, recall ও f_beta নিরাপদে 0.0 রিটার্ন করে।"
+        }
+      ],
+      "thinkQuestions": [
+        {
+          "question": "একটি Cancer Screening বা Fraud Detection মডেলে False Negative (রোগী বা ফ্রড মিস করা) False Positive-এর চেয়ে অনেক বেশি ক্ষতিকর। এক্ষেত্রে F-beta-এর beta মান কেমন হওয়া উচিত?",
+          "options": [
+            "beta < 1 (যেমন F0.5), কারণ এতে Precision-এর গুরুত্ব বাড়ে",
+            "beta-এর মান পরিবর্তন করলে F-beta-এর মান কখনোই বদলায় না",
+            "beta = 0, যাতে Recall পুরোপুরি বাদ যায়",
+            "beta > 1 (যেমন F2), কারণ F-beta সূত্রে Recall-এর ওপর beta^2 গুণ বেশি ওজন পড়ে"
+          ],
+          "answer": 3,
+          "explanation": "F-beta হলো Precision ও Recall-এর weighted harmonic mean: 1 / F_beta = (1 / (1 + beta^2)) * (1/P + beta^2 / R)। তাই beta = 2 হলে Recall-এর গুরুত্ব Precision-এর চেয়ে 4 গুণ বেশি থাকে।"
+        },
+        {
+          "question": "Precision ও Recall-এর Arithmetic Mean (P + R)/2 এর বদলে F1-এ Harmonic Mean 2PR/(P + R) কেন ব্যবহার করা হয়?",
+          "options": [
+            "Harmonic mean বের করতে কম CPU লাগে",
+            "Arithmetic mean কখনোই [0, 1]-এর ভেতরে থাকে না",
+            "Harmonic mean দুটি মানের মধ্যে যেটি ছোট তার দিকে বেশি ঝুঁকে থাকে—ফলে একটি 1.0 এবং অন্যটি 0.01 হলে স্কোর প্রায় 0.02 হয় (0.505 নয়)",
+            "Harmonic mean সবসময় Accuracy-এর সমান হয়"
+          ],
+          "answer": 2,
+          "explanation": "যদি কোনো মডেল সবকিছুকে 1 predict করে, তবে Recall = 1.0 কিন্তু Precision খুব ছোট (ধরা যাক 0.02) হবে। Arithmetic mean 0.51 দেখিয়ে বিভ্রান্ত করবে, কিন্তু Harmonic mean (F1) সাথে সাথে 0.039 দেখিয়ে দুর্বলতা ধরে ফেলবে।"
+        },
+        {
+          "question": "threshold বাড়াতে থাকলে (যেমন 0.3 থেকে 0.8 করলে) Confusion Matrix-এ কোন পরিবর্তনটি নিশ্চিতভাবে (monotonically) ঘটে?",
+          "options": [
+            "Precision সবসময়ই বাড়বে",
+            "Recall কখনোই বাড়তে পারে না (নন-ইনক্রিজিং) এবং FP কখনোই বাড়তে পারে না",
+            "TP এবং TN উভয়ই একই সাথে বাড়বে",
+            "FN কমে যাবে এবং FP বেড়ে যাবে"
+          ],
+          "answer": 1,
+          "explanation": "Threshold বাড়ালে predicted positives (TP + FP) কেবল কমতে বা সমান থাকতে পারে, বাড়তে পারে না। তাই TP (এবং Recall) ও FP নন-ইনক্রিজিং। মজার ব্যাপার হলো, Precision কিন্তু সবসময় monotonic নয়—কারণ TP ও FP উভয়ই কমে গেলে অনুপাত কমেও যেতে পারে!"
+        }
+      ],
+      "hints": [
+        "Hint 1: y_true-কে int array (0/1) এবং y_pred = (y_prob >= threshold).astype(int) করে নিন। এরপর boolean mask যেমন np.sum((y_true == 1) & (y_pred == 1)) দিয়ে tp, fp, tn, fn বের করে Python int-এ রূপান্তর করুন।",
+        "Hint 2: precision ও recall বের করার সময় হর শূন্য কিনা চেক করুন। F-beta-এর জন্য beta_sq = beta ** 2 নিয়ে denom = beta_sq * precision + recall বের করুন; denom > 0 হলে (1.0 + beta_sq) * precision * recall / denom, নতুবা 0.0 দিন।"
+      ],
+      "solutionCode": "import numpy as np\n\n\ndef classification_metrics(\n    y_true: np.ndarray,\n    y_prob: np.ndarray,\n    threshold: float = 0.5,\n    beta: float = 1.0,\n) -> dict[str, int | float]:\n    \"\"\"Compute confusion counts, precision, recall, accuracy, and F-beta score.\"\"\"\n    if beta <= 0.0:\n        raise ValueError(\"beta must be strictly positive.\")\n    y_t = np.asarray(y_true, dtype=np.int64).ravel()\n    y_p = np.asarray(y_prob, dtype=np.float64).ravel()\n    if y_t.shape != y_p.shape or y_t.size == 0:\n        raise ValueError(\"y_true and y_prob must be non-empty arrays of identical length.\")\n\n    y_pred = (y_p >= threshold).astype(np.int64)\n\n    tp = int(np.sum((y_t == 1) & (y_pred == 1)))\n    fp = int(np.sum((y_t == 0) & (y_pred == 1)))\n    tn = int(np.sum((y_t == 0) & (y_pred == 0)))\n    fn = int(np.sum((y_t == 1) & (y_pred == 0)))\n\n    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0\n    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0\n    accuracy = (tp + tn) / y_t.size\n\n    beta_sq = beta * beta\n    denom = beta_sq * precision + recall\n    f_beta = ((1.0 + beta_sq) * precision * recall / denom) if denom > 0.0 else 0.0\n\n    return {\n        \"tp\": tp,\n        \"fp\": fp,\n        \"tn\": tn,\n        \"fn\": fn,\n        \"precision\": float(precision),\n        \"recall\": float(recall),\n        \"f_beta\": float(f_beta),\n        \"accuracy\": float(accuracy),\n    }\n\n\nclass ThresholdEvaluator:\n    \"\"\"Sweeps decision thresholds to choose an optimal F-beta operating point.\"\"\"\n\n    def __init__(self, beta: float = 1.0) -> None:\n        self.beta = beta\n\n    def sweep(\n        self, y_true: np.ndarray, y_prob: np.ndarray, thresholds: list[float]\n    ) -> list[dict[str, int | float]]:\n        return [\n            {\"threshold\": t, **classification_metrics(y_true, y_prob, t, beta=self.beta)}\n            for t in thresholds\n        ]\n\n    def find_best_threshold(\n        self, y_true: np.ndarray, y_prob: np.ndarray, thresholds: list[float]\n    ) -> dict[str, int | float]:\n        results = self.sweep(y_true, y_prob, thresholds)\n        return max(results, key=lambda r: (r[\"f_beta\"], r[\"recall\"]))\n\n\n# --- Verification Tests ---\n# 1. Worked Example 1\ny_true1 = np.array([1, 1, 0, 1, 0, 0])\ny_prob1 = np.array([0.9, 0.4, 0.8, 0.7, 0.2, 0.1])\nm1 = classification_metrics(y_true1, y_prob1, threshold=0.5, beta=1.0)\nassert (m1[\"tp\"], m1[\"fp\"], m1[\"tn\"], m1[\"fn\"]) == (2, 1, 2, 1)\nassert np.isclose(m1[\"precision\"], 2 / 3)\nassert np.isclose(m1[\"recall\"], 2 / 3)\nassert np.isclose(m1[\"f_beta\"], 2 / 3)\n\n# 2. Worked Example 2: No predicted positives (zero-division guard)\nm2 = classification_metrics([1, 1, 0, 0], [0.8, 0.6, 0.4, 0.1], threshold=0.95)\nassert (m2[\"tp\"], m2[\"fp\"], m2[\"tn\"], m2[\"fn\"]) == (0, 0, 2, 2)\nassert m2[\"precision\"] == 0.0 and m2[\"recall\"] == 0.0 and m2[\"f_beta\"] == 0.0\n\n# 3. F2 vs F0.5 asymmetry check (high recall, lower precision)\ny_true3 = np.array([1, 1, 0, 0, 0])\ny_prob3 = np.array([0.9, 0.7, 0.6, 0.55, 0.1])\nf2 = classification_metrics(y_true3, y_prob3, threshold=0.5, beta=2.0)\nf05 = classification_metrics(y_true3, y_prob3, threshold=0.5, beta=0.5)\nassert f2[\"recall\"] == 1.0 and np.isclose(f2[\"precision\"], 0.5)\nassert f2[\"f_beta\"] > f05[\"f_beta\"]\n\n# 4. ThresholdEvaluator integration\nev = ThresholdEvaluator(beta=2.0)\nbest = ev.find_best_threshold(y_true1, y_prob1, [0.3, 0.5, 0.75])\nassert best[\"threshold\"] == 0.3 and best[\"recall\"] == 1.0\n",
+      "walkthrough": "১. ইনপুট Validation ও Binary Thresholding: beta > 0 এবং সমান দৈর্ঘ্যের non-empty 1D array যাচাই করা হয়েছে। এরপর y_p >= threshold দিয়ে vectorized boolean comparison চালানো হয়েছে (কনভেনশন অনুযায়ী >= হলেই positive class)।\n\n২. Confusion Matrix Counts: চারটি boolean conjunction ব্যবহার করে TP, FP, TN, FN বের করে Python int-এ cast করা হয়েছে যাতে JSON serialization বা downstream reporting-এ np.int64 ঝামেলা না করে।\n\n৩. Zero-Division সুরক্ষা: যখন threshold খুব বেশি থাকে তখন TP + FP = 0 হতে পারে, আবার টেস্ট ব্যাচে কোনো positive label না থাকলে TP + FN = 0 হতে পারে। উভয় ক্ষেত্রেই conditional guard ব্যবহার করে নিরাপদে 0.0 রিটার্ন করা হয়েছে।\n\n৪. সাধারণ F-beta ফর্মুলা: সরাসরি (1 + beta^2) * P * R / (beta^2 * P + R) লেখা হয়েছে এবং হর শূন্য হলে 0.0 দেওয়া হয়েছে। beta = 1.0 হলে এটি ঠিক F1-এ পরিণত হয়, আর beta > 1 বা beta < 1 বসিয়ে যেকোনো business cost tradeoff মডেল করা যায়।",
+      "complexity": {
+        "time": "O(n) — single threshold-এর জন্য; k-টি threshold sweep করলে O(k * n)",
+        "space": "O(n) — boolean prediction vector y_pred-এর জন্য"
+      },
+      "edgeCases": [
+        "সব predicted probability threshold-এর নিচে হলে TP + FP = 0 হয়; guard না থাকলে Precision-এ ZeroDivisionError ঘটে।",
+        "ব্যাচে কোনো true positive না থাকলে (all-negative batch) TP + FN = 0 হয়; Recall-এ guard জরুরি।",
+        "Precision ও Recall উভয়ই 0.0 হলে F-beta-এর হর 0.0 হয়—তাই আলাদাভাবে denom > 0 যাচাই করতে হয়।",
+        "beta <= 0 গাণিতিকভাবে অসংজ্ঞায়িত, তাই শুরুতেই ValueError ছুড়তে হবে।"
+      ]
+    },
+    {
+      "id": "dm_roc_auc_scratch",
+      "number": 19,
+      "title": "Exact ROC-AUC via Rank / Mann-Whitney U with Ties",
+      "category": "stats_metrics",
+      "categoryLabel": "Stats & ML Metrics",
+      "difficulty": "Medium",
+      "chapterRef": "chapter_05",
+      "tags": [
+        "ROC-AUC",
+        "Ranking",
+        "Mann-Whitney U",
+        "Tie Handling"
+      ],
+      "summary": "O(n log n) সময়ে average-rank Mann-Whitney U সূত্র ব্যবহার করে tied score-সহ শতভাগ নিখুঁত ROC-AUC গণনা করুন।",
+      "problemStatement": "ROC-AUC হলো Ranking ও Binary Classification মডেলের সবচেয়ে জনপ্রিয় threshold-free metric। অনেক সময় ক্যান্ডিডেটরা brute-force O(n^2) লুপ বা ভুল tie-handling করে বসেন, যা লক্ষ লক্ষ sample-এ অকার্যকর বা ভুল উত্তর দেয়। নিচের RankingQualityReport কোডবেসে আপনাকে compute_roc_auc(y_true, y_score) ফাংশনটি O(n log n) সময়ে ইমপ্লিমেন্ট করতে হবে।\n\nগাণিতিক নীতি:\n১. y_score অনুযায়ী sample-গুলোকে ascending ক্রমে সাজান।\n২. প্রতিটি sample-কে 1-based rank দিন। একাধিক sample-এর score সমান (tie) হলে ওই পুরো tied গ্রুপের সব sample-কে তাদের 1-based position-গুলোর গড় (average rank) দিন। যেমন index 1 ও 2 (1-based position 2 ও 3) সমান হলে উভয়ের rank হবে 2.5।\n৩. সব positive sample (y_true == 1)-এর rank-এর যোগফল R_+ বের করে Mann-Whitney U = R_+ - n_+(n_+ + 1)/2 এবং AUC = U / (n_+ * n_-) রিটার্ন করুন।\n৪. কেবল একটি class থাকলে (n_+ == 0 বা n_- == 0) ROC-AUC অসংজ্ঞায়িত—তাই ValueError ছুড়তে হবে।",
+      "mathFormula": "\\mathrm{AUC} = \\frac{\\sum_{i : y_i = 1} \\mathrm{rank}(s_i) - \\frac{n_+(n_+ + 1)}{2}}{n_+\\,n_-}",
+      "targetFunction": "compute_roc_auc(y_true, y_score)",
+      "codebaseTemplate": "import numpy as np\n\n\ndef compute_roc_auc(y_true: np.ndarray, y_score: np.ndarray) -> float:\n    \"\"\"Compute exact ROC-AUC via Mann-Whitney U with average ranks for ties.\n\n    Args:\n        y_true: Binary labels (0 or 1) of shape (n,).\n        y_score: Continuous ranking scores or probabilities of shape (n,).\n\n    Returns:\n        Exact ROC-AUC score in [0.0, 1.0].\n    \"\"\"\n    # TODO: Sort scores, assign 1-based average ranks to ties, and compute Mann-Whitney U / (n_pos * n_neg)\n    raise NotImplementedError(\"Implement compute_roc_auc(y_true, y_score)\")\n\n\nclass RankingQualityReport:\n    \"\"\"Evaluates binary ranker discrimination power via ROC-AUC and Gini.\"\"\"\n\n    @staticmethod\n    def roc_curve_points(\n        y_true: np.ndarray, y_score: np.ndarray\n    ) -> tuple[np.ndarray, np.ndarray]:\n        y_t = np.asarray(y_true, dtype=np.int64)\n        y_s = np.asarray(y_score, dtype=np.float64)\n        order = np.argsort(-y_s, kind=\"mergesort\")\n        y_sorted = y_t[order]\n        s_sorted = y_s[order]\n\n        distinct = np.where(np.diff(s_sorted) != 0)[0]\n        ends = np.r_[distinct, y_sorted.size - 1]\n        tps = np.cumsum(y_sorted)[ends]\n        fps = (1 + ends) - tps\n\n        tpr = np.r_[0.0, tps / tps[-1]]\n        fpr = np.r_[0.0, fps / fps[-1]]\n        return fpr, tpr\n\n    def summarize(self, y_true: np.ndarray, y_score: np.ndarray) -> dict[str, float]:\n        auc = compute_roc_auc(y_true, y_score)\n        return {\"roc_auc\": auc, \"gini\": 2.0 * auc - 1.0}\n",
+      "examples": [
+        {
+          "input": "y_true = [0, 0, 1, 1], y_score = [0.1, 0.4, 0.35, 0.8]",
+          "output": "0.75",
+          "explanation": "Ascending সাজালে scores = [0.1(0), 0.35(1), 0.4(0), 0.8(1)], ranks = [1, 2, 3, 4]। Positive rank sum = 2 + 4 = 6। U = 6 - 2*3/2 = 3, AUC = 3 / (2 * 2) = 0.75।"
+        },
+        {
+          "input": "y_true = [0, 1, 0, 1], y_score = [0.5, 0.5, 0.2, 0.9]",
+          "output": "0.875",
+          "explanation": "Ascending scores = [0.2(0), 0.5(0), 0.5(1), 0.9(1)]। দুটি 0.5-এর average rank = (2 + 3)/2 = 2.5। Positive rank sum = 2.5 + 4.0 = 6.5। U = 6.5 - 3.0 = 3.5, AUC = 3.5 / 4 = 0.875।"
+        }
+      ],
+      "thinkQuestions": [
+        {
+          "question": "সমান score (ties)-এর ক্ষেত্রে average rank না দিয়ে arbitrary rank (যেমন sorting-এর ক্রম অনুযায়ী 2 ও 3) দিলে কী সমস্যা হবে?",
+          "options": [
+            "ইনপুট array-এর অর্ডার বদলালে একই score-এর জন্য ভিন্ন AUC পাওয়া যাবে এবং এটি P(s_+ > s_-) + 0.5 * P(s_+ == s_-) নীতির সাথে মিলবে না",
+            "কোডটি O(n^2) হয়ে যাবে",
+            "AUC-এর মান 1.0-এর চেয়ে বড় হয়ে যাবে",
+            "Negative sample-গুলোর rank শূন্য হয়ে যাবে"
+          ],
+          "answer": 0,
+          "explanation": "যদি একটি positive ও একটি negative sample-এর score সমান হয়, তবে ROC curve-এ diagonal segment তৈরি হয় যার ক্ষেত্রফল ঠিক 0.5 credit দেয়। Average rank বসালে প্রতিটি tied (pos, neg) জোড়া ঠিক 0.5 পায় এবং ইনপুট অর্ডার বদলালেও ফল অপরিবর্তিত থাকে।"
+        },
+        {
+          "question": "Mann-Whitney U সূত্রে positive rank-এর যোগফল থেকে n_+(n_+ + 1) / 2 বিয়োগ করা হয় কেন?",
+          "options": [
+            "এটি tie count-এর সমান",
+            "এটি negative sample-গুলোর গড় rank",
+            "এটি Bessel's correction-এর মতো একটি heuristic",
+            "সব positive sample একদম নিচে (rank 1..n_+) থাকলেও তাদের rank sum হয় n_+(n_+ + 1)/2; এটি বাদ দিলে কেবল প্রতিটি positive কতগুলো negative-কে হারিয়েছে সেই সংখ্যাটি থাকে"
+          ],
+          "answer": 3,
+          "explanation": "n_+ টি positive নিজেরাই পরস্পরের সাথে rank ভাগাভাগি করে ন্যূনতম 1 + 2 + ... + n_+ = n_+(n_+ + 1)/2 যোগফল তৈরি করে। তা বিয়োগ করলেই ঠিক কতগুলো (positive, negative) জোড়ায় positive এগিয়ে আছে (tie = 0.5 ধরে) তা পাওয়া যায়!"
+        },
+        {
+          "question": "একটি মডেলের সব prediction score-কে যদি s_new = exp(2 * s + 5) দিয়ে রূপান্তর করা হয়, তবে ROC-AUC-এর মান কীভাবে বদলাবে?",
+          "options": [
+            "প্রায় দ্বিগুণ হবে",
+            "0.5-এর দিকে সরে যাবে",
+            "একদমই বদলাবে না, কারণ ROC-AUC কেবল score-গুলোর relative rank order-এর ওপর নির্ভর করে",
+            "Calibration ভালো হবে তাই AUC বাড়বে"
+          ],
+          "answer": 2,
+          "explanation": "exp(2s + 5) একটি strictly increasing (monotonic) ফাংশন, যা সব sample-এর rank order হুবহু অপরিবর্তিত রাখে। যেহেতু ROC-AUC শুধু rank-এর ওপর নির্ভরশীল, তাই calibration নষ্ট হলেও AUC অপরিবর্তিত থাকে।"
+        }
+      ],
+      "hints": [
+        "Hint 1: order = np.argsort(y_s, kind='mergesort') দিয়ে y_s ও y_t উভয়কে ascending সাজান। এরপর একটি while বা vectorized group-boundary লুপ দিয়ে সমান score-এর ব্লক [i, j) খুঁজে নিন।",
+        "Hint 2: 0-indexed ব্লক [i, j)-এর 1-based অবস্থান হলো (i + 1) থেকে j পর্যন্ত, যার গড় হলো (i + 1 + j) / 2.0। ওই ব্লকের সব পজিশনে এই avg_rank বসিয়ে দিন, তারপর ranks[y_sorted == 1].sum() দিয়ে U ও AUC বের করুন।"
+      ],
+      "solutionCode": "import numpy as np\n\n\ndef compute_roc_auc(y_true: np.ndarray, y_score: np.ndarray) -> float:\n    \"\"\"Compute exact ROC-AUC via Mann-Whitney U with average ranks for ties.\"\"\"\n    y_t = np.asarray(y_true, dtype=np.int64).ravel()\n    y_s = np.asarray(y_score, dtype=np.float64).ravel()\n    if y_t.shape != y_s.shape or y_t.size == 0:\n        raise ValueError(\"y_true and y_score must be non-empty arrays of identical length.\")\n\n    n_pos = int(np.sum(y_t == 1))\n    n_neg = int(np.sum(y_t == 0))\n    if n_pos + n_neg != y_t.size:\n        raise ValueError(\"y_true must contain only binary labels 0 and 1.\")\n    if n_pos == 0 or n_neg == 0:\n        raise ValueError(\"ROC-AUC is undefined when only one class is present in y_true.\")\n\n    order = np.argsort(y_s, kind=\"mergesort\")\n    s_sorted = y_s[order]\n    y_sorted = y_t[order]\n\n    n = s_sorted.size\n    ranks = np.empty(n, dtype=np.float64)\n    i = 0\n    while i < n:\n        j = i + 1\n        while j < n and s_sorted[j] == s_sorted[i]:\n            j += 1\n        # 1-based indices in block [i, j) are (i + 1) .. j\n        avg_rank = 0.5 * (i + 1 + j)\n        ranks[i:j] = avg_rank\n        i = j\n\n    pos_rank_sum = float(np.sum(ranks[y_sorted == 1]))\n    u_stat = pos_rank_sum - n_pos * (n_pos + 1) / 2.0\n    return float(u_stat / (n_pos * n_neg))\n\n\nclass RankingQualityReport:\n    \"\"\"Evaluates binary ranker discrimination power via ROC-AUC and Gini.\"\"\"\n\n    @staticmethod\n    def roc_curve_points(\n        y_true: np.ndarray, y_score: np.ndarray\n    ) -> tuple[np.ndarray, np.ndarray]:\n        y_t = np.asarray(y_true, dtype=np.int64)\n        y_s = np.asarray(y_score, dtype=np.float64)\n        order = np.argsort(-y_s, kind=\"mergesort\")\n        y_sorted = y_t[order]\n        s_sorted = y_s[order]\n\n        distinct = np.where(np.diff(s_sorted) != 0)[0]\n        ends = np.r_[distinct, y_sorted.size - 1]\n        tps = np.cumsum(y_sorted)[ends]\n        fps = (1 + ends) - tps\n\n        tpr = np.r_[0.0, tps / tps[-1]]\n        fpr = np.r_[0.0, fps / fps[-1]]\n        return fpr, tpr\n\n    def summarize(self, y_true: np.ndarray, y_score: np.ndarray) -> dict[str, float]:\n        auc = compute_roc_auc(y_true, y_score)\n        return {\"roc_auc\": auc, \"gini\": 2.0 * auc - 1.0}\n\n\n# --- Verification Tests ---\n# 1. Worked Example 1 & 2\nassert np.isclose(compute_roc_auc([0, 0, 1, 1], [0.1, 0.4, 0.35, 0.8]), 0.75)\nassert np.isclose(compute_roc_auc([0, 1, 0, 1], [0.5, 0.5, 0.2, 0.9]), 0.875)\n\n# 2. All ties -> exactly 0.5 regardless of ordering\nassert np.isclose(compute_roc_auc([1, 0, 1, 0, 0], [0.3, 0.3, 0.3, 0.3, 0.3]), 0.5)\nassert np.isclose(compute_roc_auc([0, 0, 1, 1], [0.1, 0.2, 0.8, 0.9]), 1.0)\nassert np.isclose(compute_roc_auc([1, 1, 0, 0], [0.1, 0.2, 0.8, 0.9]), 0.0)\n\n# 3. Exact agreement with brute-force O(n^2) pairwise definition under heavy ties\nrng = np.random.default_rng(19)\nyt = rng.integers(0, 2, size=80)\nys = rng.choice([0.1, 0.2, 0.5, 0.5, 0.8, 0.9], size=80)\npos_s = ys[yt == 1]\nneg_s = ys[yt == 0]\npairwise_auc = np.mean((pos_s[:, None] > neg_s[None, :]) + 0.5 * (pos_s[:, None] == neg_s[None, :]))\nassert np.isclose(compute_roc_auc(yt, ys), pairwise_auc, atol=1e-12)\n\n# 4. Single-class error & ROC trapezoid equivalence\nfpr, tpr = RankingQualityReport.roc_curve_points(yt, ys)\ntrapz_auc = float(np.sum((fpr[1:] - fpr[:-1]) * 0.5 * (tpr[1:] + tpr[:-1])))\nassert np.isclose(compute_roc_auc(yt, ys), trapz_auc, atol=1e-12)\ntry:\n    compute_roc_auc([1, 1, 1], [0.2, 0.5, 0.9])\n    raise AssertionError(\"Expected ValueError for single-class labels\")\nexcept ValueError:\n    pass\n",
+      "walkthrough": "১. Class Validation: ROC-AUC-এর হরে n_+ * n_- থাকে, তাই উভয় class অন্তত একবার উপস্থিত থাকা বাধ্যতামূলক। কেবল 0 বা কেবল 1 থাকলে শুরুতেই স্পষ্ট ValueError দেওয়া হয়েছে।\n\n২. Sorting ও Average-Rank Tie Handling: score-কে ascending অর্ডারে সাজিয়ে একটি O(n) two-pointer লুপ (i, j) দিয়ে প্রতিটি সমান-মানের গ্রুপ চিহ্নিত করা হয়েছে। 0-based slice [i, j)-এর 1-based rank হলো (i+1) থেকে j, যাদের গাণিতিক গড় 0.5 * (i + 1 + j)। এই মানটি পুরো গ্রুপে বসানোয় tied sample-গুলো ইনপুট অর্ডার নিরপেক্ষভাবে ঠিক 0.5 ক্রেডিট পায়।\n\n৩. Mann-Whitney U সূত্র: সব positive sample-এর rank যোগ করে তার থেকে n_+(n_+ + 1)/2 বাদ দিলেই exact U statistic মেলে, যাকে n_+ * n_- দিয়ে ভাগ করলে [0, 1] রেঞ্জে ROC-AUC পাওয়া যায়।\n\n৪. Verification: টেস্টে দেখানো হয়েছে এই O(n log n) ফর্মুলাটি brute-force O(n^2) pairwise comparison এবং ROC curve-এর exact trapezoidal area—উভয়ের সাথে 1e-12 নির্ভুলতায় মিলে যায়।",
+      "complexity": {
+        "time": "O(n log n) — sorting dominate করে; tie-grouping ও summation O(n)",
+        "space": "O(n) — sorted indices, sorted arrays এবং ranks array-এর জন্য"
+      },
+      "edgeCases": [
+        "সব label 0 বা সব label 1 হলে n_+ * n_- = 0 হয়; তাই স্পষ্ট ValueError ছুড়তে হয়।",
+        "সব sample-এর score সমান (constant model) হলে average rank পদ্ধতিতে ঠিক 0.5 রিটার্ন করে।",
+        "Decision Tree বা quantized model-এ অনেক tied score থাকে; average rank ছাড়া ফলাফল ইনপুট অর্ডারের ওপর নির্ভরশীল হয়ে ভুল উত্তর দেয়।",
+        "Inverted ranker (সব negative-এর score সব positive-এর চেয়ে বেশি) 0.0 দেয়, যা নির্দেশ করে prediction উল্টে দিলে পারফেক্ট মডেল পাওয়া যাবে।"
+      ]
+    },
+    {
+      "id": "dm_pr_auc_ap",
+      "number": 20,
+      "title": "Precision-Recall Curve & Average Precision",
+      "category": "stats_metrics",
+      "categoryLabel": "Stats & ML Metrics",
+      "difficulty": "Medium",
+      "chapterRef": "chapter_05",
+      "tags": [
+        "PR-AUC",
+        "Average Precision",
+        "Imbalanced Data",
+        "Evaluation"
+      ],
+      "summary": "Imbalanced classification-এর জন্য distinct score threshold গ্রুপ করে exact step-function Average Precision (AP) নির্ণয় করুন।",
+      "problemStatement": "যখন positive class খুব বিরল হয় (যেমন Ad Click 0.5% বা Rare Disease 0.1%), তখন ROC-AUC-এর False Positive Rate বিপুল সংখ্যক True Negative-এর আড়ালে চাপা পড়ে যায় এবং দুর্বল মডেলকেও 0.98 দেখায়। এই পরিস্থিতিতে Precision-Recall ভিত্তিক Average Precision (AP) হলো ইন্ডাস্ট্রি স্ট্যান্ডার্ড।\n\nনিচের ImbalancedClassifierAudit কোডবেসে আপনাকে average_precision(y_true, y_score) ইমপ্লিমেন্ট করতে হবে (scikit-learn-এর exact step-function সংজ্ঞা অনুযায়ী):\n১. y_score অনুযায়ী sample-গুলোকে descending (বড় থেকে ছোট) ক্রমে সাজান।\n২. সমান score (ties) যুক্ত sample-গুলোকে আলাদা threshold হিসেবে না ধরে প্রতিটি distinct score গ্রুপের শেষ প্রান্তে cumulative TP ও total predicted positives নিয়ে (Precision_k, Recall_k) নির্ণয় করুন।\n৩. Step-function যোগফল AP = sum_k (R_k - R_{k-1}) * P_k (যেখানে R_0 = 0) রিটার্ন করুন। কোনো positive label না থাকলে 0.0 রিটার্ন করুন।",
+      "mathFormula": "\\mathrm{AP} = \\sum_{k=1}^{m} \\left(R_k - R_{k-1}\\right) P_k, \\quad R_0 = 0",
+      "targetFunction": "average_precision(y_true, y_score)",
+      "codebaseTemplate": "import numpy as np\n\n\ndef average_precision(y_true: np.ndarray, y_score: np.ndarray) -> float:\n    \"\"\"Compute exact step-function Average Precision (AP) with proper tie grouping.\n\n    Args:\n        y_true: Binary ground-truth labels (0 or 1) of shape (n,).\n        y_score: Predicted scores or probabilities of shape (n,).\n\n    Returns:\n        Average Precision in [0.0, 1.0]. Returns 0.0 if no positive labels exist.\n    \"\"\"\n    # TODO: Sort descending, collapse tied scores to distinct threshold endpoints, and sum (delta_R * P)\n    raise NotImplementedError(\"Implement average_precision(y_true, y_score)\")\n\n\nclass ImbalancedClassifierAudit:\n    \"\"\"Audits rare-event classifiers against the random-baseline prevalence.\"\"\"\n\n    @staticmethod\n    def positive_prevalence(y_true: np.ndarray) -> float:\n        y_t = np.asarray(y_true, dtype=np.int64)\n        return float(np.mean(y_t == 1)) if y_t.size > 0 else 0.0\n\n    def audit_model(self, y_true: np.ndarray, y_score: np.ndarray) -> dict[str, float]:\n        ap = average_precision(y_true, y_score)\n        baseline = self.positive_prevalence(y_true)\n        lift = (ap / baseline) if baseline > 0.0 else 0.0\n        return {\n            \"average_precision\": ap,\n            \"random_baseline\": baseline,\n            \"lift_over_random\": lift,\n        }\n",
+      "examples": [
+        {
+          "input": "y_true = [1, 0, 1, 0], y_score = [0.9, 0.7, 0.6, 0.2]",
+          "output": "0.8333333333333333",
+          "explanation": "Descending threshold-গুলো 0.9 (R=0.5, P=1.0), 0.7 (R=0.5, P=0.5), 0.6 (R=1.0, P=2/3), 0.2 (R=1.0, P=0.5)। AP = 0.5*1.0 + 0*0.5 + 0.5*(2/3) + 0*0.5 = 5/6 ≈ 0.8333।"
+        },
+        {
+          "input": "y_true = [1, 0, 1, 0], y_score = [0.5, 0.5, 0.5, 0.5]",
+          "output": "0.5",
+          "explanation": "সব score সমান হওয়ায় একটিই distinct threshold endpoint (idx=3) আছে, যেখানে R=1.0 এবং P=2/4=0.5। তাই AP = 1.0 * 0.5 = 0.5, যা random baseline prevalence-এর সমান।"
+        }
+      ],
+      "thinkQuestions": [
+        {
+          "question": "Precision-Recall curve-এ linear interpolation (trapezoidal rule)-এর বদলে step-function Average Precision (R_k - R_{k-1}) * P_k কেন বেশি সঠিক?",
+          "options": [
+            "কারণ trapezoidal rule শুধু ROC curve-এ কাজ করে না",
+            "কারণ PR space-এ দুটি বিন্দুর মাঝখানে linear interpolation অবাস্তবভাবে বেশি optimistic (অতিমূল্যায়িত) ক্ষেত্রফল তৈরি করে; বাস্তবে Precision অরৈখিকভাবে পরিবর্তিত হয়",
+            "কারণ step-function সবসময় O(1) সময়ে হিসাব করা যায়",
+            "কারণ trapezoidal rule-এ Recall কমে যেতে পারে"
+          ],
+          "answer": 1,
+          "explanation": "ROC space-এ দুটি অপারেটিং পয়েন্টের মধ্যে randomized classifier দিয়ে সরলরেখা অর্জন সম্ভব, কিন্তু PR space-এ তা সম্ভব নয় (Davis & Goadrich 2006)। তাই linear interpolation করলে PR-AUC অতিমূল্যায়িত হয়; step-function AP-ই নির্ভরযোগ্য।"
+        },
+        {
+          "question": "যদি tied score-গুলোকে একটি distinct threshold-এ collapse না করে sample-by-sample delta_R * P যোগ করা হয়, তবে কী বাগ দেখা দেবে?",
+          "options": [
+            "একই constant score [0.5, 0.5, 0.5, 0.5]-এর জন্য y_true = [1, 0, 1, 0] দিলে 0.833 এবং [0, 1, 0, 1] দিলে 0.5 আসবে—অর্থাৎ রেজাল্ট ইনপুট অর্ডারের ওপর নির্ভরশীল হয়ে যাবে!",
+            "AP সবসময় 0.0 আসবে",
+            "NumPy IndexError ছুড়বে",
+            "Precision 1.0-এর বড় হয়ে যাবে"
+          ],
+          "answer": 0,
+          "explanation": "সমান score পাওয়া sample-গুলোর মধ্যে কোনটি আগে আসবে তা arbitrary। তাই একই threshold-এর সব sample-কে একত্রে গুনে একটিই (R_k, P_k) পয়েন্ট তৈরি করা বাধ্যতামূলক, নইলে constant predictor-এর AP-ও অর্ডার অনুযায়ী বদলে যাবে।"
+        },
+        {
+          "question": "১ লক্ষ sample-এর মধ্যে মাত্র ১,০০০টি positive (prevalence = 0.01) থাকলে একটি সম্পূর্ণ random classifier-এর প্রত্যাশিত ROC-AUC এবং Average Precision কত হবে?",
+          "options": [
+            "উভয়ই 0.50",
+            "উভয়ই 0.01",
+            "ROC-AUC ≈ 0.01 এবং Average Precision ≈ 0.50",
+            "ROC-AUC ≈ 0.50 এবং Average Precision ≈ 0.01 (positive prevalence-এর সমান)"
+          ],
+          "answer": 3,
+          "explanation": "Random classifier যেকোনো recall লেভেলেই গড়ে positive prevalence-এর সমান Precision পায়। তাই ROC-AUC-এর baseline সবসময় 0.50 হলেও AP-এর baseline হলো positive prevalence (এখানে 0.01)।"
+        }
+      ],
+      "hints": [
+        "Hint 1: order = np.argsort(-y_s, kind='mergesort') দিয়ে scores ও labels descending সাজান। এরপর cum_tp = np.cumsum(y_sorted) বের করুন।",
+        "Hint 2: np.where(np.diff(s_sorted) != 0)[0] এর সাথে শেষ ইনডেক্স n - 1 জুড়ে দিন (np.r_[distinct, n - 1])—এগুলোই প্রতিটি distinct score গ্রুপের শেষ ইনডেক্স! এই ইনডেক্সগুলোতে tp = cum_tp[ends], pred_pos = ends + 1, precision = tp / pred_pos, recall = tp / total_pos বের করে delta_recall * precision যোগ করুন।"
+      ],
+      "solutionCode": "import numpy as np\n\n\ndef average_precision(y_true: np.ndarray, y_score: np.ndarray) -> float:\n    \"\"\"Compute exact step-function Average Precision (AP) with proper tie grouping.\"\"\"\n    y_t = np.asarray(y_true, dtype=np.int64).ravel()\n    y_s = np.asarray(y_score, dtype=np.float64).ravel()\n    if y_t.shape != y_s.shape or y_t.size == 0:\n        raise ValueError(\"y_true and y_score must be non-empty arrays of identical length.\")\n    if not np.all((y_t == 0) | (y_t == 1)):\n        raise ValueError(\"y_true must contain only binary labels 0 and 1.\")\n\n    total_pos = int(np.sum(y_t == 1))\n    if total_pos == 0:\n        return 0.0\n\n    order = np.argsort(-y_s, kind=\"mergesort\")\n    s_sorted = y_s[order]\n    y_sorted = y_t[order]\n\n    # Collapse ties: evaluate cumulative TP/count only at the end of each unique score block\n    distinct_idx = np.where(np.diff(s_sorted) != 0.0)[0]\n    threshold_ends = np.r_[distinct_idx, s_sorted.size - 1]\n\n    tps = np.cumsum(y_sorted)[threshold_ends]\n    pred_counts = threshold_ends + 1\n\n    precisions = tps / pred_counts\n    recalls = tps / total_pos\n    delta_recalls = np.diff(np.r_[0.0, recalls])\n\n    return float(np.sum(delta_recalls * precisions))\n\n\nclass ImbalancedClassifierAudit:\n    \"\"\"Audits rare-event classifiers against the random-baseline prevalence.\"\"\"\n\n    @staticmethod\n    def positive_prevalence(y_true: np.ndarray) -> float:\n        y_t = np.asarray(y_true, dtype=np.int64)\n        return float(np.mean(y_t == 1)) if y_t.size > 0 else 0.0\n\n    def audit_model(self, y_true: np.ndarray, y_score: np.ndarray) -> dict[str, float]:\n        ap = average_precision(y_true, y_score)\n        baseline = self.positive_prevalence(y_true)\n        lift = (ap / baseline) if baseline > 0.0 else 0.0\n        return {\n            \"average_precision\": ap,\n            \"random_baseline\": baseline,\n            \"lift_over_random\": lift,\n        }\n\n\n# --- Verification Tests ---\n# 1. Worked Example 1\nassert np.isclose(average_precision([1, 0, 1, 0], [0.9, 0.7, 0.6, 0.2]), 5.0 / 6.0)\n\n# 2. Worked Example 2: Tied scores must be order-invariant and equal prevalence\nassert np.isclose(average_precision([1, 0, 1, 0], [0.5, 0.5, 0.5, 0.5]), 0.5)\nassert np.isclose(average_precision([0, 1, 0, 1], [0.5, 0.5, 0.5, 0.5]), 0.5)\n\n# 3. Perfect ranking & all-negative edge case\nassert np.isclose(average_precision([0, 1, 0, 1], [0.1, 0.9, 0.2, 0.8]), 1.0)\nassert average_precision([0, 0, 0], [0.9, 0.5, 0.1]) == 0.0\n\n# 4. Partial ties & ImbalancedClassifierAudit integration\nassert np.isclose(average_precision([1, 0, 1, 0], [0.9, 0.5, 0.5, 0.1]), 0.5 * 1.0 + 0.5 * (2.0 / 3.0))\naudit = ImbalancedClassifierAudit().audit_model([1, 0, 0, 0, 0], [0.95, 0.4, 0.3, 0.2, 0.1])\nassert np.isclose(audit[\"average_precision\"], 1.0) and np.isclose(audit[\"lift_over_random\"], 5.0)\n",
+      "walkthrough": "১. Zero-Positive Guard: কোনো positive উদাহরণ না থাকলে Recall-এর হর শূন্য হবে; তাই scikit-learn কনভেনশন মেনে 0.0 রিটার্ন করা হয়েছে।\n\n২. Descending Sort ও Tie Collapsing: -y_s দিয়ে descending ক্রমে সাজানোর পর np.where(np.diff(s_sorted) != 0.0)[0] সেই সব পজিশন চিহ্নিত করে যেখানে পরের sample-টির score আলাদা। এর সাথে শেষ ইনডেক্স (n - 1) যোগ করলে প্রতিটি unique threshold-এর শেষ প্রান্ত পাওয়া যায়।\n\n৩. Cumulative TP ও Vectorized Precision/Recall: np.cumsum(y_sorted) পুরো array-তে মাত্র একবার চালিয়ে শুধু threshold_ends পজিশনের মান নেওয়া হয়েছে। যেহেতু 0-indexed end ইনডেক্সে মোট (end + 1)টি sample থাকে, তাই precisions = tps / (threshold_ends + 1) এবং recalls = tps / total_pos।\n\n৪. Step-Function Integration: recalls-এর শুরুতে 0.0 জুড়ে np.diff করলে প্রতিটি ধাপের recall increment (R_k - R_{k-1}) পাওয়া যায়। তাকে precisions দিয়ে গুণ করে যোগ করলেই exact Average Precision মেলে।",
+      "complexity": {
+        "time": "O(n log n) — descending sort dominate করে; cumsum ও diff O(n)",
+        "space": "O(n) — sorted arrays ও cumulative counts-এর জন্য"
+      },
+      "edgeCases": [
+        "একাধিক sample-এর score সমান (ties) হলে collapse না করলে রেজাল্ট ইনপুট অর্ডারের ওপর নির্ভর করে ভুল হয়ে যায়।",
+        "ব্যাচে একটিও positive label না থাকলে (total_pos == 0) 0 দিয়ে ভাগ এড়িয়ে 0.0 রিটার্ন করতে হবে।",
+        "Trapezoidal rule ব্যবহার করলে sparse threshold-এ PR-AUC অতিমূল্যায়িত হয়; তাই step-function (R_k - R_{k-1}) * P_k ব্যবহার করা জরুরি।",
+        "প্রথম threshold-এ R_0 = 0.0 যোগ না করলে প্রথম positive ব্লকের অবদান পুরোপুরি বাদ পড়ে যাবে।"
+      ]
+    },
+    {
+      "id": "dm_binary_logloss",
+      "number": 21,
+      "title": "Clipped Binary Cross-Entropy & Multi-Class Log-Loss",
+      "category": "stats_metrics",
+      "categoryLabel": "Stats & ML Metrics",
+      "difficulty": "Easy",
+      "chapterRef": "chapter_03",
+      "tags": [
+        "Log-Loss",
+        "Cross-Entropy",
+        "Numerical Stability",
+        "Calibration"
+      ],
+      "summary": "Probability clipping ব্যবহার করে NaN ও inf মুক্ত Binary Cross-Entropy (Log-Loss) ইমপ্লিমেন্ট করুন এবং Multi-Class Log-Loss-এর সাথে সমন্বয় করুন।",
+      "problemStatement": "Logistic Regression, GBDT কিংবা Neural Network—সব probabilistic classifier-এর মূল loss function হলো Cross-Entropy বা Log-Loss। Accuracy কেবল ভুল না সঠিক দেখে, কিন্তু Log-Loss আত্মবিশ্বাসী ভুল (confident wrong prediction) করলে তীব্র শাস্তি দেয় এবং মডেলকে calibrated probability শিখতে বাধ্য করে।\n\nনিচের ProbabilisticLossSuite কোডবেসে রেফারেন্স হিসেবে multiclass_log_loss দেওয়া আছে। আপনাকে binary_log_loss(y_true, y_prob, eps=1e-15) ফাংশনটি ইমপ্লিমেন্ট করতে হবে:\n১. y_prob-কে [eps, 1.0 - eps] সীমায় clip করুন যাতে log(0) থেকে -inf বা 0.0 * (-inf) = NaN তৈরি না হয়।\n২. প্রতিটি sample-এর জন্য -[y_i * ln(p_i) + (1 - y_i) * ln(1 - p_i)] বের করে তাদের গড় (float) রিটার্ন করুন।\n৩. eps অবশ্যই (0, 0.5) সীমায় থাকতে হবে; অন্যথায় ValueError ছুড়ুন।",
+      "mathFormula": "\\mathcal{L}_{\\mathrm{BCE}} = -\\frac{1}{n}\\sum_{i=1}^{n}\\left[y_i \\ln(\\hat{p}_i) + (1 - y_i)\\ln(1 - \\hat{p}_i)\\right], \\quad \\hat{p}_i = \\mathrm{clip}(p_i, \\varepsilon, 1 - \\varepsilon)",
+      "targetFunction": "binary_log_loss(y_true, y_prob, eps)",
+      "codebaseTemplate": "import numpy as np\n\n\ndef binary_log_loss(\n    y_true: np.ndarray, y_prob: np.ndarray, eps: float = 1e-15\n) -> float:\n    \"\"\"Compute numerically stable clipped Binary Cross-Entropy (Log-Loss).\n\n    Args:\n        y_true: Binary labels (0 or 1) of shape (n,).\n        y_prob: Predicted probabilities for class 1 of shape (n,).\n        eps: Clipping floor/ceiling in (0, 0.5) to prevent log(0).\n\n    Returns:\n        Mean binary log-loss in nats (natural logarithm).\n    \"\"\"\n    # TODO: Validate inputs, clip probabilities to [eps, 1 - eps], and return mean BCE\n    raise NotImplementedError(\"Implement binary_log_loss(y_true, y_prob, eps)\")\n\n\nclass ProbabilisticLossSuite:\n    \"\"\"Evaluates binary and multi-class probabilistic predictions against baselines.\"\"\"\n\n    @staticmethod\n    def multiclass_log_loss(\n        y_true_idx: np.ndarray, probs: np.ndarray, eps: float = 1e-15\n    ) -> float:\n        y_idx = np.asarray(y_true_idx, dtype=np.int64).ravel()\n        p = np.asarray(probs, dtype=np.float64)\n        p = np.clip(p, eps, 1.0 - eps)\n        p = p / np.sum(p, axis=1, keepdims=True)\n        chosen = p[np.arange(y_idx.size), y_idx]\n        return float(-np.mean(np.log(chosen)))\n\n    def evaluate_vs_prior_baseline(\n        self, y_true: np.ndarray, y_prob: np.ndarray, eps: float = 1e-15\n    ) -> dict[str, float]:\n        y_t = np.asarray(y_true, dtype=np.float64)\n        prior_prob = np.full_like(y_t, fill_value=float(np.mean(y_t)))\n        model_loss = binary_log_loss(y_t, y_prob, eps=eps)\n        baseline_loss = binary_log_loss(y_t, prior_prob, eps=eps)\n        return {\n            \"model_log_loss\": model_loss,\n            \"prior_baseline_loss\": baseline_loss,\n            \"relative_improvement\": (\n                (baseline_loss - model_loss) / baseline_loss if baseline_loss > 0 else 0.0\n            ),\n        }\n",
+      "examples": [
+        {
+          "input": "y_true = [1, 0, 1, 0], y_prob = [0.9, 0.1, 0.8, 0.2], eps = 1e-15",
+          "output": "0.164252033486018",
+          "explanation": "-mean([ln(0.9), ln(0.9), ln(0.8), ln(0.8)]) = -0.5 * (ln(0.9) + ln(0.8)) ≈ 0.16425 nats।"
+        },
+        {
+          "input": "y_true = [1, 0], y_prob = [1.0, 0.0], eps = 1e-15",
+          "output": "9.992007221626415e-16",
+          "explanation": "Clipping করায় p হয় [1 - 1e-15, 1e-15]। সরাসরি (1 - 1) * log(0) = NaN না হয়ে loss প্রায় শূন্য (~9.99e-16) থাকে।"
+        }
+      ],
+      "thinkQuestions": [
+        {
+          "question": "যখন y_i = 1 এবং মডেল একদম সঠিক prediction p_i = 1.0 দেয়, তখন clipping ছাড়া -(y_i * log(p_i) + (1 - y_i) * log(1 - p_i)) চালালে কী ফলাফল আসে?",
+          "options": [
+            "ঠিক 0.0 আসবে",
+            "+inf আসবে",
+            "NaN আসবে, কারণ (1 - y_i) = 0.0 এবং log(1 - 1.0) = -inf, আর IEEE-754-এ 0.0 * (-inf) = NaN!",
+            "শুধু Python warning দেবে কিন্তু মান 0.0 থাকবে"
+          ],
+          "answer": 2,
+          "explanation": "অনেকেই ভাবেন 0 দিয়ে কিছু গুণ করলে 0 হয়, কিন্তু IEEE-754 floating point-এ 0.0 * (-inf) অসংজ্ঞায়িত (NaN)! তাই নিখুঁত prediction-এও clipping না করলে পুরো ব্যাচের গড় loss NaN হয়ে যায়।"
+        },
+        {
+          "question": "Float64 প্রিসিশনে eps = 1e-17 ব্যবহার করা কেন বিপজ্জনক?",
+          "options": [
+            "np.clip 1e-15-এর ছোট সংখ্যা সাপোর্ট করে না",
+            "1e-17 হলো float64-এর machine epsilon (~2.22e-16)-এর চেয়ে ছোট, ফলে 1.0 - 1e-17 ঠিক 1.0-এ round হয়ে যায় এবং log(1 - p) আবার -inf/NaN তৈরি করে!",
+            "eps ছোট হলে negative loss আসতে পারে",
+            "1e-17 বসালে gradient vanishing ঘটে"
+          ],
+          "answer": 1,
+          "explanation": "Float64-এ 1.0-এর ঠিক আগের representable সংখ্যাটি হলো 1.0 - 1.11e-16। তাই eps = 1e-17 দিলে 1.0 - eps == 1.0 হয়ে যায় এবং upper-bound clipping সম্পূর্ণ ব্যর্থ হয়! এজন্যই 1e-15 (বা 1e-12) নিরাপদ।"
+        },
+        {
+          "question": "যদি কোনো মডেল প্রতিটি sample-এর জন্যই p = 0.5 predict করে, তবে y_true যাই হোক না কেন তার Binary Log-Loss কত হবে?",
+          "options": [
+            "ln(2) ≈ 0.69315",
+            "0.5",
+            "1.0",
+            "y_true-এর positive rate-এর ওপর নির্ভর করবে"
+          ],
+          "answer": 0,
+          "explanation": "y_i = 1 হলে -ln(0.5) = ln(2), আবার y_i = 0 হলে -ln(1 - 0.5) = ln(2)। তাই label যাই হোক, constant 0.5 predictor-এর Log-Loss সর্বদা ln(2) ≈ 0.69315 nats।"
+        }
+      ],
+      "hints": [
+        "Hint 1: প্রথমে 0.0 < eps < 0.5 এবং y_true ও y_prob-এর shape মিলছে কিনা যাচাই করুন। খেয়াল রাখবেন 1.0 - eps < 1.0 হওয়া নিশ্চিত করতে np.finfo(np.float64).eps ব্যবহার করেও নিরাপদ থাকা যায়।",
+        "Hint 2: p = np.clip(y_p, eps, 1.0 - eps) বের করুন। এরপর losses = -(y_t * np.log(p) + (1.0 - y_t) * np.log(1.0 - p)) নিয়ে float(np.mean(losses)) রিটার্ন করুন।"
+      ],
+      "solutionCode": "import numpy as np\n\n\ndef binary_log_loss(\n    y_true: np.ndarray, y_prob: np.ndarray, eps: float = 1e-15\n) -> float:\n    \"\"\"Compute numerically stable clipped Binary Cross-Entropy (Log-Loss).\"\"\"\n    if not (0.0 < eps < 0.5):\n        raise ValueError(\"eps must lie strictly in (0, 0.5).\")\n    y_t = np.asarray(y_true, dtype=np.float64).ravel()\n    y_p = np.asarray(y_prob, dtype=np.float64).ravel()\n    if y_t.shape != y_p.shape or y_t.size == 0:\n        raise ValueError(\"y_true and y_prob must be non-empty arrays of identical length.\")\n    if not np.all((y_t == 0.0) | (y_t == 1.0)):\n        raise ValueError(\"y_true must contain only binary labels 0 and 1.\")\n\n    # Ensure upper clip stays strictly below 1.0 in IEEE-754 float64\n    safe_eps = max(float(eps), float(np.finfo(np.float64).eps))\n    p = np.clip(y_p, safe_eps, 1.0 - safe_eps)\n    losses = -(y_t * np.log(p) + (1.0 - y_t) * np.log(1.0 - p))\n    return float(np.mean(losses))\n\n\nclass ProbabilisticLossSuite:\n    \"\"\"Evaluates binary and multi-class probabilistic predictions against baselines.\"\"\"\n\n    @staticmethod\n    def multiclass_log_loss(\n        y_true_idx: np.ndarray, probs: np.ndarray, eps: float = 1e-15\n    ) -> float:\n        y_idx = np.asarray(y_true_idx, dtype=np.int64).ravel()\n        p = np.asarray(probs, dtype=np.float64)\n        p = np.clip(p, eps, 1.0 - eps)\n        p = p / np.sum(p, axis=1, keepdims=True)\n        chosen = p[np.arange(y_idx.size), y_idx]\n        return float(-np.mean(np.log(chosen)))\n\n    def evaluate_vs_prior_baseline(\n        self, y_true: np.ndarray, y_prob: np.ndarray, eps: float = 1e-15\n    ) -> dict[str, float]:\n        y_t = np.asarray(y_true, dtype=np.float64)\n        prior_prob = np.full_like(y_t, fill_value=float(np.mean(y_t)))\n        model_loss = binary_log_loss(y_t, y_prob, eps=eps)\n        baseline_loss = binary_log_loss(y_t, prior_prob, eps=eps)\n        return {\n            \"model_log_loss\": model_loss,\n            \"prior_baseline_loss\": baseline_loss,\n            \"relative_improvement\": (\n                (baseline_loss - model_loss) / baseline_loss if baseline_loss > 0 else 0.0\n            ),\n        }\n\n\n# --- Verification Tests ---\n# 1. Worked Example 1\nloss1 = binary_log_loss([1, 0, 1, 0], [0.9, 0.1, 0.8, 0.2])\nassert np.isclose(loss1, -0.5 * (np.log(0.9) + np.log(0.8)), atol=1e-12)\n\n# 2. Worked Example 2: Exact 0.0 / 1.0 predictions without NaN (including tiny eps=1e-18)\nloss_perfect = binary_log_loss([1, 0], [1.0, 0.0], eps=1e-15)\nassert np.isfinite(loss_perfect) and loss_perfect < 1e-14\nloss_tiny_eps = binary_log_loss([1, 0], [1.0, 0.0], eps=1e-18)\nassert np.isfinite(loss_tiny_eps) and not np.isnan(loss_tiny_eps)\n\n# 3. Uninformative 0.5 predictor always gives ln(2)\nassert np.isclose(binary_log_loss([1, 1, 1, 0], [0.5, 0.5, 0.5, 0.5]), np.log(2.0), atol=1e-12)\n\n# 4. Binary loss equals 2-class multiclass_log_loss\nsuite = ProbabilisticLossSuite()\nprobs_2c = np.array([[0.1, 0.9], [0.9, 0.1], [0.2, 0.8], [0.8, 0.2]])\nmc_loss = suite.multiclass_log_loss([1, 0, 1, 0], probs_2c)\nassert np.isclose(loss1, mc_loss, atol=1e-12)\n",
+      "walkthrough": "১. Strict Validation ও Float64 Machine-Epsilon সুরক্ষা: eps অবশ্যই (0, 0.5)-এর ভেতরে হতে হবে। তদুপরি যদি কেউ ভুলবশত eps = 1e-18 দেয়, তবে safe_eps = max(eps, np.finfo(np.float64).eps) নিশ্চিত করে যে 1.0 - safe_eps সত্যিকারের 1.0-এর চেয়ে ছোট থাকে এবং log(1 - p) কখনোই -inf হয় না।\n\n২. Vectorized Clipping ও BCE ফর্মুলা: np.clip(y_p, safe_eps, 1.0 - safe_eps) চালানোর পর -(y_t * np.log(p) + (1.0 - y_t) * np.log(1.0 - p)) পুরো array-তে একসাথে গণনা করা হয়। যেহেতু p ও (1 - p) উভয়ই strictly positive, তাই কোনো NaN বা inf তৈরি হয় না।\n\n৩. Multi-Class Consistency: ProbabilisticLossSuite-এর multiclass_log_loss-এ clipping-এর পর row renormalization করা হয়েছে, আর টেস্টে প্রমাণ করা হয়েছে 2-class ক্ষেত্রে binary_log_loss ও multiclass_log_loss হুবহু সমান।",
+      "complexity": {
+        "time": "O(n) — vectorized clip, log ও mean",
+        "space": "O(n) — clipped probabilities ও per-sample loss array-এর জন্য"
+      },
+      "edgeCases": [
+        "p = 1.0 (যখন y = 1) বা p = 0.0 (যখন y = 0) হলে clipping ছাড়া 0.0 * (-inf) = NaN তৈরি হয়।",
+        "eps < 2.22e-16 (float64 machine epsilon) হলে 1.0 - eps রাউন্ড হয়ে 1.0 হয়ে যায়; তাই floor guard জরুরি।",
+        "একটি মাত্র confident wrong prediction (যেমন y = 1, p = 0.0) পুরো ব্যাচের Log-Loss-কে ~34.5 / n পরিমাণ বাড়িয়ে দেয়।",
+        "Training-এর সময় raw logit থেকে সরাসরি BCE করতে হলে probability-তে convert না করে stable BCE-with-logits সূত্র (softplus) ব্যবহার করা উত্তম।"
+      ]
+    },
+    {
+      "id": "dm_ece_calibration",
+      "number": 22,
+      "title": "Expected Calibration Error (ECE) & Reliability Bins",
+      "category": "stats_metrics",
+      "categoryLabel": "Stats & ML Metrics",
+      "difficulty": "Medium",
+      "chapterRef": "chapter_05",
+      "tags": [
+        "Calibration",
+        "ECE",
+        "Reliability Diagram",
+        "Probabilities"
+      ],
+      "summary": "সমান প্রস্থের Reliability Bin তৈরি করে boundary-safe Expected Calibration Error (ECE) এবং প্রতিটি bin-এর calibration statistics নির্ণয় করুন।",
+      "problemStatement": "মডার্ন Deep Neural Network-গুলোর ROC-AUC খুব ভালো হলেও তারা প্রায়ই overconfident হয়—যেমন 0.90 probability বললেও বাস্তবে মাত্র 65% ক্ষেত্রে সঠিক হয়। Ad bidding, medical risk scoring বা credit underwriting-এ predicted probability-র প্রকৃত নির্ভুলতা মাপার প্রধান metric হলো Expected Calibration Error (ECE)।\n\nনিচের CalibrationMonitor কোডবেসে আপনাকে expected_calibration_error(y_true, y_prob, n_bins=10) ইমপ্লিমেন্ট করতে হবে:\n১. [0.0, 1.0] পরিসরকে n_bins-টি সমান প্রস্থের bin-এ ভাগ করুন (edges = np.linspace(0.0, 1.0, n_bins + 1))।\n২. Boundary নিয়ম: প্রথম bin হবে বাম-ডান উভয় দিকেই closed [e_0, e_1] যাতে p == 0.0 বাদ না পড়ে; এবং বাকি প্রতিটি bin হবে (e_m, e_{m+1}] যাতে p == 1.0 শেষ bin-এ পড়ে এবং কোনো sample দুবার গোনা না হয়।\n৩. প্রতিটি non-empty bin B_m-এর জন্য acc(B_m) = mean(y_true[B_m]), conf(B_m) = mean(y_prob[B_m]) এবং gap = |acc - conf| বের করুন। মোট ECE = sum_m (|B_m| / n) * |acc(B_m) - conf(B_m)|।\n৪. রিটার্ন করুন (ece, bins_info), যেখানে bins_info প্রতিটি bin-এর dict ({'lower', 'upper', 'count', 'avg_confidence', 'accuracy', 'gap'}) তালিকা।",
+      "mathFormula": "\\mathrm{ECE} = \\sum_{m=1}^{M} \\frac{|B_m|}{n}\\left|\\mathrm{acc}(B_m) - \\mathrm{conf}(B_m)\\right|",
+      "targetFunction": "expected_calibration_error(y_true, y_prob, n_bins)",
+      "codebaseTemplate": "import numpy as np\n\n\ndef expected_calibration_error(\n    y_true: np.ndarray, y_prob: np.ndarray, n_bins: int = 10\n) -> tuple[float, list[dict[str, float | int]]]:\n    \"\"\"Compute Expected Calibration Error (ECE) and per-bin reliability stats.\n\n    Bin intervals:\n        m = 0: [edges[0], edges[1]]\n        m > 0: (edges[m], edges[m + 1]]\n\n    Returns:\n        (ece, bins_info) where bins_info has one dict per bin with keys:\n        lower, upper, count, avg_confidence, accuracy, gap.\n    \"\"\"\n    # TODO: Partition [0, 1] into n_bins intervals, compute bin accuracy/confidence/gap, and return (ece, bins_info)\n    raise NotImplementedError(\"Implement expected_calibration_error(y_true, y_prob, n_bins)\")\n\n\nclass CalibrationMonitor:\n    \"\"\"Monitors probability calibration quality (ECE & MCE) in production.\"\"\"\n\n    def __init__(self, n_bins: int = 10, alert_threshold: float = 0.05) -> None:\n        self.n_bins = n_bins\n        self.alert_threshold = alert_threshold\n\n    def evaluate(self, y_true: np.ndarray, y_prob: np.ndarray) -> dict:\n        ece, bins_info = expected_calibration_error(y_true, y_prob, n_bins=self.n_bins)\n        non_empty_gaps = [b[\"gap\"] for b in bins_info if b[\"count\"] > 0]\n        mce = float(max(non_empty_gaps)) if non_empty_gaps else 0.0\n        return {\n            \"ece\": ece,\n            \"mce\": mce,\n            \"needs_recalibration\": ece > self.alert_threshold,\n            \"bins\": bins_info,\n        }\n",
+      "examples": [
+        {
+          "input": "y_true = [0, 0, 1, 1], y_prob = [0.2, 0.2, 0.8, 0.8], n_bins = 5",
+          "output": "ece = 0.2 (Bin [0.0, 0.2]: acc=0.0, conf=0.2, count=2; Bin (0.6, 0.8]: acc=1.0, conf=0.8, count=2)",
+          "explanation": "দুটি non-empty bin-এই gap = 0.2 এবং প্রতিটিতে 2/4 = 0.5 ওজন। তাই ECE = 0.5*0.2 + 0.5*0.2 = 0.2।"
+        },
+        {
+          "input": "y_true = [0, 1, 1, 1], y_prob = [0.0, 0.5, 1.0, 1.0], n_bins = 2",
+          "output": "ece = 0.125 (Bin [0.0, 0.5]: count=2, conf=0.25, acc=0.5; Bin (0.5, 1.0]: count=2, conf=1.0, acc=1.0)",
+          "explanation": "প্রথম bin [0.0, 0.5]-এ 0.0 ও 0.5 উভয়ই অন্তর্ভুক্ত (gap = 0.25) এবং দ্বিতীয় bin (0.5, 1.0]-এ দুটি 1.0 পড়েছে (gap = 0.0)। ECE = 0.5*0.25 + 0.5*0.0 = 0.125।"
+        }
+      ],
+      "thinkQuestions": [
+        {
+          "question": "সব bin-কেই (lower, upper] (বামে খোলা, ডানে বন্ধ) করলে কোন boundary ইনপুটটি নিঃশব্দে হারিয়ে যাবে?",
+          "options": [
+            "p = 1.0 হারিয়ে যাবে",
+            "কোনো sample-ই হারাবে না",
+            "p = 0.5 দুবার গণনা হবে",
+            "p = 0.0 কোনো bin-এই পড়বে না, ফলে sum(|B_m|) < n হয়ে ECE ভুল হবে"
+          ],
+          "answer": 3,
+          "explanation": "(0.0, 0.1] ইন্টারভালে p == 0.0 অন্তর্ভুক্ত হয় না! তাই প্রথম bin-কে [0.0, e_1] (both-closed) এবং পরের সব bin-কে (e_m, e_{m+1}] রাখলে [0, 1]-এর প্রতিটি বিন্দু ঠিক একবারই গোনা হয়।"
+        },
+        {
+          "question": "একটি মডেলের ROC-AUC = 1.0 (নিখুঁত ranking), তবুও তার ECE = 0.40 হতে পারে কি?",
+          "options": [
+            "না, ROC-AUC = 1.0 হলে ECE সবসময় 0.0 হয়",
+            "কেবল imbalanced dataset-এ হতে পারে",
+            "হ্যাঁ! যেমন সব negative-কে 0.49 এবং সব positive-কে 0.51 দিলে ranking নিখুঁত (AUC=1.0), কিন্তু প্রতিটি bin-এ |acc - conf| ≈ 0.49 হয়ে ECE প্রায় 0.49 হবে!",
+            "শুধু n_bins = 1 হলেই হতে পারে"
+          ],
+          "answer": 2,
+          "explanation": "ROC-AUC কেবল order দেখে, probability-র actual magnitude দেখে না। বিপরীতে ECE সরাসরি দেখে মডেল যা বলছে (confidence) আর বাস্তবে যা ঘটছে (accuracy) তা মিলছে কি না। এমন মডেলকে Temperature Scaling বা Platt Scaling দিয়ে calibrate করা যায়।"
+        },
+        {
+          "question": "ECE সূত্রে প্রতিটি bin-এর gap-কে |B_m| / n দিয়ে ওজন (weight) দেওয়ার বদলে সব non-empty bin-এর সাধারণ গড় নিলে কী সমস্যা হয়?",
+          "options": [
+            "ECE-এর মান 1.0-এর বড় হয়ে যেত",
+            "মাত্র ১-২টি sample থাকা প্রান্তিক (noisy) bin আর ১০,০০০ sample থাকা মূল bin সমান গুরুত্ব পেয়ে যেত, ফলে ECE অত্যন্ত অস্থিতিশীল হয়ে পড়ত",
+            "Empty bin-গুলো 0 দিয়ে ভাগ তৈরি করত",
+            "কোনো পার্থক্য হতো না"
+          ],
+          "answer": 1,
+          "explanation": "Sample-count weighting (|B_m| / n) নিশ্চিত করে যে যেই probability অঞ্চলে ট্রাফিক বেশি, সেই অঞ্চলের calibration error-ই মোট ECE-তে বেশি প্রভাব ফেলে—যার ফলে ১-২টি outlier sample পুরো metric-কে বিকৃত করতে পারে না।"
+        }
+      ],
+      "hints": [
+        "Hint 1: edges = np.linspace(0.0, 1.0, n_bins + 1) তৈরি করুন। লুপের ভেতরে m == 0 হলে mask = (y_p >= lo) & (y_p <= hi), আর m > 0 হলে mask = (y_p > lo) & (y_p <= hi) ব্যবহার করুন।",
+        "Hint 2: count = int(np.sum(mask)) শূন্য হলে avg_conf = acc = gap = 0.0 রেখে bins_info-তে append করুন। নতুবা mean বের করে gap = abs(acc - avg_conf) নির্ণয় করুন এবং ece += (count / n) * gap যোগ করুন।"
+      ],
+      "solutionCode": "import numpy as np\n\n\ndef expected_calibration_error(\n    y_true: np.ndarray, y_prob: np.ndarray, n_bins: int = 10\n) -> tuple[float, list[dict[str, float | int]]]:\n    \"\"\"Compute Expected Calibration Error (ECE) and per-bin reliability stats.\"\"\"\n    if n_bins < 1:\n        raise ValueError(\"n_bins must be at least 1.\")\n    y_t = np.asarray(y_true, dtype=np.float64).ravel()\n    y_p = np.asarray(y_prob, dtype=np.float64).ravel()\n    if y_t.shape != y_p.shape or y_t.size == 0:\n        raise ValueError(\"y_true and y_prob must be non-empty arrays of identical length.\")\n    if np.any((y_p < 0.0) | (y_p > 1.0)):\n        raise ValueError(\"y_prob values must lie within [0.0, 1.0].\")\n\n    edges = np.linspace(0.0, 1.0, n_bins + 1)\n    n = y_t.size\n    ece = 0.0\n    bins_info: list[dict[str, float | int]] = []\n\n    for m in range(n_bins):\n        lo = float(edges[m])\n        hi = float(edges[m + 1])\n        if m == 0:\n            mask = (y_p >= lo) & (y_p <= hi)\n        else:\n            mask = (y_p > lo) & (y_p <= hi)\n\n        count = int(np.sum(mask))\n        if count == 0:\n            avg_conf = 0.0\n            acc = 0.0\n            gap = 0.0\n        else:\n            avg_conf = float(np.mean(y_p[mask]))\n            acc = float(np.mean(y_t[mask]))\n            gap = abs(acc - avg_conf)\n            ece += (count / n) * gap\n\n        bins_info.append(\n            {\n                \"lower\": lo,\n                \"upper\": hi,\n                \"count\": count,\n                \"avg_confidence\": avg_conf,\n                \"accuracy\": acc,\n                \"gap\": gap,\n            }\n        )\n\n    return float(ece), bins_info\n\n\nclass CalibrationMonitor:\n    \"\"\"Monitors probability calibration quality (ECE & MCE) in production.\"\"\"\n\n    def __init__(self, n_bins: int = 10, alert_threshold: float = 0.05) -> None:\n        self.n_bins = n_bins\n        self.alert_threshold = alert_threshold\n\n    def evaluate(self, y_true: np.ndarray, y_prob: np.ndarray) -> dict:\n        ece, bins_info = expected_calibration_error(y_true, y_prob, n_bins=self.n_bins)\n        non_empty_gaps = [b[\"gap\"] for b in bins_info if b[\"count\"] > 0]\n        mce = float(max(non_empty_gaps)) if non_empty_gaps else 0.0\n        return {\n            \"ece\": ece,\n            \"mce\": mce,\n            \"needs_recalibration\": ece > self.alert_threshold,\n            \"bins\": bins_info,\n        }\n\n\n# --- Verification Tests ---\n# 1. Worked Example 1\nece1, bins1 = expected_calibration_error([0, 0, 1, 1], [0.2, 0.2, 0.8, 0.8], n_bins=5)\nassert np.isclose(ece1, 0.2, atol=1e-12)\nassert sum(b[\"count\"] for b in bins1) == 4\n\n# 2. Worked Example 2: Exact boundary coverage for 0.0, 0.5, and 1.0\nece2, bins2 = expected_calibration_error([0, 1, 1, 1], [0.0, 0.5, 1.0, 1.0], n_bins=2)\nassert np.isclose(ece2, 0.125, atol=1e-12)\nassert bins2[0][\"count\"] == 2 and bins2[1][\"count\"] == 2\n\n# 3. Perfectly calibrated model -> ECE == 0.0\ny_cal = np.array([1, 1, 1, 1, 0, 0, 0, 0, 0, 0])  # 40% positive\np_cal = np.full(10, 0.4)\nece_perfect, _ = expected_calibration_error(y_cal, p_cal, n_bins=10)\nassert np.isclose(ece_perfect, 0.0, atol=1e-12)\n\n# 4. High AUC but severely miscalibrated + CalibrationMonitor MCE check\nmon = CalibrationMonitor(n_bins=10, alert_threshold=0.05)\nrep = mon.evaluate([0, 0, 1, 1], [0.49, 0.49, 0.51, 0.51])\nassert np.isclose(rep[\"ece\"], 0.49, atol=1e-12)\nassert np.isclose(rep[\"mce\"], 0.49, atol=1e-12)\nassert rep[\"needs_recalibration\"] is True\n",
+      "walkthrough": "১. Probability Range ও Bin Edges: প্রথমে y_prob মানগুলো [0, 1]-এর ভেতরে এবং n_bins >= 1 নিশ্চিত করে np.linspace(0.0, 1.0, n_bins + 1) দিয়ে bin boundary তৈরি করা হয়েছে।\n\n২. Partition Invariant (No Drop, No Double-Count): প্রথম bin-এ [lo, hi] এবং পরের সব bin-এ (lo, hi] নেওয়ায় 0.0, 1.0 এবং অন্তর্বর্তী boundary মানগুলো ঠিক একটি bin-েই পড়ে। টেস্টে sum(b['count']) == n যাচাই করে এই ইনভ্যারিয়েন্ট নিশ্চিত করা হয়েছে।\n\n৩. Empty Bin Handling ও Weighted Gap: যে bin-এ কোনো prediction নেই সেখানে np.mean চালালে NaN আসত; তাই count == 0 হলে শূন্য রেখে skip করা হয়েছে। Non-empty bin-এ |acc - avg_conf| কে (count / n) দিয়ে গুণ করে মোট ECE-তে যোগ করা হয়েছে।\n\n৪. Production Context (MCE): CalibrationMonitor দেখায় কীভাবে একই bins_info থেকে Maximum Calibration Error (MCE = max gap) বের করে worst-case probability bucket মনিটর করা যায়।",
+      "complexity": {
+        "time": "O(n * M) — যেখানে M = n_bins (সাধারণত 10-20; বড় M-এর জন্য np.searchsorted দিয়ে O(n log M) করা যায়)",
+        "space": "O(n + M) — boolean bin mask এবং M-টি bin summary dict-এর জন্য"
+      },
+      "edgeCases": [
+        "p = 0.0 বা p = 1.0 প্রান্তিক probability-গুলো ভুল inequality-এর কারণে বাদ পড়ে যেতে পারে বা দুবার গোনা হতে পারে।",
+        "Empty bin-এ np.mean() কল করলে NaN এবং RuntimeWarning তৈরি হয়; তাই count == 0 চেক করা বাধ্যতামূলক।",
+        "খুব কম sample-এ অনেক বেশি n_bins নিলে প্রতি bin-এ ১টি করে sample পড়ে ECE বায়াসড (উচ্চ) হয়ে যায়; তাই বাস্তবে equal-mass (quantile) binning-ও বিকল্প হিসেবে ব্যবহৃত হয়।",
+        "ইতিবাচক ও নেতিবাচক calibration error এক bin-এর ভেতরে পরস্পরকে বাতিল করতে পারে—তাই bin সংখ্যা ও reliability diagram একসাথে দেখা জরুরি।"
+      ]
+    },
+    {
+      "id": "dm_kl_js_divergence",
+      "number": 23,
+      "title": "Discrete KL Divergence & Bounded Jensen-Shannon Divergence",
+      "category": "stats_metrics",
+      "categoryLabel": "Stats & ML Metrics",
+      "difficulty": "Medium",
+      "chapterRef": "chapter_08",
+      "tags": [
+        "Information Theory",
+        "KL Divergence",
+        "JS Divergence",
+        "Drift Detection"
+      ],
+      "summary": "Data drift ও distillation মনিটরিংয়ের জন্য smoothing-সহ Discrete KL Divergence এবং symmetric, bounded Jensen-Shannon Divergence নির্ণয় করুন।",
+      "problemStatement": "প্রোডাকশন ML সিস্টেমে feature distribution বা prediction distribution সময়ের সাথে বদলে যাচ্ছে কি না (Data Drift) তা শনাক্ত করতে এবং Knowledge Distillation বা RLHF-এ policy divergence মাপতে KL ও Jensen-Shannon Divergence ব্যাপকভাবে ব্যবহৃত হয়।\n\nনিচের DistributionDriftDetector কোডবেসে আপনাকে kl_and_js_divergence(p, q, eps=1e-12) ইমপ্লিমেন্ট করতে হবে:\n১. p এবং q দুটি সমান দৈর্ঘ্যের non-negative 1D array (প্রত্যেকের যোগফল > 0)। প্রথমে প্রত্যেককে তার যোগফল দিয়ে ভাগ করে valid probability distribution-এ রূপান্তর করুন।\n২. কোনো bin-এ q_i = 0 থাকলে log(p_i / 0) = +inf এড়াতে উভয় distribution-এ eps যোগ করে পুনরায় normalize করুন: p_s = (p + eps) / sum(p + eps), q_s = (q + eps) / sum(q + eps)।\n৩. Natural logarithm (nats) ব্যবহার করে KL(P || Q) = sum(p_s * ln(p_s / q_s)) এবং mixture M = 0.5 * (p_s + q_s) নিয়ে JS(P || Q) = 0.5 * KL(P || M) + 0.5 * KL(Q || M) নির্ণয় করুন।\n৪. Floating-point rounding-এ -1e-17 এড়াতে উভয় মানকে >= 0.0 clamp করে (kl, js) tuple রিটার্ন করুন।",
+      "mathFormula": "D_{\\mathrm{KL}}(P \\| Q) = \\sum_{i} P_i \\ln\\frac{P_i}{Q_i}, \\quad D_{\\mathrm{JS}}(P \\| Q) = \\frac{1}{2}D_{\\mathrm{KL}}(P \\| M) + \\frac{1}{2}D_{\\mathrm{KL}}(Q \\| M), \\quad M = \\frac{P + Q}{2}",
+      "targetFunction": "kl_and_js_divergence(p, q, eps)",
+      "codebaseTemplate": "import numpy as np\n\n\ndef kl_and_js_divergence(\n    p: np.ndarray, q: np.ndarray, eps: float = 1e-12\n) -> tuple[float, float]:\n    \"\"\"Compute smoothed discrete KL(P || Q) and bounded JS(P || Q) in nats.\n\n    Args:\n        p: Non-negative reference distribution or histogram counts of shape (k,).\n        q: Non-negative target distribution or histogram counts of shape (k,).\n        eps: Positive additive smoothing constant applied after normalization.\n\n    Returns:\n        (kl_div, js_div): Both non-negative floats in nats (0 <= js_div <= ln(2)).\n    \"\"\"\n    # TODO: Validate/normalize p and q, apply eps smoothing, and return (kl, js) in nats\n    raise NotImplementedError(\"Implement kl_and_js_divergence(p, q, eps)\")\n\n\nclass DistributionDriftDetector:\n    \"\"\"Monitors production feature/prediction drift using bounded JS divergence.\"\"\"\n\n    def __init__(self, js_alert_threshold: float = 0.10, eps: float = 1e-12) -> None:\n        self.js_alert_threshold = js_alert_threshold\n        self.eps = eps\n\n    @staticmethod\n    def counts_to_probs(counts: np.ndarray) -> np.ndarray:\n        c = np.asarray(counts, dtype=np.float64)\n        total = float(np.sum(c))\n        if total <= 0.0:\n            raise ValueError(\"Histogram counts must sum to a positive number.\")\n        return c / total\n\n    def check_drift(self, ref_counts: np.ndarray, cur_counts: np.ndarray) -> dict[str, float | bool]:\n        p = self.counts_to_probs(ref_counts)\n        q = self.counts_to_probs(cur_counts)\n        kl, js = kl_and_js_divergence(p, q, eps=self.eps)\n        return {\n            \"kl_divergence\": kl,\n            \"js_divergence\": js,\n            \"js_distance\": float(np.sqrt(js)),\n            \"drift_detected\": js > self.js_alert_threshold,\n        }\n",
+      "examples": [
+        {
+          "input": "p = [0.5, 0.5], q = [0.25, 0.75], eps = 1e-12",
+          "output": "kl = 0.1438410362, js = 0.0338220756",
+          "explanation": "KL(P || Q) = 0.5 * ln(0.5/0.25) + 0.5 * ln(0.5/0.75) = 0.5 * ln(4/3) ≈ 0.14384 nats। Mixture M = [0.375, 0.625] থেকে JS ≈ 0.03382 nats।"
+        },
+        {
+          "input": "p = [1.0, 0.0], q = [0.0, 1.0], eps = 1e-12",
+          "output": "kl ≈ 27.631021, js ≈ 0.693147 (ln 2)",
+          "explanation": "দুটি সম্পূর্ণ বিচ্ছিন্ন (disjoint) distribution-এ KL অনেক বড় (~27.63, smoothing ছাড়া +inf হতো), কিন্তু JS divergence সর্বদা ln(2) ≈ 0.693147-এ সীমাবদ্ধ থাকে।"
+        }
+      ],
+      "thinkQuestions": [
+        {
+          "question": "KL Divergence এবং Jensen-Shannon Divergence-এর মধ্যে কোন গাণিতিক পার্থক্যটি Data Drift মনিটরিংয়ে JS-কে বেশি জনপ্রিয় করেছে?",
+          "options": [
+            "KL asymmetric (KL(P||Q) != KL(Q||P)) ও unbounded (+inf হতে পারে), অথচ JS symmetric এবং natural log-এ সর্বদা [0, ln(2)] সীমায় আবদ্ধ",
+            "KL সর্বদা ঋণাত্মক হতে পারে, কিন্তু JS ধনাত্মক",
+            "KL কেবল continuous distribution-এ কাজ করে",
+            "JS বের করতে কোনো logarithm লাগে না"
+          ],
+          "answer": 0,
+          "explanation": "Production drift alert-এর জন্য একটি fixed threshold (যেমন JS > 0.10) সেট করতে হয়। KL +inf পর্যন্ত যেতে পারে এবং P ও Q অদলবদল করলে বদলে যায়; বিপরীতে JS symmetric, bounded [0, ln(2)], এবং sqrt(JS) একটি true mathematical metric!"
+        },
+        {
+          "question": "যখন p = [1.0, 0.0] এবং q = [0.0, 1.0], তখন smoothing ছাড়াও JS(P || Q) কেন অসীম (+inf) হয় না?",
+          "options": [
+            "কারণ ln(0) = 0 ধরা হয়",
+            "কারণ JS-এ শূন্য উপাদানগুলো বাদ দিয়ে ভাগ করা হয়",
+            "কারণ P এবং Q-এর যোগফল 2 হয়",
+            "কারণ mixture M = 0.5 * (P + Q) = [0.5, 0.5], ফলে যেখানে P_i > 0 বা Q_i > 0 সেখানে M_i সর্বদাই strictly positive (> 0)"
+          ],
+          "answer": 3,
+          "explanation": "M = (P + Q)/2 হওয়ায় P_i > 0 হলেই M_i >= P_i / 2 > 0 নিশ্চিত! ফলে P_i / M_i <= 2 এবং ln(P_i / M_i) <= ln(2)। এই কারণেই দুটি distribution সম্পূর্ণ disjoint হলেও JS কখনোই ln(2)-এর বেশি হতে পারে না।"
+        },
+        {
+          "question": "p ও q-কে normalize না করে raw histogram counts (যেমন p = [50, 50], q = [1000, 1000])-এ সরাসরি eps = 1e-12 যোগ করে KL বের করলে কী ভুল হতো?",
+          "options": [
+            "কোনো ভুল হতো না, কারণ ratio scale-invariant",
+            "JS divergence 0.5 হয়ে যেত",
+            "sum(p) != sum(q) থাকায় KL(P||Q) শূন্যের বদলে বিশাল নেগেটিভ সংখ্যা হয়ে যেত!",
+            "শুধু rounding error 1e-12 বাড়ত"
+          ],
+          "answer": 2,
+          "explanation": "Gibbs' inequality (KL >= 0) কেবল valid probability distribution (sum = 1)-এর জন্য সত্য! Raw counts [50, 50] আর [1000, 1000]-এ সরাসরি sum(p * ln(p/q)) করলে 100 * ln(0.05) ≈ -299.57 আসত, যা সম্পূর্ণ অবৈধ!"
+        }
+      ],
+      "hints": [
+        "Hint 1: প্রথমে p ও q non-negative এবং তাদের যোগফল > 0 যাচাই করে p = p / p.sum(), q = q / q.sum() করুন। তারপর eps > 0 যোগ করে পুনরায় normalize করুন।",
+        "Hint 2: m = 0.5 * (p_s + q_s) তৈরি করুন। kl = np.sum(p_s * np.log(p_s / q_s)) এবং js = 0.5 * np.sum(p_s * np.log(p_s / m)) + 0.5 * np.sum(q_s * np.log(q_s / m)) হিসাব করে max(0.0, float(...)) রিটার্ন করুন।"
+      ],
+      "solutionCode": "import numpy as np\n\n\ndef kl_and_js_divergence(\n    p: np.ndarray, q: np.ndarray, eps: float = 1e-12\n) -> tuple[float, float]:\n    \"\"\"Compute smoothed discrete KL(P || Q) and bounded JS(P || Q) in nats.\"\"\"\n    if eps <= 0.0:\n        raise ValueError(\"eps must be strictly positive for safe log smoothing.\")\n    p_arr = np.asarray(p, dtype=np.float64).ravel()\n    q_arr = np.asarray(q, dtype=np.float64).ravel()\n    if p_arr.shape != q_arr.shape or p_arr.size == 0:\n        raise ValueError(\"p and q must be non-empty 1D arrays of identical length.\")\n    if np.any(p_arr < 0.0) or np.any(q_arr < 0.0):\n        raise ValueError(\"Distributions must be non-negative.\")\n\n    sum_p, sum_q = float(np.sum(p_arr)), float(np.sum(q_arr))\n    if sum_p <= 0.0 or sum_q <= 0.0:\n        raise ValueError(\"Both p and q must have a positive sum.\")\n\n    p_norm = p_arr / sum_p\n    q_norm = q_arr / sum_q\n\n    p_s = (p_norm + eps) / np.sum(p_norm + eps)\n    q_s = (q_norm + eps) / np.sum(q_norm + eps)\n    m = 0.5 * (p_s + q_s)\n\n    kl = float(np.sum(p_s * np.log(p_s / q_s)))\n    js = 0.5 * float(np.sum(p_s * np.log(p_s / m))) + 0.5 * float(np.sum(q_s * np.log(q_s / m)))\n    return max(0.0, kl), max(0.0, js)\n\n\nclass DistributionDriftDetector:\n    \"\"\"Monitors production feature/prediction drift using bounded JS divergence.\"\"\"\n\n    def __init__(self, js_alert_threshold: float = 0.10, eps: float = 1e-12) -> None:\n        self.js_alert_threshold = js_alert_threshold\n        self.eps = eps\n\n    @staticmethod\n    def counts_to_probs(counts: np.ndarray) -> np.ndarray:\n        c = np.asarray(counts, dtype=np.float64)\n        total = float(np.sum(c))\n        if total <= 0.0:\n            raise ValueError(\"Histogram counts must sum to a positive number.\")\n        return c / total\n\n    def check_drift(self, ref_counts: np.ndarray, cur_counts: np.ndarray) -> dict[str, float | bool]:\n        p = self.counts_to_probs(ref_counts)\n        q = self.counts_to_probs(cur_counts)\n        kl, js = kl_and_js_divergence(p, q, eps=self.eps)\n        return {\n            \"kl_divergence\": kl,\n            \"js_divergence\": js,\n            \"js_distance\": float(np.sqrt(js)),\n            \"drift_detected\": js > self.js_alert_threshold,\n        }\n\n\n# --- Verification Tests ---\n# 1. Worked Example 1: Exact analytical KL & JS\nkl1, js1 = kl_and_js_divergence([0.5, 0.5], [0.25, 0.75])\nassert np.isclose(kl1, 0.5 * np.log(4.0 / 3.0), atol=1e-9)\nassert 0.0 < js1 < np.log(2.0)\n\n# 2. Worked Example 2: Disjoint distributions -> JS approaches ln(2), finite KL\nkl_disj, js_disj = kl_and_js_divergence([1.0, 0.0], [0.0, 1.0], eps=1e-12)\nassert np.isfinite(kl_disj) and kl_disj > 20.0\nassert np.isclose(js_disj, np.log(2.0), atol=1e-9)\n\n# 3. Symmetry of JS vs asymmetry of KL, plus identical-distribution zero property\nkl_pq, js_pq = kl_and_js_divergence([0.1, 0.2, 0.7], [0.5, 0.3, 0.2])\nkl_qp, js_qp = kl_and_js_divergence([0.5, 0.3, 0.2], [0.1, 0.2, 0.7])\nassert np.isclose(js_pq, js_qp, atol=1e-12)\nassert not np.isclose(kl_pq, kl_qp)\nassert kl_and_js_divergence([10, 20, 30], [100, 200, 300]) == (0.0, 0.0)\n\n# 4. DistributionDriftDetector integration\ndetector = DistributionDriftDetector(js_alert_threshold=0.10)\nres = detector.check_drift([500, 400, 100], [50, 150, 800])\nassert res[\"drift_detected\"] is True and res[\"js_distance\"] > 0.3\n",
+      "walkthrough": "১. Normalization-First ডিজাইন: ইনপুটে raw histogram count আসুক বা unnormalized weight আসুক—প্রথমে sum দিয়ে ভাগ করে valid probability simplex-এ আনা হয়েছে। এরপর eps যোগ করে পুনরায় normalize করায় দুটি distribution-এর scale পার্থক্য কোনো বিকৃতি ঘটায় না।\n\n২. KL ও Mixture M হিসাব: যেহেতু p_s ও q_s-এর প্রতিটি উপাদান strictly positive, তাই ratio p_s / q_s ও logarithm সবসময়ই finite। Mixture m = 0.5 * (p_s + q_s) থেকে দুটি অর্ধ-KL যোগ করে exact JS divergence বের করা হয়েছে।\n\n৩. Non-Negativity Clamp: তাত্ত্বিকভাবে Gibbs' inequality অনুযায়ী KL >= 0 ও JS >= 0, কিন্তু p == q হলে float rounding-এ -1e-17 আসতে পারে। max(0.0, ...) তা প্রতিরোধ করে যাতে downstream-এ np.sqrt(js) কখনো NaN না দেয়।",
+      "complexity": {
+        "time": "O(k) — যেখানে k হলো discrete category বা histogram bin সংখ্যা",
+        "space": "O(k) — normalized ও mixture distribution vector-এর জন্য"
+      },
+      "edgeCases": [
+        "কোনো bin-এ q_i = 0 অথচ p_i > 0 হলে smoothing ছাড়া KL Divergence +inf হয়ে যায়।",
+        "Unnormalized counts সরাসরি সূত্রে বসালে Gibbs' inequality ভেঙে গিয়ে negative KL আসতে পারে।",
+        "Identical distribution-এ floating-point rounding থেকে -1e-17 এলে sqrt(JS) NaN হতে পারে—তাই max(0.0, ...) জরুরি।",
+        "Log base পরিবর্তন করলে (base 2 বনাম base e) JS-এর upper bound যথাক্রমে 1.0 bit এবং ln(2) nats হয়; একক সবসময় স্পষ্ট রাখা উচিত।"
+      ]
+    },
+    {
+      "id": "dm_bayes_posterior",
+      "number": 24,
+      "title": "Sequential Bayesian Posterior Update in Log-Space",
+      "category": "stats_metrics",
+      "categoryLabel": "Stats & ML Metrics",
+      "difficulty": "Easy",
+      "chapterRef": "chapter_08",
+      "tags": [
+        "Bayesian Inference",
+        "Log-Sum-Exp",
+        "Numerical Stability",
+        "Online Learning"
+      ],
+      "summary": "হাজার হাজার observation-এর পরেও floating-point underflow এড়াতে Log-Space ও Log-Sum-Exp ব্যবহার করে sequential Bayesian posterior update করুন।",
+      "problemStatement": "Naive Bayes, Hidden Markov Model (HMM), কিংবা Online A/B / Bandit hypothesis tracking-এ শত শত বা হাজার হাজার independent observation-এর likelihood গুণ করতে হয়। কিন্তু probability space-এ মাত্র ২০০টি 0.01 গুণ করলেই মান 1e-400 হয়ে IEEE-754 float64-এ 0.0 (underflow) হয়ে যায়, এবং তারপর 0.0 / 0.0 = NaN দিয়ে পুরো সিস্টেম ভেঙে পড়ে!\n\nনিচের OnlineBayesianClassifier কোডবেসে আপনাকে bayesian_update_log_posterior(log_prior, log_likelihoods) ইমপ্লিমেন্ট করতে হবে:\n১. log_prior: shape (K,) — K-টি hypothesis-এর log prior probability (unnormalized হলেও চলবে)।\n২. log_likelihoods: shape (T, K) অথবা একটি observation হলে shape (K,) — যেখানে (t, k) হলো t-তম observation-এর log P(x_t | H_k)। T = 0 হলে কেবল log_prior-কে normalize করতে হবে।\n৩. Log-space-এ যোগফল log_unnorm = log_prior + sum_t log_likelihoods[t] বের করে Log-Sum-Exp trick (m = max(log_unnorm)) দিয়ে exact log_posterior এবং posterior = exp(log_posterior) রিটার্ন করুন।",
+      "mathFormula": "\\ln P(H_k \\mid x_{1:T}) = u_k - \\left(m + \\ln\\sum_{j=1}^{K} \\exp(u_j - m)\\right), \\quad u_k = \\ln P(H_k) + \\sum_{t=1}^{T} \\ln P(x_t \\mid H_k), \\quad m = \\max_j u_j",
+      "targetFunction": "bayesian_update_log_posterior(log_prior, log_likelihoods)",
+      "codebaseTemplate": "import numpy as np\n\n\ndef bayesian_update_log_posterior(\n    log_prior: np.ndarray, log_likelihoods: np.ndarray\n) -> tuple[np.ndarray, np.ndarray]:\n    \"\"\"Compute exact normalized log-posterior and posterior via Log-Sum-Exp.\n\n    Args:\n        log_prior: 1D array of shape (K,) containing log prior probabilities.\n        log_likelihoods: 2D array of shape (T, K) or 1D array of shape (K,)\n            containing log P(x_t | H_k) for each observation t and hypothesis k.\n\n    Returns:\n        (log_posterior, posterior): Both float64 arrays of shape (K,) with\n        sum(posterior) == 1.0.\n    \"\"\"\n    # TODO: Accumulate log_prior + sum(log_likelihoods, axis=0) and normalize via Log-Sum-Exp\n    raise NotImplementedError(\"Implement bayesian_update_log_posterior(log_prior, log_likelihoods)\")\n\n\nclass OnlineBayesianClassifier:\n    \"\"\"Tracks hypothesis probabilities over streaming observations in log-space.\"\"\"\n\n    def __init__(self, hypothesis_names: list[str], prior_probs: np.ndarray) -> None:\n        self.hypothesis_names = hypothesis_names\n        probs = np.asarray(prior_probs, dtype=np.float64)\n        self.log_belief = np.log(probs / np.sum(probs))\n\n    def update(self, log_likelihoods: np.ndarray) -> np.ndarray:\n        self.log_belief, posterior = bayesian_update_log_posterior(\n            self.log_belief, log_likelihoods\n        )\n        return posterior\n\n    def map_hypothesis(self) -> tuple[str, float]:\n        probs = np.exp(self.log_belief)\n        idx = int(np.argmax(probs))\n        return self.hypothesis_names[idx], float(probs[idx])\n",
+      "examples": [
+        {
+          "input": "log_prior = np.log([0.5, 0.5]), log_likelihoods = np.log([[0.8, 0.2], [0.8, 0.2]])",
+          "output": "posterior = [0.94117647, 0.05882353]",
+          "explanation": "দুটি observation-এ H_0-এর unnormalized probability 0.5 * 0.8^2 = 0.32 এবং H_1-এর 0.5 * 0.2^2 = 0.02। Normalize করলে 0.32 / 0.34 = 16/17 ≈ 0.9412 এবং 0.02 / 0.34 = 1/17 ≈ 0.0588।"
+        },
+        {
+          "input": "log_prior = [0.0, 0.0], log_likelihoods = np.tile([-100.0, -100.01], (500, 1))",
+          "output": "posterior = [0.99330715, 0.00669285]",
+          "explanation": "500 ধাপে মোট log-likelihood -50000 ও -50005; সরাসরি exp(-50000) করলে 0.0 হয়ে underflow ঘটত, কিন্তু max (-50000) বিয়োগ করায় exp([0, -5]) থেকে নিখুঁত posterior [1/(1+e^-5), e^-5/(1+e^-5)] পাওয়া গেছে!"
+        }
+      ],
+      "thinkQuestions": [
+        {
+          "question": "Log-Sum-Exp সূত্র m + ln(sum(exp(u_j - m)))-এ কেন ঠিক m = max(u) বিয়োগ করা হয় (min বা mean নয়)?",
+          "options": [
+            "কারণ min(u) বিয়োগ করলে logarithm ঋণাত্মক হয়",
+            "কারণ max(u) বিয়োগ করলে সব exponent (u_j - m) <= 0 হয় (অর্থাৎ কখনো overflow হয়ে +inf হয় না) এবং অন্তত একটি পদ exp(0) = 1.0 হয় (অর্থাৎ যোগফল কখনোই underflow হয়ে 0.0 হয় না)",
+            "কারণ max(u) সবসময় 0.0 হয়",
+            "কারণ mean বিয়োগ করলে probability-র যোগফল 1 হয় না"
+          ],
+          "answer": 1,
+          "explanation": "u_j - max(u) <= 0 হওয়ায় প্রতিটি exp(u_j - m) নিরাপদে [0, 1] রেঞ্জে থাকে। আবার সর্বোচ্চ পদটির জন্য exp(0) = 1.0, তাই যোগফল সর্বদা [1, K]-এর মধ্যে থাকে—overflow ও underflow দুটিই একই সাথে অসম্ভব হয়ে পড়ে!"
+        },
+        {
+          "question": "স্বাধীন (conditionally independent) observation x_1, ..., x_T-কে একবারে batch হিসেবে update করা আর একটি একটি করে sequential update করার মধ্যে ফলাফলের পার্থক্য কী?",
+          "options": [
+            "গাণিতিকভাবে উভয়ই শতভাগ অভিন্ন—কারণ প্রতিটি ধাপে যুক্ত হওয়া normalization constant log_Z সব hypothesis থেকে সমানভাবে বিয়োগ হয় এবং পরের ধাপে আবার বাতিল হয়ে যায়",
+            "Sequential update-এ পুরোনো observation-এর ওজন কমে যায়",
+            "Batch update কেবল uniform prior-এর জন্যই সঠিক",
+            "Sequential update-এ variance দ্বিগুণ হয়"
+          ],
+          "answer": 0,
+          "explanation": "Bayes' theorem-এর একটি চমৎকার ধর্ম হলো sequential invariance: আজকের posterior-ই আগামীকালের prior! Log-space-এ যোগফল commutative ও associative হওয়ায় যেকোনো অর্ডারে বা batch-এ update করলে ঠিক একই posterior পাওয়া যায়।"
+        },
+        {
+          "question": "যদি কোনো hypothesis H_k-এর জন্য log_prior[k] = -np.inf হয় (অর্থাৎ শূন্য prior probability), তবে Log-Sum-Exp-এ কী ঘটবে (ধরা যাক অন্তত একটি hypothesis-এর log_unnorm finite)?",
+          "options": [
+            "পুরো posterior NaN হয়ে যাবে",
+            "ওই hypothesis-টির posterior 1.0 হয়ে যাবে",
+            "ValueError আসবে",
+            "max_val finite থাকবে, ফলে -inf - max_val = -inf এবং exp(-inf) = 0.0 হয়ে ওই অসম্ভব hypothesis-টির posterior নিখুঁতভাবে 0.0 থাকবে!"
+          ],
+          "answer": 3,
+          "explanation": "যতক্ষণ অন্তত একটি hypothesis-এর joint score finite থাকে, ততক্ষণ max_val finite হয়। তখন -inf - finite = -inf এবং exp(-inf) = 0.0—কোনো NaN তৈরি হয় না! তবে সব hypothesis-ই -inf হলে (অসম্ভব evidence) তখন ValueError ছুড়তে হয়।"
+        }
+      ],
+      "hints": [
+        "Hint 1: log_likelihoods যদি 1D হয় (shape (K,)) তবে reshape(1, -1) দিয়ে 2D বানান, আর যদি shape (0, K) হয় তবে log_unnorm = log_prior.copy() নিন। নতুবা log_unnorm = log_prior + np.sum(ll, axis=0)।",
+        "Hint 2: m = np.max(log_unnorm) চেক করুন যেন np.isfinite(m) সত্য হয়। এরপর log_z = m + np.log(np.sum(np.exp(log_unnorm - m))), log_post = log_unnorm - log_z এবং post = np.exp(log_post) রিটার্ন করুন।"
+      ],
+      "solutionCode": "import numpy as np\n\n\ndef bayesian_update_log_posterior(\n    log_prior: np.ndarray, log_likelihoods: np.ndarray\n) -> tuple[np.ndarray, np.ndarray]:\n    \"\"\"Compute exact normalized log-posterior and posterior via Log-Sum-Exp.\"\"\"\n    lp = np.asarray(log_prior, dtype=np.float64).ravel()\n    if lp.size == 0:\n        raise ValueError(\"log_prior must be non-empty.\")\n\n    ll = np.asarray(log_likelihoods, dtype=np.float64)\n    if ll.ndim == 1:\n        ll = ll.reshape(1, -1)\n    if ll.ndim != 2 or ll.shape[1] != lp.size:\n        raise ValueError(\n            f\"log_likelihoods must have shape (T, {lp.size}) or ({lp.size},), got {ll.shape}.\"\n        )\n\n    log_unnorm = lp + (np.sum(ll, axis=0) if ll.shape[0] > 0 else 0.0)\n    max_log = float(np.max(log_unnorm))\n    if not np.isfinite(max_log):\n        raise ValueError(\"All hypotheses have zero (-inf log) joint probability.\")\n\n    log_z = max_log + float(np.log(np.sum(np.exp(log_unnorm - max_log))))\n    log_posterior = log_unnorm - log_z\n    posterior = np.exp(log_posterior)\n    return log_posterior, posterior\n\n\nclass OnlineBayesianClassifier:\n    \"\"\"Tracks hypothesis probabilities over streaming observations in log-space.\"\"\"\n\n    def __init__(self, hypothesis_names: list[str], prior_probs: np.ndarray) -> None:\n        self.hypothesis_names = hypothesis_names\n        probs = np.asarray(prior_probs, dtype=np.float64)\n        self.log_belief = np.log(probs / np.sum(probs))\n\n    def update(self, log_likelihoods: np.ndarray) -> np.ndarray:\n        self.log_belief, posterior = bayesian_update_log_posterior(\n            self.log_belief, log_likelihoods\n        )\n        return posterior\n\n    def map_hypothesis(self) -> tuple[str, float]:\n        probs = np.exp(self.log_belief)\n        idx = int(np.argmax(probs))\n        return self.hypothesis_names[idx], float(probs[idx])\n\n\n# --- Verification Tests ---\n# 1. Worked Example 1: Exact analytical Bayes update\nlp1 = np.log([0.5, 0.5])\nll1 = np.log([[0.8, 0.2], [0.8, 0.2]])\nlog_p1, p1 = bayesian_update_log_posterior(lp1, ll1)\nassert np.allclose(p1, [16.0 / 17.0, 1.0 / 17.0], atol=1e-12)\nassert np.isclose(np.sum(p1), 1.0, atol=1e-12)\n\n# 2. Worked Example 2: Deep underflow stress test (T=500, log L ~ -50,000)\nll_extreme = np.tile([-100.0, -100.01], (500, 1))\n_, p_ext = bayesian_update_log_posterior([0.0, 0.0], ll_extreme)\nexpected_p0 = 1.0 / (1.0 + np.exp(-5.0))\nassert np.allclose(p_ext, [expected_p0, 1.0 - expected_p0], atol=1e-12)\n\n# 3. Sequential invariance: batch update == step-by-step online updates\nrng = np.random.default_rng(24)\nll_seq = np.log(rng.uniform(0.05, 0.95, size=(12, 3)))\n_, p_batch = bayesian_update_log_posterior(np.log([0.2, 0.3, 0.5]), ll_seq)\nclf = OnlineBayesianClassifier([\"H0\", \"H1\", \"H2\"], np.array([0.2, 0.3, 0.5]))\nfor t in range(12):\n    p_step = clf.update(ll_seq[t])\nassert np.allclose(p_batch, p_step, atol=1e-12)\n\n# 4. Zero-prior (-inf) hypothesis handled cleanly without NaN\n_, p_zero = bayesian_update_log_posterior([0.0, -np.inf, 0.0], [-1.0, -0.1, -1.0])\nassert np.allclose(p_zero, [0.5, 0.0, 0.5], atol=1e-12)\n",
+      "walkthrough": "১. ফ্লেক্সিবল Shape সাপোর্ট: Online streaming-এ কখনো একটি observation (1D shape (K,)) আবার কখনো batch (2D shape (T, K)) আসে। 1D এলে reshape(1, -1) করে উভয় কেস এক কোড পাথে হ্যান্ডেল করা হয়েছে, এমনকি T = 0 হলেও শুধু prior normalize করে দেয়।\n\n২. Log-Space Accumulation: গুণফলকে যোগফলে রূপান্তর করায় log_unnorm = lp + np.sum(ll, axis=0) ৫০০ বা ৫০,০০০ ধাপেও কোনো precision বা underflow হারায় না।\n\n৩. Log-Sum-Exp Normalization: max_log বিয়োগ করে exp নেওয়ায় সর্বোচ্চ exponent ঠিক 0 হয় এবং বাকিগুলো <= 0 থাকে। এরপর log_z বাদ দিয়ে log_posterior এবং exp(log_posterior) বের করা হয়েছে। যদি সব hypothesis-ই -inf হয় (অর্থাৎ evidence অসম্ভব), তবে np.isfinite(max_log) চেকটি NaN না ছড়িয়ে স্পষ্ট ValueError দেয়।",
+      "complexity": {
+        "time": "O(T * K) — T-টি observation ও K-টি hypothesis-এর ওপর যোগফল",
+        "space": "O(K) — log_unnorm ও posterior vector-এর জন্য (ইনপুট বাদে)"
+      },
+      "edgeCases": [
+        "অনেক observation (T = 500+) থাকলে probability space-এ সরাসরি গুণফল 0.0 হয়ে underflow করে; Log-Sum-Exp ছাড়া 0/0 = NaN আসে।",
+        "একটি hypothesis-এর log_prior = -inf থাকলে তা বৈধ (posterior = 0.0), কিন্তু সব hypothesis-ই -inf হলে normalization অসংজ্ঞায়িত—তাই isfinite(max_log) চেক জরুরি।",
+        "T = 0 (কোনো নতুন ডেটা নেই) হলে posterior ঠিক normalized prior-এর সমান হওয়া উচিত।",
+        "Unnormalized log_prior (যেমন [0.0, 0.0]) পাস করলেও Log-Sum-Exp স্বয়ংক্রিয়ভাবে সঠিকভাবে normalize করে নেয়।"
+      ]
+    },
+    {
+      "id": "dm_bootstrap_ci",
+      "number": 25,
+      "title": "Paired Bootstrap Confidence Interval for Model Difference",
+      "category": "stats_metrics",
+      "categoryLabel": "Stats & ML Metrics",
+      "difficulty": "Medium",
+      "chapterRef": "chapter_05",
+      "tags": [
+        "Bootstrap",
+        "Confidence Interval",
+        "Model Evaluation",
+        "Hypothesis Testing"
+      ],
+      "summary": "একই test set-এ Model B বনাম Model A-এর পারফরম্যান্স পার্থক্যের statistically sound Paired Bootstrap Confidence Interval নির্ণয় করুন।",
+      "problemStatement": "আপনি একটি নতুন ML মডেল (Model B) বানালেন যা আগের প্রোডাকশন মডেলের (Model A) চেয়ে একই ৫০০ উদাহরণের test set-এ +0.8% বেশি স্কোর করেছে। কিন্তু এই উন্নতি কি সত্যিই statistically significant, নাকি কেবল test set-এর sampling noise? NLP, Vision এবং Tabular eval-এ (বিশেষত non-normal বা complex metric-এ) এর সবচেয়ে শক্তিশালী nonparametric সমাধান হলো Paired Bootstrap Confidence Interval।\n\nনিচের ModelComparisonHarness কোডবেসে আপনাকে paired_bootstrap_ci(scores_a, scores_b, n_boot=2000, alpha=0.05, seed=42) ইমপ্লিমেন্ট করতে হবে:\n১. scores_a এবং scores_b হলো একই n-টি test example-এর ওপর Model A ও Model B-এর per-example স্কোর (যেমন 0/1 accuracy, -loss বা F1 contribution)।\n২. প্রতিটি bootstrap replicate b = 1..n_boot-এর জন্য 0..n-1 থেকে with-replacement n-টি index একই সাথে উভয় মডেলের জন্য resample করুন—যা গাণিতিকভাবে paired difference d_i = scores_b[i] - scores_a[i] resample করার সমান।\n৩. n_boot-টি bootstrap গড় পার্থক্য Delta* থেকে (alpha/2) ও (1 - alpha/2) percentile নিয়ে confidence interval [ci_low, ci_high], observed_diff = mean(d), prob_b_better = mean(Delta* > 0), এবং significant = (ci_low > 0 or ci_high < 0) রিটার্ন করুন।",
+      "mathFormula": "\\Delta^{(b)} = \\frac{1}{n}\\sum_{i=1}^{n}\\left(s_{B, k_i^{(b)}} - s_{A, k_i^{(b)}}\\right), \\quad \\mathrm{CI}_{1-\\alpha} = \\left[Q_{\\alpha/2}(\\Delta^*),\\, Q_{1-\\alpha/2}(\\Delta^*)\\right]",
+      "targetFunction": "paired_bootstrap_ci(scores_a, scores_b, n_boot, alpha)",
+      "codebaseTemplate": "import numpy as np\n\n\ndef paired_bootstrap_ci(\n    scores_a: np.ndarray,\n    scores_b: np.ndarray,\n    n_boot: int = 2000,\n    alpha: float = 0.05,\n    seed: int = 42,\n) -> dict[str, float | bool]:\n    \"\"\"Compute paired bootstrap confidence interval for mean(scores_b - scores_a).\n\n    Args:\n        scores_a: Per-example evaluation scores for baseline model A, shape (n,).\n        scores_b: Per-example evaluation scores for candidate model B, shape (n,).\n        n_boot: Number of bootstrap resamples (n_boot >= 1).\n        alpha: Significance level in (0, 1); returns (1 - alpha) percentile CI.\n        seed: Random seed for reproducible resampling.\n\n    Returns:\n        Dict with keys: observed_diff, ci_low, ci_high, prob_b_better, significant.\n    \"\"\"\n    # TODO: Compute paired diffs (scores_b - scores_a), resample with replacement n_boot times, and return percentile CI dict\n    raise NotImplementedError(\"Implement paired_bootstrap_ci(scores_a, scores_b, n_boot, alpha)\")\n\n\nclass ModelComparisonHarness:\n    \"\"\"Decides whether candidate Model B reliably beats baseline Model A.\"\"\"\n\n    def __init__(self, n_boot: int = 2000, alpha: float = 0.05, seed: int = 42) -> None:\n        self.n_boot = n_boot\n        self.alpha = alpha\n        self.seed = seed\n\n    def compare(self, scores_a: np.ndarray, scores_b: np.ndarray) -> dict[str, float | bool | str]:\n        res = paired_bootstrap_ci(\n            scores_a, scores_b, n_boot=self.n_boot, alpha=self.alpha, seed=self.seed\n        )\n        if res[\"ci_low\"] > 0.0:\n            verdict = \"SHIP_MODEL_B\"\n        elif res[\"ci_high\"] < 0.0:\n            verdict = \"REGRESSION_KEEP_A\"\n        else:\n            verdict = \"INCONCLUSIVE\"\n        return {**res, \"verdict\": verdict}\n",
+      "examples": [
+        {
+          "input": "scores_a = [0.5, 0.6, 0.7, 0.8], scores_b = [0.5, 0.6, 0.7, 0.8], n_boot = 1000, alpha = 0.05",
+          "output": "{'observed_diff': 0.0, 'ci_low': 0.0, 'ci_high': 0.0, 'prob_b_better': 0.0, 'significant': False}",
+          "explanation": "প্রতিটি উদাহরণেই উভয় মডেলের স্কোর সমান হওয়ায় সব paired diff = 0.0। ফলে CI-এর প্রস্থ 0 এবং ফলাফল significant নয়।"
+        },
+        {
+          "input": "scores_a = base, scores_b = base + 0.05 (n = 50, base ~ Uniform[0, 1]), n_boot = 2000, alpha = 0.05",
+          "output": "{'observed_diff': 0.05, 'ci_low': 0.05, 'ci_high': 0.05, 'prob_b_better': 1.0, 'significant': True}",
+          "explanation": "Model B প্রতিটি উদাহরণেই ঠিক +0.05 ভালো করায় paired variance শূন্য এবং CI = [0.05, 0.05], অথচ unpaired bootstrap করলে base-এর বিশাল variance-এর কারণে পার্থক্যটি ঢাকা পড়ে যেত!"
+        }
+      ],
+      "thinkQuestions": [
+        {
+          "question": "একই test set-এ Model A ও Model B তুলনা করার সময় দুটিকে আলাদাভাবে (independently) resample না করে একই index দিয়ে paired resampling করা হয় কেন?",
+          "options": [
+            "কারণ paired resampling করতে অর্ধেক CPU সময় লাগে কেবল সেটিই একমাত্র কারণ",
+            "কারণ independent resampling-এ দুটি মডেলের sample size সমান থাকে না",
+            "কারণ Var(B - A) = Var(B) + Var(A) - 2*Cov(A, B); একই উদাহরণে দুটি মডেলের স্কোর ধনাত্মকভাবে correlated হওয়ায় paired resampling variance নাটকীয়ভাবে কমিয়ে statistical power অনেক বাড়ায়",
+            "কারণ independent resampling করলে observed_diff বদলে যায়"
+          ],
+          "answer": 2,
+          "explanation": "সহজ উদাহরণে উভয় মডেলই বেশি স্কোর করে আর কঠিন উদাহরণে উভয়ই কম স্কোর করে—ফলে Cov(A, B) অনেক বড় ও ধনাত্মক! Paired resampling এই common example-difficulty noise পুরোপুরি বিয়োগ করে দেয়, ফলে প্রকৃত মডেল পার্থক্য পরিষ্কার ধরা পড়ে।"
+        },
+        {
+          "question": "95% Confidence Interval [ci_low, ci_high] দেখে কখন আমরা বলি যে Model B ও Model A-এর পার্থক্য alpha = 0.05 লেভেলে statistically significant?",
+          "options": [
+            "যখন observed_diff > 0.0 হয়",
+            "যখন 0.0 সংখ্যাটি Confidence Interval-এর বাইরে থাকে, অর্থাৎ ci_low > 0.0 অথবা ci_high < 0.0",
+            "যখন ci_high - ci_low < 0.05 হয়",
+            "যখন prob_b_better > 0.5 হয়"
+          ],
+          "answer": 1,
+          "explanation": "Null hypothesis হলো প্রকৃত গড় পার্থক্য Delta = 0। যদি পুরো (1 - alpha) Confidence Interval শূন্যের এক পাশে থাকে (ci_low > 0 বা ci_high < 0), তবেই দুই-পার্শ্বীয় (two-sided) alpha লেভেলে শূন্য পার্থক্য বাতিল (reject) করা যায়।"
+        },
+        {
+          "question": "n = 50,000 এবং n_boot = 5,000 হলে একবারে rng.integers(0, n, size=(n_boot, n)) বানালে মেমোরিতে কী ঘটবে এবং কীভাবে এটি সমাধান করবেন?",
+          "options": [
+            "5000 * 50000 = 2.5e8 int64 = ~2 GB RAM একবারে দখল করবে (OOM ঝুঁকি); তাই chunk-এ ভাগ করে (যেমন প্রতি ব্যাচে 500 replicate) গড় বের করলে মেমোরি O(chunk * n)-এ সীমিত থাকে",
+            "মাত্র কয়েক মেগাবাইট লাগবে, কোনো সমস্যা নেই",
+            "NumPy-তে 2D integers তৈরি করা যায় না",
+            "n_boot-কে 10-এ নামিয়ে আনতে হবে"
+          ],
+          "answer": 0,
+          "explanation": "বড় test set-এ পুরো (n_boot, n) index matrix একসাথে অ্যালোকেট করলে সহজেই কয়েক GB মেমোরি শেষ হয়ে যেতে পারে। Chunked vectorization একই সাথে C-speed performance দেয় এবং peak memory ছোট রাখে।"
+        }
+      ],
+      "hints": [
+        "Hint 1: প্রথমে diffs = np.asarray(scores_b, float) - np.asarray(scores_a, float) বের করে নিন। এরপর rng = np.random.default_rng(seed) তৈরি করুন।",
+        "Hint 2: মেমোরি নিরাপদ রাখতে chunk_size = 500 নিয়ে লুপে idx = rng.integers(0, n, size=(batch, n)) জেনারেট করে diffs[idx].mean(axis=1) দিয়ে boot_means ভরুন। শেষে np.percentile(boot_means, [100 * alpha / 2, 100 * (1 - alpha / 2)]) নিন।"
+      ],
+      "solutionCode": "import numpy as np\n\n\ndef paired_bootstrap_ci(\n    scores_a: np.ndarray,\n    scores_b: np.ndarray,\n    n_boot: int = 2000,\n    alpha: float = 0.05,\n    seed: int = 42,\n) -> dict[str, float | bool]:\n    \"\"\"Compute paired bootstrap confidence interval for mean(scores_b - scores_a).\"\"\"\n    a = np.asarray(scores_a, dtype=np.float64).ravel()\n    b = np.asarray(scores_b, dtype=np.float64).ravel()\n    if a.shape != b.shape or a.size == 0:\n        raise ValueError(\"scores_a and scores_b must be non-empty 1D arrays of equal length.\")\n    if n_boot < 1:\n        raise ValueError(\"n_boot must be at least 1.\")\n    if not (0.0 < alpha < 1.0):\n        raise ValueError(\"alpha must lie strictly in (0, 1).\")\n\n    diffs = b - a\n    n = diffs.size\n    observed_diff = float(np.mean(diffs))\n\n    rng = np.random.default_rng(seed)\n    boot_means = np.empty(n_boot, dtype=np.float64)\n    chunk_size = 500\n    for start in range(0, n_boot, chunk_size):\n        end = min(start + chunk_size, n_boot)\n        idx = rng.integers(0, n, size=(end - start, n))\n        boot_means[start:end] = np.mean(diffs[idx], axis=1)\n\n    ci_low, ci_high = np.percentile(\n        boot_means, [100.0 * (alpha / 2.0), 100.0 * (1.0 - alpha / 2.0)]\n    )\n    ci_low_f = float(ci_low)\n    ci_high_f = float(ci_high)\n    prob_b_better = float(np.mean(boot_means > 0.0))\n    significant = bool(ci_low_f > 0.0 or ci_high_f < 0.0)\n\n    return {\n        \"observed_diff\": observed_diff,\n        \"ci_low\": ci_low_f,\n        \"ci_high\": ci_high_f,\n        \"prob_b_better\": prob_b_better,\n        \"significant\": significant,\n    }\n\n\nclass ModelComparisonHarness:\n    \"\"\"Decides whether candidate Model B reliably beats baseline Model A.\"\"\"\n\n    def __init__(self, n_boot: int = 2000, alpha: float = 0.05, seed: int = 42) -> None:\n        self.n_boot = n_boot\n        self.alpha = alpha\n        self.seed = seed\n\n    def compare(self, scores_a: np.ndarray, scores_b: np.ndarray) -> dict[str, float | bool | str]:\n        res = paired_bootstrap_ci(\n            scores_a, scores_b, n_boot=self.n_boot, alpha=self.alpha, seed=self.seed\n        )\n        if res[\"ci_low\"] > 0.0:\n            verdict = \"SHIP_MODEL_B\"\n        elif res[\"ci_high\"] < 0.0:\n            verdict = \"REGRESSION_KEEP_A\"\n        else:\n            verdict = \"INCONCLUSIVE\"\n        return {**res, \"verdict\": verdict}\n\n\n# --- Verification Tests ---\n# 1. Worked Example 1: Identical models -> zero width CI, not significant\nres_eq = paired_bootstrap_ci([0.5, 0.6, 0.7, 0.8], [0.5, 0.6, 0.7, 0.8], n_boot=1000, alpha=0.05)\nassert res_eq[\"observed_diff\"] == 0.0 and res_eq[\"ci_low\"] == 0.0 and res_eq[\"ci_high\"] == 0.0\nassert res_eq[\"significant\"] is False\n\n# 2. Worked Example 2: Paired power advantage when scores are heavily correlated\nrng = np.random.default_rng(101)\nbase = rng.uniform(0.0, 1.0, size=50)\nres_const_gain = paired_bootstrap_ci(base, base + 0.05, n_boot=2000, alpha=0.05, seed=7)\nassert np.isclose(res_const_gain[\"observed_diff\"], 0.05)\nassert np.isclose(res_const_gain[\"ci_low\"], 0.05) and np.isclose(res_const_gain[\"ci_high\"], 0.05)\nassert res_const_gain[\"significant\"] is True\n\n# 3. Noisy improvement: paired CI width much tighter than unpaired CI width\nscores_a = base + rng.normal(0.0, 0.02, size=50)\nscores_b = base + 0.04 + rng.normal(0.0, 0.02, size=50)\npaired_res = paired_bootstrap_ci(scores_a, scores_b, n_boot=2000, alpha=0.05, seed=42)\npaired_width = paired_res[\"ci_high\"] - paired_res[\"ci_low\"]\n# Unpaired bootstrap for comparison\nr_unp = np.random.default_rng(42)\nunp_diffs = np.array([\n    scores_b[r_unp.integers(0, 50, 50)].mean() - scores_a[r_unp.integers(0, 50, 50)].mean()\n    for _ in range(1000)\n])\nunp_width = float(np.percentile(unp_diffs, 97.5) - np.percentile(unp_diffs, 2.5))\nassert paired_width < 0.25 * unp_width\nassert paired_res[\"significant\"] is True\n\n# 4. Harness verdict check for regression (Model B clearly worse)\nharness = ModelComparisonHarness(n_boot=1000, alpha=0.05, seed=42)\nverdict_reg = harness.compare(scores_b, scores_a)\nassert verdict_reg[\"verdict\"] == \"REGRESSION_KEEP_A\"\n",
+      "walkthrough": "১. Paired Difference-এ রূপান্তর: যেহেতু mean(B[idx]) - mean(A[idx]) ঠিক mean((B - A)[idx])-এর সমান, তাই শুরুতেই diffs = b - a বের করে নেওয়া হয়েছে। এতে শুধু অর্ধেক মেমোরিই লাগে না, বরং একই index-এ pairing শতভাগ নিশ্চিত হয়।\n\n২. Chunked Vectorized Resampling: np.random.default_rng(seed) দিয়ে আধুনিক PCG64 generator ব্যবহার করা হয়েছে যাতে ফলাফল সম্পূর্ণ reproducible হয়। একসাথে বিশাল (n_boot, n) ম্যাট্রিক্স না বানিয়ে chunk_size = 500 করে লুপ চালানোয় C-level স্পিড ও কম peak memory উভয়ই পাওয়া যায়।\n\n৩. Percentile CI ও Decision Rule: np.percentile দিয়ে নিচের (alpha/2) ও উপরের (1 - alpha/2) কোয়ান্টাইল বের করা হয়েছে। 0.0 পুরো ইন্টারভালের বাইরে থাকলেই significant = True ধরা হয়েছে, এবং ModelComparisonHarness দেখিয়েছে কীভাবে এর ওপর ভিত্তি করে SHIP / REGRESSION / INCONCLUSIVE সিদ্ধান্ত নেওয়া হয়।",
+      "complexity": {
+        "time": "O(n_boot * n + n_boot log n_boot) — resampling গড় ও percentile sorting-এর জন্য",
+        "space": "O(chunk_size * n + n_boot) — chunked index buffer এবং bootstrap means array-এর জন্য"
+      },
+      "edgeCases": [
+        "Non-linear corpus metric (যেমন corpus-level F1 বা BLEU) হলে কেবল diff-এর গড় নয়, বরং প্রতিটি replicate-এ f(A[idx]) ও f(B[idx]) আলাদা করে বের করে বিয়োগ করতে হয়—যদিও index idx দুটির জন্য অভিন্নই থাকবে।",
+        "খুব ছোট sample size (যেমন n < 15) হলে percentile bootstrap-এর coverage কিছুটা narrow (anti-conservative) হতে পারে; সেক্ষেত্রে BCa বা t-bootstrap ভালো।",
+        "seed নির্ধারণ না করলে প্রতি রানে CI সামান্য বদলাবে এবং unit test flaky হয়ে যাবে।",
+        "Test উদাহরণগুলো যদি cluster/user-correlated হয়, তবে row-level নয় বরং cluster/user-level block bootstrap ব্যবহার করতে হয়।"
+      ]
+    },
+    {
+      "id": "dm_ab_ztest_power",
+      "number": 26,
+      "title": "Two-Proportion A/B Z-Test & Sample Size Power Calculator",
+      "category": "stats_metrics",
+      "categoryLabel": "Stats & ML Metrics",
+      "difficulty": "Medium",
+      "chapterRef": "chapter_37",
+      "tags": [
+        "A/B Testing",
+        "Hypothesis Testing",
+        "Statistical Power",
+        "Experimentation"
+      ],
+      "summary": "Pooled standard error ও math.erfc ব্যবহার করে SciPy ছাড়াই exact Two-Proportion Z-Test (Z-stat ও two-sided p-value) ইমপ্লিমেন্ট করুন।",
+      "problemStatement": "FAANG-এর প্রতিটি প্রোডাক্ট লঞ্চ, র‍্যাংকিং পরিবর্তন বা UI আপডেট A/B Experimentation প্ল্যাটফর্মের মধ্য দিয়ে যায়। এক্সপেরিমেন্টের আগে Power Analysis দিয়ে ন্যূনতম sample size ঠিক করা হয় এবং এক্সপেরিমেন্ট শেষে Control ও Treatment গ্রুপের conversion rate-এর পার্থক্য যাচাই করতে Two-Proportion Z-Test চালানো হয়।\n\nনিচের ABExperimentPlatform কোডবেসে pre-experiment sample size ক্যালকুলেটর (required_sample_size_per_variant) এবং Acklam-এর exact normal quantile (_norm_ppf) দেওয়া আছে। আপনাকে ab_test_z_stat_and_pvalue(c_conv, c_n, t_conv, t_n) ইমপ্লিমেন্ট করতে হবে:\n১. c_conv, c_n (Control conversions ও মোট ইউজার) এবং t_conv, t_n (Treatment conversions ও মোট ইউজার) যাচাই করুন (n > 0 এবং 0 <= conv <= n)।\n২. Null hypothesis H_0: p_t = p_c এর অধীনে pooled proportion p_pool = (c_conv + t_conv) / (c_n + t_n) এবং pooled standard error SE = sqrt(p_pool * (1 - p_pool) * (1/c_n + 1/t_n)) বের করুন।\n৩. SE == 0.0 হলে (সবাই 0 বা সবাই 1) z_stat = 0.0 এবং p_value = 1.0 দিন; নতুবা z_stat = (p_t - p_c) / SE এবং standard library-এর math.erfc(|z| / sqrt(2)) দিয়ে exact two-sided p-value নির্ণয় করুন।\n৪. {'p_control', 'p_treatment', 'lift', 'z_stat', 'p_value'} রিটার্ন করুন।",
+      "mathFormula": "z = \\frac{\\hat{p}_t - \\hat{p}_c}{\\sqrt{\\hat{p}(1 - \\hat{p})\\left(\\frac{1}{n_c} + \\frac{1}{n_t}\\right)}}, \\quad \\hat{p} = \\frac{x_c + x_t}{n_c + n_t}, \\quad p\\text{-value} = \\mathrm{erfc}\\left(\\frac{|z|}{\\sqrt{2}}\\right)",
+      "targetFunction": "ab_test_z_stat_and_pvalue(c_conv, c_n, t_conv, t_n)",
+      "codebaseTemplate": "import math\n\n\ndef ab_test_z_stat_and_pvalue(\n    c_conv: int, c_n: int, t_conv: int, t_n: int\n) -> dict[str, float]:\n    \"\"\"Run a two-sided two-proportion Z-test using pooled SE under H0.\n\n    Args:\n        c_conv: Number of conversions in control group.\n        c_n: Total users in control group (c_n > 0).\n        t_conv: Number of conversions in treatment group.\n        t_n: Total users in treatment group (t_n > 0).\n\n    Returns:\n        Dict with keys: p_control, p_treatment, lift, z_stat, p_value.\n    \"\"\"\n    # TODO: Validate inputs, compute pooled proportion & SE, Z-stat, and two-sided p-value via math.erfc\n    raise NotImplementedError(\"Implement ab_test_z_stat_and_pvalue(c_conv, c_n, t_conv, t_n)\")\n\n\ndef _norm_ppf(p: float) -> float:\n    \"\"\"Acklam's rational approximation for standard normal inverse CDF (< 1e-9 error).\"\"\"\n    if not (0.0 < p < 1.0):\n        raise ValueError(\"p must lie strictly in (0, 1).\")\n    a = (\n        -3.969683028665376e01, 2.209460984245205e02, -2.759285104469687e02,\n        1.383577518672690e02, -3.066479806614716e01, 2.506628277459239e00,\n    )\n    b = (\n        -5.447609879822406e01, 1.615858368580409e02, -1.556989798598866e02,\n        6.680131188771972e01, -1.328068155288572e01,\n    )\n    c = (\n        -7.784894002430293e-03, -3.223964580411365e-01, -2.400758277161838e00,\n        -2.549732539343734e00, 4.374664141464968e00, 2.938163982698783e00,\n    )\n    d = (\n        7.784695709041462e-03, 3.224671290700398e-01,\n        2.445134137142996e00, 3.754408661907416e00,\n    )\n    p_low, p_high = 0.02425, 1.0 - 0.02425\n    if p < p_low:\n        q = math.sqrt(-2.0 * math.log(p))\n        return (((((c[0]*q + c[1])*q + c[2])*q + c[3])*q + c[4])*q + c[5]) / ((((d[0]*q + d[1])*q + d[2])*q + d[3])*q + 1.0)\n    if p <= p_high:\n        q = p - 0.5\n        r = q * q\n        return (((((a[0]*r + a[1])*r + a[2])*r + a[3])*r + a[4])*r + a[5]) * q / (((((b[0]*r + b[1])*r + b[2])*r + b[3])*r + b[4])*r + 1.0)\n    q = math.sqrt(-2.0 * math.log(1.0 - p))\n    return -(((((c[0]*q + c[1])*q + c[2])*q + c[3])*q + c[4])*q + c[5]) / ((((d[0]*q + d[1])*q + d[2])*q + d[3])*q + 1.0)\n\n\nclass ABExperimentPlatform:\n    \"\"\"Designs sample size power requirements and evaluates two-proportion A/B tests.\"\"\"\n\n    @staticmethod\n    def required_sample_size_per_variant(\n        baseline_rate: float, mde: float, alpha: float = 0.05, power: float = 0.80\n    ) -> int:\n        p1 = baseline_rate\n        p2 = baseline_rate + mde\n        if not (0.0 < p1 < 1.0 and 0.0 < p2 < 1.0 and mde != 0.0):\n            raise ValueError(\"Invalid baseline_rate or mde.\")\n        z_alpha = _norm_ppf(1.0 - alpha / 2.0)\n        z_beta = _norm_ppf(power)\n        p_bar = 0.5 * (p1 + p2)\n        num = (z_alpha * math.sqrt(2.0 * p_bar * (1.0 - p_bar)) + z_beta * math.sqrt(p1 * (1.0 - p1) + p2 * (1.0 - p2))) ** 2\n        return int(math.ceil(num / (mde ** 2)))\n\n    def evaluate(\n        self, c_conv: int, c_n: int, t_conv: int, t_n: int, alpha: float = 0.05\n    ) -> dict[str, float | bool]:\n        res = ab_test_z_stat_and_pvalue(c_conv, c_n, t_conv, t_n)\n        return {**res, \"statistically_significant\": res[\"p_value\"] < alpha}\n",
+      "examples": [
+        {
+          "input": "c_conv = 100, c_n = 1000, t_conv = 135, t_n = 1000",
+          "output": "{'p_control': 0.10, 'p_treatment': 0.135, 'lift': 0.035, 'z_stat': 2.4304, 'p_value': 0.01508}",
+          "explanation": "p_pool = 235/2000 = 0.1175, SE_pool = sqrt(0.1175 * 0.8825 * 0.002) = 0.014401। Z = 0.035 / 0.014401 = 2.4304 এবং two-sided p-value = 0.01508 (< 0.05)।"
+        },
+        {
+          "input": "c_conv = 0, c_n = 500, t_conv = 0, t_n = 500",
+          "output": "{'p_control': 0.0, 'p_treatment': 0.0, 'lift': 0.0, 'z_stat': 0.0, 'p_value': 1.0}",
+          "explanation": "উভয় গ্রুপেই conversion 0 হওয়ায় pooled SE = 0.0। ZeroDivisionError না হয়ে নিরাপদে z_stat = 0.0 ও p_value = 1.0 রিটার্ন করে।"
+        }
+      ],
+      "thinkQuestions": [
+        {
+          "question": "Two-Proportion Z-Test-এর p-value বের করার সময় unpooled SE-এর বদলে pooled proportion p_pool = (x_c + x_t)/(n_c + n_t) ব্যবহার করা হয় কেন?",
+          "options": [
+            "কারণ math.erfc কেবল pooled SE-তে কাজ করে",
+            "কারণ unpooled SE সবসময় নেগেটিভ হয়",
+            "কারণ কেবল c_n != t_n হলেই pooled SE লাগে",
+            "কারণ p-value হিসাব করা হয় Null Hypothesis H_0: p_t = p_c সত্য ধরে নিয়ে; আর দুটি গ্রুপের সত্যিকারের rate সমান হলে সেই অভিন্ন p-এর সবচেয়ে efficient MLE হলো p_pool"
+          ],
+          "answer": 3,
+          "explanation": "Hypothesis test-এ আমরা ধরে নিই H_0 (p_t = p_c = p) সত্য, তাই সেই অভিন্ন variance p(1-p)(1/n_c + 1/n_t)-এর সেরা estimate হলো pooled p_pool। তবে Confidence Interval (যেখানে H_0 ধরে নেওয়া হয় না) বানাতে গেলে unpooled SE sqrt(p_c(1-p_c)/n_c + p_t(1-p_t)/n_t) ব্যবহার করা হয়!"
+        },
+        {
+          "question": "Standard normal Z-score থেকে two-sided p-value = 2 * (1 - Phi(|z|)) বের করতে math.erfc(|z| / sqrt(2)) কেন ঠিক সমান?",
+          "options": [
+            "এটি কেবল |z| < 2-এর জন্য একটি আনুমানিক সূত্র",
+            "কারণ erfc হলো Student-t distribution-এর CDF",
+            "কারণ Phi(x) = 0.5 * erfc(-x / sqrt(2)) এবং 1 - Phi(|z|) = 0.5 * erfc(|z| / sqrt(2)); তাকে 2 দিয়ে গুণ করলে exact erfc(|z| / sqrt(2)) পাওয়া যায়!",
+            "কারণ math.erfc সবসময় 0.05-এর চেয়ে ছোট মান দেয়"
+          ],
+          "answer": 2,
+          "explanation": "Complementary error function erfc(u) = (2/sqrt(pi)) * integral_u^inf exp(-t^2) dt। প্রতিস্থাপন t = x / sqrt(2) করলে 2 * P(Z >= |z|) = erfc(|z| / sqrt(2)) পাওয়া যায়—যা বড় |z|-এও (যেমন z = 6) 1 - Phi(z)-এর catastrophic cancellation ছাড়াই machine precision দেয়!"
+        },
+        {
+          "question": "যদি আপনার Minimum Detectable Effect (MDE) অর্ধেক করে দেন (যেমন +2% এর বদলে +1% lift ধরতে চান), তবে required sample size per variant কত গুণ বাড়বে?",
+          "options": [
+            "প্রায় 2 গুণ",
+            "প্রায় 4 গুণ (কারণ sample size নূন্যতম পার্থক্যের বর্গের ব্যস্তানুপাতিক: n proportional to 1 / MDE^2)",
+            "একই থাকবে",
+            "প্রায় sqrt(2) গুণ"
+          ],
+          "answer": 1,
+          "explanation": "Power ক্যালকুলেটরের হরে mde^2 থাকে! তাই অর্ধেক সূক্ষ্ম effect ধরতে হলে প্রতি গ্রুপে প্রায় ৪ গুণ বেশি ইউজার (অথবা ৪ গুণ বেশি দিন এক্সপেরিমেন্ট চালানো) লাগে। এটাই প্রোডাক্ট A/B টেস্টিংয়ে CUPED-এর মতো variance reduction-এর গুরুত্ব এত বেশি হওয়ার কারণ।"
+        }
+      ],
+      "hints": [
+        "Hint 1: প্রথমে c_n > 0, t_n > 0 এবং 0 <= c_conv <= c_n, 0 <= t_conv <= t_n যাচাই করুন। এরপর p_c, p_t এবং p_pool = (c_conv + t_conv) / (c_n + t_n) বের করুন।",
+        "Hint 2: se_pool = math.sqrt(p_pool * (1.0 - p_pool) * (1.0 / c_n + 1.0 / t_n)) নিন। se_pool == 0.0 হলে z = 0.0, p_value = 1.0; নতুবা z = (p_t - p_c) / se_pool এবং p_value = math.erfc(abs(z) / math.sqrt(2.0))।"
+      ],
+      "solutionCode": "import math\n\n\ndef ab_test_z_stat_and_pvalue(\n    c_conv: int, c_n: int, t_conv: int, t_n: int\n) -> dict[str, float]:\n    \"\"\"Run a two-sided two-proportion Z-test using pooled SE under H0.\"\"\"\n    if c_n <= 0 or t_n <= 0:\n        raise ValueError(\"Sample sizes c_n and t_n must be strictly positive.\")\n    if not (0 <= c_conv <= c_n) or not (0 <= t_conv <= t_n):\n        raise ValueError(\"Conversion counts must lie within [0, n].\")\n\n    p_c = c_conv / c_n\n    p_t = t_conv / t_n\n    lift = p_t - p_c\n    p_pool = (c_conv + t_conv) / (c_n + t_n)\n\n    se_pool = math.sqrt(p_pool * (1.0 - p_pool) * (1.0 / c_n + 1.0 / t_n))\n    if se_pool == 0.0:\n        z_stat = 0.0\n        p_value = 1.0\n    else:\n        z_stat = lift / se_pool\n        p_value = math.erfc(abs(z_stat) / math.sqrt(2.0))\n\n    return {\n        \"p_control\": float(p_c),\n        \"p_treatment\": float(p_t),\n        \"lift\": float(lift),\n        \"z_stat\": float(z_stat),\n        \"p_value\": float(p_value),\n    }\n\n\ndef _norm_ppf(p: float) -> float:\n    \"\"\"Acklam's rational approximation for standard normal inverse CDF (< 1e-9 error).\"\"\"\n    if not (0.0 < p < 1.0):\n        raise ValueError(\"p must lie strictly in (0, 1).\")\n    a = (\n        -3.969683028665376e01, 2.209460984245205e02, -2.759285104469687e02,\n        1.383577518672690e02, -3.066479806614716e01, 2.506628277459239e00,\n    )\n    b = (\n        -5.447609879822406e01, 1.615858368580409e02, -1.556989798598866e02,\n        6.680131188771972e01, -1.328068155288572e01,\n    )\n    c = (\n        -7.784894002430293e-03, -3.223964580411365e-01, -2.400758277161838e00,\n        -2.549732539343734e00, 4.374664141464968e00, 2.938163982698783e00,\n    )\n    d = (\n        7.784695709041462e-03, 3.224671290700398e-01,\n        2.445134137142996e00, 3.754408661907416e00,\n    )\n    p_low, p_high = 0.02425, 1.0 - 0.02425\n    if p < p_low:\n        q = math.sqrt(-2.0 * math.log(p))\n        return (((((c[0]*q + c[1])*q + c[2])*q + c[3])*q + c[4])*q + c[5]) / ((((d[0]*q + d[1])*q + d[2])*q + d[3])*q + 1.0)\n    if p <= p_high:\n        q = p - 0.5\n        r = q * q\n        return (((((a[0]*r + a[1])*r + a[2])*r + a[3])*r + a[4])*r + a[5]) * q / (((((b[0]*r + b[1])*r + b[2])*r + b[3])*r + b[4])*r + 1.0)\n    q = math.sqrt(-2.0 * math.log(1.0 - p))\n    return -(((((c[0]*q + c[1])*q + c[2])*q + c[3])*q + c[4])*q + c[5]) / ((((d[0]*q + d[1])*q + d[2])*q + d[3])*q + 1.0)\n\n\nclass ABExperimentPlatform:\n    \"\"\"Designs sample size power requirements and evaluates two-proportion A/B tests.\"\"\"\n\n    @staticmethod\n    def required_sample_size_per_variant(\n        baseline_rate: float, mde: float, alpha: float = 0.05, power: float = 0.80\n    ) -> int:\n        p1 = baseline_rate\n        p2 = baseline_rate + mde\n        if not (0.0 < p1 < 1.0 and 0.0 < p2 < 1.0 and mde != 0.0):\n            raise ValueError(\"Invalid baseline_rate or mde.\")\n        z_alpha = _norm_ppf(1.0 - alpha / 2.0)\n        z_beta = _norm_ppf(power)\n        p_bar = 0.5 * (p1 + p2)\n        num = (z_alpha * math.sqrt(2.0 * p_bar * (1.0 - p_bar)) + z_beta * math.sqrt(p1 * (1.0 - p1) + p2 * (1.0 - p2))) ** 2\n        return int(math.ceil(num / (mde ** 2)))\n\n    def evaluate(\n        self, c_conv: int, c_n: int, t_conv: int, t_n: int, alpha: float = 0.05\n    ) -> dict[str, float | bool]:\n        res = ab_test_z_stat_and_pvalue(c_conv, c_n, t_conv, t_n)\n        return {**res, \"statistically_significant\": res[\"p_value\"] < alpha}\n\n\n# --- Verification Tests ---\n# 1. Worked Example 1: Statistically significant positive lift\nr1 = ab_test_z_stat_and_pvalue(100, 1000, 135, 1000)\nassert math.isclose(r1[\"p_control\"], 0.10) and math.isclose(r1[\"p_treatment\"], 0.135)\nassert math.isclose(r1[\"z_stat\"], 2.4303944019331976, rel_tol=1e-9)\nassert math.isclose(r1[\"p_value\"], 0.015082400371376993, rel_tol=1e-9)\n\n# 2. Worked Example 2: Degenerate 0% and 100% conversion edge cases\nr_zero = ab_test_z_stat_and_pvalue(0, 500, 0, 500)\nassert r_zero[\"z_stat\"] == 0.0 and r_zero[\"p_value\"] == 1.0\nr_all = ab_test_z_stat_and_pvalue(500, 500, 500, 500)\nassert r_all[\"z_stat\"] == 0.0 and r_all[\"p_value\"] == 1.0\n\n# 3. Symmetry under swapping control and treatment (sign flips, p-value identical)\nr_swap = ab_test_z_stat_and_pvalue(135, 1000, 100, 1000)\nassert math.isclose(r_swap[\"z_stat\"], -r1[\"z_stat\"], rel_tol=1e-12)\nassert math.isclose(r_swap[\"p_value\"], r1[\"p_value\"], rel_tol=1e-12)\n\n# 4. Sample size power calculator sanity check (10% baseline, +1% MDE vs +2% MDE -> ~4x ratio)\nplat = ABExperimentPlatform()\nn_2pct = plat.required_sample_size_per_variant(0.10, 0.02, alpha=0.05, power=0.80)\nn_1pct = plat.required_sample_size_per_variant(0.10, 0.01, alpha=0.05, power=0.80)\nassert 3500 < n_2pct < 4200\nassert 3.7 < (n_1pct / n_2pct) < 4.2\n",
+      "walkthrough": "১. Boundary ও Domain Validation: কনভার্সন সংখ্যা কখনোই ঋণাত্মক বা মোট ইউজার সংখ্যার বেশি হতে পারে না—তাই শুরুতেই ইনভ্যারিয়েন্ট যাচাই করা হয়েছে।\n\n২. Pooled Proportion ও Standard Error: H_0: p_t = p_c সত্য ধরে নিয়ে p_pool = (c_conv + t_conv) / (c_n + t_n) এবং se_pool = sqrt(p_pool * (1 - p_pool) * (1/c_n + 1/t_n)) বের করা হয়েছে। উভয় গ্রুপে 0% বা 100% কনভার্সন থাকলে se_pool = 0 হয়; তখন ভাগ না করে সরাসরি z = 0, p_value = 1.0 রিটার্ন করা হয়েছে।\n\n৩. Tail-Safe Two-Sided p-value: math.erfc(abs(z_stat) / math.sqrt(2.0)) ব্যবহার করায় কোনো external SciPy dependency লাগে না এবং বড় Z-score-এও (যেমন Z = 7) 1.0 - Phi(z)-এর precision loss হয় না।\n\n৪. End-to-End Platform: ABExperimentPlatform-এর required_sample_size_per_variant দেখায় কীভাবে experiment শুরু হওয়ার আগেই MDE, alpha ও power থেকে প্রয়োজনীয় ট্রাফিক হিসাব করতে হয়।",
+      "complexity": {
+        "time": "O(1) — কেবল ধ্রুবক সংখ্যক গাণিতিক অপারেশন ও math.erfc",
+        "space": "O(1) — কোনো অতিরিক্ত array মেমোরি নেই"
+      },
+      "edgeCases": [
+        "উভয় গ্রুপেই 0% বা 100% কনভার্সন থাকলে p_pool * (1 - p_pool) = 0 হয়ে SE = 0 হয়; guard না থাকলে ZeroDivisionError ঘটে।",
+        "খুব ছোট sample বা অতি বিরল কনভার্সনে (n * p < 5) Normal approximation দুর্বল হয়—সেক্ষেত্রে Fisher's Exact Test ব্যবহার করতে হয়।",
+        "এক্সপেরিমেন্ট চলাকালীন প্রতিদিন p-value দেখে p < 0.05 হলেই থামিয়ে দেওয়া (Peeking Problem) False Positive রেট ৫% থেকে ২৫%+ পর্যন্ত বাড়িয়ে দেয়; তাই Sequential Testing বা fixed horizon জরুরি।",
+        "Randomization unit (যেমন user) এবং analysis unit (যেমন pageview) এক না হলে এই সাধারণ Binomial Z-test variance কমিয়ে দেখায়—তখন Delta Method (Problem #30) দরকার।"
+      ]
+    },
+    {
+      "id": "dm_cuped_estimator",
+      "number": 27,
+      "title": "CUPED Variance-Reduced A/B Metric Estimator",
+      "category": "stats_metrics",
+      "categoryLabel": "Stats & ML Metrics",
+      "difficulty": "Hard",
+      "chapterRef": "chapter_37",
+      "tags": [
+        "CUPED",
+        "Variance Reduction",
+        "A/B Testing",
+        "Causal Inference"
+      ],
+      "summary": "Pre-experiment covariate ব্যবহার করে optimal theta ও CUPED variance-reduced metric তৈরি করুন এবং R^2 variance reduction যাচাই করুন।",
+      "problemStatement": "Microsoft (Deng et al., WSDM 2013), Netflix, Meta ও Airbnb-এর এক্সপেরিমেন্টেশন প্ল্যাটফর্মের অন্যতম শক্তিশালী অস্ত্র হলো CUPED (Controlled-experiment Using Pre-Experiment Data)। কোনো ইউজার আগে থেকেই বেশি সক্রিয় ছিলেন কি না (pre-experiment covariate X) সেই তথ্য কাজে লাগিয়ে CUPED এক্সপেরিমেন্টের variance নাটকীয়ভাবে (প্রায়ই ৩০%-৭০% পর্যন্ত) কমিয়ে দেয়—যার ফলে অর্ধেক সময়েই statistically significant সিদ্ধান্ত নেওয়া যায়!\n\nনিচের CupedExperimentEngine কোডবেসে pooled A/B treatment effect estimator (estimate_ab_treatment_effect) দেওয়া আছে। আপনাকে এর মূল কোর ফাংশন compute_cuped_adjusted(y, x_pre) ইমপ্লিমেন্ট করতে হবে:\n১. ইনপুট y (post-experiment metric) এবং x_pre (pre-experiment covariate), উভয়ই সমান দৈর্ঘ্যের 1D array (n >= 2)।\n২. Variance কমানোর optimal সহগ theta = Cov(y, x_pre) / Var(x_pre) নির্ণয় করুন (ddof=1)। যদি Var(x_pre) == 0.0 হয় তবে theta = 0.0।\n৩. Adjusted metric বের করুন: y_cuped = y - theta * (x_pre - mean(x_pre))। খেয়াল করুন, mean(x_pre) বিয়োগ করায় mean(y_cuped) == mean(y) (unbiasedness) অক্ষুণ্ণ থাকে।\n৪. Variance reduction ratio = (Var(y) - Var(y_cuped)) / Var(y) (যদি Var(y) > 0, নতুবা 0.0) হিসাব করে {'y_cuped', 'theta', 'variance_reduction'} রিটার্ন করুন।",
+      "mathFormula": "Y_{\\mathrm{CUPED}} = Y - \\theta\\left(X - \\bar{X}\\right), \\quad \\theta^* = \\frac{\\mathrm{Cov}(Y, X)}{\\mathrm{Var}(X)}, \\quad \\frac{\\mathrm{Var}(Y) - \\mathrm{Var}(Y_{\\mathrm{CUPED}})}{\\mathrm{Var}(Y)} = \\rho_{X,Y}^2",
+      "targetFunction": "compute_cuped_adjusted(y, x_pre)",
+      "codebaseTemplate": "import math\nimport numpy as np\n\n\ndef compute_cuped_adjusted(\n    y: np.ndarray, x_pre: np.ndarray\n) -> dict[str, np.ndarray | float]:\n    \"\"\"Compute CUPED variance-reduced metric, optimal theta, and variance reduction ratio.\n\n    Args:\n        y: Post-experiment metric values of shape (n,), n >= 2.\n        x_pre: Pre-experiment covariate values of shape (n,), n >= 2.\n\n    Returns:\n        Dict with keys:\n            - y_cuped: np.ndarray of shape (n,) with mean(y_cuped) == mean(y).\n            - theta: Optimal scalar Cov(y, x_pre) / Var(x_pre) (0.0 if Var(x_pre) == 0).\n            - variance_reduction: Fractional variance reduction in [0.0, 1.0].\n    \"\"\"\n    # TODO: Compute optimal theta, y_cuped = y - theta * (x_pre - mean(x_pre)), and variance_reduction\n    raise NotImplementedError(\"Implement compute_cuped_adjusted(y, x_pre)\")\n\n\nclass CupedExperimentEngine:\n    \"\"\"Runs unbiased pooled-theta CUPED A/B analysis for continuous user metrics.\"\"\"\n\n    def estimate_ab_treatment_effect(\n        self,\n        y_ctrl: np.ndarray,\n        x_ctrl: np.ndarray,\n        y_trt: np.ndarray,\n        x_trt: np.ndarray,\n    ) -> dict[str, float]:\n        yc = np.asarray(y_ctrl, dtype=np.float64).ravel()\n        xc = np.asarray(x_ctrl, dtype=np.float64).ravel()\n        yt = np.asarray(y_trt, dtype=np.float64).ravel()\n        xt = np.asarray(x_trt, dtype=np.float64).ravel()\n\n        # Critical A/B invariant: fit a single pooled theta & global x_mean across both variants\n        y_all = np.concatenate([yc, yt])\n        x_all = np.concatenate([xc, xt])\n        res = compute_cuped_adjusted(y_all, x_all)\n        y_adj_all = res[\"y_cuped\"]\n\n        n_c = yc.size\n        n_t = yt.size\n        adj_c = y_adj_all[:n_c]\n        adj_t = y_adj_all[n_c:]\n\n        raw_ate = float(np.mean(yt) - np.mean(yc))\n        raw_se = math.sqrt(float(np.var(yt, ddof=1)) / n_t + float(np.var(yc, ddof=1)) / n_c)\n\n        cuped_ate = float(np.mean(adj_t) - np.mean(adj_c))\n        cuped_se = math.sqrt(float(np.var(adj_t, ddof=1)) / n_t + float(np.var(adj_c, ddof=1)) / n_c)\n\n        return {\n            \"raw_ate\": raw_ate,\n            \"raw_se\": raw_se,\n            \"cuped_ate\": cuped_ate,\n            \"cuped_se\": cuped_se,\n            \"theta\": float(res[\"theta\"]),\n            \"variance_reduction\": float(res[\"variance_reduction\"]),\n            \"se_ratio\": cuped_se / raw_se if raw_se > 0.0 else 1.0,\n        }\n",
+      "examples": [
+        {
+          "input": "x_pre = [10, 20, 30, 40], y = [12, 22, 32, 42] (exact linear relation y = x_pre + 2)",
+          "output": "theta = 1.0, y_cuped = [27.0, 27.0, 27.0, 27.0], variance_reduction = 1.0",
+          "explanation": "y এবং x_pre-এর correlation rho = 1.0। তাই theta = 1.0 এবং y_cuped-এর প্রতিটি মান গড় 27.0-এ স্থির হয়ে যায়—অর্থাৎ variance 100% (rho^2 = 1.0) কমে যায় কিন্তু গড় হুবহু 27.0 থাকে!"
+        },
+        {
+          "input": "x_pre = [5.0, 5.0, 5.0, 5.0], y = [1.0, 2.0, 3.0, 4.0]",
+          "output": "theta = 0.0, y_cuped = [1.0, 2.0, 3.0, 4.0], variance_reduction = 0.0",
+          "explanation": "Pre-experiment covariate constant (Var(x_pre) = 0) হওয়ায় তা y সম্পর্কে কোনো তথ্য দেয় না। Zero-division এড়িয়ে theta = 0.0 ও variance_reduction = 0.0 পাওয়া যায়।"
+        }
+      ],
+      "thinkQuestions": [
+        {
+          "question": "A/B টেস্টে Control এবং Treatment-এর জন্য আলাদা আলাদা theta_c ও theta_t (এবং আলাদা mean_x_c, mean_x_t) ব্যবহার না করে পুরো pooled dataset থেকে একটিই theta ও একটিই global mean_x বের করা হয় কেন?",
+          "options": [
+            "কারণ আলাদা mean_x ব্যবহার করলে random imbalance সমন্বয় হবে না (raw ATE-র সাথে সমান হয়ে যাবে), আর আলাদা theta ব্যবহার করলে small-sample bias তৈরি হয়ে ATE biased হয়ে যেতে পারে",
+            "কারণ আলাদা theta বের করতে দ্বিগুণ সময় লাগে",
+            "কারণ pooled theta সর্বদা 1.0 হয়",
+            "কারণ Control-এ x_pre থাকে না"
+          ],
+          "answer": 0,
+          "explanation": "যদি নিজের গ্রুপের mean_x_c ও mean_x_t বিয়োগ করেন, তবে mean(adj_t) - mean(adj_c) = mean(y_t) - mean(y_c) হয়ে CUPED-এর পুরো উদ্দেশ্যই ব্যর্থ হয়ে যাবে! আর একটি common theta ও global X_bar ব্যবহার করলে E[X_t - X_c] = 0 (randomization-এর কারণে) হওয়ায় ATE শতভাগ unbiased থাকে এবং variance কমে।"
+        },
+        {
+          "question": "Pre-experiment covariate X এবং post-experiment metric Y-এর Pearson correlation যদি rho = 0.80 হয়, তবে CUPED তাত্ত্বিকভাবে কত শতাংশ variance কমাবে এবং এতে sample size কত শতাংশ সাশ্রয় হবে?",
+          "options": [
+            "80% variance কমবে",
+            "theta-এর মানের ওপর নির্ভর করবে, rho-র সাথে সম্পর্ক নেই",
+            "20% variance কমবে",
+            "rho^2 = 64% variance কমবে, ফলে একই statistical power পেতে ~64% কম ট্রাফিক/সময় লাগবে!"
+          ],
+          "answer": 3,
+          "explanation": "Var(Y - theta*X) = Var(Y) + theta^2*Var(X) - 2*theta*Cov(Y,X)। এখানে theta* = Cov(Y,X)/Var(X) বসালে Var(Y_CUPED) = Var(Y) * (1 - rho^2)। তাই rho = 0.80 হলে ঠিক 0.80^2 = 64% variance কমে যায়!"
+        },
+        {
+          "question": "কেন CUPED-এ এক্সপেরিমেন্ট শুরু হওয়ার পরের (post-treatment) কোনো ফিচারকে covariate X হিসেবে ব্যবহার করা সম্পূর্ণ নিষিদ্ধ?",
+          "options": [
+            "কারণ post-treatment feature-এর correlation কম থাকে",
+            "কারণ post-treatment feature-এ NaN বেশি থাকে",
+            "কারণ treatment যদি X-কে প্রভাবিত করে, তবে E[X_t] != E[X_c] হবে এবং theta*(X_t - X_c) বিয়োগ করলে প্রকৃত treatment effect-এর একটি অংশই মুছে যাবে (Post-Treatment Bias)!",
+            "কারণ এতে variance বেড়ে যায়"
+          ],
+          "answer": 2,
+          "explanation": "CUPED unbiased থাকার মূল শর্ত হলো E[X | Treatment] = E[X | Control]। কেবল randomization-এর আগের (pre-experiment) ডেটাই treatment থেকে স্বাধীন হওয়া নিশ্চিত করে; post-treatment ভেরিয়েবল ব্যবহার করলে causal estimate মারাত্মকভাবে biased হয়ে যায়।"
+        }
+      ],
+      "hints": [
+        "Hint 1: x_c = x_pre - np.mean(x_pre) এবং y_c = y - np.mean(y) বের করুন। এরপর var_x = np.sum(x_c ** 2) / (n - 1), cov_xy = np.sum(x_c * y_c) / (n - 1) এবং var_y = np.sum(y_c ** 2) / (n - 1) হিসাব করুন।",
+        "Hint 2: theta = cov_xy / var_x if var_x > 0.0 else 0.0। এরপর y_cuped = y - theta * x_c এবং var_cuped = np.var(y_cuped, ddof=1) বের করে variance_reduction = max(0.0, (var_y - var_cuped) / var_y) (যদি var_y > 0) রিটার্ন করুন।"
+      ],
+      "solutionCode": "import math\nimport numpy as np\n\n\ndef compute_cuped_adjusted(\n    y: np.ndarray, x_pre: np.ndarray\n) -> dict[str, np.ndarray | float]:\n    \"\"\"Compute CUPED variance-reduced metric, optimal theta, and variance reduction ratio.\"\"\"\n    y_arr = np.asarray(y, dtype=np.float64).ravel()\n    x_arr = np.asarray(x_pre, dtype=np.float64).ravel()\n    if y_arr.shape != x_arr.shape or y_arr.size < 2:\n        raise ValueError(\"y and x_pre must be 1D arrays of identical length >= 2.\")\n\n    n = y_arr.size\n    x_c = x_arr - np.mean(x_arr)\n    y_c = y_arr - np.mean(y_arr)\n\n    var_x = float(np.sum(x_c * x_c) / (n - 1))\n    var_y = float(np.sum(y_c * y_c) / (n - 1))\n    cov_xy = float(np.sum(x_c * y_c) / (n - 1))\n\n    theta = (cov_xy / var_x) if var_x > 0.0 else 0.0\n    y_cuped = y_arr - theta * x_c\n\n    var_cuped = float(np.var(y_cuped, ddof=1))\n    variance_reduction = max(0.0, (var_y - var_cuped) / var_y) if var_y > 0.0 else 0.0\n\n    return {\n        \"y_cuped\": y_cuped,\n        \"theta\": float(theta),\n        \"variance_reduction\": float(variance_reduction),\n    }\n\n\nclass CupedExperimentEngine:\n    \"\"\"Runs unbiased pooled-theta CUPED A/B analysis for continuous user metrics.\"\"\"\n\n    def estimate_ab_treatment_effect(\n        self,\n        y_ctrl: np.ndarray,\n        x_ctrl: np.ndarray,\n        y_trt: np.ndarray,\n        x_trt: np.ndarray,\n    ) -> dict[str, float]:\n        yc = np.asarray(y_ctrl, dtype=np.float64).ravel()\n        xc = np.asarray(x_ctrl, dtype=np.float64).ravel()\n        yt = np.asarray(y_trt, dtype=np.float64).ravel()\n        xt = np.asarray(x_trt, dtype=np.float64).ravel()\n\n        # Critical A/B invariant: fit a single pooled theta & global x_mean across both variants\n        y_all = np.concatenate([yc, yt])\n        x_all = np.concatenate([xc, xt])\n        res = compute_cuped_adjusted(y_all, x_all)\n        y_adj_all = res[\"y_cuped\"]\n\n        n_c = yc.size\n        n_t = yt.size\n        adj_c = y_adj_all[:n_c]\n        adj_t = y_adj_all[n_c:]\n\n        raw_ate = float(np.mean(yt) - np.mean(yc))\n        raw_se = math.sqrt(float(np.var(yt, ddof=1)) / n_t + float(np.var(yc, ddof=1)) / n_c)\n\n        cuped_ate = float(np.mean(adj_t) - np.mean(adj_c))\n        cuped_se = math.sqrt(float(np.var(adj_t, ddof=1)) / n_t + float(np.var(adj_c, ddof=1)) / n_c)\n\n        return {\n            \"raw_ate\": raw_ate,\n            \"raw_se\": raw_se,\n            \"cuped_ate\": cuped_ate,\n            \"cuped_se\": cuped_se,\n            \"theta\": float(res[\"theta\"]),\n            \"variance_reduction\": float(res[\"variance_reduction\"]),\n            \"se_ratio\": cuped_se / raw_se if raw_se > 0.0 else 1.0,\n        }\n\n\n# --- Verification Tests ---\n# 1. Worked Example 1: Exact linear dependence -> 100% variance reduction, identical mean\nres1 = compute_cuped_adjusted([12, 22, 32, 42], [10, 20, 30, 40])\nassert np.isclose(res1[\"theta\"], 1.0, atol=1e-12)\nassert np.allclose(res1[\"y_cuped\"], [27.0, 27.0, 27.0, 27.0], atol=1e-12)\nassert np.isclose(res1[\"variance_reduction\"], 1.0, atol=1e-12)\n\n# 2. Worked Example 2: Zero-variance covariate -> safe theta = 0.0\nres2 = compute_cuped_adjusted([1.0, 2.0, 3.0, 4.0], [5.0, 5.0, 5.0, 5.0])\nassert res2[\"theta\"] == 0.0 and res2[\"variance_reduction\"] == 0.0\nassert np.allclose(res2[\"y_cuped\"], [1.0, 2.0, 3.0, 4.0])\n\n# 3. Fundamental CUPED theorem: variance_reduction == Pearson_corr(x_pre, y)^2 & exact mean preservation\nrng = np.random.default_rng(27)\nx_pre = rng.normal(100.0, 20.0, size=500)\ny = 0.9 * x_pre + rng.normal(10.0, 12.0, size=500)\nres3 = compute_cuped_adjusted(y, x_pre)\nrho = float(np.corrcoef(x_pre, y)[0, 1])\nassert np.isclose(np.mean(res3[\"y_cuped\"]), np.mean(y), atol=1e-10)\nassert np.isclose(res3[\"variance_reduction\"], rho ** 2, atol=1e-10)\n\n# 4. Pooled A/B engine drastically reduces SE while recovering true lift (+2.0)\nx_c = rng.normal(50.0, 15.0, size=400)\nx_t = rng.normal(50.0, 15.0, size=400)\ny_c = 0.85 * x_c + rng.normal(0.0, 5.0, size=400)\ny_t = 0.85 * x_t + 2.0 + rng.normal(0.0, 5.0, size=400)\nab_res = CupedExperimentEngine().estimate_ab_treatment_effect(y_c, x_c, y_t, x_t)\nassert ab_res[\"variance_reduction\"] > 0.80\nassert ab_res[\"cuped_se\"] < 0.45 * ab_res[\"raw_se\"]\nassert abs(ab_res[\"cuped_ate\"] - 2.0) < 3.0 * ab_res[\"cuped_se\"]\n",
+      "walkthrough": "১. Centered Sample Statistics: x_c ও y_c তৈরি করে (n - 1) দিয়ে ভাগ করে var_x, var_y ও cov_xy নির্ণয় করা হয়েছে। খেয়াল করুন, theta = cov_xy / var_x অনুপাতে (n - 1) কেটে যায়, কিন্তু var_y ও var_cuped-এ একই ddof=1 রাখায় variance_reduction নিখুঁতভাবে rho^2-এর সমান হয়।\n\n২. Unbiased Adjustment: y_cuped = y_arr - theta * x_c (যেখানে x_c = x_pre - mean(x_pre))। যেহেতু mean(x_c) = 0, তাই mean(y_cuped) ঠিক mean(y)-এর সমান থাকে। এক কথায়: গড় মান ঠিক থাকে, কিন্তু pre-experiment variation-এর কারণে আসা noise বাদ পড়ে যায়।\n\n৩. Zero-Variance সুরক্ষা: নতুন ইউজারদের ক্ষেত্রে সবার pre-experiment value 0 হলে var_x = 0 হয়। তখন theta = 0.0 রাখায় y_cuped = y হয়ে স্বাভাবিকভাবেই সাধারণ A/B মেট্রিকে fallback করে।\n\n৪. Pooled A/B Integration: CupedExperimentEngine দেখায় কীভাবে Control ও Treatment-কে concatenate করে একটি অভিন্ন theta ও global mean_x বের করতে হয়, যাতে random pre-experiment imbalance সংশোধন হয়ে unbiased ও বহুলাংশে কম SE-যুক্ত treatment effect পাওয়া যায়।",
+      "complexity": {
+        "time": "O(n) — একক পাসে mean, variance, covariance ও linear adjustment",
+        "space": "O(n) — centered arrays ও y_cuped ভেক্টরের জন্য"
+      },
+      "edgeCases": [
+        "নতুন ইউজারদের জন্য pre-experiment covariate x_pre শূন্য বা constant হলে Var(x_pre) = 0; guard না থাকলে theta = NaN হয়ে যাবে।",
+        "y নিজেই constant (Var(y) = 0) হলে variance_reduction-এর হর শূন্য হয়—তাই নিরাপদে 0.0 রিটার্ন করতে হবে।",
+        "Control ও Treatment-এ আলাদা mean_x বিয়োগ করলে random pre-period imbalance সংশোধন হয় না এবং আলাদা theta ব্যবহার করলে finite-sample bias ঢুকে যায়।",
+        "অনেকগুলো pre-experiment covariate বা non-linear সম্পর্ক থাকলে একক scalar theta-র বদলে cross-fitted ML model (CUPAC / ML-adjusted CUPED) ব্যবহার করে আরও বেশি variance কমানো যায়।"
+      ]
+    },
+    {
+      "id": "dm_silhouette_score",
+      "number": 28,
+      "title": "Mean Silhouette Coefficient for Cluster Quality",
+      "category": "stats_metrics",
+      "categoryLabel": "Stats & ML Metrics",
+      "difficulty": "Medium",
+      "chapterRef": "chapter_12",
+      "tags": [
+        "Clustering",
+        "Silhouette Score",
+        "Unsupervised ML",
+        "Distance Metrics"
+      ],
+      "summary": "Pairwise Euclidean distance ও singleton cluster সুরক্ষাসহ Unsupervised Clustering-এর গুণমান মাপার Mean Silhouette Coefficient তৈরি করুন।",
+      "problemStatement": "K-Means, HDBSCAN বা Hierarchical Clustering-এ কোনো ground-truth label থাকে না—ফলে কতটি cluster (K) সবচেয়ে ভালো তা নির্ণয় করা একটি ক্লাসিক চ্যালেঞ্জ। Silhouette Coefficient প্রতিটি ডাটা পয়েন্ট কতটা সুন্দরভাবে নিজের cluster-এর সাথে মানিয়েছে (cohesion) এবং নিকটতম অন্য cluster থেকে কতটা দূরে আছে (separation) তা একত্রে [-1, +1] স্কেলে পরিমাপ করে।\n\nনিচের ClusterQualitySelector কোডবেসে আপনাকে silhouette_score(X, labels) ইমপ্লিমেন্ট করতে হবে:\n১. ইনপুট X (shape (n, d)) এবং cluster assignment labels (shape (n,))। স্বতন্ত্র cluster সংখ্যা K অবশ্যই 2 <= K <= n - 1 হতে হবে; অন্যথায় ValueError ছুড়ুন।\n২. প্রতিটি sample i (যার cluster C_i)-এর জন্য:\n   - যদি |C_i| == 1 হয় (singleton cluster), তবে Rousseeuw (1987) ও scikit-learn অনুযায়ী s(i) = 0.0।\n   - নতুবা a(i) = নিজের cluster-এর অন্য সব পয়েন্টের সাথে গড় Euclidean দূরত্ব (হর |C_i| - 1), এবং b(i) = অন্য সব cluster C != C_i-এর পয়েন্টগুলোর সাথে গড় দূরত্বের মধ্যে সর্বনিম্ন মান।\n   - s(i) = (b(i) - a(i)) / max(a(i), b(i)) (যদি max(a(i), b(i)) > 0, নতুবা 0.0)।\n৩. সব sample-এর গড় mean(s) রিটার্ন করুন।",
+      "mathFormula": "s(i) = \\frac{b(i) - a(i)}{\\max(a(i),\\, b(i))}, \\quad a(i) = \\frac{1}{|C_i| - 1}\\sum_{j \\in C_i, j \\neq i} \\|x_i - x_j\\|_2, \\quad b(i) = \\min_{C \\neq C_i} \\frac{1}{|C|}\\sum_{j \\in C} \\|x_i - x_j\\|_2",
+      "targetFunction": "silhouette_score(X, labels)",
+      "codebaseTemplate": "import numpy as np\n\n\ndef silhouette_score(X: np.ndarray, labels: np.ndarray) -> float:\n    \"\"\"Compute Mean Silhouette Coefficient using Euclidean distance.\n\n    Args:\n        X: Data matrix of shape (n, d).\n        labels: Cluster labels of shape (n,) with 2 <= n_clusters <= n - 1.\n\n    Returns:\n        Mean silhouette score in [-1.0, 1.0]. Singleton clusters get s(i) = 0.0.\n    \"\"\"\n    # TODO: Compute pairwise Euclidean distances, a(i), b(i), singleton-safe s(i), and return mean(s)\n    raise NotImplementedError(\"Implement silhouette_score(X, labels)\")\n\n\nclass ClusterQualitySelector:\n    \"\"\"Selects the best clustering K by maximizing Mean Silhouette Score.\"\"\"\n\n    def select_best_k(\n        self, X: np.ndarray, candidate_labelings: dict[int, np.ndarray]\n    ) -> tuple[int, dict[int, float]]:\n        scores = {k: silhouette_score(X, lbls) for k, lbls in candidate_labelings.items()}\n        best_k = max(scores, key=lambda k: scores[k])\n        return best_k, scores\n",
+      "examples": [
+        {
+          "input": "X = [[0.0], [1.0], [10.0], [11.0]], labels = [0, 0, 1, 1]",
+          "output": "0.8997493734",
+          "explanation": "সব পয়েন্টের a(i) = 1.0। প্রান্তের পয়েন্ট 0.0 ও 11.0-এর b = 10.5 (s = 9.5/10.5 = 0.90476) এবং ভেতরের পয়েন্ট 1.0 ও 10.0-এর b = 9.5 (s = 8.5/9.5 = 0.89474); গড় = 0.89975।"
+        },
+        {
+          "input": "X = [[0.0, 0.0], [0.0, 1.0], [10.0, 0.0]], labels = [0, 0, 1]",
+          "output": "0.6001654270",
+          "explanation": "তৃতীয় পয়েন্ট [10, 0] একটি singleton cluster (|C_1| = 1) হওয়ায় তার s(2) = 0.0; প্রথম দুটি পয়েন্টের s(0) = 0.90000 এবং s(1) ≈ 0.90050; গড় = (0.90000 + 0.90050 + 0.0) / 3 ≈ 0.60017।"
+        }
+      ],
+      "thinkQuestions": [
+        {
+          "question": "Intra-cluster গড় দূরত্ব a(i) বের করার সময় নিজের cluster-এর সব পয়েন্টের দূরত্ব যোগ করে |C_i|-এর বদলে (|C_i| - 1) দিয়ে ভাগ করা হয় কেন?",
+          "options": [
+            "এটি sample variance-এর Bessel's correction-এর মতোই",
+            "কারণ নিজের সাথে নিজের দূরত্ব d(i, i) = 0.0; নিজেকে গড়ে ধরলে a(i) কৃত্রিমভাবে ছোট হয়ে যাবে, বিশেষত ছোট cluster-এ (যেমন ২টি পয়েন্টে a(i) অর্ধেক হয়ে যেত!)",
+            "কারণ Euclidean distance ম্যাট্রিক্সের diagonal-এ NaN থাকে",
+            "কারণ অন্য cluster-এও (|C| - 1) দিয়ে ভাগ করা হয়"
+          ],
+          "answer": 1,
+          "explanation": "a(i) হলো নিজের cluster-এর অন্য সদস্যদের সাথে গড় দূরত্ব। d(i, i) = 0 হওয়ায় যোগফলে নিজের অবদান ০, তাই ঠিক (|C_i| - 1) দিয়ে ভাগ করলেই অন্য সদস্যদের প্রকৃত গড় পাওয়া যায়। অন্যদিকে ভিন্ন cluster C-তে i নিজে থাকে না, তাই b(i)-তে |C| দিয়েই ভাগ হয়।"
+        },
+        {
+          "question": "কোনো cluster-এ মাত্র ১টি পয়েন্ট থাকলে (singleton cluster, |C_i| = 1), s(i)-এর মান কী হওয়া উচিত?",
+          "options": [
+            "0.0 (Rousseeuw 1987 ও scikit-learn কনভেনশন), কারণ intra-cluster দূরত্ব অসংজ্ঞায়িত এবং এটি 0 না রাখলে প্রতিটি পয়েন্টকে আলাদা cluster বানালেই +1.0 স্কোর পাওয়ার বাগ তৈরি হতো!",
+            "+1.0, কারণ cluster-এর ভেতরে কোনো spread নেই",
+            "-1.0",
+            "a(i) = 0 ধরে b(i)/b(i) = 1.0"
+          ],
+          "answer": 0,
+          "explanation": "যদি singleton cluster-কে +1.0 দেওয়া হতো, তবে K = n (প্রতিটি পয়েন্ট আলাদা cluster) সর্বদা সর্বোচ্চ স্কোর পেত! তাই সংজ্ঞা অনুযায়ী singleton-এর s(i) = 0.0 এবং 2 <= K <= n - 1 শর্ত আরোপ করা হয়।"
+        },
+        {
+          "question": "কোনো পয়েন্ট i-এর Silhouette মান ঋণাত্মক (যেমন s(i) = -0.35) হলে তা কী নির্দেশ করে?",
+          "options": [
+            "দূরত্ব হিসাব করতে বাগ হয়েছে, কারণ Silhouette কখনো নেগেটিভ হয় না",
+            "Cluster-গুলো সম্পূর্ণ আলাদা ও নিখুঁত",
+            "পয়েন্টটি একটি singleton cluster",
+            "a(i) > b(i), অর্থাৎ পয়েন্টটি নিজের cluster-এর চেয়ে অন্য একটি প্রতিবেশী cluster-এর বেশি কাছাকাছি আছে—সম্ভবত এটি ভুল cluster-এ অ্যাসাইন হয়েছে!"
+          ],
+          "answer": 3,
+          "explanation": "s(i) = (b(i) - a(i)) / max(a(i), b(i))। যখন b(i) < a(i) হয় তখন লব ঋণাত্মক হয়, যার অর্থ পয়েন্টটির নিজের cluster সদস্যদের তুলনায় নিকটতম ভিন্ন cluster-এর গড় দূরত্ব কম।"
+        }
+      ],
+      "hints": [
+        "Hint 1: প্রথমে unique_labels = np.unique(labels) বের করে 2 <= len(unique_labels) <= n - 1 যাচাই করুন। এরপর pairwise Euclidean distance matrix dist = np.linalg.norm(X[:, None, :] - X[None, :, :], axis=-1) তৈরি করুন।",
+        "Hint 2: প্রতিটি unique cluster c-এর জন্য তার member index তালিকা cluster_indices[c] আগে থেকেই বানিয়ে রাখুন। তারপর প্রতিটি i-এর জন্য own_idx = cluster_indices[labels[i]] দেখুন: len == 1 হলে s[i] = 0.0, নতুবা a_i = dist[i, own_idx].sum() / (len(own_idx) - 1) এবং b_i = min(dist[i, idx].mean() for c, idx in cluster_indices.items() if c != labels[i]) বের করুন।"
+      ],
+      "solutionCode": "import numpy as np\n\n\ndef silhouette_score(X: np.ndarray, labels: np.ndarray) -> float:\n    \"\"\"Compute Mean Silhouette Coefficient using Euclidean distance.\"\"\"\n    X_arr = np.asarray(X, dtype=np.float64)\n    lbl = np.asarray(labels).ravel()\n    if X_arr.ndim != 2 or X_arr.shape[0] != lbl.size:\n        raise ValueError(\"X must have shape (n, d) and labels must have shape (n,).\")\n\n    n = X_arr.shape[0]\n    unique_labels = np.unique(lbl)\n    n_clusters = unique_labels.size\n    if n_clusters < 2 or n_clusters > n - 1:\n        raise ValueError(\n            f\"Number of clusters must satisfy 2 <= K <= n - 1 (got K={n_clusters}, n={n}).\"\n        )\n\n    # Stable pairwise Euclidean distance matrix of shape (n, n)\n    diff = X_arr[:, None, :] - X_arr[None, :, :]\n    dist = np.linalg.norm(diff, axis=-1)\n\n    cluster_indices = {c: np.where(lbl == c)[0] for c in unique_labels}\n    s = np.zeros(n, dtype=np.float64)\n\n    for i in range(n):\n        c_i = lbl[i]\n        own_idx = cluster_indices[c_i]\n        if own_idx.size == 1:\n            s[i] = 0.0\n            continue\n\n        # dist[i, i] == 0.0, so summing over own_idx and dividing by (|C_i| - 1) excludes self\n        a_i = float(np.sum(dist[i, own_idx]) / (own_idx.size - 1))\n        b_i = min(\n            float(np.mean(dist[i, other_idx]))\n            for c_other, other_idx in cluster_indices.items()\n            if c_other != c_i\n        )\n        denom = max(a_i, b_i)\n        s[i] = (b_i - a_i) / denom if denom > 0.0 else 0.0\n\n    return float(np.mean(s))\n\n\nclass ClusterQualitySelector:\n    \"\"\"Selects the best clustering K by maximizing Mean Silhouette Score.\"\"\"\n\n    def select_best_k(\n        self, X: np.ndarray, candidate_labelings: dict[int, np.ndarray]\n    ) -> tuple[int, dict[int, float]]:\n        scores = {k: silhouette_score(X, lbls) for k, lbls in candidate_labelings.items()}\n        best_k = max(scores, key=lambda k: scores[k])\n        return best_k, scores\n\n\n# --- Verification Tests ---\n# 1. Exact hand-calculated 1D example: X = [0, 1, 10, 11], labels = [0, 0, 1, 1]\n# Point 0 & 11: a=1, b=10.5 -> s = 9.5/10.5; Point 1 & 10: a=1, b=9.5 -> s = 8.5/9.5\nX1 = np.array([[0.0], [1.0], [10.0], [11.0]])\nexpected_s1 = 0.5 * (9.5 / 10.5 + 8.5 / 9.5)\nassert np.isclose(silhouette_score(X1, [0, 0, 1, 1]), expected_s1, atol=1e-12)\n\n# 2. Singleton cluster convention: s(singleton) == 0.0\nX2 = np.array([[0.0, 0.0], [0.0, 1.0], [10.0, 0.0]])\ns0 = (10.0 - 1.0) / 10.0\ns1 = (np.hypot(10.0, 1.0) - 1.0) / np.hypot(10.0, 1.0)\nassert np.isclose(silhouette_score(X2, [0, 0, 1]), (s0 + s1 + 0.0) / 3.0, atol=1e-12)\n\n# 3. Coincident points (a == b == 0 -> safe 0.0) & misassigned cluster (negative score)\nassert silhouette_score(np.zeros((4, 2)), [0, 0, 1, 1]) == 0.0\nassert silhouette_score(X1, [0, 1, 0, 1]) < 0.0\n\n# 4. ClusterQualitySelector & invalid K ValueError check\nsel = ClusterQualitySelector()\nbest_k, all_scores = sel.select_best_k(\n    X1, {2: np.array([0, 0, 1, 1]), 3: np.array([0, 0, 1, 2])}\n)\nassert best_k == 2 and all_scores[2] > all_scores[3]\ntry:\n    silhouette_score(X1, [0, 0, 0, 0])\n    raise AssertionError(\"Expected ValueError for K < 2\")\nexcept ValueError:\n    pass\n",
+      "walkthrough": "১. Cluster Count Invariant: K = 1 হলে প্রতিবেশী cluster (b(i)) থাকে না, আর K = n হলে সব cluster-ই singleton। তাই scikit-learn-এর মতোই 2 <= K <= n - 1 যাচাই করা হয়েছে।\n\n২. Numerically Stable Pairwise Distance: ||x||^2 + ||y||^2 - 2 x.y সম্প্রসারণের বদলে সরাসরি np.linalg.norm(X[:, None, :] - X[None, :, :], axis=-1) ব্যবহার করা হয়েছে, যাতে বৃহৎ coordinate-এ catastrophic cancellation হয়ে sqrt(-1e-15) = NaN না ঘটে।\n\n৩. Precomputed Cluster Indices ও Singleton Guard: প্রতিটি cluster-এর ইনডেক্স একবারই dict-এ রাখা হয়েছে। কোনো sample-এর cluster size 1 হলে সরাসরি s[i] = 0.0; নতুবা dist[i, own_idx].sum() / (|C_i| - 1) দিয়ে a(i) (কারণ dist[i, i] = 0) এবং বাকি সব cluster-এর গড় দূরত্বের min দিয়ে b(i) বের করা হয়েছে।\n\n৪. Zero-Denominator Guard: সব পয়েন্ট একই বিন্দুতে অবস্থিত হলে a(i) = b(i) = 0 হয়; তাই max(a_i, b_i) > 0 চেক করে 0.0 রিটার্ন করা হয়েছে।",
+      "complexity": {
+        "time": "O(n^2 * d) — pairwise distance matrix নির্মাণে; per-point aggregation O(n^2)",
+        "space": "O(n^2) — (n, n) pairwise distance matrix-এর জন্য"
+      },
+      "edgeCases": [
+        "Singleton cluster (|C_i| = 1) থাকলে (|C_i| - 1) = 0 দিয়ে ভাগ করা যাবে না; সংজ্ঞানুসারে s(i) = 0.0 বসাতে হবে।",
+        "K = 1 অথবা K = n হলে Silhouette অসংজ্ঞায়িত; তাই ValueError ছুড়ে দিতে হবে।",
+        "দুটি cluster-এর পয়েন্টগুলো হুবহু একই coordinate-এ পড়লে a(i) = b(i) = 0 হয়; 0/0 এড়াতে denom > 0 চেক জরুরি।",
+        "খুব বড় ডেটাসেটে (n > 20,000) O(n^2) distance matrix মেমোরি ভরে ফেলতে পারে—বাস্তবে প্রোডাকশনে random subsample বা chunked distance ব্যবহার করা হয়।"
+      ]
+    },
+    {
+      "id": "dm_perplexity_nll",
+      "number": 29,
+      "title": "Token-Level Masked Cross-Entropy & Language Model Perplexity",
+      "category": "stats_metrics",
+      "categoryLabel": "Stats & ML Metrics",
+      "difficulty": "Easy",
+      "chapterRef": "chapter_22",
+      "tags": [
+        "LLM",
+        "Perplexity",
+        "Cross-Entropy",
+        "Log-Softmax",
+        "Masking"
+      ],
+      "summary": "Padding ও prompt টোকেন (ignore_index = -100) নিরাপদে মাস্ক করে numerically stable Token-Level NLL এবং Language Model Perplexity নির্ণয় করুন।",
+      "problemStatement": "GPT, LLaMA বা যেকোনো Autoregressive Language Model-কে ট্রেনিং ও ইভ্যালুয়েশনের সময় ভিন্ন দৈর্ঘ্যের সিকোয়েন্সগুলোকে একই ব্যাচে padding দিয়ে রাখতে হয়—আবার SFT (Supervised Fine-Tuning)-এ prompt টোকেনগুলোর ওপর loss গোনা হয় না। এসব উপেক্ষণীয় অবস্থানে PyTorch-এর কনভেনশন অনুযায়ী ignore_index = -100 বসানো থাকে।\n\nনিচের LanguageModelEvaluator কোডবেসে causal next-token shifting হেল্পার দেওয়া আছে। আপনাকে masked_perplexity(logits, targets, ignore_index=-100) ফাংশনটি ইমপ্লিমেন্ট করতে হবে:\n১. logits-এর shape (B, T, V) অথবা (N, V) এবং targets-এর shape (B, T) অথবা (N,) হতে পারে। প্রথমে logits-কে (-1, V) এবং targets-কে (-1,) শেপে flatten করুন।\n২. targets != ignore_index দিয়ে valid টোকেনগুলো আগে ফিল্টার করুন (অন্তত ১টি valid টোকেন না থাকলে ValueError ছুড়ুন)।\n৩. Log-Sum-Exp trick ব্যবহার করে প্রতিটি valid টোকেনের negative log-likelihood (NLL) বের করুন: NLL_i = log(sum_v exp(z_{i,v} - m_i)) - (z_{i, y_i} - m_i)।\n৪. রিটার্ন করুন (mean_nll, perplexity), যেখানে perplexity = exp(mean_nll)।",
+      "mathFormula": "\\mathcal{L}_{\\mathrm{NLL}} = -\\frac{1}{|\\mathcal{M}|}\\sum_{i \\in \\mathcal{M}} \\ln \\frac{\\exp(z_{i, y_i})}{\\sum_{v=1}^{V} \\exp(z_{i, v})}, \\quad \\mathrm{PPL} = \\exp\\left(\\mathcal{L}_{\\mathrm{NLL}}\\right)",
+      "targetFunction": "masked_perplexity(logits, targets, ignore_index)",
+      "codebaseTemplate": "import numpy as np\n\n\ndef masked_perplexity(\n    logits: np.ndarray, targets: np.ndarray, ignore_index: int = -100\n) -> tuple[float, float]:\n    \"\"\"Compute token-level masked cross-entropy (NLL) and perplexity.\n\n    Args:\n        logits: Unnormalized vocabulary scores of shape (B, T, V) or (N, V).\n        targets: Integer target token IDs of shape (B, T) or (N,). Positions equal\n            to `ignore_index` are excluded from the loss.\n        ignore_index: Sentinel label ID to ignore (default: -100).\n\n    Returns:\n        (mean_nll, perplexity): Mean token NLL in nats and exp(mean_nll).\n    \"\"\"\n    # TODO: Flatten logits/targets, filter out ignore_index BEFORE indexing, compute stable log-softmax NLL & perplexity\n    raise NotImplementedError(\"Implement masked_perplexity(logits, targets, ignore_index)\")\n\n\nclass LanguageModelEvaluator:\n    \"\"\"Evaluates causal Transformer LMs on padded variable-length token batches.\"\"\"\n\n    def __init__(self, pad_token_id: int = 0, ignore_index: int = -100) -> None:\n        self.pad_token_id = pad_token_id\n        self.ignore_index = ignore_index\n\n    def build_causal_targets(self, input_ids: np.ndarray) -> np.ndarray:\n        \"\"\"Shift input_ids left by 1 for next-token prediction and mask pad tokens.\"\"\"\n        targets = np.asarray(input_ids, dtype=np.int64)[:, 1:].copy()\n        targets[targets == self.pad_token_id] = self.ignore_index\n        return targets\n\n    def evaluate_batch(self, full_logits: np.ndarray, input_ids: np.ndarray) -> dict[str, float]:\n        # Predict token t+1 from logits at position t\n        shift_logits = np.asarray(full_logits, dtype=np.float64)[:, :-1, :]\n        shift_targets = self.build_causal_targets(input_ids)\n        nll, ppl = masked_perplexity(\n            shift_logits, shift_targets, ignore_index=self.ignore_index\n        )\n        return {\"mean_nll\": nll, \"perplexity\": ppl}\n",
+      "examples": [
+        {
+          "input": "logits = [[[0.0, 0.0, 0.0, 0.0], [9.0, -9.0, -9.0, -9.0]]], targets = [[2, -100]], ignore_index = -100",
+          "output": "mean_nll = 1.38629436 (ln 4), perplexity = 4.0",
+          "explanation": "দ্বিতীয় পজিশন -100 হওয়ায় বাদ পড়ে। প্রথম পজিশনে ৪টি টোকেনের logit সমান (uniform distribution p = 1/4), তাই NLL = ln(4) এবং Perplexity = 4.0 (অর্থাৎ মডেলটি ৪টি টোকেনের মধ্যে সমানভাবে বিভ্রান্ত)।"
+        },
+        {
+          "input": "logits = [[1000.0, 1000.0], [1000.0, 1000.0]], targets = [0, 1], ignore_index = -100",
+          "output": "mean_nll = 0.69314718 (ln 2), perplexity = 2.0",
+          "explanation": "Logit মান 1000.0 হওয়া সত্ত্বেও row-max বিয়োগ করায় exp(1000) overflow হয় না এবং নিখুঁতভাবে NLL = ln(2), PPL = 2.0 পাওয়া যায়।"
+        }
+      ],
+      "thinkQuestions": [
+        {
+          "question": "যদি vocabulary size V = 500 হয় এবং ignore_index = -100 কে আগে ফিল্টার না করে সরাসরি log_probs[np.arange(N), targets] চালিয়ে পরে মাস্ক দিয়ে গুণ করা হয়, তবে কী ঘটবে?",
+          "options": [
+            "Python সাথে সাথে IndexError ছুড়ে দেবে",
+            "Perplexity ঠিক 1.0 হয়ে যাবে",
+            "কোনো Error ছাড়াই Python-এর negative indexing লুকিয়ে vocabulary index 400 (= 500 - 100)-কে পড়বে! আর যদি কোনো logit NaN/inf হয় বা mask-এ ভুল থাকে তবে নীরব ডাটা করাপশন ঘটবে—এবং অপ্রয়োজনীয় padding-এ compute নষ্ট হবে",
+            "NumPy স্বয়ংক্রিয়ভাবে -100 কে 0 বানিয়ে দেবে"
+          ],
+          "answer": 2,
+          "explanation": "এটি NumPy/Python-এর একটি কুখ্যাত নীরব বাগ! V >= 100 হলে arr[i, -100] কোনো exception দেয় না বরং arr[i, V - 100] রিড করে! আর V < 100 হলে IndexError দেয়। তাই সবসময়ই indexing ও log-softmax চালানোর আগেই valid_mask দিয়ে ফিল্টার করতে হয়।"
+        },
+        {
+          "question": "একটি Language Model-এর vocabulary size V = 50,000। র‍্যান্ডম ইনিশিয়ালাইজেশনের শুরুতে (সব logit ≈ 0) এর প্রত্যাশিত Perplexity কত হওয়া উচিত?",
+          "options": [
+            "1.0",
+            "প্রায় 50,000 (vocabulary size V-এর সমান)",
+            "ln(50,000) ≈ 10.82",
+            "0.0"
+          ],
+          "answer": 1,
+          "explanation": "Uniform distribution-এ প্রতিটি টোকেনের probability 1/V, ফলে NLL = -ln(1/V) = ln(V) এবং Perplexity = exp(ln(V)) = V = 50,000! LLM ট্রেনিং শুরুর প্রথম ধাপেই এই sanity check (initial loss ≈ ln(V)) চালানো হয়।"
+        },
+        {
+          "question": "দুটি আলাদা ব্যাচের (যাদের একটিতে 10টি valid টোকেন এবং অন্যটিতে 1,000টি valid টোকেন) Perplexity একত্রে বের করার সঠিক উপায় কোনটি?",
+          "options": [
+            "প্রতিটি valid টোকেনের মোট NLL যোগ করে মোট valid টোকেন সংখ্যা (1010) দিয়ে ভাগ করে শেষে exp() নেওয়া",
+            "দুটি ব্যাচের Perplexity-র সাধারণ গড় (PPL_1 + PPL_2) / 2 নেওয়া",
+            "দুটি ব্যাচের Perplexity গুণ করা",
+            "সর্বোচ্চ Perplexity-টি নেওয়া"
+          ],
+          "answer": 0,
+          "explanation": "Perplexity হলো NLL-এর exponential—এটি linear নয়! তাই কখনোই Perplexity-র arithmetic mean নেওয়া যায় না; সবসময় টোকেন-ওয়েটেড গড় NLL বের করে একদম শেষে exp(mean_nll) নিতে হয়।"
+        }
+      ],
+      "hints": [
+        "Hint 1: V = logits.shape[-1] নিয়ে logits_2d = logits.reshape(-1, V) এবং targets_1d = targets.reshape(-1) বানান। এরপর valid = targets_1d != ignore_index তৈরি করে valid_logits = logits_2d[valid] এবং valid_targets = targets_1d[valid] নিন।",
+        "Hint 2: valid_logits-এ axis=-1 বরাবর max বাদ দিন (shifted = valid_logits - row_max)। এরপর lse = np.log(np.sum(np.exp(shifted), axis=-1)) এবং target_scores = shifted[np.arange(valid_targets.size), valid_targets] নিয়ে nll = lse - target_scores, mean_nll = mean(nll), ppl = exp(mean_nll) রিটার্ন করুন।"
+      ],
+      "solutionCode": "import numpy as np\n\n\ndef masked_perplexity(\n    logits: np.ndarray, targets: np.ndarray, ignore_index: int = -100\n) -> tuple[float, float]:\n    \"\"\"Compute token-level masked cross-entropy (NLL) and perplexity.\"\"\"\n    logits_arr = np.asarray(logits, dtype=np.float64)\n    targets_arr = np.asarray(targets, dtype=np.int64)\n    if logits_arr.ndim not in (2, 3):\n        raise ValueError(f\"Expected logits of shape (N, V) or (B, T, V), got {logits_arr.shape}.\")\n\n    vocab_size = logits_arr.shape[-1]\n    logits_2d = logits_arr.reshape(-1, vocab_size)\n    targets_1d = targets_arr.reshape(-1)\n    if logits_2d.shape[0] != targets_1d.size:\n        raise ValueError(\"Number of token positions in logits and targets must match.\")\n\n    valid_mask = targets_1d != ignore_index\n    if not np.any(valid_mask):\n        raise ValueError(\"No valid (unmasked) tokens found to compute perplexity.\")\n\n    # Filter BEFORE indexing so ignore_index (e.g. -100) never triggers negative indexing or IndexError\n    valid_logits = logits_2d[valid_mask]\n    valid_targets = targets_1d[valid_mask]\n    if np.any((valid_targets < 0) | (valid_targets >= vocab_size)):\n        raise ValueError(\"Valid target token IDs must lie in [0, vocab_size).\")\n\n    row_max = np.max(valid_logits, axis=-1, keepdims=True)\n    shifted = valid_logits - row_max\n    log_sum_exp = np.log(np.sum(np.exp(shifted), axis=-1))\n    target_shifted = shifted[np.arange(valid_targets.size), valid_targets]\n\n    token_nll = log_sum_exp - target_shifted\n    mean_nll = float(np.mean(token_nll))\n    perplexity = float(np.exp(mean_nll))\n    return mean_nll, perplexity\n\n\nclass LanguageModelEvaluator:\n    \"\"\"Evaluates causal Transformer LMs on padded variable-length token batches.\"\"\"\n\n    def __init__(self, pad_token_id: int = 0, ignore_index: int = -100) -> None:\n        self.pad_token_id = pad_token_id\n        self.ignore_index = ignore_index\n\n    def build_causal_targets(self, input_ids: np.ndarray) -> np.ndarray:\n        \"\"\"Shift input_ids left by 1 for next-token prediction and mask pad tokens.\"\"\"\n        targets = np.asarray(input_ids, dtype=np.int64)[:, 1:].copy()\n        targets[targets == self.pad_token_id] = self.ignore_index\n        return targets\n\n    def evaluate_batch(self, full_logits: np.ndarray, input_ids: np.ndarray) -> dict[str, float]:\n        shift_logits = np.asarray(full_logits, dtype=np.float64)[:, :-1, :]\n        shift_targets = self.build_causal_targets(input_ids)\n        nll, ppl = masked_perplexity(\n            shift_logits, shift_targets, ignore_index=self.ignore_index\n        )\n        return {\"mean_nll\": nll, \"perplexity\": ppl}\n\n\n# --- Verification Tests ---\n# 1. Worked Example 1: Uniform logits + masked token ignored\nlogits1 = np.array([[[0.0, 0.0, 0.0, 0.0], [9.0, -9.0, -9.0, -9.0]]])\ntargets1 = np.array([[2, -100]])\nnll1, ppl1 = masked_perplexity(logits1, targets1, ignore_index=-100)\nassert np.isclose(nll1, np.log(4.0), atol=1e-12)\nassert np.isclose(ppl1, 4.0, atol=1e-12)\n\n# 2. Worked Example 2: Large logits overflow safety (1000.0)\nnll2, ppl2 = masked_perplexity([[1000.0, 1000.0], [1000.0, 1000.0]], [0, 1])\nassert np.isclose(nll2, np.log(2.0), atol=1e-12) and np.isclose(ppl2, 2.0, atol=1e-12)\n\n# 3. Large vocab (V=200 > 100) ensures -100 never silently reads vocab index 100\nlogits_big = np.zeros((1, 2, 200), dtype=np.float64)\nlogits_big[0, 1, 100] = 50.0  # Trap at index -100 (100) on ignored position!\nnll_big, ppl_big = masked_perplexity(logits_big, [[5, -100]], ignore_index=-100)\nassert np.isclose(ppl_big, 200.0, atol=1e-10)\n\n# 4. Causal evaluator integration & all-masked ValueError guard\nev = LanguageModelEvaluator(pad_token_id=0, ignore_index=-100)\n# Sequence: [BOS=1, tok=2, PAD=0] -> shifted targets: [2, -100]; logit at pos 0 strongly predicts 2\ncausal_logits = np.array([[[0.0, 0.0, 20.0], [20.0, 0.0, 0.0], [0.0, 0.0, 0.0]]])\nres_ev = ev.evaluate_batch(causal_logits, np.array([[1, 2, 0]]))\nassert res_ev[\"perplexity\"] < 1.0001\ntry:\n    masked_perplexity(logits1, [[-100, -100]], ignore_index=-100)\n    raise AssertionError(\"Expected ValueError when all tokens are masked\")\nexcept ValueError:\n    pass\n",
+      "walkthrough": "১. Shape Normalization ও Early Masking: 3D (B, T, V) এবং 2D (N, V) উভয় ইনপুটকেই (-1, V)-তে flatten করা হয়েছে। এরপর সবার আগে valid_mask = targets_1d != ignore_index দিয়ে কেবল কার্যকর টোকেনগুলো আলাদা করা হয়েছে—এতে -100 কখনোই negative indexing করে ভুল টোকেন পড়তে পারে না এবং padding টোকেনে compute খরচও বাঁচে।\n\n২. Numerically Stable Log-Softmax: সরাসরি exp(logits) নিলে 1000.0-এর মতো logit-এ overflow হয়ে inf/inf = NaN আসত। প্রতিটি row-এর সর্বোচ্চ মান row_max বিয়োগ করায় সব exponent <= 0 থাকে। এরপর token_nll = log_sum_exp - target_shifted বের করা হয়েছে (সরাসরি softmax ও log আলাদাভাবে করলে underflow ঝুঁকি থাকত)।\n\n৩. Token-Weighted Perplexity: সব valid টোকেনের গড় NLL বের করে exp(mean_nll) রিটার্ন করা হয়েছে। LanguageModelEvaluator দেখায় কীভাবে causal LM-এ input_ids[:, 1:] এবং logits[:, :-1, :] align করতে হয়।",
+      "complexity": {
+        "time": "O(N_valid * V) — যেখানে N_valid হলো unmasked টোকেন সংখ্যা এবং V হলো vocabulary size",
+        "space": "O(N_valid * V) — shifted valid logits-এর জন্য"
+      },
+      "edgeCases": [
+        "সব টোকেন ignore_index (all-padded batch) হলে গড় অসংজ্ঞায়িত; NaN না দিয়ে ValueError ছুড়তে হবে।",
+        "V >= 100 হলে আগে মাস্ক না করে arr[:, -100] ইনডেক্সিং করলে Python কোনো এরর ছাড়াই index (V - 100) পড়ে মারাত্মক নীরব বাগ তৈরি করে।",
+        "Logit মান +1000 বা -1000 হলে max-shift ছাড়া softmax overflow/underflow করে NaN দেয়।",
+        "খুব বড় NLL (যেমন > 709 float64-এ) হলে exp(mean_nll) overflow হয়ে +inf হতে পারে—ইভ্যালুয়েশন লগে তাই NLL ও PPL দুটোই ট্র্যাক করা হয়।"
+      ]
+    },
+    {
+      "id": "dm_ratio_metric_delta",
+      "number": 30,
+      "title": "Ratio Metric Variance via Delta Method",
+      "category": "stats_metrics",
+      "categoryLabel": "Stats & ML Metrics",
+      "difficulty": "Hard",
+      "chapterRef": "chapter_37",
+      "tags": [
+        "Delta Method",
+        "Ratio Metrics",
+        "A/B Testing",
+        "Clustered Variance"
+      ],
+      "summary": "User-randomized A/B এক্সপেরিমেন্টে CTR বা Revenue-per-Session-এর মতো Ratio Metric-এর সঠিক Standard Error নির্ণয়ের জন্য Delta Method ইমপ্লিমেন্ট করুন।",
+      "problemStatement": "অ্যাড র‍্যাংকিং বা সার্চ A/B টেস্টে সবচেয়ে পরিচিত মেট্রিকগুলো হলো Ratio Metric—যেমন CTR = total_clicks / total_impressions, কিংবা Revenue-per-Session = total_revenue / total_sessions। এখানে randomization unit হলো ইউজার (u = 1..n), কিন্তু মেট্রিকের হর (impressions বা sessions) নিজেই একটি random variable এবং একই ইউজারের একাধিক impression পরস্পর correlated!\n\nযদি কেউ impression-গুলোকে i.i.d. ধরে সাধারণ Binomial SE = sqrt(p(1-p)/total_impressions) ব্যবহার করেন, তবে variance ব্যাপকভাবে underestimated হয় এবং False Positive রেট আকাশচুম্বী হয়ে যায়। এর ইন্ডাস্ট্রি-স্ট্যান্ডার্ড সমাধান হলো First-Order Delta Method (Deng et al., KDD 2018)।\n\nনিচের RatioMetricExperimentAnalyzer কোডবেসে আপনাকে ratio_metric_delta_se(num, den) ইমপ্লিমেন্ট করতে হবে:\n১. num (X_u: u-তম ইউজারের মোট numerator, যেমন clicks) এবং den (Y_u: u-তম ইউজারের মোট denominator, যেমন impressions) দুটি সমান দৈর্ঘ্যের 1D array (n >= 2), যেখানে mean(den) > 0।\n২. Overall ratio R = mean(X) / mean(Y) = sum(X) / sum(Y) নির্ণয় করুন।\n৩. Delta Method variance বের করুন:\n   Var(R) = (1 / n) * (s_X^2 / mu_Y^2 + (mu_X^2 / mu_Y^4) * s_Y^2 - 2 * (mu_X / mu_Y^3) * s_XY)\n   (যা বীজগাণিতিকভাবে linearized residual Z_u = X_u - R * Y_u-এর সাহায্যে s_Z^2 / (n * mu_Y^2)-এর ঠিক সমান!)।\n৪. রিটার্ন করুন (ratio, se), যেখানে se = sqrt(Var(R))।",
+      "mathFormula": "\\hat{R} = \\frac{\\bar{X}}{\\bar{Y}}, \\quad \\mathrm{Var}(\\hat{R}) \\approx \\frac{1}{n}\\left(\\frac{s_X^2}{\\bar{Y}^2} + \\frac{\\bar{X}^2}{\\bar{Y}^4}s_Y^2 - 2\\frac{\\bar{X}}{\\bar{Y}^3}s_{XY}\\right) = \\frac{s^2_{X - \\hat{R}Y}}{n\\,\\bar{Y}^2}",
+      "targetFunction": "ratio_metric_delta_se(num, den)",
+      "codebaseTemplate": "import math\nimport numpy as np\n\n\ndef ratio_metric_delta_se(\n    num: np.ndarray, den: np.ndarray\n) -> tuple[float, float]:\n    \"\"\"Compute ratio metric estimate sum(num)/sum(den) and its Delta Method SE.\n\n    Args:\n        num: Per-user numerator totals X_u (e.g., clicks or revenue), shape (n,).\n        den: Per-user denominator totals Y_u (e.g., impressions or sessions), shape (n,).\n\n    Returns:\n        (ratio, se): Overall ratio estimate and its user-level Delta Method standard error.\n    \"\"\"\n    # TODO: Compute ratio = mean(X)/mean(Y) and Delta Method SE = sqrt(Var(X - R*Y) / (n * mean(Y)^2))\n    raise NotImplementedError(\"Implement ratio_metric_delta_se(num, den)\")\n\n\nclass RatioMetricExperimentAnalyzer:\n    \"\"\"Runs statistically valid user-randomized A/B tests on ratio metrics (CTR, RPM).\"\"\"\n\n    def ab_ratio_z_test(\n        self,\n        num_ctrl: np.ndarray,\n        den_ctrl: np.ndarray,\n        num_trt: np.ndarray,\n        den_trt: np.ndarray,\n    ) -> dict[str, float]:\n        r_c, se_c = ratio_metric_delta_se(num_ctrl, den_ctrl)\n        r_t, se_t = ratio_metric_delta_se(num_trt, den_trt)\n        diff = r_t - r_c\n        se_diff = math.sqrt(se_c * se_c + se_t * se_t)\n        if se_diff == 0.0:\n            z_stat, p_value = 0.0, 1.0\n        else:\n            z_stat = diff / se_diff\n            p_value = math.erfc(abs(z_stat) / math.sqrt(2.0))\n        return {\n            \"ratio_control\": r_c,\n            \"ratio_treatment\": r_t,\n            \"diff\": diff,\n            \"se_diff\": se_diff,\n            \"z_stat\": z_stat,\n            \"p_value\": p_value,\n        }\n",
+      "examples": [
+        {
+          "input": "num = [2, 4, 6, 8], den = [10, 20, 30, 40] (every user has exact CTR = 0.20)",
+          "output": "ratio = 0.2, se = 0.0",
+          "explanation": "প্রতিটি ইউজারের জন্য X_u = 0.2 * Y_u হওয়ায় linearized residual X_u - R * Y_u = 0। এখানে s_X^2, s_Y^2 বড় হলেও s_XY-এর covariance বিয়োগ হওয়ায় exact Delta Method SE = 0.0!"
+        },
+        {
+          "input": "num = [10, 0, 10, 0], den = [10, 10, 10, 10] (4 users, 40 impressions total, half users click 100%, half 0%)",
+          "output": "ratio = 0.5, se = 0.288675 (vs naive Binomial SE = 0.07906!)",
+          "explanation": "ইউজারের ভেতরে ১০০% correlation থাকায় প্রকৃত user-level SE = 0.2887—যা naive Binomial SE (0.0791)-এর প্রায় 3.65 গুণ বড়! Naive SE ব্যবহার করলে মারাত্মক False Positive হতো।"
+        }
+      ],
+      "thinkQuestions": [
+        {
+          "question": "কেন CTR = total_clicks / total_impressions-এ সাধারণ Binomial সূত্র sqrt(CTR * (1 - CTR) / total_impressions) ব্যবহার করলে A/A টেস্টে False Positive রেট ৫%-এর বদলে ২০%-৪০% হয়ে যায়?",
+          "options": [
+            "কারণ sum(X)/sum(Y) এবং mean(X)/mean(Y) সমান নয়",
+            "কারণ CTR সবসময় 0.5-এর চেয়ে ছোট হয়",
+            "কারণ Binomial সূত্র কেবল integer-এর জন্য কাজ করে",
+            "কারণ Binomial সূত্রটি ধরে নেয় প্রতিটি impression স্বাধীন (i.i.d.), কিন্তু বাস্তবে একই ইউজারের ১০০টি impression পরস্পর heavily correlated (intra-user correlation), ফলে effective sample size অনেক কম এবং প্রকৃত variance অনেক বড়"
+          ],
+          "answer": 3,
+          "explanation": "Randomization unit হলো ইউজার, impression নয়! একজন পাওয়ার-ইউজার একা ৫০০ impression ও ৫০ ক্লিক করলে সেটি ৫০০ স্বাধীন ট্রায়াল নয়। Delta Method ইউজার-লেভেল ভ্যারিয়েন্স ও covariance ধরে এই clustering effect সঠিকভাবে হিসাব করে।"
+        },
+        {
+          "question": "Full Taylor সূত্র (s_X^2 / Y_bar^2 + (X_bar^2 / Y_bar^4) * s_Y^2 - 2*(X_bar / Y_bar^3)*s_XY) / n-এর বদলে linearized residual Z_u = X_u - R * Y_u নিয়ে Var(Z) / (n * Y_bar^2) ব্যবহার করা গাণিতিক ও সাংখ্যিকভাবে কেন শ্রেয়?",
+          "options": [
+            "এটি কেবল একটি আনুমানিক shortcut, exact সমান নয়",
+            "এটি O(log n) সময়ে চলে",
+            "বীজগাণিতিকভাবে দুটি শতভাগ অভিন্ন, কিন্তু Z_u^2-এর যোগফল কখনোই floating-point cancellation-এ ঋণাত্মক হতে পারে না (যখন X ও Y প্রায় perfectly correlated)",
+            "এতে mean(Y) লাগে না"
+          ],
+          "answer": 2,
+          "explanation": "লক্ষ করুন: Var(X - R*Y) = s_X^2 - 2*R*s_XY + R^2*s_Y^2; একে n * Y_bar^2 দিয়ে ভাগ করলে ঠিক Taylor সূত্রই পাওয়া যায়! কিন্তু তিনটি বড় পদের বিয়োগ (s_X^2 + R^2 s_Y^2 - 2 R s_XY) করলে float64-এ -1e-16 এসে sqrt()-এ Domain Error হতে পারত, অথচ sum((X - R*Y)^2) সর্বদাই >= 0!"
+        },
+        {
+          "question": "যদি প্রতিটি ইউজারের denominator সমান ও ধ্রুবক হয় (যেমন প্রতিটি ইউজারের জন্য den_u = 1), তবে Delta Method SE কীসে পরিণত হয়?",
+          "options": [
+            "শূন্য হয়ে যায়",
+            "ঠিক সাধারণ sample mean-এর standard error s_X / sqrt(n)-এ পরিণত হয়!",
+            "অসীম হয়ে যায়",
+            "s_X / n হয়ে যায়"
+          ],
+          "answer": 1,
+          "explanation": "den_u = 1 হলে Y_bar = 1, s_Y^2 = 0 এবং s_XY = 0। তখন সূত্রটি সরাসরি sqrt(s_X^2 / n) = s_X / sqrt(n)-এ নেমে আসে—অর্থাৎ সাধারণ user-level metric হলো Delta Method-এর একটি বিশেষ ক্ষেত্র!"
+        }
+      ],
+      "hints": [
+        "Hint 1: X ও Y-এর গড় mu_x = np.mean(X) ও mu_y = np.mean(Y) বের করুন (mu_y > 0 যাচাই করে)। Overall ratio হলো R = mu_x / mu_y।",
+        "Hint 2: Linearized residual z = X - R * Y তৈরি করুন (লক্ষ করুন mean(z) == 0)। এরপর sample variance s_z2 = np.sum(z * z) / (n - 1) বের করে var_r = s_z2 / (n * mu_y * mu_y) এবং se = math.sqrt(var_r) রিটার্ন করুন।"
+      ],
+      "solutionCode": "import math\nimport numpy as np\n\n\ndef ratio_metric_delta_se(\n    num: np.ndarray, den: np.ndarray\n) -> tuple[float, float]:\n    \"\"\"Compute ratio metric estimate sum(num)/sum(den) and its Delta Method SE.\"\"\"\n    x = np.asarray(num, dtype=np.float64).ravel()\n    y = np.asarray(den, dtype=np.float64).ravel()\n    if x.shape != y.shape or x.size < 2:\n        raise ValueError(\"num and den must be 1D arrays of identical length >= 2.\")\n\n    n = x.size\n    mu_x = float(np.mean(x))\n    mu_y = float(np.mean(y))\n    if mu_y <= 0.0:\n        raise ValueError(\"Mean denominator must be strictly positive.\")\n\n    ratio = mu_x / mu_y\n\n    # Algebraically identical to Taylor expansion:\n    # (s_x^2 / mu_y^2 + (mu_x^2 / mu_y^4) * s_y^2 - 2 * (mu_x / mu_y^3) * s_xy) / n\n    # Guaranteed non-negative without catastrophic cancellation\n    linearized = x - ratio * y\n    s_lin_sq = float(np.sum(linearized * linearized) / (n - 1))\n    var_ratio = s_lin_sq / (n * mu_y * mu_y)\n    se = math.sqrt(max(var_ratio, 0.0))\n    return float(ratio), float(se)\n\n\nclass RatioMetricExperimentAnalyzer:\n    \"\"\"Runs statistically valid user-randomized A/B tests on ratio metrics (CTR, RPM).\"\"\"\n\n    def ab_ratio_z_test(\n        self,\n        num_ctrl: np.ndarray,\n        den_ctrl: np.ndarray,\n        num_trt: np.ndarray,\n        den_trt: np.ndarray,\n    ) -> dict[str, float]:\n        r_c, se_c = ratio_metric_delta_se(num_ctrl, den_ctrl)\n        r_t, se_t = ratio_metric_delta_se(num_trt, den_trt)\n        diff = r_t - r_c\n        se_diff = math.sqrt(se_c * se_c + se_t * se_t)\n        if se_diff == 0.0:\n            z_stat, p_value = 0.0, 1.0\n        else:\n            z_stat = diff / se_diff\n            p_value = math.erfc(abs(z_stat) / math.sqrt(2.0))\n        return {\n            \"ratio_control\": r_c,\n            \"ratio_treatment\": r_t,\n            \"diff\": diff,\n            \"se_diff\": se_diff,\n            \"z_stat\": z_stat,\n            \"p_value\": p_value,\n        }\n\n\n# --- Verification Tests ---\n# 1. Worked Example 1: Exact proportional X = 0.2 * Y -> SE == 0.0\nr1, se1 = ratio_metric_delta_se([2, 4, 6, 8], [10, 20, 30, 40])\nassert math.isclose(r1, 0.2, abs_tol=1e-12) and math.isclose(se1, 0.0, abs_tol=1e-12)\n\n# 2. Worked Example 2: Clustered users -> Delta SE >> naive Binomial SE\nr2, se2 = ratio_metric_delta_se([10, 0, 10, 0], [10, 10, 10, 10])\nnaive_se = math.sqrt(0.5 * 0.5 / 40.0)\nassert math.isclose(r2, 0.5, abs_tol=1e-12)\nassert math.isclose(se2, math.sqrt(1.0 / 12.0), abs_tol=1e-12)\nassert se2 > 3.5 * naive_se\n\n# 3. Exact algebraic identity with explicit Taylor covariance formula + constant denominator reduction\nrng = np.random.default_rng(30)\nden_sim = rng.integers(1, 50, size=300).astype(np.float64)\nuser_ctr = rng.beta(2.0, 18.0, size=300)\nnum_sim = rng.binomial(den_sim.astype(int), user_ctr).astype(np.float64)\n\nr_sim, se_sim = ratio_metric_delta_se(num_sim, den_sim)\nmu_x, mu_y = np.mean(num_sim), np.mean(den_sim)\ncov_mat = np.cov(num_sim, den_sim, ddof=1)\nvar_taylor = (\n    cov_mat[0, 0] / (mu_y ** 2)\n    + (mu_x ** 2) * cov_mat[1, 1] / (mu_y ** 4)\n    - 2.0 * mu_x * cov_mat[0, 1] / (mu_y ** 3)\n) / num_sim.size\nassert math.isclose(se_sim, math.sqrt(var_taylor), rel_tol=1e-12)\n\n# Constant denominator = 1 reduces to standard sample mean SE: s_x / sqrt(n)\nr_const, se_const = ratio_metric_delta_se(num_sim, np.ones_like(num_sim))\nassert math.isclose(se_const, float(np.std(num_sim, ddof=1) / math.sqrt(num_sim.size)), rel_tol=1e-12)\n\n# 4. Agreement with user-level cluster bootstrap & A/B analyzer integration\nboot_ratios = np.empty(2000)\nfor b in range(2000):\n    idx = rng.integers(0, num_sim.size, size=num_sim.size)\n    boot_ratios[b] = np.sum(num_sim[idx]) / np.sum(den_sim[idx])\nassert abs(se_sim - float(np.std(boot_ratios, ddof=1))) / se_sim < 0.08\n\nanalyzer = RatioMetricExperimentAnalyzer()\nab = analyzer.ab_ratio_z_test(num_sim, den_sim, num_sim * 1.25, den_sim)\nassert ab[\"diff\"] > 0.0 and ab[\"p_value\"] < 0.05\n",
+      "walkthrough": "১. User-Level Ratio ও Mean: প্রতি ইউজারের aggregated (X_u, Y_u) থেকে mu_x ও mu_y বের করে R = mu_x / mu_y (= sum(X)/sum(Y)) হিসাব করা হয়েছে। এখানে mu_y <= 0 হলে ratio অসংজ্ঞায়িত, তাই ValueError দেওয়া হয়েছে।\n\n২. Linearized Residual রূপান্তর: Delta Method-এর প্রথম-ক্রম Taylor gradient (1/mu_y, -mu_x/mu_y^2) প্রয়োগ করলে প্রতিটি ইউজারের influence ফাংশন দাঁড়ায় (X_u - R * Y_u) / mu_y। লক্ষ করুন, mean(X - R * Y) = mu_x - (mu_x/mu_y)*mu_y = 0! তাই linearized = x - ratio * y নিয়ে তার sample variance (ddof=1) বের করে (n * mu_y^2) দিয়ে ভাগ করলেই full covariance-expanded Taylor variance-এর হুবহু সমান মান পাওয়া যায়—কোনো subtraction cancellation ছাড়াই!\n\n৩. Verification: টেস্টে প্রমাণ করা হয়েছে যে এই সূত্রটি (ক) explicit Taylor (s_X^2, s_Y^2, s_XY) ফর্মুলার সাথে 1e-12 নির্ভুলতায় মিলে যায়, (খ) den = 1 হলে সাধারণ s_X / sqrt(n)-এ রূপান্তরিত হয়, এবং (গ) user-level cluster bootstrap SE-এর সাথে ঘনিষ্ঠভাবে মিলে যায়—অথচ O(n) সময়ে চলে!",
+      "complexity": {
+        "time": "O(n) — যেখানে n হলো randomization unit (user) সংখ্যা",
+        "space": "O(n) — linearized residual ভেক্টরের জন্য"
+      },
+      "edgeCases": [
+        "অনেক ইউজারের den_u = 0 (যেমন এক্সপেরিমেন্টে অ্যাসাইন হয়েছেন কিন্তু কোনো impression বা session নেই) থাকলেও পুরো ডেটাসেটের mean(den) > 0 হলে সূত্রটি নিখুঁতভাবে কাজ করে—এসব ইউজারকে বাদ দিলে selection bias তৈরি হয়!",
+        "সব ইউজারের জন্য X_u = c * Y_u হলে explicit Taylor সূত্রের বিয়োগফলে -1e-18 এসে math.sqrt()-এ ValueError ঘটতে পারত; linearized residual (X - R*Y)^2 তা সম্পূর্ণ দূর করে।",
+        "খুব কম ইউজার (যেমন n < 30) বা চরম heavy-tailed denominator (যেমন একজন বট-ইউজার ৯০% impression তৈরি করলে) প্রথম-ক্রম Taylor approximation দুর্বল হয়—বাস্তবে বট ফিল্টারিং ও outlier capping (winsorization) প্রয়োজন।",
+        "আলাদা দুটি মেট্রিকের অনুপাত না নিয়ে প্রতিটি ইউজারের গড় ratio mean(X_u / Y_u) নিলে তা overall CTR = sum(X)/sum(Y)-এর সমান হয় না (Simpson's Paradox / ratio-of-means vs mean-of-ratios)।"
+      ]
+    }
+  ]
+}

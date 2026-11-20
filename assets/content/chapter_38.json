@@ -1,0 +1,1676 @@
+{
+  "id": "chapter_38",
+  "number": 38,
+  "title": "ML System Design Cases",
+  "shortTitle": "ML System Design",
+  "displayTitle": "ML System Design\nConnect. Budget. Defend.",
+  "subtitle": "বাস্তব পাঁচটি Case ধরে Data, Model, Serving এবং Decision Policy একসঙ্গে সমন্বয় করে পূর্ণাঙ্গ ML System ডিজাইন করার কৌশল।",
+  "description": "Start with requirements. Trace the data.\nBudget failure. Defend every tradeoff.",
+  "difficulty": "Advanced · system design cases",
+  "lab": "system_design",
+  "lessons": [
+    {
+      "id": "ch38_contract",
+      "title": "System Design Contract: একক Model থেকে পূর্ণাঙ্গ Service",
+      "subtitle": "মুখস্থ কোনো উত্তর নয়, বরং Requirements এবং Tradeoff-এর ধারাবাহিক শৃঙ্খল",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন শুধু ভালো Model বেছে নেওয়াই যথেষ্ট নয়?",
+          "body": "আগের অধ্যায়গুলোতে আমরা Model Training, Retrieval, Feature Pipeline, Serving এবং Experiment Design আলাদাভাবে শিখেছি। কিন্তু বাস্তবে একটি Production সিস্টেম গড়ার সময় এই অংশগুলো বিচ্ছিন্নভাবে কাজ করে না। এই অধ্যায়ে আমরা Recommendation, Search, Spam Classification, Demand Forecasting এবং RAG—এই পাঁচটি বাস্তবসম্মত Case ধরে পুরো সিস্টেমটিকে এক সুতোয় গাঁথব। মনে রাখবেন, আলোচনার শুরুতেই সবচেয়ে বড় বা আধুনিক Model-টির নাম বলে দেওয়া কখনোই ভালো System Design নয়।\n\nসিস্টেমটি কারা ব্যবহার করবেন, কোন ধরনের ভুলে ক্ষতির মাত্রা বেশি, প্রতি সেকেন্ডে কতটুকু Load সামলাতে হবে এবং কোনো একটি Component হঠাৎ অচল হয়ে পড়লে পুরো সিস্টেম কীভাবে আচরণ করবে—এই মৌলিক প্রশ্নগুলোর উত্তর থেকেই প্রকৃত ডিজাইনের শুরু হয়। আমাদের প্রতিটি সিদ্ধান্ত এবং Tradeoff-এর পেছনে সুস্পষ্ট গাণিতিক হিসাব ও তথ্যপ্রমাণ থাকতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "System Design Interview-এর কাঠামোগত ধাপ",
+          "body": "এই প্রশ্নগুলোর উত্তর এলোমেলোভাবে না দিয়ে একটি সুশৃঙ্খল কাঠামো মেনে এগোনো জরুরি। একটি আদর্শ System Design আলোচনায় প্রথমেই মূল সমস্যা ও সীমাবদ্ধতা (Constraints) পরিষ্কার করে নিতে হয়; এরপর ক্রমান্বয়ে Success Metric ও Guardrail নির্ধারণ, Data Source ও Label-এর উৎস শনাক্তকরণ, একটি সহজ Baseline প্রস্তাব, মূল Architecture সাজানো, Evaluation পদ্ধতি, Capacity হিসাব, Failure Handling এবং পরবর্তী ধাপের Validation পরিকল্পনা তুলে ধরতে হয়। শুরুতেই Requirements না জেনে মুখস্থ কোনো সার্বজনীন Architecture ডায়াগ্রাম আঁকতে গেলে আপনি হয়তো অপ্রয়োজনীয় Component যোগ করে ফেলবেন, কিংবা সম্পূর্ণ ভুল Objective-কে সামনে রেখে এগোবেন।"
+        },
+        {
+          "type": "math",
+          "title": "পূর্ণাঙ্গ System Design-এর সমীকরণ",
+          "body": "\\mathrm{design}=\\mathrm{requirements}+\\mathrm{data}+\\mathrm{model}+\\mathrm{policy}+\\mathrm{operations}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ পাঁচটি Case ও তাদের কাঠামো যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/system_design/design_lab.json\").read_text(encoding=\"utf-8\")\n)\nassert len(lab[\"cases\"]) == 5\nassert lab[\"report\"][\"reserved_outcomes_scored\"] == 0\nprint(lab[\"report\"][\"roles\"])\nprint(list(lab[\"cases\"]))\n"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব Artifacts ও তথ্যের ভিত্তি",
+          "body": "উপরের কোডে আমরা যে পাঁচটি Case লোড করলাম, সেগুলোর ভিত্তি হিসেবে আগের বইগুলোর বাস্তব ও অপরিবর্তিত (Frozen) Artifacts পুনর্ব্যবহার করা হয়েছে—যার মধ্যে রয়েছে Book 5 · Chapter 5 (Recommender Capstone)-এর MovieLens ডেটা, Book 4 · Chapter 2 (Embeddings & Retrieval) ও Book 4 · Chapter 10 (LLM/GenAI Capstone)-এর SciFact ডেটা এবং Book 6 · Chapter 2 (Serving, Monitoring & MLOps)-এর Bike ডেটা। পাশাপাশি Spam সনাক্তকরণের জন্য UCI Spambase-এর সংখ্যাসূচক ইমেইল ডেটার ওপর একটি নির্দিষ্ট Logistic Regression Model ফিট করা হয়েছে। প্রতিটি Case-এর Response স্থানীয়ভাবেই নতুন করে হিসাব করা হয়; তবে মনে রাখা ভালো যে আগে থেকে পর্যবেক্ষণ করা ডায়াগনস্টিক ফলাফলগুলোকে নতুন কোনো অদেখা বা Blind Benchmark হিসেবে দাবি করা হচ্ছে না।"
+        },
+        {
+          "type": "text",
+          "title": "সুস্পষ্ট অনুমান ও সিমুলেশনের সীমাবদ্ধতা",
+          "body": "এই ল্যাবে ব্যবহৃত Request Load, প্রতিটি Stage-এর সময়কাল, Cache Hit অনুপাত, একসঙ্গে চলমান বা Concurrent Slot সংখ্যা, Human Review-এর বাজেট, খরচ এবং ইচ্ছাকৃতভাবে তৈরি করা ত্রুটিগুলো (Injected Faults) আমাদের ডিজাইন অনুশীলনের জন্য সুনির্দিষ্টভাবে সাজানো পরিকল্পনাগত প্যারামিটার। এগুলো কোনো জীবন্ত Production সার্ভার থেকে মাপা প্রকৃত QPS, p95 Latency, বাস্তব আউটেজ কিংবা মানুষের প্রকৃত কাজের গতি নয়। পুরো অ্যাপটি কোনো বাহ্যিক সার্ভিস, নেটওয়ার্ক API বা Authentication ছাড়াই স্থানীয়ভাবে স্বয়ংসম্পূর্ণভাবে চলে, যাতে আপনি প্রতিটি প্যারামিটার বদলে তার প্রভাব সরাসরি পরীক্ষা করতে পারেন।"
+        },
+        {
+          "type": "text",
+          "title": "Data Boundary ও সংরক্ষিত ডেটার সুরক্ষা",
+          "body": "ডেটার সততা বজায় রাখতে আমরা কঠোর সীমানা (Data Boundary) মেনে চলেছি। যেমন, UCI Spambase ডেটাসেটের মোট 4601টি Row থেকে হুবহু একরকম প্রোফাইলগুলোর গ্রুপ আলাদা রেখে 3183টি Row রাখা হয়েছে Training (Fit)-এর জন্য, 738টি Row রাখা হয়েছে Development-Validation-এর জন্য এবং বাকি 680টি Row সম্পূর্ণ সংরক্ষিত (Reserved) রাখা হয়েছে। এই সংরক্ষিত অংশের Label কখনোই স্কোরিং, এক্সপোর্ট বা Policy নির্বাচনের কাজে ব্যবহার করা হয়নি—ঠিক যেমন কোডের `reserved_outcomes_scored == 0` শর্তটি তা নিশ্চিত করছে। একইভাবে Bike ডেটাসেটের শেষ 184টি সংরক্ষিত ফলাফলও না খুলেই আলাদা রাখা হয়েছে এবং মূল ডেটাসেটের বাইট ও লাইসেন্স অক্ষত রাখা হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "এই অধ্যায়ের চূড়ান্ত লক্ষ্য",
+          "body": "পুরো অধ্যায় জুড়ে আপনার লক্ষ্য হবে একটি Request সিস্টেমে প্রবেশ করার মুহূর্ত থেকে চূড়ান্ত Decision তৈরি হওয়া পর্যন্ত প্রতিটি ধাপ নিখুঁতভাবে অনুসরণ করা। প্রতিটি Metric আসলে কোন Population-এর ওপর হিসাব হচ্ছে এবং কোনো Dependency ব্যর্থ হলে সিস্টেম কীভাবে সাড়া দেবে, তা যুক্তিসহ ব্যাখ্যা করার অভ্যাস গড়ে তুলুন। এখানে শেখা Contract এবং ব্যর্থতা বিশ্লেষণের এই দক্ষতা সরাসরি পরের অধ্যায় Book 6 · Chapter 5 (Technical Interview Practice)-এর কোডিং অনুশীলনে এবং Book 6 · Chapter 6 (Final Capstone & Mock Interviews)-এ নিজের প্রজেক্টের পক্ষে যুক্তি দেওয়ার সময় দারুণভাবে কাজে লাগবে।"
+        }
+      ]
+    },
+    {
+      "id": "ch38_requirements",
+      "title": "Requirements, Constraints ও Product Metrics",
+      "subtitle": "Architecture আঁকার আগে ভাবুন: কার Request, কী Decision, আর কতটুকু Deadline?",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ব্যবহারকারী ও সিদ্ধান্তের প্রকৃতি আগে পরিষ্কার করুন",
+          "body": "আগের পাঠে আমরা দেখেছি যে Requirements ছাড়া সিস্টেম ডিজাইন শুরু করা অন্ধকারে তীর ছোড়ার মতো। একটু খেয়াল করলেই দেখবেন—একটি Recommendation Feed, বৈজ্ঞানিক তথ্য খোঁজার Evidence Search, ইনবক্সের Spam সনাক্তকরণ, পরের দিনের চাহিদার হিসাব (Next-day Demand Forecasting) এবং তথ্যসূত্রসহ উত্তর দেওয়া RAG সিস্টেমের ব্যবহারকারী ও ভুলের পরিণাম সম্পূর্ণ আলাদা। তাই শুরুতেই পরিষ্কার করে নিন: সিস্টেমটি কি শুধু একটি সম্ভাব্য Candidate তালিকা দেখিয়ে থামবে, নাকি সরাসরি চূড়ান্ত কোনো Action কার্যকর করবে? উত্তরটি কি তাৎক্ষণিক বা Interactive হতে হবে, নাকি নির্দিষ্ট সময় পরপর Batch আকারে চললেও চলবে? ফলাফল কি প্রত্যেক ব্যবহারকারীর জন্য Personalized, নাকি সবার জন্য একই বা Global? উদাহরণস্বরূপ, সাধারণ একটি ইমেইল Spam Filter-কে কখনোই আর্থিক লেনদেন আটকে দেওয়া Fraud Payment Blocker হিসেবে চালিয়ে দেওয়া যাবে না, কারণ দুটির ঝুঁকি ও দায়বদ্ধতা পুরোপুরি ভিন্ন।"
+        },
+        {
+          "type": "text",
+          "title": "Metric-এর স্তরবিন্যাস (Metric Hierarchy)",
+          "body": "সমস্যার ধরন ঠিক হওয়ার পর আসে সাফল্য মাপার পালা। একটি সিস্টেমে Product Utility, Model Quality, Service Health এবং Data Quality—এই চারটি সম্পূর্ণ আলাদা স্তর। Recommender সিস্টেমের NDCG, Search-এর Recall@k, Classification-এর False Positive সংখ্যা, Forecasting-এর MAE এবং RAG-এর Provenance যাচাইকে কখনোই একটি একক সংখ্যার লিডারবোর্ডে গুলিয়ে ফেলা চলে না। এমনকি দুটি সিস্টেমে একই নামের Metric ব্যবহার করলেও তার একক (Unit), হর বা Denominator, সময়ের সীমানা (Cutoff) এবং সময়ের পাল্লা (Horizon) শুরুতেই সুস্পষ্টভাবে সংজ্ঞায়িত করে নিতে হবে।"
+        },
+        {
+          "type": "math",
+          "title": "সীমাবদ্ধতার অধীনে সিদ্ধান্তের লক্ষ্য",
+          "body": "\\mathrm{request}\\to\\mathrm{decision},\\quad objective\\;\\mathrm{subject\\ to}\\;constraints"
+        },
+        {
+          "type": "code",
+          "title": "পাঁচটি Case-এর Request ও Quality লক্ষ্যমাত্রা দেখা",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"design38\", Path(\"assets/datasets/system_design/design_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/system_design/design_lab.json\").read_text(encoding=\"utf-8\")\n)\nfor name in m.CASE_IDS:\n    case = lab[\"cases\"][name]\n    print(name, case[\"request\"], case[\"quality\"])\nprint(lab[\"response_policies\"][\"spam\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "ক্ষতি এড়ানোর সুরক্ষা-দেয়াল (Guardrails)",
+          "body": "শুধু মূল Objective বা Accuracy বাড়লেই একটি সিস্টেম প্রোডাকশনে যাওয়ার যোগ্য হয়ে ওঠে না; এর পাশাপাশি প্রতিটি পণ্যের নিজস্ব কিছু ক্ষতি এড়ানোর সুরক্ষা-দেয়াল বা Guardrail থাকে। যেমন, কোনো জরুরি ও বৈধ ইমেইল ভুল করে ব্লক হয়ে যাওয়া, মেয়াদোত্তীর্ণ বা পুরোনো (Stale) ডেটার ওপর ভিত্তি করে Demand Forecast দেওয়া, এক ব্যবহারকারীর ব্যক্তিগত Cache থেকে অন্য ব্যবহারকারীকে Response দেখিয়ে ফেলা, কিংবা তথ্যসূত্রহীন মনগড়া উত্তর দেওয়া—এগুলোর প্রতিটিই মারাত্মক পণ্যগত ক্ষতি। বাস্তব কর্মক্ষেত্রে ব্যবসার নিয়ম, আইনি বাধ্যবাধকতা ও গোপনীয়তার শর্তগুলো সংশ্লিষ্ট Domain Owner-দের সঙ্গে বসে চূড়ান্ত করতে হয়; আমাদের এই অনুশীলনমূলক Prototype কোনো প্রতিষ্ঠানের পূর্ণাঙ্গ অনুমোদন প্রক্রিয়ার বিকল্প দাবি করে না।"
+        },
+        {
+          "type": "text",
+          "title": "Response Contract ও ফলাফলের স্বচ্ছতা",
+          "body": "উপরের কোডের শেষ লাইনে আমরা যেমন Spam সিস্টেমের Response Policy দেখলাম, বাস্তবেও একটি সার্ভিসের উত্তর কেবল হ্যাঁ-না বা একটি সংখ্যার মধ্যে সীমাবদ্ধ থাকে না। একটি সাধারণ Prediction Score, সাজানো Ranking তালিকা, মানুষের পর্যালোচনার জন্য পাঠিয়ে দেওয়া (Deferred Review) কিংবা নিশ্চিত না হলে উত্তর দেওয়া থেকে বিরত থাকা (Abstention)—এগুলোর প্রতিটিই আলাদা ধরনের Response। ভবিষ্যতে সমস্যা ধরতে বা Debugging করতে প্রতিটি উত্তরের সঙ্গে সুসংগত Status, কারণ (Reason) এবং Model/Policy-র Version Metadata জুড়ে দেওয়া অত্যন্ত জরুরি। যেমন, কোনো কুয়েরির উত্তরে খালি ফলাফল (Empty Result) আসা কি একটি নিরাপদ ও সফল Abstention, নাকি সিস্টেমের ব্যর্থতা—তা কেবল সাধারণ HTTP Status দিয়ে না বুঝিয়ে সুনির্দিষ্ট Response Contract দিয়েই পরিষ্কার করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "ঐতিহাসিক ডেটা ও বাস্তব পদক্ষেপের মধ্যকার ব্যবধান",
+          "body": "আরেকটি সূক্ষ্ম বিপদ লুকিয়ে থাকে ডেটা সংগ্রহের প্রক্রিয়ায়। অনেক সময় আসল ফলাফল বা Label পেতে দেরি হয়, কিংবা কেবল নির্দিষ্ট কিছু ঘটনার ক্ষেত্রেই Label পাওয়া যায়; এমনকি সিস্টেমের নিজের নেওয়া Action ভবিষ্যতের পর্যবেক্ষণকেই বদলে দিতে পারে! ক্রেডিট কার্ডের Fraud Chargeback, ব্যবহারকারীর করা Spam Report কিংবা ফিডে দেওয়া Click—এগুলোর কোনোটিই শতভাগ নিখুঁত ও নিরপেক্ষ Ground Truth নয়। ঠিক এই কারণেই UCI Spambase-এর পুরোনো ঐতিহাসিক ইমেইল ডেটা দিয়ে বর্তমান সময়ের কোনো আধুনিক মেসেজিং প্ল্যাটফর্মের কার্যকারিতা বা আর্থিক জালিয়াতি রোধের সক্ষমতা প্রমাণ করা সম্ভব নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে উত্তর সাজাবেন",
+          "body": "ইন্টারভিউতে আপনাকে যদি বলা হয়, 'একটি Personalized Feed ডিজাইন করুন', তবে সরাসরি ডায়াগ্রাম আঁকা শুরু না করে প্রথমে সিস্টেমের Scale, ডেটার Freshness, কোন কোন Item দেখানোর যোগ্য (Eligibility), নতুন ব্যবহারকারীর Cold Start সমস্যা, অনুমোদিত Latency, ব্যবহারকারীর Feedback এবং মূল Objective সম্পর্কে আপনার সংক্ষিপ্ত ও যৌক্তিক অনুমানগুলো লিখে নিন। যেসব তথ্য অজানা, সেগুলো চিহ্নিত রেখেই একটি সুস্পষ্ট Baseline প্রস্তাব করুন এবং পরিষ্কারভাবে বুঝিয়ে বলুন যে ভবিষ্যতে কোনো Requirement বদলে গেলে আপনার ডিজাইনের কোন অংশটি কীভাবে পরিবর্তিত হবে।"
+        }
+      ]
+    },
+    {
+      "id": "ch38_capacity",
+      "title": "Capacity হিসাব, Cache Miss ও Little’s Law",
+      "subtitle": "পরিমাপ করা বাস্তব Capacity আর কাল্পনিক Slot Model-কে কখনোই গুলিয়ে ফেলবেন না",
+      "duration": "55 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ট্রাফিক বা Load-কে অংশে অংশে ভেঙে দেখা",
+          "body": "Requirements এবং Latency-র লক্ষ্যমাত্রা ঠিক করার পর আমাদের জানতে হয় সিস্টেমটি চালাতে কতটুকু হার্ডওয়্যার বা সার্ভিস Capacity লাগবে। ধরুন, বাইরে থেকে প্রতি সেকেন্ডে আগত Request-এর হার হলো lambda এবং তার মধ্যে h অংশ সরাসরি Cache থেকে উত্তর পেয়ে যায় (Cache Hit)। তাহলে মূল ব্যাকএন্ড বা Miss Path-এ প্রতি সেকেন্ডে পৌঁছানো Request-এর হার হবে lambda × (1 − h)। তবে ভুললে চলবে না যে সিস্টেমের প্রবেশদ্বার (Ingress), Cache Lookup এবং চূড়ান্ত Response পাঠানোর স্তরগুলোকে কিন্তু পুরো বাহ্যিক ট্রাফিক (lambda)-ই সামলাতে হয়! তাই প্রতিটি পথের রিসোর্স চাহিদা ও সার্ভিসের সীমানা আলাদাভাবে হিসাব করতে হবে। গড় ট্রাফিক হিসাব করার পর হঠাৎ ট্রাফিকের ঢেউ (Burst), ব্যর্থ কলের Retry এবং Fallback ট্রাফিক যোগ হলে কোন স্তরে চাপ পড়বে, তা আগে থেকেই খতিয়ে দেখা দরকার।"
+        },
+        {
+          "type": "text",
+          "title": "সরলীকৃত বা আদর্শায়িত Slot Model",
+          "body": "প্রাথমিক ধারণার জন্য একটি সহজ হিসাব ধরা যাক: প্রতিটি সার্ভার Replica একসঙ্গে 4টি চলমান Request (Concurrent Slots) সামলাতে পারে এবং প্রতিটি Cache Miss এই Slot-টিকে অনুমিত Critical Path-এর সময় S_ms মিলিসেকেন্ড ধরে ব্যস্ত রাখে। তাহলে R সংখ্যক Replica থাকলে প্রতি সেকেন্ডে তাত্ত্বিক সর্বোচ্চ ক্ষমতা বা Ideal Capacity দাঁড়ায় R × 4 × 1000 / S_ms। অবশ্যই মনে রাখতে হবে যে এই সরল প্রবাহ ধাঁচের (Fluid Slot) মডেলটিতে শাখাগুলোর রিসোর্স কাড়াকাড়ি (Contention), CPU/GPU Batching, লাইনে দাঁড়িয়ে থাকার সময় (Queueing), ডেটা Serialization কিংবা নেটওয়ার্কের সীমাবদ্ধতা ধরা হয়নি। তাই এটি কেবল প্রাথমিক পরিকল্পনার অংক, সরাসরি প্রোডাকশনে কয়টি Replica লাগবে তার চূড়ান্ত সুপারিশ নয়।"
+        },
+        {
+          "type": "math",
+          "title": "ব্যাকএন্ড Load, আদর্শ Capacity ও Utilization-এর সূত্র",
+          "body": "\\lambda_b=\\lambda(1-h),\\quad \\mu=\\frac{R\\times4\\times1000}{S_{ms}},\\quad \\rho=\\lambda_b/\\mu"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ ব্যাকএন্ড QPS ও Ideal Capacity হিসাব",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"design38\", Path(\"assets/datasets/system_design/design_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/system_design/design_lab.json\").read_text(encoding=\"utf-8\")\n)\ncase = lab[\"cases\"][\"recommendation\"]\nplan = m.capacity(case, qps=1000, hit=0.5, replicas=4)\nassert plan[\"critical_ms\"] == 20\nassert plan[\"backend_qps\"] == 500\nassert plan[\"ideal_capacity\"] == 800\nprint(plan)\n"
+        },
+        {
+          "type": "text",
+          "title": "সংখ্যার উদাহরণে হিসাবটি মিলিয়ে দেখা",
+          "body": "উপরের কোডের সংখ্যাগুলো একটু মিলিয়ে দেখা যাক। আমাদের Recommendation কেসে অনুমিত Critical Path হলো 20 ms এবং সার্ভার Replica রয়েছে 4টি; অর্থাৎ মোট 4 × 4 = 16টি Slot প্রতি সেকেন্ডে আদর্শ অবস্থায় 16 × (1000 / 20) = 800টি Request সামলাতে পারে। এখন বাইরে থেকে প্রতি সেকেন্ডে 1000টি Request এলে এবং Cache Hit অনুপাত 0.5 হলে ব্যাকএন্ডে যায় 500টি Request, যার ফলে সিস্টেমের গড় Utilization দাঁড়ায় 500 / 800 = 0.625। কিন্তু বাস্তব ট্রাফিকে যদি একেকটি Request-এর কাজের চাপ একেকরকম হয় কিংবা ট্রাফিক হঠাৎ লাফিয়ে বাড়ে (Burstiness), তবে কেবল এই গড় পাটিগণিত দেখে সিস্টেমের প্রকৃত Throughput-এর নিশ্চয়তা দেওয়া যায় না।"
+        },
+        {
+          "type": "design_architecture",
+          "title": "স্থিতিশীলতা (Stability) ও সিস্টেমের ভেতরের চাপ",
+          "body": "সিস্টেমে যদি দীর্ঘ সময় ধরে Utilization ≥ 1 থাকে, তার মানে আপনার সক্ষমতার চেয়ে বেশি কাজের চাপ আসছে—সেক্ষেত্রে সিস্টেমে কোনো স্থিতিশীল সাম্যাবস্থা (Steady State) থাকে না, বরং অপেক্ষার লাইন ক্রমাগত লম্বা হতেই থাকে। কেবল স্থিতিশীল অবস্থায় (Utilization < 1) গড় আগমনের হার lambda-কে গড় সার্ভিস সময় দিয়ে গুণ করলে সিস্টেমের ভেতরে সক্রিয়ভাবে কাজ চলা Request-এর গড় সংখ্যা পাওয়া যায়। তবে অপেক্ষমাণ লাইনের সময়সহ (Queue Wait) মোট অবস্থানকাল (Residence Time) না মাপলে শুধু Little’s Law বসিয়ে বাস্তবের মোট লাইনের দৈর্ঘ্য অনুমান করা সম্ভব নয়।"
+        },
+        {
+          "type": "text",
+          "title": "পরিকল্পনার নিয়ন্ত্রক ও Headroom-এর ধারণা",
+          "body": "এই সিমুলেশন মডেলে আপনি পাঁচটি Case, Request Rate, Cache Hit, Replica সংখ্যা, Stage-এর সময়ের স্কেল এবং Deadline ঘুরিয়ে-ফিরিয়ে দেখতে পারেন। এখানে খেয়াল করবেন যে অতিরিক্ত চাপের সংকেত (Load Flag) এবং Critical Path-এর সময়সীমার বাড়তি অবকাশ (Deadline Slack) দুটি সম্পূর্ণ ভিন্ন জিনিস। বোঝার সুবিধার্থে এখানে 0.7 Utilization-কে একটি নিরাপদ Headroom সীমা হিসেবে চিহ্নিত করা হয়েছে; কিন্তু গড় Utilization কম থাকা বা ধনাত্মক Slack থাকাই প্রমাণ করে না যে বাস্তব লোড টেস্টে সিস্টেমটি p95 Latency SLO সফলভাবে পাস করবে।"
+        },
+        {
+          "type": "text",
+          "title": "একক ও প্রবাহের সতর্কতা",
+          "body": "হিসাব করার সময় এককগুলোর দিকে কড়া নজর রাখুন: মিলিসেকেন্ডকে সেকেন্ডে নেওয়া এবং প্রতি সেকেন্ডের Request সংখ্যা থেকে Concurrency বের করার জায়গায় অনেকেই ভুল করেন। তা ছাড়া একটি মূল Request থেকে ভেতরে একাধিক সার্ভিসে কল গেলে (Per-request Fanout) কিংবা ব্যর্থতায় বারবার চেষ্টা করলে (Retry Amplification) নিচের স্তরের সার্ভিসে ট্রাফিকের হার কয়েক গুণ বেড়ে যায়। মনে রাখবেন, অসীম আকারের Queue কখনোই অতিরিক্ত চাপের (Overload) সমাধান করে না; এর জন্য প্রয়োজন কঠোর Deadline, Admission Control, Backpressure এবং নিয়ন্ত্রিত উপায়ে সার্ভিসের মান কমানো (Bounded Degradation)।"
+        },
+        {
+          "type": "text",
+          "title": "কেন Utilization বাড়লে Queueing Delay সরলরেখায় বাড়ে না?",
+          "body": "কেন আমরা 100% Utilization-এর কাছাকাছি যেতে ভয় পাই, তা বোঝার জন্য একটি স্বতন্ত্র M/M/1 Queueing মডেল ধরা যাক। মনে করি, Request-গুলো আসছে Poisson প্রক্রিয়ায়, সার্ভিস সময়গুলো পরস্পর স্বাধীন Exponential বিন্যাস মেনে চলে, একটি একক সার্ভারের কাজের হার mu = 50 requests/s (অর্থাৎ গড় সার্ভিস সময় 20 ms) এবং অপেক্ষার জায়গা অসীম। এখন যদি প্রতি সেকেন্ডে 40টি Request আসে, তবে rho = 0.8 এবং সিস্টেমে মোট গড় সময় লাগে W = 1 / (50 − 40) = 0.1 s, যার মধ্যে 0.08 s সময়ই কেটে যায় কেবল লাইনে দাঁড়িয়ে! অথচ আগমনের হার সামান্য বেড়ে প্রতি সেকেন্ডে 49টি হলে (rho = 0.98) মোট গড় সময় এক লাফে বেড়ে দাঁড়ায় W = 1 s! এগুলো অবশ্যই সাম্যাবস্থার তাত্ত্বিক গড় মান, এবং আমাদের আগের চার-স্লটের সরল মডেলের সঙ্গে এই একক-সার্ভারের সূত্র মিশিয়ে সরাসরি সার্ভারের সংখ্যা নির্ধারণ করা যাবে না—কিন্তু এটি স্পষ্ট দেখিয়ে দেয় কেন উচ্চ Utilization-এ Latency বিস্ফোরিত হয়।"
+        },
+        {
+          "type": "math",
+          "title": "M/M/1 মডেলের গড় Queueing সমীকরণ",
+          "body": "\\rho=\\lambda/\\mu<1,\\qquad W=\\frac{1}{\\mu-\\lambda},\\quad W_q=W-\\frac1\\mu,\\quad L=\\lambda W"
+        },
+        {
+          "type": "code",
+          "title": "Little’s Law ও M/M/1 মডেলে গড় Response Time হিসাব",
+          "body": "service_rate = 50.0  # Requests per second for this one-server model.\nrows = []\nfor arrival_rate in [40.0, 49.0]:\n    assert 0 < arrival_rate < service_rate\n    mean_time = 1 / (service_rate - arrival_rate)\n    queue_time = mean_time - 1 / service_rate\n    number_in_system = arrival_rate * mean_time\n    rows.append((mean_time, queue_time, number_in_system))\nprint(*[round(value, 6) for row in rows for value in row])\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে যাচাই করুন",
+          "body": "যদি আগমনের হার ও সার্ভিসের হার সমান হয়ে যায় (অর্থাৎ lambda = mu হয়), তবে কি উপরের এই একই Steady-state গড় সূত্র থেকে কোনো সসীম (Finite) Latency পাওয়া সম্ভব?",
+          "solution": "না, অসীম বাফারযুক্ত এই M/M/1 মডেলে স্থিতিশীল গড় মান পাওয়ার আবশ্যিক শর্তই হলো lambda < mu; সমান হয়ে গেলে হর শূন্য হয়ে গড় অপেক্ষার সময় অসীমের দিকে চলে যায়। বাস্তব প্রোডাকশন সার্ভিসে তাই অসীম লাইনের বদলে সীমিত Admission Control, নির্দিষ্ট Queue Limit এবং কঠোর Request Deadline রাখা হয়। প্রকৃত সিস্টেমের আকার ঠিক করতে ট্রাফিকের Burstiness, সার্ভিস সময়ের প্রকৃত Distribution এবং শেয়ার করা রিসোর্সের আচরণ মেপে উপযুক্ত Queueing মডেল বা সরাসরি Load Test ব্যবহার করতে হবে।",
+          "reference": "https://web.mit.edu/dimitrib/www/Queueing_Data_Nets.pdf"
+        }
+      ]
+    },
+    {
+      "id": "ch38_architecture",
+      "title": "Critical Path: Serial যোগফল ও Parallel সর্বোচ্চ মান",
+      "subtitle": "Parallel কাজ মানেই বিনা খরচে গতি বৃদ্ধি নয়; সবার আগে চাই স্পষ্ট Dependency Graph",
+      "duration": "55 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কোন কাজ কার ওপর নির্ভরশীল? (Dependency Graph)",
+          "body": "আগের পাঠে আমরা পুরো সিস্টেমের Critical Path-কে 20 ms ধরে Capacity হিসাব করেছিলাম। কিন্তু এই 20 ms সংখ্যাটি আসে কোথা থেকে? একটি Request-এর ভেতরে যখন একাধিক স্বাধীন কাজ বা Branch একই সময়ে (Parallel) চলে, তখন ওই পুরো গ্রুপের অতিবাহিত সময় (Elapsed Time) নির্ধারিত হয় সবচেয়ে ধীরগতির Branch-টির সময় দিয়ে। আর পরবর্তী কোনো Stage যদি সব কটি সমান্তরাল Branch শেষ হওয়ার অপেক্ষায় থাকে, তবে তার সময় আগের সময়ের সঙ্গে ধারাবাহিকভাবে (Serial) যোগ হয়। তাই আর্কিটেকচার সাজানোর শুরুতেই একটি Dependency Graph এঁকে পরিষ্কার করতে হয় কোন কাজ কখন শুরু হতে পারবে। মনে রাখবেন—মোট রিসোর্সের শ্রম (Total Work), ঘড়ির কাঁটায় অতিবাহিত গড় Latency এবং Tail Latency-র বিন্যাস তিনটি সম্পূর্ণ আলাদা মাপকাঠি।"
+        },
+        {
+          "type": "text",
+          "title": "মোট শ্রম (Total Work) বনাম অতিবাহিত সময় (Elapsed Time)",
+          "body": "আমাদের Recommendation কেসের উদাহরণটিই ধরুন। সেখানে তিনটি সমান্তরাল Candidate শাখার অনুমিত সময় যথাক্রমে 3 ms, 8 ms এবং 12 ms। এগুলো একসঙ্গে চললে ঘড়ির কাঁটায় সময় লাগে সর্বোচ্চটি, অর্থাৎ 12 ms—অথচ ভেতরে মোট কাজের পরিমাণ কিন্তু 3 + 8 + 12 = 23 ms! পুরো Pipeline-এর অন্যান্য ধাপ মিলিয়ে সামগ্রিক Critical Path দাঁড়ায় 20 ms, যেখানে সব কাজ একের পর এক করলে মোট সময় লাগত 31 ms। এই যে 11 ms সময় বাঁচল, এটি কেবল ঘড়ির সময়ের সাশ্রয়; এতে কিন্তু CPU বা কম্পিউটিং রিসোর্স মোটেও কমেনি, বরং সমান্তরাল কর্মীদের চালাতে একই সময়ে বাড়তি রিসোর্স ব্যবহৃত হয়েছে।"
+        },
+        {
+          "type": "math",
+          "title": "Critical Path-এর দৈর্ঘ্য ও p95-এর অসমতা",
+          "body": "L_{path}=\\sum_g\\max_{j\\in g}L_j,\\quad \\max\\mathrm{,of,p95s}\\ne\\mathrm{p95,of,max}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Critical Path বনাম মোট Serial Work হিসাব",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"design38\", Path(\"assets/datasets/system_design/design_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/system_design/design_lab.json\").read_text(encoding=\"utf-8\")\n)\ncase = lab[\"cases\"][\"recommendation\"]\ntimes = [max((stage[\"ms\"] for stage in group)) for group in case[\"stages\"]]\ncritical = sum(times)\nserial_work = sum((stage[\"ms\"] for group in case[\"stages\"] for stage in group))\nprint(times, critical, serial_work, serial_work - critical)\n"
+        },
+        {
+          "type": "text",
+          "title": "Tail Latency-র সূক্ষ্ম ফাঁদ",
+          "body": "উপরের গাণিতিক সূত্রে একটি অত্যন্ত গুরুত্বপূর্ণ সতর্কবার্তা রয়েছে: প্রতিটি ধাপের আলাদা p95 যোগ করলে বা সমান্তরাল শাখাগুলোর p95-এর সর্বোচ্চ মান নিলেই পুরো Request-এর প্রকৃত p95 পাওয়া যায় না! কারণ এর পেছনে কাজ করে সময়ের পুরো Distribution, শাখাগুলোর পারস্পরিক নির্ভরশীলতা (Correlation) এবং শেয়ার করা রিসোর্সের চাপ। আমাদের এই অ্যাপে দেওয়া সময়গুলো পরিকল্পনার জন্য ধরে নেওয়া স্থির সংখ্যা মাত্র, বাস্তব ট্রাফিকের নমুনা থেকে মাপা কোনো Quantile নয়। প্রোডাকশনে সবচেয়ে ধীর শাখার Tail Latency, ব্যর্থ কলের Retry এবং ডাটাবেসের কাড়াকাড়ি একাই পুরো পথের সময়কে বহুগুণ বাড়িয়ে দিতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "সময়ের বাজেট বণ্টন (Latency Budget Ownership)",
+          "body": "সিস্টেমকে নিয়ন্ত্রণে রাখতে তাই Ingress, Feature Lookup, Candidate Retrieval, Ranking, Policy যাচাই এবং Response Serialization—প্রতিটি ধাপের জন্য আলাদা সময়ের বাজেট ও সুনির্দিষ্ট Deadline বেঁধে দিতে হয়। যদি কোনো ঐচ্ছিক কিন্তু ব্যয়বহুল ধাপ নির্ধারিত সময়ের মধ্যে শেষ না হতে পারে (Timeout), তবে আগে থেকে যাচাই করা কোনো সহজতর পথ দিয়ে নিরাপদে উত্তর দেওয়া যায় কি না তা ডিজাইনেই ঠিক করে রাখুন। আর একটি জরুরি নিয়ম: নিচের স্তরের কোনো Downstream কলের Timeout যেন কখনোই মূল কলারের অবশিষ্ট Deadline-কে ছাড়িয়ে না যায়।"
+        },
+        {
+          "type": "text",
+          "title": "Batch Throughput বনাম Online Latency",
+          "body": "একই মডেল যখন বড় আকারের Batch Job-এ চলে, তখন আমাদের মূল লক্ষ্য থাকে প্রতি সেকেন্ডে সর্বোচ্চ কাজের পরিমাণ বা Throughput বাড়ানো; কিন্তু ব্যবহারকারী যখন সরাসরি অ্যাপের সামনে অপেক্ষা করছেন, তখন আমাদের চাই সীমিত ও নিশ্চিত Latency। সার্ভারের দক্ষতা বাড়াতে অনেকে Dynamic Batching ব্যবহার করেন, কিন্তু মনে রাখতে হবে যে ব্যাচ পূর্ণ হওয়ার অপেক্ষা আবার বাড়তি Queue Delay যোগ করে। আমাদের এই স্থানীয় প্রোটোটাইপে GPU Batching, Autoscaling বা ডিস্ট্রিবিউটেড শিডিউলিং বেঞ্চমার্ক করা হয়নি, তাই সাধারণ CPU-তে চালানো এই ছোট উদাহরণগুলোকে সরাসরি প্রোডাকশন সার্ভার সাইজিংয়ের প্রমাণ হিসেবে নেওয়া যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "নিজের আর্কিটেকচার সিদ্ধান্তের পক্ষে যুক্তি দিন",
+          "body": "ইন্টারভিউ বা ডিজাইন রিভিউতে যখনই কোনো ধাপকে Parallel করার প্রস্তাব দেবেন, তখনই পরিষ্কার করে দেখান এর ফলে সিস্টেমের মূল Bottleneck আসলে কোথায় সরে যাচ্ছে। যেমন, একই শেয়ার করা ডাটাবেসের ওপর একসঙ্গে অনেকগুলো সমান্তরাল কুয়েরি চালালে (Parallel Fanout) উল্টো রিসোর্স Contention বেড়ে পুরো সিস্টেম ধীর হয়ে যেতে পারে! তাই আপনার আলোচনায় Critical Path ডায়াগ্রাম, মোট রিসোর্সের চাহিদা এবং বাস্তবসম্মত Load-test পরিকল্পনাকে তিনটি স্বতন্ত্র কিন্তু পরিপূরক দলিল হিসেবে উপস্থাপন করুন।"
+        },
+        {
+          "type": "text",
+          "title": "শাখাগুলোর নিজস্ব Tail একই হলেও Fanout Tail কেন বদলে যায়?",
+          "body": "কেন শুধু আলাদা শাখার p95 দেখে পুরো সমান্তরাল গ্রুপের p95 বলা যায় না, তা একটি চমৎকার সংখ্যার উদাহরণ দিয়ে দেখা যাক। ধরুন, 20টি Request-এর একটি নমুনা ট্রেসে দুটি সমান্তরাল শাখার প্রত্যেকটিই 19 বার সময় নেয় 10 ms এবং মাত্র একবার নেয় 100 ms। এখন দুটি শাখাতেই যদি ঠিক একই Request-টির ক্ষেত্রে দেরি হয়, তবে সর্বোচ্চ শাখার সময় 20টির মধ্যে 19 বারই (অর্থাৎ 95% ক্ষেত্রে) 10 ms-এর মধ্যে থাকে। কিন্তু দুটি শাখায় যদি ভিন্ন দুটি Request-এ দেরি ঘটে, তবে উভয় শাখা মিলে 10 ms-এ শেষ হওয়ার হার নেমে আসে 90%-এ (20টির মধ্যে 18টি)! খেয়াল করুন, প্রতিটি শাখার একক আচরণ (Marginal Distribution) হুবহু এক, কেবল তাদের মধ্যকার নির্ভরশীলতা (Dependence) বদলে গেছে। এখানে আমরা যদি সাজানো তালিকার ceil(0.95 × n)-তম মানকে Nearest-rank p95 হিসেবে ধরি, তবে দুটি শাখার একক p95-ই হলো 10 ms, অথচ ভিন্ন সময়ে ধীর হওয়া সমান্তরাল পথের সামগ্রিক p95 এক লাফে হয়ে যাচ্ছে 100 ms!"
+        },
+        {
+          "type": "code",
+          "title": "যৌথ ট্রেস (Joint Trace) থেকে সমান্তরাল শাখার Latency যাচাই",
+          "body": "import math\nimport numpy as np\n\nfirst = np.full(20, 10.0)\nfirst[0] = 100.0\nshared_slow = first.copy()\nseparate_slow = np.full(20, 10.0)\nseparate_slow[-1] = 100.0\n\n\ndef nearest_rank_p95(values):\n    ordered = sorted(values)\n    return ordered[math.ceil(0.95 * len(ordered)) - 1]\n\n\nshared_path = np.maximum(first, shared_slow)\nseparate_path = np.maximum(first, separate_slow)\nassert nearest_rank_p95(separate_slow) == 10\nprint(\n    np.mean(first <= 50),\n    np.mean(separate_slow <= 50),\n    np.mean(shared_path <= 50),\n    np.mean(separate_path <= 50),\n    nearest_rank_p95(first),\n    nearest_rank_p95(shared_path),\n    nearest_rank_p95(separate_path),\n)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে যাচাই করুন",
+          "body": "দুটি সমান্তরাল শাখার প্রত্যেকটির নির্দিষ্ট Deadline-এর ভেতরে কাজ শেষ করার Probability যদি 0.95 হয় এবং শাখা দুটি পরস্পর স্বাধীন (Independent) হয়, তবে পুরো গ্রুপটির সময়মতো শেষ হওয়ার যৌথ Probability কত?",
+          "solution": "শাখা দুটি পরস্পর স্বাধীন হলে দুটোকেই একই সঙ্গে সময়মতো শেষ হতে হবে, তাই যৌথ Probability হবে 0.95² = 0.9025 (অর্থাৎ 90.25%)। উপরের কোডের উদাহরণে আমরা পুরোপুরি একসঙ্গে ধীর হওয়া (Shared) এবং আলাদাভাবে ধীর হওয়া (Disjoint) উভয় চরিত্রই দেখলাম। বাস্তব সিস্টেমে প্রকৃত যৌথ Tail Latency বের করতে হলে একই Request-এর অধীনে সব ধাপের সময় একসঙ্গে লগ করতে হবে এবং রিপোর্ট করার সময় কোন Quantile পদ্ধতি ব্যবহার করছেন তাও স্পষ্টভাবে উল্লেখ করতে হবে।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch38_recommendation",
+      "title": "Case 1: Personalized Recommendation আর্কিটেকচার",
+      "subtitle": "Retrieval → Ranking → Constraints → চূড়ান্ত Response",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "পণ্যগত সমস্যার সংজ্ঞায়ন (Product Formulation)",
+          "body": "সিস্টেম ডিজাইনের মৌলিক গণিত ও আর্কিটেকচারের ভিত্তি গড়ার পর এবার আমরা আমাদের প্রথম বাস্তব কেস—Personalized Recommendation নিয়ে কাজ শুরু করব। এখানে মূল লক্ষ্য হলো একজন ব্যবহারকারীর অতীত আচরণ (User History) এবং দেখানোর যোগ্য ক্যাটালগ (Eligible Catalog) ঘেঁটে সবচেয়ে প্রাসঙ্গিক Top-K সংখ্যক Item ফিরিয়ে দেওয়া। আপনি ট্রেনিংয়ের Label হিসেবে পরোক্ষ সংকেত (Implicit Feedback), আইটেমের সামনে আসা (Exposure), ব্যবহারকারীর কাটানো সময় (Dwell Time) নাকি সরাসরি দেওয়া রেটিং (Explicit Rating) নিচ্ছেন, তার ওপর ভিত্তি করে মডেলের Objective পুরোপুরি বদলে যায়। মনে রাখতে হবে, অফলাইনে রেটিংয়ের ভিত্তিতে মাপা প্রাসঙ্গিকতা কখনোই বাস্তব কেনাকাটা বা ব্যবহারকারীর দীর্ঘমেয়াদী সন্তুষ্টির শতভাগ নিশ্চয়তা দেয় না; আর কোন আইটেম দেখানো যাবে বা আগে দেখা আইটেম বাদ যাবে কি না, তা সম্পূর্ণভাবে পণ্যের নিজস্ব Policy।"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তবায়িত ডেটা উৎস ও পূর্বনির্ধারিত Policy",
+          "body": "এই কেসে আমরা Book 5 · Chapter 5 (Recommender Capstone)-এ তৈরি করা MovieLens-এর শুধুমাত্র Training (Fit) অংশের ওপর ভিত্তি করে গড়া তিনটি উৎস—Popularity, Content Profile এবং Shrunk User-CF Candidate তালিকা পুনর্ব্যবহার করছি। সেখানে আগে থেকেই নির্বাচিত ও স্থির রাখা Weighted RRF পলিসি (rrfcf, প্রতি উৎস থেকে সর্বোচ্চ Budget 50, চূড়ান্ত তালিকা Top 10) দিয়ে এখানে Audit অংশের user 15-এর একটি নমুনা Request চালিয়ে দেখানো হয়েছে। এই অধ্যায়ে নতুন করে কোনো রিকমেন্ডার মডেল ট্রেন করা হয়নি বা নতুন কোনো অদেখা ডেটায় মূল্যায়ন চালানো হয়নি; কারণ কোন পলিসিটি সেরা, তা আগের বইয়ের পর্যবেক্ষণেই নির্ধারিত হয়ে গেছে।"
+        },
+        {
+          "type": "math",
+          "title": "বহু-উৎসের Candidate একত্রীকরণ ও চূড়ান্ত বাছাই",
+          "body": "pool=\\bigcup_s candidates_s,\\quad rank\\to filter\\to topK"
+        },
+        {
+          "type": "code",
+          "title": "স্বাভাবিক ও বিপর্যস্ত অবস্থায় Recommendation Response পরীক্ষা",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"design38\", Path(\"assets/datasets/system_design/design_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/system_design/design_lab.json\").read_text(encoding=\"utf-8\")\n)\nnormal = m.response(lab, \"recommendation\")\ndegraded = m.response(lab, \"recommendation\", \"upstream\")\nprint(normal[\"output\"][\"items\"])\nprint(degraded[\"served\"], degraded[\"output\"][\"items\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "পূর্ণাঙ্গ সার্ভিস আর্কিটেকচার",
+          "body": "বাস্তবে এই পাইপলাইনটি দুই ভাগে কাজ করে: অফলাইন বা নির্ধারিত বিরতিতে চলা Batch/Incremental জবগুলো মডেলের Artifacts এবং ব্যবহারকারীর ইতিহাসের Feature আগে থেকেই প্রস্তুত (Materialize) করে রাখে; আর যখন লাইভ Request আসে, তখন সিস্টেম প্রথমেই ব্যবহারকারীর পরিচয় ও সময়ের সীমানা (Cutoff) যাচাই করে নেয়, সমান্তরালভাবে বিভিন্ন স্বাধীন উৎস থেকে Candidate সংগ্রহ করে তাদের একত্র (Union) করে, এরপর স্কোর অনুযায়ী সাজিয়ে (Rank) ব্যবসায়িক শর্তাবলি (Constraints) প্রয়োগ করে চূড়ান্ত তালিকা ফিরিয়ে দেয়। মূল পার্সোনালাইজেশন ব্যর্থ হলে সাধারণ Popularity তালিকা একটি সস্তা ও কার্যকর Fallback হতে পারে—তবে সেটি সার্ভ করার আগেও যাচাই করতে হবে যেন তা বর্তমান ক্যাটালগ এবং ব্যবহারকারীর আগে দেখা আইটেম বাদ দেওয়ার নিয়ম (Seen Policy) যথাযথভাবে মেনে চলে।"
+        },
+        {
+          "type": "text",
+          "title": "নতুন ব্যবহারকারী ও নতুন আইটেমের চ্যালেঞ্জ (Cold Start)",
+          "body": "রিকমেন্ডার সিস্টেমের একটি চিরচেনা চ্যালেঞ্জ হলো Cold Start। একেবারে নতুন কোনো ব্যবহারকারী এলে বা তার ইতিহাস খালি থাকলে পার্সোনালাইজড উৎসগুলো কোনো সাজেশনই দিতে পারে না। একইভাবে ক্যাটালগে সদ্য যোগ হওয়া নতুন Item-এর কোনো ক্লিক বা রেটিং ইতিহাস থাকে না; সেক্ষেত্রে আইটেমের বিবরণ বা Content Feature প্রাথমিক সাহায্য করতে পারলেও বাস্তবে আইটেমটি ব্যবহারকারীদের সামনে কতটা সুযোগ (Exposure) পাচ্ছে তা আলাদাভাবে মূল্যায়ন করতে হয়। কেবল একটি একক গড় সংখ্যায় প্রকাশ করা NDCG-এর দিকে তাকিয়ে থাকলে কম জনপ্রিয় আইটেমের বঞ্চনা (Long-tail Coverage), ফিডব্যাকের পক্ষপাতিত্ব এবং জনপ্রিয় আইটেমের একচেটিয়া আধিপত্য (Popularity Bias) খুব সহজেই চোখের আড়ালে থেকে যায়।"
+        },
+        {
+          "type": "text",
+          "title": "বিপর্যয় মোকাবিলা ও Fallback পরীক্ষা",
+          "body": "উপরের কোডের দ্বিতীয় অংশে আমরা যখন 'upstream' ত্রুটি অনুকরণ করলাম, তখন সিস্টেমটি পার্সোনালাইজড শাখাগুলো বাদ দিয়ে ওই একই ব্যবহারকারীর আগে দেখা আইটেমগুলো ছেঁকে (Seen-filtered) শুধুমাত্র Training ডেটার Popularity তালিকা ফিরিয়ে দিয়েছে। অবশ্যই এটি আমাদের স্থানীয় কোডে পলিসি পরীক্ষার একটি মহড়া মাত্র, বাস্তব ক্লাউড অবকাঠামোর আউটেজ নয়। তবে প্রোডাকশন ডিজাইনে আপনাকে আলাদাভাবে হিসাব করে দেখতে হবে যে মূল সার্ভিস অচল হলে হঠাৎ পুরো ট্রাফিক যখন Fallback পথে গিয়ে আছড়ে পড়বে, তখন সেই বিকল্প ডাটাবেস বা ক্যাশ একা সেই বাড়তি চাপ সামলাতে পারবে কি না।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে উত্তর সাজাবেন",
+          "body": "ইন্টারভিউতে প্রশ্নকর্তা প্রায়ই জানতে চান: আপনি যদি কেবল তাৎক্ষণিক ক্লিকের হার (CTR) বাড়ানোর দিকে মনোযোগ দেন, তবে আইটেমের প্রকৃত প্রাসঙ্গিকতা, বৈচিত্র্য (Diversity), একই জিনিস বারবার দেখানোর বিরক্তি এবং ব্যবহারকারীর দীর্ঘমেয়াদী সন্তুষ্টি কীভাবে নজরদারিতে রাখবেন? উত্তরে স্পষ্ট করে বলুন যে অফলাইন মেট্রিকগুলো কেবল ঐতিহাসিক ডেটার সাপেক্ষে একটি প্রাথমিক ধারণা দেয়, আর বাস্তব প্রোডাক্টে পরিবর্তনের প্রকৃত কার্যকারণ প্রভাব (Causal Impact) মাপতে হলে Book 6 · Chapter 3 (Experimentation & Causal Reasoning)-এর নিয়ম মেনে সুপরিকল্পিত অনলাইন পরীক্ষা চালাতে হয়। ভুলেও দাবি করবেন না যে পৃথিবীর সব রিকমেন্ডার সমস্যার জন্য একটাই সর্বশ্রেষ্ঠ Retrieval বা Ranking স্ট্যাক রয়েছে।"
+        }
+      ]
+    },
+    {
+      "id": "ch38_candidates",
+      "title": "Candidate Coverage, Ranking Loss ও Eligibility",
+      "subtitle": "Retrieval ধাপে প্রাসঙ্গিক Item বাদ পড়ে গেলে সবচেয়ে শক্তিশালী Ranker-ও তা ফিরিয়ে আনতে পারে না",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "দুই ধাপের আর্কিটেকচারে কার দায়িত্ব কতটুকু?",
+          "body": "আগের পাঠে আমরা দেখেছি যে আমাদের রিকমেন্ডার সিস্টেম প্রথমে কয়েকটি উৎস থেকে Candidate জোগাড় করে এবং তারপর সেগুলোকে Rank করে। এখানে একটি মৌলিক সত্য সবসময় মনে রাখতে হবে: প্রথম ধাপের Candidate Generator যদি ক্যাটালগের কোনো প্রাসঙ্গিক Item মিস করে ফেলে, তবে পরের ধাপের Ranker যতই শক্তিশালী হোক না কেন, সেই অনুপস্থিত আইটেমটিকে সে কখনোই ব্যবহারকারীর সামনে হাজির করতে পারবে না! তাই পুরো সিস্টেমের End-to-end মেট্রিক আশানুরূপ না হলেই হুট করে আরও ব্যয়বহুল ডিপ লার্নিং Ranker বসানো প্রথম সমাধান নয়; বরং আগে Retrieval-এর Recall, সংগৃহীত Pool-এর আকার, Ranking-এর মান এবং চূড়ান্ত Eligibility ফিল্টারকে আলাদাভাবে পরীক্ষা করে দেখতে হবে গলদটা আসলে কোথায়।"
+        },
+        {
+          "type": "text",
+          "title": "সর্বোচ্চ সম্ভাব্য সীমা (Oracle Upper Bound)",
+          "body": "একটি নির্দিষ্ট Candidate Pool হাতে পাওয়ার পর যেকোনো নিখুঁত বা সর্বজ্ঞ (Oracle) Ranker-ও তার Top-K তালিকায় বড়জোর min(K, |pool ∩ relevant|) সংখ্যক সঠিক আইটেম রাখতে পারে। তা ছাড়া আমাদের হাতে থাকা সত্যের তালিকা (Gold Set) যদি অসম্পূর্ণ হয়, তবে এই সর্বোচ্চ সীমাটিও কেবল ইতিহাসে দেখা যাওয়া পছন্দগুলোর সাপেক্ষেই প্রযোজ্য হবে। নিচের কোডে আমরা MovieLens-এর সংরক্ষিত Audit ডেটায় থাকা প্রাসঙ্গিক আইটেমগুলো ব্যবহার করে একটি ডায়াগনস্টিক ঊর্ধ্বসীমা বের করছি—যদিও বাস্তবে ওই ব্যবহারকারীর মনের সব অদেখা পছন্দ আমাদের জানা নেই।"
+        },
+        {
+          "type": "math",
+          "title": "Candidate Pool সাপেক্ষে Recall@K-এর তাত্ত্বিক ঊর্ধ্বসীমা",
+          "body": "Recall@K\\le\\frac{\\min(K,|pool\\cap relevant|)}{|relevant|}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ User 15-এর Candidate Pool ও Oracle Upper Bound হিসাব",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"design38\", Path(\"assets/datasets/system_design/design_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/system_design/design_lab.json\").read_text(encoding=\"utf-8\")\n)\ndata = m.deps()[\"movielens/recommender_capstone_lab.json\"]\nrow = next((r for r in data[\"roles\"][\"audit\"] if r[\"user\"] == 15))\npool = set((i for values in row[\"sources\"].values() for i in values[:50]))\ngold = set(row[\"eligible\"])\nprint(len(pool), len(gold), len(pool & gold))\nprint(\n    \"Oracle recall upper bound:\",\n    min(10, len(pool & gold)) / len(gold) if gold else None,\n)\n"
+        },
+        {
+          "type": "text",
+          "title": "Data Leakage রোধের কড়া সতর্কতা",
+          "body": "রিকমেন্ডার মূল্যায়নে সামান্য অসতর্কতাতেই মারাত্মক Data Leakage ঘটে যেতে পারে। যেমন, যে সময়ের সীমানায় (Fit Cutoff) আপনি মডেল ট্রেন করছেন, তার পরের কোনো ইন্টারঅ্যাকশন যদি ভুলক্রমে ব্যবহারকারীর প্রোফাইল, ফিচার বা Popularity গণনার ভেতরে ঢুকে পড়ে, তবে পুরো ঐতিহাসিক মূল্যায়নই অকেজো হয়ে যাবে। একইভাবে শুরুতেই পরিষ্কার নিয়ম বেঁধে দিতে হবে যে 'আগে দেখা আইটেম' (Seen Policy) বলতে আপনি কী বোঝাচ্ছেন—ব্যবহারকারীর অতীতের সব কটি ইন্টারঅ্যাকশন, নাকি কেবল যেগুলোতে সে ইতিবাচক সাড়া দিয়েছিল? এখানে আমরা Book 5 · Chapter 5 (Recommender Capstone)-এর মূল সংজ্ঞাই হুবহু বজায় রেখেছি, এবং বলার অপেক্ষা রাখে না যে মূল্যায়নের জন্য রাখা Audit অংশের ইতিবাচক আইটেমগুলো কখনোই সার্ভিংয়ের সময় ইনপুট হিসেবে ব্যবহৃত হয় না।"
+        },
+        {
+          "type": "text",
+          "title": "Filter ও ব্যবসায়িক শর্তগুলো কখন প্রয়োগ করবেন?",
+          "body": "ব্লক করা, স্টকে না থাকা কিংবা আগে দেখা আইটেমগুলো কি আপনি Retrieval-এর আগেই বাদ দেবেন, নাকি পরে ছেঁকে ফেলবেন? এই ক্রমটি বদলে দিলেই কিন্তু আপনার Candidate Budget এবং মেট্রিকের হর (Denominator) বদলে যাবে! যেমন, মাত্র 50টি আইটেম তুলে আনার পর যদি দেখেন তার 45টিই ব্যবহারকারী আগে দেখে ফেলেছেন, তবে র‍্যাঙ্কারের হাতে সাজানোর মতো আর তেমন কিছুই অবশিষ্ট থাকবে না। আবার তালিকায় বৈচিত্র্য আনা বা ব্যবসায়িক শর্ত পূরণের জন্য Re-ranking করলে একক প্রাসঙ্গিকতার সঙ্গে কিছুটা আপস (Tradeoff) করতে হতে পারে। কিন্তু মনে রাখবেন, কঠোর নীতিগত শর্ত (Hard Constraints) ভেঙে উচ্চ স্কোর পাওয়ার কোনো অর্থ নেই; এমনকি সিস্টেমের জরুরি Fallback পথকেও ঠিক একই শর্তগুলো মেনে চলতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "ভিন্ন উৎসের স্কোর মেলানো ও Versioned Fusion",
+          "body": "আলাদা আলাদা Candidate উৎস থেকে আসা কাঁচা স্কোরগুলো যদি একই মাপকাঠিতে Calibrated না হয়, তবে সেগুলোকে সরাসরি যোগ করে দেওয়া মারাত্মক ভুল। এই সমস্যা এড়াতেই আমাদের কেসে Reciprocal Rank Fusion (RRF) ব্যবহার করা হয়েছে, যা কাঁচা স্কোরের বদলে আইটেমের অবস্থান বা Rank-কে সমন্বয় করে। তবে RRF মানেই কোনো Calibrated Probability নয় বা সব পরিস্থিতির সেরা সার্বজনীন পদ্ধতিও নয়। ডিবাগিং সহজ রাখতে কোন উৎস থেকে কত Budget নেওয়া হলো, তাদের Weight কত এবং পলিসির Version কী—তা সবসময় Response-এর পরিচয়ে সংরক্ষণ করুন। এখানেও স্মরণ রাখা ভালো যে Validation ডেটায় বেছে নেওয়া ফিউশন পলিসিকে Audit ডেটার ফলাফল দেখে দ্বিতীয়বার পরিবর্তন করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "কোডিং ও ইঞ্জিনিয়ারিং অনুশীলনের খুঁটিনাটি",
+          "body": "ইন্টারভিউয়ের কোডিং রাউন্ডে এই ধরনের মাল্টি-সোর্স ফিউশন লিখতে দিলে কয়েকটি বিষয়ে বিশেষ যত্নবান হবেন: সমান স্কোর হলে যেন ফলাফল এলোমেলো না হয়ে সুনির্দিষ্ট নিয়মে ভাঙে (Deterministic Tie-break), প্রতিটি Candidate ID যেন অনন্য থাকে, উৎসগুলোর সংযোগ (Union) ও প্রতি উৎসের নিজস্ব Rank Map যেন নির্ভুল হয় এবং কেবল বৈধ (Eligible) আইটেমগুলোই যেন চূড়ান্ত তালিকায় জায়গা পায়। একই আইটেম একাধিক উৎস থেকে উঠে এলে চূড়ান্ত আউটপুটে সেটি যেন ভুল করে দুবার না আসে! সবশেষে, র‍্যাঙ্কিং লজিকের গাণিতিক নির্ভুলতা এবং সার্ভিংয়ের Latency—দুটোকেই আলাদা আলাদা টেস্ট দিয়ে যাচাই করার অভ্যাস গড়ে তুলুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch38_search",
+      "title": "Case 2: Lexical ও Semantic Search ডিজাইন",
+      "subtitle": "Corpus ও Index-এর Freshness, অনুমতিভিত্তিক Filter এবং Retrieval Evaluation",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Search সিস্টেমের মৌলিক চুক্তি (Search Contract)",
+          "body": "Recommendation-এ ব্যবহারকারী নিজে কিছু লেখেন না, কিন্তু Search সিস্টেমে ব্যবহারকারীর দেওয়া একটি সুনির্দিষ্ট Query থেকে প্রাসঙ্গিক প্রামাণ্য নথি (Evidence Documents) খুঁজে বের করতে হয়। ডিজাইনের শুরুতেই ঠিক করে নিতে হবে—সিস্টেমটি কি হুবহু শব্দের মিল (Keyword Matching) খুঁজবে, নাকি ঘুরিয়ে বলা বাক্যের অর্থও (Paraphrase Sensitivity) ধরতে পারবে? পাশাপাশি Corpus কত ঘনঘন আপডেট হবে, ব্যবহারকারীর অনুসন্ধানের অনুমোদিত পরিধি (Allowed Scope) কতটুকু এবং কয়টি ফলাফল (Top-K) ফেরত দেওয়া হবে, তাও স্পষ্ট থাকতে হবে। এখানে দুটি সতর্কতা সবসময় মনে রাখবেন: সার্চের Relevance Ranking মানেই কিন্তু বৈজ্ঞানিক সত্যতা বা Entailment প্রমাণিত হওয়া নয়; আর যেসব ডকুমেন্ট মানুষের হাতে যাচাই করা হয়নি (Unjudged Documents), সেগুলো স্বয়ংক্রিয়ভাবে অপ্রাসঙ্গিক বলে প্রমাণিত হয়ে যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তবায়িত Hybrid পদ্ধতি ও এর সীমানা",
+          "body": "এই কেসে আমরা Book 4 · Chapter 2 (Embeddings & Retrieval)-এ তৈরি করা 4096 শব্দের স্থির TF-IDF Vocabulary, 32-মাত্রার LSA Projection এবং তাদের সমন্বয়ে গঠিত Hybrid RRF পদ্ধতি পুনর্ব্যবহার করছি। SciFact কর্পাসের মোট 5183টি ডকুমেন্টের ওপর সংরক্ষিত query 0-এর প্রকৃত স্কোরগুলো থেকে স্থানীয়ভাবেই Top 5 ফলাফল নতুন করে হিসাব করা হয়। খেয়াল রাখবেন, এটি কোনো প্রিট্রেইনড নিউরাল Embedding, আনুমানিক নেবার সার্চ (ANN Index) কিংবা বাংলা ভাষার Semantic Search বেঞ্চমার্ক নয়—বরং দুটি ভিন্ন ঘরানার Retrieval শাখাকে একসঙ্গে সার্ভ করার একটি স্বচ্ছ ইঞ্জিনিয়ারিং উদাহরণ।"
+        },
+        {
+          "type": "math",
+          "title": "Lexical ও LSA র‍্যাঙ্কের সমন্বয় এবং স্কোরের অর্থ",
+          "body": "\\mathrm{hybrid}=RRF(lexical,LSA),\\quad score\\ne P(relevant)"
+        },
+        {
+          "type": "code",
+          "title": "স্বাভাবিক Hybrid Search ও Lexical Fallback পরীক্ষা",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"design38\", Path(\"assets/datasets/system_design/design_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/system_design/design_lab.json\").read_text(encoding=\"utf-8\")\n)\nnormal = m.response(lab, \"search\")\nlexical = m.response(lab, \"search\", \"upstream\")\nprint(normal[\"output\"][\"documents\"])\nprint(lexical[\"output\"][\"documents\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "সার্ভিং আর্কিটেকচার ও সংস্করণের সামঞ্জস্য",
+          "body": "সার্চ পাইপলাইনে অফলাইনেই Tokenization নিয়ম, Vocabulary, IDF ওজন, LSA Projection ম্যাট্রিক্স এবং ডকুমেন্ট Index নির্দিষ্ট Version সহ তৈরি করে রাখা হয়। রানটাইমে কুয়েরি এলে প্রথমে সেটিকে Encode করা হয়, এরপর সমান্তরালভাবে Candidate ডকুমেন্ট তুলে এনে একত্রীকরণ ও Rerank করা হয় এবং সবশেষে অনুমোদিত পরিধির Filter বসিয়ে চূড়ান্ত Response পাঠানো হয়। কুয়েরিতে যদি এমন শব্দ থাকে যা পরিচিত Vocabulary-তে নেই, তবে ঘন ভেক্টর শাখা থেকে কোনো কার্যকর সংকেত নাও পাওয়া যেতে পারে। সবচেয়ে জরুরি বিষয় হলো—অনলাইনের Query Encoder এবং অফলাইনের ডকুমেন্ট Index যেন হুবহু একই প্রজন্মের (Generation) হয়; নীরবে দুই ভিন্ন সংস্করণের মডেল ও ইনডেক্স মিশে গেলে পুরো সার্চ ফলাফলই অর্থহীন হয়ে পড়বে।"
+        },
+        {
+          "type": "text",
+          "title": "অ্যাক্সেস নিয়ন্ত্রণ (Authorization Filter) ও নিরাপদ Caching",
+          "body": "পাবলিক ডেটাসেটের বাইরে কোনো প্রতিষ্ঠানের অভ্যন্তরীণ বা ব্যক্তিগত নথির ওপর সার্চ চালাতে হলে ডকুমেন্ট দেখানোর বা Cache করার আগেই কঠোরভাবে Authorization যাচাই করতে হবে। কোনো টেক্সটের প্রাসঙ্গিকতার স্কোর বেশি হওয়া মানেই সেটি দেখার অনুমতি থাকা নয়! আমাদের এই পাবলিক SciFact প্রোটোটাইপে কোনো ইউজার লগইন বা Access Control List (ACL) সার্ভিস যুক্ত করা হয়নি; কিন্তু বাস্তব প্রোডাকশনে শেয়ার করা Cache ব্যবহার করলে তার Key-এর ভেতরে অবশ্যই Tenant বা ব্যবহারকারীর অনুমতির পরিচয় যুক্ত করতে হবে, অথবা সংবেদনশীল কুয়েরি শেয়ারড ক্যাশে রাখা থেকে পুরোপুরি বিরত থাকতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "শাখাগত ব্যর্থতা ও নিরাপদ Fallback",
+          "body": "উপরের কোডে আমরা যখন 'upstream' ত্রুটি অনুকরণ করলাম, তখন সিস্টেমটি ঘন ভেক্টর বা LSA শাখাটি বাদ দিয়ে কেবল প্রকৃত Lexical TF-IDF থেকে পাওয়া Top 5 ডকুমেন্ট ফিরিয়ে দিয়েছে। অবশ্য এখানে Encoder ও সার্চ স্থানীয় মেমোরিতেই চলছে, তাই এটি নেটওয়ার্ক বিচ্ছিন্নতা বা ডিস্ট্রিবিউটেড ফেইলওভারের প্রকৃত পরিমাপ নয়। তবে বাস্তবে যদি কখনো মূল Lexical Index-টিই নষ্ট বা অনুপস্থিত থাকে, তখন ভুল ডকুমেন্ট দেখানোর চেয়ে খালি ফলাফল বা স্পষ্ট Abstention ফিরিয়ে দেওয়াই অনেক বেশি নিরাপদ নীতি।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে উত্তর সাজাবেন",
+          "body": "ইন্টারভিউতে আপনাকে প্রায়ই Exact Search বনাম Approximate Nearest Neighbor (ANN) ইনডেক্সের তুলনা করতে বলা হবে। তখন আন্দাজে কোনো সংখ্যা না বানিয়ে Recall, Latency, মেমোরি খরচ এবং নতুন ডকুমেন্ট যোগ বা আপডেট করার জটিলতার মাপকাঠিতে এদের Tradeoff ব্যাখ্যা করুন। আর মূল্যায়নের আলোচনায় পরিষ্কার করে বলুন যে অফলাইন Relevance Judgment (qrels), মানুষের সরাসরি মূল্যায়ন, ইনডেক্সের Freshness এবং ব্যবহারকারীর চূড়ান্ত ব্যবসায়িক উপযোগিতা—প্রতিটিকেই আলাদা আলাদাভাবে পরিমাপ করতে হয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch38_spam",
+      "title": "Case 3: বাস্তব Spam Classifier ও ডোমেইনের সীমাবদ্ধতা",
+      "subtitle": "ঐতিহাসিক সংখ্যাসূচক Feature থেকে শেখা Model—পূর্ণাঙ্গ মেইল সার্ভিস নয়",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ডেটার উৎস ও Label-এর প্রকৃত অর্থ",
+          "body": "আমাদের তৃতীয় কেসটি হলো ইমেইল শ্রেণিবিন্যাস বা Spam Classification। এখানে ব্যবহৃত UCI Spambase ডেটাসেটে 4601টি ঐতিহাসিক ইমেইল থেকে বের করা 57টি সংখ্যাসূচক Feature রয়েছে—যেমন নির্দিষ্ট কিছু শব্দ বা চিহ্নের হার এবং বড় হাতের অক্ষরের ধারাবাহিক দৈর্ঘ্য। খেয়াল করুন, এই ডেটাসেটে মূল ইমেইলের কাঁচা টেক্সট (Raw Text), প্রেরকের পরিচয় (Sender ID) কিংবা ইমেইল পাঠানোর সময়কাল (Timestamp) কিছুই নেই। তা ছাড়া পুরোনো এই ডেটায় এমন কিছু উৎস-নির্ভর সংকেত আছে যা কেবল নির্দিষ্ট একজনের ইনবক্সের বৈধ মেইল চিনতে সাহায্য করে, ফলে আধুনিক যেকোনো মেইল সার্ভিসে এর সাধারণীকরণ ক্ষমতা (Generalization) খুবই সীমিত। একই সঙ্গে মনে রাখতে হবে, সাধারণ Spam Label-কে কখনোই আর্থিক জালিয়াতি (Fraud), ম্যালওয়্যার বা সাইবার আক্রমণের সমার্থক বলা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "ডুপ্লিকেট প্রোফাইল ও Group-ভিত্তিক বিভাজন প্রটোকল",
+          "body": "ডেটাসেটটি বিশ্লেষণ করতে গিয়ে দেখা যায়, 4601টি Row-এর মধ্যে অনন্য (Unique) ফিচার প্রোফাইল রয়েছে আসলে 4207টি—অর্থাৎ হুবহু একই সংখ্যাসূচক প্রোফাইল একাধিকবার এসেছে। সাধারণ র‍্যান্ডম স্প্লিট করলে একই প্রোফাইল ট্রেনিং ও ভ্যালিডেশন দুই জায়গাতেই ঢুকে Data Leakage ঘটাত। তাই আমরা হুবহু অভিন্ন প্রোফাইলগুলোকে একেকটি গ্রুপে বেঁধে GroupShuffleSplit (seed 38 ও 380) ব্যবহার করে আনুমানিক 70/15/15 অনুপাতে ভাগ করেছি—যাতে চূড়ান্তভাবে 3183টি Fit, 738টি Validation এবং 680টি Reserved Row পাওয়া গেছে এবং কোনো গ্রুপই দুই ভাগে ছড়িয়ে পড়েনি। তবে এই সতর্কতা কেবল হুবহু নকল প্রোফাইল ঠেকায়; সামান্য বদলে দেওয়া মেইল (Near-duplicates), একই প্রেরকের ভিন্ন মেইল কিংবা সময়ের সঙ্গে স্প্যামারদের কৌশল বদলানোর (Adversarial Shift) সমস্যার সমাধান এটি করে না।"
+        },
+        {
+          "type": "math",
+          "title": "মানকীকৃত Feature-এর ওপর Logistic Regression সমীকরণ",
+          "body": "p=\\sigma\\left(b+\\sum_jw_j\\frac{x_j-\\mu_j}{s_j}\\right)"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ সংরক্ষিত মডেল দিয়ে Spam Score ও মেট্রিক যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"design38\", Path(\"assets/datasets/system_design/design_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/system_design/design_lab.json\").read_text(encoding=\"utf-8\")\n)\nrow = lab[\"spam\"][\"validation\"][0]\np = m.spam_predict(lab[\"spam\"][\"model\"], row[\"features\"])\nassert abs(p - row[\"score\"]) < 1e-10\nprint(row[\"index\"], p)\nprint(lab[\"spam\"][\"metrics\"][\"0.5\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "স্থির Baseline ও সংরক্ষিত ডেটার শৃঙ্খলা",
+          "body": "শুধুমাত্র 3183টি Fit সারির গড় ও পরিমিত ব্যবধান দিয়ে StandardScaler ফিট করে এবং C = 1 সহ lbfgs সলভারে LogisticRegression (যা 121টি ধাপে অভিসারী বা Converge হয়েছে) ট্রেন করে আমাদের স্থির Baseline তৈরি করা হয়েছে। চমকপ্রদ সংখ্যা দেখানোর লোভে এখানে কোনো মডেল, র‍্যান্ডম সিড বা Threshold টিউনিং করা হয়নি। ফাইল লোড করার সময় পুরো ডেটাসেট পড়া হলেও সংরক্ষিত 680টি সারির Label কখনোই ট্রেনিং, স্কোরিং, এক্সপোর্ট বা পলিসি বাছাইয়ে ব্যবহৃত হয়নি। পাবলিক ডেটাসেট ডিস্কে থাকা সত্ত্বেও সেটিকে স্পর্শ না করাটাই একজন প্রকৃত ML Engineer-এর বিশ্লেষণী শৃঙ্খলা।"
+        },
+        {
+          "type": "text",
+          "title": "Development ডেটায় প্রাপ্ত ফলাফল ও সতর্কতা",
+          "body": "সাধারণ 0.5 Threshold ধরলে আমাদের 738টি Validation সারির ওপর ফলাফল দাঁড়ায়: TP = 226, FP = 20, TN = 462 এবং FN = 30। এখান থেকে হিসাব করলে Precision আসে 0.918699, Recall 0.882813, সামগ্রিক Accuracy 0.932249 এবং বৈধ মেইল ভুল করে ধরার হার বা FPR দাঁড়ায় 0.041494।\n\nমনে রাখতে হবে, এগুলো কেবল আমাদের Development ডেটার ডায়াগনস্টিক পরিসংখ্যান—কোনো অদেখা টেস্ট সেট বা জীবন্ত প্রোডাকশন সিস্টেমের সাফল্যের প্রমাণ নয়। তা ছাড়া Logistic Regression-এর এই Sigmoid আউটপুটকে আলাদাভাবে Calibrate করা হয়নি; ইনপুটে শূন্যের আধিক্য, নয়েজ বা ডেটার উৎস বদলে গেলে স্কোরের আচরণ কেমন হবে, তা আলাদাভাবে পরীক্ষা করা প্রয়োজন।"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব মেইল সার্ভিসে রূপান্তরের কারিগরি ব্যবধান",
+          "body": "সত্যিকারের ইমেইল সার্ভিসে এই মডেলটি বসাতে হলে কাঁচা ইমেইল পার্সিং এবং Tokenization পাইপলাইনকে হুবহু ওই 57টি সংখ্যাসূচক Feature-এর মূল গাণিতিক সংজ্ঞা নিখুঁতভাবে পুনরুৎপাদন করতে হবে। আমাদের এই স্থানীয় ল্যাবে সেরকম কোনো মেইল পার্সার, ভাইরাস বা লিংক স্ক্যানার, স্প্যামারদের চালাকি ঠেকানোর Adversarial প্রতিরক্ষা কিংবা গোপনীয়তা রক্ষার অবকাঠামো তৈরি করা হয়নি। তাই 57টি সংখ্যার এই ডেমোটিকে সরাসরি একটি পূর্ণাঙ্গ অপারেশনাল ইমেইল ফিল্টার ভেবে নেওয়া ভুল হবে।"
+        },
+        {
+          "type": "text",
+          "title": "Spam থেকে আর্থিক Fraud সিস্টেমে ধারণা স্থানান্তরের সীমা",
+          "body": "ইন্টারভিউতে অনেক সময় দেখা যায়, প্রার্থীরা Spam Classifier-এর অভিজ্ঞতাকে সরাসরি পেমেন্ট বা ক্রেডিট কার্ড Fraud সিস্টেমে বসিয়ে দেন। হ্যাঁ, দুই জায়গাতেই অসম ক্ষতি এবং রিভিউ কিউয়ের মতো কিছু কাঠামোগত মিল আছে। কিন্তু Fraud ডোমেইনে আসল Label আসে অনেক দেরিতে (যেমন কয়েক সপ্তাহ পর Chargeback এলে) অথবা কেবল রিভিউ করা লেনদেন থেকে; সেখানে প্রতারকদের সক্রিয় কৌশল পরিবর্তন, ব্যবহারকারীর পরিচয় ও লেনদেনের গতির (Velocity) ফিচার এবং প্রতিটি রিভিউয়ের আর্থিক খরচ অনেক বেশি নির্ধারক ভূমিকা রাখে।\n\nতাই ইন্টারভিউতে ব্যাখ্যা করুন এই পার্থক্যগুলোর কারণে আপনার আর্কিটেকচার কীভাবে বদলাবে—কখনোই পুরোনো ইমেইল ডেটার পারফরম্যান্সকে নাম বদলে আর্থিক ঝুঁকি মডেলের প্রমাণ হিসেবে পেশ করবেন না।"
+        }
+      ]
+    },
+    {
+      "id": "ch38_review_policy",
+      "title": "Decision Threshold, Human Review ও Overflow ব্যবস্থাপনা",
+      "subtitle": "সীমিত বাজেটে মানুষের কাছে পাঠানো মানেই শতভাগ নির্ভুল সিদ্ধান্তের নিশ্চয়তা নয়",
+      "duration": "55 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "একক Threshold-এর বদলে ত্রি-স্তরীয় Selective Policy",
+          "body": "আগের পাঠে 0.5 Threshold ব্যবহার করে আমরা দেখেছিলাম 20টি বৈধ ইমেইল ভুল করে ব্লক হয়ে যাচ্ছে। এই ঝুঁকি কমাতে বাস্তব সিস্টেমে প্রায়ই একটি মাঝামাঝি অঞ্চলের সাহায্য নেওয়া হয়। আমাদের এই ল্যাবে মডেল স্কোর p < 0.2 হলে স্বয়ংক্রিয়ভাবে অনুমোদন (Auto-allow), p ≥ 0.8 হলে স্বয়ংক্রিয়ভাবে ব্লক (Auto-block) এবং মাঝের অনিশ্চিত অংশটিকে (0.2 ≤ p < 0.8) মানুষের পর্যালোচনার (Human Review) প্রার্থী হিসেবে ধরা হয়েছে। এই মাঝের অঞ্চলে যাদের স্কোর 0.5-এর সবচেয়ে কাছে—অর্থাৎ |p − 0.5|-এর মান যত ছোট—তারা রিভিউ লাইনে আগে অগ্রাধিকার পায়; আর দূরত্ব সমান হলে মূল ডেটার ক্রমিক নম্বর দিয়ে টাই ভাঙা হয়। এটি আমাদের স্পষ্টভাবে ঘোষিত একটি সহজ নীতি (Heuristic)। তবে মানুষকে রিভিউতে পাঠানোর পর তারা আসলে কতটা সঠিক সিদ্ধান্ত দিচ্ছেন বা কত দেরি হচ্ছে, তা জানার জন্য আলাদা প্রামাণ্য ডেটা প্রয়োজন।"
+        },
+        {
+          "type": "text",
+          "title": "সীমিত Review Budget ও উপচে পড়া ট্রাফিক (Overflow)",
+          "body": "সমস্যা হলো মানুষের রিভিউ করার ক্ষমতা কখনোই অসীম নয়। আমাদের 738টি Validation সারির মধ্যে ডিফল্ট নিয়মে অনিশ্চিত অঞ্চলে পড়ে মোট 132টি ইমেইল; কিন্তু আমরা যদি রিভিউ বাজেট সর্বোচ্চ 50টি বেঁধে দিই, তবে অগ্রাধিকার পাওয়া 50টি মেইল রিভিউতে ঢোকে এবং বাকি 82টি মেইল বাজেট উপচে (Overflow) অমীমাংসিত অবস্থায় (Deferred) থেকে যায়! এমনকি যে 50টি মেইল রিভিউতে ঢুকল, আমাদের ডেটাসেটে যেহেতু কোনো প্রকৃত মানব রিভিউয়ার নেই, তাই সেগুলোর চূড়ান্ত ফলাফলও এখানে অমীমাংসিত। খেয়াল রাখবেন, এখানে বাজেট হিসাব করা হয়েছে একটি স্থির ঐতিহাসিক ব্যাচের ওপর—বাস্তব সময়ের আগমনী প্রবাহ, লাইনের দৈর্ঘ্য বা রিভিউয়ারদের প্রতি ঘণ্টার কাজের গতির ওপর নয়।"
+        },
+        {
+          "type": "math",
+          "title": "দুটি Threshold-এর মাধ্যমে তিন পথে রাউটিং",
+          "body": "route(p)=\\begin{cases}allow&p<l\\\\review&l\\le p<h\\\\block&p\\ge h\\end{cases}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Guarded Review পলিসির কভারেজ ও ভুলের হিসাব",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"design38\", Path(\"assets/datasets/system_design/design_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/system_design/design_lab.json\").read_text(encoding=\"utf-8\")\n)\npolicy = m.guarded_review(lab)\nassert policy[\"n\"] == 738 and policy[\"decided\"] == 606\nassert policy[\"review\"] == 50 and policy[\"defer\"] == 82\nprint(\n    {\n        k: policy[k]\n        for k in [\n            \"coverage\",\n            \"false_blocks\",\n            \"missed_spam\",\n            \"conditional_accuracy\",\n            \"automatic_cost\",\n        ]\n    }\n)\n"
+        },
+        {
+          "type": "text",
+          "title": "Overflow হলে কী করবেন: Defer, Allow নাকি Block?",
+          "body": "রিভিউ কিউ উপচে পড়লে বাকি 82টি মেইলের ভাগ্যে কী ঘটবে, তা একটি গুরুতর পণ্যগত সিদ্ধান্ত। Defer করে রাখলে মেইলটি ডেলিভারি না হয়ে ঝুলে থাকে। ঢালাওভাবে Allow (Fail-open) করে দিলে বিপজ্জনক স্প্যাম বা ফিশিং মেইল ইনবক্সে ঢুকে পড়তে পারে; আবার ঢালাওভাবে Block (Fail-closed) করলে জরুরি বৈধ মেইল আটকে যেতে পারে। তাই সব পণ্যের জন্য একই Fail-open বা Fail-closed নিয়ম অন্ধভাবে খাটে না—সম্ভাব্য ক্ষতির মাত্রা এবং সার্ভিসের প্রাপ্যতা (Availability) পাশাপাশি রেখে সিদ্ধান্ত নিতে হয়।\n\nএমনকি ইনপুট ডেটার চুক্তি বা Schema ভেঙে গেলে (Contract Fault) আমাদের এই ল্যাব মডেল ইনফারেন্স চালানোর আগেই সব Request-কে নিরাপদে Defer করে দেয়। তখন স্বয়ংক্রিয় সিদ্ধান্তের ভুলের সংখ্যা শূন্য দেখালেও ব্যবহারকারীর আসল কাজ কিন্তু মোটেও সম্পন্ন হয়নি!"
+        },
+        {
+          "type": "design_review_policy",
+          "title": "শর্তসাপেক্ষ মেট্রিক (Conditional Metrics) ও হরের পরিবর্তন",
+          "body": "ডিফল্ট পলিসিতে 738টির মধ্যে স্বয়ংক্রিয়ভাবে সিদ্ধান্ত হয়েছে 606টির (অর্থাৎ Coverage = 0.821138); এই স্বয়ংক্রিয় অংশে বৈধ মেইল ভুল ব্লক হয়েছে 10টি এবং স্প্যাম ফসকে গেছে 8টি, ফলে স্বয়ংক্রিয় সিদ্ধান্তের শর্তসাপেক্ষ সঠিকতা (Conditional Accuracy) দাঁড়িয়েছে 0.970297। কিন্তু সাবধান! অমীমাংসিত 132টি কঠিন কেসকে হিসাবের বাইরে রেখে পাওয়া এই 97% সংখ্যাটিকে কখনোই পুরো 738টি কেসের ওপর চলা 0.5 Threshold-এর সাধারণ Accuracy (93.2%)-এর সরাসরি উন্নতি বলে দাবি করা যাবে না—কারণ এখানে ভগ্নাংশের হর বা Population Denominator-ই বদলে গেছে!"
+        },
+        {
+          "type": "text",
+          "title": "খরচের প্রতীকী একক ও অদেখা ব্যয়ের সীমানা",
+          "body": "অসম ক্ষতির ধারণাটি বোঝাতে এখানে প্রতিটি বৈধ মেইল ভুল ব্লক হওয়ার খরচ 100 এবং প্রতিটি স্প্যাম ফসকে যাওয়ার খরচ 1 প্রতীকী একক ধরা হয়েছে—যাতে ডিফল্ট স্বয়ংক্রিয় সিদ্ধান্তের মোট প্রক্সি খরচ দাঁড়ায় 10 × 100 + 8 × 1 = 1008। কিন্তু এই সহজ যোগফলে মানুষের রিভিউ করার পারিশ্রমিক, মেইল দেরিতে পৌঁছানোর ক্ষতি, উত্তর না দেওয়ার অসন্তুষ্টি কিংবা নিরাপত্তার প্রকৃত ব্যবসায়িক ব্যয় অন্তর্ভুক্ত নেই। তাই সব মেইল Defer করে প্রক্সি খরচ শূন্য বানিয়ে ফেললেই পলিসিটি বিনা খরচের বা সর্বোত্তম হয়ে যায় না! আর রিভিউতে পাঠানো কেসগুলোতে মানুষ শতভাগ নির্ভুল (Oracle) রায় দেবে—এমন কাল্পনিক অনুমান ধরে কখনোই সামগ্রিক Accuracy বাড়িয়ে দেখাবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "ভিন্ন Policy Namespace ও সংস্করণ আলাদা রাখা",
+          "body": "একটি সূক্ষ্ম কাঠামোগত দিক খেয়াল করুন: এই রিভিউ ল্যাবে দুটি Threshold দিয়ে গতিশীল Selective Policy চালানো হচ্ছে, আবার অন্যদিকে আমাদের মূল সার্ভিস ও Failure-replay ল্যাবের সাধারণ Spam কেসটি একটি স্থির বাইনারি Threshold (0.5) ব্যবহার করে এবং তার নিজস্ব আলাদা Policy Identity রয়েছে।\n\nএই দুটি ভিন্ন কনফিগারেশনকে একই প্রোডাকশন গেটওয়ে ভেবে গুলিয়ে ফেলবেন না। যেকোনো মেট্রিক রিপোর্ট বা তুলনা করার সময় অবশ্যই সংশ্লিষ্ট পলিসির নাম, কনফিগারেশন এবং Version স্পষ্টভাবে উল্লেখ করুন, নইলে কোন নীতির ফলাফল পড়া হচ্ছে তা সম্পূর্ণ অস্পষ্ট থেকে যাবে।"
+        },
+        {
+          "type": "text",
+          "title": "Human Review থেকে প্রকৃত লাভ কখন হয়? (Expected Risk বিশ্লেষণ)",
+          "body": "শুধু মডেলের স্কোর 0.5-এর কাছাকাছি হলেই যে মানুষকে দিয়ে রিভিউ করানো সবচেয়ে লাভজনক হবে—এমন কোনো ধরাবাঁধা নিয়ম নেই! বিষয়টি গাণিতিকভাবে বোঝার জন্য একটি কাল্পনিক উদাহরণ ধরা যাক, যেখানে মডেলের স্প্যাম Probability p পুরোপুরি Calibrated, বৈধ মেইল ব্লক করার খরচ 10, স্প্যাম ছাড়া পাওয়ার খরচ 1 এবং মানুষের রিভিউ করার নিজস্ব খরচ 0.2। আরও ধরি, মানব রিভিউয়ার নিজেও শতভাগ নিখুঁত নন—তাঁর স্প্যাম ধরার সক্ষমতা (Sensitivity) 0.8 এবং বৈধ মেইল চেনার সক্ষমতা (Specificity) 0.95। তাহলে সরাসরি Allow করার প্রত্যাশিত ঝুঁকি = p, সরাসরি Block করার ঝুঁকি = 10(1 − p), আর মানুষের কাছে Review-তে পাঠানোর মোট প্রত্যাশিত ঝুঁকি দাঁড়ায় 0.2 + 0.2p + 0.5(1 − p)। এখন হিসাব করে দেখুন: p = 0.5 হলে সরাসরি Allow করার ঝুঁকি 0.50, যা রিভিউ করার ঝুঁকি (0.55)-এর চেয়েও কম! অথচ p = 0.9 হলে Allow ঝুঁকি 0.90 এবং Block ঝুঁকি 1.00, কিন্তু Review ঝুঁকি নেমে আসে 0.43-এ—অর্থাৎ এখানে রিভিউ পাঠানোই সবচেয়ে সাশ্রয়ী! অবশ্যই এই সংখ্যা ও হারগুলো কেবল ধারণাটি বোঝানোর জন্য সাজানো হয়েছে।"
+        },
+        {
+          "type": "code",
+          "title": "তিনটি সম্ভাব্য পদক্ষেপের (Allow, Block, Review) প্রত্যাশিত ঝুঁকি তুলনা",
+          "body": "import numpy as np\n\nprobability = np.array([0.1, 0.5, 0.9, 0.99])\nallow = probability\nblock = 10 * (1 - probability)\nreview = 0.2 + probability * (1 - 0.8) + 10 * (1 - probability) * (1 - 0.95)\nrisks = np.column_stack([allow, block, review])  # Action codes 0, 1, 2.\naction = risks.argmin(axis=1)\nprint(*action, *np.round(review, 6))\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে যাচাই করুন",
+          "body": "উপরের এই প্রত্যাশিত ঝুঁকির (Expected Risk) সূত্র বসিয়ে কি আমরা সরাসরি বলে দিতে পারি যে আমাদের UCI Spambase ল্যাবের বর্তমান Review Policy-টিই সর্বোত্তম?",
+          "solution": "না, তা বলা যাবে না। কারণ আমাদের মূল ল্যাবের Logistic Regression স্কোরগুলো প্রকৃত Probability হিসেবে Calibrated কি না তা যাচাই করা হয়নি, এবং বাস্তবে মানব রিভিউয়ারদের প্রকৃত Sensitivity, Specificity কিংবা রিভিউয়ের ফলাফল আমাদের জানা নেই। প্রোডাকশনে একটি সর্বোত্তম নীতি তৈরি করতে হলে প্রতিনিধিত্বশীল রিভিউ নমুনার ফলাফল, দেরি বা অমীমাংসিত রাখার প্রকৃত খরচ এবং আগমনী ট্রাফিকের বিপরীতে রিভিউয়ারদের সক্ষমতা মেপে নিতে হবে; আর সীমিত রিভিউ বাজেট থাকলে কোন কেসগুলো রিভিউ করলে প্রত্যাশিত ঝুঁকি সবচেয়ে বেশি কমবে (Expected Risk Reduction), সেই ক্রমানুসারে অগ্রাধিকার দিতে হবে।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch38_forecast",
+      "title": "Case 4: দৈনিক Demand Forecasting সার্ভিস",
+      "subtitle": "Event Time, ডেটার প্রাপ্যতা (Availability) এবং Forecast Horizon-এর সমন্বয়",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ব্যবসায়িক প্রশ্ন ও ডেটার সূক্ষ্মতার স্তর (Data Grain)",
+          "body": "চতুর্থ কেসে আমরা সময়-নির্ভর চাহিদা প্রাক্কলন বা Demand Forecasting সিস্টেম ডিজাইন করব। শুরুতেই খেয়াল করতে হবে—আগামীকাল পুরো শহরে মোট কতটি বাইক ভাড়া হবে, কোন নির্দিষ্ট স্টেশনে কয়টি বাইক লাগবে, নাকি আগামী কয়েক সপ্তাহের সামগ্রিক পরিকল্পনা করা হবে—এই প্রতিটি প্রশ্নের জন্য ডেটার একক (Data Grain), সময়ের পাল্লা (Horizon) এবং Loss Function সম্পূর্ণ আলাদা হয়। আমাদের ব্যবহৃত মূল Bike Sharing ডেটাসেটে কেবল পুরো সিস্টেমের দৈনিক মোট ভাড়ার সংখ্যা (Global Daily Aggregate) রয়েছে; তাই এখান থেকে আমরা কাল্পনিকভাবে স্টেশন-ভিত্তিক বা ব্যক্তি-ভিত্তিক হিসাব বানানোর চেষ্টা করব না। পাশাপাশি এই সংখ্যা দেখে বাস্তবে ইনভেন্টরি সরালে ব্যবসায়িক কতটা লাভ হচ্ছে, তা আলাদাভাবে মূল্যায়ন করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "পূর্বনির্ধারিত Ridge Model ও সংরক্ষিত ডেটার সীমানা",
+          "body": "এখানে আমরা Book 6 · Chapter 2 (Serving, Monitoring & MLOps)-এ তৈরি করা অপরিবর্তিত Ridge Regression মডেলটি (alpha = 10) পুনর্ব্যবহার করছি, যা শুধুমাত্র 2011 সালের 358টি উদাহরণের ওপর lag1, lag7 ও mean7 ফিচার এবং Fit-only স্কেলার দিয়ে ট্রেন করা হয়েছিল। কোডে আমরা 375তম দিনের (অর্থাৎ 2012-01-11 তারিখের) একটি বাস্তব Request-এর জন্য স্থানীয়ভাবে ফলাফল হিসাব করে দেখছি। এখানে নতুন করে কোনো Forecasting মডেল ট্রেন করা হয়নি এবং ডেটাসেটের শেষের সংরক্ষিত 184টি দিনের ফলাফলও স্পর্শ করা হয়নি। আর ডেভেলপমেন্ট পর্বের যে অংশটি আমরা আগেই দেখেছি, সেটিকে নতুন কোনো স্বাধীন পরীক্ষা হিসেবে গণ্য করা যাবে না।"
+        },
+        {
+          "type": "math",
+          "title": "নির্দিষ্ট সময়ের সীমানায় লভ্য অতীত ডেটা থেকে Prediction",
+          "body": "\\hat y_t=f(count_{<t,\\ available\\le t}),\\quad features\\not\\ni y_t"
+        },
+        {
+          "type": "code",
+          "title": "স্বাভাবিক ও বিলম্বিত ডেটায় (Late Data) Forecasting পরীক্ষা",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"design38\", Path(\"assets/datasets/system_design/design_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/system_design/design_lab.json\").read_text(encoding=\"utf-8\")\n)\nnormal = m.response(lab, \"forecast\")\nlate = m.response(lab, \"forecast\", \"upstream\")\nprint(normal[\"output\"], late[\"output\"], late[\"reason\"])\nassert late[\"served\"] == \"seasonal7\"\nassert late[\"output\"][\"prediction\"] == 2368\n"
+        },
+        {
+          "type": "text",
+          "title": "দুটি ঘড়ির পার্থক্য: Event Time বনাম Feature Availability",
+          "body": "Forecasting সিস্টেমের সবচেয়ে বড় ফাঁদ হলো সময়ের হিসাব। কোনো ঘটনা অতীতে ঘটেছে (Event Time < t)—কেবল এটুকুই যথেষ্ট নয়; যে মুহূর্তে দাঁড়িয়ে আপনি Prediction করছেন (Prediction Cutoff), ঠিক সেই মুহূর্তের আগে ওই ডেটাটি আপনার পাইপলাইনে এসে পৌঁছাতেও হবে (Available ≤ Cutoff)! মূল Bike ডেটাসেটে ডেটা কখন সার্ভারে জমা হয়েছে তার বাস্তব Timestamp নেই, তাই এই গুরুত্বপূর্ণ ধারণাটি হাতে-কলমে দেখানোর জন্য আমরা সুস্পষ্টভাবে `on_time` এবং `late_fixture` নামের দুটি আগমনী সূচি তৈরি করেছি। আর বলার অপেক্ষা রাখে না যে যেই দিনের হিসাব বের করছেন, সেই দিনের মোট ভাড়া, তার উপাদান কিংবা ভবিষ্যতের প্রকৃত আবহাওয়া কখনোই সার্ভিংয়ের ইনপুট হতে পারে না।"
+        },
+        {
+          "type": "text",
+          "title": "ডেটা আসতে দেরি হলে নিরাপদ Fallback কৌশল",
+          "body": "উপরের কোডে আমরা যখন 'upstream' ত্রুটি (অর্থাৎ 375তম দিনের বিলম্বিত সূচি) চালালাম, তখন দেখা গেল গতকালের ডেটা (`lag1`) এখনো পাইপলাইনে এসে পৌঁছায়নি, কিন্তু সাত দিন আগের ডেটা (`lag7` = 2368) বৈধভাবে হাতে আছে। মূল Ridge মডেলটি `lag1` ছাড়া চলতে পারে না, তাই সিস্টেমটি নিরাপদে তার স্বতন্ত্র `seasonal7` Fallback পলিসিতে সরে গিয়ে 2368 সংখ্যাটি ফিরিয়ে দিয়েছে এবং কারণ হিসেবে বিলম্বের কথা জানিয়ে দিয়েছে। এখানে একটি গভীর শিক্ষা রয়েছে: বর্তমানের ইনপুট ডেটা যদি বাসি (Stale) বা ত্রুটিপূর্ণ হয়, তবে মডেলকে আগের ভার্সনে Rollback করে কোনোই লাভ হয় না—কারণ সমস্যা মডেলের ওজনে নয়, ইনপুট ফিচারে! আর যদি দেখা যায় Fallback-এর জন্য দরকারি `lag7` ডেটাটিও অনুপস্থিত, তবে ভুল সংখ্যা দেওয়ার চেয়ে স্পষ্টভাবে Abstain বা ব্লক করাই নিরাপদ।"
+        },
+        {
+          "type": "text",
+          "title": "পূর্ণাঙ্গ সার্ভিস আর্কিটেকচার ও সক্ষমতার বিভাজন",
+          "body": "একটি নির্ভরযোগ্য Forecasting পাইপলাইনের ধাপগুলো হলো: উৎস ডেটার বৈধতা যাচাই ও ডুপ্লিকেট দূরীকরণ → সময়ের নিখুঁত সীমানা মেনে (Point-in-time) ফিচার তৈরি → নির্দিষ্ট Version-এর মডেল চালানো → প্রয়োজনে Fallback বা ব্যবসায়িক নীতি প্রয়োগ → ডায়াগনস্টিক তথ্যসহ চূড়ান্ত Response প্রদান। বাস্তবে প্রতিদিন একসঙ্গে অনেক হিসাব তৈরি করা Batch Materialization এবং ব্যবহারকারীর তাৎক্ষণিক কুয়েরি সামলানো Interactive Serving-এর সার্ভার সক্ষমতার চাহিদা সম্পূর্ণ আলাদা। আর আমাদের ডেটা যেহেতু দৈনিক মোট হিসাবের, তাই এর ওপর ভিত্তি করে প্রতি মিনিটে তাৎক্ষণিক প্রতিক্রিয়াশীল Forecasting-এর দাবি করা যুক্তিসংগত নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে উত্তর সাজাবেন",
+          "body": "ইন্টারভিউতে কথা বলার সময় অনুপস্থিত ডেটা, দেরিতে আসা সংশোধনী (Late Correction), ব্যর্থ ব্যাচ জবের Retry, একটি নির্দিষ্ট দিন থেকে বহুদূরের Multi-step Horizon হিসাব করা এবং প্রতিদিন নতুন তথ্য যোগ করে One-step রিফ্রেশ করার পার্থক্যগুলো পরিষ্কারভাবে তুলে ধরুন। মনে করিয়ে দিন যে নির্ধারিত সময়ের মধ্যে উত্তর পৌঁছানো (Freshness/Deadline) এবং মডেলের গাণিতিক ত্রুটি (Model Error) দুটি আলাদা SLO। আর প্রোডাক্ট টিম যদি শুধু একটি একক সংখ্যা (Point Estimate) না চেয়ে অনিশ্চয়তার পাল্লা বা Prediction Interval চায়, তবে তার জন্য আলাদাভাবে Calibration ও Coverage পরীক্ষা ডিজাইন করতে হবে।"
+        }
+      ]
+    },
+    {
+      "id": "ch38_horizons",
+      "title": "Backtesting, Delayed Labels ও Action Feedback",
+      "subtitle": "ডেটায় কেবল তারিখ অনুযায়ী Time Split থাকলেই মূল্যায়ন নিখুঁত হয়ে যায় না",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "দুই ভিন্ন প্রটোকল: Rolling One-step বনাম Fixed-origin Multi-step",
+          "body": "আগের পাঠে আমরা দেখেছি সময়মতো ফিচার না এলে সার্ভিং কীভাবে বদলে যায়; এবার দেখা যাক অফলাইনে মূল্যায়নের সময় কী কী সূক্ষ্ম ভুল হতে পারে। ধরুন, আপনি Rolling One-step পদ্ধতিতে মূল্যায়ন করছেন—যেখানে আজকের প্রকৃত ফলাফল জানা হয়ে গেলে আগামীকালের Prediction করার সময় সেটি ফিচার হিসেবে ব্যবহার করা যায়। কিন্তু আপনাকে যদি আজকের দিনে দাঁড়িয়ে একটানা আগামী 182 দিনের চাহিদা প্রাক্কলন (Fixed-origin Forecast) করতে বলা হয়, তবে মাঝের দিনগুলোর ভবিষ্যৎ ফলাফল কিন্তু আপনার হাতে থাকবে না!\n\nকাজেই এই দুই ভিন্ন প্রটোকলের এররকে একই কাজের স্কোর ভেবে সরাসরি তুলনা করা মারাত্মক ভুল। আমাদের আগের Bike ডেভেলপমেন্ট ফলাফলে 182টি Rolling One-step লক্ষ্যমাত্রা মাপা হয়েছিল; ফলাফল পড়ার সময় ঠিক সেই নির্দিষ্ট সেটিংটিই মাথায় রাখতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "নির্ভুল Backtesting কীভাবে সাজাবেন?",
+          "body": "ইতিহাসের ওপর মডেলের কার্যকারিতা যাচাই বা Backtesting করার সময় একাধিক শুরুর বিন্দু (Origins), সময়ের পাল্লা (Horizons), মডেল কত দিন পরপর Retrain হবে, তখন কোন কোন Feature লভ্য ছিল এবং কোন সময়ের জানালায় মেট্রিক হিসাব হবে—সবই আগে থেকে বেঁধে দিতে হয়। একটি খুব সাধারণ ভুল হলো ডাটাবেসের সর্বশেষ সংশোধিত বা Backfill করা নিখুঁত টেবিল থেকে অতীতের ফিচার পূরণ করা; এতে ভবিষ্যৎ থেকে পাওয়া তথ্য অতীতে ঢুকে পড়ে (Hindsight Leakage) এবং অফলাইনে মডেলকে বাস্তবের চেয়ে অনেক বেশি ভালো মনে হয়। কেবল তারিখ অনুযায়ী ডেটা ভাগ করলেই (Date-ordered Split) ডেটা কখন সিস্টেমে এসে পৌঁছেছিল সেই সময়সীমা স্বয়ংক্রিয়ভাবে রক্ষিত হয় না।"
+        },
+        {
+          "type": "math",
+          "title": "Prediction-এর মুহূর্তে জানা তথ্য বনাম পরবর্তী চূড়ান্ত সত্য",
+          "body": "\\mathrm{origin}<\\mathrm{target},\\quad \\mathrm{knowledge}(origin)\\ne\\mathrm{latest\\ truth}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Bike ডেটাসেটের মূল্যায়ন প্রটোকল ও সীমানা যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"design38\", Path(\"assets/datasets/system_design/design_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/system_design/design_lab.json\").read_text(encoding=\"utf-8\")\n)\nsource = m.deps()[\"bike_sharing/serving_lab.json\"]\nassert source[\"report\"][\"fit_examples\"] == 358\nassert source[\"report\"][\"development_examples\"] == 182\nassert source[\"report\"][\"reserved_outcomes_used\"] == 0\nprint(source[\"report\"][\"protocol\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "Label পরিপক্ব হওয়া (Label Maturity) ও বিচ্যুতির হিসাব",
+          "body": "মডেলের গুণমান মাপার জন্য চূড়ান্ত স্থির Label পাওয়ার সময়সীমা আর কাঁচা ইনপুট Feature আসার সময়সীমা এক নাও হতে পারে—যা আমরা Book 6 · Chapter 2 (Serving, Monitoring & MLOps)-এর বিলম্বিত ডেটার উদাহরণে দেখেছিলাম। কোনো দিনের আসল ফলাফল বা Label যদি এখনো অমীমাংসিত (Pending) থাকে, তবে রিপোর্টে স্পষ্টভাবে জানান কত শতাংশ ডেটার ফলাফল পাওয়া গেছে (Coverage); ভুলেও অজানা ফলাফলের এরর বা Residual-কে শূন্য ধরে গড় এরর কমিয়ে দেখাবেন না! আর পরে যদি পুরোনো ডেটায় কোনো সংশোধন (Revision) আসে, তবে আগের ও পরের উভয় সংস্করণের হিসাবের যোগসূত্র (Lineage) সংরক্ষণ করুন।"
+        },
+        {
+          "type": "text",
+          "title": "সিস্টেমের পদক্ষেপ যখন ভবিষ্যতের ডেটাকেই বদলে দেয় (Action Feedback)",
+          "body": "প্রোডাকশন এমএল সিস্টেমের আরেকটি গভীর জটিলতা হলো Action Feedback Loop। ভাবুন তো, আপনার Forecast দেখে অপারেশন টিম যদি কোনো স্টেশনে মাত্র 10টি বাইক রাখে এবং সব কটিই ভাড়া হয়ে যায়, তবে দিনশেষে রেকর্ড হওয়া ভাড়ার সংখ্যা হবে 10—কিন্তু প্রকৃত চাহিদা হয়তো ছিল 25 (Unconstrained Demand)! একইভাবে Spam ব্লক করে দিলে ব্যবহারকারীরা সেই মেইল দেখতেই পান না, ফলে ভবিষ্যতের অভিযোগ বা রিভিউ ডেটা একপেশে হয়ে যায়; আর Recommender সিস্টেমে যা দেখানো হয় কেবল তার ওপরই ক্লিক পড়ে। সিস্টেমের নিজের হস্তক্ষেপে বদলে যাওয়া এমন ডেটা থেকে নিরপেক্ষ প্রভাব বের করা মোটেও সহজ কাজ নয়।"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের প্রামাণ্য ডেটার সীমাবদ্ধতা",
+          "body": "আমাদের হাতে থাকা ঐতিহাসিক Bike ডেটাসেটে স্টকে কয়টি বাইক ছিল, কোন গ্রাহক ভাড়া নিয়েছেন কিংবা কর্তৃপক্ষ কখন কী হস্তক্ষেপ করেছে তার কোনো লগ নেই। ফলে এখান থেকে স্টক ফুরিয়ে যাওয়া (Stockout) কতটা কমল বা বাস্তবে কত টাকা সাশ্রয় হলো—এমন কোনো কার্যকারণ (Causal) ব্যবসায়িক সুফল মাপা হয়নি। বাস্তব প্রোডাকশনে এ ধরনের কার্যকারণ প্রভাব মাপতে হলে Book 6 · Chapter 3 (Experimentation & Causal Reasoning)-এর নীতি মেনে সুনির্দিষ্ট পরীক্ষা ডিজাইন করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "সারসংক্ষেপ ও পর্যবেক্ষণের তালিকা",
+          "body": "প্রতিটি Prediction ও তার ফলাফলের জন্য পাঁচটি তথ্য আলাদাভাবে ট্রেস করার অভ্যাস করুন: লক্ষ্যমাত্রার তারিখ (Target Date), হিসাব করার মুহূর্ত (Prediction Origin), ফিচারগুলো হাতে পাওয়ার সময়, মডেলের Version এবং Label পরিপক্ব হয়েছে কি না। রিপোর্টে Data Quality, Model Quality এবং ব্যবসায়িক Decision Impact আলাদাভাবে তুলে ধরুন—কারণ সংখ্যার নিখুঁততা পুরো সিস্টেমের ইঞ্জিনিয়ারিং মানের একটি অংশমাত্র।"
+        }
+      ]
+    },
+    {
+      "id": "ch38_rag",
+      "title": "Case 5: RAG আর্কিটেকচার ও Response Contract",
+      "subtitle": "Retrieved Context → স্পষ্ট Provenance → নিয়ন্ত্রিত ও নিরাপদ Output",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "আমাদের RAG কেসের সুনির্দিষ্ট পরিধি",
+          "body": "পঞ্চম ও শেষ কেস হিসেবে আমরা দেখব Retrieval-Augmented Generation (RAG) সিস্টেমের ডিজাইন। এখানে আমরা Book 4 · Chapter 10 (LLM/GenAI Capstone)-এ সংরক্ষিত ছোট্ট Response-word Decoder-এর ওজনগুলো পুনর্ব্যবহার করছি। এটি কোনো বিশাল প্রিট্রেইনড LLM, চ্যাটবট বা মুক্তভাবে প্রবন্ধ লেখার মডেল নয়—বরং SciFact ডেটাসেটের `claim 2`-এর বিপরীতে খুঁজে আনা প্রামাণ্য অংশ (Retrieved Source Spans) পড়ে স্থানীয়ভাবে `support` বা `contradict` শব্দ এবং সমাপ্তি চিহ্ন (`EOS`) তৈরি করে। সবচেয়ে গুরুত্বপূর্ণ নীতিগত দিক হলো, সিস্টেমের তৈরি করা এই আউটপুটকে সবসময় একটি অযাচাইকৃত অনুমান (`unverified_hypothesis`) হিসেবে চিহ্নিত রাখা হয়, চূড়ান্ত বৈজ্ঞানিক সত্য হিসেবে নয়।"
+        },
+        {
+          "type": "text",
+          "title": "এন্ড-টু-এন্ড RAG আর্কিটেকচারের ধাপসমূহ",
+          "body": "একটি পূর্ণাঙ্গ RAG পাইপলাইন বেশ কয়েকটি ধারাবাহিক ধাপে কাজ করে: ডকুমেন্ট সংগ্রহ ও প্রমিতকরণ (Ingestion & Normalization) → সার্চ উপযোগী Index তৈরি → ব্যবহারকারীর Query ও অনুমোদিত পরিধি মেনে ডকুমেন্ট Retrieval → নির্ধারিত বাজেটের মধ্যে প্রাসঙ্গিক অংশগুলো সাজানো (Budgeted Chunk Packing) → Response Model দিয়ে উত্তর তৈরি → এবং সবশেষে ফরম্যাট, তথ্যসূত্র (Provenance) ও নিরাপত্তা নীতি যাচাইয়ের Gate। এর যেকোনো একটি ধাপে ত্রুটি ঘটলে চূড়ান্ত উত্তরের মান বা প্রাপ্যতা ক্ষতিগ্রস্ত হয়। তাই কেবল Retriever-এর অফলাইন বেঞ্চমার্ক স্কোর ভালো হলেই পুরো সিস্টেমটি বিশ্বাসযোগ্য উত্তর দেবে—এমন কোনো কথা নেই।"
+        },
+        {
+          "type": "math",
+          "title": "কুয়েরি থেকে প্রমাণ সংগ্রহ, প্যাকিং ও চূড়ান্ত নীতি-ফিল্টার",
+          "body": "query\\to retrieve\\to pack\\to decode\\to gate"
+        },
+        {
+          "type": "code",
+          "title": "স্বাভাবিক RAG উত্তর ও প্রমাণবিহীন অবস্থায় Abstention পরীক্ষা",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"design38\", Path(\"assets/datasets/system_design/design_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/system_design/design_lab.json\").read_text(encoding=\"utf-8\")\n)\nnormal = m.response(lab, \"rag\")\nempty = m.response(lab, \"rag\", \"upstream\")\nassert normal[\"reason\"] == \"unverified_hypothesis\"\nassert empty[\"status\"] == \"ABSTAIN\"\nprint(normal[\"output\"], normal[\"citations\"])\nprint(empty[\"reason\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "Context Budgeting ও এককের সূক্ষ্ম হিসাব",
+          "body": "জেনারেশন মডেলের কাছে পাঠানোর আগে মূল ডকুমেন্টের হুবহু টেক্সট, Document ও Span ID, ডুপ্লিকেট ছাঁটাই এবং আকারের সীমা কঠোরভাবে বজায় রাখতে হয়। ইঞ্জিনিয়ারিংয়ের দিক থেকে মনে রাখা জরুরি যে UTF-8 Byte, মডেলের Token এবং সাধারণ অক্ষর (Character) তিনটি সম্পূর্ণ ভিন্ন একক—বিশেষ করে বাংলা বা বহুভাষিক টেক্সটে এক অক্ষরে একাধিক বাইট লাগে! আমাদের এই সংরক্ষিত সিস্টেমটি ফরম্যাট করা সর্বোচ্চ 1024 UTF-8 Byte বাজেট ব্যবহার করে। মনে রাখবেন, Context-এর আকার বড় করলেই উত্তর সবসময় ভালো হয় না; বরং বাড়তি অপ্রাসঙ্গিক তথ্যের কোলাহল (Noise), মডেলের মনোযোগ বিচ্যুতি এবং কম্পিউটিং খরচ বেড়ে যেতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "পুনরুৎপাদনযোগ্যতা (Functional Replay) ও বাস্তব সীমানা",
+          "body": "একই কুয়েরি ও সংগৃহীত Context ফিচার থেকে আমাদের স্থির রাখা Recurrent মডেলের ফরোয়ার্ড পাস Python (NumPy) এবং অ্যাপের Dart রানটাইমে হুবহু একই শব্দ তৈরি করে কি না, তা এখানে মিলিয়ে দেখা হয়েছে; পাশাপাশি প্রতিটি Citation সরাসরি মূল নথির সুনির্দিষ্ট Span-এ গিয়ে পৌঁছায় কি না তাও নিশ্চিত করা হয়েছে।\n\nপুরো প্রক্রিয়াটি চালাতে কোনো বাহ্যিক API, নতুন মডেল ডাউনলোড বা GPU-র প্রয়োজন হয় না এবং মডেলটিকে নতুন করে ট্রেনও করা হচ্ছে না। আর এখানে ব্যবহৃত বৈজ্ঞানিক দাবিগুলো নিছক বেঞ্চমার্ক ইনপুট—এই আউটপুট থেকে কোনো চিকিৎসা বা ক্লিনিক্যাল পরামর্শ দেওয়া হচ্ছে না।"
+        },
+        {
+          "type": "text",
+          "title": "প্রমাণ না পাওয়া গেলে নিরাপদ বিরতি (Abstention)",
+          "body": "উপরের কোডের দ্বিতীয় অংশে যখন 'upstream' সমস্যার কারণে কোনো প্রামাণ্য টেক্সট পাওয়া গেল না (Empty Context), তখন সিস্টেমটি মডেল দিয়ে শব্দ তৈরি করার আগেই নিজেকে থামিয়ে `ABSTAIN` স্ট্যাটাস ফিরিয়ে দিয়েছে। এটি একটি অপরিহার্য সুরক্ষা নীতি: হাতে কোনো প্রামাণ্য সূত্র না থাকা সত্ত্বেও জেনারেটর দিয়ে আন্দাজে একটি বিশ্বাসযোগ্য চেহারার শব্দ বানিয়ে ব্যবহারকারীর কাছে সেটিকে তথ্যভিত্তিক উত্তর বলে চালিয়ে দেওয়া চরম দায়িত্বহীনতা। তা ছাড়া রানটাইমে সিস্টেমের হাতে কোনো লুকানো Gold Rationale থাকে না—ওই লেবেলগুলো কেবল আগের ট্রেনিং ও ডায়াগনস্টিক পর্বেই ব্যবহৃত হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে উত্তর সাজাবেন",
+          "body": "ইন্টারভিউতে RAG সিস্টেমের মূল্যায়ন নিয়ে প্রশ্ন করা হলে পরিষ্কারভাবে দেখান কীভাবে আপনি Retrieval-এর মান, Citation-এর নির্ভুলতা, মূল তথ্যের প্রতি বিশ্বস্ততা (Faithfulness), ব্যবহারকারীর কাছে উপযোগিতা, উত্তর দেওয়ার হার (Coverage) এবং সম্ভাব্য ক্ষতিকে আলাদা আলাদা মেট্রিকে মাপবেন। স্পষ্ট করে বলুন যে ডেটাসেটের লেবেল বা হুবহু উদ্ধৃতি থাকাই সার্বিক সত্যতার চূড়ান্ত সনদ নয়; আর মডেল যত বড়ই হোক বা Prompt যত চতুরভাবেই লেখা হোক না কেন, তা কখনোই অ্যাক্সেস পারমিশন, সিকিউরিটি এবং Provenance যাচাইয়ের ইঞ্জিনিয়ারিং নিয়ন্ত্রণগুলোর বিকল্প হতে পারে না।"
+        }
+      ]
+    },
+    {
+      "id": "ch38_provenance",
+      "title": "Citation Validity, Entailment ও Security Boundary",
+      "subtitle": "মূল ডকুমেন্ট থেকে হুবহু উদ্ধৃতি থাকলেই উত্তরের সত্যতার Probability পাওয়া যায় না",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "তথ্যসূত্রের যান্ত্রিক যাচাই (Provenance Checks) বনাম অর্থগত সত্যতা",
+          "body": "আগের পাঠে আমরা দেখেছি আমাদের RAG সিস্টেম প্রতিটি উত্তরের সঙ্গে মূল নথির Citation ফিরিয়ে দেয়। কিন্তু একটি Citation কারিগরিভাবে বৈধ হওয়া মানে আসলে কী? ডকুমেন্টটি আসলেই কর্পাসে বিদ্যমান আছে, উল্লেখ করা Span Index-গুলো সীমার ভেতরে আছে এবং উদ্ধৃত অংশটি মূল টেক্সটের Substring-এর সঙ্গে অক্ষরে অক্ষরে মিলে যাচ্ছে—এগুলো হলো যান্ত্রিক Provenance Check। কিন্তু ওই উদ্ধৃত বাক্যটি আসলেই ব্যবহারকারীর দাবিকে সমর্থন (Support) করছে নাকি খণ্ডন (Refute) করছে, সেটি সম্পূর্ণ আলাদা একটি অর্থগত বা Entailment প্রশ্ন! নিখুঁত ফরম্যাটে সঠিক উদ্ধৃতি জুড়ে দিলেই কোনো ভুল সিদ্ধান্ত আপনা-আপনি সত্য হয়ে যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "ডকুমেন্ট উদ্ধার (Retrieval) বনাম চূড়ান্ত রায় (Verdict)",
+          "body": "আমাদের ব্যবহৃত SciFact ডেটাসেটের প্রাসঙ্গিকতা এবং যুক্তির টীকাগুলো (Rationale Annotations) আংশিক ডায়াগনস্টিক সংকেত মাত্র। কোনো ডকুমেন্টে টীকা না থাকা মানে সেটি মিথ্যা নয়, আর ডেটাসেটে উত্তর না থাকা মানেই প্রশ্নটি চিরতরে অনুত্তরযোগ্য নয়। একইভাবে জেনারেটর মডেলের প্রথম Token-এর স্কোর বা Confidence বেশি হওয়া মানেই যে উত্তরটি সুনির্দিষ্টভাবে Calibrated বা প্রমাণের দিক থেকে যথেষ্ট—তার কোনো নিশ্চয়তা নেই। এই কারণেই আমাদের ছোট্ট ডিকোডারটির আউটপুট কঠোরভাবে সীমাবদ্ধ রাখা হয়েছে এবং সেটিকে সবসময় `unverified_hypothesis` হিসেবে চিহ্নিত করা হয়েছে।"
+        },
+        {
+          "type": "math",
+          "title": "উদ্ধৃতি, Entailment ও নিরাপদ পদক্ষেপের পার্থক্য",
+          "body": "exact\\ quote\\not\\Rightarrow entailment\\not\\Rightarrow safe\\ action"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ RAG উত্তরের Citation ও Hypothesis ট্যাগ যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"design38\", Path(\"assets/datasets/system_design/design_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/system_design/design_lab.json\").read_text(encoding=\"utf-8\")\n)\nrow = m.response(lab, \"rag\")\nassert row[\"served\"] == \"tiny_response_decoder\"\nassert row[\"reason\"] == \"unverified_hypothesis\"\nprint(\"Citations:\", row[\"citations\"])\nprint(\"Hypothesis only:\", row[\"output\"][\"hypothesis\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "Prompt Injection ও নিরাপত্তার সীমানা (Security Boundary)",
+          "body": "বাস্তব দুনিয়ার RAG সিস্টেমে আরেকটি বড় নিরাপত্তা ঝুঁকি হলো বাইরে থেকে তুলে আনা টেক্সটের ভেতরে লুকিয়ে থাকা ক্ষতিকর নির্দেশনা বা Prompt Injection। সিস্টেম ডিজাইনের মৌলিক নিয়ম হলো—ডাটাবেস বা ওয়েব থেকে পড়া টেক্সটকে সবসময় নিছক 'ডেটা' হিসেবেই দেখতে হবে, সিস্টেমের নির্দেশনা হিসেবে নয়! মডেল যদি বাহ্যিক কোনো Tool কল করতে পারে, তবে তার আগে কঠোর Permission Check, সুনির্দিষ্ট Tool Policy, সীমিত পরিধিতে নির্বাহ (Scoped Execution) এবং আউটপুট ভ্যালিডেশন বসানো অপরিহার্য। আমাদের এই অফলাইন পাবলিক কর্পাসের উদাহরণে অবশ্য কোনো এজেন্ট টুল বা Prompt-injection সুরক্ষার সনদ দাবি করা হচ্ছে না।"
+        },
+        {
+          "type": "text",
+          "title": "ব্যক্তিগত নথির গোপনীয়তা ও Authorization ধারণা",
+          "body": "প্রতিষ্ঠানের অভ্যন্তরীণ নথিপত্র বা শেয়ার করা Cache থাকলে প্রতিটি Request-এর পরিচয় ও ডকুমেন্ট দেখার এখতিয়ার (Document Scope) কঠোরভাবে যাচাই করতে হয়। অর্থগতভাবে সবচেয়ে প্রাসঙ্গিক বলেই একজনের গোপনীয় ফাইল অন্যজনের উত্তরে ফাঁস করে দেওয়া চলবে না! আমাদের এই শিক্ষণীয় অ্যাপে সব ডেটা পাবলিক এবং সম্পূর্ণ স্থানীয়ভাবে চলে বলে এখানে কোনো কৃত্রিম লগইন স্ক্রিন যোগ করা হয়নি; কিন্তু প্রোডাকশন আর্কিটেকচার ডিজাইনের সময় এই নিরাপত্তা সীমানাটি শুরু থেকেই মাথায় রাখতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "প্রমাণের সংরক্ষণ ও গোপনীয়তা নীতি",
+          "body": "ভবিষ্যতে কোনো ভুল উত্তরের কারণ অনুসন্ধান (Debugging) করতে হলে ডকুমেন্ট, Citation, Index, Query এবং Response-এর সংস্করণযুক্ত Provenance রেকর্ড সংরক্ষণ করা জরুরি—তবে তা অবশ্যই উপযুক্ত মেয়াদ (Retention) ও গোপনীয়তা নীতি মেনে। ব্যবহারকারীর ব্যক্তিগত তথ্য (PII) বা সংবেদনশীল সম্পূর্ণ Prompt কখনোই বাছবিচারহীনভাবে সাধারণ লগে লিখে রাখা উচিত নয়। পাশাপাশি পাবলিক বেঞ্চমার্ক ডেটা ব্যবহারের ক্ষেত্রেও মূল লেখকের কৃতজ্ঞতা ও লাইসেন্স সংরক্ষণ করা প্রকৌশলগত দায়িত্বের অংশ।"
+        },
+        {
+          "type": "text",
+          "title": "নিজের ডিজাইন সিদ্ধান্তের পক্ষে যুক্তি দিন",
+          "body": "ইন্টারভিউতে প্রশ্ন হতে পারে: ধরুন, সিস্টেমের দেওয়া Citation মূল ডকুমেন্টে হুবহু আছে, কিন্তু চূড়ান্ত উত্তরটি সেই উদ্ধৃতির মাধ্যমে প্রমাণিত হয় না—এই সূক্ষ্ম ত্রুটি আপনি কীভাবে ধরবেন? উত্তরে নিয়মিত Human/Gold Audit, স্বয়ংক্রিয় Faithfulness যাচাই, সন্দেহজনক ক্ষেত্রে নিরাপদ Abstention এবং সংবেদনশীল ডোমেইনে বিশেষজ্ঞ অনুমোদনের প্রস্তাব দিন। স্পষ্ট করে বলুন যে হুবহু উদ্ধৃতি থাকা কিংবা মডেলের নিজস্ব Confidence স্কোর—কোনোটিই বৈজ্ঞানিক সত্যতার চূড়ান্ত সনদ নয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch38_feature_contracts",
+      "title": "Model, Schema, Source ও Policy Identity",
+      "subtitle": "একটি সামঞ্জস্যপূর্ণ Release মানে কেবল মডেল নয়, পুরো Dependency শৃঙ্খলের মিল",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "একটি সার্ভিস Release-এর পূর্ণাঙ্গ পরিচয়",
+          "body": "পাঁচটি ভিন্ন ডোমেইনের কেস দেখার পর এবার আমরা এমন কিছু সাধারণ ইঞ্জিনিয়ারিং স্তম্ভ নিয়ে কথা বলব, যা প্রতিটি ML সার্ভিসের জন্যই সমানভাবে প্রযোজ্য। তার প্রথমটি হলো Dependency Identity। একটি প্রোডাকশন রিলিজ মানে শুধু মডেলের Weight ফাইল নয়; বরং মডেলের ওজন ও Scaler, সুনির্দিষ্ট ক্রমে সাজানো Feature তালিকা, ডেটার Source বা Index, সিদ্ধান্তের Policy প্যারামিটার এবং Request-এর অর্থ—এই সব কটি মিলে একটি একক সিদ্ধান্ত-ব্যবস্থা তৈরি করে। ভাবুন তো, মডেলের ওজন হুবহু এক রেখে কেবল Threshold বদলে দিলেই কি সিস্টেমের আচরণ বদলে যায় না? তাই আমাদের সিস্টেমে Canonical Policy Hash দিয়ে স্থির প্যারামিটারগুলোকে বেঁধে দেওয়া হয়েছে—যেমন রিকমেন্ডেশনের `rrfcf` ও Budget 50, কিংবা স্প্যামের বাইনারি Threshold 0.5।"
+        },
+        {
+          "type": "text",
+          "title": "হিসাব শুরুর আগেই সুরক্ষা-ফটক (Pre-compute Gate)",
+          "body": "রানটাইমে যদি দেখা যায় Case Version, Model, Source, Input Schema কিংবা Policy-র যেকোনো একটিতে অমিল (Mismatch) রয়েছে, তবে আমাদের সিস্টেম মূল ইনফারেন্স চালানোর আগেই সেই Request-কে ব্লক করে দেয়। আমাদের Python স্ক্রিপ্ট সরাসরি ডিস্কে থাকা ফাইলের বাইট ও ডিপেন্ডেন্সি যাচাই করে, আর অ্যাপের ইন্টারঅ্যাক্টিভ প্যানেলে মেটাডেটার অমিল ঘটিয়ে এর আচরণ অনুশীলন করা যায়। তবে মনে রাখবেন, এটি রানটাইমের ক্রিপ্টোগ্রাফিক সনদ নয়; আর ফাইলের নাম বা মেটাডেটা মিলে যাওয়া মানেই ভেতরের গাণিতিক অর্থ (Semantic Correctness) ঠিক আছে—তারও শতভাগ বিকল্প নয়।"
+        },
+        {
+          "type": "math",
+          "title": "পাঁচটি উপাদানে বাঁধা সার্ভিস Contract",
+          "body": "contract=(case,model,source,schema,policy)"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Schema অমিল ও Model Mismatch শনাক্তকরণ",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"design38\", Path(\"assets/datasets/system_design/design_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/system_design/design_lab.json\").read_text(encoding=\"utf-8\")\n)\nexpected = lab[\"manifests\"][\"spam\"]\nloaded = dict(expected, input_schema=\"wrong-schema-fixture\")\nassert m.contract_errors(expected, loaded) == [\"input_schema\"]\nprint(expected)\nprint(m.response(lab, \"spam\", \"model_mismatch\"))\n"
+        },
+        {
+          "type": "text",
+          "title": "Feature-এর গাণিতিক সংজ্ঞা ও ক্রম রক্ষা",
+          "body": "মডেল সার্ভিংয়ে নীরব বিপর্যয়ের সবচেয়ে বড় উৎস হলো Training-Serving Skew। যেমন—Spambase-এর 57টি ফিচারের সঠিক ক্রম ও ট্রেনিং সেটের গড়-পরিমিত ব্যবধান, Forecasting-এ Ridge মডেলের সুনির্দিষ্ট `lag` ও উইন্ডোর হিসাব এবং Search-এ সঠিক Vocabulary ও LSA Projection ম্যাট্রিক্স অক্ষুণ্ণ রাখা বাধ্যতামূলক। কলামের নাম এক থাকার পরও যদি একক (যেমন সেকেন্ডের বদলে মিলিসেকেন্ড), সময়ের সীমানা কিংবা ফাঁকা মান (Null) সামলানোর নিয়ম বদলে যায়, তবে মডেল নীরবে ভুল আউটপুট দিতে শুরু করবে। তাই মূল ডেটার বিপরীতে সংখ্যাগত মিল যাচাইয়ের স্বতন্ত্র টেস্ট থাকা চাই।"
+        },
+        {
+          "type": "text",
+          "title": "আলাদা কনফিগারেশন পরিধি ও নিরাপদ Rollout",
+          "body": "সক্ষমতা পরিকল্পনার স্লাইডার, Selective Review-এর নিয়ন্ত্রক এবং স্থির সার্ভিস Response পলিসি—এই তিনটির কর্মপরিধি (Scope) সম্পূর্ণ আলাদা। একটি অনুশীলন প্যানেলের সেটিং বদলালেই অন্য প্যানেলের সংরক্ষিত বা Cached উত্তরের পরিচয় বদলে যাওয়া উচিত নয়। বাস্তব প্রোডাকশনে নতুন মডেল, পলিসি বা ক্যাশ একসঙ্গে আপডেট করার সময় পরিবর্তনটি একযোগে ঘটবে কি না (Atomicity), পুরোনো ও নতুনের সামঞ্জস্য থাকবে কি না এবং সমস্যা হলে ঠিক কোন সংস্করণে Rollback করা হবে—তা আগে থেকেই লিখিত থাকতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "Artifact Hash ও বিশ্বাসযোগ্যতার সীমানা",
+          "body": "ফাইলের Hash বা Checksum মেলানো নিশ্চিত করে যে বাইটগুলো পথে নষ্ট হয়নি; কিন্তু প্রত্যাশিত Manifest ফাইলটি নিজে যদি কোনো বিশ্বস্ত ও স্বতন্ত্র জায়গা থেকে না আসে, তবে কেবল হ্যাশ মিললেই ফাইলের প্রামাণিকতা (Authenticity) প্রমাণিত হয় না—কারণ কেউ চাইলে ফাইল ও চেকসাম দুটোই একসঙ্গে বদলে দিতে পারে! আমাদের এই বান্ডেলটি ফাইল পরিবর্তন, উৎসের অমিল ও আন্তঃসংযোগের ত্রুটি ধরা শেখায়; এটি এন্টারপ্রাইজ পর্যায়ের ক্রিপ্টোগ্রাফিকভাবে স্বাক্ষরিত (Signed) রিলিজ পাইপলাইন নয়।"
+        },
+        {
+          "type": "text",
+          "title": "ব্যবহারিক অনুশীলনের নির্দেশনা",
+          "body": "নিজে একবার ভেবে দেখুন: চুক্তির পাঁচটি আবশ্যিক ফিল্ডের যেকোনো একটি ভুল থাকলে বা বাদ পড়লে কেন ইনফারেন্সের আগেই কাজ থামিয়ে দেওয়া জরুরি? আর তার বিপরীতে, সব সংস্করণ ঠিক থাকার পরও যখন কোনো বাহ্যিক ফিচার বা ইনডেক্স সাময়িকভাবে অনুপস্থিত থাকে (Compatible Upstream Fault), তখন কেন সিস্টেম ব্লক না করে নিরাপদ Fallback বা Abstain পথে যায়? মূল নিয়মটি খুব সহজ—অবৈধ বা বেমিল মেটাডেটার ওপর দাঁড়িয়ে কখনোই কোনো অনিরাপদ Fallback চালু করা যাবে না।"
+        }
+      ]
+    },
+    {
+      "id": "ch38_caching",
+      "title": "Cache Keys, Staleness ও Cross-request Correctness",
+      "subtitle": "গতি বাড়ানোর আগে নিশ্চিত করুন একজনের উত্তর যেন অন্যজনের কাছে চলে না যায়",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "গতির চেয়ে সঠিকতা আগে (Correctness First)",
+          "body": "Capacity পাঠের অংকে আমরা দেখেছিলাম Cache Hit বাড়লে ব্যাকএন্ডের চাপ ম্যাজিকের মতো কমে যায়। কিন্তু ভুলভাবে ডিজাইন করা Cache একটি সিস্টেমের সবচেয়ে ভয়াবহ বাগের জন্ম দিতে পারে! একটি Cache Entry কেবল তখনই বৈধ, যখন সেটি সঠিক Query, সঠিক User ও তার বর্তমান History, সঠিক Source ও Model Version, সঠিক Policy এবং অনুমোদিত নিরাপত্তা পরিধির (Allowed Scope) সঙ্গে হুবহু মেলে। ক্যাশের Key থেকে যদি ভুলক্রমে ইউজারের পরিচয় বা মডেলের ভার্সন বাদ পড়ে যায়, তবে এক অনুরোধের উত্তর অন্য অনুরোধে চলে যাবে। মাত্র 2 মিলিসেকেন্ডে ভুল মানুষের ব্যক্তিগত তথ্য ফিরিয়ে দেওয়া কখনোই ভালো ইঞ্জিনিয়ারিং হতে পারে না!"
+        },
+        {
+          "type": "text",
+          "title": "মেয়াদোত্তীর্ণ ডেটা ও Cache Invalidation কৌশল",
+          "body": "ক্যাশে রাখা উত্তর কতক্ষণ বৈধ থাকবে তা নিয়ন্ত্রণের জন্য নির্দিষ্ট সময়সীমা (TTL), সংস্করণযুক্ত কি (Versioned Keys), সরাসরি মুছে ফেলা (Explicit Invalidation) এবং ইভেন্ট-ভিত্তিক রিফ্রেশ—এগুলো আলাদা আলাদা কৌশল। খেয়াল রাখবেন, ক্যাশের TTL এবং মূল ফিচারের প্রকৃত সতেজতা (Feature Freshness) এক জিনিস নয়। একজন ব্যবহারকারী নতুন দুটি মুভি দেখার পরও কতক্ষণ পর্যন্ত তাকে পুরোনো ইতিহাসের ভিত্তিতে সাজেশন দেখানো গ্রহণযোগ্য হবে, তা নির্ধারিত হয় পণ্যের নিজস্ব Contract দিয়ে।"
+        },
+        {
+          "type": "math",
+          "title": "নিরাপদ ও সংঘর্ষমুক্ত Cache Key গঠনের উপাদান",
+          "body": "key=H(identity,history,model,index,policy,scope,cutoff)"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Cache Hit অনুপাত বদলে ব্যাকএন্ড QPS-এর পরিবর্তন যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"design38\", Path(\"assets/datasets/system_design/design_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/system_design/design_lab.json\").read_text(encoding=\"utf-8\")\n)\nbase = m.capacity(lab[\"cases\"][\"recommendation\"], hit=0)\ncached = m.capacity(lab[\"cases\"][\"recommendation\"], hit=0.9)\nassert abs(cached[\"backend_qps\"] - 0.1 * base[\"backend_qps\"]) < 1e-08\nprint(base[\"backend_qps\"], cached[\"backend_qps\"])\nprint(\n    \"Assumed cache fraction;not a measured cache replay or upstream capacity guarantee\"\n)\n"
+        },
+        {
+          "type": "text",
+          "title": "পাঁচটি Case-এ Cache Key-এর আবশ্যিক মাত্রা",
+          "body": "আমাদের পাঁচটি কেসের প্রতিটিতে Cache Key-এর মূল উপাদানগুলো আলাদাভাবে ভাবতে হবে: Recommendation-এ ইউজার ও তার ইতিহাসের অবস্থা; Search-এ কুয়েরি, ইনডেক্স সংস্করণ ও ফিল্টার; Forecasting-এ লক্ষ্যমাত্রার তারিখ, হিসাবের দিন (Origin) ও ডেটার কাটঅফ সময় (`as_of`); RAG-এ ব্যবহারকারীর অনুমতি, সংগৃহীত Context ও মডেল; আর Spam-এ মডেল, ফিচার ও পলিসি সংস্করণ। আমাদের স্থানীয় ল্যাবে কোনো ডিস্ট্রিবিউটেড ক্যাশ সার্ভার বসানো হয়নি—এখানে ব্যবহৃত Hit অনুপাতটি কেবল সক্ষমতা পরিকল্পনার একটি অনুমিত ইনপুট।"
+        },
+        {
+          "type": "text",
+          "title": "ট্রাফিকের পাটিগণিত ও Cache Stampede-এর ঝুঁকি",
+          "body": "উপরের কোডে দেখা যাচ্ছে, অনুমিত 90% Cache Hit থাকলে ব্যাকএন্ডে যাওয়া Miss ট্রাফিক মাত্র 10%-এ নেমে আসে। কিন্তু ভুলে যাবেন না যে সিস্টেমের প্রবেশদ্বার (Ingress), ক্যাশ সার্ভার নিজে এবং নেটওয়ার্ক Serialization-কে তখনো পুরো 100% বাহ্যিক ট্রাফিকই সামলাতে হচ্ছে! তার ওপর কোনো জনপ্রিয় আইটেমের ক্যাশ হঠাৎ একসঙ্গে মেয়াদোত্তীর্ণ হলে হাজারো অনুরোধ একই মুহূর্তে ব্যাকএন্ডে আছড়ে পড়তে পারে (Cache Stampede), কিংবা নতুন রিলিজে পুরো ক্যাশ খালি হয়ে গেলে আকস্মিক চাপ তৈরি হতে পারে। তাই কেবল গড় Hit Rate দেখে ব্যাকএন্ড সার্ভার কমিয়ে ফেলা বিপজ্জনক।"
+        },
+        {
+          "type": "text",
+          "title": "বিচ্ছিন্নতা পরীক্ষা (Isolation Tests)",
+          "body": "প্রোডাকশনে যাওয়ার আগে স্বয়ংক্রিয় টেস্ট লিখে যাচাই করুন: হুবহু একই কুয়েরি হলেও ভিন্ন ইউজার, ভিন্ন Tenant, ভিন্ন ইতিহাস, ভিন্ন পলিসি বা ভিন্ন ইনডেক্স ভার্সনের অনুরোধ যেন কখনোই অনিরাপদ Cache Hit না পায়; কেবল সম্পূর্ণ সামঞ্জস্যপূর্ণ প্রেক্ষাপটেই উত্তর পুনর্ব্যবহৃত হতে পারে। এর আগে Book 5 · Chapter 5 (Recommender Capstone)-এ আমরা স্থানীয় ক্যাশ রিপ্লের মাধ্যমে এই ধরনের প্রেক্ষাপট সুরক্ষা দেখেছিলাম; তবে বর্তমান অধ্যায়ে ডিস্ট্রিবিউটেড ক্যাশের সামঞ্জস্য বা p95 ল্যাটেন্সি মাপা হচ্ছে না।"
+        },
+        {
+          "type": "text",
+          "title": "নিজের ডিজাইন সিদ্ধান্তের পক্ষে যুক্তি দিন",
+          "body": "ডিজাইন রিভিউতে স্পষ্ট করে বলুন আপনার Cache Key-তে ঠিক কোন কোন ক্ষেত্র থাকবে, গোপনীয়তার খাতিরে কী কী লগ করা যাবে না এবং সামান্য পুরোনো উত্তর (Stale Answer) দেখানো ভালো নাকি খালি উত্তর দেওয়া ভালো। মনে রাখবেন—পার্সোনালাইজেশন, নিরাপত্তার পরিধি এবং সার্ভিসের প্রাপ্যতা তিনটি আলাদা শর্ত; আর ক্যাশ কেবল গতি বাড়ানোর স্তর, এটি কখনোই বৈধ ডেটা সোর্স বা সঠিক মডেল স্টেটের বিকল্প নয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch38_reliability",
+      "title": "Deadlines, Backpressure, Fallback ও Abstention",
+      "subtitle": "সব ধরনের ব্যর্থতায় একই গৎবাঁধা Default উত্তর ফিরিয়ে দেওয়া কখনোই নিরাপদ নয়",
+      "duration": "55 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ব্যর্থতার শ্রেণিবিন্যাস (Failure Taxonomy)",
+          "body": "প্রোডাকশন সিস্টেমে 'সার্ভিস কাজ করছে না'—এটুকু বলা যথেষ্ট নয়; ব্যর্থতার প্রকৃত ধরন অনুযায়ী আমাদের প্রতিক্রিয়াও আলাদা হতে হবে। ত্রুটিপূর্ণ ইনপুট (Bad Input), বেমিল সংস্করণের রিলিজ (Incompatible Release), অনুপস্থিত ফিচার, সার্চে শূন্য ফলাফল আসা, সময়ের মধ্যে কাজ শেষ না হওয়া (Timeout) এবং অতিরিক্ত ট্রাফিকের চাপ (Overload)—এগুলোর প্রতিটিই ভিন্ন ভিন্ন পরিস্থিতি। প্রতিটির জন্য সুনির্দিষ্ট শনাক্তকরণ সংকেত এবং Response Policy থাকতে হবে। যদি আগে থেকে যাচাই করা কোনো সামঞ্জস্যপূর্ণ Fallback থাকে, তবে কতটুকু মান ও সক্ষমতার সীমার ভেতরে সিস্টেমকে নামিয়ে আনা (Degrade) যাবে তা ঠিক করুন; আর যদি চুক্তির শর্ত পূরণ করা অসম্ভব হয়, তবে পণ্যের ধরন বুঝে স্পষ্টভাবে Abstain, Defer অথবা Block করুন।"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের পাঁচটি Case-এর বাস্তবায়িত Fallback ও বিরতি নীতি",
+          "body": "আমাদের ল্যাবে পাঁচটি কেসের আচরণ তুলনা করলেই পার্থক্যটা পরিষ্কার হয়ে যাবে: বাহ্যিক ফিচার সমস্যায় Recommendation ফিরে যায় Training সেটের Popularity তালিকায়, Search ফিরে যায় Lexical TF-IDF-এ এবং Forecasting ফিরে যায় সাত দিন আগের `seasonal7` মানে। কিন্তু Spam কেসে জরুরি ফিচার না থাকলে আন্দাজে মেইল ব্লক বা অ্যালাউ না করে সেটিকে `DEFER` করা হয়; আর RAG কেসে প্রামাণ্য টেক্সট না পেলে কোনো মনগড়া শব্দ না বানিয়ে সরাসরি `ABSTAIN` (অর্থাৎ `None` আউটপুট) দেওয়া হয়! অন্যদিকে মেটাডেটা বা Contract-এ অমিল থাকলে পাঁচটি কেসেই হিসাব শুরুর আগে কাজ ব্লক করে দেওয়া হয়। এগুলো আমাদের স্থানীয় কোডে সাজানো নীতির মহড়া, বাস্তব সার্ভার আউটেজ নয়।"
+        },
+        {
+          "type": "math",
+          "title": "সামঞ্জস্যপূর্ণ ব্যর্থতায় নিরাপদ Degradation বনাম Abstention",
+          "body": "\\mathrm{compatible\\ dependency}\\to\\begin{cases}degrade&validated\\ fallback\\\\abstain&otherwise\\end{cases}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ পাঁচটি Case-এর Upstream ব্যর্থতার আচরণ যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"design38\", Path(\"assets/datasets/system_design/design_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/system_design/design_lab.json\").read_text(encoding=\"utf-8\")\n)\nfor case in m.CASE_IDS:\n    result = m.response(lab, case, \"upstream\")\n    print(case, result[\"status\"], result[\"served\"], result[\"reason\"])\nassert m.response(lab, \"rag\", \"upstream\")[\"output\"] is None\n"
+        },
+        {
+          "type": "text",
+          "title": "অতিরিক্ত চাপ নিয়ন্ত্রণ (Overload Containment) ও Retry-এর বিপদ",
+          "body": "সিস্টেমে যখন ধারণক্ষমতার চেয়ে বেশি ট্রাফিক আসে, তখন এক সার্ভিসের পতন থেকে পুরো সিস্টেমকে বাঁচাতে (Cascading Failure রোধে) সীমিত আকারের Queue, Admission Control, নিচের স্তরে ছড়িয়ে দেওয়া Deadline, রিসোর্স বিভাজন (Bulkheads) এবং প্রয়োজনে অতিরিক্ত অনুরোধ ঝেড়ে ফেলা (Load Shedding) ব্যবহার করতে হয়। বিশেষ করে অন্ধের মতো Retry করা মারাত্মক বিপজ্জনক, কারণ তা বিপর্যস্ত ব্যাকএন্ডের ওপর ট্রাফিকের চাপ বহুগুণ বাড়িয়ে দেয়! তাই চেষ্টার সর্বোচ্চ সংখ্যা বাঁধা, সময়ের বিরতি ও এলোমেলো ছন্দ (Backoff with Jitter) এবং অপারেশনটি বারবার চালালেও নিরাপদ কি না (Idempotency) তা নিশ্চিত করা জরুরি।"
+        },
+        {
+          "type": "design_failure",
+          "title": "Fallback পথের নিজস্ব সক্ষমতা ও সামঞ্জস্য",
+          "body": "অনেকেই ভাবেন, মূল মডেল ব্যর্থ হলে সব ট্রাফিক একটি সাধারণ ডাটাবেস বা পুরোনো মডেলের দিকে ঘুরিয়ে দিলেই সমস্যার সমাধান! কিন্তু ভাবুন তো, মূল সার্ভিস অচল হওয়ার মুহূর্তে সেকেন্ডে হাজার হাজার অনুরোধ গিয়ে যদি অপ্রস্তুত Fallback ডাটাবেসের ওপর পড়ে, তবে সেটিও তো মুহূর্তেই ক্র্যাশ করবে! তাই নিরাপদ বিকল্প পথেরও নিজস্ব পর্যাপ্ত Capacity, ডেটার সতেজতা এবং বৈধ Contract থাকতে হবে। তা ছাড়া পুরোনো মডেলের ভার্সন মানেই স্বয়ংক্রিয়ভাবে নিরাপদ নয়—আপস্ট্রিম ডেটাই যদি দূষিত হয়ে যায়, তবে পুরোনো মডেলও একইভাবে ভুল উত্তর দেবে।"
+        },
+        {
+          "type": "text",
+          "title": "উত্তর না দেওয়ারও একটি মূল্য আছে (Cost of Abstention)",
+          "body": "ভুল এড়ানোর সবচেয়ে সহজ উপায় হলো সব অনুরোধেই হাত তুলে নেওয়া বা Abstain করা—এতে স্বয়ংক্রিয় ভুলের সংখ্যা নিশ্চিতভাবে শূন্য হবে, কিন্তু সিস্টেমের উপযোগিতা ও প্রাপ্যতাও নেমে আসবে শূন্যে! সিদ্ধান্ত ঝুলিয়ে রাখা, মানুষের রিভিউয়ের বোঝা বাড়ানো এবং ব্যবহারকারীকে খালি হাতে ফেরানোর বাস্তব ব্যবসায়িক ক্ষতি রয়েছে। আমাদের আগের প্রতীকী খরচের সূত্রে এই দিকগুলো ধরা হয়নি বলেই আমরা সেটিকে কখনোই সর্বোত্তম নীতি বলে দাবি করি না।"
+        },
+        {
+          "type": "text",
+          "title": "Failure Replay দিয়ে নীতি পরীক্ষা",
+          "body": "সিমুলেটরে একেকটি Case বেছে নিয়ে `none`, `model_mismatch` এবং `upstream` অপশনগুলো ঘুরিয়ে দেখুন। প্রতিটি অবস্থায় সিস্টেমের Status, কোন পদ্ধতিতে সার্ভ হলো (`served`), পেছনের কারণ (`reason`) এবং চূড়ান্ত আউটপুট বা Citation কীভাবে বদলে যাচ্ছে তা লক্ষ্য করুন। মনে রাখবেন, এই ইচ্ছাকৃত ত্রুটিগুলো নীতির যুক্তি পরীক্ষার জন্য—বাস্তব নেটওয়ার্ক বিচ্ছিন্নতা বা সিস্টেম পুনরুদ্ধারের সময় (MTTR) মাপার জন্য নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Retry করলে ব্যাকএন্ডের চাপ গাণিতিকভাবে কত গুণ বাড়ে?",
+          "body": "কেন লাগামহীন Retry এত ভয়ংকর, তা একটি ছোট্ট হিসাব কষে দেখা যাক। ধরুন, একটি অনুরোধ সফল না হলে সর্বোচ্চ 3 বার চেষ্টা করা যায় (অর্থাৎ মূল চেষ্টা + ২ বার Retry) এবং প্রতিটি চেষ্টায় ব্যর্থ হওয়ার স্বাধীন সম্ভাবনা হলো p। প্রথমবারেই কাজ হবে এমন না হলে দ্বিতীয় চেষ্টায় যাওয়ার সম্ভাবনা p, আর প্রথম দুবারই ব্যর্থ হয়ে তৃতীয় চেষ্টায় যাওয়ার সম্ভাবনা p²। ফলে গড় চেষ্টার সংখ্যা দাঁড়ায় 1 + p + p²। এখন p = 0.5 হলে গড় চেষ্টা হয় 1.75 গুণ, আর সিস্টেম চাপে পড়ে p = 0.9 হয়ে গেলে গড় চেষ্টা বেড়ে দাঁড়ায় 2.71 গুণ! এবার ভাবুন: ব্যাকএন্ডে মূল Cache Miss যদি হয় সেকেন্ডে 500টি এবং প্রতিটি অনুরোধ থেকে ভেতরে 3টি সার্ভিসে কল যায় (Fanout = 3), তবে স্বাভাবিক অবস্থার 1500 কলের বদলে নিচের স্তরের সার্ভিসে প্রতি সেকেন্ডে গিয়ে আঘাত করবে 500 × 3 × 2.71 = 4065টি কল! বাস্তবে চাপ বাড়লে ব্যর্থতার হার p নিজেই আরও বেড়ে যায়, তাই স্থির p-এর এই হিসাবের চেয়েও প্রকৃত পরিস্থিতি দ্রুত খারাপ হতে পারে।"
+        },
+        {
+          "type": "code",
+          "title": "ব্যর্থতার সম্ভাবনা থেকে Retry Amplification ও চূড়ান্ত ব্যর্থতার হিসাব",
+          "body": "def retry_summary(failure_probability):\n    # Stop on success, with at most three total attempts.\n    probabilities = [\n        1 - failure_probability,\n        failure_probability * (1 - failure_probability),\n        failure_probability**2,\n    ]\n    expected_attempts = sum(\n        (index + 1) * value for index, value in enumerate(probabilities)\n    )\n    assert abs(sum(probabilities) - 1) < 1e-12\n    return expected_attempts, failure_probability**3\n\n\nmoderate, _ = retry_summary(0.5)\nheavy, terminal_failure = retry_summary(0.9)\ndownstream_rate = 500 * 3 * heavy\nprint(\n    round(moderate, 6),\n    round(heavy, 6),\n    round(downstream_rate, 6),\n    round(terminal_failure, 6),\n)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে যাচাই করুন",
+          "body": "যদি পরপর তিনটি স্তরের (Dependency Layers) প্রতিটি সার্ভিসই নিজ নিজ ব্যর্থতায় 3 বার করে চেষ্টা করে, তবে সবচেয়ে খারাপ অবস্থায় (Worst Case) মূল একটি অনুরোধের জন্য একেবারে নিচের স্তরে (Leaf Service) কয়টি কল গিয়ে পৌঁছাতে পারে?",
+          "solution": "উপরের স্তরের প্রতিটি চেষ্টা যদি ব্যর্থ হওয়ার আগে নিচের স্তরের সব কটি চেষ্টাকে নতুন করে চালায়, তবে একটি মাত্র মূল Request থেকে নিচের স্তরে সর্বোচ্চ 3³ = 27টি কল তৈরি হতে পারে! এই ভয়াবহ গুণন ঠেকাতে পুরো কল-চেইন জুড়ে একটি সমন্বিত Retry Budget, কলার থেকে নিচে পাঠানো কঠোর Deadline এবং কেবল সাময়িক ত্রুটিতেই Retry করার নিয়ম রাখা অপরিহার্য। মনে রাখবেন, Backoff কেবল কলের সময়টা একটু পিছিয়ে দেয়, কিন্তু ব্যাকএন্ডের মোট সক্ষমতা বাড়ায় না।",
+          "reference": "https://sre.google/sre-book/handling-overload/"
+        }
+      ]
+    },
+    {
+      "id": "ch38_monitoring",
+      "title": "Observable System: Model Quality ও Service Health",
+      "subtitle": "যেকোনো Metric নামের পাশেই তার Population, সময়ের Window এবং Version উল্লেখ রাখুন",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "পর্যবেক্ষণের চারটি স্বতন্ত্র স্তর",
+          "body": "সিস্টেম প্রোডাকশনে চালু হওয়ার পর অন্ধের মতো বসে থাকলে চলবে না; আমাদের জানতে হবে সবকিছু ঠিকঠাক চলছে কি না। একটি সুষ্ঠুভাবে পর্যবেক্ষণযোগ্য (Observable) এমএল সিস্টেমে চারটি আলাদা স্তর থাকে: ১) সার্ভিসের স্বাস্থ্য (Availability, Latency, Saturation), ২) ডেটার স্বাস্থ্য (Schema, Freshness), ৩) মডেলের গুণমান ও কভারেজ, এবং ৪) চূড়ান্ত ব্যবসায়িক প্রভাব। ড্যাশবোর্ডে কেবল একটি সবুজ বাতি জ্বলে থাকাই যথেষ্ট নয়। আর মনে রাখতে হবে, মনিটরিং আমাদের সমস্যার লক্ষণ বা ডায়াগনস্টিক সংকেত দেয়, কিন্তু পণ্যগত পরিবর্তনের প্রকৃত কার্যকারণ সুফল (Causal Benefit) প্রমাণ করতে আলাদা পরীক্ষার প্রয়োজন হয়।"
+        },
+        {
+          "type": "text",
+          "title": "ভগ্নাংশের হরের শৃঙ্খলা (Denominator Discipline)",
+          "body": "মনিটরিং ড্যাশবোর্ডে সবচেয়ে বেশি বিভ্রান্তি তৈরি হয় ভগ্নাংশের হর বা Denominator নিয়ে। আমাদের Spam ল্যাবের কথাই মনে করুন: মোট Validation সারি 738টি, স্বয়ংক্রিয় সিদ্ধান্ত হয়েছে 606টির, আর অমীমাংসিত রয়েছে 132টি। ওই 606টির ওপর মাপা 0.9703 শর্তসাপেক্ষ Accuracy কিন্তু মোটেও পুরো 738টির Accuracy নয়! একইভাবে Forecasting-এ মোট আগত অনুরোধ বনাম পরিপক্ব হওয়া Label, Search-এ মানুষের যাচাই করা কুয়েরি বনাম সব কুয়েরি, এবং RAG-এ উত্তর দেওয়া অনুরোধ বনাম মোট অনুরোধ—প্রতিটির হর আলাদা। তাই শতাংশের পাশাপাশি সবসময় মোট সংখ্যা (Counts) এবং যোগ্যতার শর্ত পাশাপাশি দেখান।"
+        },
+        {
+          "type": "math",
+          "title": "একটি অর্থবহ Monitoring Signal-এর পাঁচটি উপাদান",
+          "body": "\\mathrm{signal}=(value,unit,denominator,window,version)"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ মোট ডেটা, স্বয়ংক্রিয় সিদ্ধান্ত ও শর্তসাপেক্ষ সঠিকতা পর্যবেক্ষণ",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"design38\", Path(\"assets/datasets/system_design/design_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/system_design/design_lab.json\").read_text(encoding=\"utf-8\")\n)\npolicy = m.guarded_review(lab)\nprint(\"All development rows:\", policy[\"n\"])\nprint(\"Automatic decisions:\", policy[\"decided\"])\nprint(\"Unresolved decisions:\", policy[\"pending\"])\nprint(\"Conditional accuracy:\", policy[\"conditional_accuracy\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "সার্ভিস স্তরের মেট্রিক (Service Metrics)",
+          "body": "প্রতি সেকেন্ডে আগত অনুরোধের হার (Rate), এরর বা Timeout ও Fallback-এর সংখ্যা, অপেক্ষমাণ লাইনের গভীরতা (Queue Depth), রিসোর্সের পূর্ণতা (Saturation) এবং Latency-র পূর্ণাঙ্গ Histogram হলো সার্ভিস স্বাস্থ্যের মূল সংকেত। আমাদের এই ল্যাবের স্টেজ সময়গুলো অবশ্য পরিকল্পনার জন্য ধরে নেওয়া সংখ্যা, জীবন্ত সার্ভার থেকে পাওয়া Telemetry নয়। শুধুমাত্র সঠিক র‍্যাঙ্কিং আইডি ফেরত এসেছে দেখেই সার্ভারের প্রকৃত QPS বা p95 Latency সম্পর্কে কোনো সিদ্ধান্ত নেওয়া যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "ডেটা, Label ও Drift পর্যবেক্ষণের সতর্কতা",
+          "body": "ইনপুট ডেটায় Schema অমিল, ফাঁকা মানের হার (Missingness), সোর্স ও ইনডেক্সের Version এবং আসল Label কবে ও কীভাবে আসছে তা নিয়মিত নজরে রাখুন। তবে একটি গুরুত্বপূর্ণ কথা মনে রাখবেন: কোনো ফিচারের Drift Score বেড়ে যাওয়া মানেই সমস্যার মূল কারণ ধরা পড়ে যাওয়া নয়, কিংবা চোখ বন্ধ করে স্বয়ংক্রিয়ভাবে মডেল Retrain করার নির্দেশও নয়! যেমন, স্প্যামের ক্ষেত্রে আক্রমণকারীদের কৌশল বদলানো বা নতুন ধরনের ক্যাম্পেইনের কারণে ইনপুট বদলে যেতে পারে; পুরোনো ডেভেলপমেন্ট ডেটার উচ্চ Accuracy কখনোই আজকের জীবন্ত মেইলবক্সে সমান সাফল্যের গ্যারান্টি দেয় না।"
+        },
+        {
+          "type": "text",
+          "title": "গোপনীয়তা রক্ষা ও মেট্রিকের Cardinality নিয়ন্ত্রণ",
+          "body": "মনিটরিং সিস্টেমকে সচল রাখতে মেট্রিকের ট্যাগ বা Label-এর সংখ্যা সীমিত (Bounded) রাখুন; ইউজার আইডি বা রিকোয়েস্ট আইডির মতো অসংখ্য অনন্য মান (High-cardinality) মেট্রিক ট্যাগে না দিয়ে বরং নিয়ন্ত্রিত স্যাম্পলিংসহ Trace বা Log-এ রাখুন। আর কখনোই কাঁচা ব্যক্তিগত ইমেইল, গোপনীয় সার্চ কুয়েরি কিংবা ব্যবহারকারীর সম্পূর্ণ Prompt বাছবিচারহীনভাবে লগে সংরক্ষণ করবেন না। পাবলিক সংখ্যাসূচক ডেটাসেট দিয়ে কাজ করা মানেই প্রোডাকশনের প্রাইভেসি শর্ত পূরণ হয়ে যাওয়া নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে উত্তর সাজাবেন",
+          "body": "ইন্টারভিউতে একটি দারুণ বাস্তবধর্মী প্রশ্ন করা হয়: ধরুন, আপনার সার্ভিসের Latency এবং HTTP 200 সাফল্যের হার একদম স্বাভাবিক দেখাচ্ছে, কিন্তু হঠাৎ Fallback-এর হার লাফিয়ে বেড়ে গেছে—এর মানে কী? এটি কি ইচ্ছাকৃত কোনো পলিসি পরিবর্তন, নাকি ভেতরে মূল মডেল বা ফিচার পাইপলাইন ভেঙে গেছে এবং সস্তা Fallback নীরবে সব উত্তর দিচ্ছে? তখন Version, Reason Code, Coverage এবং সিদ্ধান্তের অনুপাত ঘেঁটে কীভাবে মূল কারণ বের করবেন তা ব্যাখ্যা করুন। মনে করিয়ে দিন যে HTTP সফল হওয়া মানেই উত্তরটি সঠিক বা উপকারী হওয়া নয়।"
+        },
+        {
+          "type": "text",
+          "title": "অমীমাংসিত সিদ্ধান্ত থাকলে সামগ্রিক Accuracy সম্পর্কে কতটুকু নিশ্চিত হওয়া যায়?",
+          "body": "যখন কিছু সিদ্ধান্ত মানুষের রিভিউ বা Defer অবস্থায় ঝুলে থাকে, তখন পুরো ডেটাসেটের প্রকৃত Accuracy আসলে একটি নির্দিষ্ট সীমার ভেতরে থাকে। আমাদের 738টি সারির উদাহরণেই দেখুন: 606টি স্বয়ংক্রিয় সিদ্ধান্তের মধ্যে ভুল হয়েছে 18টি, তার মানে নিশ্চিতভাবে সঠিক হয়েছে 606 − 18 = 588টি। বাকি 132টি সিদ্ধান্ত এখনো অমীমাংসিত। যদি চূড়ান্ত ফলাফলকে কেবল সঠিক বা ভুল—এই দুই ভাগে ধরা হয়, তবে পুরো 738টির সামগ্রিক Accuracy-র গাণিতিক নিম্নসীমা (Lower Bound) হলো 588 / 738 (যদি বাকি সব কটি ভুল হয়) এবং ঊর্ধ্বসীমা (Upper Bound) হলো (588 + 132) / 738 = 720 / 738 (যদি বাকি সব কটি সঠিক হয়)। অন্যদিকে স্বয়ংক্রিয় অংশের 588 / 606 সংখ্যাটি সম্পূর্ণ আলাদা হর ব্যবহার করে। অমীমাংসিত কেসগুলোর চূড়ান্ত ফলাফল হাতে না পাওয়া পর্যন্ত এই নিম্ন ও ঊর্ধ্বসীমার মাঝখান থেকে ইচ্ছেমতো কোনো একটি একক পূর্ণাঙ্গ Accuracy দাবি করা যাবে না।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে যাচাই করুন",
+          "body": "আমাদের ডিফল্ট কেসে রিভিউ বাজেট 50 হওয়া সত্ত্বেও সামগ্রিক Accuracy-র ঊর্ধ্বসীমা বের করার সময় কেন শুধু 50টি সঠিক উত্তর যোগ না করে পুরো 132টি অমীমাংসিত কেসই হিসাব করতে হলো?",
+          "solution": "কারণ রিভিউ লাইনে জায়গা পাওয়া (Admission) মানেই চূড়ান্ত ফলাফল হাতে চলে আসা নয়, আর বাকি যে 82টি কেস বাজেট উপচে Defer হয়ে আছে সেগুলোর চূড়ান্ত ফলাফলও এখনো অজানা—অর্থাৎ 50টি রিভিউ এবং 82টি Defer মিলিয়ে মোট 132টি কেসই অমীমাংসিত! পূর্ণাঙ্গ বাইনারি Accuracy জানতে হলে নির্দিষ্ট সময়ের মধ্যে এই 132টির প্রতিটিরই চূড়ান্ত পরিণতি জানতে হবে। আর আপনি যদি সিদ্ধান্ত ঝুলিয়ে রাখাকে (Defer) সরাসরি একটি ব্যবসায়িক ক্ষতি বা জরিমানা হিসেবে গণ্য করতে চান, তবে সাধারণ Accuracy-র বদলে সেই আলাদা Utility মেট্রিকের সংজ্ঞা স্পষ্টভাবে লিখে নিতে হবে।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch38_evaluation",
+      "title": "Offline Quality, Validation পছন্দ ও Online প্রমাণ",
+      "subtitle": "একটি সৎ Design Review-তে প্রতিটি প্রমাণের সীমা স্পষ্টভাবে লিখে দিন",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "তিনটি আলাদা ধাপ: Training, Validation এবং সংরক্ষিত পরীক্ষা",
+          "body": "সিস্টেম ডিজাইনের শেষ প্রান্তে এসে আমাদের স্পষ্ট করতে হবে আমরা কোন ডেটা থেকে কী সিদ্ধান্ত নিচ্ছি। Training সেট মডেলের প্যারামিটার ফিট করে, Validation সেট আমাদের Threshold বা Policy বেছে নিতে সাহায্য করে, আর একটি সম্পূর্ণ আলাদা সংরক্ষিত সেট বারবার নীতি পরিবর্তনের ফলে তৈরি হওয়া পক্ষপাত (Adaptive Overfitting) ধরে ফেলে। আমাদের এই অ্যাপে ডেভেলপমেন্ট ডেটার ওপর বিভিন্ন Threshold ঘুরিয়ে দেখা হলেও সংরক্ষিত 680টি Spam ফলাফলের একটিও স্কোর করা হয়নি। পাবলিক ডেটাসেটে লেবেল চোখের সামনে থাকা সত্ত্বেও সেটিকে স্পর্শ না করাটাই বৈজ্ঞানিক মূল্যায়নের মূল শৃঙ্খলা।"
+        },
+        {
+          "type": "text",
+          "title": "প্রতিটি Case-এর প্রমাণের প্রকৃত চরিত্র",
+          "body": "খেয়াল করে দেখুন: MovieLens-এর র‍্যাঙ্কিং, SciFact-এর রিট্রিভাল ও ডিকোডার এবং Bike ডেটার Ridge মডেল—এসব ঐতিহাসিক ফলাফল আমরা আগের অধ্যায়গুলোতেই দেখে এসেছি। এখানে সেগুলোকে পুনরায় চালিয়ে আমরা আসলে কোডের নির্ভুল বাস্তবায়ন ও তথ্যের উৎস (Provenance) যাচাই করছি, নতুন কোনো অদেখা বেঞ্চমার্ক জয় দাবি করছি না। এমনকি Spambase-এর স্থির রেসিপিতে পাওয়া ডেভেলপমেন্ট ফলাফলও কেবল একটি ঐতিহাসিক স্ন্যাপশট—বাস্তব মেইলবক্সে সক্রিয় স্প্যামারদের বিরুদ্ধে সক্ষমতার চূড়ান্ত প্রমাণ নয়।"
+        },
+        {
+          "type": "math",
+          "title": "অফলাইন মেট্রিক বনাম অনলাইনের কার্যকারণ সুফল",
+          "body": "\\mathrm{offline\\ metric}\\not\\Rightarrow\\mathrm{causal\\ online\\ value}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ বিভিন্ন Threshold-এর ডেভেলপমেন্ট Tradeoff পর্যবেক্ষণ",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"design38\", Path(\"assets/datasets/system_design/design_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/system_design/design_lab.json\").read_text(encoding=\"utf-8\")\n)\nfor threshold in [\"0.2\", \"0.5\", \"0.8\"]:\n    metric = lab[\"spam\"][\"metrics\"][threshold]\n    print(threshold, metric[\"precision\"], metric[\"recall\"], metric[\"fpr\"])\nassert lab[\"report\"][\"reserved_outcomes_scored\"] == 0\nprint(\"Development tradeoffs;no reserved-test confirmation claimed\")\n"
+        },
+        {
+          "type": "text",
+          "title": "নমুনা নির্বাচনের ফাঁদ (Selection Pitfalls)",
+          "body": "মূল্যায়নের সময় যদি আপনি কেবল যাঁরা কিনেছেন (Converters), যেসব উত্তর গৃহীত হয়েছে কিংবা যেসব সিদ্ধান্ত স্বয়ংক্রিয়ভাবে নেওয়া হয়েছে শুধু সেগুলোর ওপরই স্কোর হিসাব করেন, তবে আপনার মূল Population-ই বদলে যায়! ভিন্ন ভিন্ন হর (Denominator) বিশিষ্ট Accuracy কখনোই সরাসরি তুলনা করবেন না। একইভাবে মানুষের রিভিউ শতভাগ নিখুঁত ধরে নিয়ে গড় ফলাফল বাড়িয়ে দেখানো চলবে না, এবং মূল্যায়নের জন্য রাখা Gold Label যেন ভুলেও সার্ভিং পলিসির ডেটা প্রবাহে ঢুকে না পড়ে।"
+        },
+        {
+          "type": "text",
+          "title": "অনলাইন পরীক্ষার আবশ্যিকতা",
+          "body": "র‍্যাঙ্কিংয়ে কোন আইটেম ওপরে দেখালেন, কোন মেইল ব্লক করলেন কিংবা স্টেশনে কয়টি বাইক রাখলেন—এই প্রতিটি পদক্ষেপই ভবিষ্যতের ডেটাকে বদলে দেয়। তাই প্রকৃত পণ্যগত উন্নতি মাপতে হলে সঠিক Randomization Unit, পরীক্ষার অখণ্ডতা, পর্যাপ্ত পরিসংখ্যানগত ক্ষমতা (Power), ক্ষতি ঠেকানোর Guardrail এবং নির্ভুল বিশ্লেষণ পদ্ধতি প্রয়োজন। কেবল Canary রাউটিংয়ে ক্র্যাশ না হওয়া, পুরোনো মডেলের সঙ্গে Shadow মোডে মিল থাকা কিংবা অফলাইন AUC বাড়া—এর কোনোটিই প্রকৃত অনলাইন Causal Lift প্রমাণ করে না।"
+        },
+        {
+          "type": "text",
+          "title": "প্রোডাকশনে যাওয়ার আগের Decision Memo",
+          "body": "একজন সিনিয়র ইঞ্জিনিয়ারের মতো যেকোনো রিলিজের আগে একটি সংক্ষিপ্ত Decision Memo তৈরির অভ্যাস করুন—যেখানে পণ্যের Requirements, মূল্যায়ন প্রটোকল, Baseline-এর তুলনা, জানা ফলাফল, অজানা ঝুঁকি, কখন পরীক্ষা থামাতে হবে (Stop Conditions) এবং পরবর্তী Validation ধাপ স্পষ্টভাবে লেখা থাকবে। কোন সংখ্যাটি কোড চালিয়ে পাওয়া প্রকৃত হিসাব, কোনটি পরিকল্পনার অনুমান, কোনটি সিমুলেশন আর কোনটি জীবন্ত সার্ভার থেকে মাপা মেট্রিক—এই চারটিকে সবসময় আলাদা ঘরে রাখুন। শুধু মডেলের স্কোর বাড়াই রিলিজ দেওয়ার একক শর্ত হতে পারে না।"
+        },
+        {
+          "type": "text",
+          "title": "চূড়ান্ত Review Gate",
+          "body": "এগিয়ে যাওয়ার আগে নিজের ভাষায় একবার মিলিয়ে নিন: বৈধ মেইল ব্লক হওয়া, স্প্যাম ফসকে যাওয়া, Cache Isolation, ফিচারের সময়ের সীমানা, প্রমাণের অনুপস্থিতি, অতিরিক্ত ট্রাফিকের চাপ এবং Rollback করার শর্তগুলো কি আপনি নিখুঁতভাবে ব্যাখ্যা করতে পারছেন? প্রতিটি Response-এর সঙ্গে তার উৎস, Version এবং মূল্যায়নের হর যুক্ত রাখুন। পরের অধ্যায় Book 6 · Chapter 5 (Technical Interview Practice)-এ আমরা ঠিক এই ধারণাগুলোই সরাসরি কোডিং এবং ডিবাগিং সমস্যায় প্রয়োগ করব।"
+        }
+      ]
+    },
+    {
+      "id": "ch38_book_design_tradeoffs",
+      "title": "System Design Tradeoffs: Quality, Latency, Cost ও Failure Budgets",
+      "subtitle": "আগে সীমাবদ্ধতার ধারণাটি বুঝি, তারপর গাণিতিক সূত্র ও সংখ্যার উদাহরণ মিলিয়ে Python-এ যাচাই করি",
+      "duration": "18 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন 'সেরা Model' কথাটি সিস্টেম ডিজাইনে অসম্পূর্ণ?",
+          "body": "সিস্টেম ডিজাইন ইন্টারভিউতে কেবল 'সবচেয়ে নির্ভুল Model কোনটি' তা বলে দিলেই উত্তর শেষ হয়ে যায় না। ভাবুন তো, রিট্রিভালে Candidate সংখ্যা বাড়ালে হয়তো Recall বাড়ে, কিন্তু পরের ধাপের Reranker-এর Latency ও সার্ভারের খরচও তো পাল্লা দিয়ে বেড়ে যায়! আবার সবচেয়ে শক্তিশালী মডেলটি যদি ভিড়ের সময় ঘনঘন Timeout করে, তবে আপনার সিস্টেমের প্রকৃত অভিজ্ঞতা নির্ভর করবে Fallback কতটা ভালো তার ওপর। তাই আগে থেকে সীমাবদ্ধতা বা Requirements লিখে না নিলে আর্কিটেকচার ডায়াগ্রামের কোন Tradeoff-টি আসলে গ্রহণযোগ্য, তা বিচার করার কোনো মাপকাঠিই থাকে না।"
+        },
+        {
+          "type": "text",
+          "title": "কঠোর সীমাবদ্ধতা (Hard Constraints) বনাম অপ্টিমাইজেশন লক্ষ্য",
+          "body": "সিদ্ধান্ত নেওয়ার সবচেয়ে পরিষ্কার উপায় হলো আবশ্যিক শর্ত বা Hard Constraints এবং অপ্টিমাইজ করার মূল লক্ষ্যকে আলাদা করে ফেলা। যেমন, শর্ত দেওয়া হলো: p95 Latency ≤ 200 ms, মেমোরি ≤ 4 GB এবং Recall ≥ 0.80 হতেই হবে—এবং এই শর্তগুলো পূরণ করা বিকল্পগুলোর মধ্য থেকে আমরা খরচ (Cost) সর্বনিম্ন করব। যদি কোনো কনফিগারেশন সব কটি মাপকাঠিতেই অন্য একটির চেয়ে খারাপ হয়, তবে সেটিকে আমরা বলি Dominated বিকল্প। আর একাধিক ভালো বিকল্প Pareto Frontier-এ থাকলেও চোখ বন্ধ করে যেকোনো একটি নেওয়া যায় না; তখন ব্যবসার বাস্তব শর্ত এবং পরিমাপের অনিশ্চয়তা বিচার করে চূড়ান্ত সিদ্ধান্ত নিতে হয়।"
+        },
+        {
+          "type": "math",
+          "title": "সীমাবদ্ধতার অধীনে খরচ কমানোর গাণিতিক রূপ",
+          "body": "\\min_c\\ \\mathrm{Cost}(c)\\quad\\text{s.t.}\\quad Q(c)\\ge q_{min},\\ L_{95}(c)\\le B"
+        },
+        {
+          "type": "text",
+          "title": "খাতাকলমে তিনটি কনফিগারেশনের তুলনা",
+          "body": "পরিকল্পনার জন্য তিনটি অনুমিত বিকল্প ধরা যাক: A = (quality 0.82, latency 150 ms, cost 2), B = (quality 0.88, latency 260 ms, cost 3) এবং C = (quality 0.80, latency 180 ms, cost 4)। এখন আমাদের আবশ্যিক শর্ত যদি হয় সর্বোচ্চ Latency 200 ms এবং সর্বনিম্ন Quality 0.81, তবে দেখুন: B-এর মান সবচেয়ে ভালো হলেও সে সময়ের বাজেট (260 > 200) ছাড়িয়ে গেছে, আর C মানের শর্তই (0.80 < 0.81) পূরণ করতে পারেনি—এমনকি C প্রতিটি দিকেই A-এর চেয়ে খারাপ (Dominated)! ফলে একমাত্র বৈধ বা Feasible বিকল্প হিসেবে টিকে থাকে কেবল A। অবশ্যই মনে রাখবেন, এগুলো পরিকল্পনার অনুমিত সংখ্যা, বাস্তব প্রোডাকশনের মাপা p95 নয়।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ আগে শর্ত যাচাই ও পরে সর্বনিম্ন খরচ নির্বাচন",
+          "body": "configs = [\n    {\"quality\": 0.82, \"latency\": 150, \"cost\": 2},\n    {\"quality\": 0.88, \"latency\": 260, \"cost\": 3},\n    {\"quality\": 0.80, \"latency\": 180, \"cost\": 4},\n]\nfeasible = [c for c in configs if c[\"quality\"] >= 0.81 and c[\"latency\"] <= 200]\n# Feasibility comes before cost optimization; handle an empty set explicitly.\nbest_cost = min(c[\"cost\"] for c in feasible) if feasible else None\nprint(len(feasible), best_cost)\n"
+        },
+        {
+          "type": "text",
+          "title": "কোডের ফলাফল ও বাস্তব লোড টেস্টের সম্পর্ক",
+          "body": "কোডটি চালালে আউটপুট আসে `1 2`—অর্থাৎ বৈধ কনফিগারেশন মাত্র 1টি এবং তার সর্বনিম্ন খরচ হলো 2। খেয়াল করুন, কোডে আমরা খরচ কমানোর আগে বৈধতার শর্ত (Feasibility) যাচাই করেছি এবং বৈধ তালিকা খালি হলে যেন ক্র্যাশ না করে তাও সামলেছি। বাস্তবে Capacity হিসাব দেওয়ার সময় অবশ্যই ট্রাফিকের অনুমানগুলো উল্লেখ করবেন; সত্যিকারের Load Test না চালিয়ে কখনোই কোনো p95 সংখ্যাকে 'পরিমাপকৃত' বলবেন না, কারণ সমান্তরাল শাখাগুলোর আলাদা p95-এর সর্বোচ্চ মান পুরো পথের যৌথ p95-এর চেয়ে অনেক কম হতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "কখন এই সরল হিসাব ভেঙে পড়ে?",
+          "body": "গড় বা Average Latency দেখে কখনোই Tail Latency SLO পূরণের দাবি করা যায় না। ট্রাফিকের লাইন বা Queueing, ব্যর্থ কলের Retry, হঠাৎ Cache Miss বেড়ে যাওয়া এবং একসঙ্গে একাধিক সার্ভিসের ত্রুটি (Correlated Failures) খাতাকলমের সরল পাটিগণিতকে নিমেষেই ভেঙে দিতে পারে। আর যদি দেখেন কোনো একটি কনফিগারেশনই আপনার সব শর্ত পূরণ করতে পারছে না (Empty Feasible Set), তবে গোপনে শর্ত ভাঙা কোনো অপশন রিলিজ না দিয়ে বরং প্রোডাক্ট টিমের সঙ্গে বসে শর্ত বা আর্কিটেকচার নতুন করে সাজান।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে চেষ্টা করুন",
+          "body": "ধরুন ইঞ্জিনিয়ারিং টিম B কনফিগারেশনটিকে অপ্টিমাইজ করে 200 ms-এর নিচে নামিয়ে আনল, কিন্তু এর ফলে তার সার্ভার খরচ আরও বেড়ে গেল। আপনি কি তখনো সবসময় B-কেই বেছে নেবেন? আর মূল সিস্টেমের Hard SLO ব্যর্থ হলে Fallback পথের গ্রহণযোগ্যতার শর্ত কীভাবে লিখবেন?",
+          "solution": "না, সবসময় B-কে বেছে নেব না! আমাদের ঘোষিত লক্ষ্য যদি হয় 'ন্যূনতম মান 0.81 ও সময় 200 ms বজায় রেখে সর্বনিম্ন খরচ', তবে A (খরচ 2) এখনো B-এর চেয়ে সাশ্রয়ী—যতক্ষণ না বাড়তি 0.06 মানের ব্যবসায়িক মূল্য ওই অতিরিক্ত খরচের চেয়ে বেশি বলে প্রমাণিত হচ্ছে। আর Fallback পথের গ্রহণযোগ্যতার চুক্তিতে স্পষ্টভাবে লিখতে হবে: ঠিক কত মিলিসেকেন্ড Timeout বা কোন ত্রুটিতে এটি ট্রিগার হবে, এর সর্বনিম্ন গ্রহণযোগ্য গুণমান কত, এর নিজস্ব সর্বোচ্চ Capacity কত, ড্যাশবোর্ডে কীভাবে এটি পর্যবেক্ষণ করা হবে এবং কখন আবার মূল মডেলে ফিরে আসা বা Rollback করা হবে।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch38_design_review",
+      "title": "Interview Case Defense ও Executable Evidence Bundle",
+      "subtitle": "আপনার Architecture ডায়াগ্রামের প্রতিটি দাবিকে তথ্য ও কোডের মাধ্যমে যাচাইযোগ্য করুন",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ইন্টারভিউতে গল্প বলার ধারাবাহিকতা (Interview Narrative)",
+          "body": "সফল ইন্টারভিউয়াররা প্রার্থীর মুখে কেবল জনপ্রিয় টুলের নাম শুনতে চান না, তাঁরা দেখতে চান চিন্তার গভীরতা। তাই আপনার উত্তর সবসময় একটি সুসংবদ্ধ শৃঙ্খলে সাজান: প্রথমে Requirements ও অনুমান পরিষ্কার করা → সহজ কিন্তু কার্যকর Baseline → শুরু থেকে শেষ পর্যন্ত Data Flow → মূল্যায়ন পদ্ধতি → Capacity ও ব্যর্থতার Tradeoff → এবং সবশেষে পরবর্তী ধাপের Validation পরিকল্পনা। কোনো ফ্রেমওয়ার্কের নাম উচ্চারণ করেই থেমে যাবেন না; ঠিক কোন সংকেতে (Trigger) কোন আচরণ চালু হবে তা সুনির্দিষ্টভাবে বলুন। এখানে দেওয়া সমস্যাগুলো আমাদের মৌলিক অনুশীলন কেস, কোনো কোম্পানির ফাঁস হওয়া প্রশ্ন নয়।"
+        },
+        {
+          "type": "text",
+          "title": "সংখ্যার প্রমাণগুলোকে নিজ নিজ জায়গায় আলাদা রাখুন",
+          "body": "আলোচনায় সংখ্যা ব্যবহারের সময় তাদের চরিত্র গুলিয়ে ফেলবেন না। যেমন—Recommendation কেসে 20 ms Critical Path এবং 1000 QPS, 0.5 Cache Hit ও 4টি Replica থেকে পাওয়া 500 Miss Rate, 800 Ideal Capacity এবং rho = 0.625 হলো আমাদের স্পষ্টভাবে ধরে নেওয়া পরিকল্পনার অংক। অন্যদিকে Spam কেসের 738টি ডেভেলপমেন্ট সারি থেকে ডিফল্ট পলিসিতে পাওয়া 606টি স্বয়ংক্রিয় সিদ্ধান্ত, 132টি অমীমাংসিত কেস, 10টি বৈধ মেইল ব্লক এবং 8টি মিসড স্প্যাম হলো বাস্তব ডেটার ওপর কোড চালিয়ে পাওয়া ফলাফল। মডেলের গাণিতিক ফলাফল, পলিসির আচরণ এবং ক্যাপাসিটি প্ল্যানিংয়ের পাটিগণিতকে আলাদাভাবে তুলে ধরাই পরিপক্ব ইঞ্জিনিয়ারের পরিচয়।"
+        },
+        {
+          "type": "math",
+          "title": "উৎস ডেটা থেকে অডিট পর্যন্ত সম্পূর্ণ ট্রেসযোগ্য প্রবাহ",
+          "body": "\\mathrm{source}\\to\\mathrm{artifact}\\to\\mathrm{request}\\to\\mathrm{decision}\\to\\mathrm{audit}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ সম্পূর্ণ Evidence Bundle এক্সপোর্ট ও Checksum যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"design38\", Path(\"assets/datasets/system_design/design_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/system_design/design_lab.json\").read_text(encoding=\"utf-8\")\n)\nimport tempfile\n\nwith tempfile.TemporaryDirectory() as folder:\n    m.export_bundle(folder, lab)\n    print(m.verify_bundle(folder))\n    print(sorted(json.loads((Path(folder) / \"checksums.json\").read_text())))\n"
+        },
+        {
+          "type": "text",
+          "title": "কার্যকরী প্রমাণ (Functional Evidence)",
+          "body": "আমাদের এই ডিজাইন ল্যাবে 5টি কেস এবং প্রতিটির 3টি করে ত্রুটির পরিস্থিতি (Fault Presets) স্থানীয়ভাবে চালিয়ে দেখার ব্যবস্থা রয়েছে। প্রতিটি ভ্যালিডেশন প্রোবাবিলিটি, পলিসি কনফিগারেশন, পথের সময় বাজেট, চুক্তির সুরক্ষা-ফটক এবং মূল টেক্সটের Span স্বতন্ত্রভাবে পরীক্ষা করা হয়েছে। তবে অ্যাপের এই ইউনিট বা অফলাইন টেস্টগুলো আমাদের সফটওয়্যার লজিকের সঠিকতা প্রমাণ করে—কোনো ডিস্ট্রিবিউটেড প্রোডাকশন ক্লাস্টারের নির্ভরযোগ্যতা নয়।"
+        },
+        {
+          "type": "text",
+          "title": "পোর্টেবল Artifacts ও Checksum যাচাইয়ের অর্থ",
+          "body": "উপরের কোডে এক্সপোর্ট করা বান্ডেলে মোট 6টি ফাইল থাকে—Design Lab ডেটা, Spam Model, Design Contract, মূল Spambase ডকুমেন্টেশন, MovieLens-এর বিজ্ঞপ্তি এবং Attribution নথি; আর তাদের পাশে থাকে একটি আলাদা `checksums.json` ইনডেক্স। ভেরিফায়ার ফাংশনটি ফাইলের প্রকৃত বাইট, পারস্পরিক সংযোগ এবং উৎসের নোটিশ মিলিয়ে দেখে। কিন্তু মনে রাখবেন, হ্যাশ মেলানো কেবল ফাইলের অখণ্ডতা নিশ্চিত করে এবং এর জন্য একটি বিশ্বস্ত Manifest দরকার হয়; চেকসাম মিলে যাওয়া মানেই সিস্টেমটি ব্যবসায়িকভাবে সফল বা কার্যকারণগতভাবে নির্ভুল—এমন কোনো সনদ নয়।"
+        },
+        {
+          "type": "text",
+          "title": "যা মাপা হয়নি তা অকপটে স্বীকার করুন",
+          "body": "এই প্রজেক্টে কোনো জীবন্ত ইন্টারনেট ট্রাফিক, মানব রিভিউয়ারদের বাস্তব কাজের গতি, আর্থিক জালিয়াতি রোধের সক্ষমতা, GPU বা ANN ইনডেক্সের বেঞ্চমার্ক, মাল্টি-নোড ডিপ্লয়মেন্ট কিংবা Prompt Injection প্রতিরক্ষা মাপা হয়নি; আর ছোট্ট RAG ডিকোডারের এক শব্দের উত্তর কোনো বৈজ্ঞানিক বা চিকিৎসাবিষয়ক রায় নয়। ডিজাইন রিভিউতে এগুলোকে লুকানো ফিচারের মতো ভান না করে ভবিষ্যতের সুস্পষ্ট প্রোডাকশন Requirement হিসেবে উল্লেখ করুন।"
+        },
+        {
+          "type": "text",
+          "title": "নিজেকে প্রশ্ন করার অনুশীলন (Defense Drill)",
+          "body": "যেকোনো সিস্টেম ডিজাইন শেষ করে নিজেকে পাঁচটি কঠিন প্রশ্ন করুন: ১) কেন আমি এই একক, Label এবং সময়ের Horizon বেছে নিলাম? ২) চাপ বাড়লে সবার আগে কোন অংশটি ভেঙে পড়বে? ৩) তখন কি সিস্টেম নিরাপদে মান কমিয়ে (Degrade) চলতে পারবে? ৪) আমার বলা কোন সংখ্যাটি বাস্তব ডেটা থেকে মাপা আর কোনটি অনুমিত? ৫) কী ঘটলে প্রমাণিত হবে যে আমার এই ডিজাইন প্রস্তাবটি ভুল? বাস্তব কেস ও ব্যর্থতার পথ দেখিয়ে উত্তর দিন এবং প্রোটোটাইপের সীমাবদ্ধতা সততার সঙ্গে তুলে ধরুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch38_freshness_overload_round",
+      "title": "Senior Design Mock: Peak Load, Stale Features ও Fallback",
+      "subtitle": "একই ডিজাইনে Quality, Latency, Freshness এবং বিপর্যয় থেকে পুনরুদ্ধারের কৌশল প্রতিষ্ঠা করুন",
+      "duration": "29 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ইন্টারভিউয়ের প্রশ্ন ও সময়ের ফ্রেম",
+          "body": "ধরুন আপনাকে 45 মিনিটের একটি সিনিয়র সিস্টেম ডিজাইন ইন্টারভিউতে বলা হলো: একটি বৃহৎ প্ল্যাটফর্মের Recommendation API ডিজাইন করুন। ব্যবহারকারীর সর্বশেষ আগ্রহের User Embedding রাখা থাকে একটি Online Feature Store-এ, যার সতেজতার লক্ষ্যমাত্রা (Freshness SLO) হলো সর্বোচ্চ 5 মিনিট। ব্যস্ত সময়ে (Peak) বাইরে থেকে প্রতি সেকেন্ডে 12,000টি Request আসে। হঠাৎ কোনো কারণে আপনার সিস্টেমের Cache Hit হার স্বাভাবিক 75% থেকে কমে 40%-এ নেমে গেছে, অথচ আপনার মূল ব্যাকএন্ডের নিরাপদ ধারণক্ষমতা (Safe Capacity) হলো প্রতি সেকেন্ডে সর্বোচ্চ 6,000টি Request। ইন্টারভিউয়ের এই অনুমিত সংখ্যাগুলো ধরেই আপনাকে তাৎক্ষণিক সমাধান দাঁড় করাতে হবে।"
+        },
+        {
+          "type": "math",
+          "title": "ব্যাকএন্ডের প্রকৃত চাপ ও অতিরিক্ত ট্রাফিকের সমীকরণ",
+          "body": "Q_{\\mathrm{backend}}=Q_{\\mathrm{arrival}}(1-h),\\qquad Q_{\\mathrm{excess}}=\\max(0,Q_{\\mathrm{backend}}-Q_{\\mathrm{safe}})"
+        },
+        {
+          "type": "code",
+          "title": "নতুন সার্ভার চাওয়ার আগে খাতাকলমে হিসাব করুন",
+          "body": "arrivals = 12000\nsafe = 6000\nhealthy = round(arrivals * (1 - .75))\ndegraded = round(arrivals * (1 - .40))\nexcess = max(0, degraded - safe)\nprint(healthy, degraded, excess)"
+        },
+        {
+          "type": "text",
+          "title": "সংখ্যার ভিত্তিতে আর্কিটেকচার প্রতিরক্ষা (Design Defense)",
+          "body": "উপরের কোডটি চালালেই সংকটের চেহারা পরিষ্কার হয়ে যায়: স্বাভাবিক অবস্থায় 75% ক্যাশ হিট থাকলে ব্যাকএন্ডে যেত মাত্র 3,000 req/s, যা 6,000 সক্ষমতার চেয়ে অনেক কম। কিন্তু হিট 40%-এ নামতেই ব্যাকএন্ডের চাপ এক লাফে বেড়ে দাঁড়িয়েছে 7,200 req/s—অর্থাৎ নিরাপদ সীমার চেয়ে অন্তত 1,200 req/s বাড়তি Miss-path ট্রাফিক ঝেড়ে ফেলতে হবে, আর নিরাপদ Headroom রাখতে চাইলে সরাতে হবে আরও বেশি! তাৎক্ষণিক প্রতিরক্ষা হিসেবে কঠোর Deadline, Admission Control, একই জনপ্রিয় অনুরোধগুলো একত্র করা (Hot-key Coalescing), সীমিত Retry এবং ক্যাশ করা বা Popularity ভিত্তিক হালকা Fallback চালু করার প্রস্তাব দিন। তবে সামান্য পুরোনো বা Stale Feature ব্যবহার করার আগে অবশ্যই যাচাই করতে হবে সেটি বর্তমান মডেলের সংস্করণের সঙ্গে সামঞ্জস্যপূর্ণ কি না, এবং এক ব্যবহারকারীর ক্যাশ করা ডেটা যেন কোনোভাবেই অন্য ব্যবহারকারীর কাছে ফাঁস না হয়।"
+        },
+        {
+          "type": "text",
+          "title": "বিপর্যয়ের সময় ড্যাশবোর্ডে কী কী পর্যবেক্ষণ করবেন?",
+          "body": "কেবল মোট ট্রাফিক ও p95 Latency দেখলেই চলবে না; এর পাশাপাশি Cache Miss হার, কত শতাংশ অনুরোধ Fallback বা খালি উত্তরে যাচ্ছে, ফিচারের বয়স (Feature Age) কত মিনিট ছাড়াল, পরিপক্ব হওয়া রূপান্তর হার (Mature Conversion), ব্যবহারকারীর বিভিন্ন অংশের (Slice) অভিজ্ঞতা এবং Rollback-এর প্রস্তুতি একসঙ্গে নজরে রাখতে হবে। এখানে মূল ডিজাইন Tradeoff-টি স্পষ্ট করুন: সস্তা Fallback চালু করলে হয়তো p95 Latency আবার নিয়ন্ত্রণে ফিরে আসবে, কিন্তু পুরোনো বা অপার্সোনালাইজড ফিচারের কারণে র‍্যাঙ্কিংয়ের মান কিছুটা কমবে। আর যাঁরা Fallback পেয়েছেন তাঁরা যেহেতু বিশেষ পরিস্থিতির শিকার একটি আলাদা দল, তাই তাঁদের মেট্রিককে স্বাভাবিক ট্রাফিকের সঙ্গে সরাসরি তুলনা করে কোনো কার্যকারণ (Causal) সিদ্ধান্ত টানবেন না।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "বই বন্ধ করে নিজে উত্তর দিন",
+          "body": "ব্যাকএন্ড যখন সেকেন্ডে 1,200টি অতিরিক্ত অনুরোধের চাপে ধুঁকছে, তখন ক্লায়েন্ট বা গেটওয়ে স্তরে Retry বাড়িয়ে দিলে কি এই ঘাটতি মেটানো সম্ভব?",
+          "solution": "মোটেই না—উল্টো অতিরিক্ত চেষ্টার কারণে ব্যাকএন্ডে আগত কলের সংখ্যা আরও বহুগুণ বেড়ে (Retry Amplification) পুরো সিস্টেমকে সম্পূর্ণ অচল করে দেবে! এই অতিরিক্ত 1,200 req/s চাপ সামলাতে হলে অবশিষ্ট Deadline দেখে সীমিত Retry, প্রবেশদ্বারেই Admission Limit বা Load Shedding এবং ব্যাকএন্ডকে বাইপাস করা হালকা Fallback দিয়ে প্রকৃত চাহিদা কমাতে হবে।",
+          "reference": "https://sre.google/sre-book/handling-overload/"
+        }
+      ]
+    },
+    {
+      "id": "ch38_review",
+      "title": "Mastery Checkpoint: পুরো সিস্টেমটিকে এক সুতোয় বাঁধুন",
+      "subtitle": "নিজে সমীকরণ প্রতিপাদন করুন, কোডে বাস্তবায়ন করুন, পরীক্ষা করুন এবং যুক্তি দিয়ে প্রতিষ্ঠা করুন",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "গাণিতিক প্রতিপাদন (Derive)",
+          "body": "এই অধ্যায় শেষ করার আগে খাতায় নিজে নিজে সূত্রগুলো একবার লিখে মিলিয়ে দেখুন: Serial যোগফল ও Parallel সর্বোচ্চ মানের Critical Path, Cache Miss-এর হার, আদর্শ Concurrent-slot সক্ষমতা, সিস্টেমের Utilization এবং স্থিতিশীল অবস্থায় ভেতরে চলমান অনুরোধের গড় সংখ্যা। একই সঙ্গে সাধারণ Accuracy, Coverage এবং শর্তসাপেক্ষ ঝুঁকির (Conditional Risk) ভগ্নাংশের হরগুলো নিখুঁতভাবে সংজ্ঞায়িত করুন। আর যেকোনো আলোচনায় p95, নেটওয়ার্ক বা ক্লাস্টারের সংখ্যা বাস্তব সার্ভার থেকে মাপা না হলে সেটিকে স্পষ্টভাবে অনুমান (Assumption) হিসেবে উল্লেখ করার অভ্যাস বজায় রাখুন।"
+        },
+        {
+          "type": "text",
+          "title": "কোডে বাস্তবায়ন (Implement)",
+          "body": "এই অধ্যায়ের অনুশীলনী অংশে থাকা 10টি কোডিং সমস্যায় আপনি নিজের হাতে বাস্তবায়ন করবেন—Critical Path, ব্যাকএন্ড Load, আদর্শ Capacity, Utilization, সংখ্যাসূচকভাবে স্থিতিশীল Logistic Prediction, সীমিত বাজেটে Review Admission, স্বয়ংক্রিয় সিদ্ধান্তের ভুল গণনা, Coverage, বাস্তব Fallback নির্বাচন এবং পলিসির ক্যানোনিকাল Hash তৈরি। নিজের খসড়া কোড লিখে স্থানীয় Python পরিবেশে চালিয়ে পরীক্ষা করুন; অ্যাপটি আপনার ড্রাফট সংরক্ষণ করে এবং গাণিতিক ফলাফল মিলিয়ে দেখে।"
+        },
+        {
+          "type": "math",
+          "title": "পূর্ণাঙ্গ দক্ষতার চারটি স্তম্ভ",
+          "body": "\\mathrm{mastery}=\\mathrm{reason}+\\mathrm{compute}+\\mathrm{audit}+\\mathrm{communicate}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ সম্পূর্ণ ল্যাবের 1215টি ক্যাপাসিটি ও 72টি পলিসি প্রিসেট যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"design38\", Path(\"assets/datasets/system_design/design_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/system_design/design_lab.json\").read_text(encoding=\"utf-8\")\n)\nassert len(lab[\"capacity\"]) == 1215\nassert len(lab[\"policies\"]) == 72\nassert len(lab[\"responses\"]) == 5\nfor case in m.CASE_IDS:\n    assert m.response(lab, case, \"model_mismatch\")[\"status\"] == \"BLOCKED\"\nprint(\"Ready for system-design coding and interview defense\")\n"
+        },
+        {
+          "type": "text",
+          "title": "পুঙ্খানুপুঙ্খ পরীক্ষা (Test)",
+          "body": "কোড লেখার পাশাপাশি একজন নিরীক্ষকের চোখে যাচাই করুন: সব ভ্যালিডেশন ভেক্টর, হুবহু অভিন্ন প্রোফাইল গ্রুপের বিচ্ছিন্নতা, 72টি পলিসি ও 1215টি ক্যাপাসিটি প্রিসেট, 5টি কেস ও 3টি ফল্ট মোড মিলিয়ে মোট 15টি সার্ভিস রেসপন্স, সীমান্তবর্তী টাই ভাঙার নিয়ম, চুক্তির অমিল ধরা এবং আসল লেবেল ছাড়াই রাউটিং কাজ করছে কি না। মূল কোডের সাধারণ ভুল ধরতে আলাদা NumPy বা SQL রেফারেন্স হিসাবের সাহায্য নিন।"
+        },
+        {
+          "type": "text",
+          "title": "পাঁচটি Case-এর মূল শিক্ষাগুলো সংযুক্ত করুন (Connect)",
+          "body": "পাঁচটি কেস থেকে পাওয়া পাঁচটি অমোঘ সতর্কবার্তা সবসময় মনে রাখবেন: ১) Candidate Pool থেকে বাদ পড়া আইটেম Ranker ফিরিয়ে আনতে পারে না; ২) সার্চের প্রাসঙ্গিকতা মানেই বৈজ্ঞানিক সত্যতা নয়; ৩) ঐতিহাসিক Spam স্কোর মানেই আর্থিক Fraud ঝুঁকি নয়; ৪) ঘটনা অতীতে ঘটা মানেই সার্ভিংয়ের মুহূর্তে সেই ডেটা লভ্য থাকা নয়; এবং ৫) RAG-এ হুবহু উদ্ধৃতি থাকা মানেই দাবির পক্ষে যৌক্তিক প্রমাণ (Entailment) থাকা নয়। ইন্টারভিউতে আপনার প্রতিটি আর্কিটেকচার সিদ্ধান্ত ব্যাখ্যা করতে এই বাস্তব উদাহরণগুলো ব্যবহার করুন।"
+        },
+        {
+          "type": "text",
+          "title": "প্রয়োজনে আগের অধ্যায়গুলোতে ফিরে যান (Revisit)",
+          "body": "কোনো অংশে জড়তা থাকলে আগের সংশ্লিষ্ট অধ্যায়গুলো ঝালিয়ে নিন—রিকমেন্ডেশনের জন্য Book 5 · Chapter 5 (Recommender Capstone), সময়ের সীমানা মানা ফিচারের জন্য Book 6 · Chapter 1 (Data Pipelines & Feature Systems), সার্ভিং ও মনিটরিংয়ের জন্য Book 6 · Chapter 2 (Serving, Monitoring & MLOps) এবং কার্যকারণ পরীক্ষার জন্য Book 6 · Chapter 3 (Experimentation & Causal Reasoning)। বর্তমান অধ্যায়টি ওই সব মৌলিক ধারণাকে একত্র করে গভীর কেস বিশ্লেষণ করতে শেখায়, কিন্তু প্রতিটি বিষয়ের গোড়ার পাঠের বিকল্প হতে চায় না।"
+        },
+        {
+          "type": "text",
+          "title": "পরবর্তী গন্তব্য",
+          "body": "যেকোনো একটি কেস বেছে নিয়ে শুরু থেকে শেষ পর্যন্ত একটি Request-এর Data Flow, Critical Path, নিরাপদ Fallback এবং মূল্যায়নের Denominator চোখ বন্ধ করে বলে দেখুন। আত্মবিশ্বাস চলে এলে পরের অধ্যায় Book 6 · Chapter 5 (Technical Interview Practice)-এ প্রবেশ করুন, যেখানে কোনো রেফারেন্স না দেখেই Python, SQL, Algorithms এবং ML Debugging-এর বাস্তব সমস্যা সমাধানের চূড়ান্ত মহড়া অপেক্ষা করছে।"
+        }
+      ]
+    }
+  ],
+  "quizzes": [
+    {
+      "id": "ch38_q1",
+      "question": "যেকোনো ML System Design শুরু করার আগে সবার প্রথমে কোন কাজটি করা জরুরি?",
+      "options": [
+        "Request-এর ধরন, Objective, একক, Deadline এবং Guardrail সুস্পষ্টভাবে সংজ্ঞায়িত করা",
+        "বাজারের সবচেয়ে বড় Model-টি বেছে নেওয়া",
+        "সব পরিস্থিতির জন্য শুরুতেই একটি বিশাল GPU Cluster বরাদ্দ নেওয়া",
+        "সব কাজের জন্য চোখ বন্ধ করে Streaming Architecture বেছে নেওয়া"
+      ],
+      "answer": 0,
+      "explanation": "ব্যবহারকারীর সামনে কোন সিদ্ধান্ত যাবে এবং সিস্টেমের সীমাবদ্ধতাগুলো কী, তা আগে পরিষ্কার না করলে কোনো Model বা Architecture-এরই ভালো-মন্দ Tradeoff বিচার করা সম্ভব নয়।"
+    },
+    {
+      "id": "ch38_q2",
+      "question": "একটি পাইপলাইনে সমান্তরাল (Parallel) শাখাগুলোর সময় 3 ms, 8 ms ও 12 ms এবং ধারাবাহিক (Serial) ধাপগুলোর সময় 2 ms, 4 ms ও 2 ms হলে অনুমিত Critical Path কত?",
+      "options": [
+        "31 ms",
+        "12 ms",
+        "8 ms",
+        "20 ms"
+      ],
+      "answer": 3,
+      "explanation": "সমান্তরাল গ্রুপের সময় হবে সর্বোচ্চ শাখাটির সময়, অর্থাৎ 12 ms; এরপর বাকি ধারাবাহিক ধাপগুলো যোগ করলে দাঁড়ায় 2 + 12 + 4 + 2 = 20 ms। মনে রাখবেন, এগুলো পরিকল্পনার অনুমিত স্থির সময়, সার্ভার থেকে মাপা প্রকৃত Latency নয়।"
+    },
+    {
+      "id": "ch38_q3",
+      "question": "বাইরে থেকে আগত ট্রাফিক 1000 requests/s এবং Cache-hit অনুপাত 0.5 হলে ব্যাকএন্ডের Miss Load কত হবে?",
+      "options": [
+        "2000 requests/s",
+        "0 requests/s",
+        "500 requests/s",
+        "1000 requests/s"
+      ],
+      "answer": 2,
+      "explanation": "ব্যাকএন্ডের Miss Load = 1000 × (1 − 0.5) = 500 requests/s। তবে মনে রাখতে হবে যে সিস্টেমের প্রবেশদ্বার (Ingress) এবং ক্যাশ স্তরকে তখনো পুরো 1000 requests/s ট্রাফিকই সামলাতে হয়।"
+    },
+    {
+      "id": "ch38_q4",
+      "question": "4টি সার্ভার Replica, প্রতিটিতে 4টি করে Concurrent Slot এবং প্রতিটি Miss-এ স্লট ব্যস্ত থাকার সময় 20 ms হলে আদর্শ Capacity কত?",
+      "options": [
+        "পরিমাপকৃত p95 = 800 ms",
+        "800 requests/s",
+        "80 requests/s",
+        "320 requests/s"
+      ],
+      "answer": 1,
+      "explanation": "4টি রেপ্লিকায় মোট 4 × 4 = 16টি স্লট থাকে; প্রতিটি স্লট 0.020 সেকেন্ড ব্যস্ত থাকলে আদর্শ ক্ষমতা হয় 16 / 0.020 = 800 misses/s। এটি সমান কাজের চাপ ও স্বাধীন স্লট ধরে নেওয়া একটি সরল পরিকল্পনাগত হিসাব।"
+    },
+    {
+      "id": "ch38_q5",
+      "question": "সিস্টেমের Utilization যদি rho ≥ 1 হয়, তবে কি আমাদের ল্যাব কোনো স্থিতিশীল সচল অনুরোধের সংখ্যা (In-service Estimate) দেখাবে?",
+      "options": [
+        "না; এখানে কোনো স্থিতিশীল সসীম Queue অবস্থা ধরে নেওয়া যায় না",
+        "হ্যাঁ, সব পরিস্থিতিতেই স্থির গড় সংখ্যা পাওয়া যাবে",
+        "Queue-এর সীমা তুলে দিলেই সিস্টেম স্থিতিশীল হয়ে যাবে",
+        "Utilization বাড়লে সব Request আরও দ্রুত শেষ হবে"
+      ],
+      "answer": 0,
+      "explanation": "আগত ট্রাফিকের চাপ আদর্শ ধারণক্ষমতার সমান বা বেশি হয়ে গেলে স্থিতিশীল সাম্যাবস্থার (Steady-state) অনুমান আর খাটে না, তাই এটি অসংজ্ঞায়িত রাখা হয়। এমনকি একক অনুরোধের হাতে বাড়তি Deadline Slack থাকলেও তা সামগ্রিক Overload দূর করতে পারে না।"
+    },
+    {
+      "id": "ch38_q6",
+      "question": "পাইপলাইনের প্রতিটি ধাপের আলাদা p95 Latency যোগ করলেই কি সাধারণভাবে পুরো Request-এর End-to-end p95 পাওয়া যায়?",
+      "options": [
+        "হ্যাঁ, সব ক্ষেত্রেই নিখুঁতভাবে পাওয়া যায়",
+        "মাঝখানে একটি Cache থাকলেই যোগফল মিলে যায়",
+        "কেবল CPU সার্ভারে চালালে এই নিয়ম খাটে",
+        "সাধারণভাবে না; ধাপগুলোর পারস্পরিক নির্ভরশীলতা, Queueing ও সমান্তরাল পথ এর ওপর প্রভাব ফেলে"
+      ],
+      "answer": 3,
+      "explanation": "পরিসংখ্যানের Quantile-গুলোকে সাধারণ গড়ের মতো সরাসরি যোগ করা যায় না; ধাপগুলোর পারস্পরিক সম্পর্ক (Correlation), লাইনের অপেক্ষা এবং সমান্তরাল শাখার আচরণ যৌথ Tail Latency বদলে দেয়।"
+    },
+    {
+      "id": "ch38_q7",
+      "question": "কোনো প্রাসঙ্গিক Item যদি প্রথম ধাপের সংগৃহীত Candidate Pool-এই না থাকে, তবে পরের ধাপের Ranker কী করতে পারবে?",
+      "options": [
+        "তবুও সবসময় NDCG = 1 নিশ্চিত করবে",
+        "সিস্টেমের Eligibility শর্তগুলোকে অপ্রাসঙ্গিক করে দেবে",
+        "Candidate Pool-এর বাইরে থাকা কোনো Item ফিরিয়ে আনতে পারবে না",
+        "নিজের শক্তিতে সব বাদ পড়া প্রাসঙ্গিক Item উদ্ধার করে আনবে"
+      ],
+      "answer": 2,
+      "explanation": "Candidate Coverage হলো রিকমেন্ডার পাইপলাইনের প্রথম ছাঁকনি বা ঊর্ধ্বসীমা। তাই Candidate Generation-এর Recall এবং চূড়ান্ত Ranking-এর গুণমান সবসময় আলাদাভাবে মূল্যায়ন করতে হয়।"
+    },
+    {
+      "id": "ch38_q8",
+      "question": "এই অধ্যায়ের Search কেসটিতে ঠিক কোন Retrieval পদ্ধতিটি বাস্তবায়ন করা হয়েছে?",
+      "options": [
+        "স্বয়ংক্রিয় চিকিৎসাবিজ্ঞান সত্যতা যাচাইকারী Classifier",
+        "স্থির TF-IDF ও 32-মাত্রার LSA-এর সমন্বয়ে গঠিত Hybrid RRF",
+        "বৃহৎ প্রিট্রেইনড নিউরাল Encoder মডেল",
+        "প্রোডাকশন ক্লাস্টারে মাপা ডিস্ট্রিবিউটেড ANN ইনডেক্স"
+      ],
+      "answer": 1,
+      "explanation": "এখানে কর্পাসের ওপর ফিট করা সংরক্ষিত TF-IDF এবং 32-মাত্রার LSA থেকে পাওয়া প্রার্থীদের RRF দিয়ে একত্র করা হয়েছে; এটি কোনো প্রিট্রেইনড ডিপ এনকোডার বা ANN বেঞ্চমার্ক নয়।"
+    },
+    {
+      "id": "ch38_q9",
+      "question": "UCI Spambase ডেটাসেট ভাগ করার সময় অভিন্ন প্রোফাইল ধরে Group Split কেন করা হয়েছে?",
+      "options": [
+        "হুবহু একই Feature প্রোফাইল ভিন্ন সেটে ছড়িয়ে পড়ে হওয়া Data Leakage ঠেকাতে",
+        "প্রেরকের পরিচয় ও সময়ের পরিবর্তনের সব সমস্যা পুরোপুরি মিটিয়ে ফেলতে",
+        "সংরক্ষিত Reserved Label দেখে হাইপারপ্যারামিটার টিউন করতে",
+        "কৃত্রিমভাবে নতুন ইমেইল ফলাফল তৈরি করতে"
+      ],
+      "answer": 0,
+      "explanation": "এতে হুবহু একই সংখ্যাসূচক প্রোফাইলগুলো ট্রেনিং অথবা ভ্যালিডেশনের যেকোনো একটিতেই সীমাবদ্ধ থাকে। তবে সামান্য বদলানো ডুপ্লিকেট, একই প্রেরক বা সময়ের সঙ্গে স্প্যামের ধরন বদলানোর সমস্যার পূর্ণ সমাধান এটি করে না।"
+    },
+    {
+      "id": "ch38_q10",
+      "question": "আমাদের এই Group Split-এ Spambase ডেটাসেটের তিনটি অংশে প্রকৃত Row সংখ্যা কত?",
+      "options": [
+        "3220টি Fit, 690টি Validation এবং 691টি Reserved Row",
+        "সব 4601টিই Fit Row",
+        "680টি Validation এবং 738টি Reserved Row",
+        "3183টি Fit, 738টি Validation এবং 680টি Reserved Row"
+      ],
+      "answer": 3,
+      "explanation": "70/15/15 ছিল গ্রুপ সংখ্যার লক্ষ্যমাত্রা; একেকটি গ্রুপে সারির সংখ্যা ভিন্ন হওয়ায় প্রকৃত সারির অনুপাত কিছুটা আলাদা হয়েছে, তবে মোট 4601টি সারিই সম্পূর্ণ নিশ্ছিদ্র ও পরস্পর বিচ্ছিন্নভাবে তিন ভাগে বসেছে।"
+    },
+    {
+      "id": "ch38_q11",
+      "question": "Spambase-এ Validation Accuracy প্রায় 0.93225 পাওয়া থেকে নিচের কোন দাবিটি যুক্তিসংগতভাবে করা যায়?",
+      "options": [
+        "এটি একটি সম্পূর্ণ অদেখা ডেটার নতুন চূড়ান্ত প্রমাণ",
+        "বর্তমানের যেকোনো আধুনিক মেইলবক্সেও ঠিক একই Accuracy পাওয়া নিশ্চিত",
+        "এটি আমাদের নির্ধারিত স্থির রেসিপির Development ডেটায় পাওয়া ডায়াগনস্টিক পারফরম্যান্স",
+        "এটি দিয়ে আর্থিক লেনদেনের Fraud সনাক্তকরণের কার্যকারিতা প্রমাণিত হয়েছে"
+      ],
+      "answer": 2,
+      "explanation": "এই 738টি Validation সারি আমাদের ডেভেলপমেন্ট পর্বের ডায়াগনস্টিক প্রমাণ মাত্র। সংরক্ষিত 680টি সারি কখনোই স্পর্শ করা হয়নি এবং আজকের বাস্তব মেইল সার্ভিসে এর পারফরম্যান্স কত হবে তা অজানা।"
+    },
+    {
+      "id": "ch38_q12",
+      "question": "অনিশ্চিত অঞ্চলের 50টি মেইল যদি Human Review-তে প্রবেশের সুযোগ পায় (Admitted), তবে কি সেগুলোকে 50টি সঠিক মানব সিদ্ধান্ত হিসেবে গণ্য করা যাবে?",
+      "options": [
+        "হ্যাঁ, ঝুলে থাকা সব সিদ্ধান্তের ভুলের সংখ্যা শূন্য ধরতে হবে",
+        "না; কারণ এখানে মানব রিভিউয়ের প্রকৃত ফলাফল পর্যবেক্ষণ করা হয়নি",
+        "হ্যাঁ, মানুষকে সবসময় নির্ভুল Oracle হিসেবে ধরে নেওয়া নিয়ম",
+        "রিভিউ লাইনে ঢোকা মানেই সঠিক Label পেয়ে যাওয়া"
+      ],
+      "answer": 1,
+      "explanation": "রিভিউতে ভর্তি হওয়া মানে কেবল একটি রাউটিং সিদ্ধান্ত। মানুষের প্রকৃত নির্ভুলতার হার, সিদ্ধান্তের বিলম্ব এবং রিভিউয়ের খরচ না জেনে চূড়ান্ত সামগ্রিক Accuracy বা উপযোগিতা বানিয়ে ফেলা যায় না।"
+    },
+    {
+      "id": "ch38_q13",
+      "question": "আমাদের ডিফল্ট Selective Policy-তে মোট কতটি মেইলের সিদ্ধান্ত স্বয়ংক্রিয়ভাবে (Automatic Decision) নিষ্পত্তি হয়েছে?",
+      "options": [
+        "606",
+        "738",
+        "132",
+        "50"
+      ],
+      "answer": 0,
+      "explanation": "418টি Auto-allow এবং 188টি Auto-block মিলিয়ে মোট 606টি স্বয়ংক্রিয় সিদ্ধান্ত হয়েছে। বাকি 50টি রিভিউ ও 82টি Defer মিলিয়ে 132টি কেস অমীমাংসিত থাকায় শর্তসাপেক্ষ স্বয়ংক্রিয় Accuracy-র হর হলো 606।"
+    },
+    {
+      "id": "ch38_q14",
+      "question": "শর্তসাপেক্ষ স্বয়ংক্রিয় Accuracy প্রায় 0.9703 হওয়ার বিষয়ে নিচের কোন বক্তব্যটি সঠিক?",
+      "options": [
+        "এটি মানুষের রিভিউ ফলাফলসহ পুরো সিস্টেমের সম্মিলিত Accuracy",
+        "এতে অমীমাংসিত 132টি মেইলকেই সঠিক বলে ধরে নেওয়া হয়েছে",
+        "এটি মডেলের নিখুঁতভাবে Calibrated Probability প্রমাণ করে",
+        "এটি কেবল নিষ্পত্তি হওয়া 606টি মেইলের হিসাব, সব 738টি Row-এর Accuracy নয়"
+      ],
+      "answer": 3,
+      "explanation": "এটি শুধুমাত্র স্বয়ংক্রিয়ভাবে নিষ্পত্তি হওয়া অংশের 588 / 606 অনুপাত। এর পাশাপাশি অবশ্যই Coverage (606 / 738) দেখাতে হবে এবং মনে রাখতে হবে যে পুরো 738টি সারির সাধারণ ক্লাসিফায়ার Accuracy (690 / 738)-এর হর সম্পূর্ণ আলাদা।"
+    },
+    {
+      "id": "ch38_q15",
+      "question": "Contract ত্রুটির কারণে সব Request যদি Defer করে দেওয়া হয় এবং স্বয়ংক্রিয় ভুলের প্রক্সি খরচ 0 আসে, তবে কি সেই পলিসিটিকে সেরা বলা যাবে?",
+      "options": [
+        "হ্যাঁ, কারণ এতে বিনিয়োগের রিটার্ন অসীম",
+        "হ্যাঁ, এতে ব্যবহারযোগ্য সার্ভিসের প্রাপ্যতা 100% থাকে",
+        "না; কারণ এই প্রক্সি হিসাবে রিভিউ, বিলম্ব ও সিদ্ধান্ত না দেওয়ার বাস্তব খরচ বাদ পড়ে আছে",
+        "হ্যাঁ, শূন্য খরচ মানেই সব পরিস্থিতিতে সেরা পলিসি"
+      ],
+      "answer": 2,
+      "explanation": "স্বয়ংক্রিয় ভুল শূন্য হওয়া মানেই ব্যবহারকারীর কোনো উপকার হয়েছে তা নয়! সব 738টি অনুরোধ ঝুলে থাকলে সিস্টেমের কার্যকর Coverage শূন্য হয়ে যায় এবং হিসাবের বাইরে থাকা বিলম্বের ক্ষতি মারাত্মক আকার নেয়।"
+    },
+    {
+      "id": "ch38_q16",
+      "question": "Spam রিভিউ রাউটিং এবং অগ্রাধিকার নির্ধারণের সময় নিচের কোন তথ্যটি কখনোই ইনপুট হিসেবে ব্যবহৃত হয় না?",
+      "options": [
+        "নিম্ন ও উচ্চ Threshold",
+        "আসল ফলাফল বা True Labels",
+        "মডেলের দেওয়া Prediction Score",
+        "টাই ভাঙার জন্য ডেটার ক্রমিক নম্বর (Source Ordinal)"
+      ],
+      "answer": 1,
+      "explanation": "সার্ভিংয়ের সময় আসল Label আমাদের জানা থাকে না; সেটি কেবল পরবর্তীকালে ভুল ও খরচের অডিট করতে কাজে লাগে। রিভিউয়ের অগ্রাধিকার ঠিক হয় কেবল স্কোরের দূরত্ব এবং ক্রমিক নম্বর দিয়ে।"
+    },
+    {
+      "id": "ch38_q17",
+      "question": "Demand Forecasting কেসে গতকালের ডেটা (`lag1`) আসতে দেরি হলে সিস্টেমের কোন আচরণটি সঠিক?",
+      "options": [
+        "সাত দিন আগের ডেটা লভ্য ও সামঞ্জস্যপূর্ণ হলে যাচাইকৃত seasonal7 Fallback ব্যবহার করা",
+        "ভবিষ্যতের আসল Target সংখ্যা বসিয়ে শূন্যস্থান পূরণ করা",
+        "অনুপস্থিত ফিচারের জায়গায় সবসময় 0 বসিয়ে মূল মডেল চালানো",
+        "ডেটা কখন এসে পৌঁছেছে সেই Availability ঘড়ি পুরোপুরি উপেক্ষা করা"
+      ],
+      "answer": 0,
+      "explanation": "375তম দিনের বিলম্বিত সূচিতে `lag1` না থাকলেও বৈধ `lag7 = 2368` হাতে আছে, তাই `seasonal7` নিরাপদে সেটি ফিরিয়ে দেয়। ডেটা না আসাকে কখনোই শূন্য চাহিদা (Zero Demand) ভেবে নেওয়া যাবে না।"
+    },
+    {
+      "id": "ch38_q18",
+      "question": "Rolling One-step এবং Fixed-origin Multi-step কি মূলত একই মূল্যায়ন প্রটোকল?",
+      "options": [
+        "হ্যাঁ, দুটো সবসময় অভিন্ন ফলাফল দেয়",
+        "দুটো পদ্ধতিতেই অনিবার্যভাবে Data Leakage ঘটে",
+        "দুটো চালাতেই আবশ্যিকভাবে GPU প্রয়োজন হয়",
+        "না; ভবিষ্যতের প্রকৃত পর্যবেক্ষণ কখন ফিচার হিসেবে পাওয়া যাবে তার নিয়ম দুটিতে সম্পূর্ণ আলাদা"
+      ],
+      "answer": 3,
+      "explanation": "Rolling One-step প্রটোকলে প্রতিদিন নতুন প্রকৃত সংখ্যা হাতে আসার পর পরের দিনের হিসাব আপডেট করা যায়; কিন্তু একটি নির্দিষ্ট দিন থেকে বহুদূরের Multi-step হিসাব করার সময় অজানা ভবিষ্যতের আসল Lag ব্যবহার করলে মারাত্মক Leakage ঘটে।"
+    },
+    {
+      "id": "ch38_q19",
+      "question": "RAG সিস্টেমের দেওয়া Citation যদি মূল ডকুমেন্টের টেক্সটের সঙ্গে অক্ষরে অক্ষরে মিলে যায়, তবেই কি তৈরি হওয়া দাবিটি সত্য বলে প্রমাণিত হয়?",
+      "options": [
+        "হ্যাঁ, প্রথম Token-এর স্কোর 1 হলেই তা ধ্রুব সত্য",
+        "হ্যাঁ, বৈধ Document ID থাকলেই উত্তর সঠিক হতে বাধ্য",
+        "না; কারণ তথ্যের উৎস ঠিক থাকা (Provenance) এবং অর্থগত সমর্থন (Entailment) দুটি ভিন্ন বিষয়",
+        "হ্যাঁ, হুবহু উদ্ধৃতি থাকলে ভুল সিদ্ধান্ত হওয়া অসম্ভব"
+      ],
+      "answer": 2,
+      "explanation": "হুবহু উদ্ধৃতি কেবল প্রমাণ করে যে লেখাটি মূল নথিতেই আছে; কিন্তু সেই বাক্যটি দাবিকে আসলেই সমর্থন করছে কি না তা আলাদা অর্থগত প্রশ্ন। তাই আমাদের ক্ষুদ্র ডিকোডারের আউটপুট সবসময় `unverified_hypothesis` হিসেবে চিহ্নিত থাকে।"
+    },
+    {
+      "id": "ch38_q20",
+      "question": "RAG কেসে প্রামাণ্য Context অনুপস্থিত থাকলে ('upstream' ত্রুটিতে) আমাদের সিস্টেম কী করে?",
+      "options": [
+        "বৈজ্ঞানিক নিশ্চয়তার দাবি করে উত্তর দেয়",
+        "মডেল দিয়ে শব্দ তৈরির (Generation) আগেই নিরাপদে Abstain করে",
+        "অনুমানের ওপর ভিত্তি করে একটি বিশ্বাসযোগ্য উত্তর বানিয়ে দেয়",
+        "গোপনে ট্রেনিংয়ের Gold Rationale ব্যবহার করে উত্তর দেয়"
+      ],
+      "answer": 1,
+      "explanation": "বৈধ কোনো প্রামাণ্য সূত্র হাতে না থাকায় সিস্টেমটি জেনারেটর চালানোর আগেই থেমে যায় এবং `no_answer` কারণ দেখিয়ে বিরত থাকে; প্রমাণ ছাড়া মনগড়া উত্তরকে তথ্যভিত্তিক বলে চালানো হয় না।"
+    },
+    {
+      "id": "ch38_q21",
+      "question": "রানটাইমে যদি দেখা যায় Model, Schema, Source বা Policy Manifest-এ অমিল রয়েছে, তবে সিস্টেমের কী করা উচিত?",
+      "options": [
+        "মূল Request-এর হিসাব শুরু করার আগেই সেটিকে Block করে দেওয়া",
+        "ঝুঁকি নিয়েই অনিরাপদ Inference চালিয়ে যাওয়া",
+        "Cache Key-এর পরিচয় উপেক্ষা করে পুরোনো উত্তর দেওয়া",
+        "পরে আসল Label দেখে ভুল আউটপুট মেরামত করে নেওয়া"
+      ],
+      "answer": 0,
+      "explanation": "আমাদের পাঁচটি কেসেই সংস্করণ ও পরিচয়ের সামঞ্জস্য সবার আগে যাচাই (Preflight Gate) করা হয় এবং অমিল পেলে সাথে সাথে ব্লক করা হয়, যাতে নীরবে ভুল আউটপুট তৈরি না হতে পারে।"
+    },
+    {
+      "id": "ch38_q22",
+      "question": "নিরাপদভাবে Request Cache করার জন্য Cache Key-এর ভেতরে কোন তথ্যগুলো থাকা অত্যন্ত জরুরি?",
+      "options": [
+        "সব ব্যবহারকারীর জন্য একটিই সাধারণ গ্লোবাল Key",
+        "সব প্রতিষ্ঠানের (Tenants) জন্য কেবল কাঁচা সার্চ Query",
+        "কেবল মেয়াদোত্তীর্ণ হওয়ার সময়সীমা (TTL)",
+        "ব্যবহারকারীর পরিচয়, ইতিহাস, মডেল ও ইনডেক্স Version, Policy, অনুমতির পরিধি ও সময়ের Cutoff"
+      ],
+      "answer": 3,
+      "explanation": "অনুরোধের প্রাসঙ্গিক পরিচয় বা রিলিজের সংস্করণ বাদ দিলে এক ব্যবহারকারীর ব্যক্তিগত উত্তর অন্যের কাছে চলে যেতে পারে কিংবা পুরোনো নীতির ভুল ফলাফল ফিরে আসতে পারে। একা TTL কখনোই এই বিচ্ছিন্নতা নিশ্চিত করে না।"
+    },
+    {
+      "id": "ch38_q23",
+      "question": "সিস্টেমের নিরাপদ Fallback পথের জন্যও কেন আলাদাভাবে Capacity পরিকল্পনা করতে হয়?",
+      "options": [
+        "কারণ Fallback চালাতে কোনো কম্পিউটিং রিসোর্সই লাগে না",
+        "কারণ Fallback স্বয়ংক্রিয়ভাবে অসীম ট্রাফিক সামলাতে পারে",
+        "কারণ মূল মডেল ব্যর্থ হলে হঠাৎ পুরো ট্রাফিক গিয়ে Fallback সার্ভিসকেও Overload করে ফেলতে পারে",
+        "কারণ ক্লাউডে সব Fallback সার্ভিস বিনা খরচে চলে"
+      ],
+      "answer": 2,
+      "explanation": "মূল সার্ভিস অচল হওয়ার মুহূর্তে সব অনুরোধ একসঙ্গে বিকল্প পথে ছুটে গেলে সেই শেয়ার করা ডাটাবেস বা সার্ভিসও ভেঙে পড়তে পারে। তাই সেখানেও Admission Control, Deadline এবং নিজস্ব বৈধ Contract থাকা অপরিহার্য।"
+    },
+    {
+      "id": "ch38_q24",
+      "question": "এই অধ্যায়ে উপস্থাপিত ফলাফলগুলোর প্রকৃতি সম্পর্কে নিচের কোন বর্ণনাটি সবচেয়ে সঠিক?",
+      "options": [
+        "এখানে জীবন্ত প্রোডাকশন ট্রাফিকে কার্যকারণ ব্যবসায়িক সুফল (Causal Lift) প্রমাণিত হয়েছে",
+        "এখানে বাস্তব অফলাইন ডেটার স্থানীয় Replay এবং সুস্পষ্টভাবে ঘোষিত সক্ষমতা ও ত্রুটির অনুমান ব্যবহৃত হয়েছে",
+        "এখানে প্রকৃত ডিস্ট্রিবিউটেড ক্লাস্টারে নেটওয়ার্ক ও GPU বেঞ্চমার্ক মাপা হয়েছে",
+        "এখানে একটি পূর্ণাঙ্গ আর্থিক জালিয়াতি রোধী সিস্টেম প্রোডাকশনে চালু করা হয়েছে"
+      ],
+      "answer": 1,
+      "explanation": "বাস্তব ডেটা ও সংরক্ষিত মডেলের আউটপুট স্থানীয়ভাবে পুনরায় হিসাব করে যাচাই করা হয়েছে, কিন্তু ট্রাফিকের হার, ধাপের সময়, রিভিউ বাজেট ও ইনজেক্ট করা ত্রুটিগুলো ডিজাইন অনুশীলনের জন্য সাজানো প্যারামিটার।"
+    },
+    {
+      "id": "ch38_q_queue_mean_revision",
+      "question": "স্থিতিশীল এক-সার্ভারের M/M/1 মডেলে সার্ভিস হার mu = 50/s এবং আগমনী হার lambda = 40/s হলে সিস্টেমে মোট গড় সময় (Mean Total Time) কত হবে?",
+      "options": [
+        "20 ms",
+        "80 ms",
+        "100 ms",
+        "800 ms"
+      ],
+      "answer": 2,
+      "explanation": "সূত্র অনুযায়ী W = 1 / (50 − 40) = 0.1 s = 100 ms। এর মধ্যে মূল সার্ভিস সময় 0.02 s (20 ms) এবং লাইনে অপেক্ষার সময় 0.08 s (80 ms)। মনে রাখবেন, এই সূত্রটি কেবল Poisson আগমন ও Exponential সার্ভিস সময়ের অনুমানেই প্রযোজ্য।"
+    },
+    {
+      "id": "ch38_q_fanout_tail_revision",
+      "question": "দুটি সমান্তরাল শাখার প্রত্যেকটিই 95% অনুরোধে নির্ধারিত Deadline মেনে চলে। উভয় শাখা মিলে সময়মতো শেষ হওয়ার যৌথ সম্ভাবনা (Joint Pass Probability) বের করতে আর কোন তথ্যটি জানা আবশ্যক?",
+      "options": [
+        "কেবল দুটি শাখার p95-এর গাণিতিক গড়",
+        "শাখা দুটির পারস্পরিক নির্ভরশীলতা (Joint Dependence) বা স্বাধীনতার অনুমান",
+        "কেবল ব্যবহৃত মডেলের মোট Parameter সংখ্যা",
+        "প্রতিটি শাখার সর্বোচ্চ Prediction Score"
+      ],
+      "answer": 1,
+      "explanation": "শাখা দুটি পরস্পর স্বাধীন হলে যৌথ সম্ভাবনা হয় 0.95² = 0.9025, কিন্তু একই অনুরোধে একসঙ্গে ধীর হলে বা বিপরীত সময়ে ধীর হলে এই মান বদলে যায়। তাই একই অনুরোধের অধীনে সব শাখার সময় একসঙ্গে ট্রেস করতে হয়।"
+    }
+  ],
+  "exercises": [
+    {
+      "id": "ch38_ex_path",
+      "title": "সমান্তরাল শাখাসহ Critical Path হিসাব",
+      "prompt": "`design_lab.json` থেকে Recommendation কেসের প্রতিটি সমান্তরাল Stage গ্রুপের সর্বোচ্চ সময় (`ms`) বের করুন এবং সব গ্রুপের ফলাফল যোগ করে অনুমিত Critical Path কত মিলিসেকেন্ড তা নির্ণয় করুন। আগে থেকে সংরক্ষিত ক্যাপাসিটি ফলাফল সরাসরি ব্যবহার করবেন না।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/system_design/design_lab.json\").read_text(encoding=\"utf-8\")\n)\ngroups = lab[\"cases\"][\"recommendation\"][\"stages\"]\nstage_times = [max((stage[\"ms\"] for stage in group)) for group in groups]\nresult = sum(stage_times)\nprint(result)\n",
+      "expected": 20.0,
+      "explanation": "সমান্তরাল গ্রুপগুলোর সর্বোচ্চ সময় যোগ করলে অনুমিত Critical Path পাওয়া যায় 20 ms, যেখানে সব শাখার মোট কাজের যোগফল (Serial Work) হলো 31 ms। সিস্টেমের সক্ষমতা বোঝার জন্য অতিবাহিত সময় এবং মোট রিসোর্স শ্রম—দুটো হিসাবই সমান জরুরি।"
+    },
+    {
+      "id": "ch38_ex_load",
+      "title": "Cache Miss থেকে ব্যাকএন্ডের Load নির্ণয়",
+      "prompt": "বাইরে থেকে আগত অনুরোধের হার 10000 requests/s এবং অনুমিত Cache Hit হার 90% (অর্থাৎ 0.9) হলে ব্যাকএন্ডের Miss Rate প্রতি সেকেন্ডে কতটি Request হবে তা হিসাব করুন।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "external_qps = 10000\nhit_fraction = 0.9\nresult = external_qps * (1 - hit_fraction)\nprint(result)\n",
+      "expected": 999.9999999999998,
+      "explanation": "ব্যাকএন্ডের Miss Rate = 10000 × (1 − 0.9) = 1000 requests/s। তবে মনে রাখবেন, সিস্টেমের প্রবেশদ্বার এবং ক্যাশ লুকআপ স্তরকে পুরো 10000 requests/s বাহ্যিক ট্রাফিকই সামলাতে হয়।"
+    },
+    {
+      "id": "ch38_ex_capacity",
+      "title": "আদর্শ Concurrent-slot Capacity হিসাব",
+      "prompt": "4টি সার্ভার Replica, প্রতিটিতে 4টি করে Concurrent Slot এবং প্রতিটি Cache Miss-এ স্লট ব্যস্ত থাকার সময় 20 ms দেওয়া আছে। প্রতি সেকেন্ডে আদর্শ ধারণক্ষমতা (Ideal Capacity) কত requests/s তা বের করুন।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "replicas = 4\nslots_per_replica = 4\nservice_ms = 20\nresult = replicas * slots_per_replica * 1000 / service_ms\nprint(result)\n",
+      "expected": 800.0,
+      "explanation": "মোট 16টি স্লট এবং প্রতিটিতে 0.020 সেকেন্ড সময় ধরলে আদর্শ ক্ষমতা দাঁড়ায় 16 / 0.020 = 800 requests/s। এটি সুষম চাপ ধরে নেওয়া একটি সরল স্লট হিসাব; বাস্তব সক্ষমতা জানতে হার্ডওয়্যার ও রিসোর্সের প্রকৃত সীমাবদ্ধতা মাপতে হবে।"
+    },
+    {
+      "id": "ch38_ex_utilization",
+      "title": "ব্যাকএন্ডের সরলীকৃত Utilization নির্ণয়",
+      "prompt": "ব্যাকএন্ডের Miss Load 500 requests/s এবং আদর্শ ধারণক্ষমতা 800 requests/s হলে সরলীকৃত Utilization (`rho`) কত হবে তা লিখুন।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "backend_qps = 500\nideal_capacity = 800\nresult = backend_qps / ideal_capacity\nprint(result)\n",
+      "expected": 0.625,
+      "explanation": "সরলীকৃত Utilization rho = 500 / 800 = 0.625। তবে বাস্তবে লাইনের অপেক্ষা এবং Tail Latency কেমন হবে তা নির্ভর করে আগমনী ট্রাফিকের ঢেউ, সার্ভিস সময়ের বিন্যাস ও রিসোর্স কাড়াকাড়ির ওপর।"
+    },
+    {
+      "id": "ch38_ex_predict",
+      "title": "57টি Feature থেকে স্থিতিশীল Logistic Probability হিসাব",
+      "prompt": "Spambase-এর প্রথম Validation সারির (`validation[0]`) 57টি ফিচার এবং সংরক্ষিত মডেলের Fit-only স্কেলার (`mean`, `scale`), `weights` ও `intercept` ব্যবহার করে সংখ্যাসূচকভাবে স্থিতিশীল (Numerically Stable) Sigmoid ফাংশন নিজে লিখে প্রোবাবিলিটি স্কোর বের করুন। আগে থেকে সংরক্ষিত `score` বা কোনো হেল্পার ফাংশন ব্যবহার করবেন না।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/system_design/design_lab.json\").read_text(encoding=\"utf-8\")\n)\nimport math\n\nmodel = lab[\"spam\"][\"model\"]\nx = lab[\"spam\"][\"validation\"][0][\"features\"]\nlogit = model[\"intercept\"] + sum(\n    (\n        w * (v - mu) / s\n        for v, mu, s, w in zip(x, model[\"mean\"], model[\"scale\"], model[\"weights\"])\n    )\n)\nresult = (\n    1 / (1 + math.exp(-logit))\n    if logit >= 0\n    else math.exp(logit) / (1 + math.exp(logit))\n)\nprint(result)\n",
+      "expected": 0.6420178626550789,
+      "explanation": "মানকীকৃত রৈখিক স্কোর (Logit) থেকে প্রাপ্ত প্রোবাবিলিটি প্রায় 0.6420178627। ধনাত্মক ও ঋণাত্মক Logit-এর জন্য আলাদা শর্ত ব্যবহার করলে বড় সংখ্যায় `exp` ওভারফ্লো হওয়ার ঝুঁকি থাকে না। স্কোরটি প্রকৃত প্রোবাবিলিটি হিসেবে Calibrated কি না, তা অবশ্য আলাদা মূল্যায়নের বিষয়।"
+    },
+    {
+      "id": "ch38_ex_review",
+      "title": "সীমিত বাজেটে Uncertain Review Admission গণনা",
+      "prompt": "738টি Validation স্কোরের মধ্যে কতগুলোর মান `0.2 <= p < 0.8` সীমায় পড়ে তা গুনুন এবং সর্বোচ্চ Review Budget = 50 হলে কয়টি অনুরোধ রিভিউতে প্রবেশ করবে (Admission Count) তা নির্ণয় করুন।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/system_design/design_lab.json\").read_text(encoding=\"utf-8\")\n)\nuncertain = [r for r in lab[\"spam\"][\"validation\"] if 0.2 <= r[\"score\"] < 0.8]\nresult = min(50, len(uncertain))\nprint(result)\n",
+      "expected": 50.0,
+      "explanation": "মাঝের অনিশ্চিত অঞ্চলে মোট 132টি সারি পড়ে, তাই বাজেট 50 হলে ভর্তি হবে min(132, 50) = 50টি। ঠিক কোন 50টি সারি আগে ঢুকবে তা নির্ধারিত হয় 0.5 থেকে দূরত্ব এবং ক্রমিক নম্বরের টাই-ব্রেক দিয়ে; আর ভর্তি হওয়া মানেই কিন্তু চূড়ান্ত মানব ফলাফল জানা হয়ে যাওয়া নয়।"
+    },
+    {
+      "id": "ch38_ex_false_blocks",
+      "title": "স্বয়ংক্রিয় False-block অডিট",
+      "prompt": "Validation সেটের স্কোর এবং আসল লেবেল পরীক্ষা করে দেখুন কয়টি সারিতে `p >= 0.8` হওয়ার কারণে স্বয়ংক্রিয়ভাবে ব্লক হয়েছে অথচ আসল `label == 0` (অর্থাৎ বৈধ ইমেইল ছিল)। মোট স্বয়ংক্রিয় False-block সংখ্যাটি লিখুন।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/system_design/design_lab.json\").read_text(encoding=\"utf-8\")\n)\nresult = sum((r[\"score\"] >= 0.8 and r[\"label\"] == 0 for r in lab[\"spam\"][\"validation\"]))\nprint(result)\n",
+      "expected": 10.0,
+      "explanation": "স্বয়ংক্রিয়ভাবে ভুল ব্লক হওয়া বৈধ ইমেইলের সংখ্যা হলো 10টি। খেয়াল করুন, আসল লেবেল কেবল সিদ্ধান্তের পর ভুল অডিট করার কাজে ব্যবহৃত হচ্ছে; লাইভ রাউটিং চলে শুধুমাত্র মডেল স্কোর ও পলিসির ওপর।"
+    },
+    {
+      "id": "ch38_ex_coverage",
+      "title": "ডিফল্ট Selective Policy-র স্বয়ংক্রিয় Coverage",
+      "prompt": "নিম্ন সীমা `0.2`, উচ্চ সীমা `0.8` এবং বাজেট-পরবর্তী আচরণ `defer` ধরে মোট 738টি Validation সারির কত অংশ স্বয়ংক্রিয়ভাবে (`allow` বা `block` হিসেবে) নিষ্পত্তি হয়েছে সেই ভগ্নাংশটি বের করুন।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/system_design/design_lab.json\").read_text(encoding=\"utf-8\")\n)\nrows = lab[\"spam\"][\"validation\"]\ndecided = sum((r[\"score\"] < 0.2 or r[\"score\"] >= 0.8 for r in rows))\nresult = decided / len(rows)\nprint(result)\n",
+      "expected": 0.8211382113821138,
+      "explanation": "418টি Allow এবং 188টি Block মিলিয়ে স্বয়ংক্রিয় Coverage দাঁড়ায় (418 + 188) / 738 ≈ 0.8211382114। শর্তসাপেক্ষ স্বয়ংক্রিয় Accuracy হিসাবের হর হলো এই 606; বাকি 132টি অমীমাংসিত কেসের চূড়ান্ত পরিণতির জন্য আলাদা তথ্যপ্রমাণ প্রয়োজন।"
+    },
+    {
+      "id": "ch38_ex_fallback",
+      "title": "বিলম্বিত ডেটায় বাস্তব Forecasting Fallback",
+      "prompt": "ডিজাইন ওয়ার্কফ্লো মডিউল ব্যবহার করে `\"forecast\"` কেসের `\"upstream\"` (বিলম্বিত ফিচার) পরিস্থিতিটি চালান এবং `seasonal7` Fallback পদ্ধতি যে সংখ্যাটি Prediction হিসেবে ফিরিয়ে দেয় তা লিখুন।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"design38\", Path(\"assets/datasets/system_design/design_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/system_design/design_lab.json\").read_text(encoding=\"utf-8\")\n)\nresponse = m.response(lab, \"forecast\", \"upstream\")\nassert response[\"served\"] == \"seasonal7\"\nresult = response[\"output\"][\"prediction\"]\nprint(result)\n",
+      "expected": 2368.0,
+      "explanation": "Fallback থেকে প্রাপ্ত সংখ্যাটি হলো 2368। এখানে 375তম দিনের জন্য গতকালের ডেটা (`lag1`) অনুপস্থিত থাকায় সিস্টেমটি সাত দিন আগের বৈধ ঐতিহাসিক মান (`lag7 = 2368`) ব্যবহার করেছে।"
+    },
+    {
+      "id": "ch38_ex_policy_hash",
+      "title": "স্থির Policy-র ক্যানোনিকাল বাইট পরিচয় (SHA-256)",
+      "prompt": "`response_policies[\"spam\"]` অবজেক্টটিকে কী-গুলো সাজিয়ে (`sort_keys=True`) এবং বাড়তি স্পেস ছাড়া সংক্ষিপ্ত UTF-8 JSON আকারে (`separators=(\",\", \":\")`) সিরিয়ালাইজ করে শেষে একটি নতুন লাইন (`\"\\n\"`) যোগ করুন। এবার তার SHA-256 হেক্স ডাইজেস্ট বের করে প্রথম 8টি হেক্স ডিজিটকে 16-ভিত্তিক পূর্ণসংখ্যায় (Integer) রূপান্তর করে লিখুন।",
+      "starter": "# Implement locally in Python; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/system_design/design_lab.json\").read_text(encoding=\"utf-8\")\n)\nimport hashlib\n\nencoded = (\n    json.dumps(\n        lab[\"response_policies\"][\"spam\"],\n        ensure_ascii=False,\n        sort_keys=True,\n        separators=(\",\", \":\"),\n    )\n    + \"\\n\"\n).encode()\ndigest = hashlib.sha256(encoded).hexdigest()\nassert digest == lab[\"manifests\"][\"spam\"][\"policy_identity\"]\nresult = int(digest[:8], 16)\nprint(result)\n",
+      "expected": 2295679388.0,
+      "explanation": "প্রাপ্ত পূর্ণসংখ্যাটি হলো 2295679388। পলিসি প্যারামিটারের হুবহু বাইটগুলোই তার ক্যানোনিকাল পরিচয় নির্ধারণ করে; তবে নিরাপত্তার জন্য প্রত্যাশিত Manifest ফাইলটি নিজে বিশ্বস্ত উৎস থেকে এসেছে কি না তাও যাচাই করতে হয়।"
+    }
+  ],
+  "interviews": [
+    {
+      "title": "Personalized Recommendation সার্ভিস ডিজাইন",
+      "tag": "Recommendation system design",
+      "prompt": "ব্যবসায়িক Requirements থেকে শুরু করে Candidate Retrieval, Ranking, Serving এবং ব্যর্থতা সামলানোর পূর্ণাঙ্গ আর্কিটেকচার ডিজাইন করুন। সম্পূরক প্রশ্ন (Follow-up): একেবারে নতুন ব্যবহারকারী (Cold User), বদলে যাওয়া Eligibility শর্ত এবং মেয়াদোত্তীর্ণ Cache কীভাবে সামলাবেন?",
+      "answer": "উত্তরের শুরুতেই আমি ব্যবহারকারীর ধরন, কোন কোন আইটেম দেখানোর যোগ্য (Eligible Catalog), ফিডব্যাকের মূল লক্ষ্যমাত্রা, ডেটার সতেজতা এবং অনুমোদিত Latency পরিষ্কার করে নেব। এরপর আর্কিটেকচার হিসেবে শুধুমাত্র ট্রেনিং ডেটায় তৈরি ফিচার, তিনটি স্বাধীন উৎস থেকে Candidate সংগ্রহ, সুনির্দিষ্ট নিয়মে র‍্যাঙ্ক একত্রীকরণ (যেমন RRF), আগে দেখা আইটেম ছাঁটাই (Seen Filter), সংস্করণযুক্ত Response এবং স্বতন্ত্রভাবে বৈধ একটি Popularity Fallback প্রস্তাব করব। সাথে মনে করিয়ে দেব যে Candidate Coverage এবং Ranking-এর মান দুটি আলাদা স্তর, আর অফলাইনের NDCG বাড়লেই অনলাইনে প্রকৃত ব্যবসায়িক লাভ নিশ্চিত হয় না।\n\nসম্পূরক প্রশ্নের যুক্তি: নতুন বা ইতিহাসহীন ব্যবহারকারীর জন্য শুধুমাত্র ট্রেনিং ডেটার বৈধ Popularity তালিকা দিয়ে শুরু করব, তবে ব্যবহারকারী-ভিত্তিক Eligibility ও Seen ফিল্টার এই Fallback পথেও সমানভাবে কার্যকর থাকবে। নিরাপদ বিচ্ছিন্নতা বজায় রাখতে Cache Key-এর ভেতরে ব্যবহারকারীর ইতিহাস এবং মডেল ও পলিসির Version যুক্ত রাখব; আর কোনো আইটেম হঠাৎ অযোগ্য বা স্টক-আউট হয়ে গেলে সাথে সাথে ক্যাশ বাতিল (Invalidate) করব অথবা উত্তর পাঠানোর ঠিক আগে হালকা একটি যোগ্যতা-ফিল্টার চালাব। সাধারণ ভুল (Common Pitfall): প্রথম ধাপে বাদ পড়ে যাওয়া আইটেম পরের ধাপের Ranker ফিরিয়ে আনতে পারবে বলে ভাবা, কিংবা এক ব্যবহারকারীর পার্সোনালাইজড ক্যাশ অন্য ব্যবহারকারীকে দেখিয়ে ফেলা।"
+    },
+    {
+      "title": "হাইব্রিড Search-এ প্রাসঙ্গিক ফলাফল হারিয়ে যাওয়ার কারণ অনুসন্ধান",
+      "tag": "Search / retrieval",
+      "prompt": "একটি Hybrid Search সিস্টেম প্রাসঙ্গিক ডকুমেন্ট খুঁজে আনতে ব্যর্থ হচ্ছে। Corpus, Query, Candidate Pool এবং Ranking—এই চারটি স্তর আলাদা করে আপনি কীভাবে সমস্যাটি শনাক্ত করবেন? সম্পূরক প্রশ্ন (Follow-up): ঘন ভেক্টর শাখা (Dense Retrieval) অচল হয়ে পড়লে কেবল Lexical Fallback কখন যথেষ্ট হবে আর কখন নয়?",
+      "answer": "সমস্যা ধরার জন্য আমি ধাপে ধাপে তল্লাশি চালাব: প্রথমে দেখব Corpus, ডকুমেন্ট Index, Query Encoder এবং Tokenization নিয়মের Version পরস্পর সামঞ্জস্যপূর্ণ কি না; এরপর দেখব কুয়েরিতে অপরিচিত শব্দ (OOV) আছে কি না, অনুমতির পরিধি (Scope Filter) ডকুমেন্টটিকে আটকে দিচ্ছে কি না, Candidate Budget যথেষ্ট কি না এবং Retrieval ধাপের নিজস্ব Recall কত। কারণ Candidate Pool-এ ডকুমেন্টটি না উঠলে Ranker কিছুই করতে পারবে না। আর আমাদের বর্তমান TF-IDF ও LSA উদাহরণটি যেমন কোনো প্রিট্রেইনড ডিপ এনকোডার বা ANN বেঞ্চমার্ক নয়, তেমনি মনে রাখতে হবে সার্চের স্কোর কখনোই ডকুমেন্ট দেখার নিরাপত্তার অনুমতিকে প্রতিস্থাপন করতে পারে না।\n\nসম্পূরক প্রশ্নের যুক্তি: একটি ব্যর্থ কুয়েরির ট্রেস ধরে আমি একে একে মিলিয়ে দেখব—ডকুমেন্টটি আদৌ কর্পাসে আছে কি না, ব্যবহারকারীর সেটি দেখার এখতিয়ার আছে কি না, টোকেনাইজার শব্দগুলো কীভাবে ভেঙেছে, ডকুমেন্টটি Candidate Pool-এ ঢুকেছিল কি না এবং চূড়ান্ত র‍্যাঙ্কে তার অবস্থান কোথায় ছিল। লেবেলযুক্ত কুয়েরিতে `Recall@Candidate-Budget` এবং চূড়ান্ত `NDCG` আলাদাভাবে মাপব। ঘন শাখা ব্যর্থ হলে Lexical Fallback স্পষ্ট ডিগ্রেডেড স্ট্যাটাসসহ উত্তর দেবে—বিশেষ নাম, কোড বা হুবহু শব্দের মিল খোঁজার ক্ষেত্রে এটি বেশ কার্যকর হলেও ঘুরিয়ে বলা বাক্যের (Paraphrase) ক্ষেত্রে Recall কমে যেতে পারে। সাধারণ ভুল: সার্চের Recall বাড়ানোর লোভে গোপনীয়তার Access Filter শিথিল করে দেওয়া।"
+    },
+    {
+      "title": "উচ্চ ঝুঁকির Spam সিদ্ধান্ত ও সীমিত বাজেটের Review সিস্টেম ডিজাইন",
+      "tag": "Classification / policy",
+      "prompt": "বৈধ ইমেইল ভুল করে ব্লক হওয়ার ক্ষতি (False-positive Cost) অনেক বেশি এবং মানব রিভিউয়ারদের বাজেট সীমিত—এমন অবস্থায় সিদ্ধান্ত নেওয়ার সিস্টেম কীভাবে ডিজাইন করবেন? সম্পূরক প্রশ্ন (Follow-up): অনিশ্চিত মেইলের সংখ্যা বাজেটের চেয়ে বেশি হলে কাকে আগে রিভিউতে নেবেন এবং উপচে পড়া মেইলের (Overflow) ঝুঁকি কী?",
+      "answer": "শুরুতেই আমি লেবেলের উৎস, সিদ্ধান্তের একক, ডোমেইনের প্রকৃতি এবং ফিডব্যাক আসতে কত দেরি হয় তা স্পষ্ট করব। এরপর শুধুমাত্র ট্রেনিং ডেটায় ফিট করা পাইপলাইন, ডুপ্লিকেট বা সময়-সচেতন বিভাজন প্রটোকল, দুই সীমাযুক্ত Selective Routing (যেমন খুব কম স্কোরে Allow, খুব বেশি স্কোরে Block এবং মাঝে Review), সীমিত বাজেটের অগ্রাধিকার নীতি এবং শর্তসাপেক্ষ ভুলের হিসাব সাজাব। উদাহরণ হিসেবে আমাদের ল্যাবের 738টি ডেভেলপমেন্ট সারির মধ্যে 606টি স্বয়ংক্রিয় সিদ্ধান্ত ও 132টি অমীমাংসিত কেসের কথা বলা যায়—যেখানে পেন্ডিং কেসগুলোকে কখনোই শতভাগ সঠিক ধরে নেওয়া হয়নি এবং প্রতীকী খরচে রিভিউ ও বিলম্বের ব্যয় বাদ রাখা হয়েছে।\n\nসম্পূরক প্রশ্নের যুক্তি: আমাদের ল্যাবে ব্যবহৃত `|p − 0.5|` দূরত্বের অগ্রাধিকার কেবল একটি সরল ঘোষিত নীতি; মডেল যদি Calibrated না হয় এবং রিভিউয়ারদের নিজস্ব ভুলের হার জানা না থাকে, তবে সর্বোচ্চ অনিশ্চয়তা মানেই যে রিভিউ থেকে সর্বোচ্চ ঝুঁকি হ্রাস হবে এমন কোনো নিশ্চয়তা নেই। বাস্তব আগমনী ট্রাফিকে রিভিউয়ারদের কাজের গতি, অপেক্ষমাণ লাইনের দৈর্ঘ্য ও সর্বোচ্চ অপেক্ষার সময় আলাদাভাবে যাচাই করতে হবে; আর Overflow হলে ঢালাও Allow করলে স্প্যাম ঢুকবে এবং ঢালাও Block করলে বৈধ মেইল আটকাবে। সাধারণ ভুল: রিভিউতে পাঠানো কেসগুলোকে আগেভাগেই সঠিক ধরে সামগ্রিক Accuracy বাড়িয়ে দেখানো, কিংবা কেবল খরচের ওজন বদলালেই রাউটিং বদলে গেছে বলে মনে করা।",
+      "prerequisiteLessons": [
+        "ch38_review_policy"
+      ]
+    },
+    {
+      "title": "বিলম্বিত পর্যবেক্ষণসহ (Late Observations) Demand Forecasting সার্ভিস",
+      "tag": "Temporal system design",
+      "prompt": "আগামীকালের চাহিদার হিসাব চাওয়া হয়েছে, কিন্তু গতকালের প্রকৃত সংখ্যাটি এখনো পাইপলাইনে এসে পৌঁছায়নি—এই অবস্থায় Request-টি কীভাবে সার্ভ করবেন? সম্পূরক প্রশ্ন (Follow-up): প্রতিদিন আপডেটের বদলে আজ দাঁড়িয়ে একটানা সাত দিন সামনের Fixed-origin Forecast দিতে হলে Lag ফিচারের ব্যবহার কীভাবে বদলাবে?",
+      "answer": "আমি সবার আগে তিনটি আলাদা ঘড়ি মিলিয়ে দেখব: ঘটনা ঘটার সময় (Event Time), ডেটা পাইপলাইনে পৌঁছানোর সময় (Availability Time) এবং হিসাব চাওয়ার মুহূর্ত (Prediction Cutoff)। গতকালের ডেটা না আসা মানে কিন্তু শূন্য চাহিদা নয়! যদি সাত দিন আগের ডেটা (`lag7`) কাটঅফ সময়ের ভেতরে বৈধভাবে উপস্থিত থাকে এবং বিকল্প চুক্তির সঙ্গে সামঞ্জস্যপূর্ণ হয়, তবে আমাদের 375তম দিনের উদাহরণের মতো যাচাইকৃত `seasonal7` Fallback (যেখানে 2368 ফিরে আসে) ব্যবহার করব; আর সেটিও না থাকলে স্পষ্টভাবে Abstain বা Defer করব। পাশাপাশি মডেলের গাণিতিক ত্রুটি এবং ডেটার সতেজতাকে দুটি আলাদা SLO হিসেবে রিপোর্ট করব।\n\nসম্পূরক প্রশ্নের যুক্তি: Rolling One-step মূল্যায়নে প্রতিদিন নতুন প্রকৃত সংখ্যা হাতে পাওয়া যায়, কিন্তু আজ দাঁড়িয়ে সাত দিন সামনের Fixed-origin হিসাব করার সময় মাঝের ভবিষ্যৎ দিনগুলোর আসল Lag আপনার হাতে থাকবে না—ভুল করে ঐতিহাসিক টেবিল থেকে সেগুলো নিয়ে নিলে মারাত্মক Data Leakage ঘটবে! সেক্ষেত্রে আগের ধাপের নিজস্ব অনুমিত মান ঘুরিয়ে ব্যবহার করা (Recursive Prediction), প্রতিটি দূরত্বের জন্য আলাদা মডেল বানানো (Direct Horizon Models) কিংবা বৈধ সাপ্তাহিক সিজনাল বেসলাইন বেছে নিয়ে Horizon অনুযায়ী আলাদা Backtest করতে হবে। সাধারণ ভুল: অনুপস্থিত বা বিলম্বিত Lag ফিচারের জায়গায় নীরবে শূন্য বসিয়ে দেওয়া।"
+    },
+    {
+      "title": "নিরাপদ RAG Response আর্কিটেকচার ও তার প্রতিরক্ষা",
+      "tag": "RAG / safety",
+      "prompt": "মূল ডকুমেন্ট থেকে হুবহু সঠিক Citation দেওয়ার পরও একটি RAG সিস্টেমের উত্তর কেন ভুল হতে পারে? সম্পূরক প্রশ্ন (Follow-up): উদ্ধার করা ডকুমেন্টের ভেতরে যদি লুকানো ক্ষতিকর নির্দেশনা (Instruction Injection) থাকে, তবে কোন নিরাপত্তার দেয়ালগুলো কার্যকর করবেন?",
+      "answer": "হুবহু মিলে যাওয়া Span কেবল প্রমাণ করে যে উদ্ধৃত কথাটি ওই ডকুমেন্টের অমুক জায়গায় সত্যিই লেখা আছে (Provenance); কিন্তু সেই কথাটি ব্যবহারকারীর প্রশ্ন বা দাবিকে যৌক্তিকভাবে প্রমাণ করে কি না (Entailment), তা সম্পূর্ণ আলাদা বিষয়! তাই Retrieval-এর কভারেজ, Context-এর বাইট বা টোকেন বাজেট, আউটপুটের কাঠামো, অনিশ্চিত অবস্থায় Abstention এবং ব্যবহারকারীর অনুমতির পরিধি—প্রতিটি স্তর আলাদাভাবে নিয়ন্ত্রণ করতে হয়। যেমন আমাদের ল্যাবের ক্ষুদ্র ডিকোডারটি প্রামাণ্য টেক্সট না পেলে শব্দ তৈরির আগেই থেমে যায়, আর উত্তর দিলেও সেটিকে চূড়ান্ত সত্য না বলে `unverified_hypothesis` হিসেবে চিহ্নিত রাখে।\n\nসম্পূরক প্রশ্নের যুক্তি: বাইরে থেকে খুঁজে আনা যেকোনো ডকুমেন্টকে সবসময় অবিশ্বস্ত 'ডেটা' হিসেবে গণ্য করতে হবে, কখনোই সিস্টেমের নির্বাহযোগ্য নির্দেশনা (Executable Instruction) হিসেবে নয়! উদ্ধৃতির যান্ত্রিক মিল দেখার পাশাপাশি উত্তরের প্রাসঙ্গিকতা ও বিশ্বস্ততা আলাদাভাবে যাচাই করতে হবে। আর সিস্টেম যদি ব্যক্তিগত নথি পড়ে বা বাহ্যিক কোনো Tool চালায়, তবে Retrieval-এর আগেই ব্যবহারকারীর অনুমতি যাচাই, অনুমোদিত উৎসের তালিকা এবং কঠোর Tool Isolation বাস্তবায়ন ও পরীক্ষা করতে হবে। সাধারণ ভুল: ডকুমেন্টের হুবহু কোটেশন দেখেই উত্তরটি প্রমাণিত বা বৈজ্ঞানিকভাবে নির্ভুল বলে দাবি করা।"
+    },
+    {
+      "title": "Cache ও সমান্তরাল Fanout-এর অধীনে Capacity ও Queueing হিসাব",
+      "tag": "Mathematics / systems",
+      "prompt": "সমান্তরাল শাখাগুলো 3 ms, 8 ms ও 12 ms এবং ধারাবাহিক ধাপগুলো 2 ms, 4 ms ও 2 ms সময় নেয়; বাহ্যিক ট্রাফিক 1000 QPS, Cache Hit অনুপাত 0.5 এবং 4টি সার্ভার Replica (প্রতিটিতে 4টি স্লট) থাকলে পুরো সক্ষমতার অংকটি করে দেখান। সম্পূরক প্রশ্ন (Follow-up): rho = 1 হলে কী বদলে যায়? আর আলাদা একটি এক-সার্ভার M/M/1 মডেলে mu = 50/s হলে আগমনী হার lambda = 40/s থেকে 49/s-এ গেলে মোট গড় Latency কত হবে?",
+      "answer": "প্রথমে সমান্তরাল শাখার সর্বোচ্চ মান নিয়ে অনুমিত Critical Path দাঁড়ায় 2 + 12 + 4 + 2 = 20 ms, যেখানে মোট রিসোর্স শ্রম বা Serial Work হলো 31 ms। 1000 QPS ও 0.5 হিট অনুপাতে ব্যাকএন্ডে যায় 500 misses/s। 4টি রেপ্লিকায় মোট 16টি স্লট থাকায় এবং প্রতিটিতে 0.020 সেকেন্ড ধরলে আদর্শ ক্ষমতা হয় 16 / 0.020 = 800 misses/s; ফলে সরল Utilization দাঁড়ায় rho = 500 / 800 = 0.625 এবং স্থিতিশীল অবস্থায় সার্ভিসে সচল গড় অনুরোধ থাকে 500 × 0.020 = 10টি। তবে স্পষ্ট করে বলব এগুলো পরিকল্পনার অনুমান, মাপা p95 নয়—এখানে প্রবেশদ্বারের ক্যাশ ট্রাফিক, শাখার রিসোর্স চাপ বা Retry ধরা হয়নি।\n\nসম্পূরক প্রশ্নের যুক্তি: আগত Miss ট্রাফিক বেড়ে 800/s হয়ে গেলে rho = 1 হয়ে যায়, তখন আর কোনো স্থিতিশীল সসীম অপেক্ষার সময়ের (Steady-state Waiting Time) দাবি করা চলে না।\n\nঅন্যদিকে স্বতন্ত্র এক-সার্ভার M/M/1 মডেলে গড় মোট সময় W = 1 / (mu − lambda)। ফলে lambda = 40/s হলে W = 1 / (50 − 40) = 0.1 s (যার মধ্যে মূল কাজ 0.02 s এবং লাইনের অপেক্ষা 0.08 s); আর lambda = 49/s হলে W এক লাফে দশ গুণ বেড়ে 1 / (50 − 49) = 1.0 s হয়ে যায় (লাইনের অপেক্ষা 0.98 s)! এই সূত্রটি অসীম বাফার, Poisson আগমন ও Exponential সার্ভিস সময়ের তাত্ত্বিক অনুমানের ওপর প্রতিষ্ঠিত, তাই একে আগের চার-স্লটের সরল মডেলের সঙ্গে সরাসরি মেশানো যাবে না। সাধারণ ভুল: 31 ms মোট শ্রমকে ঘড়ির ল্যাটেন্সি ভাবা, কিংবা সার্ভিসে সচল 10টি অনুরোধকে অপেক্ষমাণ লাইনের মোট দৈর্ঘ্য বলে দাবি করা।",
+      "prerequisiteLessons": [
+        "ch38_capacity",
+        "ch38_architecture"
+      ]
+    },
+    {
+      "title": "রিলিজের পর Version অমিল ও Manifest যাচাই",
+      "tag": "Debugging / MLOps",
+      "prompt": "নতুন রিলিজের পর পুরোনো Scaler-এর সঙ্গে নতুন মডেলের Weights, কিংবা মেয়াদোত্তীর্ণ Index ও Policy Cache মিশে যাওয়ার ঝুঁকি কীভাবে ঠেকাবেন? সম্পূরক প্রশ্ন (Follow-up): প্রত্যাশিত Manifest ফাইলটি নিজেই যদি পুরোনো বা অবিশ্বস্ত উৎস থেকে আসে, তবে ফাইলের Hash মেলানো কতটা কাজে আসবে?",
+      "answer": "এই নীরব বিপর্যয় ঠেকাতে আমি অপরিবর্তনীয় (Immutable) Model, Source, Input Schema এবং Policy পরিচয়কে একসঙ্গে বেঁধে দেব, সামঞ্জস্যপূর্ণ Fallback রাখব এবং অনুরোধের প্রেক্ষাপটযুক্ত Cache Key ব্যবহার করব। সার্ভিংয়ের শুরুতেই যেকোনো একটি পরিচয়ে অমিল পেলে মূল হিসাব চালানোর আগেই অনুরোধটি Block করে দেওয়া হবে; আর শুধু মেটাডেটার ওপর ভরসা না করে সব সারির সংখ্যাসূচক মিল দেখার স্বতন্ত্র টেস্টও রাখব। যেমন আমাদের Python স্ক্রিপ্ট সরাসরি বাইট যাচাই করে, আর অ্যাপের প্যানেলটি মেটাডেটা অমিলের মহড়া দেখায়।\n\nসম্পূরক প্রশ্নের যুক্তি: রোলআউটের সময় একটি একক অপরিবর্তনীয় বান্ডেল থেকে Scaler, Weights, Schema, Source ও Policy একযোগে (Atomically) লোড করার ব্যবস্থা করব এবং পরিষ্কার Rollback লক্ষ্যমাত্রা লিখে রাখব। কিন্তু মনে রাখতে হবে—ফাইলের SHA-256 হ্যাশ কেবল এটুকুই প্রমাণ করে যে ডিস্কের বাইটগুলো প্রদত্ত প্রত্যাশিত হ্যাশের সঙ্গে মিলছে। যদি প্রত্যাশিত Manifest-টিই ভুল হয় কিংবা কেউ ফাইল ও চেকসাম দুটোই একসঙ্গে বদলে দেয়, তবে সাধারণ হ্যাশ চেক তা ধরতে পারবে না! তাই বিশ্বস্ত চ্যানেলে Manifest বিতরণ এবং অর্থগত সঠিকতার পরীক্ষা আলাদাভাবে প্রয়োজন। সাধারণ ভুল: টেনসরের আকার বা হ্যাশ মিলে যাওয়াকেই গাণিতিক নির্ভুলতা বা পূর্ণ নিরাপত্তার প্রমাণ ভেবে নেওয়া।"
+    },
+    {
+      "title": "ধারাবাহিক বিপর্যয় (Cascading Overload) প্রতিরোধের কৌশল",
+      "tag": "Reliability",
+      "prompt": "মূল মডেল সার্ভিস হঠাৎ অচল হওয়ায় সব অনুরোধ স্বয়ংক্রিয়ভাবে Fallback পথে চলে যাচ্ছে। এতে Cascading Overload ঘটার ঝুঁকি কোথায়? সম্পূরক প্রশ্ন (Follow-up): Fallback সার্ভিসের নিজের Latency বাড়তে শুরু করলে তখন আপনার Retry এবং Queue নীতি কী হবে?",
+      "answer": "মূল সার্ভিস ভেঙে পড়ার মুহূর্তে পুরো ট্রাফিক গিয়ে যদি Fallback ডাটাবেস বা সার্ভিসের ওপর আছড়ে পড়ে, তবে নিজস্ব পর্যাপ্ত সক্ষমতা না থাকলে সেই বিকল্প সার্ভিসটিও মুহূর্তেই Overload হয়ে পুরো সিস্টেমকে ধসিয়ে দিতে পারে! তাই Fallback পথের জন্যও আলাদা Capacity, ডেটার সতেজতা ও বৈধ Contract পরিকল্পনা করতে হয়। প্রতিরক্ষার জন্য আমি সীমিত আকারের Queue, কঠোর Deadline, সীমিত Retry ও Backoff + Jitter, রিসোর্স বিভাজন (Bulkheads) এবং প্রয়োজনে নিরাপদ Abstention ব্যবহার করব। সব পণ্যের জন্য একই Fail-open বা Fail-closed নিয়ম খাটে না, তাই ক্ষতির মাত্রা ও প্রাপ্যতার Tradeoff স্পষ্টভাবে নির্ধারণ করব।\n\nসম্পূরক প্রশ্নের যুক্তি: Fallback সার্ভিসের Latency বাড়তে দেখলে তার নিরাপদ ধারণক্ষমতা অনুযায়ী প্রবেশদ্বারেই সীমিত Admission Control চালু করব, কলারের নির্ধারিত Deadline পার হয়ে যাওয়া কাজগুলো সাথে সাথে বাতিল করব এবং পুরো কল-চেইনের জন্য একটি বাঁধা Retry Budget রাখব। অপারেশনটি বারবার চালালেও নিরাপদ (Idempotent) না হলে অন্ধের মতো Retry করা থেকে বিরত থাকব, নইলে ডুপ্লিকেট সাইড-ইফেক্ট তৈরি হবে। আর মূল ও বিকল্প পথ যদি ভেতরে একই শেয়ার করা ডাটাবেস ব্যবহার করে, তবে শুধু Circuit Breaker বসালেই নতুন সক্ষমতা তৈরি হয়ে যায় না। সাধারণ ভুল: সার্ভার ধীর হয়ে যাওয়ার পরও অসীম Retry চালিয়ে সফল উত্তরের অপেক্ষায় থাকা।",
+      "prerequisiteLessons": [
+        "ch38_reliability"
+      ]
+    },
+    {
+      "title": "Selective Decision পলিসির সঠিক মূল্যায়ন ও হরের শৃঙ্খলা",
+      "tag": "Evaluation / causal reasoning",
+      "prompt": "একটি নতুন Selective পলিসির শর্তসাপেক্ষ স্বয়ংক্রিয় Accuracy 0.9703, আর আগের সাধারণ ক্লাসিফায়ারের Accuracy ছিল 0.9322—শুধু এই দুটি সংখ্যা দেখেই কি মডেল উন্নত হয়েছে বলে দাবি করা যাবে? সম্পূরক প্রশ্ন (Follow-up): দুটি পলিসির ন্যায্য তুলনায় আপনি কোন কোন Denominator এবং অদেখা খরচ পাশাপাশি দেখাবেন?",
+      "answer": "না, এভাবে সরাসরি উন্নতি দাবি করা সম্পূর্ণ ভুল—কারণ সংখ্যা দুটির ভগ্নাংশের হর বা Population Denominator আলাদা! 0.9322 হিসাব করা হয়েছে পুরো 738টি সারির ওপর, অথচ 0.9703 এসেছে কেবল সহজতর 606টি স্বয়ংক্রিয় সিদ্ধান্ত থেকে, যেখানে কঠিন 132টি কেস অমীমাংসিত অবস্থায় বাইরে রয়ে গেছে। তা ছাড়া এটি ডেভেলপমেন্ট ডেটার পর্যবেক্ষণ মাত্র, সংরক্ষিত 680টি ফলাফল এখানে ব্যবহৃত হয়নি; আর বাস্তব অনলাইন সুফল প্রমাণ করতে উপযুক্ত কার্যকারণ (Causal) পরীক্ষা প্রয়োজন।\n\nসম্পূরক প্রশ্নের যুক্তি: ন্যায্য তুলনার জন্য আমি ঠিক একই 738টি সারির মূল Population-এর ওপর স্বয়ংক্রিয় Coverage, স্বয়ংক্রিয় ভুলের সংখ্যা (বৈধ মেইল ব্লক ও মিসড স্প্যাম), রিভিউ ও Defer-এ যাওয়া সংখ্যা এবং অমীমাংসিত ফলাফলগুলো পাশাপাশি টেবিলে দেখাব। মানব রিভিউয়াররা সব সঠিক করবেন—এমন কাল্পনিক সংখ্যা বানাব না এবং মনে করিয়ে দেব যে সিদ্ধান্ত ঝুলিয়ে রাখার বিলম্ব ও রিভিউ শ্রমের বাস্তব খরচ এই সাধারণ প্রক্সিতে ধরা নেই। চূড়ান্ত সিদ্ধান্তের জন্য একটি স্থির প্রটোকলে বিলম্বিত ফিডব্যাকসহ সামগ্রিক ব্যবসায়িক Utility মাপতে হবে। সাধারণ ভুল: কঠিন কেসগুলো থেকে হাত তুলে নিয়ে (Abstention বাড়িয়ে) কেবল নির্বাচিত অংশের Accuracy বৃদ্ধিকে পুরো পণ্যের সাফল্য বলে চালিয়ে দেওয়া।",
+      "prerequisiteLessons": [
+        "ch38_monitoring",
+        "ch38_evaluation"
+      ]
+    },
+    {
+      "title": "যাচাইযোগ্য ও সৎ System Design Report লেখার কৌশল",
+      "tag": "Synthesis / communication",
+      "prompt": "নিজের পোর্টফোলিও বা সিনিয়র ইন্টারভিউতে একটি এমএল সিস্টেম ডিজাইনের পক্ষে সবচেয়ে শক্তিশালী ও সৎ প্রমাণ কীভাবে উপস্থাপন করবেন? সম্পূরক প্রশ্ন (Follow-up): সিস্টেমটি সত্যিকারের প্রোডাকশনে লঞ্চ করার আগে কোন অজানা বিষয়টি (Unknown) আপনি সবার আগে সমাধান করবেন?",
+      "answer": "একটি গ্রহণযোগ্য ও শক্তিশালী রিপোর্টে আমি ক্রমান্বয়ে তুলে ধরব: পণ্যের সুনির্দিষ্ট Requirements, ডেটার উৎস ও লাইসেন্স, বিভাজন ও সময়ের Cutoff, সহজ Baseline, সার্ভিং পাইপলাইন ও পলিসি, স্থানীয় Replay থেকে পাওয়া প্রকৃত আউটপুট, প্রতিটি মেট্রিকের হর (Denominator), অনুমিত Capacity ও ত্রুটির হিসাব, স্বয়ংক্রিয় টেস্ট এবং পরবর্তী Validation পরিকল্পনা। যেমন আমাদের এই কাজে 5টি কেসের 15টি রেসপন্স, 738টি সারির প্রোবাবিলিটি এবং 1215টি ক্যাপাসিটি ও 72টি পলিসি কনফিগারেশন যাচাই করা হয়েছে—কিন্তু কোথাও জীবন্ত প্রোডাকশন ট্রাফিক, মাপা p95, আর্থিক জালিয়াতি রোধের সনদ বা বৈজ্ঞানিক সত্যতার অতিরঞ্জিত দাবি করা হয়নি এবং সংরক্ষিত হোল্ডআউট ডেটা অক্ষত রাখা হয়েছে।\n\nসম্পূরক প্রশ্নের যুক্তি: রিভিউয়ারের সামনে আমি একটি পূর্ণাঙ্গ Request Trace, বেসলাইন বনাম Fallback তুলনা, সংস্করণের Contract, পুনরুৎপাদনযোগ্য কমান্ড এবং ব্যর্থতার সুস্পষ্ট কারণ তুলে ধরব। আর প্রোডাকশন লঞ্চের আগে সবার প্রথমে যে অজানা বিষয়গুলো মেটাব তা হলো—প্রকৃত হার্ডওয়্যারে লোড টেস্ট চালিয়ে মাপা Latency ও Throughput, বাস্তব আগমনী ট্রাফিকের বিপরীতে রিভিউ কিউয়ের আচরণ এবং বর্তমান ডোমেইনের প্রতিনিধিত্বশীল ডেটায় মডেলের মান; এদের অগ্রাধিকার ঠিক হবে ব্যবহারকারীর সম্ভাব্য ক্ষতি এবং ঘোষিত SLO অনুযায়ী। সাধারণ ভুল: নিজের ল্যাপটপে চালানো ছোট অফলাইন Replay-কে ডিস্ট্রিবিউটেড প্রোডাকশন ডিপ্লয়মেন্ট বা ক্লাস্টার বেঞ্চমার্ক বলে দাবি করা।"
+    }
+  ],
+  "book": {
+    "order": 45,
+    "part": "Book 6 · ML Systems, MLOps & Interviews",
+    "prerequisites": [
+      "chapter_24",
+      "chapter_34",
+      "chapter_35",
+      "chapter_36",
+      "chapter_37"
+    ],
+    "purpose": "আগের অধ্যায়গুলোতে শেখা Data Pipeline, Serving এবং Experimentation-এর ধারণাগুলো একত্র করে বাস্তবসম্মত Requirements ও সীমাবদ্ধতার আলোকে পূর্ণাঙ্গ ML System Design সমস্যার সমাধান করতে শেখা।",
+    "outcomes": [
+      "ব্যবসায়িক ও কারিগরি Requirements বিশ্লেষণ করে Data Flow, Capacity, Tail Latency এবং Failure Policy নির্ধারণ করতে পারবেন।",
+      "সুস্পষ্ট অনুমান উল্লেখ করে Queueing, Fanout এবং Retry Amplification-এর গাণিতিক হিসাব নিজে করে দেখাতে পারবেন।",
+      "Selective Review, অমীমাংসিত ফলাফল (Unresolved Outcomes) এবং নিরাপদ Fallback-এর ক্ষেত্রে খরচের সঙ্গে Coverage-এর Tradeoff ব্যাখ্যা করতে পারবেন।"
+    ],
+    "recall": [
+      "একটি Request-এর ভেতরে Serial এবং Parallel Service Call থাকলে সামগ্রিক Latency Budget কীভাবে হিসাব করতে হয়?",
+      "কোনো Variant B দ্রুততর হওয়ার পরও যদি তার খরচ বেশি হয়, তবে কি সবসময় সেটিকেই বেছে নেওয়া উচিত? আর মূল সিস্টেমের Hard SLO ব্যর্থ হলে Fallback-এর গ্রহণযোগ্যতা কীভাবে সংজ্ঞায়িত করবেন?"
+    ],
+    "bridge": "এই অধ্যায়ে আপনি একটি Request-এর শুরু থেকে শেষ পর্যন্ত Data Flow, Critical Path, নিরাপদ Fallback এবং Evaluation Denominator পুঙ্খানুপুঙ্খভাবে অনুসরণ করতে শিখবেন। এরপর পরের অধ্যায়ে (Book 6 · Chapter 5: Technical Interview Practice) কোনো বাহ্যিক সহায়তা ছাড়াই Python, SQL, Algorithms এবং ML Debugging-এর ব্যবহারিক সমস্যাগুলো সমাধান করার প্রস্তুতি নেবেন।",
+    "bookId": "systems",
+    "bookChapter": 4
+  }
+}

@@ -1,0 +1,1613 @@
+{
+  "id": "chapter_18",
+  "number": 18,
+  "title": "CNNs, Computer Vision & Transfer Learning",
+  "shortTitle": "CNNs & Vision",
+  "displayTitle": "CNNs & Computer Vision\nTransfer Learning",
+  "subtitle": "ছবির কাঁচা Pixel থেকে অর্থবহ Feature তৈরি এবং Convolution থেকে বাস্তবসম্মত Transfer Learning পর্যন্ত পূর্ণাঙ্গ যাত্রা।",
+  "description": "See the image. Trace the kernel. Reuse the features.\nBuild and audit an offline computer-vision workflow.",
+  "difficulty": "Deep learning · vision",
+  "lab": "vision",
+  "lessons": [
+    {
+      "id": "ch18_contract",
+      "title": "Computer Vision: কাঁচা Pixel থেকে শেখা Feature পর্যন্ত",
+      "subtitle": "CNN-এর স্থানিক গঠন, Inductive Bias এবং প্রমাণের সীমারেখা",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "এই অধ্যায়ের যাত্রাপথ",
+          "body": "একটি ছবির নিছক সংখ্যার গ্রিড বা কাঁচা Pixel থেকে Model কীভাবে রেখা, বাঁক ও অর্থবহ গঠন চিনতে শেখে? এই প্রশ্নের উত্তর খুঁজতে আমরা একদম গোড়া থেকে শুরু করব—প্রথমে জানব Image Tensor-এর সঠিক Shape ও মানের পাল্লা (Range), তারপর হাতে-কলমে একটি Convolution Window-এর হিসাব কষে ধাপে ধাপে Channel, Pooling এবং পূর্ণাঙ্গ Classifier পর্যন্ত এগোব।\n\nএকটি ছোট CNN সফলভাবে Train করার পর আমরা আরও একটি বাস্তব প্রশ্নের মুখোমুখি হব: এক ধরনের কাজে শেখা Feature কি নতুন আরেকটি কাজে পুনর্ব্যবহার করা যায়? সেই Transfer Learning অংশে আমরা দেখব কেন শুধু শেখা Weight কপি করাই যথেষ্ট নয়—বরং ছবির Preprocessing, Model-এর ট্রেনিং বা ইভ্যালুয়েশন মোড এবং নিখুঁত Data Split-ও সমানভাবে গুরুত্বপূর্ণ।"
+        },
+        {
+          "type": "text",
+          "title": "কেন সাধারণ Network-এর বদলে CNN?",
+          "body": "যেকোনো স্বাভাবিক ছবিতে পাশাপাশি থাকা Pixel-গুলো একে অপরের সাথে গভীরভাবে সম্পর্কিত—কয়েকটি কাছাকাছি ঘর মিলেই তৈরি করে একটি রেখা, কোণ বা টেক্সচার। একটি সাধারণ Fully Connected Layer ছবির প্রতিটি স্থানের জন্য আলাদা আলাদা Weight দাবি করে, ফলে ছবির আকার বাড়লে Parameter-এর সংখ্যা অযৌক্তিকভাবে ফুলে-ফেঁপে ওঠে। বিপরীতে Convolution একটি ছোট স্থানীয় Filter পুরো ছবি জুড়ে বারবার ব্যবহার করে (Shared Local Filter)। স্থানিক গঠনের এই সহজাত অনুমান বা Inductive Bias অধিকাংশ Vision সমস্যায় দারুণ কার্যকর, তবে মনে রাখতে হবে যে দুনিয়ার সব ধরনের ডেটা বা কাজে এটি স্বয়ংক্রিয়ভাবে অন্য সব পদ্ধতির চেয়ে সেরা ফল দেবে—এমন কোনো ধরা-বাঁধা নিয়ম নেই।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "X\\in\\mathbb R^{B\\times C\\times H\\times W},\\quad f_\\theta(X)\\in\\mathbb R^{B\\times K}"
+        },
+        {
+          "type": "code",
+          "title": "ছোট একটি CNN Pipeline-এ Tensor Shape পরিবর্তন",
+          "body": "import torch\nfrom torch import nn\n\nmodel = nn.Sequential(nn.Conv2d(1, 4, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2))\nX = torch.zeros(2, 1, 8, 8)  # Explicit shape illustration, not image data.\nassert model(X).shape == (2, 4, 4, 4)\nprint(model(X).shape)\n"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের ব্যবহৃত বাস্তব Dataset",
+          "body": "এই অধ্যায়ের পরীক্ষাগুলোর জন্য আমরা scikit-learn-এ সংরক্ষিত UCI Optical Recognition of Handwritten Digits ডেটাসেটের মোট 1797 টি বাস্তব ছবি ব্যবহার করছি। প্রতিটি ছবি 8×8 আকারের Grayscale গ্রিড, যেখানে প্রতিটি Pixel-এর মান 0 থেকে 16-এর মধ্যে থাকে। শেখার ও পরীক্ষা চালানোর সুবিধার্থে মূল ঐতিহাসিক Test অংশটিকে এখানে আমাদের নিজস্ব শিক্ষামূলক Split-এ নতুনভাবে সাজানো হয়েছে—তাই এখানকার প্রাপ্ত নম্বরকে মূল ঐতিহাসিক Benchmark ফলাফল কিংবা সম্পূর্ণ নতুন লেখকের হাতের লেখার ওপর (Writer-independent) চূড়ান্ত মূল্যায়ন হিসেবে ধরে নেওয়া যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে আমাদের Transfer Learning সমস্যা",
+          "body": "Transfer Learning-এর খুঁটিনাটি স্পষ্টভাবে দেখার জন্য আমরা অঙ্ক 0–4-কে আমাদের Source Task এবং অঙ্ক 5–9-কে Target Task হিসেবে ভাগ করেছি। প্রথমে কেবল Source Training অংশের ছবির ওপর আমাদের CNN-এর মূল অংশ বা Backbone ট্রেন করা হয়; এরপর Target Task-এর জন্য একটি নতুন সাধারণ Classifier Head বসিয়ে দুটি আলাদা শাখা—Frozen Backbone এবং Fine-tuned Backbone—পাশাপাশি পরীক্ষা করা হয়। এখানে বাইরে থেকে ডাউনলোড করা কোনো বিশাল ImageNet Weight ব্যবহৃত হয়নি, বরং সম্পূর্ণ Pretraining স্থানীয়ভাবেই সম্পন্ন হয়েছে এবং কৃত্রিমভাবে সেরা সংখ্যা দেখানোর উদ্দেশ্যে হাজারো Architecture, Seed বা Epoch ঘেঁটে সেরাটি বেছে নেওয়ার চেষ্টা করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "সম্পূর্ণ অফলাইন বাস্তবায়ন ও যাচাইকরণ",
+          "body": "এই অধ্যায়ের সমস্ত উৎস ডেটা, Label, ছবির অবস্থান, ট্রেন করা Weight এবং গাণিতিক রেফারেন্স মান অ্যাপের ভেতরেই বান্ডেল করা আছে। অ্যাপটি সরাসরি Dart-এ Forward Pass ও গাণিতিক হিসাবগুলো নতুন করে চালিয়ে ফলাফল যাচাই করে, পর্দার আড়ালে কোনো লাইভ Python ট্রেনিং চালায় না। নিজের কম্পিউটারে ডেভেলপমেন্ট পরিবেশ তৈরি করার সময় প্রথমবার Package ইনস্টল করতে ইন্টারনেট সংযোগ লাগতে পারে, কিন্তু অ্যাপের ভেতরে থাকা পুরো অধ্যায় ও ইন্টারেক্টিভ ল্যাবগুলো সম্পূর্ণ অফলাইনেই চলে।"
+        },
+        {
+          "type": "text",
+          "title": "অধ্যায় শেষে আপনার দক্ষতার লক্ষ্যমাত্রা",
+          "body": "এই অধ্যায়টি আয়ত্ত করার আসল মাপকাঠি হলো—আউটপুটের যেকোনো একটি ঘরের গুণ-যোগের (Multiply-sum) হিসাব নিজে হাতে করে দেখাতে পারা, পুরো Layer-এর Shape ও Parameter সংখ্যা নির্ভুলভাবে বের করা, Pooling কোথায় তথ্য হারাচ্ছে তা ব্যাখ্যা করা এবং Frozen Parameter-এর আচরণ স্পষ্টভাবে বিশ্লেষণ করতে পারা। সবসময় সতর্ক থাকবেন: নিখুঁত Dataset Split এবং সুনির্দিষ্ট Transform Contract যাচাই না করে কেবল সুন্দর দেখতে একটি Feature Map দেখেই ধরে নেবেন না যে আপনার Model ছবির ভেতরের প্রকৃত অর্থ শিখে ফেলেছে।"
+        }
+      ]
+    },
+    {
+      "id": "ch18_images",
+      "title": "Image Tensor-এর গঠন: Layout, Range এবং Channel",
+      "subtitle": "NCHW বিন্যাস, সঠিক Dtype এবং অর্থবহ Preprocessing",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Tensor Layout-এর অলিখিত চুক্তি",
+          "body": "আগের পাঠে আমরা দেখেছি একটি CNN চার মাত্রার Tensor ইনপুট হিসেবে গ্রহণ করে; কিন্তু সেই চারটি মাত্রার ক্রম ঠিক কী হতে হবে? PyTorch-এর Conv2d সাধারণত NCHW ক্রমের লজিক্যাল ইনপুট নেয়—অর্থাৎ প্রথমে Batch (N), তারপর Channel (C), এবং এরপর যথাক্রমে Height (H) ও Width (W)। অথচ সাধারণ ইমেজ লাইব্রেরি থেকে ছবি লোড করলে প্রায়ই তা HWC বিন্যাসে থাকে, যেখানে রঙের Channel থাকে সবার শেষে। সেক্ষেত্রে permute ব্যবহার করে Axis-এর ক্রম ঘুরিয়ে নেওয়া আবশ্যক। ভুলেও সরাসরি reshape দিয়ে এই ক্রম ঠিক করার চেষ্টা করবেন না, কারণ reshape মেমোরির ধারাবাহিক সংখ্যাগুলোকে ভুল ঘরে বসিয়ে পুরো ছবির স্থানিক গঠন ভেঙে দেয়! পাশাপাশি মনে রাখবেন, হার্ডওয়্যারে দ্রুত গণনার জন্য ব্যবহৃত channels_last মেমোরি ফরম্যাট কেবল ভেতরের মেমোরি সাজানোর ধরন পাল্টায়, Tensor-এর লজিক্যাল NCHW ক্রমকে বদলে দেয় না।"
+        },
+        {
+          "type": "text",
+          "title": "মানের পাল্লা (Range) ও সঠিক Dtype",
+          "body": "মাত্রার ক্রম ঠিক হওয়ার পর আমাদের নিশ্চিত করতে হয় Pixel মানের পাল্লা এবং ডেটা টাইপ। আমাদের এই ডিজিট Dataset-এ Pixel-এর সর্বোচ্চ সম্ভাব্য মান আগে থেকেই নির্ধারিত এবং তা হলো 16—তাই প্রতিটি কাঁচা মানকে আমরা 16 দিয়ে ভাগ করে [0, 1] পাল্লায় নিয়ে আসি। সাধারণ ৮-বিট ছবির অভ্যাসবশত এখানে 255 দিয়ে ভাগ করলে সব সংখ্যা অতি ক্ষুদ্র হয়ে ভুল সংকেত তৈরি করবে! মডেলকে দেওয়ার আগে আমরা যাচাই করে নিই যেন ইনপুটটি একটি Floating-point Tensor হয়, এর Shape সঠিক থাকে এবং ভেতরে কোনো অসীম বা অসংজ্ঞায়িত মান না থাকে। যেহেতু 16 সংখ্যাটি ডেটার নিজস্ব ফরম্যাটের অংশ (ডেটা দেখে হিসাব করা গড় বা আদর্শ বিচ্যুতি নয়), তাই এই Normalization-এ Validation বা Test অংশ থেকে কোনো পরিসংখ্যান চুরি হওয়ার প্রশ্নই ওঠে না।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "\\mathrm{shape}(X)=[B,C,H,W],\\quad x_{\\mathrm{normalized}}=x_{\\mathrm{raw}}/16"
+        },
+        {
+          "type": "code",
+          "title": "কাঁচা ডিজিট ডেটা থেকে Normalized NCHW Tensor তৈরি",
+          "body": "from pathlib import Path\nimport numpy as np, torch\n\ndata = np.loadtxt(Path(\"assets/datasets/digits/digits.csv.gz\"), delimiter=\",\")\nraw = data[:, :64].reshape(-1, 8, 8)\nX = torch.tensor(raw[:3, None], dtype=torch.float64) / 16\nassert X.shape == (3, 1, 8, 8) and X.min() >= 0 and X.max() <= 1\nprint(X.shape, X[0, 0].tolist())\n"
+        },
+        {
+          "type": "text",
+          "title": "Grayscale বনাম RGB চ্যানেলের পার্থক্য",
+          "body": "এবার Channel-এর বাস্তব অর্থের দিকে তাকানো যাক। এক-চ্যানেলের Grayscale ছবি এবং তিন-চ্যানেলের RGB রঙিন ছবির জন্য CNN-এর প্রথম Layer-এ ভিন্ন আকারের ইনপুট Filter প্রয়োজন হয়। অনেক সময় এক-চ্যানেলের Grayscale ছবিকে তিনবার কপি করে তিন-চ্যানেলের আকার বানানো হয় ঠিকই, কিন্তু এতে ছবিতে নতুন কোনো রঙিন প্রাকৃতিক তথ্য যোগ হয় না। বিশেষ করে আপনি যখন প্রাকৃতিক ছবির ওপর ট্রেন করা কোনো Pretrained RGB Model ব্যবহার করবেন, তখন সেই Model যে নির্দিষ্ট Channel সংখ্যা, মানের পাল্লা, রেজোলিউশন এবং Normalization প্রত্যাশা করে, তা হুবহু বজায় রাখা অপরিহার্য।"
+        },
+        {
+          "type": "text",
+          "title": "ছবির স্থানাঙ্ক (Coordinates) ও রেজোলিউশন",
+          "body": "ছবির ভেতরে কোনো নির্দিষ্ট অবস্থান খুঁজতে গেলে স্থানাঙ্কের দিকটি পরিষ্কার থাকা দরকার। ইমেজ গ্রিড ও Tensor উভয় ক্ষেত্রেই Row ইনডেক্স ওপর থেকে নিচের দিকে বাড়ে এবং Column ইনডেক্স বাম থেকে ডান দিকে এগোয়। ছবি পর্দায় দেখানোর সময় এবং কোডে Tensor Indexing করার সময় যেন এই একই অভিমুখ (Orientation) বজায় থাকে, সেদিকে লক্ষ্য রাখুন। আমাদের ব্যবহৃত ছবিগুলো উচ্চ-রেজোলিউশনের কাঁচা হাতের লেখা নয়, বরং মূল লেখাকে সংকুচিত করে আনা 8×8 আকারের ঘনত্বের হিসাব—ফলে কোনো Pixel বা ছবির উৎস অবস্থান দেখে ডেটা যাচাই (Audit) করা গেলেও কেবল তা দিয়ে লেখকের পরিচয় (Writer Identity) আলাদা করা যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "ডেটার মালিকানা ও In-place পরিবর্তনের ঝুঁকি",
+          "body": "পাইপলাইন সাজানোর সময় একটি সূক্ষ্ম ইঞ্জিনিয়ারিং সতর্কতা হলো ডেটার মালিকানা (Data Ownership) খেয়াল রাখা। কোনো রূপান্তর বা Augmentation চালানোর সময় আপনার কোড কি ইনপুটের নতুন কপি তৈরি করছে, নাকি মেমোরিতে থাকা মূল View-টিকেই সরাসরি বদলে দিচ্ছে (In-place Mutation), তা সবসময় পরীক্ষা করে দেখবেন। ক্যাশ করে রাখা মূল Tensor-কে ভুলবশত In-place বদলে ফেললে পরের Epoch-এ আসল ছবির বদলে বিকৃত ছবি ট্রেনিংয়ে ঢুকে পড়বে! এজন্যই আমাদের মূল পাইপলাইনে উৎস অ্যারেগুলোকে অপরিবর্তনীয় (Immutable) হিসেবে পড়া হয় এবং অ্যাপের ভেতরেও মূল Pixel মানগুলো Read-only থাকে।"
+        },
+        {
+          "type": "text",
+          "title": "নিজের হাতে ঝালিয়ে নিন",
+          "body": "ধারণাটি পাকা করতে একটি বাস্তব ছবির রূপান্তর নিজে খাতায় লিখে ফেলুন: একক ছবির [8, 8] আকার থেকে কীভাবে চ্যানেল যোগ হয়ে [1, 8, 8] এবং ব্যাচ যোগ হয়ে [1, 1, 8, 8] তৈরি হয়। পাশাপাশি ভেবে দেখুন, Batch = 1 এবং 5 টি আউটপুট Class থাকলে মডেলের চূড়ান্ত আউটপুটের Shape কেন [1, 5] হবে। সবসময় মনে রাখবেন—ভুল সংখ্যা দিয়ে স্কেলিং করলে কিংবা ভুলভাবে Channel ঘুরিয়ে ফেললেও অনেক সময় কোডে কোনো Shape Error ধরা পড়ে না, কিন্তু ভেতরে ভেতরে সব Prediction সম্পূর্ণ ভুল পথে চলে যায়!"
+        }
+      ]
+    },
+    {
+      "id": "ch18_convolution",
+      "title": "Convolution Window: প্রতিটি ঘরের হিসাব হাতে-কলমে দেখি",
+      "subtitle": "Cross-correlation, Padding এবং ঋণাত্মক (Signed) সাড়া বোঝা",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "স্থানীয় গুণ-যোগের (Local Multiply-sum) মূল কৌশল",
+          "body": "আগের পাঠে আমরা ছবিকে সঠিকভাবে NCHW Tensor-এ সাজিয়েছি। এখন প্রশ্ন হলো, CNN এই সংখ্যার ছক থেকে কিনারা বা বাঁকের মতো স্থানিক বৈশিষ্ট্য কীভাবে খুঁজে বের করে? এর উত্তর লুকিয়ে আছে একটি ছোট জানালার (Window) ভেতর স্থানীয় গুণ-যোগে। আউটপুটের প্রতিটি ঘরের মান বের করতে ইনপুট ছবির নির্দিষ্ট ছোট অংশের (Patch) প্রতিটি সংখ্যার সাথে Kernel-এর অনুরূপ ঘরের সংখ্যা গুণ করে সব কটি গুণফল যোগ করা হয় এবং শেষে একটি Bias যোগ করা হয়। আউটপুটের এক ঘর থেকে পরের ঘরে গেলে ইনপুটের জানালাটি কত ঘর লাফ দেবে তা নির্ধারণ করে Stride, আর ছবির কিনারার বাইরে ঘোষিত মান (যেমন 0) জোগান দেয় Padding। সবচেয়ে বড় সুবিধা হলো, ছবির প্রতিটি স্থানে ঠিক একই Kernel-এর Weight বারবার ব্যবহৃত হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Convolution নাম বনাম Cross-correlation বাস্তবতা",
+          "body": "এখানে একটি অত্যন্ত জরুরি গাণিতিক প্রথা স্পষ্ট করে নেওয়া দরকার। ধ্রুপদী গণিত বা Signal Processing-এর সংজ্ঞায় Convolution করার সময় গুণ করার আগে Kernel-টিকে উল্টে (Flip) নেওয়া হয়। কিন্তু PyTorch-এর Conv2d-সহ প্রায় সব আধুনিক Deep Learning ফ্রেমওয়ার্ক Kernel উল্টায় না—তারা আসলে সরাসরি Cross-correlation হিসাব করে, যদিও প্রচলিত অভ্যাসে সবাই একে Convolution নামেই ডাকে! আপনি যখন খাতায় হাতে অঙ্ক কষবেন কিংবা অন্য কোনো ভাষায় স্বতন্ত্র রেফারেন্স কোড লিখবেন, তখন এই নিয়মটি হুবহু মেলানো আবশ্যক; বিশেষ করে Sobel Filter-এর মতো অপ্রতিসম (Asymmetric) Kernel-এ ভুল করে Kernel উল্টে ফেললে ফলাফলের চিহ্ন ও দিক পুরোপুরি পাল্টে যাবে।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "Y_{o,i,j}=b_o+\\sum_c\\sum_u\\sum_v W_{o,c,u,v}X_{c,is-p+u,js-p+v}"
+        },
+        {
+          "type": "code",
+          "title": "PyTorch-এ একটি ছোট Cross-correlation Window-এর হিসাব",
+          "body": "import torch\nimport torch.nn.functional as F\n\nX = torch.tensor(\n    [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]], dtype=torch.float64\n)[\n    None, None\n]  # Illustration.\nK = torch.tensor([[1.0, 0.0], [0.0, -1.0]], dtype=torch.float64)[None, None]\nY = F.conv2d(X, K)\nassert Y[0, 0, 0, 0].item() == -4.0\nprint(Y[0, 0].tolist())\n"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে উদাহরণ ও ঋণাত্মক মানের অর্থ",
+          "body": "ওপরের কোডের ছোট উদাহরণটি খাতায় মেলালেই পুরো প্রক্রিয়াটি জলের মতো পরিষ্কার হয়ে যাবে। আমাদের 3×3 গাণিতিক ইনপুটের বাম-ওপরের 2×2 অংশটি হলো [[1, 2], [4, 5]] এবং ব্যবহৃত Kernel-টি হলো [[1, 0], [0, -1]]। ঘর-বরাবর গুণ করে যোগ করলে আমরা পাই: (1 × 1) + (2 × 0) + (4 × 0) + (5 × -1) = 1 - 5 = -4। খেয়াল করুন, আউটপুট ঋণাত্মক (-4) আসা মানেই কিন্তু কোনো ত্রুটি নয়! একটি Signed Filter ধনাত্মক ও ঋণাত্মক মানের সাহায্যেই আলো-ছায়ার দিক বা বৈপরীত্যের অভিমুখ (Orientation ও Contrast) প্রকাশ করে। এর পরে ReLU প্রয়োগ করলে ঋণাত্মক সাড়াগুলো শূন্য হয়ে যায় ঠিকই, কিন্তু কাঁচা Convolution-এর নিজস্ব ফলাফল তার চেয়ে আলাদা এবং চিহ্নযুক্ত।"
+        },
+        {
+          "type": "vision_convolution_lab",
+          "title": "ইন্টারেক্টিভ Convolution Window ল্যাব",
+          "body": "এবার Target-training অংশের একটি বাস্তব হাতে লেখা অঙ্কের ছবির ওপর Sobel অথবা Average Filter বেছে নিন এবং আউটপুট গ্রিডের যেকোনো ঘরে ট্যাপ করুন। কমলা রঙে চিহ্নিত ঘরগুলো দেখাবে ইনপুটের ঠিক কোন অংশটুকু (Receptive Window) ওই আউটপুট তৈরি করছে, যেখানে ছবির সীমানার বাইরে শূন্য (Padding 0) ধরা হয়েছে। মনে রাখবেন, এখানে দেখানো Filter-গুলো বোঝার সুবিধার্থে আগে থেকে নির্ধারিত উদাহরণ, ট্রেনিংয়ে শেখা Model Filter নয়; নিচের Stride ও Padding বদলে আউটপুটের আকার কীভাবে পাল্টায় তা নিজে পরীক্ষা করে দেখুন।"
+        },
+        {
+          "type": "text",
+          "title": "Weight Sharing ও বাস্তব সীমাবদ্ধতা",
+          "body": "ছবির প্রতিটি অবস্থানের জন্য আলাদা Dense Weight শেখার বদলে একই বৈশিষ্ট্য-শনাক্তকারী (Detector) পুরো ছবি জুড়ে পুনর্ব্যবহার করার কৌশলটিই হলো Weight Sharing। তাত্ত্বিকভাবে এটি স্থানান্তরের সাপেক্ষে সামঞ্জস্য (Translation Equivariance) দেয়; তবে বাস্তব ছবিতে কিনারার Boundary প্রভাব, 1-এর চেয়ে বড় Stride এবং ছবির সসীম আকার এই Equivariance-কে পুরোপুরি নিখুঁত থাকতে দেয় না। এ ছাড়া মনে রাখবেন, একটি Convolution-এর আউটপুট দেখতে ছবির মতো হলেও তার আসল অর্থ নির্ভর করে ব্যবহৃত Filter, পরের Activation এবং পুরো নেটওয়ার্কের প্রেক্ষাপটের ওপর—সেটি মানুষের চোখে চেনা কোনো সুনির্দিষ্ট ধারণা বহন করবেই, এমন কোনো নিশ্চয়তা নেই।"
+        },
+        {
+          "type": "text",
+          "title": "কোডিং অনুশীলনের চ্যালেঞ্জ",
+          "body": "নিজের দক্ষতা যাচাই করতে সাধারণ Nested Loop দিয়ে ছোট একটি Cross-correlation ফাংশন লিখুন এবং তার আউটপুট সরাসরি F.conv2d-এর সাথে মিলিয়ে দেখুন। কোড লেখার সময় তিনটি পরিচিত বাগ আলাদাভাবে খেয়াল করবেন: অজান্তে Kernel উল্টে ফেলা, Padding-এর অফসেট ঠিকমতো হিসাব না করা এবং আউটপুট ইনডেক্সকে Stride দিয়ে গুণ করতে ভুলে যাওয়া। এমনকি একক চ্যানেলে সংখ্যার মান মিলে যাওয়ার পরেও একাধিক ইনপুট ও আউটপুট Channel সঠিকভাবে ম্যাপ হচ্ছে কি না, তা অবশ্যই পরীক্ষা করে দেখবেন।"
+        }
+      ]
+    },
+    {
+      "id": "ch18_geometry",
+      "title": "আউটপুটের জ্যামিতি: Stride, Padding এবং Dilation",
+      "subtitle": "Floor Division-এর নিয়ম এবং Effective Kernel Size নির্ণয়",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "আউটপুট Shape নির্ণয়ের সর্বজনীন সূত্র",
+          "body": "একটি Convolution Layer পেরোলে ছবির উচ্চতা ও প্রস্থ কত হবে, তা অনুমানের ওপর না রেখে নিখুঁত সূত্র দিয়ে বের করতে হয়। এজন্য Height এবং Width—দুই মাত্রায় আলাদাভাবে সূত্রটি বসাতে হবে, কারণ বাস্তবে Stride, Padding, Dilation এবং Kernel Size যেকোনোটিই Tuple আকারে (লম্বা ও চওড়ায় ভিন্ন মান) থাকতে পারে। সূত্রের মূল চাবিকাঠি হলো Effective Kernel Size, যার মান d(k - 1) + 1। বিশেষভাবে লক্ষ্য করুন, Dilation (d) বাড়ালে কিন্তু শেখার মতো Parameter-এর সংখ্যা একটুকুও বাড়ে না; এটি কেবল ইনপুটের যে ঘরগুলো থেকে মান নেওয়া হচ্ছে তাদের মধ্যবর্তী ফাঁকা দূরত্ব বাড়িয়ে দেয়।"
+        },
+        {
+          "type": "text",
+          "title": "8×8 ছবির ওপর তিনটি বাস্তব হিসাব",
+          "body": "সমীকরণটি দেখার আগে আমাদের পরিচিত 8×8 ছবির ওপর তিনটি উদাহরণ মিলিয়ে নিই (যেখানে d = 1)। যদি k = 3, s = 1, p = 0 হয়, তবে আউটপুট ছোট হয়ে দাঁড়ায় 6×6। চারপাশে এক ঘর Padding যোগ করলে (k = 3, s = 1, p = 1) আউটপুট অবিকল 8×8 থাকে। আর সেই অবস্থাতেই লাফের দৈর্ঘ্য বাড়িয়ে k = 3, s = 2, p = 1 করলে আউটপুট দাঁড়ায় 4×4। সূত্রের ভেতরে Floor Division থাকার কারণে ছবির শেষ প্রান্তে গিয়ে যদি পূর্ণ একটি জানালা বসানোর জায়গা না থাকে, তবে সেই আংশিক অংশটুকু বাদ পড়ে যায়। তাই Stride, Dilation ও ফ্রেমওয়ার্কের নিজস্ব শর্ত না দেখেই 'Same Padding দিলেই আকার সমান থাকবে'—এমন সরলীকরণ সব ক্ষেত্রে প্রয়োগ করবেন না।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "H_{out}=\\left\\lfloor{H+2p-d(k-1)-1\\over s}+1\\right\\rfloor,\\quad k_{eff}=d(k-1)+1"
+        },
+        {
+          "type": "code",
+          "title": "সূত্রের হিসাব এবং PyTorch Conv2d-এর আউটপুট Shape যাচাই",
+          "body": "import torch\nfrom torch import nn\n\nX = torch.zeros(1, 1, 8, 8)\nlayer = nn.Conv2d(1, 4, 3, stride=2, padding=1)\nassert layer(X).shape == (1, 4, 4, 4)\nheight = (8 + 2 * 1 - 1 * (3 - 1) - 1) // 2 + 1\nassert height == 4\nprint(height)\n"
+        },
+        {
+          "type": "text",
+          "title": "Stride বাড়ানোর সুবিধা ও ঝুঁকি",
+          "body": "Stride বাড়ালে ছবির স্থানিক রেজোলিউশন দ্রুত কমে এবং গণনার খরচও (Compute) অনেক বাঁচে। তবে বড় লাফ দেওয়ার ফলে ছবি থেকে তথ্য নেওয়ার ঘনত্ব কমে যায় এবং Aliasing-এর মতো আচরণ দেখা দিতে পারে—যার কারণে ছবি সামান্য সরলেও আউটপুট অপ্রত্যাশিতভাবে বদলে যাওয়ার ঝুঁকি থাকে। পুরো ছবির Class চেনার (Classification) কাজে রেজোলিউশন কমানো মানানসই হলেও সূক্ষ্ম অবস্থান নির্ণয়ের (Fine Localization) কাজে রেজোলিউশনের চাহিদা সম্পূর্ণ আলাদা।"
+        },
+        {
+          "type": "text",
+          "title": "Padding-এর নীতি ও কিনারার আচরণ",
+          "body": "ছবির সীমানার বাইরে ঠিক কী মান বসানো হবে—Zero, Reflection নাকি Replication—তার ওপর কিনারার আউটপুট নির্ভর করে। আমাদের মূল CNN এবং ইন্টারেক্টিভ ল্যাব উভয় জায়গাতেই Zero Padding = 1 ব্যবহার করা হয়েছে। মনে রাখা জরুরি যে, Padding দিয়ে ছবির আকার সমান রাখা গেলেও কিনারার ঘরগুলোর পরিসংখ্যান ছবির ভেতরের (Interior) স্বাভাবিক অংশের মতো থাকে না। আপনার মূল ডেটাতে ছবির কিনারা আসলে কী অর্থ বহন করে, সেটি বিবেচনা করেই Padding নীতি বেছে নেওয়া উচিত।"
+        },
+        {
+          "type": "text",
+          "title": "Dilation: অতিরিক্ত Weight ছাড়াই বড় দৃষ্টিসীমা",
+          "body": "নতুন কোনো Kernel Coefficient না বাড়িয়েই ফাঁকা ফাঁকা অবস্থান থেকে তথ্য নিয়ে বড় স্থানিক অঞ্চল (Field) দেখার চমৎকার উপায় হলো Dilation। তবে অতিরিক্ত Dilation ব্যবহারে কখনো কখনো ছকে কাটা দাগের মতো Gridding বা Sampling প্রভাব তৈরি হতে পারে। আমাদের এই অধ্যায়ের ছোট CNN-এ সাধারণ Dilation = 1 রাখা হয়েছে; উন্নত Dilated Segmentation মডেলের পারফরম্যান্স তুলনা এই পাঠের পরিসরের অন্তর্ভুক্ত নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এর জন্য জরুরি প্রস্তুতি",
+          "body": "Interview-এ ভালো করার জন্য যেকোনো Layer-এর আউটপুট Shape প্রথমে কোড না চালিয়ে খাতায় সূত্র বসিয়ে বের করার অভ্যাস করুন, তারপর কোডে assert দিয়ে তা মিলিয়ে নিন। নিজস্ব কোড লেখার সময় খেয়াল রাখবেন, Padding যোগ করার পরেও যদি Effective Kernel Size ইনপুটের চেয়ে বড় হয়ে যায়, তবে শুরুতেই সেই অবৈধ কনফিগারেশনটি আটকে দেওয়া উচিত। সবচেয়ে বড় শিক্ষা হলো—দুই Layer-এর মাঝে Tensor-এর মাত্রা মিলে যাওয়া মানেই কিন্তু আপনার উদ্দিষ্ট Sampling নীতি সঠিকভাবে বাস্তবায়িত হয়েছে—এমনটি ধরে নেওয়া যাবে না।"
+        }
+      ]
+    },
+    {
+      "id": "ch18_channels",
+      "title": "Channel, Filter এবং Parameter সংখ্যার হিসাব",
+      "subtitle": "ইনপুট Channel-এর প্রমাণ যোগ হয়, আউটপুট Feature Map স্তরে স্তরে সাজে",
+      "duration": "57 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "চতুর্মাত্রিক Filter-এর গঠন ও যোগের নিয়ম",
+          "body": "আগের পাঠে আমরা ছবির লম্বা ও চওড়ার হিসাব দেখেছি; এবার দেখা যাক একাধিক Channel থাকলে ভেতরে কী ঘটে। একটি Conv2d Layer-এর Weight Tensor-এর মাত্রা হয় [Cout, Cin / groups, kH, kW]। প্রতিটি আউটপুট Channel তৈরি করতে সংশ্লিষ্ট সব কটি ইনপুট Channel-এর Cross-correlation ফলাফল ঘর-বরাবর যোগ (Sum) করা হয় এবং শেষে ওই আউটপুট চ্যানেলের একটি Bias যোগ করা হয়; এরপর এরকম সব কটি আউটপুট ম্যাপ পরপর সাজিয়ে (Stack করে) পূর্ণ আউটপুট তৈরি হয়। ইনপুট চ্যানেলগুলো যোগ করার বদলে আলাদা রেখে দিলে পুরো Layer-এর গাণিতিক অর্থই বদলে যাবে! আমাদের অ্যাপের স্বতন্ত্র Dart কোডেও হুবহু এই যোগ করার নিয়মটি অনুসরণ করা হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "Backbone-এর 336 টি Parameter গোনার হিসাব",
+          "body": "এই গঠনটি জানা থাকলে যেকোনো Layer-এর মোট Parameter সংখ্যা মুহূর্তেই বের করা যায়। আমাদের মূল CNN-এর প্রথম Layer-এ ইনপুট চ্যানেল 1, আউটপুট চ্যানেল 4 এবং 3×3 Kernel (k = 3) থাকায় মোট Parameter হয় 4 × (1 × 9 + 1) = 40 টি। দ্বিতীয় Layer-এ ইনপুট চ্যানেল 4 থেকে আউটপুট চ্যানেল 8 এবং 3×3 Kernel হওয়ায় মোট Parameter দাঁড়ায় 8 × (4 × 9 + 1) = 296 টি। অর্থাৎ দুটি Layer মিলিয়ে আমাদের পুরো Backbone-এর মোট Parameter সংখ্যা 40 + 296 = 336 টি! দারুণ বিষয় হলো, ইনপুট ছবির আকার 8×8 থেকে অনেক বড় করলেও কিন্তু এই Convolution Weight-এর সংখ্যা একটুও বদলায় না—বদলায় কেবল মধ্যবর্তী Activation মেমোরি এবং গণনার পরিমাণ।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "P=C_{out}\\left({C_{in}\\over g}k_Hk_W+1\\right)\\quad\\text{with bias and groups }g"
+        },
+        {
+          "type": "code",
+          "title": "সাধারণ ও Depthwise Conv2d Layer-এর Parameter সংখ্যা যাচাই",
+          "body": "from torch import nn\n\nfirst = nn.Conv2d(1, 4, 3, bias=True)\nsecond = nn.Conv2d(4, 8, 3, bias=True)\nassert sum(p.numel() for p in first.parameters()) == 40\nassert sum(p.numel() for p in second.parameters()) == 296\ndepthwise = nn.Conv2d(4, 4, 3, groups=4)\nprint(sum(p.numel() for p in depthwise.parameters()))\n"
+        },
+        {
+          "type": "text",
+          "title": "1×1 Convolution কেন ব্যবহার করা হয়?",
+          "body": "স্থানিক জানালার আকার মাত্র 1×1 হলেও এই বিশেষ Convolution প্রতিটি Pixel অবস্থানে দাঁড়িয়ে একাধিক ইনপুট Channel-এর মধ্যে শেখা মিশ্রণ (Learned Mixing) ঘটায়। চ্যানেলের সংখ্যা বাড়ানো-কমানো (Channel Projection) এবং বড় মডেলে গণনা কমানোর Bottleneck তৈরিতে এটি দারুণ কাজের। তবে খেয়াল রাখবেন, এটি নিজে থেকে স্থানিক প্রতিবেশ বা চারপাশ মোটেও বাড়ায় না; আগের Layer পর্যন্ত যতটুকু Receptive Field ছিল, ঠিক ততটুকুই বজায় থাকে।"
+        },
+        {
+          "type": "text",
+          "title": "Groups এবং Depthwise Separable ধারণা",
+          "body": "সূত্রের groups Parameter-টি ইনপুট ও আউটপুট Channel-এর সংযোগগুলোকে সমান কয়েকটি দলে ভাগ করে দেয় (যেখানে Cin ও Cout উভয়কেই groups দিয়ে নিঃশেষে বিভাজ্য হতে হয়)। এর সবচেয়ে জনপ্রিয় রূপ হলো Depthwise Convolution, যেখানে groups = Cin ধরা হয়; এর সাথে একটি 1×1 Pointwise Mixing Layer জুড়ে দিলে তৈরি হয় Separable Block। তবে মনে রাখবেন, খাতায় Parameter সংখ্যা কম হওয়া মানেই সব ধরনের হার্ডওয়্যারে Model-টি দ্রুত চলবে এমন নয়—প্রকৃত গতি জানতে বাস্তব Kernel ও কাজের চাপের (Workload) ওপর Benchmark করা জরুরি।"
+        },
+        {
+          "type": "text",
+          "title": "Feature Map পড়ার সময় সতর্কতা",
+          "body": "Convolution থেকে বেরোনো আউটপুট Channel-গুলো হলো নেটওয়ার্কের শেখা গাণিতিক রূপান্তর—এগুলো কাঁচা ছবির মতো সরাসরি আলোর মাপ বা RGB রঙ নয়। কোনো Feature Map বিশ্লেষণ করার সময় সেটি ReLU-এর আগের ঋণাত্মক মানসহ Pre-activation নাকি পরের মান, এবং তার স্কেল ও Normalization কী, তা খেয়াল রাখতে হয়। কেবল একটি Filter বা Feature Map-এর দৃশ্যমান ছবি দেখেই মডেল কীভাবে সিদ্ধান্ত নিচ্ছে তার চূড়ান্ত কার্যকারণ (Causal Explanation) দাবি করা যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "নিজের হাতে হিসাব মেলান",
+          "body": "খাতায় হিসাব করে দেখুন: Cin = 4, Cout = 4, k = 3 হলে groups = 1 বনাম groups = 4-এর ক্ষেত্রে Parameter সংখ্যা কত দাঁড়ায়? যদি Bias বন্ধ (bias=False) করে দেওয়া হয়, তবে মোট সংখ্যা থেকে ঠিক Cout পরিমাণ কমে যাবে কেন? পাশাপাশি ব্যাখ্যা করুন—Parameter গোনার সূত্রে Batch Dimension এবং ছবির Width অনুপস্থিত থাকলেও ট্রেনিংয়ের মেমোরি খরচে তারা কেন বড় ভূমিকা রাখে।"
+        },
+        {
+          "type": "text",
+          "title": "Depthwise ও Pointwise-এর কাজ আলাদা করে দেখি",
+          "body": "চলুন দুই ইনপুট Channel-বিশিষ্ট একটিমাত্র Pixel-এর ছোট উদাহরণ দিয়ে পুরো তফাতটি হাতে-কলমে দেখি, যেখানে ইনপুট মান [1, 10]। প্রথমে Depthwise ধাপে 1×1 আকারের Weight [2, 3] প্রয়োগ করলে আমরা পাই [2, 30]—খেয়াল করুন, এই ধাপে দুটি ইনপুট Channel পরস্পরের সাথে একটুও মেশেনি। এরপর Pointwise ধাপে [4, 5] Weight দিয়ে একটি আউটপুট Channel-এ মেলালে পাই (4 × 2) + (5 × 30) = 158। এবার Parameter সাশ্রয়টিও দেখুন: Bias ছাড়া Cin = 2, Cout = 3, k = 3 হলে Depthwise-plus-pointwise গঠনে মোট Parameter লাগে 18 + 6 = 24 টি, অথচ সাধারণ Dense Convolution-এ লাগত 54 টি!"
+        },
+        {
+          "type": "code",
+          "title": "Channel আলাদা রাখা থেকে Channel মেশানো: Depthwise ও Pointwise কোড",
+          "body": "import torch\nimport torch.nn.functional as F\n\ninputs = torch.tensor([[[[1.0]], [[10.0]]]], dtype=torch.float64)\ndepthwise_weights = torch.tensor([2.0, 3.0], dtype=inputs.dtype).reshape(2, 1, 1, 1)\ndepthwise = F.conv2d(inputs, depthwise_weights, groups=2)\npointwise_weights = torch.tensor([4.0, 5.0], dtype=inputs.dtype).reshape(1, 2, 1, 1)\nmixed = F.conv2d(depthwise, pointwise_weights)\nseparable_count = 2 * 3 * 3 + 3 * 2\ndense_count = 3 * 2 * 3 * 3\nprint(*depthwise.flatten().tolist(), mixed.item(), separable_count, dense_count)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে ভেবে দেখুন",
+          "body": "54 টির বদলে মাত্র 24 টি Parameter দিয়ে যে সাশ্রয় হলো—এই কাঠামো দিয়ে কি সাধারণ Dense Convolution-এর সব সম্ভাব্য Kernel-কে হুবহু প্রকাশ করা যাবে?",
+          "solution": "না, সব Kernel-কে প্রকাশ করা সম্ভব নয়। কারণ Depthwise-plus-pointwise বিভাজনটি চ্যানেল সংযোগের ওপর একটি নির্দিষ্ট গাণিতিক কাঠামো আরোপ করে। প্রতিটি ইনপুট চ্যানেলে কেবল একটি করে Depthwise Filter থাকলে সাধারণ Dense Spatial-Channel Kernel-এর সব স্বাধীন সহগ (Independent Coefficients) একসাথে পাওয়া যায় না। তাই মডেল বেছে নেওয়ার সময় কেবল Parameter সংখ্যা না দেখে শেখার ক্ষমতা (Capacity), Activation মেমোরি এবং প্রকৃত কাজের গতি মেপে বিচার করতে হয়।",
+          "reference": "https://d2l.ai/"
+        }
+      ]
+    },
+    {
+      "id": "ch18_pooling",
+      "title": "Pooling ও স্থানান্তর (Translation): তথ্য কোথায় হারায়?",
+      "subtitle": "Max ও Average Window-এর আচরণ এবং নিখুঁত Invariance-এর ভুল ধারণা ভাঙা",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "আকার ছোট করার (Downsampling) মূল উদ্দেশ্য",
+          "body": "Pooling পাশাপাশি থাকা একটি ছোট অঞ্চলের সারসংক্ষেপ তৈরি করে স্থানিক আকার কমিয়ে আনে। Max Pooling জানালার ভেতরের সবচেয়ে শক্তিশালী মানটিকে ধরে রাখে, আর Average Pooling পুরো অংশের গড় তীব্রতা হিসাব করে। আউটপুটের আকার এবং কিনারার কোনো ঘর বাদ পড়বে কি না তা নির্ভর করে Window, Stride, Padding ও ceil_mode-এর ওপর। আমাদের মূল CNN আর্কিটেকচারে কোনো Pooling Padding ছাড়াই 2×2 জানালা এবং Stride = 2 ব্যবহার করা হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "সংকোচনের বিনিময়ে তথ্য হারানো (Information Loss)",
+          "body": "একটি 8×8 আকারের ম্যাপ কমে 4×4 হয়ে গেলে 64 টি মান থেকে টিকে থাকে মাত্র 16 টি মান! এই সংকুচিত আউটপুট থেকে মূল Patch-টিকে সাধারণত আর পুনরুদ্ধার করা সম্ভব নয়। Max Pooling সবচেয়ে বড় Activation-টিকে বাঁচিয়ে রাখলেও তার সুনির্দিষ্ট অবস্থান ও আশপাশের সূক্ষ্ম গঠন হারিয়ে ফেলে; অন্যদিকে Average Pooling সূক্ষ্ম বৈপরীত্যকে (Contrast) গড় করে মসৃণ করে দেয়। আপনার নির্দিষ্ট কাজে বস্তুর নিখুঁত অবস্থান জানা (Localization) কতটা জরুরি, তার ওপর ভিত্তি করেই এই Trade-off মূল্যায়ন করতে হয়।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "\\mathrm{maxpool}(X)_{ij}=\\max_{u,v\\in\\{0,1\\}}X_{2i+u,2j+v}"
+        },
+        {
+          "type": "code",
+          "title": "একটি 2×2 Patch-এ Max ও Average Pooling-এর তুলনা",
+          "body": "import torch\nimport torch.nn.functional as F\n\nX = torch.tensor([[1.0, 2.0], [3.0, 4.0]])[None, None]  # Illustration.\nassert F.max_pool2d(X, 2).item() == 4\nassert F.avg_pool2d(X, 2).item() == 2.5\nprint(F.max_pool2d(X, 2).shape)\n"
+        },
+        {
+          "type": "text",
+          "title": "স্থানান্তর ও নিখুঁত Invariance-এর সূক্ষ্ম সত্য",
+          "body": "অনেকেই ঢালাওভাবে বলে থাকেন যে Pooling ব্যবহার করলেই মডেল নিখুঁত Translation Invariance পেয়ে যায়—কিন্তু এই দাবিটি ভুল! Stride গ্রিডের সাপেক্ষে ছবিটি মাত্র 1 Pixel সরে গেলেই প্রতিটি জানালার ভেতরে কোন ঘরগুলো পড়ছে তার হিসাব বদলে যায়, ফলে Pooled মানগুলোও পাল্টে যেতে পারে। এর সাথে কিনারায় নতুন শূন্য বসা (Zero Fill) এবং অপর প্রান্তের Pixel কেটে বাদ পড়ার প্রভাব মিলে আউটপুটে আরও স্পষ্ট পার্থক্য তৈরি করে।"
+        },
+        {
+          "type": "vision_pooling_lab",
+          "title": "ইন্টারেক্টিভ Pooling ও Pixel Shift ল্যাব",
+          "body": "একটি বাস্তব ছবির ওপর Max ও Average Pooling চালিয়ে এবং ছবিটিকে ডানে 1 ঘর সরিয়ে (Right-shift 1) ফলাফল পর্যবেক্ষণ করুন। খেয়াল রাখবেন, এই সরানো মানে ঘুরিয়ে আনা (Wrap) নয়—বাম পাশের নতুন কলামে 0 বসছে এবং ডান কিনারার কলামটি বাদ পড়ছে। এটি আমাদের মূল ট্রেনিংয়ের কোনো Augmentation নয়; ছবি এভাবে সরালে আসল Label অক্ষুণ্ণ থাকে কি না, এই সংখ্যাগত ল্যাব তা যাচাই করে না।"
+        },
+        {
+          "type": "text",
+          "title": "Backpropagation-এ Gradient কোন পথে ফেরে?",
+          "body": "ট্রেনিংয়ের সময় Max Pooling-এর Gradient কেবল সেই ঘরটিতেই ফিরে যায় যেখান থেকে সর্বোচ্চ মানটি নির্বাচিত হয়েছিল (একাধিক ঘরে সমান মান বা Tie থাকলে ফ্রেমওয়ার্কের নিজস্ব নিয়ম কার্যকর হয়)। বিপরীতে Average Pooling-এ আউটপুটের Gradient জানালার সব কটি উপাদানের মধ্যে সমানভাবে ভাগ হয়ে যায়। আর জানালাগুলো পরস্পরের ওপর ওভারল্যাপ করলে একই ঘরে একাধিক জানালার অবদান এসে যোগ হয়। ছোট একটি সংখ্যাগত পরীক্ষা লিখে এই Gradient চলাচলের পথটি নিজেই যাচাই করে নিন।"
+        },
+        {
+          "type": "text",
+          "title": "কোডিং অনুশীলন ও বাস্তব শিক্ষা",
+          "body": "একটি 2×2 Patch-এর আউটপুট খাতায় হিসাব করে কোডের সাথে মিলিয়ে দেখুন। এরপর একই ছবিকে সামান্য সরিয়ে আউটপুটের সংখ্যাগত পার্থক্য মাপুন; খেয়াল রাখবেন, ছবি সরানোর পর শুধু চূড়ান্ত Predicted Class অপরিবর্তিত থাকলেই প্রমাণ হয় না যে পুরো মডেলটি গাণিতিকভাবে Invariant! আর মনে রাখবেন, Pooling Layer-এ শেখার মতো Parameter সংখ্যা 0 হলেও এর কিন্তু নিজস্ব গণনা ও মেমোরি খরচ ঠিকই রয়েছে।"
+        }
+      ]
+    },
+    {
+      "id": "ch18_receptive",
+      "title": "Receptive Field, Jump এবং স্থানিক যুক্তি",
+      "subtitle": "নেটওয়ার্কের গভীরের একটি আউটপুট মূল ছবির কতটুকু অঞ্চলের ওপর নির্ভর করে?",
+      "duration": "57 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "তাত্ত্বিক দৃষ্টিসীমা বা Receptive Field",
+          "body": "একের পর এক Convolution ও Pooling পেরিয়ে যাওয়ার পর গভীরের একটি আউটপুট ঘর আসলে মূল ছবির কত বড় অঞ্চলের তথ্যের ওপর নির্ভর করে? মূল ইনপুটের সেই সম্ভাব্য স্থানিক বিস্তৃতিকেই বলা হয় Receptive Field। তবে মনে রাখতে হবে, এটি কেবল তাত্ত্বিক সীমানা (Theoretical Extent) নির্দেশ করে—ওই অঞ্চলের প্রতিটি Pixel আউটপুটের ওপর সমান শক্তিতে প্রভাব ফেলছে, এমনটি বোঝায় না। প্রতিটি Layer-এর Kernel, Stride ও Dilation ব্যবহার করে একটি সরল পৌনঃপুনিক সম্পর্কের (Recurrence) মাধ্যমে এই বিস্তৃতি হিসাব করা যায়। আর ছবি সসীম আকারের হওয়ায় এবং কিনারায় Padding থাকায় সীমান্তবর্তী জানালাগুলোর Receptive Field-এর কিছু অংশ আসল ছবির বদলে কৃত্রিম শূন্যও (Artificial Zeros) হতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের মূল আর্কিটেকচারের হিসাব",
+          "body": "আমাদের মূল CNN-এর গঠনের কথাই ধরুন: Conv3 → Pool2 → Conv3 → Pool2। সূত্র বসিয়ে হিসাব করলে দেখা যায় চূড়ান্ত আউটপুটের তাত্ত্বিক বিস্তৃতি বা Receptive Extent দাঁড়ায় 10 এবং পাশাপাশি দুটি আউটপুটের মধ্যবর্তী লাফ বা Final Jump দাঁড়ায় 4। অথচ আমাদের ইনপুট ছবি কিন্তু মাত্র 8×8 আকারের! অর্থাৎ কিনারার জানালাগুলোর তাত্ত্বিক বিস্তৃতি মূল ছবির সীমানার বাইরে চলে যাচ্ছে। তাই Receptive Field = 10 পেলেই ধরে নেওয়া যাবে না যে একটি অক্ষে আসল ছবির 10 টি বাস্তব Pixel পর্যবেক্ষণ করা হয়েছে।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "r_l=r_{l-1}+(k_l-1)d_lj_{l-1},\\quad j_l=j_{l-1}s_l"
+        },
+        {
+          "type": "code",
+          "title": "আমাদের চার-স্তরের Backbone-এ Receptive Field ও Jump গণনা",
+          "body": "r, j = 1, 1  # Mathematical architecture accounting.\nfor kernel, stride in [(3, 1), (2, 2), (3, 1), (2, 2)]:\n    r = r + (kernel - 1) * j\n    j = j * stride\nassert (r, j) == (10, 4)\nprint(r, j)\n"
+        },
+        {
+          "type": "text",
+          "title": "গভীরতার প্রভাব: ছোট Kernel স্তরে স্তরে সাজানো",
+          "body": "একাধিক ছোট Kernel পরপর সাজিয়ে এবং মাঝখানে Nonlinear Activation রেখে অনেক বড় Receptive Field তৈরি করা যায়। তবে মনে রাখবেন, সমান স্থানিক বিস্তৃতি থাকলেই একটি বড় একক Kernel এবং একাধিক ছোট Kernel-এর স্তূপ গাণিতিকভাবে সবসময় একই প্রকাশক্ষমতা (Representational Equivalence) দেয় না—কারণ তাদের মধ্যবর্তী Activation এবং Channel মেশানোর প্রক্রিয়া সম্পূর্ণ আলাদা।"
+        },
+        {
+          "type": "text",
+          "title": "Flatten বনাম Global Average Pooling",
+          "body": "Backbone থেকে পাওয়া [8, 2, 2] আকারের ম্যাপকে Flatten করে 32 দৈর্ঘ্যের ভেক্টর বানালে ছবির স্থূল অবস্থানগত তথ্য (Coarse Position) Classifier-এর Weight-এর ভেতর সংরক্ষিত থাকে। অন্যদিকে Global Average Pooling প্রতিটি আউটপুট Channel-এর গড় নিয়ে অনেক ছোট Head তৈরি করে ঠিকই, কিন্তু এতে সুনির্দিষ্ট অবস্থানের তথ্য হারানোর একটি Trade-off থাকে। আমাদের বর্তমান মডেলে Flatten পদ্ধতিই রাখা হয়েছে, পর্দার আড়ালে কোনো নীরব আর্কিটেকচার পরিবর্তন করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "Equivariance বনাম Invariance-এর স্পষ্ট পার্থক্য",
+          "body": "ইনপুট ছবি সরে গেলে যদি ভেতরের Feature Map-ও অনুরূপভাবে সরে যায়, তাকে বলে Equivariance; আর ইনপুট সরালেও যদি চূড়ান্ত আউটপুট অবিকল একই থাকে, তাকে বলে Invariance। বাস্তব মডেলে Padding, Striding এবং Classifier Head—প্রতিটি অংশ এই আচরণকে কীভাবে প্রভাবিত করছে তা আলাদাভাবে পরীক্ষা করা দরকার। ছবির অসীম মধ্যভাগের গাণিতিক ধর্ম সসীম আকারের পুরো Classifier-এর জন্য স্বয়ংক্রিয়ভাবে সত্য থাকবে—এমন কোনো নিশ্চয়তা নেই।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে উপস্থাপন করবেন",
+          "body": "Interview-এ কোনো CNN ব্যাখ্যা করার সময় প্রতিটি Layer-এর Shape, Receptive Field এবং Jump সারণি আকারে পরিষ্কারভাবে লিখুন। ছবির আকার বাড়ালে নির্দিষ্ট আকারের Flatten Head কেন ভেঙে পড়বে তা ভেক্টরের মাত্রা দিয়ে বুঝিয়ে বলুন। পাশাপাশি উল্লেখ করুন যে, Adaptive Pooling ব্যবহার করে Shape-এর চুক্তি সহজে ঠিক রাখা গেলেও তা নিজে থেকে নতুন রেজোলিউশনে ভালো ফলাফলের নিশ্চয়তা দেয় না।"
+        },
+        {
+          "type": "text",
+          "title": "বিস্তৃতির ভেতরেই Dilation-এর ফাঁকা ঘর",
+          "body": "বিস্তৃতি (Extent) এবং প্রকৃত ব্যবহৃত ঘরের পার্থক্য বুঝতে Padding = 0 ধরে দুটি 1D Layer কল্পনা করুন: প্রথমটিতে kernel = 3, dilation = 2, stride = 2 এবং পরেরটিতে kernel = 3, dilation = 1, stride = 1। প্রথম Layer-এর প্রথম আউটপুটটি ইনপুটের {0, 2, 4} অবস্থানগুলো নেয়। দ্বিতীয় Layer-এর প্রথম আউটপুটটি প্রথম Layer-এর তিনটি অবস্থান নেওয়ায় মূল ইনপুটের ব্যবহৃত অফসেট দাঁড়ায় {0, 2, 4, 6, 8}। খেয়াল করুন, এখানে 0 থেকে 8 পর্যন্ত মোট Receptive Extent হলো 9, কিন্তু প্রকৃতপক্ষে অনন্য ইনপুট অবস্থান ব্যবহৃত হয়েছে মাত্র 5 টি! আর পরের আউটপুটে গেলে সব অফসেট 2 ঘর করে সরে যায়, তাই Jump হলো 2।"
+        },
+        {
+          "type": "code",
+          "title": "পৌনঃপুনিক সূত্র এবং প্রকৃত ব্যবহৃত ঘরের (Exact Support) তুলনা",
+          "body": "layers = [(3, 2, 2), (3, 1, 1)]  # kernel, stride, dilation\nsupport, extent, jump = {0}, 1, 1\nfor kernel, stride, dilation in layers:\n    support = {\n        offset + tap * dilation * jump for offset in support for tap in range(kernel)\n    }\n    extent += (kernel - 1) * dilation * jump\n    jump *= stride\nassert max(support) - min(support) + 1 == extent\nprint(*sorted(support), extent, len(support), jump)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে হিসাব করুন",
+          "body": "ছবিতে Padding যোগ করা হলে তাত্ত্বিক Receptive Extent কি সবসময় আসল ছবির পর্যবেক্ষণ করা Pixel-এর সংখ্যাই বোঝাবে?",
+          "solution": "না। Receptive Extent মূল স্থানাঙ্ক ব্যবস্থায় কেবল প্রথম থেকে শেষ সীমার মোট দৈর্ঘ্যটুকু (Span) নির্দেশ করে। ছবির কিনারায় সেই সীমার কিছু অবস্থান কৃত্রিম Padding হতে পারে। আবার Dilation-এর কারণে ওই সীমার মাঝখানেও অব্যবহৃত ফাঁকা ঘর থাকতে পারে। তাই আসল ছবির বৈধ পর্যবেক্ষণকৃত ঘরগুলো (Observed Support) জানতে প্রকৃত ইনডেক্স এবং ইনপুটের সীমানা মিলিয়ে পরীক্ষা করতে হবে।",
+          "reference": "https://d2l.ai/"
+        }
+      ]
+    },
+    {
+      "id": "ch18_backward",
+      "title": "Convolution-এর Backpropagation ও Shared Weight-এর পথ",
+      "subtitle": "একই Filter বারবার ব্যবহৃত হওয়ায় প্রতিটি Patch-এর অবদান কীভাবে যোগ হয়?",
+      "duration": "57 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Shared Weight-এর Derivative যেভাবে তৈরি হয়",
+          "body": "একটি Filter-এর প্রতিটি সহগ (Coefficient) ছবির সব কটি স্থানিক জানালায় বারবার ব্যবহৃত হয়। তাই Backpropagation-এর সময় তার মোট Gradient বের করতে হলে প্রতিটি স্থানিক পথ থেকে আসা Upstream Delta × সংশ্লিষ্ট ইনপুট ঘরের মান—এই সব কটি অবদান যোগ (Sum) করতে হয়। একইভাবে একাধিক ইনপুট Channel এবং পুরো Batch অক্ষ বরাবরও অবদানগুলো যোগ হয়; আর গড় Loss (Mean Loss) ব্যবহার করলে তার হর (Denominator) আগেই Upstream সংকেতের ভেতরে অন্তর্ভুক্ত থাকে।"
+        },
+        {
+          "type": "text",
+          "title": "ইনপুট ছবির Gradient ও Transposed Convolution",
+          "body": "আগের Layer-এ সংকেত ফেরানোর সময় একটি ইনপুট Pixel যদি পরস্পর ওভারল্যাপ করা একাধিক জানালার ভেতরে থাকে, তবে সব কটি জানালার Gradient ওই ঘরে এসে যোগ হয়। গাণিতিকভাবে Transposed Convolution এই রৈখিক অপারেটরের Transpose-এর সাথে সম্পর্কিত—তবে মনে রাখবেন, এটি মূল Convolution-এর সাধারণ গাণিতিক বিপরীত (Inverse) নয়! Stride ও আউটপুটের আকারের দ্ব্যর্থতা এড়াতে আর্কিটেকচার অনুযায়ী output_padding সঠিকভাবে পরিচালনা করতে হয়।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "{\\partial L\\over\\partial W_{uv}}=\\sum_{ij}{\\partial L\\over\\partial Y_{ij}}X_{is-p+u,js-p+v}"
+        },
+        {
+          "type": "code",
+          "title": "PyTorch Autograd-এ Shared Filter-এর Gradient যোগ হওয়ার প্রমাণ",
+          "body": "import torch\nimport torch.nn.functional as F\n\nX = torch.arange(1, 10, dtype=torch.float64).reshape(1, 1, 3, 3)  # Illustration.\nW = torch.ones(1, 1, 2, 2, dtype=torch.float64, requires_grad=True)\n# Backward accumulates into .grad; the seed or reduction sets the scale.\nF.conv2d(X, W).sum().backward()\nassert W.grad[0, 0, 0, 0].item() == 1 + 2 + 4 + 5\nprint(W.grad.tolist())\n"
+        },
+        {
+          "type": "text",
+          "title": "Pooling, ReLU এবং Frozen অংশের Gradient আচরণ",
+          "body": "পেছনে ফেরার পথে Max Pooling কেবল নির্বাচিত সর্বোচ্চ ঘরের অবস্থানে সংকেত পাঠায়, আর Average Pooling তা সমানভাবে ছড়িয়ে দেয়; অন্যদিকে নিষ্ক্রিয় ReLU ঘরের স্থানীয় দরজা 0 থাকে। আপনি যদি Backbone-কে Freeze করেন, তবে তার নিজস্ব Parameter Gradient-গুলো None থাকতে পারে—কিন্তু ইনপুট ছবির সাপেক্ষে Gradient প্রয়োজন হলে কম্পিউটেশন গ্রাফের উদ্দেশ্য আলাদাভাবে সচল রাখতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Finite Differences দিয়ে সংখ্যাগত যাচাই",
+          "body": "ছোট ও মসৃণ একটি float64 উদাহরণে নির্দিষ্ট কোনো Convolution Weight সামান্য পরিবর্তন (Perturb) করে সংখ্যাগত Derivative বের করুন এবং Autograd-এর Gradient-এর সাথে মিলিয়ে দেখুন। তবে সতর্ক থাকবেন: ReLU-এর বাঁক (Kink) বা Max Pooling-এ সমান মানের (Tie) কাছাকাছি বিন্দুতে সংখ্যাগত Derivative-এর মসৃণতার অনুমান ভেঙে পড়তে পারে। পরীক্ষার সময় ব্যবহৃত Tolerance এবং নির্বাচিত ডেটা পয়েন্ট দুটিই নথিভুক্ত রাখুন।"
+        },
+        {
+          "type": "text",
+          "title": "Frozen Feature ও মোড নিয়ন্ত্রণের সূক্ষ্ম পার্থক্য",
+          "body": "মনে রাখবেন, requires_grad = False কেবল নির্দিষ্ট Parameter-গুলোর Derivative গণনা বন্ধ করে। কিন্তু BatchNorm ও Dropout কেমন আচরণ করবে তা নিয়ন্ত্রণ করে eval() মোড—এটি সম্পূর্ণ পৃথক একটি বিষয়! এ ছাড়া ট্রেনিং দ্রুত করতে যদি Detached Frozen Feature ক্যাশ করে কেবল Head ট্রেন করা হয়, তবে র‍্যান্ডম Augmentation বা মডেলের ভেতরের দৈব আচরণ (Stochasticity) থাকলে সেই ক্যাশের বৈধতা আর প্রতি Epoch-এ নতুন বৈচিত্র্য পাওয়ার সমান থাকে না।"
+        },
+        {
+          "type": "text",
+          "title": "কোডিং অনুশীলনের লক্ষ্য",
+          "body": "স্পষ্ট লুপ (Explicit Loops) লিখে একটি 2×2 Filter-এর যেকোনো একটি সহগের Derivative হাতে-কলমে বের করুন। খেয়াল রাখবেন, Weight-sharing-এর কারণে অবদানগুলো যোগ (sum) না করে কেউ ভুল করে গড় (mean) নিলে আপনার টেস্ট যেন সেই বাগ ধরে ফেলে। পুরো কোডে মডেলের Parameter-এর অভিমুখ এবং Cross-correlation প্রথা একই রাখুন।"
+        },
+        {
+          "type": "text",
+          "title": "চারটি আউটপুট থেকে Filter ও Input Gradient-এর পূর্ণ হিসাব",
+          "body": "ধরুন ইনপুট ছবি [[1, 2, 3], [4, 5, 6], [7, 8, 9]], Filter [[1, 0], [0, -1]], এবং stride = 1 ও padding = 0। এখানে চারটি আউটপুট ঘরের মানই আসে -4, এবং আমাদের Loss হলো চারটি আউটপুটের যোগফল (sum)। ফলে dW-এর প্রথম ঘরটি চারটি জানালার বাম-ওপরের ইনপুটগুলো যোগ করে পায় 1 + 2 + 4 + 5 = 12; বাকি তিনটি ঘরে যোগফল হয় 16, 24 এবং 28। অন্যদিকে ইনপুট ছবির ঠিক মাঝখানের ঘরটি (5) দুটি জানালা থেকে দুটি বিপরীত চিহ্নের Kernel অবদান (+1 এবং -1) পাওয়ায় তার মোট Gradient হয়ে যায় ঠিক 0!"
+        },
+        {
+          "type": "code",
+          "title": "Unfold এবং Autograd দিয়ে Filter ও Input Gradient যাচাই",
+          "body": "import torch\nimport torch.nn.functional as F\n\nimage = (\n    torch.arange(1.0, 10.0, dtype=torch.float64).reshape(1, 1, 3, 3).requires_grad_()\n)\nkernel = torch.tensor(\n    [[[[1.0, 0.0], [0.0, -1.0]]]], dtype=image.dtype, requires_grad=True\n)\noutput = F.conv2d(image, kernel)\nimage_gradient, kernel_gradient = torch.autograd.grad(output.sum(), (image, kernel))\nwindows = F.unfold(image.detach(), kernel_size=2)\nmanual_output = kernel.detach().flatten() @ windows[0]\ntorch.testing.assert_close(output.flatten(), manual_output)\ntorch.testing.assert_close(kernel_gradient.flatten(), windows.sum(dim=(0, 2)))\nreference_image_gradient = torch.tensor(\n    [[1.0, 1.0, 0.0], [1.0, 0.0, -1.0], [0.0, -1.0, -1.0]], dtype=image.dtype\n)\ntorch.testing.assert_close(image_gradient[0, 0], reference_image_gradient)\nprint(\n    *output.flatten().tolist(),\n    *kernel_gradient.flatten().tolist(),\n    image_gradient[0, 0, 1, 1].item()\n)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে হিসাব করুন",
+          "body": "Loss যদি চারটি আউটপুটের যোগফলের (sum) বদলে তাদের গড় (mean) হতো, তবে ওপরের দুটি Gradient কীভাবে বদলাত?",
+          "solution": "চারটি আউটপুটের গড় নিলে প্রতিটি আউটপুটে Upstream Derivative হতো 1/4। ফলে dW এবং dInput দুটোই এখানে 4 দিয়ে ভাগ হয়ে যেত। তবে যেহেতু Kernel-টি পুরো ছবিতে Shared, তাই একই Weight-এর সব স্থানিক জানালার অবদান আগের মতোই পরস্পর যোগ হতো।",
+          "reference": "https://d2l.ai/"
+        }
+      ]
+    },
+    {
+      "id": "ch18_architecture",
+      "title": "আমাদের Tiny CNN: Feature Extractor ও Classifier Head",
+      "subtitle": "মোট 501 টি Parameter-এর নিখুঁত Shape ও কাজের হিসাব",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন এই ছিমছাম আর্কিটেকচার?",
+          "body": "ছোট 8×8 আকারের ছবি এবং সাধারণ CPU-তে সম্পূর্ণ অফলাইন চালনার কথা মাথায় রেখেই এই Tiny CNN বেছে নেওয়া হয়েছে। এটি কোনো গবেষণাপত্রের বিশাল State-of-the-art OCR মডেল নয়; বরং দুটি Conv2d/ReLU/MaxPool2d ব্লক এবং পাঁচ-ক্লাসের একটি Linear Head দিয়েই এর মূল কলকব্জাগুলো সম্পূর্ণ স্বচ্ছভাবে তুলে ধরা সম্ভব। নেটওয়ার্কের জটিলতা বাড়ানোর আগে প্রতিটি স্তরের পুঙ্খানুপুঙ্খ হিসাব (Audit) বোঝা অপরিহার্য।"
+        },
+        {
+          "type": "text",
+          "title": "501 টি Parameter-এর নিখুঁত হিসাব",
+          "body": "আমাদের Backbone-এর দুটি স্তরে রয়েছে 40 + 296 = 336 টি Parameter, আর শেষের Linear Head-এ রয়েছে (32 × 5) + 5 = 165 টি Parameter—সব মিলিয়ে মোট 501 টি Parameter! পরের Transfer Learning পরীক্ষায় Frozen শাখায় ট্রেন হবে কেবল Head-এর 165 টি Parameter, আর Fine-tune শাখায় আপডেট হবে পুরো 501 টিই। খেয়াল রাখবেন, Batch Size কিংবা স্থানিক Feature Tensor-এর ঘরের সংখ্যাকে যেন কখনোই মডেলের এই Parameter সংখ্যার সাথে গুলিয়ে ফেলা না হয়।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "[B,1,8,8]\\to[B,4,8,8]\\to[B,4,4,4]\\to[B,8,4,4]\\to[B,8,2,2]\\to[B,5]"
+        },
+        {
+          "type": "code",
+          "title": "PyTorch-এ 501 Parameter-এর Tiny CNN ও তার Shape যাচাই",
+          "body": "import torch\nfrom torch import nn\n\nbackbone = nn.Sequential(\n    nn.Conv2d(1, 4, 3, padding=1),\n    nn.ReLU(),\n    nn.MaxPool2d(2),\n    nn.Conv2d(4, 8, 3, padding=1),\n    nn.ReLU(),\n    nn.MaxPool2d(2),\n)\nhead = nn.Linear(32, 5)\nX = torch.zeros(1, 1, 8, 8)\nfeatures = backbone(X)\nlogits = head(features.flatten(1))\nassert features.shape == (1, 8, 2, 2) and logits.shape == (1, 5)\nassert (\n    sum(p.numel() for p in backbone.parameters())\n    + sum(p.numel() for p in head.parameters())\n    == 501\n)\n"
+        },
+        {
+          "type": "text",
+          "title": "কাঁচা Logits ও Label Mapping-এর চুক্তি",
+          "body": "পরস্পর-বর্জনশীল (Mutually Exclusive) 5 টি Target Class-এর জন্য মডেলটি দেয় [B, 5] আকারের কাঁচা Logits, আর Label থাকে [B] আকারের পূর্ণসংখ্যা (0 থেকে 4) হিসেবে। CrossEntropyLoss সরাসরি কাঁচা Logits গ্রহণ করে; কেবল মূল্যায়নের সময় ক্লাসের Probability দরকার হলে আমরা Softmax নিই। যেহেতু আমাদের Target Task-এর আসল অঙ্কগুলো হলো 5..9, তাই ট্রেনিংয়ের আগে সেগুলোকে 0..4 পাল্লায় নামিয়ে আনতে হয় এবং argmax বের করার পর আবার 5 যোগ করে মূল অঙ্কে ফিরিয়ে নেওয়া হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Flatten-এর ক্রম ও নির্দিষ্ট ইনপুট আকারের শর্ত",
+          "body": "Backbone-এর আউটপুট Flatten করার সময় ক্রম থাকে Channel → Row → Column, এবং আমাদের অ্যাপের স্বতন্ত্র Dart কোডেও ঠিক একই ক্রম মানা হয়েছে। খেয়াল করুন, 8×8 ইনপুট চুক্তির বদলে অন্য কোনো ইচ্ছেমতো রেজোলিউশনের ছবি দিলে পুলিং শেষে আর 32 টি Head ইনপুট তৈরি নাও হতে পারে। ছবি জোর করে Resize করা হলে আর্কিটেকচারের আকার মেলানো এবং মূল ছবির তথ্য অক্ষুণ্ণ রাখা—এই দুটি সম্পূর্ণ আলাদা বিষয় হয়ে দাঁড়ায়।"
+        },
+        {
+          "type": "text",
+          "title": "আধুনিক আর্কিটেকচারের সম্প্রসারণ",
+          "body": "বড় ভিশন মডেলগুলোতে Residual Skip Path যোগ করলে গভীর নেটওয়ার্কের Optimization ও পুরোনো Feature পুনর্ব্যবহার সহজ হয়, আর Depthwise ব্লক গণনার খরচে নতুন Trade-off এনে দেয়। বাস্তবে ResNet বা MobileNet-এর মতো মডেল ব্যবহারের সময় তাদের অফিশিয়াল ডকুমেন্টেশন অনুযায়ী নির্দিষ্ট Weight Preprocessing ও ইনপুট চুক্তি মেনে চলতে হয়; এই অধ্যায়ে সেসব বড় মডেলের আলাদা কোনো Benchmark ট্রেন করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "নিজের হাতে পরীক্ষা করুন",
+          "body": "মডেলে Hook বসিয়ে অথবা ধাপে ধাপে চালিয়ে প্রতিটি স্তরের পূর্ণ Shape Trace লিখে ফেলুন। Batch = 1, সসীম Pixel মান এবং ক্লাস ম্যাপিংয়ের সঠিকতা টেস্ট দিয়ে যাচাই করুন। বিশেষ সতর্কতা: ভুল ক্রমে Flatten করলেও কিন্তু Head-এর আকার 32-ই থাকবে এবং কোনো Shape Error আসবে না—তাই মধ্যবর্তী Feature এবং রেফারেন্স Logits মিলিয়েই এ ধরনের সূক্ষ্ম বাগ ধরতে হয়!"
+        }
+      ]
+    },
+    {
+      "id": "ch18_augmentation",
+      "title": "Data Augmentation: রূপান্তর কি ছবির অর্থ অক্ষুণ্ণ রাখছে?",
+      "subtitle": "ট্রেনিংয়ে নিয়ন্ত্রিত বৈচিত্র্য এবং মূল্যায়নে স্থির ধারাবাহিকতা",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Augmentation-এর আসল উদ্দেশ্য ও শর্ত",
+          "body": "বাস্তব পরিবেশে আলো বা অবস্থানের যে স্বাভাবিক কিন্তু অপ্রাসঙ্গিক তারতম্য (Nuisance Variation) ঘটে, তা সহ্য করার সক্ষমতা মডেলকে শেখাতে পারে Data Augmentation। তবে সবার আগে যাচাই করতে হবে রূপান্তরটি আসল Label অক্ষুণ্ণ রাখছে কি না (Label-preserving Assumption)। হাতে লেখা অঙ্ক ঘুরিয়ে বা উল্টে ফেললে তার অর্থই পাল্টে যেতে পারে—তাই সাধারণ প্রাকৃতিক ছবির রেসিপি এখানে অন্ধভাবে কপি করা চলে না। তা ছাড়া অতি ছোট 8×8 রেজোলিউশনে Crop বা Resize করলে গুরুত্বপূর্ণ তথ্য হারিয়ে যাওয়ার ঝুঁকি অনেক বেশি।"
+        },
+        {
+          "type": "text",
+          "title": "Training বনাম Validation-এর নীতি",
+          "body": "দৈব বা Stochastic Augmentation কেবল Training ধাপে চালানো এবং Validation ও Test ধাপে সুনির্দিষ্ট ও অপরিবর্তনীয় (Deterministic) Preprocessing রাখাই হলো আদর্শ প্রকৌশল নীতি। কখনো Test-time Augmentation ব্যবহার করলে কীভাবে একাধিক আউটপুট একত্র করা হবে এবং মূল্যায়ন নকশা কী হবে তা আগেভাগে স্পষ্ট করতে হয়। আমাদের এই অধ্যায়ের মূল ট্রেনিংয়ে কোনো Augmentation ব্যবহৃত হয়নি; ইন্টারেক্টিভ ল্যাবে কেবল স্থানান্তরের (Shift) গাণিতিক প্রক্রিয়াটি দেখানো হয়েছে।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "\\min_\\theta E_{(x,y),T}\\left[\\ell(f_\\theta(T(x)),y)\\right]"
+        },
+        {
+          "type": "code",
+          "title": "বাস্তব অঙ্কের ছবিতে Zero-fill স্থানান্তর (Shift) প্রয়োগ",
+          "body": "from pathlib import Path\nimport numpy as np, torch\n\nraw = np.loadtxt(Path(\"assets/datasets/digits/digits.csv.gz\"), delimiter=\",\")[\n    0, :64\n].reshape(8, 8)\nimage = torch.tensor(raw, dtype=torch.float64) / 16\nshifted = torch.zeros_like(image)\nshifted[:, 1:] = image[:, :-1]\nassert torch.count_nonzero(shifted[:, 0]).item() == 0\nprint(\n    \"Actual source image, declared zero-fill transform; label validity is task-specific.\"\n)\n"
+        },
+        {
+          "type": "text",
+          "title": "ছবির সাথে Label-এর যুগপৎ রূপান্তর (Coupled Transforms)",
+          "body": "Segmentation Mask, Bounding Box বা Keypoint শনাক্তকরণের কাজে ছবির ওপর যে স্থানিক রূপান্তর চালানো হয়, ঠিক সেই একই রূপান্তর তার Label বা স্থানাঙ্কের ওপরেও প্রয়োগ করতে হয়। এমনকি সাধারণ Classification-এও যে Label আপনাআপনি অক্ষুণ্ণ থাকবে, তার কোনো নিশ্চয়তা নেই। ব্যবহৃত Interpolation পদ্ধতি, কিনারায় ভরার মান (Fill Value) এবং Cropping নীতি—সবই উৎস ডেটার অর্থ বদলে দিতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "দৈব আচরণ (Randomness) ও ক্যাশ করার সীমাবদ্ধতা",
+          "body": "ফলাফল পুনরুৎপাদনযোগ্য (Reproducible) রাখতে হলে রূপান্তর পাইপলাইনেও নির্দিষ্ট Seed থাকা চাই—পাশাপাশি DataLoader Worker-এর RNG, স্যাম্পল নেওয়ার ক্রম এবং Epoch-এর অবস্থা নথিভুক্ত রাখা জরুরি। আরেকটি সূক্ষ্ম বিষয় খেয়াল রাখুন: Frozen Feature যদি একবার হিসাব করে ক্যাশ করে রাখা হয়, তবে র‍্যান্ডম Augmentation-এর একটিমাত্র রূপই স্থায়ী হয়ে যায়—প্রতিটি Epoch-এ নতুন নতুন রূপান্তর দেখার সমতুল্য তা কখনোই নয়!"
+        },
+        {
+          "type": "text",
+          "title": "Normalization ও রূপান্তরের ক্রম সংবেদনশীলতা",
+          "body": "কাঁচা Pixel রূপান্তর, Interpolation এবং কিনারায় শূন্য বসানোর অর্থ ঠিক কোন ক্রমে চালানো হচ্ছে তার ওপর দারুণভাবে নির্ভরশীল। Pretrained Weight ব্যবহার করলে তার অফিশিয়াল Transform ক্রম হুবহু অনুসরণ করুন। আমাদের এই ডিজিট প্রজেক্টে কেবল জানা সর্বোচ্চ মান 16 দিয়ে ভাগ করা হয়েছে; কোনো ImageNet গড়/বিচ্যুতি বা 255 ভাগফল ব্যবহৃত হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "কোডিং অনুশীলন ও প্রমাণের পার্থক্য",
+          "body": "কোডে বাম পাশে শূন্য বসানো Zero-fill Shift এবং কিনারা ঘুরিয়ে আনা torch.roll Wrap-around পাশাপাশি তুলনা করে দেখুন। পাশাপাশি পরীক্ষা করুন আপনার রূপান্তর কোড মূল উৎস Tensor-কে অজান্তে In-place বদলে দিচ্ছে কি না। মনে রাখবেন, রূপান্তরিত ছবি চোখে দেখতে বিশ্বাসযোগ্য লাগা এবং মূল্যায়নে প্রকৃত কার্যকারিতা প্রমাণিত হওয়া—দুটি আলাদা বিষয়; কেবল রূপান্তরের নাম থাকলেই তা সঠিক হয়ে যায় না।"
+        }
+      ]
+    },
+    {
+      "id": "ch18_book_vision_shift",
+      "title": "Vision Robustness: Label-preserving রূপান্তর ও Domain Shift",
+      "subtitle": "ছবির অর্থ অক্ষুণ্ণ রাখার শর্ত এবং বাস্তব পরিবেশের পরিবর্তনে মডেলের টিকে থাকার পরীক্ষা",
+      "duration": "18 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ধারণাটি কেন এত জরুরি?",
+          "body": "একটি ছবির রূপান্তর আপাতদৃষ্টিতে নিরীহ মনে হলেও তা নিঃশব্দে আসল Label পাল্টে দিতে পারে! হাতে লেখা অঙ্ক 6 উল্টে গেলে 9 হয়ে যায়, মেডিকেল এক্স-রে ছবি বাম-ডান উল্টে দিলে অঙ্গের দিক (Laterality) ভুল হয়ে যায়, আর রাস্তার সাইনবোর্ড অসতর্কভাবে Crop করলে জরুরি লেখাই কেটে যেতে পারে। তাই Augmentation কেবল ট্রেনিং সেটে বাড়তি কিছু উদাহরণ যোগ করার কৌশল নয়; বরং এটি আমাদের সুস্পষ্ট ঘোষণা যে ঠিক কোন কোন পরিবর্তনের সাপেক্ষে আমরা মডেলকে অপরিবর্তনীয় (Invariant) হিসেবে গড়ে তুলতে চাই।"
+        },
+        {
+          "type": "text",
+          "title": "ধাপে ধাপে নিরাপদ মূল্যায়ন পদ্ধতি",
+          "body": "প্রথমেই আপনার নির্দিষ্ট সমস্যার প্রকৃতি বুঝে অনুমোদিত রূপান্তরগুলোর সুস্পষ্ট তালিকা তৈরি করুন। Training ধাপে সেই বৈধ র‍্যান্ডম Augmentation ব্যবহার করুন, কিন্তু Validation ও Test ধাপে রাখুন সুনির্দিষ্ট ও নথিভুক্ত Deterministic Preprocessing। মডেল কতটা টেকসই তা মাপতে পরিষ্কার (Clean) ডেটার পাশাপাশি পূর্বনির্ধারিত বিকৃতি বা পরিবর্তিত অংশে (Corruption Slices) আলাদাভাবে স্কোর হিসাব করুন। আর কড়া নজর রাখুন যেন একই মূল ছবি থেকে তৈরি রূপান্তরিত কপিগুলো কখনোই Split-এর দুই পাশে ছড়িয়ে না পড়ে—নইলে Near-duplicate Data Leakage ঘটে পুরো মূল্যায়নই ভণ্ডুল হয়ে যাবে!"
+        },
+        {
+          "type": "math",
+          "title": "কাঙ্ক্ষিত Invariance এবং Shift-জনিত ত্রুটির ব্যবধান",
+          "body": "\\text{desired invariance: }P(y\\mid x)\\approx P(y\\mid T(x)),\\qquad \\Delta=R_{shift}-R_{clean}"
+        },
+        {
+          "type": "text",
+          "title": "খাতাকলমে একটি ছোট উদাহরণ",
+          "body": "Robustness-এর পাটিগণিতটি বোঝার জন্য চারটি ছবির একটি ছোট উদাহরণ দেখা যাক: ধরুন পরিষ্কার (Clean) অবস্থায় চারটি Prediction-এ মডেল 1 টি ভুল করেছে, আর পরিবর্তিত (Shifted) অবস্থায় ঠিক ওই সেটেই ভুল বেড়ে দাঁড়িয়েছে 2 টিতে। ফলে Error Rate 0.25 থেকে বেড়ে হলো 0.5, এবং অবনতির ব্যবধান (Gap) দাঁড়াল 0.25। খেয়াল রাখবেন, এটি কেবল হিসাবের নিয়ম বোঝানোর একটি উদাহরণ—আমাদের বাস্তব ডিজিট পরীক্ষার ফলাফল নয়।"
+        },
+        {
+          "type": "code",
+          "title": "যুগ্ম (Paired) উদাহরণে Clean বনাম Shifted ত্রুটির হিসাব",
+          "body": "labels = [0, 1, 0, 1]\nclean_predictions = [0, 1, 1, 1]\nshifted_predictions = [1, 0, 0, 1]\n\n\ndef error_rate(predictions):\n    return sum(y != p for y, p in zip(labels, predictions)) / len(labels)\n\n\n# Paired examples preserve identity; only the input condition differs.\nclean, shifted = error_rate(clean_predictions), error_rate(shifted_predictions)\nprint(clean, shifted, shifted - clean)\n"
+        },
+        {
+          "type": "text",
+          "title": "কোডের ফলাফল আমাদের কী শেখাচ্ছে?",
+          "body": "কোডটি চালালে আমরা আউটপুট পাই 0.25, 0.5 এবং ব্যবধান 0.25। এখানে একই উৎস ছবির পরিচয় (Source IDs) অক্ষুণ্ণ রেখে শুধুমাত্র ইনপুটের অবস্থা বদলে যুগ্ম বিশ্লেষণ (Paired Analysis) করা হয়েছে। তবে শর্ত একটাই: প্রযুক্ত রূপান্তরটি যদি ছবির আসল অর্থ বা Label-ই বদলে দিয়ে থাকে, তবে পুরোনো Label ধরে এভাবে ত্রুটির মেট্রিক হিসাব করা সম্পূর্ণ ভুল হবে।"
+        },
+        {
+          "type": "text",
+          "title": "কখন এই মূল্যায়ন তার গ্রহণযোগ্যতা হারায়?",
+          "body": "আপনি যদি সংরক্ষিত Test Corruption সেটের স্কোর বারবার দেখে সেই অনুযায়ী নিজের Augmentation টিউন করতে থাকেন, তবে ওই Robustness সেটটি কার্যত একটি সাধারণ Development সেটে পরিণত হয় এবং নিরপেক্ষ পরীক্ষার মর্যাদা হারায়। পাশাপাশি মনে রাখবেন, ছোট 8×8 অঙ্কের ছবিতে কোনো কৌশল সফল হওয়া মানেই উচ্চ-রেজোলিউশনের ক্লিনিক্যাল ডায়াগনসিস বা স্বয়ংচালিত গাড়ির (Autonomous Driving) নির্ভরযোগ্যতা প্রমাণিত হওয়া নয়।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে ভেবে উত্তর দিন",
+          "body": "একটি হাতে লেখা অঙ্কের Classifier এবং একটি উপগ্রহ চিত্রের (Satellite Image) Classifier—উভয়ের জন্য দুটি করে বৈধ (Valid) এবং ঝুঁকিপূর্ণ (Risky) Augmentation লিখুন।",
+          "solution": "হাতে লেখা অঙ্কের ক্ষেত্রে সামান্য স্থানান্তর (Small Translation) বা হালকা উজ্জ্বলতার তারতম্য বৈধ হতে পারে, কিন্তু 180° ঘোরানো বা Horizontal Flip ঝুঁকিপূর্ণ। অন্যদিকে উপগ্রহ চিত্রের কাজে দিক-নিরপেক্ষ ঘোরানো (Orientation Invariance) বৈধ কি না তা নির্দিষ্ট সমস্যার ওপর নির্ভর করে; আর সময় বা ঋতু পরিবর্তনের মতো রঙের বদল আসল Label বা Target-এর অর্থ পাল্টে দেয় কি না, তা অবশ্যই সংশ্লিষ্ট ডোমেইন বিশেষজ্ঞকে দিয়ে যাচাই করতে হবে।",
+          "reference": "https://d2l.ai/chapter_computer-vision/image-augmentation.html"
+        }
+      ]
+    },
+    {
+      "id": "ch18_splits",
+      "title": "Vision Data Leakage এবং সঠিক Split Unit",
+      "subtitle": "ডুপ্লিকেট ছবি, লেখকের পরিচয় এবং পুরোনো Benchmark ডেটার পুনর্ব্যবহার",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ভিশন ডেটায় Leakage ঘটার আসল এককগুলো",
+          "body": "একই বড় ছবির একাধিক Crop, হুবহু ডুপ্লিকেট, একই ভিডিওর পরপর ফ্রেম কিংবা একই লেখক বা রোগীর একাধিক নমুনা যদি সাধারণ র‍্যান্ডম Split দিয়ে ভাগ করা হয়, তবে মূল্যায়নের স্কোর কৃত্রিমভাবে ফুলে-ফেঁপে উঠতে পারে। তাই নির্দিষ্ট কাজের প্রকৃতি বুঝে সঠিক Group, Time বা Domain Split বেছে নেওয়া জরুরি। মনে রাখবেন, কাঁচা Pixel-এর হ্যাশ (Hash) কেবল শতভাগ অভিন্ন ছবিগুলোকে একই দলে রাখে—সামান্য পরিবর্তিত Near-duplicate ছবি কিংবা লেখকের অভিন্ন পরিচয়ের সমস্যার সমাধান কেবল হ্যাশ দিয়ে হয় না।"
+        },
+        {
+          "type": "text",
+          "title": "ঐতিহাসিক ডেটার উৎস ও আমাদের সীমানা",
+          "body": "scikit-learn-এ থাকা এই 1797 টি ছবি মূলত মূল UCI ডেটাসেটের ঐতিহাসিক Test অংশ। আমাদের এই অধ্যায়ে সেখান থেকেই নতুন ডায়াগনস্টিক Train ও Validation ভাগ তৈরি করা হয়েছে; মূল UCI-এর 5620 টি ট্রেনিং ছবির প্রোটোকল এখানে পুনরুৎপাদন করা হয়নি। তাই আগের কোনো Benchmark-এর Test অংশে মডেল ট্রেন করে প্রাপ্ত নম্বরকে প্রামাণ্য Held-out স্কোর হিসেবে দাবি করা যাবে না।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "\\mathrm{groups}(\\mathcal D_{train})\\cap\\mathrm{groups}(\\mathcal D_{val})=\\varnothing"
+        },
+        {
+          "type": "code",
+          "title": "SHA-256 হ্যাশ গ্রুপ ও StratifiedGroupKFold দিয়ে নিরাপদ Split",
+          "body": "from pathlib import Path\nimport hashlib, numpy as np\nfrom sklearn.model_selection import StratifiedGroupKFold\n\ndata = np.loadtxt(Path(\"assets/datasets/digits/digits.csv.gz\"), delimiter=\",\")\nimages = data[:, :64].astype(np.uint8)\nlabels = data[:, 64].astype(int)\ngroups = np.unique(\n    [hashlib.sha256(x.tobytes()).hexdigest() for x in images], return_inverse=True\n)[1]\ntrain, val = next(\n    StratifiedGroupKFold(5, shuffle=True, random_state=18).split(images, labels, groups)\n)\nassert set(groups[train]).isdisjoint(groups[val])\nprint(len(train), len(val), len(np.unique(groups)))\n"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের প্রকৃত ভাগের সংখ্যাগত হিসাব",
+          "body": "random_state = 18 দিয়ে 5-ফোল্ড StratifiedGroupKFold-এর প্রথম ভাগটি নেওয়ায় Source টাস্কে Train = 721 ও Validation = 180 টি ছবি এবং Target টাস্কে Train = 717 ও Validation = 179 টি ছবি পড়েছে। দেখা গেছে সব কটি অর্থাৎ 1797 টি ছবিরই Exact-pixel গ্রুপ পরস্পর অনন্য, এবং Source ক্লাস 0–4 ও Target ক্লাস 5–9 সম্পূর্ণ পৃথক কাজ। তবে ডেটায় লেখকের আলাদা Writer ID না থাকায় সম্পূর্ণ Writer-disjoint মূল্যায়নের নিশ্চয়তা এখানে নেই।"
+        },
+        {
+          "type": "text",
+          "title": "Source বনাম Target প্রমাণের কঠোর সীমানা",
+          "body": "আমাদের পরীক্ষায় Backbone কেবল Source-training অংশের Label দেখে, আর Source-validation ব্যবহৃত হয় স্রেফ ডায়াগনস্টিক পর্যবেক্ষণে। একইভাবে Target Head এবং Fine-tuning কেবল Target-training অংশের Label দেখে—Target-validation কখনোই ট্রেনিং বা সেরা মডেল বাছাইয়ে ব্যবহৃত হয় না। মনে রাখবেন, রিপোর্ট করা স্কোর একবার প্রকাশিত হয়ে যাওয়ার পর তা দেখে ভবিষ্যতে আবার টিউনিং করলে চূড়ান্ত যাচাইয়ের নিরপেক্ষ সীমানা (Confirmation Boundary) বদলে যায়।"
+        },
+        {
+          "type": "text",
+          "title": "Preprocessing ও Label Mapping-এর সতর্কতা",
+          "body": "স্থির সংখ্যা 16 দিয়ে ভাগ করার এই নিয়মে পুরো ডেটাসেট থেকে হিসাব করা কোনো পরিসংখ্যান ব্যবহৃত হয় না। তবে আপনি যদি ডেটা থেকে শেখা Normalization, Augmentation টিউনিং বা Class Balancing চালান, তবে তার fit করার পরিধি আলাদাভাবে নথিভুক্ত করতে হবে। পাশাপাশি Target অঙ্ক থেকে 5 বিয়োগ করে ইনডেক্স মেলানোর কাজটি শতভাগ নির্ভুল হতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এর জন্য জরুরি প্রস্তুতি",
+          "body": "Interview-এ স্পষ্টভাবে ব্যাখ্যা করুন কেন একই ছবির বিভিন্ন রূপান্তরিত সংস্করণ Split-এর দুই পাশে চলে গেলে Data Leakage ঘটে, এবং কেন সাধারণ Hash Group টেস্টেরও নিজস্ব সীমাবদ্ধতা আছে। সবসময় মনে রাখবেন, একই উৎস থেকে নেওয়া ছোট অঙ্কের এই শিক্ষামূলক পরীক্ষা দিয়ে ক্লিনিক্যাল বা প্রোডাকশন ভিশন সিস্টেমের দাবি প্রতিষ্ঠা করা চলে না।"
+        }
+      ]
+    },
+    {
+      "id": "ch18_training",
+      "title": "CNN Training Loop এবং Multiclass মূল্যায়ন",
+      "subtitle": "কাঁচা Logits, পূর্ণসংখ্যার Target এবং পূর্বনির্ধারিত স্থির সমাপ্তি",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Training Loop-এর সুনির্দিষ্ট চুক্তি",
+          "body": "প্রতিটি ধাপের আদর্শ ক্রম হলো: zero_grad দিয়ে পুরোনো Gradient পরিষ্কার করা, নতুন Forward Pass চালানো, CrossEntropyLoss হিসাব করা, backward কল করা এবং সবশেষে Optimizer-এর step সম্পন্ন করা। আমাদের Source রান চলে পূর্বনির্ধারিত 30 টি স্থির Epoch ধরে, আর দুটি Target শাখা চলে 20 টি Epoch ধরে। পুরো গণনা করা হয়েছে CPU-তে float64 Precision-এ, যেখানে Minibatch = 64 এবং AdamW-এর weight_decay = 0.001। স্বচ্ছতার খাতিরে কোনো Early Stopping, সেরা Seed খোঁজা বা Augmentation রাখা হয়নি; এমনকি শুরুর Epoch 0 এবং প্রতি Epoch শেষের মূল্যায়ন ইতিহাসও আলাদাভাবে সংরক্ষিত হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "Target Label-এর পাল্লা ও সামঞ্জস্য",
+          "body": "Source Task-এর 0–4 Label-গুলো শুরু থেকেই সরাসরি ব্যবহারযোগ্য। কিন্তু Target Task-এর 5–9 Label-গুলো থেকে 5 বিয়োগ করে 0–4 পাল্লায় নামিয়ে আনতে হয়, কারণ আমাদের নতুন Classifier Head-এও আউটপুট Column সংখ্যা 5। ভুল Dtype বা সীমার বাইরের Target দিলে CrossEntropyLoss সাথে সাথে তা প্রত্যাখ্যান করবে। তাই প্রদর্শনের আসল Label এবং ভেতরের Class-index Mapping সবসময় Model Artifact-এই সংরক্ষণ করুন।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "L=-{1\\over B}\\sum_i\\log{e^{z_{i,y_i}}\\over\\sum_c e^{z_{ic}}}"
+        },
+        {
+          "type": "code",
+          "title": "CNN-এ একটি নিখুঁত Multiclass Optimizer Step",
+          "body": "import torch\nimport torch.nn.functional as F\nfrom torch import nn\n\nmodel = nn.Sequential(\n    nn.Conv2d(1, 2, 3, padding=1), nn.ReLU(), nn.Flatten(), nn.Linear(128, 5)\n)\nX = torch.zeros(2, 1, 8, 8)\ny = torch.tensor([0, 4], dtype=torch.long)  # Shape illustration.\nopt = torch.optim.AdamW(model.parameters(), lr=0.01)\n# Gradients accumulate: clear them at the intended optimizer-step boundary.\nopt.zero_grad(set_to_none=True)\nloss = F.cross_entropy(model(X), y)\nloss.backward()\nopt.step()\nassert torch.isfinite(loss)\n"
+        },
+        {
+          "type": "text",
+          "title": "মূল্যায়ন Metric-এর প্রকৃত অর্থ",
+          "body": "Accuracy কেবল সর্বোচ্চ মানের অবস্থান (argmax) দেখে, কিন্তু Cross-entropy Loss Model-এর আত্মবিশ্বাসের (Confidence) প্রতিও সংবেদনশীল। আমাদের Confusion Matrix-এ Row-গুলো বোঝায় আসল Class (True Class) এবং Column-গুলো বোঝায় অনুমিত Class (Predicted Class)। Dataset-এ Class Imbalance থাকলে প্রতি Class-এর Macro Metric দেখা বেশ কার্যকর—কারণ একটিমাত্র গড় স্কোর সব ধরনের ব্যর্থতার ধরন (Failure Mode) প্রকাশ করতে পারে না।"
+        },
+        {
+          "type": "text",
+          "title": "Validation-এর জীবনচক্র ও প্রারম্ভিক Weight",
+          "body": "মূল্যায়নের সময় আমরা eval() মোড ও torch.no_grad() ব্যবহার করি; Validation ধাপে কখনোই কোনো Optimizer Step চলে না। Source Model-এর শেখা Backbone Parameter কপি করেই Target-এর যাত্রা শুরু হয়, তবে পুরোনো Source Head কখনোই Target Head হিসেবে পুনর্ব্যবহার করা হয় না। Frozen ও Fine-tuning উভয় শাখাই একই নতুন Head দিয়ে শুরু হয়, কেবল তাদের ঘোষিত Learning Rate নীতি থাকে আলাদা।"
+        },
+        {
+          "type": "text",
+          "title": "সসীম মানের (Finite) পরীক্ষা ও বাস্তব সীমা",
+          "body": "Training চলাকালীন ইনপুট ডেটা, Logits, Loss এবং Gradient সবই সসীম (Finite) আছে কি না তা নিয়মিত যাচাই করুন; মূল রান শুরুর আগে ছোট একটি Batch-এ ইচ্ছাকৃত Overfit করিয়ে নিলে সংখ্যাগত Training পথের সঠিকতা সহজেই ধরা পড়ে। মনে রাখবেন, প্রোডাকশন মানের OCR কিংবা সাধারণ হাতের লেখার সার্বিক Robustness এই নিম্ন-রেজোলিউশনের সীমিত পরীক্ষার আওতার বাইরে।"
+        },
+        {
+          "type": "text",
+          "title": "কোডিং অনুশীলনের চ্যালেঞ্জ",
+          "body": "Batch = 1 এবং শেষের অসম্পূর্ণ আংশিক Batch—উভয় ক্ষেত্রেই Logits-এর Shape [B, 5] থাকছে কি না তা assert করুন। পাশাপাশি সংখ্যাগতভাবে স্থিতিশীল Softmax Probability-গুলোর যোগফল 1 হচ্ছে কি না তা মিলিয়ে দেখুন। আর কখনোই Training Loss বা Gradient প্রবাহের ভেতরে argmax ঢোকাবেন না, কারণ এতে অন্তরীকরণের পথ (Differentiability) ভেঙে যায়!"
+        }
+      ]
+    },
+    {
+      "id": "ch18_transfer",
+      "title": "Transfer Learning: Source Task থেকে Target Task-এ জ্ঞান স্থানান্তর",
+      "subtitle": "শেখা Feature-এর পুনর্ব্যবহার এবং নতুন Label Space-এর জন্য নতুন Head",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "আসলে ঠিক কোন জিনিসটি স্থানান্তরিত হয়?",
+          "body": "Source Task-এ শেখা অভ্যন্তরীণ Feature বা Representation নতুন কাজের সূচনাবিন্দু হিসেবে কাজ করে। যেহেতু নতুন কাজে Target Label সেট আলাদা, তাই শেষে একটি নতুন Classifier Head বসাতে হয়। তবে আগের শেখা Feature নতুন কাজে সত্যিই উপকারী হবে কি না তা নির্ভর করে Domain, কাজের সাদৃশ্য, Dataset-এর আকার ও Optimization-এর ওপর—অসঙ্গতি বেশি হলে উল্টো ক্ষতিকর স্থানান্তরও (Negative Transfer) ঘটতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের স্থানীয় Pretraining-এর স্বরূপ",
+          "body": "এখানে আমরা অঙ্ক 0–4-এ Backbone ট্রেন করে অঙ্ক 5–9-এর Target Class-এ তা স্থানান্তর করছি। দুটি কাজই একই Dataset পরিবারের অন্তর্গত, কেবল Class ও Row-গুলো পরস্পর বিচ্ছিন্ন—এটি বিশাল বাহ্যিক ImageNet থেকে Domain Transfer নয়। তাই এখানে Pretrained শব্দটি দিয়ে Random Weight-এর বিপরীতে স্থানীয়ভাবে Source ডেটায় Train করা Checkpoint-কেই বোঝানো হচ্ছে।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "f_{target}(x)=h_{\\psi}\\bigl(g_{\\theta_{source}}(x)\\bigr)"
+        },
+        {
+          "type": "code",
+          "title": "Source Backbone-এর State Dict কপি এবং নতুন Target Head সংযোজন",
+          "body": "import torch\nfrom torch import nn\n\nsource = nn.Sequential(\n    nn.Linear(4, 3), nn.ReLU()\n)  # Explicit module-policy illustration.\ntarget_backbone = nn.Sequential(nn.Linear(4, 3), nn.ReLU())\ntarget_backbone.load_state_dict(source.state_dict())\nhead = nn.Linear(3, 5)\nassert head.out_features == 5\nfor a, b in zip(source.parameters(), target_backbone.parameters()):\n    torch.testing.assert_close(a, b)\n"
+        },
+        {
+          "type": "text",
+          "title": "উভয় শাখার অভিন্ন সূচনাবিন্দু",
+          "body": "আমাদের দুটি Target শাখাই হুবহু একই Source Backbone এবং seed = 19 থেকে তৈরি নতুন Target Head পায়। এরপর Frozen শাখা কেবল Head ট্রেন করে, আর Fine-tuning শাখা পুরো CNN ট্রেন করে। আগের কোনো ক্যাশ করা Training অবস্থা বা Source Optimizer-এর পুরোনো Running Moment এখানে আনা হয়নি; দুটি শাখাতেই নতুন Optimizer ব্যবহৃত হয়েছে।"
+        },
+        {
+          "type": "vision_transfer_lab",
+          "title": "ইন্টারেক্টিভ Transfer Learning পরিদর্শক",
+          "body": "অ্যাপটি এখানে Target-training সেটের তিনটি বাস্তব ছবির ওপর Initial, Frozen এবং Fine-tuned অবস্থার Logits নতুন করে হিসাব করে দেখায়। মনে রাখবেন, এগুলো Training সেটেরই পর্যবেক্ষণ—তাই এগুলোকে অদেখা ডেটায় সাফল্যের উদাহরণ বলা যাবে না। সংরক্ষিত Backbone পরিবর্তনের হিসাব দেখে যাচাই করুন যে Freeze নীতি আসলেই Parameter মানগুলোকে অক্ষত রেখেছে কি না।"
+        },
+        {
+          "type": "text",
+          "title": "ফলাফলের পরিসংখ্যান ও দাবির সীমারেখা",
+          "body": "নির্ধারিত অসম Learning Rate নীতির অধীনে আমাদের ডায়াগনস্টিক পর্যবেক্ষণে Frozen শাখায় প্রায় 0.9162 এবং Fine-tuned শাখায় প্রায় 0.9497 Target Accuracy পাওয়া গেছে। যেহেতু এখানে শূন্য থেকে Train করা Scratch Target Baseline কিংবা বহুবার ভিন্ন Seed-এর পুনরাবৃত্তি নেই এবং আলাদা কোনো চূড়ান্ত Confirmation সেটও নেই, তাই কেবল এখান থেকে Pretraining-এর সুফল মাপা বা সর্বজনীন সেরা কৌশল দাবি করা সংগত নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে উপস্থাপন করবেন",
+          "body": "নিজের পাইপলাইন ব্যাখ্যা করার সময় Source Weight, নতুন Target Head, Class Mapping, Optimizer নীতি এবং Preprocessing Artifact—প্রতিটি অংশ স্পষ্ট করুন। মনে রাখবেন, Target Validation দেখে সেরা Pretrained Model বেছে নিলে সেটিও Model Selection-এর অংশ হয়ে যায়। আর ঘটনাচক্রে আকার সমান হলেও পুরোনো Head ভুলবশত রেখে দিলে Class-এর অর্থগত সামঞ্জস্য (Semantic Label Alignment) ঠিক হয় না।"
+        }
+      ]
+    },
+    {
+      "id": "ch18_freezing",
+      "title": "Frozen Backbone: Parameter, Buffer এবং Optimizer নিয়ন্ত্রণ",
+      "subtitle": "কেন requires_grad এবং eval() মোড দুটি সম্পূর্ণ আলাদা সুইচ?",
+      "duration": "57 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Parameter Freeze করার দ্বিস্তরীয় সুরক্ষা",
+          "body": "requires_grad = False করলে সংশ্লিষ্ট Parameter-গুলোর জন্য নতুন Gradient হিসাবের অনুরোধ বন্ধ হয়ে যায়। পাশাপাশি Optimizer-এ শুধুমাত্র Head-এর Parameter পাঠালে বাদ পড়া Backbone ভুলক্রমেও কোনো Update Step পায় না। বাস্তব কাজে এই দুটি নীতিই একসাথে যাচাই করা উত্তম; পুরোনো অশূন্য Gradient রেখে কেবল Flag বদলালে Optimizer কী আচরণ করছে তা অবশ্যই পরীক্ষা করে দেখা দরকার।"
+        },
+        {
+          "type": "text",
+          "title": "Module-এর মোড: কেন eval() মানেই Freeze নয়?",
+          "body": "মনে রাখবেন, eval() কল করা মানে Gradient Freeze করা নয়! BatchNorm-এর Running Buffer এবং Dropout Mask নির্ভর করে Module-এর মোডের ওপর। তাই Frozen Backbone কি Training মোডে থাকবে নাকি Evaluation মোডে থাকবে, সেই নীতি স্পষ্টভাবে লিখুন; পুরো target_model.train() ডাকলে ভেতরের সব Sub-module-এও Training মোড ছড়িয়ে পড়ে, তাই প্রয়োজনে তার ঠিক পরেই backbone.eval() দিতে হয়। আমাদের মূল Backbone কেবল Conv/ReLU/Pool দিয়ে গঠিত, সেখানে কোনো BatchNorm বা Dropout নেই।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "\\nabla_\\theta L\\;\\text{not requested},\\qquad\\psi_{t+1}=\\psi_t-\\eta\\nabla_\\psi L"
+        },
+        {
+          "type": "code",
+          "title": "Backbone Freeze রেখে শুধুমাত্র Classifier Head আপডেট",
+          "body": "import torch\nfrom torch import nn\n\nbackbone = nn.Linear(4, 3)\nhead = nn.Linear(3, 2)\nfor p in backbone.parameters():\n    p.requires_grad_(False)\nopt = torch.optim.SGD(head.parameters(), lr=0.1)\nX = torch.ones(2, 4)\ny = torch.tensor([0, 1])  # Mathematical shape illustration.\n# Gradients accumulate: clear them at the intended optimizer-step boundary.\nopt.zero_grad(set_to_none=True)\nnn.functional.cross_entropy(head(backbone(X)), y).backward()\nopt.step()\nassert all(p.grad is None for p in backbone.parameters())\nassert head.weight.grad is not None\n"
+        },
+        {
+          "type": "text",
+          "title": "মান মিলিয়ে দেখা (Value Audit)",
+          "body": "Frozen Training শুরুর আগে এবং শেষ হওয়ার পরে সব State Tensor সরাসরি তুলনা করুন। আমাদের মূল রানে Backbone-এর সর্বোচ্চ পার্থক্য নিখুঁত 0। কেবল grad is None প্রিন্ট করলেই সব Buffer অপরিবর্তিত আছে প্রমাণিত হয় না—এজন্য সম্পূর্ণ state_dict() পরীক্ষা করা জরুরি।"
+        },
+        {
+          "type": "text",
+          "title": "Frozen Feature ক্যাশ করার চুক্তি",
+          "body": "একটি সম্পূর্ণ Deterministic Frozen Backbone-এর আউটপুট Feature একবার ক্যাশ করে রেখে দ্রুত Head ট্রেন করা সম্ভব। তবে ডেটার ক্রম, Augmentation, Preprocessing সংস্করণ ও সংখ্যার Precision—সবই ওই ক্যাশের অবিচ্ছেদ্য চুক্তি। ভেতরে দৈব বা Stochastic আচরণ থাকলে ক্যাশ করা Training মূল লাইভ প্রক্রিয়ার চেয়ে আলাদা হয়ে যেতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "no_grad সীমানার প্রভাব",
+          "body": "মেমোরি বাঁচাতে Frozen Feature-গুলো torch.no_grad() ব্লকের ভেতরে হিসাব করলে ইনপুটের সাপেক্ষে Gradient নেওয়ার পথ বিচ্ছিন্ন হয়ে যায়। তাই Saliency বা Input Optimization দরকার হলে Parameter Freeze রাখা এবং ইনপুটের অন্তরীকরণ চালু রাখা—দুটি আলাদাভাবে সামলান। আমাদের অ্যাপটি কেবল ব্যাখ্যামূলক Forward Trace দেখায়, Input-gradient Attribution নয়।"
+        },
+        {
+          "type": "text",
+          "title": "কোডিং অনুশীলনের লক্ষ্য",
+          "body": "Training-এর আগের ও পরের Backbone Tensor হুবহু মিলিয়ে দেখে নিশ্চিত করুন যে শুধু Head আপডেট হয়েছে। সাথে Optimizer-এ থাকা Parameter ID এবং ট্রেনযোগ্য সংখ্যা ঠিক 165 কি না তা assert করুন। Weight কপি করার সময় মেমোরির রেফারেন্স ভাগাভাগি না করে সম্পূর্ণ স্বতন্ত্র প্রারম্ভিক কপি তৈরি করুন।"
+        },
+        {
+          "type": "text",
+          "title": "Parameter Frozen থাকলেও যেভাবে Buffer বদলে যায়",
+          "body": "বোঝার সুবিধার্থে Identity Linear ও BatchNorm দিয়ে তৈরি ছোট একটি Backbone নিন, যার সব Parameter-এই requires_grad = False করা আছে। একে train() মোডে রেখে [[1, 2], [3, 4]] ইনপুট দিলে দেখা যায় BatchNorm-এর running_mean [0, 0] থেকে বদলে [0.2, 0.3] হয়ে যাচ্ছে, অথচ শেখার মতো Parameter-গুলো হুবহু একই আছে! অন্যদিকে Head-এর backward স্বাভাবিকভাবেই Gradient পায়। আর Backbone-কে eval() মোডে চালালে সংরক্ষিত পরিসংখ্যানই ব্যবহৃত হয় ও স্থির থাকে। এই পার্থক্যটি Pretrained Feature Extractor-এর মোড নীতি বুঝতে দারুণ সাহায্য করে।"
+        },
+        {
+          "type": "code",
+          "title": "Frozen Weight থাকা সত্ত্বেও BatchNorm-এর Running Buffer পরিবর্তনের প্রমাণ",
+          "body": "import torch\nfrom torch import nn\n\nbackbone = nn.Sequential(\n    nn.Linear(2, 2, bias=False, dtype=torch.float64),\n    nn.BatchNorm1d(2, dtype=torch.float64),\n)\nhead = nn.Linear(2, 1, bias=False, dtype=torch.float64)\nwith torch.no_grad():\n    backbone[0].weight.copy_(torch.eye(2, dtype=torch.float64))\n    head.weight.fill_(1)\nfor parameter in backbone.parameters():\n    parameter.requires_grad_(False)\nbefore_weights = [parameter.detach().clone() for parameter in backbone.parameters()]\nbefore_mean = backbone[1].running_mean.clone()\ninputs = torch.tensor([[1.0, 2.0], [3.0, 4.0]], dtype=torch.float64)\nbackbone.train()\nwith torch.no_grad():\n    features = backbone(inputs)\nhead(features).square().mean().backward()\nunchanged = all(\n    torch.equal(before, after)\n    for before, after in zip(before_weights, backbone.parameters())\n)\nchanged_buffer = not torch.equal(before_mean, backbone[1].running_mean)\ntorch.testing.assert_close(\n    backbone[1].running_mean, torch.tensor([0.2, 0.3], dtype=torch.float64)\n)\nbackbone.eval()\nsaved_mean = backbone[1].running_mean.clone()\nwith torch.no_grad():\n    backbone(inputs)\nprint(\n    int(unchanged),\n    int(changed_buffer),\n    int(head.weight.grad is not None),\n    int(torch.equal(saved_mean, backbone[1].running_mean)),\n)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে ভেবে দেখুন",
+          "body": "পুরো Model-এর ওপর প্যারেন্ট model.train() কল করলে ভেতরে থাকা Frozen Backbone-এর eval() মোড কি বজায় থাকবে?",
+          "solution": "না। কারণ train() কল করলে তা ভেতরের সব Child Module-এও Training মোড ছড়িয়ে দেয়। তাই আপনার নীতি অনুযায়ী প্রয়োজন হলে তার ঠিক পরেই আবার backbone.eval() কল করতে হবে। সবসময় Training-এর আগে ও পরে Parameter, Optimizer-এর সদস্য তালিকা এবং Buffer পরীক্ষা করে নিজের Freeze উদ্দেশ্য যাচাই করুন।",
+          "reference": "https://d2l.ai/"
+        }
+      ]
+    },
+    {
+      "id": "ch18_finetuning",
+      "title": "Fine-tuning: নিয়ন্ত্রিত Unfreezing ও আলাদা Learning Rate",
+      "subtitle": "Classifier Head এবং Backbone-এর আপডেট বাজেট কেন ভিন্ন রাখা হয়?",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন Backbone-এ ছোট Learning Rate দেওয়া হয়?",
+          "body": "আগের কাজে শেখা কার্যকর Feature-গুলো সযত্নে রক্ষা করার উদ্দেশ্যেই সাধারণত Backbone-এর Learning Rate নতুন Head-এর চেয়ে ছোট রাখা হয়। মনে রাখবেন, এটি একটি বাস্তবসম্মত প্রারম্ভিক কৌশল (Heuristic Policy), কিন্তু সর্বজনীন সেরা মান নয়। Target Domain উৎস থেকে বেশ আলাদা হলে কেবল Frozen Feature যথেষ্ট নাও হতে পারে; আবার উল্টো দিকে অতিরিক্ত আগ্রাসী আপডেট দিলে আগের শেখা সুন্দর গঠন ভেঙে নষ্টও হয়ে যেতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "সুশৃঙ্খল Unfreezing পরিকল্পনা",
+          "body": "সব কটি Layer একসাথে খুলে দিয়ে অথবা ধাপে ধাপে ব্লক ধরে Unfreeze করা যায়। তবে নতুন ট্রেনযোগ্য হওয়া Parameter-গুলো Optimizer গ্রুপে ঠিকমতো আছে কি না, আগের জমে থাকা Optimizer Moment পুনর্ব্যবহার নাকি রিসেট হবে এবং Scheduler কাউন্টার কী বোঝাবে—তা স্পষ্টভাবে নির্ধারণ করুন। আমাদের মূল রানে Target Training-এর শুরুতেই পুরো Backbone একসাথে Unfreeze করা হয়েছে।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "\\eta_{backbone}=.001,\\quad\\eta_{head}=.01\\quad\\text{in this declared local recipe}"
+        },
+        {
+          "type": "code",
+          "title": "PyTorch Optimizer-এ Head ও Backbone-এর জন্য আলাদা Parameter Group",
+          "body": "import torch\nfrom torch import nn\n\nbackbone = nn.Linear(4, 3)\nhead = nn.Linear(3, 5)\nfor p in backbone.parameters():\n    p.requires_grad_(True)\nopt = torch.optim.AdamW(\n    [\n        {\"params\": head.parameters(), \"lr\": 0.01},\n        {\"params\": backbone.parameters(), \"lr\": 0.001},\n    ],\n    weight_decay=0.001,\n)\nassert [g[\"lr\"] for g in opt.param_groups] == [0.01, 0.001]\nprint(sum(p.numel() for g in opt.param_groups for p in g[\"params\"]))\n"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের পরীক্ষার সুনির্দিষ্ট হার ও ন্যায্য তুলনা",
+          "body": "এই রানে Target Head-এর Learning Rate 0.01 এবং Backbone-এর 0.001 রাখা হয়েছে, এবং AdamW-এ weight_decay = 0.001 রেখে 20 টি Epoch চালানো হয়েছে। অন্যদিকে Frozen-backbone শাখায় শুধু Head শেখে, যার Learning Rate 0.01।\n\nন্যায্য তুলনার জন্য দুটি শাখাতেই একই প্রারম্ভিক Weight এবং Generator seed = 180 দিয়ে তৈরি একই ক্রমের Shuffle করা ডেটা ব্যবহার করা হয়েছে; Validation ফলাফল দেখে কোনো রেসিপি বাছাই করা হয়নি। তাই এই তুলনাটি কেবল এই নির্দিষ্ট দুটি শাখার মধ্যেই সীমাবদ্ধ—সব ধরনের Transfer Learning পরিস্থিতির সাধারণ সিদ্ধান্ত নয়।"
+        },
+        {
+          "type": "text",
+          "title": "BatchNorm পরিসংখ্যানের সূক্ষ্ম বিবেচনা",
+          "body": "BatchNorm-যুক্ত Model Fine-tune করার সময় উৎসের Running Statistics স্থির রাখা হবে নাকি নতুন ডেটায় মানিয়ে নেওয়া হবে—সেই নীতি ফলাফল বদলে দেয়, বিশেষ করে ছোট Target Batch-এ অতিরিক্ত Noise থাকলে। আমাদের শুধুই Convolution-নির্ভর Backbone-এর পরীক্ষা দিয়ে সব ধরনের Pretrained Architecture-এর মোড আচরণ আপনাআপনি প্রমাণিত হয় না।"
+        },
+        {
+          "type": "text",
+          "title": "পুরোনো কাজ ভুলে যাওয়ার ঝুঁকি (Catastrophic Forgetting)",
+          "body": "Target ডেটার আপডেটে ভেতরের Representation বদলে গিয়ে আগের Source Task-এর দক্ষতা কমে যেতে পারে। আপনি যদি পুরোনো কাজের সক্ষমতাও ধরে রাখতে চান, তবে তার জন্য প্রাসঙ্গিক মূল্যায়ন ও বাড়তি শর্ত (Constraint) দরকার হবে। আমাদের এই পরীক্ষায় Target Fine-tuning শেষে পুনরায় Source Accuracy মাপা হয়নি, তাই কতটুকু বিস্মৃতি ঘটেছে তা এখানে সংখ্যায় দাবি করা হচ্ছে না।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এর জন্য জরুরি প্রস্তুতি",
+          "body": "একাধিক Optimizer Parameter Group ব্যবহারের সময় সেট পরীক্ষা দিয়ে নিশ্চিত করুন যেন গ্রুপগুলো পরস্পর বিচ্ছিন্ন (Disjoint) হয়—কোনো Parameter যেন দুবার না থাকে বা বাদ না পড়ে। পাশাপাশি Frozen থেকে Unfrozen অবস্থায় যাওয়ার সময় স্টেপ কাউন্টার ও Momentum যাচাই করুন। আর একবার কোনো Validation স্কোর বেশি দেখেই 'Fine-tuning সবসময়ই সেরা'—এমন ঢালাও মন্তব্য করবেন না।"
+        }
+      ]
+    },
+    {
+      "id": "ch18_pretrained",
+      "title": "External Pretrained Model: নির্দিষ্ট Transform ও Local Weight ব্যবস্থাপনা",
+      "subtitle": "TorchVision-এর অফিশিয়াল রেসিপি বোঝা এবং নিরাপদ অফলাইন সীমারেখা বজায় রাখা",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "TorchVision Weights API: কেন অন্ধভাবে গড় ও বিচ্যুতি বসানো চলে না?",
+          "body": "আগের পাঠে আমরা নিজেদের ট্রেন করা ছোট Backbone-এর ওপর Fine-tuning চালিয়েছি। কিন্তু বাস্তব প্রকল্পে আপনি যখন TorchVision-এর মতো বড় লাইব্রেরি থেকে বাইরের কোনো Pretrained Model ব্যবহার করবেন, তখন তার ইনপুট চুক্তিটি কীভাবে সামলাবেন? আধুনিক TorchVision Model Builder-এ weights=None দিলে সাধারণত Random Initialization হয়; Pretrained Weight পেতে হলে সুনির্দিষ্ট Weight Enum স্পষ্টভাবে উল্লেখ করতে হয়। সবচেয়ে গুরুত্বপূর্ণ বিষয় হলো, প্রতিটি Weight অবজেক্টের নিজস্ব weight.transforms() মেথডে ওই Checkpoint-এর প্রত্যাশিত Preprocessing নিয়ম বাঁধা থাকে। Model Family, Variant কিংবা Weight Version ভেদে Resize, Crop এবং Normalization-এর মান আলাদা হতে পারে—তাই না জেনে অন্ধভাবে মুখস্থ কোনো Resize বা গড় ও বিচ্যুতি (mean/std) বসিয়ে দেওয়া মারাত্মক ভুল।"
+        },
+        {
+          "type": "text",
+          "title": "বাহ্যিক Pretrained Model লোডের বাস্তব চিত্র ও আমাদের অফলাইন নীতি",
+          "body": "উদাহরণস্বরূপ, অফিশিয়াল API-তে ResNet18_Weights.IMAGENET1K_V1 এবং resnet18(weights=...) ব্যবহার করে ImageNet-এ শেখা প্রারম্ভিক Weight লোড করা হয়। সেক্ষেত্রে ডেভেলপমেন্ট মেশিনের লোকাল Cache-এ ফাইলটি না থাকলে লাইব্রেরি ইন্টারনেট থেকে Weight ডাউনলোড করার চেষ্টা করতে পারে। তবে আমাদের এই অ্যাপ ও পাঠ্যক্রমে বাইরের কোনো ডাউনলোড বা TorchVision নির্ভরতা রাখা হয়নি; এখানে চালানো প্রতিটি কোড উদাহরণ সম্পূর্ণ অফলাইনে আমাদের স্থানীয়ভাবে Train করা PyTorch CNN ব্যবহার করে।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "\\mathrm{prediction}=f_{\\mathrm{weights}}\\!\\left(T_{\\mathrm{weights}}(image)\\right)"
+        },
+        {
+          "type": "code",
+          "title": "স্থানীয় Model Schema ও প্রত্যাশিত ইনপুট চুক্তি যাচাই",
+          "body": "from pathlib import Path\nimport json, torch\n\n# Executed offline path uses our locally trained CNN, not external weight downloads.\nschema = {\n    \"input\": [\"B\", 1, 8, 8],\n    \"pixel_divisor\": 16,\n    \"target_labels\": [5, 6, 7, 8, 9],\n}\nassert schema[\"input\"][1] == 1 and schema[\"pixel_divisor\"] == 16\ndata = json.loads(Path(\"assets/datasets/digits/vision_lab.json\").read_text())\nassert data[\"target_labels\"] == schema[\"target_labels\"]\nprint(\"For an external model also record weight version, transforms and class mapping.\")\n"
+        },
+        {
+          "type": "text",
+          "title": "নিরাপদ অফলাইন পরিবেশে বাহ্যিক Weight সংযোজন (Offline Provisioning)",
+          "body": "নিয়ন্ত্রিত অফলাইন সিস্টেমে বা প্রোডাকশনে আপনি যদি সত্যিই বাহ্যিক কোনো Pretrained Weight ব্যবহার করতে চান, তবে অনুমোদিত ও বিশ্বস্ত উৎস থেকে আনা Local Artifact, তার License ও Attribution, ফাইলের Checksum, সামঞ্জস্যপূর্ণ Architecture এবং নির্দিষ্ট Transform—সবকিছু আগে থেকেই যাচাই করে সংরক্ষণ করতে হবে। আমাদের অ্যাপের অফলাইন রানটাইম কখনোই বাইরে থেকে কোনো Weight URL ফেচ করে না; বরং স্থানীয় Source Task-এর Pretraining দিয়েই একটি পূর্ণাঙ্গ ও কার্যকর Transfer Learning অনুশীলন সম্পন্ন করে।"
+        },
+        {
+          "type": "text",
+          "title": "ইনপুট মানিয়ে নেওয়ার (Input Adaptation) বাস্তব সীমাবদ্ধতা",
+          "body": "তিন-চ্যানেলের RGB Pretrained Model-এ এক-চ্যানেলের Grayscale ছবি পাঠাতে গিয়ে অনেকেই চ্যানেলটিকে তিনবার Repeat করেন অথবা প্রথম Convolution Layer-টি পরিবর্তন করে নেন। খেয়াল রাখবেন, এতে কিন্তু ছবির অর্থ ও Model Function দুটোই বদলে যায়! একইভাবে আমাদের অতি ছোট 8×8 আকারের ছবিকে টেনে বড় (Upsample) করলেও ইতিমধ্যে হারিয়ে যাওয়া সূক্ষ্ম রেখার ডিটেইল আর ফিরে আসে না। তাই নতুন কোনো Task-এ যাওয়ার সময় Resolution, Interpolation পদ্ধতি এবং Normalization চুক্তিটি আসলেই কতটা কাজ করছে, তা আলাদাভাবে মূল্যায়ন করে দেখতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "পুরোনো Classifier Head বদলে নতুন Head সংযোজন",
+          "body": "ImageNet-এর মতো 1000-Class-এর পুরোনো Classifier Head কখনোই আপনার নিজস্ব Target Label-এর সাথে মিলবে না। তাই আগের Backbone থেকে সঠিক Feature Dimension জেনে নিয়ে সেখানে সম্পূর্ণ নতুন একটি Classifier Head বসাতে হবে এবং তার জন্য সুস্পষ্ট Optimizer ও Freeze নীতি লিখতে হবে। পাশাপাশি কোন ইনডেক্স কোন আসল Class বোঝাচ্ছে সেই Label Mapping-ও Model Artifact-এর ভেতর সংরক্ষণ করুন—আর ভুলে যাবেন না যে আউটপুটের Probability স্কোর মানেই স্বয়ংক্রিয়ভাবে Calibrated সম্ভাবনা নয়।"
+        },
+        {
+          "type": "text",
+          "title": "ব্যবহারিক পরিকল্পনা ও সতর্কবার্তা",
+          "body": "নিজের যেকোনো External Model পরিকল্পনায় ব্যবহৃত Weight-এর সুনির্দিষ্ট সংস্করণ, উৎস ও License, নির্ধারিত Transform, Class Map, কোন Parameter Group-গুলো ট্রেনযোগ্য থাকবে এবং পূর্ণ Evaluation প্রোটোকল স্পষ্টভাবে নথিভুক্ত করুন। সবসময় মনে রাখবেন—কোডে কোনো ত্রুটি ছাড়া Model লোড হওয়া মানেই কিন্তু সেখানে আসল Pretrained Transfer ঘটার প্রমাণ নয়; ভুলক্রমে Random Weight লোড হয়ে গেলেও কোড নির্বিঘ্নে চলতে পারে!"
+        }
+      ]
+    },
+    {
+      "id": "ch18_workflow",
+      "title": "অফলাইন Vision Dataset উৎস ও Training Helper ফাংশন",
+      "subtitle": "অপরিবর্তিত উৎস ফাইল, হ্যাশ-ভিত্তিক Group Split এবং নির্ভুল Target Mapping",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "পরিবেশ প্রস্তুত ও স্ক্রিপ্ট চালানোর নিয়ম",
+          "body": "এতক্ষণ আমরা খণ্ড খণ্ড অংশে CNN ও Transfer Learning-এর গাণিতিক ভিত্তি এবং ছোট উদাহরণ দেখেছি; এবার পুরো অফলাইন পাইপলাইনটি একত্রে সাজানোর পালা। পরীক্ষিত Python 3.12.10 ও PyTorch 2.15.0+cpu পরিবেশে কাজটি চালাতে প্রথমে python -m pip install -r tool/requirements-pytorch-qa.txt কমান্ড দিয়ে প্রয়োজনীয় প্যাকেজ ইনস্টল করে নিন। এরপর চালান python assets/datasets/digits/vision_workflow.py --output build/chapter-18-workflow-report.json --artifact-dir build/chapter-18-artifacts। এই পুরো প্রক্রিয়ায় কোনো TorchVision নির্ভরতা বা বাহ্যিক Weight ডাউনলোডের প্রয়োজন নেই।"
+        },
+        {
+          "type": "text",
+          "title": "উৎস ডেটার প্রামাণ্যতা ও License (Source Provenance)",
+          "body": "ডেটার শুদ্ধতা নিশ্চিত করতে scikit-learn 1.9.1 প্যাকেজের মূল digits.csv.gz এবং digits.rst ফাইল দুটি কোনো রকম পরিবর্তন ছাড়াই সরাসরি বান্ডেল করা হয়েছে। সংশ্লিষ্ট Manifest ফাইলে এর SHA-256 Checksum, সরবরাহকারীর তথ্য, মূল UCI উৎসের স্বীকৃতি এবং License সংরক্ষিত আছে। মূল Dataset-টি Alpaydin ও Kaynak (1998)-এর কাজ (CC BY 4.0 লাইসেন্সের আওতায়) এবং প্যাকেজিংয়ের সাথে BSD License যুক্ত রয়েছে। মনে রাখা দরকার যে এটি সংকুচিত অঙ্কের ছবি—কোনো উচ্চ-রেজোলিউশনের প্রাকৃতিক ছবির সংগ্রহ নয়।"
+        },
+        {
+          "type": "code",
+          "title": "উৎস ডেটার SHA-256 যাচাই এবং নিরাপদ Stratified Group Split",
+          "body": "from pathlib import Path\nimport argparse, copy, hashlib, json, platform\nimport numpy as np\nimport torch\nfrom torch import nn\nimport torch.nn.functional as F\nfrom sklearn.model_selection import StratifiedGroupKFold\n\nDATA = Path(\"assets/datasets/digits\").resolve()\nHASH = \"09f66e6debdee2cd2b5ae59e0d6abbb73fc2b0e0185d2e1957e9ebb51e23aa22\"\n\n\ndef load_source(path):\n    path = Path(path)\n    if hashlib.sha256(path.read_bytes()).hexdigest() != HASH:\n        raise ValueError(\"Original bundled digits hash mismatch\")\n    data = np.loadtxt(path, delimiter=\",\")\n    raw = data[:, :64]\n    labels = data[:, 64].astype(np.int64)\n    if (\n        data.shape != (1797, 65)\n        or not np.isfinite(data).all()\n        or not np.equal(raw, np.round(raw)).all()\n        or raw.min() < 0\n        or raw.max() > 16\n        or not np.isin(labels, np.arange(10)).all()\n    ):\n        raise ValueError(\"8x8 source schema\")\n    raw = raw.astype(np.uint8).reshape(-1, 8, 8)\n    keys = [hashlib.sha256(x.tobytes()).hexdigest() for x in raw]\n    groups = np.unique(keys, return_inverse=True)[1]\n    train, val = next(\n        StratifiedGroupKFold(5, shuffle=True, random_state=18).split(\n            raw, labels, groups\n        )\n    )\n    roles = {\n        \"source_train\": train[labels[train] < 5],\n        \"source_validation\": val[labels[val] < 5],\n        \"target_train\": train[labels[train] >= 5],\n        \"target_validation\": val[labels[val] >= 5],\n    }\n    assert set(groups[train]).isdisjoint(groups[val])\n    return raw, labels, groups, roles\n"
+        },
+        {
+          "type": "code",
+          "title": "DigitCNN আর্কিটেকচার, মূল্যায়ন Metric ও Transfer Training Helper",
+          "body": "class DigitCNN(nn.Module):\n    def __init__(self):\n        super().__init__()\n        self.backbone = nn.Sequential(\n            nn.Conv2d(1, 4, 3, padding=1, dtype=torch.float64),\n            nn.ReLU(),\n            nn.MaxPool2d(2),\n            nn.Conv2d(4, 8, 3, padding=1, dtype=torch.float64),\n            nn.ReLU(),\n            nn.MaxPool2d(2),\n        )\n        self.head = nn.Linear(32, 5, dtype=torch.float64)\n\n    def forward(self, x):\n        if x.ndim != 4 or tuple(x.shape[1:]) != (1, 8, 8):\n            raise ValueError(\"NCHW[B,1,8,8]\")\n        return self.head(self.backbone(x).flatten(1))\n\n\ndef tensor_images(raw):\n    return torch.tensor(raw[:, None], dtype=torch.float64) / 16.0\n\n\ndef metrics(model, X, y):\n    model.eval()\n    with torch.no_grad():\n        logits = model(X)\n        prob = logits.softmax(-1)\n        pred = logits.argmax(-1)\n        confusion = torch.zeros(5, 5, dtype=torch.int64)\n        for truth, guess in zip(y, pred):\n            confusion[truth, guess] += 1\n        return {\n            \"ce\": F.cross_entropy(logits, y).item(),\n            \"accuracy\": (pred == y).double().mean().item(),\n            \"confusion\": confusion.tolist(),\n        }\n\n\ndef train(model, X, y, V, vy, epochs, mode):\n    freeze = mode == \"frozen\"\n    for p in model.backbone.parameters():\n        p.requires_grad_(not freeze)\n    if mode == \"source\":\n        opt = torch.optim.AdamW(\n            model.parameters(), lr=0.01, weight_decay=0.001, foreach=False\n        )\n    else:\n        opt = torch.optim.AdamW(\n            [{\"params\": model.head.parameters(), \"lr\": 0.01}]\n            + (\n                [] if freeze else [{\"params\": model.backbone.parameters(), \"lr\": 0.001}]\n            ),\n            weight_decay=0.001,\n            foreach=False,\n        )\n    generator = torch.Generator().manual_seed(180)\n    history = []\n    for epoch in range(epochs + 1):\n        tr = metrics(model, X, y)\n        va = metrics(model, V, vy)\n        history.append(\n            {\n                \"epoch\": epoch,\n                \"train_ce\": tr[\"ce\"],\n                \"validation_ce\": va[\"ce\"],\n                \"validation_accuracy\": va[\"accuracy\"],\n            }\n        )\n        if epoch == epochs:\n            break\n        model.train()\n        if freeze:\n            model.backbone.eval()  # No BN/dropout here; deliberate policy for future extensions.\n        for batch in torch.randperm(len(X), generator=generator).split(64):\n            # Gradients accumulate: clear them at the intended optimizer-step boundary.\n            opt.zero_grad(set_to_none=True)\n            loss = F.cross_entropy(model(X[batch]), y[batch])\n            loss.backward()\n            opt.step()\n    return history, metrics(model, V, vy)\n\n\ndef weights(model):\n    return {\n        \"conv1_weight\": model.backbone[0].weight.detach().tolist(),\n        \"conv1_bias\": model.backbone[0].bias.detach().tolist(),\n        \"conv2_weight\": model.backbone[3].weight.detach().tolist(),\n        \"conv2_bias\": model.backbone[3].bias.detach().tolist(),\n        \"head_weight\": model.head.weight.detach().tolist(),\n        \"head_bias\": model.head.bias.detach().tolist(),\n    }\n"
+        },
+        {
+          "type": "text",
+          "title": "Group Split ও স্কেলিংয়ের নিখুঁত হিসাব",
+          "body": "প্রথম কোড ব্লকে প্রতিটি ছবির কাঁচা Pixel-এর SHA-256 হ্যাশ দিয়ে গ্রুপ তৈরি করে random_state = 18 সহ 5-Fold StratifiedGroupKFold-এর প্রথম ভাগটি নেওয়া হয়েছে। দেখা যায় মোট 1797 টি ছবির প্রতিটিই আলাদা বা অনন্য গ্রুপ তৈরি করে, যদিও মূল ডেটায় লেখকের আলাদা কোনো Writer ID নেই। এই ভাগে Source Task পায় 721 টি Train ও 180 টি Validation Row, আর Target Task পায় 717 টি Train ও 179 টি Validation Row। প্রতিটি Pixel-কে পূর্বনির্ধারিত সর্বোচ্চ মান 16 দিয়ে ভাগ করা হয়—ডেটার ওপর কোনো আলাদা Scaler fit করা হয় না। এ ছাড়া Source Label থাকে সরাসরি 0–4, আর Target Label তৈরি করা হয় আসল অঙ্ক থেকে 5 বিয়োগ করে (digit - 5) পূর্ণসংখ্যা (long) আকারে।"
+        },
+        {
+          "type": "text",
+          "title": "সহায়ক ফাংশনগুলোর সমন্বিত কাজ",
+          "body": "দ্বিতীয় কোড ব্লকটি আমাদের নিবন্ধিত DigitCNN Model, Role অনুযায়ী Tensor রূপান্তর, নির্ধারিত Training ও Evaluation লুপ এবং শেখা Weight এক্সপোর্ট করার ফাংশনগুলো একত্রে সাজিয়ে দেয়। দুটি ব্লক একই Python Scope-এ রেখে চালালে পুরো ভিত্তি প্রস্তুত হয়ে যাবে। ঠিক পরের পাঠেই আমরা এই সহায়ক ফাংশনগুলো জুড়ে দিয়ে পূর্ণাঙ্গ চালনযোগ্য পরীক্ষা এবং তিনটি Transfer শাখার তুলনামূলক ফলাফল দেখব।"
+        },
+        {
+          "type": "text",
+          "title": "সংরক্ষিত Model Artifact ও নিরাপত্তার নিয়ম",
+          "body": "ডেভেলপমেন্ট স্ক্রিপ্টটি চালালে লোকাল আউটপুট হিসেবে source.pt, frozen.pt ও finetune.pt নামের তিনটি State Dictionary এবং তার সাথে schema.json ও checksums.json তৈরি হয়। অন্যদিকে আমাদের অ্যাপটি কোনো বাইনারি ফাইল লোড না করে স্বতন্ত্র JSON Weight পড়ে সরাসরি Dart-এ Forward Pass সম্পন্ন করে। নিরাপত্তার স্বার্থে সবসময় মনে রাখবেন, যেকোনো Serialized Artifact কেবল নিজের বিশ্বস্ত ও সামঞ্জস্যপূর্ণ পরিবেশেই লোড করা উচিত।"
+        },
+        {
+          "type": "text",
+          "title": "ফলাফলের ব্যাখ্যা ও প্রমাণের সীমারেখা",
+          "body": "যেহেতু মূল Dataset-এর ঐতিহাসিক Test অংশটিকে এখানে আমাদের শিক্ষামূলক Train ও Validation ভাগে রূপান্তর করা হয়েছে, তাই এখানকার ফলাফলকে মূল UCI Benchmark, নতুন লেখকের হাতের লেখার ওপর সাধারণীকরণ (Writer-independent Generalization), পূর্ণাঙ্গ OCR সক্ষমতা কিংবা আনকোরা চূড়ান্ত Test স্কোর হিসেবে দাবি করা যাবে না। তা ছাড়া একবার প্রকাশিত এই ডায়াগনস্টিক স্কোরগুলো দেখে ভবিষ্যতে নতুন কোনো পরিবর্তন আনলে তা অনিবার্যভাবেই Model Selection ইতিহাসের অংশ হয়ে যাবে।"
+        }
+      ]
+    },
+    {
+      "id": "ch18_experiment",
+      "title": "পূর্ণাঙ্গ CNN ও স্থানীয় Transfer Learning পরীক্ষা",
+      "subtitle": "বাস্তব ছবি, ট্রেন করা Weight এবং স্বতন্ত্র গাণিতিক রেফারেন্স যাচাই",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "একনজরে স্বয়ংসম্পূর্ণ চালনযোগ্য কোড",
+          "body": "আগের পাঠের খণ্ডগুলোকে এক সুতোয় গেঁথে নিচের স্বয়ংসম্পূর্ণ কোড ব্লকে উৎস ডেটা লোড ও SHA-256 হ্যাশ যাচাই, Pixel Group তৈরি, মূল CNN Training, Transfer Learning-এর শাখাগুলো, Convolution ও Pooling-এর গাণিতিক রেফারেন্স এবং Artifact এক্সপোর্ট—সবকিছু একত্রে দেওয়া হলো। মূল স্ক্রিপ্টে CLI অংশটি আলাদা main গার্ডের ভেতর Import-safe ভাবে রাখা হয়েছে, যাতে অন্য যেকোনো ডিরেক্টরি থেকে চালালেও এটি সঠিক উৎস ফাইল খুঁজে পায় এবং কাজ শেষে কলারের পূর্ববর্তী Thread সংখ্যা ও RNG অবস্থা হুবহু ফিরিয়ে দেয়।"
+        },
+        {
+          "type": "text",
+          "title": "Source Task-এ পর্যবেক্ষণকৃত ফলাফল",
+          "body": "নির্ধারিত একটিমাত্র রেসিপিতে (seed = 18 এবং 30 টি Epoch) অঙ্ক 0–4-এর Source Task ট্রেন করার পর ডায়াগনস্টিক Validation সেটে আমরা প্রায় 0.988889 Accuracy এবং প্রায় 0.029792 Cross-Entropy (CE) পাই। খেয়াল রাখবেন, এই নম্বরটি কেবল Source Task-এর অভ্যন্তরীণ পর্যবেক্ষণ—এটি অঙ্ক 5–9-এর Target পারফরম্যান্স নয় এবং মূল UCI Benchmark-এর ফলাফলও নয়।"
+        },
+        {
+          "type": "code",
+          "title": "পূর্ণাঙ্গ অফলাইন CNN ও Transfer Learning পরীক্ষার স্বয়ংসম্পূর্ণ স্ক্রিপ্ট",
+          "body": "from pathlib import Path\nimport argparse, copy, hashlib, json, platform\nimport numpy as np\nimport torch\nfrom torch import nn\nimport torch.nn.functional as F\nfrom sklearn.model_selection import StratifiedGroupKFold\n\nDATA = Path(\"assets/datasets/digits\").resolve()\nHASH = \"09f66e6debdee2cd2b5ae59e0d6abbb73fc2b0e0185d2e1957e9ebb51e23aa22\"\n\n\ndef load_source(path):\n    path = Path(path)\n    if hashlib.sha256(path.read_bytes()).hexdigest() != HASH:\n        raise ValueError(\"Original bundled digits hash mismatch\")\n    data = np.loadtxt(path, delimiter=\",\")\n    raw = data[:, :64]\n    labels = data[:, 64].astype(np.int64)\n    if (\n        data.shape != (1797, 65)\n        or not np.isfinite(data).all()\n        or not np.equal(raw, np.round(raw)).all()\n        or raw.min() < 0\n        or raw.max() > 16\n        or not np.isin(labels, np.arange(10)).all()\n    ):\n        raise ValueError(\"8x8 source schema\")\n    raw = raw.astype(np.uint8).reshape(-1, 8, 8)\n    keys = [hashlib.sha256(x.tobytes()).hexdigest() for x in raw]\n    groups = np.unique(keys, return_inverse=True)[1]\n    train, val = next(\n        StratifiedGroupKFold(5, shuffle=True, random_state=18).split(\n            raw, labels, groups\n        )\n    )\n    roles = {\n        \"source_train\": train[labels[train] < 5],\n        \"source_validation\": val[labels[val] < 5],\n        \"target_train\": train[labels[train] >= 5],\n        \"target_validation\": val[labels[val] >= 5],\n    }\n    assert set(groups[train]).isdisjoint(groups[val])\n    return raw, labels, groups, roles\n\n\nclass DigitCNN(nn.Module):\n    def __init__(self):\n        super().__init__()\n        self.backbone = nn.Sequential(\n            nn.Conv2d(1, 4, 3, padding=1, dtype=torch.float64),\n            nn.ReLU(),\n            nn.MaxPool2d(2),\n            nn.Conv2d(4, 8, 3, padding=1, dtype=torch.float64),\n            nn.ReLU(),\n            nn.MaxPool2d(2),\n        )\n        self.head = nn.Linear(32, 5, dtype=torch.float64)\n\n    def forward(self, x):\n        if x.ndim != 4 or tuple(x.shape[1:]) != (1, 8, 8):\n            raise ValueError(\"NCHW[B,1,8,8]\")\n        return self.head(self.backbone(x).flatten(1))\n\n\ndef tensor_images(raw):\n    return torch.tensor(raw[:, None], dtype=torch.float64) / 16.0\n\n\ndef metrics(model, X, y):\n    model.eval()\n    with torch.no_grad():\n        logits = model(X)\n        prob = logits.softmax(-1)\n        pred = logits.argmax(-1)\n        confusion = torch.zeros(5, 5, dtype=torch.int64)\n        for truth, guess in zip(y, pred):\n            confusion[truth, guess] += 1\n        return {\n            \"ce\": F.cross_entropy(logits, y).item(),\n            \"accuracy\": (pred == y).double().mean().item(),\n            \"confusion\": confusion.tolist(),\n        }\n\n\ndef train(model, X, y, V, vy, epochs, mode):\n    freeze = mode == \"frozen\"\n    for p in model.backbone.parameters():\n        p.requires_grad_(not freeze)\n    if mode == \"source\":\n        opt = torch.optim.AdamW(\n            model.parameters(), lr=0.01, weight_decay=0.001, foreach=False\n        )\n    else:\n        opt = torch.optim.AdamW(\n            [{\"params\": model.head.parameters(), \"lr\": 0.01}]\n            + (\n                [] if freeze else [{\"params\": model.backbone.parameters(), \"lr\": 0.001}]\n            ),\n            weight_decay=0.001,\n            foreach=False,\n        )\n    generator = torch.Generator().manual_seed(180)\n    history = []\n    for epoch in range(epochs + 1):\n        tr = metrics(model, X, y)\n        va = metrics(model, V, vy)\n        history.append(\n            {\n                \"epoch\": epoch,\n                \"train_ce\": tr[\"ce\"],\n                \"validation_ce\": va[\"ce\"],\n                \"validation_accuracy\": va[\"accuracy\"],\n            }\n        )\n        if epoch == epochs:\n            break\n        model.train()\n        if freeze:\n            model.backbone.eval()  # No BN/dropout here; deliberate policy for future extensions.\n        for batch in torch.randperm(len(X), generator=generator).split(64):\n            # Gradients accumulate: clear them at the intended optimizer-step boundary.\n            opt.zero_grad(set_to_none=True)\n            loss = F.cross_entropy(model(X[batch]), y[batch])\n            loss.backward()\n            opt.step()\n    return history, metrics(model, V, vy)\n\n\ndef weights(model):\n    return {\n        \"conv1_weight\": model.backbone[0].weight.detach().tolist(),\n        \"conv1_bias\": model.backbone[0].bias.detach().tolist(),\n        \"conv2_weight\": model.backbone[3].weight.detach().tolist(),\n        \"conv2_bias\": model.backbone[3].bias.detach().tolist(),\n        \"head_weight\": model.head.weight.detach().tolist(),\n        \"head_bias\": model.head.bias.detach().tolist(),\n    }\n\n\nKERNELS = {\n    \"sobel\": [[-1.0, 0.0, 1.0], [-2.0, 0.0, 2.0], [-1.0, 0.0, 1.0]],\n    \"average\": [[1 / 9] * 3 for _ in range(3)],\n}\n\n\ndef analyse_source(path, artifact_dir=None):\n    raw, labels, groups, roles = load_source(path)\n\n    def role(key, target=False):\n        ids = roles[key]\n        return tensor_images(raw[ids]), torch.tensor(\n            labels[ids] - (5 if target else 0), dtype=torch.long\n        )\n\n    S, sy = role(\"source_train\")\n    SV, svy = role(\"source_validation\")\n    T, ty = role(\"target_train\", True)\n    TV, tvy = role(\"target_validation\", True)\n    with torch.random.fork_rng(devices=[]):\n        torch.manual_seed(18)\n        source = DigitCNN()\n        source_history, source_result = train(source, S, sy, SV, svy, 30, \"source\")\n        base = copy.deepcopy(source.backbone.state_dict())\n        torch.manual_seed(19)\n        target = DigitCNN()\n        target.backbone.load_state_dict(base)\n        initial = copy.deepcopy(target)\n        frozen = copy.deepcopy(target)\n        fine = copy.deepcopy(target)\n        frozen_history, frozen_result = train(frozen, T, ty, TV, tvy, 20, \"frozen\")\n        fine_history, fine_result = train(fine, T, ty, TV, tvy, 20, \"finetune\")\n    frozen_change = max(\n        (v - frozen.backbone.state_dict()[k]).abs().max().item()\n        for k, v in base.items()\n    )\n    fine_change = max(\n        (v - fine.backbone.state_dict()[k]).abs().max().item() for k, v in base.items()\n    )\n    assert frozen_change == 0 and fine_change > 0\n    ids = [\n        int(next(i for i in roles[\"target_train\"] if labels[i] == digit))\n        for digit in [5, 6, 9]\n    ]\n    samples = [\n        {\"source_row_1based\": i + 1, \"digit\": int(labels[i]), \"pixels\": raw[i].tolist()}\n        for i in ids\n    ]\n    conv_refs = []\n    pool_refs = []\n    for sample in samples:\n        image = tensor_images(raw[[sample[\"source_row_1based\"] - 1]])\n        for name, kernel in KERNELS.items():\n            for stride, padding in [(1, 0), (1, 1), (2, 1)]:\n                output = F.conv2d(\n                    image,\n                    torch.tensor(kernel, dtype=torch.float64)[None, None],\n                    stride=stride,\n                    padding=padding,\n                )\n                conv_refs.append(\n                    {\n                        \"source_row_1based\": sample[\"source_row_1based\"],\n                        \"kernel\": name,\n                        \"stride\": stride,\n                        \"padding\": padding,\n                        \"output\": output[0, 0].tolist(),\n                    }\n                )\n        for shift in [0, 1]:\n            shifted = torch.zeros_like(image)\n            if shift:\n                shifted[:, :, :, 1:] = image[:, :, :, :-1]\n            else:\n                shifted = image.clone()\n            for mode in [\"max\", \"average\"]:\n                out = (\n                    F.max_pool2d(shifted, 2)\n                    if mode == \"max\"\n                    else F.avg_pool2d(shifted, 2)\n                )\n                pool_refs.append(\n                    {\n                        \"source_row_1based\": sample[\"source_row_1based\"],\n                        \"shift_right\": shift,\n                        \"mode\": mode,\n                        \"input\": shifted[0, 0].tolist(),\n                        \"output\": out[0, 0].tolist(),\n                    }\n                )\n    branches = []\n    images = tensor_images(raw[ids])\n    for name, m in [(\"initial\", initial), (\"frozen\", frozen), (\"finetune\", fine)]:\n        m.eval()\n        with torch.no_grad():\n            logits = m(images)\n            features = m.backbone(images)\n        branches.append(\n            {\n                \"name\": name,\n                \"weights\": weights(m),\n                \"logits\": logits.tolist(),\n                \"probabilities\": logits.softmax(-1).tolist(),\n                \"features\": features.tolist(),\n            }\n        )\n    provenance = {\n        \"source\": \"UCI Optical Recognition of Handwritten Digits, Alpaydin & Kaynak (1998), CC BY 4.0; sklearn-packaged historical test subset\",\n        \"sha256\": HASH,\n    }\n    counts = {k: len(v) for k, v in roles.items()}\n    report = {\n        **provenance,\n        \"versions\": {\n            \"python\": platform.python_version(),\n            \"torch\": torch.__version__,\n            \"numpy\": np.__version__,\n        },\n        \"device\": \"cpu\",\n        \"dtype\": \"float64\",\n        \"roles\": counts,\n        \"unique_pixel_groups\": len(np.unique(groups)),\n        \"source_classes\": [0, 1, 2, 3, 4],\n        \"target_class_to_index\": {\"5\": 0, \"6\": 1, \"7\": 2, \"8\": 3, \"9\": 4},\n        \"parameters\": 501,\n        \"backbone_parameters\": 336,\n        \"head_parameters\": 165,\n        \"source_epochs\": 30,\n        \"target_epochs\": 20,\n        \"source_validation\": source_result,\n        \"frozen_validation\": frozen_result,\n        \"finetune_validation\": fine_result,\n        \"frozen_backbone_max_abs\": frozen_change,\n        \"finetune_backbone_max_abs\": fine_change,\n        \"assumptions\": [\n            \"Historical1797 UCI test-subset images repurposed as diagnostic train/validation, not canonical benchmark evaluation.\",\n            \"Exact-pixel groups kept together with first StratifiedGroupKFold5 seed18; writer IDs unavailable, no writer-disjoint claim.\",\n            \"Source digits0-4 train backbone; target digits5-9 use a fresh common head and disjoint class/task rows. No target-validation fitting.\",\n            \"One declared source30/target20 epoch recipe; no seed/architecture/best-epoch search or independent final test.\",\n            \"Local source-task pretraining, not ImageNet weights. Frozen/fine-tune observed comparison is not universal transfer benefit.\",\n            \"Pixels divide by known maximum16, no fitted normalization. Main training has no augmentation, BN or dropout.\",\n            \"Sobel/average kernels and zero-fill shift are declared mathematical operators on real images, not learned filters/validated augmentation policy.\",\n            \"CPU float64 only; no GPU, mobile PyTorch, TorchVision weight download or production OCR guarantee.\",\n        ],\n    }\n    asset = {\n        **provenance,\n        \"roles\": counts,\n        \"samples\": samples,\n        \"kernels\": KERNELS,\n        \"convolution_references\": conv_refs,\n        \"pool_references\": pool_refs,\n        \"branches\": branches,\n        \"validation_metrics\": {\n            \"source\": source_result,\n            \"frozen\": frozen_result,\n            \"finetune\": fine_result,\n        },\n        \"source_history\": source_history,\n        \"frozen_history\": frozen_history,\n        \"finetune_history\": fine_history,\n        \"frozen_backbone_max_abs\": frozen_change,\n        \"finetune_backbone_max_abs\": fine_change,\n        \"dtype\": \"float64\",\n        \"pixel_divisor\": 16,\n        \"target_labels\": [5, 6, 7, 8, 9],\n        \"parameter_count\": 501,\n        \"torch_version\": torch.__version__,\n    }\n    if artifact_dir:\n        folder = Path(artifact_dir)\n        folder.mkdir(parents=True, exist_ok=True)\n        for name, m in [(\"source\", source), (\"frozen\", frozen), (\"finetune\", fine)]:\n            torch.save(m.state_dict(), folder / (name + \".pt\"))\n        folder.joinpath(\"schema.json\").write_text(\n            json.dumps(\n                {\n                    \"shape\": [\"B\", 1, 8, 8],\n                    \"divisor\": 16,\n                    \"target_labels\": [5, 6, 7, 8, 9],\n                    \"source_sha256\": HASH,\n                },\n                indent=2,\n            )\n            + \"\\n\"\n        )\n        folder.joinpath(\"checksums.json\").write_text(\n            json.dumps(\n                {\n                    p.name: hashlib.sha256(p.read_bytes()).hexdigest()\n                    for p in folder.iterdir()\n                    if p.name\n                    in [\"source.pt\", \"frozen.pt\", \"finetune.pt\", \"schema.json\"]\n                },\n                indent=2,\n            )\n            + \"\\n\"\n        )\n    return report, asset\n\n\ndef run_analysis(path, artifact_dir=None):\n    previous = torch.get_num_threads()\n    try:\n        torch.set_num_threads(1)\n        return analyse_source(path, artifact_dir)\n    finally:\n        torch.set_num_threads(previous)\n\n\nreport, asset = run_analysis(DATA / \"digits.csv.gz\")\nprint(report)\n"
+        },
+        {
+          "type": "code",
+          "title": "চূড়ান্ত ফলাফল ও Frozen Backbone-এর অপরিবর্তিত অবস্থা যাচাই",
+          "body": "assert report[\"frozen_backbone_max_abs\"] == 0\nassert report[\"finetune_backbone_max_abs\"] > 0\nassert report[\"parameters\"] == 501\nprint(report[\"frozen_validation\"], report[\"finetune_validation\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "Target Task-এ Frozen বনাম Fine-tuned শাখার ফলাফল",
+          "body": "এরপর অভিন্ন 179 টি Target Validation Row-তে (20 টি স্থির Epoch শেষে, সেরা Epoch খোঁজার কোনো চেষ্টা ছাড়াই) দেখা যায়—Frozen Backbone রেখে কেবল নতুন Head ট্রেন করলে Accuracy আসে প্রায় 0.916201 (CE ≈ 0.275254), আর পুরো নেটওয়ার্ক Fine-tune করলে Accuracy বেড়ে দাঁড়ায় প্রায় 0.949721 (CE ≈ 0.219725)। যেহেতু এখানে শূন্য থেকে Train করা কোনো Scratch Baseline কিংবা একাধিক Seed-এর পুনরাবৃত্ত পরীক্ষা নেই, তাই কেবল এই একটি রানের ব্যবধান দেখে সর্বজনীন Transfer সুবিধা বা পরিসংখ্যানগত শ্রেষ্ঠত্ব দাবি করা সমীচীন নয়।"
+        },
+        {
+          "type": "text",
+          "title": "ইন্টারেক্টিভ ল্যাবের পেছনের বাস্তব রেফারেন্স ডেটা",
+          "body": "অ্যাপের ইন্টারেক্টিভ ল্যাবগুলো যাতে বাস্তব ডেটায় নিখুঁতভাবে কাজ করে, সেজন্য Target-training সেট থেকে বেছে নেওয়া তিনটি বাস্তব ছবির (5, 6 ও 9) পাশাপাশি 18 টি Convolution Reference Map, 12 টি Pooling ও Shift কেস এবং তিনটি Model শাখার (initial, frozen ও finetune) পূর্ণ Logits, Probability ও মধ্যবর্তী Feature সরাসরি JSON ফাইলে সংরক্ষণ করা হয়েছে। মনে রাখবেন, ল্যাবে দেখানো Sobel ও Average Filter দুটি গাণিতিক উদাহরণ হিসেবে ঘোষিত—মূল CNN-এর Training-এ শেখা Filter নয়।"
+        },
+        {
+          "type": "text",
+          "title": "নিরাপদ ফাইল লিখন ও রানটাইম স্বাতন্ত্র্য",
+          "body": "সাধারণভাবে স্ক্রিপ্টটি চালালে প্রকল্পের কোনো উৎস ফাইল বা বান্ডেল করা Asset পরিবর্তিত হয় না। কেবল স্পষ্টভাবে --write-labs ফ্ল্যাগ দিলেই vision_lab.json নতুন করে তৈরি হয়, আর --artifact-dir দিলে নির্দিষ্ট ফোল্ডারে Model State, Schema ও Checksum লেখা হয়। মূল CSV, rst ও License ফাইলের প্রতিটি বাইট আমাদের Source Manifest-এর সাথে হুবহু মিলে যায়, এবং মোবাইল অ্যাপ চালানোর সময় এই Python Model-গুলোর ওপর কোনো রানটাইম নির্ভরতা থাকে না।"
+        },
+        {
+          "type": "text",
+          "title": "চূড়ান্ত মিলিয়ে দেখা ও পরবর্তী ধাপের প্রস্তুতি",
+          "body": "নিজে পরীক্ষা করে নিশ্চিত হোন যে Frozen শাখায় Backbone-এর সর্বোচ্চ পরিবর্তন নিখুঁত 0 এবং Fine-tuned শাখায় সেই পরিবর্তন প্রায় 0.156389। চাইলে পাইথনের এই প্রকৃত আউটপুটগুলো অ্যাপের স্বতন্ত্র Dart বাস্তবায়নের সাথেও মিলিয়ে দেখতে পারেন। তবে পরের অধ্যায়ে অর্থাৎ Book 3 · Chapter 5 (Sequence Models)-এ যাওয়ার আগে চলুন পরের দুটি পাঠে আমাদের Vision Model-এর ভুলগুলো কীভাবে বিশ্লেষণ করতে হয় এবং Interview-এ কীভাবে পুরো সিস্টেমটি যুক্তি দিয়ে ব্যাখ্যা করতে হয় তা আয়ত্ত করে নিই।"
+        }
+      ]
+    },
+    {
+      "id": "ch18_diagnostics",
+      "title": "Vision Model মূল্যায়ন ও ত্রুটি বিশ্লেষণ (Failure Analysis)",
+      "subtitle": "Confusion Matrix, Calibration, পরিবেশগত Shift এবং কাজের প্রকৃত সীমানা",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Confusion Matrix ও সঠিক Class Mapping",
+          "body": "Training শেষ হলেই ইঞ্জিনিয়ারের কাজ ফুরিয়ে যায় না; একটি ভালো গড় Accuracy স্কোরের আড়ালেও নির্দিষ্ট কিছু Class-এ মারাত্মক দুর্বলতা লুকিয়ে থাকতে পারে। আমাদের Target Task-এর Confusion Matrix-এ Row ও Column-এর ইনডেক্স 0–4 আসলে মূল অঙ্ক 5–9-কে নির্দেশ করে। এই Mapping-এ সামান্য ভুল থাকলেও ছকটি দেখতে বিশ্বাসযোগ্য মনে হবে, কিন্তু কোন অঙ্কের সাথে কোন অঙ্কের গোলমাল পাকছে তার অর্থগত ব্যাখ্যা পুরোপুরি উল্টে যাবে! তাই স্রেফ সামগ্রিক Accuracy না দেখে প্রতিটি Class-এর Support, বাস্তব ভুলের নমুনা এবং Model-এর Confidence মিলিয়ে বিশ্লেষণ করুন।"
+        },
+        {
+          "type": "text",
+          "title": "Softmax স্কোর বনাম প্রকৃত Calibration",
+          "body": "Model-এর শেষ স্তরে Softmax বসালে সব Class-এর স্কোরের যোগফল 1 হয় ঠিকই, কিন্তু তার মানে এই নয় যে সংখ্যাগুলো বাস্তব জগতের নিখুঁত Calibrated Probability প্রকাশ করছে। Model যদি প্রবল আত্মবিশ্বাসের সাথে ভুল Class বেছে নেয় (High-confidence Error), কিংবা নতুন পরিবেশে ডেটার Distribution Shift বা Class Prior বদলে যায়, তবে সেই ঝুঁকি আলাদাভাবে খতিয়ে দেখা জরুরি। সত্যিকারের Probability Calibration চাইলে তার জন্য স্বতন্ত্র ডেটা ও মূল্যায়ন নকশা প্রয়োজন—আমাদের বর্তমান পরীক্ষায় আলাদা কোনো Calibrator fit করা হয়নি।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "C_{ab}=\\#\\{i:y_i=a,\\widehat y_i=b\\},\\quad\\mathrm{accuracy}={\\mathrm{trace}(C)\\over N}"
+        },
+        {
+          "type": "code",
+          "title": "Fine-tuned শাখার Confusion Matrix থেকে Accuracy যাচাই",
+          "body": "from pathlib import Path\nimport json, numpy as np\n\nasset = json.loads(Path(\"assets/datasets/digits/vision_lab.json\").read_text())\nresult = asset[\"validation_metrics\"][\"finetune\"]\nC = np.array(result[\"confusion\"])\nassert C.shape == (5, 5) and C.sum() == 179\nassert abs(C.trace() / C.sum() - result[\"accuracy\"]) < 1e-12\nprint(C)\n"
+        },
+        {
+          "type": "text",
+          "title": "ভুলের নমুনা পরিদর্শন ও Adaptive Selection-এর ফাঁদ",
+          "body": "অ্যাপের ইন্টারেক্টিভ অংশগুলো মূলত Training Row ব্যবহার করে ভেতরের গাণিতিক হিসাব শেখায়—তাই বেছে বেছে কয়েকটি সঠিক উদাহরণ দেখানো (Cherry-picking) কখনোই অদেখা ডেটায় Model-এর দক্ষতার প্রমাণ হতে পারে না। উল্টো দিকে আপনি যদি Validation সেটের ভুলগুলো বারবার দেখে সেই অনুযায়ী ভবিষ্যৎ Architecture বা Transform বদলাতে থাকেন, তবে সেটিও একধরনের Adaptive Selection হয়ে দাঁড়ায়। চূড়ান্ত ও নিরপেক্ষ প্রমাণের জন্য সবসময় সম্পূর্ণ অস্পর্শিত একটি Confirmation ডেটা বাজেট আলাদা রাখতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "সমস্যার পরিধি: Classification বনাম Detection, Segmentation ও OCR",
+          "body": "কোনো Vision Model মূল্যায়নের সময় তার কাজের প্রকৃত পরিধি (Task Scope) সম্পর্কে স্বচ্ছ ধারণা থাকা চাই। সাধারণ Image Classification পুরো ছবির জন্য একটিমাত্র Label দেয়; কিন্তু Object Detection-এ লাগে Bounding Box, Segmentation-এ লাগে প্রতি Pixel-এর Mask, আর পূর্ণাঙ্গ OCR-এ লাগে ধারাবাহিক অক্ষর বা শব্দের Sequence চেনার ক্ষমতা—যাদের প্রত্যেকের Target, Loss এবং Metric সম্পূর্ণ আলাদা। তাই ছোট একটি 8×8 একক অঙ্কের Classifier বানিয়েই পুরো ডকুমেন্ট পড়ার OCR সক্ষমতা দাবি করা চলে না।"
+        },
+        {
+          "type": "text",
+          "title": "পরিবেশগত পরিবর্তন ও Shift Robustness-এর বাস্তবতা",
+          "body": "বাস্তব প্রয়োগে অঙ্কের ঘূর্ণন (Rotation), কলমের দাগের পুরুত্ব, ছবির পটভূমি, রেজোলিউশন কিংবা লেখকের জনগোষ্ঠী বদলে গেলেই Model-এর ত্রুটির হার নাটকীয়ভাবে পাল্টে যেতে পারে। আমাদের Dataset-এ লেখকের পরিচয় (Writer ID) না থাকায় নতুন লেখকের ওপর পারফরম্যান্স কতটা টিকবে তার কোনো স্বতন্ত্র স্কোর এখানে নেই। একইভাবে আমাদের Pooling ও Translation ল্যাবটি স্থানান্তরের ফলে সংখ্যাগত পার্থক্য কোথায় ঘটে তা হাতে-কলমে দেখায়—কিন্তু এটি কোনোভাবেই সার্বিক Robust Invariance-এর সনদ নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ পূর্ণাঙ্গ মূল্যায়ন উপস্থাপন",
+          "body": "Interview-এ কোনো Vision সিস্টেমের মূল্যায়ন ব্যাখ্যা করার সময় সঠিক Data Split Unit, সুনির্দিষ্ট Transform Contract, নির্ভুল Class Mapping, Frozen Buffer-এর হিসাব এবং পরিমাপের অনিশ্চয়তা (Metric Uncertainty)—সব কটি দিক একটি সুসংহত নকশায় তুলে ধরুন। আর বাস্তব হার্ডওয়্যারে মাপা Speed বা Latency Benchmark হাতে না থাকলে কখনোই মনগড়া প্রোডাকশন সক্ষমতা বা Throughput দাবি করবেন না।"
+        }
+      ]
+    },
+    {
+      "id": "ch18_readiness",
+      "title": "CNN কোডিং ও Transfer Learning: পূর্ণাঙ্গ Interview প্রস্তুতি",
+      "subtitle": "হাতে-কলমে Window হিসাব থেকে পূর্ণাঙ্গ পরীক্ষার প্রতিটি সিদ্ধান্ত যুক্তি দিয়ে ব্যাখ্যা করা",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "মূল গাণিতিক কলকব্জা নিজের ভাষায় ব্যাখ্যা করুন",
+          "body": "এই অধ্যায়ের সমাপ্তিতে এসে নিজেকে যাচাই করুন—কোনো নোট বা কোড না দেখেই কি আপনি Cross-correlation বনাম ধ্রুপদী Convolution-এর তফাত, Stride ও Dilation-সহ আউটপুট Shape-এর সূত্র, একাধিক Channel ও groups-এর হিসাব, Pooling-এর Gradient পথ এবং Receptive Field-এর সমীকরণ খাতায় প্রতিপাদন করতে পারছেন? পাশাপাশি Model-এর মোট Parameter সংখ্যা এবং মধ্যবর্তী Activation মেমোরির খরচের পার্থক্য স্পষ্টভাবে আলাদা করতে শিখুন, এবং আমাদের পুরো CNN-এর প্রতিটি স্তরের Forward Shape কোড না চালিয়েই লিখে ফেলুন।"
+        },
+        {
+          "type": "text",
+          "title": "১০টি কোডিং অনুশীলনী ও সূক্ষ্ম বাগ প্রতিরোধের অভ্যাস",
+          "body": "এই অধ্যায়ের 10 টি কোডিং অনুশীলনী নিজের লোকাল Python পরিবেশে হাতে লিখে সমাধান করুন। কোড লেখার সময় ভুল Channel সংখ্যা, অসামঞ্জস্যপূর্ণ ইনপুট Range, ভুল Class Mapping, Batch Size = 1, Padding সীমানার আচরণ এবং ভুল Flatten ক্রম ধরার জন্য সুস্পষ্ট গার্ড ও assert বসান। নিজের কোড, প্রাপ্ত সংখ্যাগত আউটপুট এবং ব্যর্থতার ট্রেস সংরক্ষণ করে রেফারেন্স সমাধানের সাথে মিলিয়ে দেখুন।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "\\text{source}\\to\\text{split}\\to\\text{preprocess}\\to\\text{CNN}\\to\\text{transfer}\\to\\text{diagnostics}"
+        },
+        {
+          "type": "code",
+          "title": "বান্ডেল করা পরীক্ষার মূল ধ্রুবক ও নিখুঁত Freeze শর্তের চূড়ান্ত যাচাই",
+          "body": "from pathlib import Path\nimport json\n\na = json.loads(Path(\"assets/datasets/digits/vision_lab.json\").read_text())\nassert a[\"parameter_count\"] == 501 and a[\"pixel_divisor\"] == 16\nassert a[\"target_labels\"] == [5, 6, 7, 8, 9]\nassert a[\"frozen_backbone_max_abs\"] == 0\nprint(\"Review shapes, source roles, transformations and transfer policy.\")\n"
+        },
+        {
+          "type": "text",
+          "title": "Transfer Learning নকশার প্রতিটি সিদ্ধান্ত যুক্তি দিয়ে প্রতিষ্ঠা করুন",
+          "body": "Interview-এ আমাদের স্থানীয় Source Pretraining আসলে কী করছে, কেন Target Task-এ সম্পূর্ণ নতুন Head বসাতে হয়েছে, এবং Frozen অবস্থা, eval() মোড ও Optimizer Parameter Group-এর নীতিগুলো কীভাবে পরস্পর আলাদা—তা পরিষ্কারভাবে তুলে ধরুন। বাইরে থেকে ImageNet Weight পাওয়া যায়নি বলে কখনোই সাধারণ Random Initialization-কে ভুলে Pretrained বলে চালিয়ে দেবেন না; বরং অফিশিয়াল External Transform এবং বিশ্বস্ত উৎস থেকে Local Artifact সংযোজনের সঠিক প্রকৌশল পরিকল্পনাটি ব্যাখ্যা করুন।"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তবমুখী Interview কেস ও যুক্তিনির্ভর উত্তর",
+          "body": "অধ্যায়ের শেষে দেওয়া 10 টি মৌলিক উচ্চমানের Interview প্রশ্ন আপনার গাণিতিক যুক্তি, কোডিং এবং ডিবাগিং দক্ষতা ঝালিয়ে নেওয়ার জন্য সাজানো হয়েছে। যেকোনো প্রশ্নের উত্তরে শুধু বড় বড় Architecture-এর নাম মুখস্থ না বলে অন্তর্নিহিত অনুমান (Assumptions), Tensor Shape, উৎস ডেটার সীমাবদ্ধতা এবং প্রাসঙ্গিক পাল্টা উদাহরণ (Counterexample) দিয়ে নিজের উত্তরকে অকাট্য করে তুলুন।"
+        },
+        {
+          "type": "text",
+          "title": "প্রাথমিক রেফারেন্স ও অফিশিয়াল ডকুমেন্টেশন",
+          "body": "আরও গভীরে পড়ার জন্য অফিশিয়াল ডকুমেন্টেশনগুলো দেখতে পারেন—Conv2d: https://docs.pytorch.org/docs/2.15/generated/torch.nn.Conv2d.html , MaxPool2d: https://docs.pytorch.org/docs/2.15/generated/torch.nn.MaxPool2d.html , Transfer Learning টিউটোরিয়াল: https://docs.pytorch.org/tutorials/beginner/transfer_learning_tutorial.html , Pretrained Model ও Transform রেফারেন্স: https://docs.pytorch.org/vision/stable/models.html এবং মূল UCI Dataset ও লাইসেন্স: https://archive.ics.uci.edu/dataset/80/optical+recognition+of+handwritten+digits । তবে শেখার জন্য অপরিহার্য সব উপাদান এই অ্যাপের ভেতরেই অফলাইনে সংযুক্ত রয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "পরের অধ্যায়ে যাওয়ার আগে চূড়ান্ত যাচাই",
+          "body": "সামনে এগোনোর আগে একবার মিলিয়ে নিন—Convolution-এর গুণ-যোগ, আউটপুট Shape, Shared Weight-এর Gradient এবং Frozen Backbone-এর সম্পূর্ণ State পরীক্ষা করার প্রতিটি ধাপ আপনার কাছে স্পষ্ট কি না। এরপরের অধ্যায়ে অর্থাৎ Book 3 · Chapter 5 (Sequence Models)-এ আমরা স্থানিক গ্রিড থেকে বেরিয়ে সময়ের ধারাবাহিকতা বা ক্রমভিত্তিক ডেটা, Sequence Window, Recurrent State এবং Temporal Evaluation-এর জগতে প্রবেশ করব।"
+        }
+      ]
+    }
+  ],
+  "quizzes": [
+    {
+      "id": "ch18_q1",
+      "question": "PyTorch-এর Conv2d সাধারণত কোন লজিক্যাল ইনপুট Layout প্রত্যাশা করে?",
+      "options": [
+        "সবসময় [H, W, B, C] বিন্যাসে",
+        "[B, C, H, W] বিন্যাসে",
+        "কেবল দ্বিমাত্রিক [B, D] বিন্যাসে",
+        "একক Vector [C] হিসেবে"
+      ],
+      "answer": 1,
+      "explanation": "PyTorch-এর Conv2d লজিক্যাল Axis হিসেবে NCHW অর্থাৎ [B, C, H, W] ক্রম গ্রহণ করে। মেমোরিতে দ্রুত গণনার জন্য ব্যবহৃত channels_last স্টোরেজ ফরম্যাট কেবল ভেতরের মেমোরি সাজানোর ধরন পাল্টায়, লজিক্যাল Axis-এর অর্থ বদলে দেয় না।"
+    },
+    {
+      "id": "ch18_q2",
+      "question": "এই অধ্যায়ের বান্ডেল করা অঙ্কের Dataset-এ কাঁচা Pixel মান কীভাবে Normalize করা হয়েছে?",
+      "options": [
+        "প্রতিটি মানকে 255 দিয়ে ভাগ করে",
+        "Validation সেট থেকে গড় মান fit করে",
+        "পূর্বনির্ধারিত সর্বোচ্চ মান 16 দিয়ে ভাগ করে",
+        "বাধ্যতামূলকভাবে ImageNet-এর std দিয়ে ভাগ করে"
+      ],
+      "answer": 2,
+      "explanation": "UCI অঙ্কের এই Dataset-এ প্রতিটি ব্লকের কাঁচা গণনার পাল্লা আগে থেকেই 0 থেকে 16 নির্ধারিত। তাই 16 দিয়ে ভাগ করাই সঠিক রূপান্তর; ভুল ভাজক (যেমন 255) ব্যবহার করলে ইনপুটের স্কেল ও Distribution পুরোপুরি বিকৃত হয়ে যাবে।"
+    },
+    {
+      "id": "ch18_q3",
+      "question": "PyTorch-এর Conv2d কি গণনার সময় অপ্রতিসম (Asymmetric) Kernel-কে উল্টে (Flip) নেয়?",
+      "options": [
+        "হ্যাঁ, সবসময় উল্টে নেয়",
+        "কেবল তিন-চ্যানেলের RGB ছবিতে উল্টে নেয়",
+        "কেবল Dilation ব্যবহার করলেই উল্টে নেয়",
+        "না, এটি সরাসরি Cross-correlation প্রথা অনুসরণ করে"
+      ],
+      "answer": 3,
+      "explanation": "ধ্রুপদী গাণিতিক Convolution-এ Kernel উল্টানো হলেও PyTorch-এর Conv2d সরাসরি Cross-correlation হিসাব করে। খাতায় হাতে অঙ্ক কষার সময় বা স্বতন্ত্র রেফারেন্স কোড লেখার সময় এই পার্থক্যটি খেয়াল রাখা অত্যন্ত জরুরি।"
+    },
+    {
+      "id": "ch18_q4",
+      "question": "একটি 8×8 ইনপুটে Kernel k = 3, Stride s = 2, Padding p = 1 এবং Dilation d = 1 প্রয়োগ করলে আউটপুটের স্থানিক আকার কত হবে?",
+      "options": [
+        "4×4",
+        "8×8",
+        "6×6",
+        "3×3"
+      ],
+      "answer": 0,
+      "explanation": "আউটপুট আকারের Floor সূত্র বসালে পাই floor((8 + 2×1 - 3) / 2) + 1 = floor(7 / 2) + 1 = 3 + 1 = 4, অর্থাৎ আউটপুট হবে 4×4।"
+    },
+    {
+      "id": "ch18_q5",
+      "question": "ইনপুট Channel 1, আউটপুট Channel 4, Kernel 3×3 এবং bias=True হলে একটি Conv2d Layer-এ মোট কয়টি ট্রেনযোগ্য Parameter থাকে?",
+      "options": [
+        "36 টি",
+        "40 টি",
+        "64 টি",
+        "256 টি"
+      ],
+      "answer": 1,
+      "explanation": "প্রতিটি আউটপুট Filter-এ থাকে 1 × 3 × 3 = 9 টি Weight এবং 1 টি Bias। ফলে 4 টি Filter মিলিয়ে মোট Parameter সংখ্যা 4 × (9 + 1) = 40 টি। ছবির স্থানিক উচ্চতা বা প্রস্থ Parameter সংখ্যাকে প্রভাবিত করে না।"
+    },
+    {
+      "id": "ch18_q6",
+      "question": "ইনপুট Channel 4, আউটপুট Channel 8, Kernel 3×3 এবং bias=True হলে Conv2d Layer-এর মোট Parameter সংখ্যা কত?",
+      "options": [
+        "288 টি",
+        "40 টি",
+        "296 টি",
+        "512 টি"
+      ],
+      "answer": 2,
+      "explanation": "এখানে প্রতিটি আউটপুট Channel তৈরি করতে 4 টি ইনপুট Channel-এর ফলাফল যোগ হয়, তাই একেকটি Filter-এ থাকে 4 × 9 = 36 টি Weight এবং 1 টি Bias। 8 টি আউটপুট Channel-এ মোট Parameter দাঁড়ায় 8 × (36 + 1) = 296 টি।"
+    },
+    {
+      "id": "ch18_q7",
+      "question": "Depthwise Convolution তৈরি করতে সাধারণত কোন grouping সেটিংটি ব্যবহার করা হয়?",
+      "options": [
+        "সবসময় groups = 1",
+        "groups = Batch Size (B)",
+        "groups = kernel_size",
+        "groups = ইনপুট Channel সংখ্যা (Cin)"
+      ],
+      "answer": 3,
+      "explanation": "groups = Cin ধরলে প্রতিটি ইনপুট Channel অন্য Channel-গুলোর সাথে না মিশে স্বতন্ত্রভাবে স্থানিক Filtering সম্পন্ন করে; এরপর সাধারণত একটি 1×1 Pointwise Layer যোগ করে Channel-গুলোর মিশ্রণ ঘটানো হয়।"
+    },
+    {
+      "id": "ch18_q8",
+      "question": "Pooling ব্যবহার করলেই কি ছবির যেকোনো স্থানান্তরের সাপেক্ষে নিখুঁত Translation Invariance পাওয়া যায়?",
+      "options": [
+        "না, সসীম আকারের ছবি ও সব ধরনের Stride Shift-এ নিখুঁত Invariance থাকে না",
+        "হ্যাঁ, সবসময় শতভাগ অপরিবর্তিত থাকে",
+        "কেবল Max Pooling ব্যবহার করলেই সবসময় পাওয়া যায়",
+        "কেবল Average Pooling ব্যবহার করলেই সবসময় পাওয়া যায়"
+      ],
+      "answer": 0,
+      "explanation": "Stride গ্রিডের সাপেক্ষে ছবি সামান্য সরে গেলেই জানালার ভেতরের উপাদান এবং কিনারার Boundary মান বদলে যায়—যেমনটি আমাদের 1-Pixel Shift ল্যাবে স্পষ্টভাবে দেখা যায়।"
+    },
+    {
+      "id": "ch18_q9",
+      "question": "একটি 2×2 Patch-এর মানগুলো 1, 2, 3 এবং 4 হলে এর ওপর Max Pooling ও Average Pooling চালালে ফলাফল যথাক্রমে কত হবে?",
+      "options": [
+        "2.5 এবং 4",
+        "4 এবং 2.5",
+        "10 এবং 4",
+        "1 এবং 1"
+      ],
+      "answer": 1,
+      "explanation": "সর্বোচ্চ মান হলো 4 এবং চারটি সংখ্যার গড় হলো (1 + 2 + 3 + 4) / 4 = 2.5। প্রতিটি Pooling পদ্ধতি ভিন্ন ধরনের সারসংক্ষেপ রাখে এবং কোনোটি থেকেই সাধারণত মূল চারটি মান পুরোপুরি পুনরুদ্ধার করা যায় না।"
+    },
+    {
+      "id": "ch18_q10",
+      "question": "Conv3 (s=1) → Pool2 (s=2) → Conv3 (s=1) → Pool2 (s=2) কাঠামোর চূড়ান্ত তাত্ত্বিক Receptive Field এবং Jump যথাক্রমে কত?",
+      "options": [
+        "8 এবং 8",
+        "4 এবং 10",
+        "10 এবং 4",
+        "3 এবং 1"
+      ],
+      "answer": 2,
+      "explanation": "পৌনঃপুনিক সূত্র এবং Stride-এর গুণফল অনুযায়ী তাত্ত্বিক Receptive Field দাঁড়ায় 10 এবং চূড়ান্ত Jump হয় 4। খেয়াল রাখবেন, ছবি ছোট হলে এই তাত্ত্বিক সীমার কিছু অংশ আসল ছবির বাইরের Padding অঞ্চলও হতে পারে।"
+    },
+    {
+      "id": "ch18_q11",
+      "question": "Backpropagation-এর সময় একটি Convolution Kernel-এর Weight Gradient কেন সব জানালার অবদানের যোগফল (Sum) হয়?",
+      "options": [
+        "কারণ প্রতিটি Pixel-এর জন্য আলাদা আলাদা Parameter থাকে",
+        "কারণ Convolution-এ কখনো Bias ব্যবহৃত হয় না",
+        "কারণ গড় নিলে ফলাফল সবসময় শূন্য হয়ে যায়",
+        "কারণ একই Kernel সহগ একাধিক স্থানিক Window ও Batch Row-তে বারবার ব্যবহৃত হয়"
+      ],
+      "answer": 3,
+      "explanation": "Shared Parameter হওয়ায় কম্পিউটেশন গ্রাফের প্রতিটি স্থানিক পথ থেকে আসা অবদান Chain Rule অনুযায়ী পরস্পর যোগ হয়। আর Mean Loss ব্যবহার করলে তার ভাগফল আগেই Upstream Delta-র ভেতরে অন্তর্ভুক্ত থাকে।"
+    },
+    {
+      "id": "ch18_q12",
+      "question": "Target Task-এর আসল অঙ্কগুলো 5–9 হলে 5-Class Classifier Head ট্রেন করার সময় Target Label-গুলো কীভাবে পাঠাতে হবে?",
+      "options": [
+        "আসল অঙ্ক থেকে 5 বিয়োগ করে 0–4 পাল্লার পূর্ণসংখ্যা Tensor [B] (long) হিসেবে",
+        "সরাসরি কাঁচা 5–9 মান পাঠালেই সবসময় কাজ করবে",
+        "[B, 1] আকারের ভগ্নাংশ Probability Label হিসেবে",
+        "সরাসরি টেক্সট বা String আকারে"
+      ],
+      "answer": 0,
+      "explanation": "5-Class আউটপুটের জন্য PyTorch-এর CrossEntropyLoss শূন্য থেকে শুরু হওয়া 0–4 Class Index প্রত্যাশা করে; Prediction দেখানোর সময় ফলাফলের সাথে আবার 5 যোগ করে মূল অঙ্কে ফিরিয়ে নেওয়া হয়।"
+    },
+    {
+      "id": "ch18_q13",
+      "question": "আমাদের মূল Tiny CNN-এ Classifier Head-এর ইনপুট Vector-এর মাত্রা (Dimension) কত?",
+      "options": [
+        "64",
+        "32 (= 8 × 2 × 2)",
+        "8",
+        "501"
+      ],
+      "answer": 1,
+      "explanation": "Backbone থেকে পাওয়া [8, 2, 2] আকারের Feature Map-কে Channel-Row-Column ক্রমে Flatten করলে 32 দৈর্ঘ্যের Vector তৈরি হয়, যা থেকে Linear(32, 5) Head-এর মোট 165 টি Parameter আসে।"
+    },
+    {
+      "id": "ch18_q14",
+      "question": "আমাদের মূল CNN-এ Backbone সম্পূর্ণ Freeze রাখলে ট্রেনযোগ্য (Trainable) Parameter সংখ্যা কয়টি থাকে?",
+      "options": [
+        "501 টি",
+        "336 টি",
+        "165 টি",
+        "0 টি"
+      ],
+      "answer": 2,
+      "explanation": "পুরো Model-এর 501 টি Parameter-এর মধ্যে Backbone-এর 336 টি Parameter স্থির (Frozen) থাকে; কেবল নতুন Target Head-এর (32 × 5) + 5 = 165 টি Parameter ট্রেনযোগ্য থাকে।"
+    },
+    {
+      "id": "ch18_q15",
+      "question": "কোনো Module-এর সব Parameter-এ requires_grad = False করা কি model.eval() কল করার সমান?",
+      "options": [
+        "হ্যাঁ, দুটি হুবহু একই কাজ করে",
+        "কেবল BatchNorm থাকলেই দুটি সমান",
+        "কেবল RGB ছবির ক্ষেত্রে দুটি সমান",
+        "না, Parameter-এর Gradient নিয়ন্ত্রণ এবং Module-এর আচরণগত মোড সম্পূর্ণ আলাদা দুটি বিষয়"
+      ],
+      "answer": 3,
+      "explanation": "BatchNorm-এর Running Buffer আপডেট হওয়া বা Dropout সক্রিয় থাকা নির্ভর করে train()/eval() মোডের ওপর, requires_grad ফ্ল্যাগের ওপর নয় (যদিও আমাদের এই ছোট Backbone-এ কোনো BatchNorm বা Dropout নেই)।"
+    },
+    {
+      "id": "ch18_q16",
+      "question": "এই অধ্যায়ের মূল পরীক্ষায় Backbone-এর স্থানীয় Source Pretraining কোন Class-গুলোর ওপর চালানো হয়েছে?",
+      "options": [
+        "অঙ্ক 0–4 এর ওপর",
+        "অঙ্ক 5–9 এর ওপর",
+        "বাহ্যিক ImageNet-এর 1000 টি Class-এর ওপর",
+        "সম্পূর্ণ Target Validation সেটের ওপর"
+      ],
+      "answer": 0,
+      "explanation": "আমাদের পরীক্ষায় Source Task (0–4) এবং Target Task (5–9)-এর Class ও ডেটা Row সম্পূর্ণ পৃথক রাখা হয়েছে; এখানে বাইরের কোনো ImageNet Weight নয়, বরং স্থানীয় Source ডেটাতেই Pretraining করা হয়েছে।"
+    },
+    {
+      "id": "ch18_q17",
+      "question": "আমাদের পরীক্ষায় Frozen এবং Fine-tuned—এই দুটি Target শাখার প্রারম্ভিক অবস্থা (Initialization) কীভাবে নির্ধারণ করা হয়েছে?",
+      "options": [
+        "একাধিক Seed ঘেঁটে পাওয়া আলাদা দুটি সেরা Model দিয়ে",
+        "হুবহু একই Source Backbone এবং একই নতুন Target Head কপি করে",
+        "Target Validation সেটে আগেই fit করা Weight দিয়ে",
+        "পুরোনো Source Classifier Head ও তার Label হুবহু রেখে দিয়ে"
+      ],
+      "answer": 1,
+      "explanation": "দুটি শাখাকেই হুবহু একই প্রারম্ভিক বিন্দু থেকে শুরু করায় কেবল Freeze বনাম Fine-tuning নীতির নিয়ন্ত্রিত তুলনা করা সহজ হয়েছে—যদিও এটি কোনো সর্বজনীন কৌশলগত শ্রেষ্ঠত্বের প্রমাণ নয়।"
+    },
+    {
+      "id": "ch18_q18",
+      "question": "আমাদের Fine-tuning শাখায় নতুন Classifier Head এবং পুরোনো Backbone-এর জন্য ঘোষিত Learning Rate যথাক্রমে কত?",
+      "options": [
+        "0.001 এবং 0.01",
+        "0 এবং 0",
+        "0.01 এবং 0.001",
+        "0.1 এবং 0.1"
+      ],
+      "answer": 2,
+      "explanation": "AdamW Optimizer-এর দুটি আলাদা Parameter Group-এ নতুন Head-এর জন্য 0.01 এবং শেখা Feature সংরক্ষণের উদ্দেশ্যে Backbone-এর জন্য তুলনামূলক ছোট 0.001 হার নির্ধারণ করা হয়েছে, যা একটি পূর্বঘোষিত স্থির রেসিপি।"
+    },
+    {
+      "id": "ch18_q19",
+      "question": "বাইরের কোনো Pretrained Model ব্যবহার করার সময় তার সঠিক Preprocessing নিয়ম কোথা থেকে নেওয়া উচিত?",
+      "options": [
+        "সব Vision Model-এই হুবহু একই গড় ও বিচ্যুতি বসিয়ে",
+        "কেবল ছবির প্রস্থ (Width) দেখে অনুমান করে",
+        "লাইব্রেরির যেকোনো র‍্যান্ডম ডিফল্ট মান থেকে",
+        "ব্যবহৃত সুনির্দিষ্ট Weight সংস্করণের অফিশিয়াল Transform ও Metadata থেকে"
+      ],
+      "answer": 3,
+      "explanation": "Model-এর পরিবার এবং নির্দিষ্ট Weight সংস্করণ ভেদে প্রত্যাশিত ইনপুট Range, Resolution, Interpolation এবং Normalization আলাদা হতে পারে—তাই অফিশিয়াল weight.transforms() ও Metadata অনুসরণ করাই নিরাপদ।"
+    },
+    {
+      "id": "ch18_q20",
+      "question": "TorchVision-এর আধুনিক Model Builder ফাংশনে weights=None পাস করলে সাধারণত কী ঘটে?",
+      "options": [
+        "Model-টি সাধারণত Random Initialization নিয়ে তৈরি হয়",
+        "Model-টি বাধ্যতামূলকভাবে ImageNet Pretrained Weight লোড করে",
+        "Model-এর সব Parameter স্বয়ংক্রিয়ভাবে Freeze হয়ে যায়",
+        "Model-এর ভেতরে কোনো Parameter-ই তৈরি হয় না"
+      ],
+      "answer": 0,
+      "explanation": "weights=None দিলে কোনো Pretrained Checkpoint লোড হয় না, বরং নতুন Random Weight তৈরি হয়। তাই শুধু কোডে Model সফলভাবে লোড হওয়া মানেই Pretrained Weight ব্যবহৃত হওয়ার প্রমাণ নয়।"
+    },
+    {
+      "id": "ch18_q21",
+      "question": "কাঁচা Pixel-এর SHA-256 হ্যাশ ধরে Group Split করলে নিচের কোন বিষয়টি প্রমাণিত হয় না?",
+      "options": [
+        "হুবহু অভিন্ন Pixel-বিশিষ্ট ছবিগুলো দুই ভাগে ছড়িয়ে পড়েনি",
+        "ভিন্ন লেখক (Writer-disjoint) বা সামান্য পরিবর্তিত Near-duplicate ছবির পূর্ণ পৃথকীকরণ",
+        "একটি সুনির্দিষ্ট গ্রুপিং নীতি অনুসরণ করা হয়েছে",
+        "Split-এর ইনডেক্সগুলো পুনরুৎপাদনযোগ্য (Reproducible)"
+      ],
+      "answer": 1,
+      "explanation": "আমাদের ডেটায় লেখকের আলাদা Writer ID নেই; হুবহু এক না হলেও একই লেখকের লেখা ভিন্ন ভিন্ন অনন্য ছবি Train ও Validation উভয় ভাগেই থাকতে পারে, যা কেবল হ্যাশ দিয়ে ধরা সম্ভব নয়।"
+    },
+    {
+      "id": "ch18_q22",
+      "question": "এই অধ্যায়ে ব্যবহৃত 1797 টি ছবির ঐতিহাসিক উৎস আসলে কোনটি?",
+      "options": [
+        "মূল UCI Benchmark-এর পূর্ণ 5620 টি Training ছবির সেট",
+        "কম্পিউটারে কৃত্রিমভাবে তৈরি সম্পূর্ণ নতুন ছবি",
+        "মূল UCI Dataset-এর ঐতিহাসিক Test অংশ, যা এখানে শিক্ষামূলক Split হিসেবে পুনর্ব্যবহৃত হয়েছে",
+        "মোবাইল ফোনে তোলা নতুন হাতের লেখার ছবি"
+      ],
+      "answer": 2,
+      "explanation": "scikit-learn-এ সংরক্ষিত এই ঐতিহাসিক Test সাবসেটটিকে এখানে ডায়াগনস্টিক Train ও Validation ভাগে সাজানো হয়েছে; তাই এর ফলাফলকে মূল UCI Benchmark-এর চূড়ান্ত মূল্যায়ন বলা যাবে না।"
+    },
+    {
+      "id": "ch18_q23",
+      "question": "আমাদের মূল CNN Training পাইপলাইনে কী ধরনের Data Augmentation নীতি ব্যবহার করা হয়েছে?",
+      "options": [
+        "প্রতি ধাপে বাধ্যতামূলক র‍্যান্ডম Flip",
+        "Validation দিয়ে যাচাই করা বড় কোণের Rotation",
+        "Validation সেটের ওপর স্বয়ংক্রিয় Augmentation সার্চ",
+        "কোনো Augmentation ব্যবহৃত হয়নি; ইন্টারেক্টিভ Shift ল্যাবটি কেবল একটি সংখ্যাগত পরীক্ষা"
+      ],
+      "answer": 3,
+      "explanation": "অঙ্কের ছবিতে কোন রূপান্তর Label অক্ষুণ্ণ রাখবে তা সমস্যার প্রকৃতির ওপর নির্ভরশীল; মূল Training-এ কোনো Augmentation নেই এবং ল্যাবের Zero-fill Shift কেবল গাণিতিক প্রভাব দেখানোর জন্য রাখা হয়েছে।"
+    },
+    {
+      "id": "ch18_q24",
+      "question": "আমাদের পরীক্ষায় Fine-tuning শাখায় তুলনামূলক বেশি Accuracy দেখা গেলে সেখান থেকে কোন দাবিটি করা যাবে না?",
+      "options": [
+        "যেকোনো কাজে Fine-tuning ও Pretraining সর্বজনীনভাবে সবসময় সেরা ফল দেবে",
+        "নির্দিষ্ট এই স্থির রানে Fine-tuning শাখায় বেশি স্কোর পর্যবেক্ষণ করা গেছে",
+        "দুটি শাখাই অভিন্ন 179 টি Validation Row-তে মূল্যায়ন করা হয়েছে",
+        "দুটি শাখায় পূর্বঘোষিত Learning Rate নীতি অনুসরণ করা হয়েছে"
+      ],
+      "answer": 0,
+      "explanation": "এখানে শূন্য থেকে Train করা Scratch Baseline, বহু Seed-এর পুনরাবৃত্তি কিংবা নতুন কোনো চূড়ান্ত Test সেট নেই—তাই এটি কেবল এই নির্দিষ্ট রানের সীমিত ডায়াগনস্টিক তুলনা।"
+    },
+    {
+      "id": "ch18_q_frozen_revision",
+      "question": "Backbone-এর সব Parameter-এ requires_grad = False করা থাকলেও যদি ভেতরের BatchNorm স্তরটি train() মোডে চলে, তবে কোন State-টি বদলে যেতে পারে?",
+      "options": [
+        "BatchNorm-এর Running Statistics Buffer (যেমন running_mean ও running_var)",
+        "কেবল Convolution-এর শেখা Weight-গুলো",
+        "কোনো অবস্থাতেই কোনো State বদলাতে পারে না",
+        "ইনপুট ডেটার আসল Class Label-গুলো"
+      ],
+      "answer": 0,
+      "explanation": "Parameter-এর Gradient গণনা বন্ধ থাকলেও train() মোডে Forward Pass চলার সময় BatchNorm তার Running Buffer আপডেট করতে থাকে। তাই সত্যিকারের স্থির আচরণ নিশ্চিত করতে eval() মোড এবং সম্পূর্ণ state_dict() তুলনা করা জরুরি।"
+    },
+    {
+      "id": "ch18_q_dilation_revision",
+      "question": "দুই-স্তরের একটি 1D উদাহরণে ব্যবহৃত ইনপুট অবস্থানগুলোর সেট (Receptive Support) যদি {0, 2, 4, 6, 8} হয়, তবে এর মোট বিস্তৃতি (Extent) এবং প্রকৃত অনন্য ইনপুট সংখ্যা যথাক্রমে কত?",
+      "options": [
+        "5 এবং 5",
+        "9 এবং 9",
+        "9 এবং 5",
+        "8 এবং 4"
+      ],
+      "answer": 2,
+      "explanation": "মোট বিস্তৃতি বা Extent হলো (8 - 0 + 1) = 9, কিন্তু Dilation-এর ফাঁকা ঘরের কারণে প্রকৃত অনন্য ইনপুট অবস্থান ব্যবহৃত হয়েছে মাত্র 5 টি। তাই তাত্ত্বিক Extent মানেই সরাসরি পর্যবেক্ষণকৃত Pixel সংখ্যা নয়।"
+    }
+  ],
+  "exercises": [
+    {
+      "id": "ch18_ex_window",
+      "title": "একটি Convolution Window-এর হিসাব",
+      "prompt": "1 থেকে 9 পর্যন্ত সংখ্যাগুলোকে সাজিয়ে একটি 3×3 ইনপুট তৈরি করুন। এবার Kernel [[1, 0], [0, -1]], padding = 0 এবং stride = 1 ধরে conv2d চালান এবং বাম-ওপরের (Top-left) আউটপুট মানটি answer চলকে সংরক্ষণ করুন।",
+      "starter": "# Implement in local Python. Assign requested scalar to answer.\nanswer = None\n",
+      "solution": "import torch\nimport torch.nn.functional as F\n\nx = torch.arange(1, 10, dtype=torch.float64).reshape(1, 1, 3, 3)\nk = torch.tensor([[1.0, 0.0], [0.0, -1.0]], dtype=torch.float64)[None, None]\nanswer = F.conv2d(x, k)[0, 0, 0, 0].item()\n",
+      "expected": -4,
+      "explanation": "PyTorch-এর conv2d এখানে Kernel না উল্টিয়ে সরাসরি Cross-correlation হিসাব করে। ফলে বাম-ওপরের 2×2 অংশের হিসাব হয় (1 × 1) + (2 × 0) + (4 × 0) + (5 × -1) = 1 - 5 = -4।"
+    },
+    {
+      "id": "ch18_ex_shape",
+      "title": "Stride-সহ আউটপুটের আকার নির্ণয়",
+      "prompt": "ইনপুটের উচ্চতা (Height) 8, Kernel = 3, stride = 2, padding = 1 এবং dilation = 1 হলে আউটপুটের উচ্চতা কত হবে? সংখ্যাটি হিসাব করে answer চলকে রাখুন।",
+      "starter": "# Implement in local Python. Assign requested scalar to answer.\nanswer = None\n",
+      "solution": "answer = float((8 + 2 * 1 - 1 * (3 - 1) - 1) // 2 + 1)\n",
+      "expected": 4,
+      "explanation": "আউটপুট আকারের সূত্র অনুযায়ী floor((8 + 2×1 - 1×(3 - 1) - 1) / 2 + 1) = 4। ছবির Height ও Width-এর সেটিংস আলাদা হলে প্রতিটি Axis-এ সূত্রটি আলাদাভাবে প্রয়োগ করতে হয়।"
+    },
+    {
+      "id": "ch18_ex_count",
+      "title": "Convolution Layer-এর Parameter গণনা",
+      "prompt": "একটি Conv2d Layer-এ ইনপুট Channel = 1, আউটপুট Channel = 4, Kernel = 3×3 এবং bias=True দেওয়া আছে। মোট ট্রেনযোগ্য স্কেলার Parameter সংখ্যা হিসাব করে answer চলকে রাখুন।",
+      "starter": "# Implement in local Python. Assign requested scalar to answer.\nanswer = None\n",
+      "solution": "from torch import nn\n\nlayer = nn.Conv2d(1, 4, 3)\nanswer = float(sum(p.numel() for p in layer.parameters()))\n",
+      "expected": 40,
+      "explanation": "প্রতিটি আউটপুট Filter-এ থাকে 9 টি Weight এবং 1 টি Bias, অর্থাৎ মোট 10 টি মান। চারটি Filter মিলিয়ে মোট Parameter সংখ্যা 4 × 10 = 40। ইনপুট ছবির স্থানিক আকার এই হিসাবকে প্রভাবিত করে না।"
+    },
+    {
+      "id": "ch18_ex_max",
+      "title": "Max Pooling-এর আউটপুট",
+      "prompt": "[[1, 2], [3, 4]] আকারের একটি ছোট Patch-এর ওপর kernel_size = 2 দিয়ে max_pool2d চালান এবং প্রাপ্ত স্কেলার আউটপুটটি answer চলকে রাখুন।",
+      "starter": "# Implement in local Python. Assign requested scalar to answer.\nanswer = None\n",
+      "solution": "import torch\nimport torch.nn.functional as F\n\nanswer = F.max_pool2d(torch.tensor([[1.0, 2.0], [3.0, 4.0]])[None, None], 2).item()\n",
+      "expected": 4,
+      "explanation": "চারটি মানের মধ্যে সর্বোচ্চ মান হলো 4। Backpropagation-এর সময় কেবল এই নির্বাচিত সর্বোচ্চ মানের অবস্থানটিই Gradient পায় (একাধিক ঘরে সমান মান থাকলে ফ্রেমওয়ার্কের নিজস্ব Tie-breaking নিয়ম প্রযোজ্য হয়)।"
+    },
+    {
+      "id": "ch18_ex_average",
+      "title": "Average Pooling-এর আউটপুট",
+      "prompt": "[[1, 2], [3, 4]] আকারের Patch-টির ওপর kernel_size = 2 দিয়ে avg_pool2d চালান এবং প্রাপ্ত স্কেলার আউটপুটটি answer চলকে রাখুন।",
+      "starter": "# Implement in local Python. Assign requested scalar to answer.\nanswer = None\n",
+      "solution": "import torch\nimport torch.nn.functional as F\n\nanswer = F.avg_pool2d(torch.tensor([[1.0, 2.0], [3.0, 4.0]])[None, None], 2).item()\n",
+      "expected": 2.5,
+      "explanation": "চারটি সংখ্যার গড় (1 + 2 + 3 + 4) / 4 = 2.5। Padding-বিহীন এই জানালার Backpropagation-এ আউটপুটের Gradient চারটি ইনপুট ঘরে সমানভাবে ভাগ হয়ে ফিরে যায়।"
+    },
+    {
+      "id": "ch18_ex_field",
+      "title": "তাত্ত্বিক Receptive Field নির্ণয়",
+      "prompt": "পরপর চারটি স্তর: Conv3 (stride = 1) → Pool2 (stride = 2) → Conv3 (stride = 1) → Pool2 (stride = 2), যেখানে সব কটিরই dilation = 1। চূড়ান্ত তাত্ত্বিক Receptive Extent হিসাব করে answer চলকে রাখুন।",
+      "starter": "# Implement in local Python. Assign requested scalar to answer.\nanswer = None\n",
+      "solution": "field, jump = 1, 1\nfor kernel, stride in [(3, 1), (2, 2), (3, 1), (2, 2)]:\n    field += (kernel - 1) * jump\n    jump *= stride\nanswer = float(field)\n",
+      "expected": 10,
+      "explanation": "পৌনঃপুনিক সূত্রে স্তরগুলো পেরোনোর সাথে সাথে বিস্তৃতি বা Extent পর্যায়ক্রমে 3, 4, 8 এবং শেষে 10 হয় (এবং চূড়ান্ত Jump হয় 4)। এই বিস্তৃতি মূল ছবির সীমানা ছাড়িয়ে গেলে এর কিছু অংশ Padding হতে পারে।"
+    },
+    {
+      "id": "ch18_ex_head",
+      "title": "নতুন Target Head-এর Parameter সংখ্যা",
+      "prompt": "Flatten করা 32 টি Feature থেকে 5 টি Class-এ যাওয়ার জন্য একটি Linear Head (bias=True সহ) তৈরি করলে তাতে মোট কয়টি ট্রেনযোগ্য Parameter থাকবে? সংখ্যাটি answer চলকে রাখুন।",
+      "starter": "# Implement in local Python. Assign requested scalar to answer.\nanswer = None\n",
+      "solution": "from torch import nn\n\nhead = nn.Linear(32, 5)\nanswer = float(sum(p.numel() for p in head.parameters()))\n",
+      "expected": 165,
+      "explanation": "Weight Matrix-এ থাকে 32 × 5 = 160 টি মান এবং সাথে থাকে 5 টি Bias—সব মিলিয়ে মোট Parameter সংখ্যা 165।"
+    },
+    {
+      "id": "ch18_ex_labels",
+      "title": "Target Class ইনডেক্স রূপান্তর",
+      "prompt": "এই অধ্যায়ের Target Task-এর আসল Label-গুলো হলো [5, 6, 7, 8, 9]। CrossEntropyLoss-এর উপযোগী শূন্য-ভিত্তিক (Zero-based) Class Index-এ রূপান্তর করলে অঙ্ক 9-এর ইনডেক্স কত হবে? মানটি answer চলকে রাখুন।",
+      "starter": "# Implement in local Python. Assign requested scalar to answer.\nanswer = None\n",
+      "solution": "digit = 9\nanswer = float(digit - 5)\n",
+      "expected": 4,
+      "explanation": "5 বিয়োগ করার নিয়মে রূপান্তরটি দাঁড়ায় 5→0, 6→1, 7→2, 8→3 এবং 9→4; তাই অঙ্ক 9-এর ইনডেক্স হলো 4। Training ও Inference উভয় ধাপে সামঞ্জস্য রাখতে বিপরীত রূপান্তরটিও সংরক্ষণ করা জরুরি।"
+    },
+    {
+      "id": "ch18_ex_gradient",
+      "title": "Shared Filter-এর Gradient হিসাব",
+      "prompt": "1 থেকে 9 সংখ্যাগুলোকে 3×3 আকারে সাজিয়ে ইনপুট নিন এবং সব ঘরে 1 থাকা একটি 2×2 Filter দিয়ে stride = 1 ও padding = 0 সেটিংসে conv2d চালান। সব কটি আউটপুটের যোগফলের (sum) ওপর backward কল করলে dW[0, 0]-এর মান কত হবে? তা answer চলকে রাখুন।",
+      "starter": "# Implement in local Python. Assign requested scalar to answer.\nanswer = None\n",
+      "solution": "import torch\nimport torch.nn.functional as F\n\nx = torch.arange(1, 10, dtype=torch.float64).reshape(1, 1, 3, 3)\nw = torch.ones(1, 1, 2, 2, dtype=torch.float64, requires_grad=True)\nF.conv2d(x, w).sum().backward()\nanswer = w.grad[0, 0, 0, 0].item()\n",
+      "expected": 12,
+      "explanation": "ছবির চারটি 2×2 স্থানিক জানালাই একই Kernel সহগ শেয়ার করে। ফলে বাম-ওপরের ঘরটির মোট Gradient হবে চারটি জানালার বাম-ওপরের ইনপুটগুলোর যোগফল: 1 + 2 + 4 + 5 = 12।"
+    },
+    {
+      "id": "ch18_ex_normalize",
+      "title": "পূর্বনির্ধারিত পাল্লায় Pixel Normalization",
+      "prompt": "আমাদের বান্ডেল করা অঙ্কের Dataset-এ কাঁচা Pixel মানের নথিভুক্ত পাল্লা হলো 0–16। একটি কাঁচা Pixel-এর মান 16 হলে তাকে এই পাল্লা অনুযায়ী Normalize করলে স্কেলার ফলাফল কত হবে? মানটি answer চলকে রাখুন।",
+      "starter": "# Implement in local Python. Assign requested scalar to answer.\nanswer = None\n",
+      "solution": "raw_pixel = 16\nanswer = raw_pixel / 16\n",
+      "expected": 1,
+      "explanation": "সর্বোচ্চ মান 16 দিয়ে ভাগ করলে 16 / 16 = 1 পাওয়া যায়। এটি ডেটা ফরম্যাটের নিজস্ব পাল্লা-ভিত্তিক রূপান্তর; এর বদলে Dataset থেকে Mean বা Variance শিখে ব্যবহার করলে তা শুধুমাত্র Training সেটের ওপর fit করতে হতো।"
+    }
+  ],
+  "interviews": [
+    {
+      "title": "হাতে-কলমে Convolution ও তার Gradient বাস্তবায়ন",
+      "tag": "VISION ML CODING · 30 MIN",
+      "prompt": "একটি একক আউটপুট ঘর এবং Shared Filter-এর Gradient গাণিতিকভাবে প্রতিপাদন করুন এবং সাধারণ লুপ দিয়ে লেখা কোড কীভাবে যাচাই করবেন তা ব্যাখ্যা করুন।\n\nপাশাপাশি 1 থেকে 9 সংখ্যাগুলোকে 3×3 আকারে সাজিয়ে Kernel [[1, 0], [0, -1]], stride = 1 এবং padding = 0 ধরুন। সব আউটপুটের যোগফলকে (sum) Loss ধরলে dKernel এবং ঠিক মাঝখানের ইনপুট ঘরটির Gradient কত হবে বের করুন।",
+      "answer": "প্রথমেই ইনপুটের NCHW ক্রম, Weight-এর [Cout, Cin, kH, kW] আকার এবং Kernel না উল্টানোর Cross-correlation প্রথা স্পষ্ট করে নেব। আউটপুটের (i, j) ঘরের জন্য ইনপুট Patch শুরু হয় (i*s - p, j*s - p) অবস্থান থেকে; সেখানে সব ইনপুট Channel ও Kernel ঘরের গুণফল যোগ করে শেষে Bias যোগ করলে আউটপুট পাওয়া যায়। আর Backpropagation-এ যেহেতু একই Filter পুরো ছবিতে ব্যবহৃত হয়, তাই প্রতিটি স্থানিক Window ও পুরো Batch জুড়ে (Upstream Delta × সংশ্লিষ্ট ইনপুট মান) যোগ করলে পাওয়া যায় Weight-এর Derivative। কিনারার Padding সীমানা ও Dilation লুপের ভেতর স্পষ্টভাবে সামলাব এবং ছোট float64 উদাহরণে F.conv2d ও Autograd-এর সাথে মিলিয়ে দেখার পাশাপাশি মসৃণ বিন্দুতে Finite Difference ও অবৈধ Shape-এর টেস্ট রাখব।\n\nপ্রদত্ত সংখ্যার উদাহরণে চারটি আউটপুট ঘরের মানই আসে -4। ফলে যোগফল Loss-এর জন্য Shared Filter-এর Gradient Matrix দাঁড়ায় [[12, 16], [24, 28]]। অন্যদিকে 3×3 ইনপুটের ঠিক মাঝখানের ঘরটি (যার মান 5) দুটি ওভারল্যাপ করা জানালা থেকে যথাক্রমে +1 এবং -1 সহগের দুটি বিপরীত অবদান পায়—ফলে তার মোট ইনপুট Gradient কাটাকাটি হয়ে নিখুঁত 0 হয়ে যায়! আর যোগফলের বদলে গড় (Mean) Loss নিলে প্রতিটি Gradient-ই 4 দিয়ে ভাগ হয়ে যেত।",
+      "prerequisiteLessons": [
+        "ch18_convolution",
+        "ch18_backward"
+      ]
+    },
+    {
+      "title": "Pooling ও স্থানান্তর: 1 Pixel সরালেই আউটপুট বদলে যায় কেন?",
+      "tag": "VISION ML CODING · 30 MIN",
+      "prompt": "ছবিটিকে মাত্র 1 Pixel ডানে সরানোর পর দেখা গেল Pooling Layer-এর আউটপুট বদলে গেছে। এটি কি কোডের কোনো বাগ?",
+      "answer": "এটি মোটেও বাগ হতে বাধ্য নয়! ছবি মাত্র 1 Pixel সরে গেলেই Stride গ্রিডের সাপেক্ষে প্রতিটি জানালার ভেতরে কোন ঘরগুলো পড়ছে তার সীমানা বদলে যায়, এবং ছবির কিনারায় নতুন Padding বা শূন্য মান ঢুকে পড়ে। Max এবং Average Pooling ভিন্ন ভিন্ন উপায়ে স্থানিক সারসংক্ষেপ তৈরি করে, কিন্তু সসীম আকারের ছবি ও Stride > 1 থাকলে কোনোটিই ঢালাওভাবে নিখুঁত Translation Invariance-এর নিশ্চয়তা দেয় না।\n\nডিবাগ করার সময় প্রথমেই দেখব স্থানান্তরটি শূন্য বসিয়ে (Zero-fill) করা হয়েছে নাকি ঘুরিয়ে এনে (Roll/Wrap) করা হয়েছে। মনে রাখতে হবে, অসীম গ্রিডের মধ্যভাগে Convolution-এর Equivariance ধর্ম এবং একটি সসীম Classifier-এর চূড়ান্ত Invariance দুটি আলাদা বিষয়। তাই বাস্তবে রূপান্তরিত ছবিতে আসল Label অক্ষুণ্ণ থাকছে কি না এবং আলাদা মূল্যায়ন সেটে Model কতটা টিকে থাকছে তা মেপেই সিদ্ধান্ত নিতে হবে।"
+    },
+    {
+      "title": "পূর্ণাঙ্গ CNN-এর Shape, Parameter ও Receptive Field অডিট",
+      "tag": "VISION ML CODING · 30 MIN",
+      "prompt": "1×8×8 ইনপুট → Conv(4) → Pool → Conv(8) → Pool → Linear Head(5) কাঠামোর Model-টির প্রতিটি স্তরের আকার ও Parameter সংখ্যা পুঙ্খানুপুঙ্খভাবে হিসাব করে দেখান।",
+      "answer": "একক ছবির [1, 8, 8] ইনপুটে প্রথম 3×3 Convolution (padding = 1) চালালে আকার হয় [4, 8, 8], যা প্রথম 2×2 MaxPool পেরিয়ে দাঁড়ায় [4, 4, 4]-এ। এরপর দ্বিতীয় 3×3 Convolution (padding = 1) আকার দেয় [8, 4, 4], এবং দ্বিতীয় 2×2 MaxPool শেষে পাওয়া যায় [8, 2, 2]। একে Flatten করলে তৈরি হয় 32 মাত্রার Vector, যা থেকে শেষের Linear Head দেয় 5 টি Class-এর Logits (Batch = 1 থাকলে চূড়ান্ত আকার [1, 5])।\n\nParameter-এর হিসাবে প্রথম Conv স্তরে 4 × (1×9 + 1) = 40 টি এবং দ্বিতীয় Conv স্তরে 8 × (4×9 + 1) = 296 টি মিলিয়ে Backbone-এ থাকে মোট 336 টি Parameter; আর শেষের Head-এ থাকে (32 × 5) + 5 = 165 টি—সর্বমোট 501 টি Parameter। তাত্ত্বিক Receptive Field দাঁড়ায় 10 এবং চূড়ান্ত Jump হয় 4, যেখানে 8×8 ছবির কিনারার শূন্য Padding-ও ওই ক্ষেত্রের অন্তর্ভুক্ত থাকে। বাস্তবায়ন যাচাই করতে Flatten-এর ক্রম (Channel-Row-Column) এবং রেফারেন্স Logits হুবহু মিলিয়ে দেখব।",
+      "prerequisiteLessons": [
+        "ch18_channels",
+        "ch18_receptive"
+      ]
+    },
+    {
+      "title": "Parameter Freeze করার পরেও কেন আউটপুট বদলে যাচ্ছে?",
+      "tag": "VISION ML CODING · 30 MIN",
+      "prompt": "Backbone-এর সব Parameter-এ requires_grad = False করে দেওয়া হয়েছে, তবুও দেখা যাচ্ছে প্রতি ধাপে এর আউটপুট বদলে যাচ্ছে। কীভাবে এর কারণ নির্ণয় করবেন?",
+      "answer": "সবার আগে পরীক্ষা করব Module-টি train() নাকি eval() মোডে আছে—কারণ BatchNorm তার Running Buffer আপডেট করে এবং Dropout র‍্যান্ডম Mask প্রয়োগ করে Module-এর মোড দেখে, requires_grad দেখে নয়! প্যারেন্ট Model-এ model.train() কল করলে ভেতরের Frozen Child Module-ও আবার Training মোডে ফিরে যেতে পারে। পাশাপাশি ইনপুট পাইপলাইনে কোনো র‍্যান্ডম Augmentation বা অস্থির Preprocessing চালু আছে কি না তাও দেখব।\n\nদ্বিতীয় ধাপে Optimizer-এর Parameter তালিকা ও পুরোনো জমে থাকা অশূন্য Gradient পরীক্ষা করব যেন Frozen অংশ ভুলক্রমেও আপডেট না পায়। কেবল .grad is None দেখেই সন্তুষ্ট না হয়ে Training-এর আগে ও পরে সম্পূর্ণ state_dict()-এর প্রতিটি Tensor তুলনা করব। যেমন আমাদের এই অধ্যায়ের কেবল Conv/ReLU/Pool দিয়ে গড়া Backbone-এ কোনো Stochastic Buffer না থাকায় এর সর্বোচ্চ পরিবর্তন নিখুঁত 0 এসেছে—কিন্তু সেই ফলাফলটি সব ধরনের জটিল Architecture-এর জন্য স্বয়ংক্রিয় নিশ্চয়তা নয়।",
+      "prerequisiteLessons": [
+        "ch18_freezing"
+      ]
+    },
+    {
+      "title": "স্থানীয় Transfer Learning পরীক্ষার ন্যায্য নকশা",
+      "tag": "VISION ML CODING · 30 MIN",
+      "prompt": "অঙ্ক 0–4 কে Source Task এবং অঙ্ক 5–9 কে Target Task ধরে একটি ন্যায্য ও ত্রুটিমুক্ত Transfer Learning পরীক্ষার প্রারম্ভিক নীতি কীভাবে সাজাবেন?",
+      "answer": "প্রথমে শুধুমাত্র Source Training অংশের (অঙ্ক 0–4) ওপর মূল CNN ট্রেন করে তার শেখা Backbone আলাদা করে নেব। এরপর Target Task-এর 5 টি নতুন Class-এর জন্য সম্পূর্ণ নতুন একটি 5-Class Classifier Head বসাব এবং আসল অঙ্ক থেকে 5 বিয়োগ করে (digit - 5) শূন্য-ভিত্তিক Target Label তৈরি করব।\n\nন্যায্য তুলনার স্বার্থে Frozen এবং Fine-tuning—উভয় শাখাকেই হুবহু একই কপি করা Source Backbone এবং একই প্রারম্ভিক Target Head থেকে যাত্রা শুরু করাব। পুরোনো Optimizer-এর Momentum না এনে নতুন Optimizer তৈরি করব এবং Head ও Backbone-এর Parameter Group ও Learning Rate স্পষ্টভাবে ঘোষণা করব। পুরো প্রক্রিয়ায় Target Validation সেটকে কখনোই Training বা টিউনিংয়ে ব্যবহার করব না। সবশেষে প্রতিবেদনে স্পষ্টভাবে উল্লেখ করব যে এখানে Class ও Row-গুলো পরস্পর বিচ্ছিন্ন হলেও লেখকের পরিচয় (Writer ID) অজানা, এবং শূন্য থেকে Train করা Scratch Baseline ও বহু Seed না থাকলে কেবল এই পরীক্ষা দিয়ে Pretraining-এর একক সুফল আলাদাভাবে প্রমাণিত হয় না।"
+    },
+    {
+      "title": "ImageNet Pretrained Model-এ ছোট Grayscale ছবির সামঞ্জস্য যাচাই",
+      "tag": "VISION ML CODING · 30 MIN",
+      "prompt": "বাইরের একটি বড় ImageNet Pretrained Model-এ আমাদের অতি ছোট Grayscale ছবি ইনপুট দিতে চাইলে কোন কোন প্রকৌশলগত দিকগুলো পরীক্ষা করতে হবে?",
+      "answer": "প্রথমেই ব্যবহৃত নির্দিষ্ট Weight সংস্করণ এবং তার অফিশিয়াল Transform ও Metadata মিলিয়ে দেখব—বিশেষ করে প্রত্যাশিত Resolution, Interpolation পদ্ধতি, Channel সংখ্যা, মানের পাল্লা, Normalization এবং Class Mapping। এক-চ্যানেলের Grayscale ছবিকে তিনবার Repeat করে RGB বানানো কিংবা প্রথম Convolution Layer কেটে বদলে নিলে মূল Model-এর গাণিতিক আচরণ পাল্টে যায়; আবার ছোট 8×8 ছবিকে জোর করে বড় রেজোলিউশনে Upsample করলেও হারিয়ে যাওয়া সূক্ষ্ম তথ্য ফিরে আসে না।\n\nএর পাশাপাশি 1000-Class Head সরিয়ে নতুন Target Head বসানো এবং সুস্পষ্ট Freeze ও BatchNorm মোড নীতি ঠিক করা জরুরি। আর অফলাইন বা নিয়ন্ত্রিত পরিবেশে বিশ্বস্ত Local Weight ফাইল, Checksum এবং সঠিক License নিশ্চিত না করে ভুলক্রমে লোড হওয়া Random Weight-কে কখনোই Pretrained বলে চালানো যাবে না (যেমন আমাদের বর্তমান অ্যাপটি বাইরে থেকে কোনো Weight ডাউনলোড করে না)।"
+    },
+    {
+      "title": "ভিশন ডেটার অস্বাভাবিক ভালো স্কোর ও Data Leakage অনুসন্ধান",
+      "tag": "VISION ML CODING · 30 MIN",
+      "prompt": "সাধারণ Random Image Split করার পর আপনার Vision Model অভাবনীয় ভালো Validation স্কোর দিচ্ছে। ফলটি বিশ্বাস করার আগে কী কী প্রশ্ন তুলবেন?",
+      "answer": "প্রথমেই সন্দেহ করব Train ও Validation ভাগের মাঝে কোনো হুবহু ডুপ্লিকেট, সামান্য পরিবর্তিত Near-duplicate, একই বড় ছবির একাধিক Crop, ভিডিওর পাশাপাশি Frame কিংবা একই লেখক, রোগী, ক্যামেরা বা সময়ের Sample ছড়িয়ে পড়েছে কি না। মনে রাখতে হবে, আমাদের SHA-256 Pixel Hash কেবল শতভাগ অভিন্ন ছবিগুলোকে একসাথে রাখে—কিন্তু লেখকের পরিচয় (Writer Separation) বা সামান্য সরে যাওয়া ছবির Data Leakage ঠেকাতে পারে না।\n\nএ ছাড়া খতিয়ে দেখব Dataset-টি আগে কোনো ঐতিহাসিক Benchmark-এর অংশ ছিল কি না, কোনো Preprocessing ভুলক্রমে পুরো ডেটার ওপর fit হয়েছে কি না এবং Validation স্কোর দেখেই বারবার Augmentation বা Hyperparameter বাছাই করা হয়েছে কি না। সত্যিকারের নির্ভরযোগ্য মূল্যায়নের জন্য সমস্যার সঠিক একক (Group/Domain Unit) ধরে সম্পূর্ণ অস্পর্শিত একটি নতুন Confirmation সেট সাজাতে হবে।"
+    },
+    {
+      "title": "অসতর্ক Data Augmentation যখন আসল Label নষ্ট করে দেয়",
+      "tag": "VISION ML CODING · 30 MIN",
+      "prompt": "হাতে লেখা অঙ্ক চেনার একটি কাজে কেউ সাধারণ প্রাকৃতিক ছবির মতো ঢালাও Flip ও বড় কোণের Rotation ব্যবহার করেছে। এর প্রভাব কীভাবে বিশ্লেষণ করবেন?",
+      "answer": "যেকোনো Augmentation প্রয়োগের প্রথম শর্তই হলো রূপান্তরটি আসল Label অক্ষুণ্ণ রাখছে কি না (Label-preservation Assumption) তা যাচাই করা। হাতে লেখা অঙ্কের ছবি উল্টে বা ঘুরিয়ে দিলে তার অর্থই পাল্টে যেতে পারে—যেমন 6 উল্টে 9 হয়ে যায় কিংবা অঙ্কটি সম্পূর্ণ অবাস্তব রূপ নেয়! পাশাপাশি অতি ছোট রেজোলিউশনের ছবিতে আগ্রাসী Crop, ভুল Fill মান বা অনুপযুক্ত Interpolation ব্যবহার করলে অঙ্কের মূল রেখাই মুছে যেতে পারে।\n\nতাই কেবল সমস্যার সাথে সামঞ্জস্যপূর্ণ বৈধ রূপান্তরগুলোই Training ধাপে দৈবভাবে (Stochastic) ব্যবহার করতে হবে, আর Validation ও Test ধাপ রাখতে হবে সম্পূর্ণ স্থির ও Deterministic। আমাদের অধ্যায়ের Shift ল্যাবটি কেবল এক ঘর সরানোর সংখ্যাগত ফলাফল দেখায়, এটি কোনো পরীক্ষিত Training রেসিপি নয়। আর কাজে যদি Bounding Box বা Segmentation Mask থাকে, তবে ছবির সাথে সাথে স্থানাঙ্কগুলোরও যুগপৎ রূপান্তর (Coupled Transform) নিশ্চিত করতে হবে।"
+    },
+    {
+      "title": "Fine-tuning চালু করার পরেও কেন Backbone আপডেট হচ্ছে না?",
+      "tag": "VISION ML CODING · 30 MIN",
+      "prompt": "আপনি Fine-tuning শুরু করেছেন; দেখা যাচ্ছে নতুন Classifier Head-এর Weight বদলাচ্ছে, কিন্তু Backbone আগের জায়গাতেই স্থির হয়ে আছে। কীভাবে ডিবাগ করবেন?",
+      "answer": "ধাপে ধাপে পাঁচটি জায়গা পরীক্ষা করব: এক, Backbone-এর প্রতিটি Parameter-এ সত্যিই requires_grad = True করা হয়েছে কি না; দুই, Unfreeze করার পর সেই Parameter-গুলো আদৌ Optimizer-এর param_groups-এ যোগ করা হয়েছে কি না এবং তাদের Learning Rate ভুলক্রমে 0 হয়ে নেই তো; তিন, আগের ধাপে ক্যাশ করে রাখা কোনো পুরোনো Detached Feature ভুলবশত সরাসরি Head-এ পাঠানো হচ্ছে কি না; চার, Backbone-এর Forward Pass কোনো torch.no_grad() ব্লকের ভেতর আটকে আছে কি না।\n\nপাশাপাশি পরীক্ষা করব .grad আসলে None হয়ে আছে (অর্থাৎ গ্রাফ বিচ্ছিন্ন), নাকি গ্রাফ যুক্ত থাকা সত্ত্বেও নিষ্ক্রিয় ReLU বা শূন্য সংকেতের কারণে মান 0 আসছে। সবশেষে একটি ছোট Batch-এ ডামি রান চালিয়ে Training-এর আগের ও পরের Weight পার্থক্য (Value Delta) এবং Loss চুক্তি সরাসরি মিলিয়ে দেখব।",
+      "prerequisiteLessons": [
+        "ch18_finetuning"
+      ]
+    },
+    {
+      "title": "Fine-tuning-এর উচ্চতর স্কোরকে পরিমিত ও বস্তুনিষ্ঠভাবে ব্যাখ্যা করা",
+      "tag": "VISION ML CODING · 30 MIN",
+      "prompt": "Target Task-এ দেখা গেল Fine-tuning শাখার Accuracy প্রায় 0.9497 এবং Frozen শাখার Accuracy প্রায় 0.9162। এখান থেকে আপনার প্রকৌশলগত সিদ্ধান্ত কী হবে?",
+      "answer": "আমি ফলাফলটিকে ঠিক ততটুকুই দাবি করব যতটুকু আমাদের পরীক্ষার নকশা সমর্থন করে: স্থানীয়ভাবে অঙ্ক 0–4 এ Pretrain করা এই নির্দিষ্ট Tiny CNN-এ, অভিন্ন 179 টি ডায়াগনস্টিক Validation Row-তে এবং পূর্বঘোষিত অসম Learning Rate নীতির অধীনে Fine-tuning শাখাটি Frozen শাখার চেয়ে ভালো ফলাফল দেখিয়েছে।\n\nএকই সাথে স্পষ্টভাবে জানাব কী কী এখান থেকে দাবি করা যাবে না: এখানে শূন্য থেকে Train করা কোনো Scratch Target Baseline নেই, একাধিক Seed-এর পুনরাবৃত্তি বা সেরা Epoch খোঁজা হয়নি এবং আলাদা কোনো চূড়ান্ত Test সেটও নেই। তাই এই একটি সংখ্যা দিয়ে সর্বজনীনভাবে Fine-tuning-এর শ্রেষ্ঠত্ব, বাহ্যিক ImageNet Transfer-এর সুফল, নিখুঁত Probability Calibration, নতুন লেখকের ওপর সাধারণীকরণ কিংবা প্রোডাকশন OCR সক্ষমতা প্রমাণিত হয় না। আর এই স্কোর দেখে ভবিষ্যতে Model বদলালে যে Validation সেটটি Model Selection ইতিহাসের অংশ হয়ে যাবে, সেটিও নথিতে উল্লেখ রাখব।"
+    }
+  ],
+  "book": {
+    "order": 18,
+    "part": "Book 3 · Deep Learning & RL",
+    "prerequisites": [
+      "chapter_17"
+    ],
+    "purpose": "আগের অধ্যায়ে (Book 3 · Chapter 3: Reliable Deep Learning Training) আমরা দেখেছি কীভাবে একটি Neural Network নির্ভরযোগ্যভাবে Train করতে হয়। এই অধ্যায়ে আমরা জানব কীভাবে ছবির স্থানিক গঠনকে কাজে লাগিয়ে CNN তৈরি করা হয়, কীভাবে Transfer Learning দিয়ে এক সমস্যার জ্ঞান অন্য সমস্যায় কাজে লাগানো যায়, এবং ছবির অর্থ অক্ষুণ্ণ রেখেই কীভাবে Model-এর Robustness যাচাই করতে হয়।",
+    "outcomes": [
+      "Convolution-এর জ্যামিতিক হিসাব, Shared Weight-এর Backpropagation এবং Data Leakage এড়িয়ে নিখুঁত Vision Evaluation ও সঠিক Augmentation নির্বাচন করতে পারা।",
+      "হাতে-কলমে উদাহরণ, Python কোড ও স্বমূল্যায়নের মাধ্যমে Label-preserving Transform এবং Domain Shift-এর বাস্তব প্রভাব স্পষ্টভাবে ব্যাখ্যা করতে পারা।"
+    ],
+    "recall": [
+      "Backbone-এর সব Parameter Freeze করার পরেও কেন এবং কীভাবে BatchNorm-এর Running Statistics ট্রেনিংয়ের সময় বদলে যেতে পারে?",
+      "হাতে লেখা অঙ্কের Classifier এবং উপগ্রহ চিত্রের (Satellite Image) Classifier—উভয়ের জন্য দুটি নিরাপদ এবং দুটি ঝুঁকিপূর্ণ Augmentation উদাহরণসহ ব্যাখ্যা করুন।"
+    ],
+    "bridge": "এই অধ্যায়ে স্থানিক বা Spatial ডেটার গাঁথুনি বোঝার পর আমাদের পরবর্তী গন্তব্য Book 3 · Chapter 5 (Sequence Models), যেখানে আমরা সময়ের ক্রম বা ধারাবাহিক ডেটা নিয়ে কাজ করব। পরের অধ্যায়ে যাওয়ার আগে এখানকার Quiz, Coding অনুশীলনী ও না দেখে ব্যাখ্যা করার প্রশ্নগুলো নিজে মিলিয়ে নিন।",
+    "bookId": "deep_learning",
+    "bookChapter": 4
+  }
+}

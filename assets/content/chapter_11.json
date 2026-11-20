@@ -1,0 +1,1652 @@
+{
+  "id": "chapter_11",
+  "number": 11,
+  "title": "SVM, kNN & Naive Bayes",
+  "shortTitle": "SVM, kNN & Naive Bayes",
+  "displayTitle": "SVM, kNN\n& Naive Bayes",
+  "subtitle": "Margin, Neighborhood ও Likelihood—তিনটি ভিন্ন গাণিতিক দৃষ্টিভঙ্গি থেকে Classification বোঝার পূর্ণাঙ্গ নির্দেশিকা।",
+  "description": "গভীর derivations, exact neighbor ও log-likelihood coding, বাস্তব Adult labs এবং interview preparation।",
+  "difficulty": "Intermediate",
+  "lab": "classical",
+  "lessons": [
+    {
+      "id": "ch11_families",
+      "title": "তিনটি Learning নীতি",
+      "subtitle": "Margin, Neighborhood ও Generative Probability থেকে Classification বোঝা",
+      "duration": "28 min",
+      "icon": "functions",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "একই সমস্যার তিনটি ভিন্ন দর্শন",
+          "body": "আগের অধ্যায়ে (Book 2 · Chapter 5: Ensembles & Boosting) আমরা দেখেছি কীভাবে একাধিক Decision Tree মিলে Feature Space-কে অক্ষ-সমান্তরাল ছোট ছোট অঞ্চলে ভাগ করে শক্তিশালী Prediction তৈরি করে। কিন্তু বাস্তব সমস্যায় সব ডেটার গঠন একরকম নয়। একই Classification সমস্যাকে জ্যামিতি ও Probability-এর তিনটি সম্পূর্ণ ভিন্ন দৃষ্টিভঙ্গি থেকে সমাধান করা যায়। প্রথমত, Support Vector Machine (SVM) চায় দুটি Class-এর মাঝখানে এমন একটি Decision Boundary টানতে, যার দুপাশের নিরাপদ ফাঁকা জায়গা বা Margin যেন সবচেয়ে প্রশস্ত হয়। দ্বিতীয়ত, k-Nearest Neighbors (kNN) কোনো আলাদা সমীকরণ মুখস্থ না রেখে দেখে নতুন ডেটাবিন্দুটির সবচেয়ে কাছে কোন কোন পুরোনো Training Sample বসে আছে এবং তাদের সংখ্যাগরিষ্ঠ Label কী। তৃতীয়ত, Naive Bayes প্রতিটি Class-এর সাপেক্ষে Feature-গুলোর Likelihood ও Class Prior হিসাব করে Probability-এর সূত্র ধরে সিদ্ধান্ত নেয়।\n\nলক্ষ্য করার মতো বিষয় হলো, এই তিনটি Model পরিবারের গাণিতিক অনুমান একেবারেই আলাদা। তাই একই Feature Matrix হাতে পেলেই তিনটির জন্য একই ধরনের Preprocessing কাজ করবে না, আবার তিনটির সংখ্যাগত আউটপুটকেও একই অর্থে Probability বলা যাবে না। কোন পরিস্থিতিতে কোন পদ্ধতিটি বেছে নেওয়া যুক্তিযুক্ত, তা আমরা ছোট গাণিতিক উদাহরণ ও কোডের সাহায্যে ধাপে ধাপে বুঝে নেব।"
+        },
+        {
+          "type": "text",
+          "title": "Prediction Contract ও Output-এর প্রকৃত অর্থ",
+          "body": "কাঁচা Dataset-এ সাধারণত Binary Label হিসেবে `0` এবং `1` দেওয়া থাকে, কিন্তু SVM-এর গাণিতিক প্রতিপাদনে আমরা চিহ্নযুক্ত Label `y ∈ {-1, +1}` ব্যবহার করব—যাতে কাঁচা স্কোরের সাথে `y` গুণ করলেই বিন্দুটি সঠিক পাশে আছে কি না তা এক মুহূর্তে বোঝা যায়।\n\nআরও জরুরি বিষয় হলো তিনটি মডেলের আউটপুটের অর্থ পরিষ্কারভাবে আলাদা রাখা। SVM দেয় একটি চিহ্নযুক্ত Decision Score `f(x)`, kNN দেয় নিকটতম প্রতিবেশীদের স্থানীয় Vote Fraction, আর Naive Bayes দেয় শক্তিশালী Conditional Independence অনুমানের অধীনে একটি Posterior হিসাব। কোনো যাচাই ছাড়াই SVM-এর কাঁচা স্কোরের ওপর সরাসরি Sigmoid বসিয়ে সেটিকে প্রকৃত Probability বলে দাবি করা মারাত্মক ভুল। আপনার মূল্যায়নের মাপকাঠি যদি Average Precision (AP) বা ROC-AUC হয়, তবে সঠিক ক্রম বজায় রাখে এমন একটি Ranking Score-ই যথেষ্ট; কিন্তু Brier Score বা ঝুঁকিভিত্তিক সিদ্ধান্তের জন্য চাই যাচাইকৃত ও Calibrated Probability।"
+        },
+        {
+          "type": "text",
+          "title": "Algorithm বেছে নেওয়ার আগে Feature Representation",
+          "body": "মডেল পাল্টানোর আগে ভাবতে হবে আপনার Feature-গুলো আসলে কী অর্থ বহন করছে। ধরুন, একটি কলামে মানুষের বয়স (`20` থেকে `70` বছর) এবং আরেকটি কলামে বার্ষিক আয় (`20,000` থেকে `200,000` টাকা) দেওয়া আছে। সরাসরি Euclidean Distance মাপলে বয়সের পার্থক্য আয়ের বিশাল সংখ্যার নিচে পুরোপুরি চাপা পড়ে যাবে! একইভাবে SVM-এ ওজনের Norm ও Margin-এর প্রস্থও স্থানাঙ্কের এককের ওপর সরাসরি নির্ভর করে।\n\nআবার শব্দের সংখ্যা গোনা Count-ভিত্তিক Multinomial Naive Bayes কখনো ঋণাত্মক (Negative) বা শূন্য-কেন্দ্রিক মান গ্রহণ করতে পারে না, অথচ Gaussian Naive Bayes ধরে নেয় অবিচ্ছিন্ন (Continuous) Feature-গুলো প্রতিটি Class-এর ভেতরে ঘণ্টাকৃতির Gaussian Distribution মেনে চলে। তাই Feature-এর অর্থ ও গঠন ঠিক না করে শুধু নামীদামি Algorithm বসিয়ে দিলে সমস্যার প্রকৃত সমাধান পাওয়া যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "তিনটি আলাদা Training ও Inference প্রবাহ",
+          "body": "বাস্তব পাইপলাইনে এই তিনটি Model-এর কাজের ধারা স্পষ্টভাবে আলাদা থাকে:\n- **SVM:** শুধুমাত্র Training অংশে Scaling Parameter শেখা → Margin Objective অপ্টিমাইজ করা → নতুন বিন্দুর জন্য Decision Score বের করা।\n- **kNN:** শুধুমাত্র Training ডেটা থেকে রূপান্তর শেখা → রূপান্তরিত Training পুল বা Spatial Index সংরক্ষণ করা → Query এলে Distance মাপা, ক্রম সাজানো ও Vote গণনা করা।\n- **Naive Bayes:** Training ডেটা থেকে প্রতিটি Class-এর পরিসংখ্যান শেখা → Log-Space-এ Log-Likelihood ও Log-Prior যোগ করা → নিরাপদ Normalization করে Posterior Probability বের করা।\n\nপ্রতিটি ক্ষেত্রেই ইনপুটের Schema, অসীম বা অনুপস্থিত মান না থাকা (Finite Values) এবং Class-এর ক্রম পরীক্ষা করে নেওয়া জরুরি। নিচে দেখুন কীভাবে খুব ছোট সংখ্যার ক্ষেত্রেও Underflow এড়িয়ে Log-Space-এ নিরাপদভাবে Posterior Probability বের করা হয়।"
+        },
+        {
+          "type": "code",
+          "title": "Log-Space-এ স্থিতিশীল Output যাচাই",
+          "body": "import numpy as np\nfrom scipy.special import logsumexp\n\nscores = np.array([-1000.0, -1001.0])  # illustrative class log scores\nlog_p = scores - logsumexp(scores)\nassert np.isclose(np.exp(log_p).sum(), 1)\nassert np.isfinite(log_p).all()\nprint(np.exp(log_p))\n# Stable normalization applies to model log scores, not arbitrary SVM margins.\n"
+        },
+        {
+          "type": "text",
+          "title": "একটি দায়িত্বশীল ML রিপোর্টে কী কী থাকা জরুরি",
+          "body": "সংখ্যার নিখুঁত হিসাবের পাশাপাশি পরীক্ষার স্বচ্ছতাও সমান গুরুত্বপূর্ণ। যেকোনো মডেল তুলনার রিপোর্টে অবশ্যই উল্লেখ করবেন: মূল Task কী, প্রতিটি Observation Unit কাকে বোঝাচ্ছে, Prediction-এর মুহূর্তে কোন কোন Feature বাস্তবে পাওয়া যাবে, ডেটার Split ও Preprocessing-এর পরিধি কী ছিল, কোন Metric ও Baseline ধরা হয়েছে, কোন Hyperparameter টিউন করা হয়েছে এবং আউটপুট স্কোরটির অর্থ কী। এই অধ্যায়ে আমরা ঐতিহাসিক Adult ডেটাসেটের একটি নির্দিষ্ট অংশ ব্যবহার করব কেবল গাণিতিক আচরণ ও মূল্যায়ন পদ্ধতি হাতে-কলমে শেখার জন্য—এখান থেকে বর্তমান জনসংখ্যার ওপর কোনো কার্যকারণ (Causal) বা চূড়ান্ত সিদ্ধান্ত দাবি করা আমাদের উদ্দেশ্য নয়। পাশাপাশি মনে রাখবেন, অ্যাপের ভেতরের ইন্টারঅ্যাক্টিভ ল্যাবগুলো ডিভাইসে সরাসরি Python ট্রেনিং না চালিয়ে পূর্ব-সংরক্ষিত Fit ও নিখুঁত গাণিতিক হিসাব প্রদর্শন করে।"
+        },
+        {
+          "type": "text",
+          "title": "Model বাছাইয়ের বাস্তবসম্মত দৃষ্টিভঙ্গি",
+          "body": "কোন পরিস্থিতিতে কোন মডেলটি এগিয়ে থাকে? ছোট বা মাঝারি আকারের ঘন (Dense) সংখ্যাসূচক ডেটায় সঠিকভাবে স্কেল করা RBF SVM বা kNN মসৃণ স্থানীয় সীমানা ধরতে দারুণ কাজ করে। অন্যদিকে হাজার হাজার শব্দের উচ্চমাত্রিক Sparse টেক্সট ডেটায় Linear SVM এবং Multinomial বা Complement Naive Bayes অত্যন্ত দ্রুত ও শক্তিশালী Baseline দেয়। আবার যেখানে কোটি কোটি গ্রাহকের ডেটা থেকে কয়েক মিলিসেকেন্ডের মধ্যে উত্তর দিতে হয়, সেখানে পুরো ডেটাসেট ধরে রাখা নিখুঁত kNN কিংবা হাজারো Support Vector-বিশিষ্ট Kernel SVM চালানো ব্যয়বহুল হয়ে পড়ে। তাই সবসময় Parameter সংখ্যা, Training ও Prediction Latency, Memory খরচ, Missing Value এবং Calibration একসাথে মিলিয়ে বিচার করুন—কারণ কোনো একক Algorithm সব ডেটায় সেরা হতে পারে না।"
+        },
+        {
+          "type": "text",
+          "title": "পরের পাঠের প্রস্তুতি: নিজে ভেবে দেখুন",
+          "body": "পরের পাঠে SVM-এর জ্যামিতিতে ঢোকার আগে একটি বাস্তব দৃশ্য কল্পনা করুন। ধরুন, আপনি একটি Spam শনাক্তকরণ সিস্টেম বানাচ্ছেন—সেখানে আপনার Feature-গুলো কি শব্দের মোট সংখ্যা (Count), উপস্থিতি-অনুপস্থিতি, নাকি অবিচ্ছিন্ন অনুপাত? নতুন একজন ব্যবহারকারীর ক্ষেত্রে kNN ব্যবহার করলে তার 'নিকটতম প্রতিবেশী' আসলে কারা হবে? আর SVM-এর কাঁচা Decision Score থেকে চূড়ান্ত সিদ্ধান্ত নেওয়ার Threshold আপনি কীভাবে নির্ধারণ করবেন? মনে মনে প্রতিটি মডেলের জন্য এক অনুচ্ছেদের একটি করে Serving Contract গুছিয়ে রাখুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch11_margin",
+      "title": "SVM Geometry ও Maximum Margin",
+      "subtitle": "Functional Margin থেকে Geometric Distance ও Primal Optimization",
+      "duration": "38 min",
+      "icon": "functions",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Separating Hyperplane ও Scale-এর ধাঁধা",
+          "body": "ধরুন, দ্বিমাত্রিক সমতলে দুটি Class-এর বিন্দু এমনভাবে ছড়িয়ে আছে যে তাদের মাঝখান দিয়ে অসংখ্য সরলরেখা টেনে দুটি দলকে নিখুঁতভাবে আলাদা করা সম্ভব। প্রশ্ন হলো, এতগুলো রেখার মধ্যে কোনটিকে আমরা সেরা Decision Boundary বলব? SVM-এর মূল জ্যামিতিক দর্শন খুব সহজ: এমন একটি সমতল বা Hyperplane বেছে নাও, যা উভয় Class-এর সবচেয়ে কাছের বিন্দুগুলো থেকে সর্বাধিক দূরত্বে থাকে।\n\nগাণিতিকভাবে আমরা রৈখিক স্কোরকে লিখি `f(x) = wᵀx + b`, যেখানে `f(x) = 0` সমীকরণটি আমাদের Decision Boundary নির্দেশ করে। চিহ্নযুক্ত Label `y ∈ {-1, +1}` ধরলে আমাদের Binary Prediction হয় `sign(f(x))`। এখানে `w` হলো সীমানার ওপর লম্বভাবে থাকা Normal Vector এবং `b` হলো কেন্দ্র থেকে সরণ বা Bias। কিন্তু একটি সূক্ষ্ম সমস্যা খেয়াল করুন: আমরা যদি `w` এবং `b` উভয়কেই `3` (বা যেকোনো ধনাত্মক সংখ্যা) দিয়ে গুণ করি, তবে `wᵀx + b = 0` সীমানাটি এক চুলও নড়ে না, অথচ কাঁচা স্কোর ও `Functional Margin` `y_i(wᵀx_i + b)` তিন গুণ বেড়ে যায়! অর্থাৎ কাঁচা Functional Margin স্কেল-নিরপেক্ষ প্রকৃত দূরত্ব মাপতে পারে না।"
+        },
+        {
+          "type": "math",
+          "title": "বিন্দুর লম্ব দূরত্ব ও Signed Geometric Margin",
+          "body": "d(x,H)=\\frac{|w^Tx+b|}{\\|w\\|_2},\\qquad\\gamma_i=\\frac{y_i(w^Tx_i+b)}{\\|w\\|_2}"
+        },
+        {
+          "type": "text",
+          "title": "Canonical Scaling এবং Margin প্রশস্ত করার সমীকরণ",
+          "body": "উপরের সমীকরণে দেখুন, কাঁচা স্কোরকে ওজনের Euclidean Norm `‖w‖₂` দিয়ে ভাগ করায় যেকোনো ধনাত্মক গুণিতকের প্রভাব কেটে যায় এবং আমরা পাই প্রকৃত জ্যামিতিক দূরত্ব বা Geometric Margin `γ_i`। যেহেতু `(w, b)`-কে ধনাত্মক সংখ্যা দিয়ে স্কেল করলে সীমানা বদলায় না, তাই রৈখিকভাবে বিভাজ্য (Linearly Separable) Training ডেটায় আমরা হিসাবের সুবিধার্থে স্কেলটি বেঁধে দিতে পারি—যেন সীমানার সবচেয়ে কাছের বিন্দুগুলোর সর্বনিম্ন Functional Margin ঠিক `1` হয়।\n\nএই Canonical Scaling ধরলে প্রতিটি Training বিন্দুর জন্য শর্ত দাঁড়ায় `y_i(wᵀx_i + b) ≥ 1`। তখন সীমানার দুপাশের দুটি সমান্তরাল সহায়ক তল `f(x) = +1` এবং `f(x) = -1`-এর মধ্যবর্তী মোট দূরত্ব বা Margin Width হয় ঠিক `2 / ‖w‖₂`। সুতরাং এই Margin-কে সবচেয়ে বড় করার অর্থই হলো `‖w‖₂`-কে সবচেয়ে ছোট করা—কিংবা অপ্টিমাইজেশনের সুবিধার জন্য `(1/2)‖w‖₂²` মিনিমাইজ করা। খেয়াল রাখবেন, আদর্শ SVM সমীকরণে ওজনের Norm ছোট করা হলেও Bias `b`-এর ওপর কোনো পেনাল্টি বসানো হয় না।"
+        },
+        {
+          "type": "math",
+          "title": "Hard-Margin SVM-এর Primal সমস্যা",
+          "body": "\\min_{w,b}\\frac12\\|w\\|_2^2\\quad\\text{s.t.}\\quad y_i(w^Tx_i+b)\\ge1"
+        },
+        {
+          "type": "text",
+          "title": "একটি ছোট সংখ্যার উদাহরণে যাচাই",
+          "body": "চলুন একমাত্রিক রেখায় দুটি বিন্দু দিয়ে বিষয়টি মিলিয়ে দেখি: প্রথম বিন্দু `x₁ = -2` (`Label` `y₁ = -1`) এবং দ্বিতীয় বিন্দু `x₂ = +2` (`Label` `y₂ = +1`)। আমরা যদি `w = 0.5` এবং `b = 0` নিই, তবে দুটি বিন্দুতেই Functional Margin হয় `1`। এখানে `‖w‖₂ = 0.5` হওয়ায় সীমানা (`x = 0`) থেকে প্রতি পাশে Geometric Distance দাঁড়ায় `1 / 0.5 = 2`, অর্থাৎ মোট Margin Width হয় `4`।\n\nএখন কেউ যদি `w = 1` এবং `b = 0` নিত, তবেও কিন্তু সীমানাটি একই জায়গায় (`x = 0`) থাকত এবং শর্ত `y_i f_i = 2 ≥ 1` পূরণ হতো। কিন্তু তখন `‖w‖₂ = 1` হয়ে যাওয়ায় আমাদের Primal Objective তাকে বর্জন করবে! অর্থাৎ Maximum-Margin অপ্টিমাইজেশন কখনোই কাঁচা স্কোরের মান বাড়ানোর প্রতিযোগিতা করে না, বরং প্রকৃত জ্যামিতিক ব্যবধানকে সর্বোচ্চ করে। নিচের কোডে এই স্কেল-নিরপেক্ষতা সরাসরি পরীক্ষা করে দেখুন।"
+        },
+        {
+          "type": "code",
+          "title": "কোডে Geometric Margin ও Scale Invariance যাচাই",
+          "body": "import numpy as np\n\nw = np.array([0.5, 0.0])\nb = 0.0\nx = np.array([2.0, 3.0])\ny = 1\nscore = float(w @ x + b)\nnorm = np.linalg.norm(w)\nassert score == 1 and score / norm == 2\nassert 2 / norm == 4\nassert np.isclose((3 * w) @ x / (np.linalg.norm(3 * w)), score / norm)\nprint(score, y * score, score / norm)\n"
+        },
+        {
+          "type": "svm_lab",
+          "title": "Interactive Geometry Lab: Margin ও C-এর প্রভাব",
+          "body": "নিচের ইন্টারঅ্যাক্টিভ ল্যাবে Adult ডেটাসেটের Training-Standardized `age` ও `education` ফিচারের ওপর ফিট করা একটি রৈখিক SVC দেখতে পাবেন। বাস্তব ডেটায় ক্লাসগুলোর মধ্যে ওভারল্যাপ থাকায় এবং এখানে Balanced Class Weight ব্যবহৃত হওয়ায় এটি একটি ওজনযুক্ত Soft-Margin ফিট দেখায়—আদর্শ নিখুঁত বিভাজ্য Hard-Margin সমাধান নয় (যা আমরা ঠিক পরের পাঠেই শিখব)। সমান স্কেলের অক্ষে বিভিন্ন `C` স্ন্যাপশট বদলে দেখুন কীভাবে Decision Score, চিহ্নযুক্ত Margin, Hinge Loss এবং মোট Support Vector-এর সংখ্যা পরিবর্তিত হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এর সূক্ষ্ম প্রশ্ন ও সতর্কতা",
+          "body": "ইন্টারভিউতে এই অংশ থেকে তিনটি খুব তীক্ষ্ণ প্রশ্ন প্রায়ই করা হয়:\n১. কোনো বিন্দু সীমানার ভুল পাশে চলে গেলে তার Signed Geometric Margin ঋণাত্মক হয় কেন? কারণ তখন `wᵀx_i + b`-এর চিহ্ন এবং প্রকৃত `y_i ∈ {-1, +1}` পরস্পর বিপরীত হয়, ফলে তাদের গুণফল ঋণাত্মক হয়ে যায়।\n২. যদি কোনো কারণে `w = 0` হয়ে যায়, তবে দূরত্বের সূত্রটির কী হবে? তখন হর `‖w‖₂ = 0` হওয়ায় জ্যামিতিক দূরত্ব অসংজ্ঞায়িত হয়ে পড়বে; তাই যেকোনো নিখুঁত কোডে শূন্য Normal Vector-এর বিরুদ্ধে সুরক্ষা থাকতে হয়।\n৩. মনে রাখবেন, ডেটা Standardize করার পর যে দূরত্ব মাপা হয় তা কিন্তু মূল বয়সের 'বছর' বা টাকার এককে নয়, বরং Standard Deviation এককে—তাই ব্যাখ্যা করার সময় কোন স্থানাঙ্ক ব্যবস্থায় দূরত্ব মাপছেন তা স্পষ্ট করে বলুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch11_soft_margin",
+      "title": "Soft Margin ও Hinge Loss",
+      "subtitle": "Slack Variable, Regularization প্যারামিটার C এবং Subgradient",
+      "duration": "38 min",
+      "icon": "functions",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "যখন ক্লাসগুলো নিখুঁতভাবে আলাদা করা যায় না",
+          "body": "আগের পাঠে দেখা Hard-Margin SVM ধরে নিয়েছিল যে একটি সরল সমতল দিয়ে দুটি Class-কে শতভাগ নির্ভুলভাবে আলাদা করা যাবে। কিন্তু বাস্তব জগতের ডেটায় Outlier, ভুল Label (Label Noise) কিংবা স্বাভাবিকভাবেই একে অপরের ভেতর ঢুকে থাকা Class Distribution প্রায়ই দেখা যায়। তখন `y_i(wᵀx_i + b) ≥ 1` শর্তটি সব বিন্দুর জন্য একসাথে পূরণ করা অসম্ভব হয়ে পড়ে এবং Hard-Margin সমস্যাটির আর কোনো সমাধানই (Feasible Solution) থাকে না।\n\nএই অচলাবস্থা কাটাতে প্রতিটি বিন্দুর জন্য আমরা একটি অঋণাত্মক ছাড় বা Slack Variable `ξ_i ≥ 0` যোগ করি এবং শর্তটিকে নমনীয় করে লিখি `y_i f_i ≥ 1 - ξ_i`। এই `ξ_i`-এর মান দেখে একটি বিন্দুর জ্যামিতিক অবস্থান নিখুঁতভাবে বোঝা যায়:\n- `ξ_i = 0`: বিন্দুটি সঠিক পাশে এবং Margin-এর বাইরে বা ঠিক তার সীমানায় নিরাপদে আছে।\n- `0 < ξ_i < 1`: বিন্দুটি এখনো Decision Boundary-এর সঠিক পাশেই আছে, কিন্তু নিরাপদ Margin অঞ্চলের ভেতরে ঢুকে পড়েছে।\n- `ξ_i = 1`: বিন্দুটি ঠিক `f(x_i) = 0` সীমানার ওপর বসে আছে।\n- `ξ_i > 1`: বিন্দুটি সীমানা পেরিয়ে ভুল পাশে চলে গেছে, অর্থাৎ Misclassified হয়েছে।"
+        },
+        {
+          "type": "math",
+          "title": "Slack Variable-সহ Soft-Margin Primal",
+          "body": "\\min_{w,b,\\xi}\\frac12\\|w\\|^2+C\\sum_i\\xi_i,\\quad y_i(w^Tx_i+b)\\ge1-\\xi_i,\\quad\\xi_i\\ge0"
+        },
+        {
+          "type": "math",
+          "title": "Slack সরিয়ে সমতুল্য Hinge Loss আকার",
+          "body": "\\min_{w,b}\\frac12\\|w\\|^2+C\\sum_i\\max(0,1-y_if_i)"
+        },
+        {
+          "type": "text",
+          "title": "প্যারামিটার C-এর প্রকৃত ভূমিকা ও Sum বনাম Mean কনভেনশন",
+          "body": "উপরের দুটি সমীকরণ মিলিয়ে দেখুন: অপ্টিমাল অবস্থায় প্রতিটি বিন্দু কেবল ততটুকুই Slack নেবে যতটুকু না নিলেই নয়, অর্থাৎ `ξ_i = max(0, 1 - y_i f_i)`—একেই বলা হয় Hinge Loss!\n\nএখানে প্যারামিটার `C > 0` ঠিক করে দেয় আমরা চওড়া Margin রাখা (`‖w‖²` ছোট রাখা) এবং Margin লঙ্ঘনের শাস্তি (`ξ_i` ছোট রাখা)—এই দুই লক্ষ্যের মধ্যে কীভাবে ভারসাম্য করব। নির্দিষ্ট ডেটা ও সমীকরণের গঠনে `C` বাড়ালে ভুলের ওপর জরিমানা বাড়ে (অর্থাৎ Regularization কমে), আর `C` কমালে দু-একটি ভুল মেনে নিয়েও মডেল প্রশস্ত ও মসৃণ Margin ধরে রাখতে চায়।\n\nতবে একটি প্রকৌশলগত ফাঁদ সম্পর্কে খুব সতর্ক থাকবেন: সব লাইব্রেরিতে একই সংখ্যার `C` কিন্তু একই অর্থ বহন করে না! কোনো কোডে যদি সব বিন্দুর Hinge Loss যোগ (Sum) করা হয় আর অন্য কোডে গড় (Mean) নেওয়া হয়, তবে তাদের কার্যকর `C`-এর স্কেল ডেটার আকার `n` গুণ বদলে যায়। আবার Class Weight বা Sample Weight থাকলে প্রতিটি বিন্দুর নিজস্ব পেনাল্টি `C_i` আলাদা হয়ে যায়। আর হ্যাঁ, `C` বাড়ালেই যে Validation পারফরম্যান্স ক্রমাগত ভালো হবে এমন মোটেও নয়—অতিরিক্ত বড় `C` নয়েজ মুখস্থ করে Overfitting ঘটাতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "কৌণিক বিন্দুতে কীভাবে অপ্টিমাইজেশন চলে: Subgradient",
+          "body": "চলুন দেখি প্রথম-ক্রমের (First-order) অপ্টিমাইজার দিয়ে Hinge Loss কীভাবে মিনিমাইজ করা যায়। ধরি `z = y f(x)`। যখন `z > 1`, তখন বিন্দুটি নিরাপদ অঞ্চলে থাকায় Loss শূন্য এবং `w` ও `b`-এর সাপেক্ষে Gradient-ও শূন্য। যখন `z < 1`, তখন Loss হয় `1 - y(wᵀx + b)`, তাই `w`-এর সাপেক্ষে Gradient দাঁড়ায় `-y x` এবং `b`-এর সাপেক্ষে `-y`।\n\nকিন্তু ঠিক `z = 1` বিন্দুতে ফাংশনটিতে একটি তীক্ষ্ণ কোণ (Kink) থাকায় সাধারণ Derivative সংজ্ঞায়িত নয়। সৌভাগ্যবশত Hinge Loss একটি Convex ফাংশন, তাই `z = 1` বিন্দুতে একটি বৈধ Subgradient সেট পাওয়া যায় এবং সেখান থেকে যেকোনো বৈধ দিক নিয়ে অপ্টিমাইজেশন চালানো সম্ভব। অন্যদিকে কখনো কখনো Squared Hinge Loss `max(0, 1 - z)²` ব্যবহার করা হয়, যা `z = 1` বিন্দুতে মসৃণভাবে অন্তরীকরণযোগ্য (Differentiable), তবে এটি বড় আকারের ভুল বা Outlier-কে দ্বিঘাত হারে অনেক কঠোর শাস্তি দেয়।"
+        },
+        {
+          "type": "code",
+          "title": "Mean Hinge কনভেনশনে Objective ও Subgradient হিসাব",
+          "body": "from pathlib import Path\nimport runpy\nimport numpy as np\n\napi = runpy.run_path(str(Path(\"assets/datasets/adult/classical_workflow.py\")))\nX = np.array([[1.0, 0.0], [0.0, 1.0]])\ny = np.array([1, -1])\nw = np.array([0.2, -0.1])\nloss, gradient, bias_gradient = api[\"hinge_objective\"](X, y, w, 0.05, C=2.0)\nassert np.isfinite(loss) and gradient.shape == (2,)\nprint(loss, gradient, bias_gradient)\n# Helper: ||w||²/2 + C*MEAN hinge; unpenalized b, not LinearSVC defaults.\n"
+        },
+        {
+          "type": "text",
+          "title": "Hinge Loss বনাম Calibrated Probability",
+          "body": "কোডের আউটপুট দেখার পর একটি মৌলিক পার্থক্য মনে গেঁথে নিন। Logistic Regression যেখানে Log Loss মিনিমাইজ করে সরাসরি Bernoulli Likelihood বাড়াতে চায়, সেখানে Hinge Loss কেবল দেখে `y_i f(x_i)` মানটি `1` পেরিয়েছে কি না—একবার `1` পেরিয়ে গেলে স্কোর `1.5` হোক বা `10`, Hinge Loss আর কোনো বাড়তি পুরস্কার দেয় না। তাছাড়া স্কোরের স্কেল `C`, Feature-এর একক এবং সলভারের নিয়মের ওপর নির্ভর করে বদলে যায়। তাই চূড়ান্ত সিদ্ধান্তে যদি নির্ভরযোগ্য Probability প্রয়োজন হয়, তবে Cross-Validation ব্যবহার করে আলাদা Calibration (যেমন Platt Scaling বা Isotonic Regression) ফিট করতে হবে এবং স্বতন্ত্র ডেটায় তা যাচাই করে নিতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে অনুশীলন",
+          "body": "নিজে খাতায় একটি ছোট হিসাব করে দেখুন: ধরি প্রকৃত Label `y = +1`, এবং পাঁচটি বিন্দুতে মডেলের কাঁচা স্কোর `f` যথাক্রমে `-1`, `0`, `0.5`, `1` এবং `2`। প্রতিটি ক্ষেত্রে সাধারণ Hinge Loss ও Squared Hinge Loss কত আসে তা বের করুন। খেয়াল রাখবেন, কোনো Training বিন্দুতে Loss `0` আসার অর্থ কেবল এই যে বিন্দুটি বর্তমান সীমানার Margin পেরিয়ে গেছে—ভবিষ্যতের অদেখা ডেটায় নির্ভুলতার কোনো নিশ্চয়তা এটি দেয় না। সবশেষে `n` সংখ্যক স্যাম্পলের জন্য `C_mean` এবং `C_sum`-এর মধ্যে ঠিক কী সম্পর্ক ধরলে দুটি Objective হুবহু একই সমাধান দেবে, তা সূত্র লিখে মিলিয়ে নিন।"
+        }
+      ]
+    },
+    {
+      "id": "ch11_dual",
+      "title": "Dual সমস্যা, Support Vector ও KKT শর্তাবলি",
+      "subtitle": "কোন Training Sample-গুলো প্রকৃতপক্ষে Decision Boundary নির্ধারণ করে?",
+      "duration": "55 min",
+      "icon": "functions",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Primal থেকে Lagrangian Dual-এ যাওয়ার কারণ",
+          "body": "Soft-Margin SVM-কে আমরা সরাসরি `(w, b, ξ)` চলকে সমাধান করতে পারতাম, তাহলে হঠাৎ এর Dual রূপটি শেখার দরকার কেন? এর পেছনে দুটি চমৎকার কারণ আছে। এক, এটি চোখে আঙুল দিয়ে দেখিয়ে দেয় কেন পুরো Dataset নয়, বরং গুটিকয়েক প্রান্তিক বিন্দুই (`Support Vector`) পুরো সীমানাটিকে ধরে রাখে। দুই, এই রূপান্তরে ডেটাবিন্দুগুলো কেবল জোড়ায় জোড়ায় Inner Product হিসেবে প্রকাশ পায়—যার ওপর ভর করে পরের পাঠেই আমরা Nonlinear Kernel-এর জাদুকরী জগতে প্রবেশ করব।\n\nশর্তযুক্ত Primal সমস্যার Margin শর্তগুলোর জন্য অঋণাত্মক Lagrange Multiplier `α_i ≥ 0` এবং Slack অঋণাত্মক রাখার শর্তের জন্য `μ_i ≥ 0` ধরে Lagrangian গঠন করা হয়। এরপর `w`, `b` ও `ξ_i`-এর সাপেক্ষে Derivative শূন্য (`Stationarity`) ধরলে তিনটি মূল সম্পর্ক বেরিয়ে আসে: `w = ∑ α_i y_i x_i`, `∑ α_i y_i = 0`, এবং বক্স সীমা `0 ≤ α_i ≤ C_i`। এগুলো মূল সমীকরণে বসালেই আমরা পেয়ে যাই নিচের Dual সমস্যা।"
+        },
+        {
+          "type": "math",
+          "title": "Soft-Margin SVM-এর Dual Objective",
+          "body": "\\max_\\alpha\\sum_i\\alpha_i-\\frac12\\sum_{i,j}\\alpha_i\\alpha_jy_iy_jK(x_i,x_j),\\quad0\\le\\alpha_i\\le C_i,\\quad\\sum_i\\alpha_i y_i=0"
+        },
+        {
+          "type": "math",
+          "title": "Support Vector দিয়ে Dual Prediction সূত্র",
+          "body": "f(x)=\\sum_{i:\\alpha_i>0}\\alpha_i y_iK(x_i,x)+b"
+        },
+        {
+          "type": "text",
+          "title": "KKT শর্তাবলি ও তিন ধরনের Training বিন্দু",
+          "body": "উত্তল (Convex) অপ্টিমাইজেশনের আদর্শ সমাধান বিন্দুতে KKT (Karush-Kuhn-Tucker) শর্তাবলি দেখে প্রতিটি Training Row-এর ভূমিকা পরিষ্কারভাবে আলাদা করা যায়:\n- **`α_i = 0`:** বিন্দুটি সাধারণত নিরাপদ Margin-এর বাইরে (বা প্রান্তিক ক্ষেত্রে ঠিক Margin-এর ওপর) অবস্থান করে। ট্রেনিং শেষে এই বিন্দুগুলো ফেলে দিলেও সীমানা বদলায় না।\n- **`0 < α_i < C_i` (Free Support Vector):** এ ক্ষেত্রে Slack `ξ_i = 0` হতে বাধ্য এবং বিন্দুটির Functional Margin হয় নিখুঁতভাবে `1`—অর্থাৎ বিন্দুটি ঠিক Margin রেখার ওপরেই বসে আছে।\n- **`α_i = C_i` (Bound Support Vector):** বিন্দুটি উপরের সীমায় ঠেকে গেছে, তাই এটি ঠিক Margin রেখায়, Margin-এর ভেতরে, কিংবা সীমানার ভুল পাশেও (Misclassified) থাকতে পারে।\n\nবাস্তব কোডে Degenerate Tie এবং সলভারের সূক্ষ্ম সংখ্যাগত Tolerance-এর কারণে একদম নিশ্ছিদ্র সমতার বদলে সামান্য বিচ্যুতি থাকতে পারে—তাই অতি-সরলীকৃত মন্তব্য এড়িয়ে চলবেন। আর মনে রাখবেন, Support Vector হলো কেবলমাত্র ধনাত্মক Dual Coefficient (`α_i > 0`) পাওয়া Training Row; ভবিষ্যতের কোনো নতুন Query বিন্দু কখনোই Support Vector নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Dual সমাধান থেকে Bias b পুনরুদ্ধার",
+          "body": "লক্ষ্য করেছেন কি, Dual Objective সমীকরণ থেকে Bias `b` পুরোপুরি অদৃশ্য হয়ে গেছে! তাহলে অপ্টিমাল `α` বের করার পর আমরা `b` কীভাবে ফিরে পাব? যদি অন্তত একটি Free Support Vector (`0 < α_i < C_i`) পাওয়া যায়, তবে আমরা জানি সেখানে `y_i(wᵀφ(x_i) + b) = 1`, যেখান থেকে সরাসরি `b = y_i - wᵀφ(x_i)` বের করা যায়। ফ্লোটিং-পয়েন্ট হিসাবের স্থিতিশীলতার জন্য বাস্তবে সব কটি Free Support Vector থেকে পাওয়া মানের গড় নেওয়া হয়। আর যদি এমন ব্যতিক্রমী পরিস্থিতি তৈরি হয় যেখানে সবগুলো সক্রিয় Support Vector-ই উপরের সীমা `C_i`-তে ঠেকে গেছে, তখন যেকোনো একটি সারি বসিয়ে সূত্র প্রয়োগ করা চলে না—তখন বৈধ ব্যবধি (Interval) বা সলভারের নিজস্ব নীতি মেনে `b` নির্ধারণ করতে হয়।"
+        },
+        {
+          "type": "code",
+          "title": "scikit-learn-এর Support Vector দিয়ে হাতে Decision Score যাচাই",
+          "body": "import numpy as np\nfrom sklearn.svm import SVC\n\nX = np.array([[-2.0], [-1.0], [1.0], [2.0]])\ny = np.array([0, 0, 1, 1])\nm = SVC(kernel=\"linear\", C=10).fit(X, y)\nprobe = np.array([[0.3]])\nmanual = ((probe @ m.support_vectors_.T) @ m.dual_coef_[0] + m.intercept_[0]).item()\nassert np.isclose(manual, m.decision_function(probe)[0])\nassert np.all(np.abs(m.dual_coef_[0]) <= 10 + 1e-8)\nprint(m.support_, manual)\n"
+        },
+        {
+          "type": "text",
+          "title": "Dual Sparsity এবং Inference-এর হিসাবনিকাশ",
+          "body": "এখানে 'Sparsity' শব্দটি নিয়ে একটি প্রচলিত বিভ্রান্তি দূর করা জরুরি। Dual Coefficient `α`-তে প্রচুর শূন্য থাকার অর্থ হলো অনেকগুলো Training Row বাদ পড়েছে—এর অর্থ মোটেও এই নয় যে ইনপুট Feature কলামগুলো শূন্য হয়ে গেছে! Linear SVM-এর ক্ষেত্রে আমরা ট্রেনিং শেষেই `w = ∑ α_i y_i x_i` হিসাব করে `d` দৈর্ঘ্যের একটিমাত্র ভেক্টর জমিয়ে রাখতে পারি, ফলে নতুন যেকোনো Prediction করতে মাত্র `O(d)` সময় লাগে। কিন্তু সাধারণ Nonlinear Kernel SVM-এ তা সম্ভব হয় না; সেখানে প্রতিটি Support Vector মেমোরিতে সংরক্ষণ করতে হয় এবং প্রতিটি নতুন Query এলে সবগুলো Support Vector-এর সাথে Kernel হিসাব করতে হয়। ফলে ডেটায় নয়েজ বেশি থাকলে এবং Support Vector-এর সংখ্যা অনেক বেড়ে গেলে Kernel SVM-এর Inference বেশ ব্যয়বহুল হয়ে উঠতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যে ভুল ধারণাটি এড়িয়ে চলবেন",
+          "body": "ইন্টারভিউতে প্রায়ই জিজ্ঞেস করা হয়: 'একটি Training বিন্দু যদি ভুলভাবে ক্লাসিফাইড (Misclassified) হয়, তবে সেটি কি Support Vector হতে পারে?' উত্তর হলো, আদর্শ Soft-Margin KKT কাঠামোয় ভুল পাশে থাকা বিন্দুর জন্য `ξ_i > 1 > 0`, তাই সেটি সাধারণত উপরের সীমায় আটকানো Bound Support Vector (`α_i = C_i`) হয় (অবশ্য স্যাম্পল ওজন, Degeneracy ও সলভার Tolerance-এর কথা উল্লেখ করতে ভুলবেন না)। কখনোই বলবেন না যে 'সব Support Vector-ই Decision Boundary বা ঠিক Margin রেখার ওপর বসে থাকে'—কারণ Slack থাকা অবস্থায় অসংখ্য Support Vector Margin-এর ভেতরে, এমনকি ভুল পাশেও অবস্থান করে!"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে দুই বিন্দুর Dual সমাধান",
+          "body": "সূত্রগুলো সত্যিই কীভাবে কাজ করে তা বোঝার জন্য চলুন মাত্র দুটি বিন্দু নিয়ে পুরো হিসাবটি হাতে কষে দেখি: ধরি `x = [-1, +1]`, `y = [-1, +1]` এবং `C = 1`। সমতা শর্ত `-α₁ + α₂ = 0` থেকে সরাসরি বোঝা যাচ্ছে দুটি Multiplier সমান হতে বাধ্য, ধরি `α₁ = α₂ = a`। তখন Weight দাঁড়ায় `w = a(-1)(-1) + a(+1)(+1) = 2a`, এবং Dual Objective সংকুচিত হয়ে এক চলকের Function `D(a) = 2a - 2a²`-এ পরিণত হয়।\n\nএখন `a`-এর সাপেক্ষে Derivative `2 - 4a = 0` ধরলে পাওয়া যায় `a = 0.5`। যেহেতু `0.5` মানটি `0` এবং `C = 1`-এর ঠিক মাঝখানে আছে, তাই দুটি বিন্দুই এখানে Free Support Vector এবং দুটিরই Functional Margin নিখুঁত `1`। প্রতিসাম্যের কারণে Bias `b = 0`, এবং মিলিয়ে দেখলে Primal Objective ও Dual Objective উভয়ের মানই ঠিক `0.5`!"
+        },
+        {
+          "type": "math",
+          "title": "Stationarity থেকে এক চলকের Dual সমীকরণ",
+          "body": "\\alpha_1=\\alpha_2=a,\\quad D(a)=2a-2a^2,\\quad a^*=\\min(C,1/2)"
+        },
+        {
+          "type": "code",
+          "title": "কোডে Primal ও Dual সমতুল্যতা যাচাই",
+          "body": "import numpy as np\n\nfeatures = np.array([-1.0, 1.0])\nlabels = np.array([-1.0, 1.0])\npenalty = 1.0\nmultipliers = np.full(2, min(penalty, 0.5))\nweight = float(np.sum(multipliers * labels * features))\nmargins = labels * (weight * features)\nprimal = 0.5 * weight**2 + penalty * np.maximum(0, 1 - margins).sum()\ndual = multipliers.sum() - 0.5 * weight**2\nnp.testing.assert_allclose(primal, dual)\nprint(*multipliers, weight, primal, dual)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে হিসাব করে দেখুন",
+          "body": "উপরের একই উদাহরণে (`x = [-1, +1]`, `y = [-1, +1]`) যদি `C = 0.2` করে দেওয়া হয়, তাহলে অপ্টিমাল `a`, ওজন `w`, দুটি বিন্দুর Slack এবং Primal Objective-এর মান কত হবে?",
+          "solution": "যেহেতু `a* = min(C, 0.5)`, তাই `C = 0.2` বসালে `a = 0.2` বক্সের উপরের সীমায় আটকে যাবে এবং `w = 2a = 0.4` হবে। তখন দুটি বিন্দুতেই Functional Margin হবে `0.4`, ফলে প্রতিটির Slack হবে `1 - 0.4 = 0.6`। এ ক্ষেত্রে Primal Objective হবে `0.5 × (0.4)² + 0.2 × (0.6 + 0.6) = 0.08 + 0.24 = 0.32`, এবং Dual Objective-ও হবে `2(0.2) - 2(0.2)² = 0.40 - 0.08 = 0.32`। লক্ষ্য করুন, এবার দুটি বিন্দুই Bound Support Vector হিসেবে Margin-এর ভেতরে অবস্থান করছে।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch11_kernels",
+      "title": "Kernel কৌশল ও Nonlinear Decision Boundary",
+      "subtitle": "RBF ও Polynomial Kernel, Gamma, PSD শর্ত এবং Kernel Approximation",
+      "duration": "38 min",
+      "icon": "functions",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "উচ্চমাত্রিক Feature Map ও Kernel Trick-এর মূল কথা",
+          "body": "আগের পাঠে আমরা দেখেছি যে Dual SVM-এ ইনপুট ভেক্টরগুলো কেবল নিজেদের মধ্যে Inner Product হিসেবে ব্যবহৃত হয়। এখন ভাবুন এমন এক Dataset-এর কথা, যেখানে একটি Class মাঝখানে বৃত্তের মতো জড়ো হয়ে আছে আর অন্য Class-টি তাকে চারপাশ থেকে ঘিরে রেখেছে—মূল স্থানাঙ্কে কোনো সরলরেখা দিয়েই এদের আলাদা করা সম্ভব নয়! কিন্তু আমরা যদি একটি রূপান্তর `φ(x)` দিয়ে ডেটাকে উচ্চমাত্রিক স্থানে নিয়ে যাই, তবে সেই নতুন স্থানের একটি সাধারণ রৈখিক বিভাজকই মূল স্থানে বাঁকানো Nonlinear Decision Boundary তৈরি করতে পারে।\n\nসবচেয়ে মজার ব্যাপার হলো, যদি কোনো ফাংশন `K(x, z) = φ(x)ᵀφ(z)` সরাসরি মূল ভেক্টর দুটি থেকেই ওই উচ্চমাত্রিক Inner Product-এর মান বের করে দিতে পারে, তবে আমাদের কষ্ট করে `φ(x)`-এর হাজারো (কিংবা অসীম সংখ্যক!) স্থানাঙ্ক হাতে তৈরি ও সংরক্ষণ করতেই হয় না। একেই বলে Kernel Trick। তবে মনে রাখবেন, ইচ্ছেমতো যেকোনো সাদৃশ্য মাপার সূত্র লিখে দিলেই কিন্তু সেটি বৈধ Kernel হয়ে যায় না।"
+        },
+        {
+          "type": "math",
+          "title": "জনপ্রিয় দুটি Kernel: RBF এবং Polynomial",
+          "body": "K_{RBF}(x,z)=\\exp[-\\gamma\\|x-z\\|^2],\\qquad K_{poly}(x,z)=(a\\,x^Tz+c)^p"
+        },
+        {
+          "type": "text",
+          "title": "RBF Kernel-এ Gamma ও C-এর যৌথ আচরণ",
+          "body": "RBF (Radial Basis Function) Kernel-এর সূত্রটির দিকে তাকালেই প্যারামিটার `γ` (Gamma)-এর ভূমিকা স্পষ্ট হয়ে ওঠে। যখন `γ` অনেক বড় নেওয়া হয়, তখন বিন্দু দুটির দূরত্ব সামান্য বাড়লেই `exp(-γ‖x - z‖²)` দ্রুত শূন্যের কাছাকাছি নেমে যায়—অর্থাৎ প্রতিটি বিন্দু কেবল তার অতি নিকটবর্তী প্রতিবেশীদের ওপরই প্রভাব ফেলে, ফলে অত্যন্ত আঁকাবাঁকা ও স্থানীয় (Local) সীমানা তৈরি হয়। বিপরীতে `γ` খুব ছোট হলে দূরের বিন্দুগুলোও পরস্পরের কাছে যথেষ্ট সদৃশ মনে হয় এবং সীমানাটি অনেক মসৃণ হয়ে ওঠে।\n\nবাস্তবে পেনাল্টি নিয়ন্ত্রণকারী `C` এবং জ্যামিতিক বিস্তার নিয়ন্ত্রণকারী `γ` একে অপরের সাথে ওতপ্রোতভাবে জড়িত, তাই এদের একসাথে টিউন করতে হয়। আরেকটি গুরুত্বপূর্ণ কথা: যেহেতু সূত্রের ভেতরে সরাসরি `‖x - z‖²` আছে, তাই ইনপুট Feature-গুলোর স্কেল বদলে গেলে বিন্দুগুলোর দূরত্ব এবং কার্যকর `γ`-এর আচরণও আমূল বদলে যায়!"
+        },
+        {
+          "type": "text",
+          "title": "কোন ফাংশন বৈধ Kernel হতে পারে? PSD ও Gram Matrix শর্ত",
+          "body": "একটি ফাংশন বৈধ Positive Semi-Definite (PSD) Kernel হওয়ার আবশ্যিক শর্ত হলো—যেকোনো সসীম সংখ্যক ইনপুট স্যাম্পলের জন্য তার তৈরি করা `n × n` আকারের Gram Matrix-টি প্রতিসম (Symmetric) এবং Positive Semi-Definite হতে হবে (অর্থাৎ এর সব Eigenvalue অঋণাত্মক হবে)। তবে এখানে একটি যুক্তির সূক্ষ্মতা খেয়াল রাখবেন: কোডে কেবল একটি নির্দিষ্ট ছোট ম্যাট্রিক্সের Eigenvalue অঋণাত্মক দেখাই কিন্তু মহাবিশ্বের সব সম্ভাব্য ইনপুটের জন্য Kernel-টির বৈধতার গাণিতিক প্রমাণ নয়; সেটি কেবল একটি প্রয়োজনীয় যাচাই। গাণিতিকভাবে প্রমাণিত যে `γ ≥ 0` হলে RBF একটি আদর্শ PSD Kernel, কিন্তু ঋণাত্মক `γ` সাধারণত বৈধ অনুমান নয়।"
+        },
+        {
+          "type": "code",
+          "title": "কোডে RBF Gram Matrix-এর প্রতিসাম্য ও PSD যাচাই",
+          "body": "from pathlib import Path\nimport runpy\nimport numpy as np\n\napi = runpy.run_path(str(Path(\"assets/datasets/adult/classical_workflow.py\")))\nX = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]])\nK = api[\"rbf_kernel\"](X, X, 0.5)\nassert np.allclose(K, K.T) and np.allclose(np.diag(K), 1)\nassert np.linalg.eigvalsh(K).min() > -1e-12\nassert np.all(api[\"rbf_kernel\"](X, X, 0) == 1)\nprint(K)\n"
+        },
+        {
+          "type": "text",
+          "title": "Feature Scaling, Sparse ডেটা এবং Kernel Approximation",
+          "body": "ঘন (Dense) সংখ্যাসূচক ডেটায় RBF SVM চালানোর আগে শুধুমাত্র Training অংশে ফিট করা `StandardScaler` ব্যবহার করা একটি চমৎকার Baseline অভ্যাস। কিন্তু উচ্চমাত্রিক Sparse টেক্সট ডেটায় ভুলেও গড় বিয়োগ করে Centering করতে যাবেন না—তাতে কোটি কোটি শূন্য অশূন্য মানে বদলে গিয়ে মেমোরি উপচে পড়বে! সেসব ক্ষেত্রে L2 Normalization এবং Linear Model ব্যবহার করাই বাস্তবসম্মত পথ।\n\nআবার ডেটার আকার অনেক বড় হলে নিখুঁত Kernel SVM চালানোর বদলে Random Fourier Features বা Nyström-এর মতো Kernel Approximation পদ্ধতি ব্যবহার করা যায়—যা একটি সসীম মাত্রার আনুমানিক ফিচার ম্যাপ তৈরি করে দ্রুতগতির Linear Solver চালানোর সুযোগ দেয়, যেখানে নির্ভুলতা ও কম্পিউট খরচের মধ্যে স্পষ্ট ভারসাম্য বজায় রাখা যায়।"
+        },
+        {
+          "type": "text",
+          "title": "মেমোরি ও সময়ের জটিলতা (Complexity Scope)",
+          "body": "পুরো `n × n` আকারের একটি ঘন Gram Matrix মেমোরিতে জমা রাখতে `O(n²)` জায়গা লাগে, এবং নিখুঁত সলভারের সময়-জটিলতা ডেটা ও সলভারভেদে বড় `n`-এর জন্য অত্যন্ত ব্যয়বহুল হয়ে উঠতে পারে। অবশ্য আধুনিক লাইব্রেরিগুলো পুরো ম্যাট্রিক্স একসাথে মেমোরিতে না রেখে সীমিত আকারের Cache ব্যবহার করে প্রয়োজনমতো সারি হিসাব করে নেয়। খেয়াল রাখবেন, উপরের কোডে ব্যবহৃত আমাদের ছোট শিক্ষণীয় `rbf_kernel` ফাংশনটি Broadcasting দিয়ে পার্থক্য বের করতে `O(nmd)` মেমোরি নেয়—এটি ধারণা স্পষ্ট করার জন্য তৈরি, বিশাল প্রোডাকশন সিস্টেমের Kernel ইঞ্জিন হিসেবে নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এর কমন ফাঁদ: RBF মানেই কি নিখুঁত সমাধান?",
+          "body": "ইন্টারভিউতে কেউ যদি জিজ্ঞেস করে, 'RBF Kernel তো অসীম মাত্রার ফিচার স্পেসে ম্যাপ করে, তাহলে এটি কি যেকোনো ডেটাকেই নিখুঁতভাবে আলাদা করে সেরা ফলাফল দেবে?'—উত্তর দেওয়ার সময় তিনটি বাস্তব দিক তুলে ধরবেন। এক, একই Feature মানে যদি পরস্পরবিরোধী Label (Noise) থাকে বা সসীম Regularization `C` কাজ করে, তবে ডেটা আলাদা নাও হতে পারে। দুই, জোর করে Training ডেটায় শতভাগ ফিট করানো মানেই ভালো Generalization নয়—বরং এতে তীব্র Overfitting হতে পারে। তিন, Kernel Trick কিন্তু ইনপুট স্পেসের Euclidean দূরত্বের স্কেলিং সমস্যাকে জাদুমন্ত্রের মতো মুছে দেয় না; তাই সঠিক Feature Scaling তখনো অপরিহার্য।"
+        }
+      ]
+    },
+    {
+      "id": "ch11_book_gaussian_process",
+      "title": "Gaussian Process: Kernel ও Predictive Uncertainty",
+      "subtitle": "ফাংশনের ওপর Prior থেকে Posterior Mean ও Variance নির্ণয়",
+      "duration": "33 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Kernel শুধুই কি সীমানা টানার জন্য?",
+          "body": "আগের পাঠে আমরা দেখেছি কীভাবে Kernel ব্যবহার করে SVM বাঁকানো Decision Boundary তৈরি করে। কিন্তু SVM কেবল একটি কাঁচা স্কোর দেয়—যে অঞ্চলে ডেটা খুব কম বা নেই, সেখানে মডেলের অনিশ্চয়তা (Uncertainty) কতটুকু, তা সরাসরি জানায় না। ঠিক এই জায়গায় দারুণ এক দৃষ্টিভঙ্গি নিয়ে আসে Gaussian Process বা GP।\n\nএখানে নির্দিষ্ট কিছু ওজনের ওপর নয়, বরং সরাসরি সম্ভাব্য ফাংশনের ওপর একটি Prior ধরা হয়—যার মূল কথা হলো যেকোনো সসীম সংখ্যক ইনপুট বিন্দুতে ফাংশনটির মানগুলো সম্মিলিতভাবে Gaussian Distribution মেনে চলে। এখানে Kernel কাজ করে Covariance ফাংশন হিসেবে, যা বলে দেয় কাছাকাছি বা সদৃশ ইনপুট বিন্দুগুলোর আউটপুট পরস্পরের সাথে কতটা সম্পর্কযুক্ত। এরপর বাস্তব পর্যবেক্ষিত ডেটার সাপেক্ষে শর্তায়ন (Conditioning) করলেই যেকোনো নতুন বিন্দুতে একসাথে পাওয়া যায় Posterior Mean এবং অনিশ্চয়তার পরিমাপ Posterior Variance।"
+        },
+        {
+          "type": "text",
+          "title": "Noisy পর্যবেক্ষণ থেকে Posterior সমীকরণ",
+          "body": "ধরি আমাদের পর্যবেক্ষিত ডেটায় পরিমাপগত নয়েজ আছে: `y = f(X) + ε`, যেখানে `ε ~ Normal(0, σ²I)` এবং শূন্য-গড়ের (Zero-Mean) Prior ধরা হয়েছে। এখানে `K` হলো Training বিন্দুগুলোর নিজেদের মধ্যকার Covariance ম্যাট্রিক্স, `k*` হলো Training বিন্দু ও নতুন টেস্ট বিন্দুটির মধ্যকার Cross-Covariance ভেক্টর, এবং `k**` হলো টেস্ট বিন্দুর নিজস্ব Prior Variance।\n\nযৌথ Gaussian শর্তায়নের নিয়ম থেকে সুপ্ত ফাংশনটির Posterior Mean আসে `k*ᵀ(K + σ²I)⁻¹y`, এবং এর Latent Variance আসে `k** - k*ᵀ(K + σ²I)⁻¹k*`। বাস্তব কোডে সরাসরি ম্যাট্রিক্সের Inverse না বের করে স্থিতিশীল Cholesky পদ্ধতিতে রৈখিক সমীকরণ সমাধান করা অনেক নিরাপদ। আর আমরা যদি নিখুঁত ফাংশন মানের বদলে ভবিষ্যতের একটি নতুন কোলাহলপূর্ণ পর্যবেক্ষণের (Noisy Observation) মোট Variance জানতে চাই, তবে এই Latent Variance-এর সাথে পরিমাপের নয়েজ `σ²` আরেকবার যোগ করতে হবে।"
+        },
+        {
+          "type": "math",
+          "title": "Posterior Mean ও Latent Variance-এর সূত্র",
+          "body": "\\mu_*=k_*^T(K+\\sigma^2I)^{-1}y,\\quad v_*=k_{**}-k_*^T(K+\\sigma^2I)^{-1}k_*"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে এক বিন্দুর উদাহরণ",
+          "body": "চলুন একটি মাত্র পর্যবেক্ষণ বিন্দু নিয়ে পুরো হিসাবটি খাতায় মিলিয়ে দেখি। ধরি `K = 1`, Noise Variance `σ² = 1`, পর্যবেক্ষিত মান `y = 2`, টেস্ট বিন্দুর সাথে Cross-Covariance `k* = 0.5` এবং টেস্ট বিন্দুর নিজস্ব Prior Variance `k** = 1`।\n\nতাহলে হরে থাকছে `K + σ² = 1 + 1 = 2`। ফলে নতুন বিন্দুতে Posterior Mean দাঁড়াবে `0.5 × 2 / 2 = 0.5`। সুপ্ত ফাংশনের Latent Variance কমে হবে `1 - (0.5)² / 2 = 1 - 0.125 = 0.875`। আর নতুন কোনো কোলাহলপূর্ণ পরিমাপের মোট Observation Variance হবে `0.875 + 1 = 1.875`। খেয়াল করুন, এখানে আমরা ফাংশনের Prior এবং Noise Model দুটোই সুনির্দিষ্টভাবে বলে দিয়েছি বলেই অনিশ্চয়তার এমন নিখুঁত গাণিতিক ব্যাখ্যা পাওয়া সম্ভব হচ্ছে।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ এক বিন্দুর Posterior হিসাব",
+          "body": "train_covariance, noise_variance = 1.0, 1.0\nobserved_y, cross_covariance, test_covariance = 2.0, 0.5, 1.0\nsystem = train_covariance + noise_variance\nmean = cross_covariance * observed_y / system\nlatent_variance = test_covariance - cross_covariance**2 / system\n# Predicting a new noisy observation adds its measurement variance.\nobservation_variance = latent_variance + noise_variance\nprint(mean, latent_variance, observation_variance)\n"
+        },
+        {
+          "type": "text",
+          "title": "কোডের ফলাফল ও সংখ্যাগত সতর্কতা",
+          "body": "কোডটি চালালে আউটপুট হিসেবে ঠিক `0.5`, `0.875` এবং `1.875` পাওয়া যায়। একটি মাত্র স্কেলার বিন্দুর ক্ষেত্রে সাধারণ ভাগ করাই যথেষ্ট, কিন্তু বহু বিন্দুর বেলায় কখনোই সরাসরি Matrix Inverse গঠন না করে রৈখিক সলভার (`solve`) ব্যবহার করবেন। আরেকটি অপরিহার্য শর্ত মনে রাখবেন: এখানে Kernel-কে অবশ্যই একটি বৈধ Positive Semi-Definite (PSD) Function হতে হবে; যেকোনো মনগড়া সাদৃশ্য সূচক বসালে Variance ঋণাত্মক হয়ে পুরো Probability কাঠামো ভেঙে পড়তে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "কখন এই Uncertainty অন্ধভাবে বিশ্বাস করা যাবে না",
+          "body": "GP থেকে পাওয়া অনিশ্চয়তার ব্যবধি (Posterior Interval) কিন্তু ভুল মডেল অনুমানের (Model Misspecification) বিরুদ্ধে কোনো সার্বজনীন বা Distribution-Free নিশ্চয়তা দেয় না—আসল ডেটা যদি আপনার ধরা Kernel বা Gaussian নয়েজের শর্ত না মানে, তবে এই ব্যবধি ভুল হতে পারে। তাছাড়া ঘন ম্যাট্রিক্সে নিখুঁত GP ফিট করতে প্রায় `O(n³)` সময় এবং `O(n²)` মেমোরি লাগে, তাই বড় ডেটাসেটে আনুমানিক (Sparse/Inducing-point) পদ্ধতির প্রয়োজন হয়। সর্বোপরি, মোট অনিশ্চয়তার কতটুকু তথ্যের অভাবে (Epistemic) আর কতটুকু নয়েজের কারণে হচ্ছে, সেই বিভাজনটিও সম্পূর্ণভাবে আপনার বেছে নেওয়া মডেলের ওপর নির্ভরশীল।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে ভেবে উত্তর দিন",
+          "body": "যদি কোনো দূরের টেস্ট বিন্দুতে Cross-Covariance `k* = 0` হয়, তবে Zero-Mean Prior-এ তার Posterior Mean ও Latent Variance কত হবে? আর Noise Variance অনেক বাড়িয়ে দিলে Training পর্যবেক্ষণের প্রভাব কীভাবে বদলায়?",
+          "solution": "Zero-Mean Prior-এর অধীনে `k* = 0` হলে Posterior Mean আবার `0`-তে ফিরে যায় এবং Latent Variance পূর্ণ `k**`-এর সমানই থেকে যায়—কারণ দূরের ওই বিন্দুতে Training ডেটার কোনো প্রভাব পৌঁছায় না। অন্যদিকে Noise Variance বাড়ালে মডেল ধরে নেয় পর্যবেক্ষণটি কম নির্ভরযোগ্য, তাই তার প্রভাব কমে গিয়ে Posterior Mean ক্রমশ Prior-এর দিকে সংকুচিত (Shrink) হতে থাকে।",
+          "reference": "https://scikit-learn.org/stable/modules/gaussian_process.html"
+        },
+        {
+          "type": "text",
+          "title": "দুই বিন্দুর ক্ষেত্রে Cholesky Decomposition দিয়ে হিসাব",
+          "body": "এবার দুটি পর্যবেক্ষণ নিয়ে সরাসরি Inverse না বের করে কীভাবে হিসাব করতে হয় তা দেখা যাক। ধরি Zero-Mean Prior-এ Covariance ম্যাট্রিক্স `K = [[1, 0.5], [0.5, 1]]`, Noise Variance `0.5` এবং পর্যবেক্ষিত মান `y = [1, -1]`। প্রথমে `A = K + 0.5I` গঠন করে Cholesky উৎপাদকে বিশ্লেষণ করি: `L Lᵀ = A`। এরপর ধাপে ধাপে দুটি ত্রিভুজাকার সমীকরণ `Lz = y` এবং `Lᵀα = z` সমাধান করে `α` বের করি।\n\nএখন নতুন Query বিন্দুর Cross-Covariance যদি `[0.5, 0.5]` এবং নিজস্ব Prior Variance `1` হয়, তবে প্রতিসাম্যের কারণেই Posterior Mean `k*ᵀα = 0` আসে। একইভাবে `v = L⁻¹k*` বের করে নিলে Latent Variance পাওয়া যায় `1 - vᵀv = 0.75`, এবং নতুন কোলাহলপূর্ণ পর্যবেক্ষণের মোট Variance হয় `0.75 + 0.5 = 1.25`।"
+        },
+        {
+          "type": "code",
+          "title": "Matrix Inverse ছাড়াই Cholesky দিয়ে Posterior নির্ণয়",
+          "body": "import numpy as np\n\ncovariance = np.array([[1.0, 0.5], [0.5, 1.0]])\nnoise_variance = 0.5\ntarget = np.array([1.0, -1.0])\ncross = np.array([0.5, 0.5])\nsystem = covariance + noise_variance * np.eye(2)\nlower = np.linalg.cholesky(system)\nalpha = np.linalg.solve(lower.T, np.linalg.solve(lower, target))\nprojected = np.linalg.solve(lower, cross)\nmean = float(cross @ alpha)\nlatent_variance = float(1 - projected @ projected)\nnp.testing.assert_allclose(system @ alpha, target)\nprint(round(mean, 6), latent_variance, latent_variance + noise_variance)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "প্রকৌশলগত পার্থক্যটি যাচাই করুন",
+          "body": "একটি GP মডেলে প্রকৃত Noise Variance এবং সংখ্যাগত স্থিতিশীলতার জন্য ব্যবহৃত Numerical Jitter-এর ভূমিকার পার্থক্য আপনি কীভাবে ব্যাখ্যা করবেন?",
+          "solution": "Noise Variance হলো পর্যবেক্ষণ প্রক্রিয়ার বাস্তব অনিশ্চয়তার গাণিতিক পরিমাপ, যা মডেলের একটি অর্থবহ অংশ। বিপরীতে Numerical Jitter হলো ম্যাট্রিক্সের Cholesky Factorization যেন ফ্লোটিং-পয়েন্ট ত্রুটিতে ভেঙে না পড়ে সেজন্য কর্ণ বরাবর যোগ করা অতি ক্ষুদ্র ধনাত্মক সংখ্যা। তাই কোডে দুটির উদ্দেশ্য ও মান আলাদা রাখুন এবং ভবিষ্যতের নতুন পর্যবেক্ষণের মোট Variance বের করার সময় কেবল মডেলের প্রকৃত ভৌত Noise যোগ হচ্ছে কি না তা নিশ্চিত করুন।",
+          "reference": "https://scikit-learn.org/stable/modules/gaussian_process.html"
+        }
+      ]
+    },
+    {
+      "id": "ch11_svm_engineering",
+      "title": "SVM Training ও প্রোডাকশন Output Contract",
+      "subtitle": "LinearSVC বনাম SVC, Multiclass কৌশল, Calibration এবং SVR",
+      "duration": "34 min",
+      "icon": "functions",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "LinearSVC বনাম SVC(kernel='linear'): একই নাম, ভিন্ন সমীকরণ!",
+          "body": "scikit-learn ব্যবহারের সময় অনেকেই ধরে নেন `LinearSVC` এবং `SVC(kernel='linear')` বোধহয় ভেতরে ভেতরে হুবহু একই সমীকরণ সমাধান করে—কিন্তু বাস্তবে তা নয়! `LinearSVC` তৈরি হয়েছে `LIBLINEAR` ইঞ্জিনের ওপর, যেখানে ডিফল্টভাবে `squared_hinge` লস ব্যবহৃত হয় এবং Bias বা Intercept পদের ওপরেও Regularization বসে—যা আমাদের শেখা আদর্শ পেনাল্টিমুক্ত Bias-এর সমীকরণ থেকে আলাদা। অন্যদিকে `SVC(kernel='linear')` চলে `LIBSVM`-এর আদর্শ Support Vector কাঠামোয়। ফলে একই ডেটা ও একই সংখ্যার `C` দিলেও দুটি ক্লাস থেকে হুবহু একই ওজন পাওয়া যায় না। আমাদের এই অধ্যায়ের বেঞ্চমার্কে ঘন ডেটার জন্য দ্রুততর `LinearSVC(..., dual=False)` ব্যবহার করা হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "Scaling-এর পরিধি ও Data Leakage রোধ",
+          "body": "Cross-Validation পাইপলাইন চালানোর সময় প্রতিটি ফোল্ডের শুধুমাত্র Training অংশের ওপরই Scaler ফিট করতে হবে। শুরুতেই পুরো Dataset-এর গড় ও আদর্শ বিচ্যুতি বের করে নিলে ভবিষ্যতের Validation ডেটার তথ্য চুইয়ে ঢুকে পড়ে (Data Leakage)। আরেকটি ব্যবহারিক সূক্ষ্মতা খেয়াল রাখবেন: আমাদের ইন্টারঅ্যাক্টিভ ল্যাবের SVC-এর Scaler ফিট করা হয়েছে কেবল ল্যাবের নির্দিষ্ট `1024`টি সারির ওপর, আর মূল বেঞ্চমার্কের Scaler ফিট হয়েছে মূল Training ফোল্ডে। যেহেতু দুটি ফিট করার পরিধি (Scope) আলাদা, তাই দুই জায়গার জ্যামিতিক একক সরাসরি মিলিয়ে তুলনা করা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "Multiclass সম্প্রসারণ: One-vs-Rest বনাম One-vs-One",
+          "body": "মৌলিক SVM যেহেতু দুটি Class-কে আলাদা করে, তাই দুইয়ের বেশি Class থাকলে আমরা সাধারণত One-vs-Rest (প্রতিটি ক্লাস বনাম বাকি সব) অথবা One-vs-One (প্রতিটি জোড়া ক্লাসের আলাদা লড়াই)—এই দুটি কৌশলের আশ্রয় নিই। লাইব্রেরিতে `decision_function`-এর বাইরের আকার (Shape) দেখতে একই রকম হলেও ভেতরের অপ্টিমাইজার ঠিক কোন কৌশল ব্যবহার করছে তা কিন্তু আলাদা হতে পারে! তাই প্রোডাকশন চুক্তিতে সবসময় সাজানো Class-এর ক্রম, সিদ্ধান্ত নেওয়ার Threshold এবং সমান স্কোরের ক্ষেত্রে Tie-breaking নিয়ম সুস্পষ্টভাবে লিখে রাখবেন।"
+        },
+        {
+          "type": "text",
+          "title": "Convergence পরীক্ষা ও নীরব ব্যর্থতা এড়ানো",
+          "body": "মডেল কনভার্জ না করলে কেবল অন্ধভাবে `max_iter` বাড়িয়ে দিলেই সমস্যার মূল সমাধান হয়ে যায় না। কেন অপ্টিমাইজার স্থির হতে পারছে না তা বুঝতে Feature-গুলোর স্কেল, Tolerance, তীব্র Class Imbalance এবং সলভারের ধরন পরীক্ষা করে দেখা জরুরি। প্রোডাকশন বা বেঞ্চমার্ক পাইপলাইনে `ConvergenceWarning`-কে কখনোই উপেক্ষা করবেন না; আমাদের বেঞ্চমার্ক কোডে অসমাপ্ত ফিটকে সরাসরি ত্রুটি (Error) হিসেবে ধরা হয়েছে, যাতে আধা-শেখা কোনো মডেল চুপিসারে সফল বলে চালিয়ে না যায়।"
+        },
+        {
+          "type": "text",
+          "title": "Probability Calibration ও মূল্যায়নের পৃথক ধাপ",
+          "body": "আবারও মনে করিয়ে দিই, কাঁচা `decision_function` কখনোই প্রকৃত Posterior Probability নয়। নির্ভরযোগ্য Probability প্রয়োজন হলে `CalibratedClassifierCV` ব্যবহার করতে পারেন, তবে তার ভেতরের ফোল্ডগুলো আপনার ডেটার Group বা সময়ের শর্ত মানছে কি না তা নিজে যাচাই করে নেবেন। একটি নিশ্ছিদ্র পরীক্ষায় Calibration ডেটা, Model বাছাইয়ের Validation ডেটা এবং চূড়ান্ত Test মূল্যায়ন—এই তিনটির ভূমিকা আলাদা থাকে। এ ছাড়া বিভিন্ন লাইব্রেরি সংস্করণে অভ্যন্তরীণ Probability অপশনের নিয়ম বদলাতে পারে বলে আমরা কোথাও মনগড়া Sigmoid বসিয়ে কৃত্রিম Probability তৈরি করিনি।"
+        },
+        {
+          "type": "code",
+          "title": "Pipeline-এ StandardScaler ও LinearSVC-এর Output যাচাই",
+          "body": "import numpy as np\nfrom sklearn.pipeline import make_pipeline\nfrom sklearn.preprocessing import StandardScaler\nfrom sklearn.svm import LinearSVC\n\nX = np.array([[0.0, 10.0], [1.0, 20.0], [2.0, 25.0], [3.0, 40.0]])\ny = np.array([0, 0, 1, 1])\nm = make_pipeline(\n    StandardScaler(), LinearSVC(C=1, dual=False, max_iter=10000, random_state=42)\n).fit(X, y)\nassert m.decision_function(X).shape == (4,)\nassert not hasattr(m, \"predict_proba\")\nprint(m.decision_function(X))\n"
+        },
+        {
+          "type": "text",
+          "title": "Regression-এ SVM-এর রূপ: SVR ও ε-Insensitive Tube",
+          "body": "একই জ্যামিতিক ধারণা দিয়ে কি অবিচ্ছিন্ন সংখ্যার Regression করা যায়? হ্যাঁ, Support Vector Regression (SVR) ঠিক এই কাজটিই করে একটি `ε`-insensitive টিউব ব্যবহার করে! যদি মডেলের ভুল `|y - f(x)|` নির্ধারিত `ε` সীমার ভেতরে থাকে, তবে কোনো শাস্তি বা Loss গোনা হয় না; কেবল এই টিউবের বাইরে বেরিয়ে যাওয়া বিন্দুগুলোর ওপর রৈখিক বা দ্বিঘাত পেনাল্টি বসে। মনে রাখবেন, এখানে `ε` মাপা হয় সরাসরি Target চলকের এককে—তাই ইনপুট Feature স্কেলিং এবং Target স্কেলিংয়ের প্রভাব সম্পূর্ণ আলাদা। এই অধ্যায়ের কার্যকর বেঞ্চমার্কটি মূলত Classification ঘিরে সাজানো, পূর্ণাঙ্গ SVR প্রজেক্ট নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যে ভুলটি ধরতে বলবে",
+          "body": "ধরুন ইন্টারভিউতে প্রশ্ন এল: 'একজন প্রকৌশলী `LinearSVC`-এর Decision Score `0.9` দেখে বললেন ঘটনাটি ঘটার Probability `90%`—এখানে গলদ কোথায়?' গুছিয়ে বলুন যে এই স্কোরের স্কেল অসীম ও পরিবর্তনশীল, এর পেছনে কাজ করেছে Hinge জাতীয় Objective (Probability Likelihood নয়), এবং প্রকৃত Probability পেতে আলাদা Calibration ডেটা ও যাচাই প্রয়োজন। পাশাপাশি Model এক্সপোর্ট করার পর প্রোডাকশনে Class-এর ক্রম ও StandardScaler রূপান্তর অক্ষত আছে কি না, তা সীমান্তবর্তী Test ইনপুট (Boundary Probes) দিয়ে অবশ্যই পরীক্ষা করে নিতে বলবেন।"
+        }
+      ]
+    },
+    {
+      "id": "ch11_distance",
+      "title": "kNN: Distance Metric ও Feature Scaling",
+      "subtitle": "Minkowski দূরত্ব, Training রূপান্তর এবং প্রতিবেশী জ্যামিতি",
+      "duration": "34 min",
+      "icon": "functions",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Lazy Learning মানেই কি কোনো প্রস্তুতি নেই?",
+          "body": "এবার আমরা আমাদের দ্বিতীয় পরিবার k-Nearest Neighbors (kNN)-এ প্রবেশ করছি। SVM যেখানে পুরো ডেটা থেকে কয়েকটি ওজন বা Support Vector ছেঁকে নেয়, সেখানে kNN ট্রেনিংয়ের সময় মূলত রূপান্তরিত পর্যবেক্ষণগুলো (এবং প্রয়োজনে একটি Search Index) মেমোরিতে সংরক্ষণ করে রাখে। এরপর যখনই নতুন কোনো Query আসে, তখন সে দূরত্ব মেপে সবচেয়ে কাছের `k`-সংখ্যক প্রতিবেশী খুঁজে বের করে এবং তাদের ভোট বা গড় নেয়। বইপত্রে একে প্রায়ই 'No Training' বা Lazy Learning বলা হয়—কিন্তু এই মুখরোচক কথাটির আড়ালে যে সঠিক Scaling, Distance Metric নির্বাচন, ইনডেক্স তৈরি এবং Hyperparameter টিউনিংয়ের মতো গুরুদায়িত্ব লুকিয়ে থাকে, তা ভুলে গেলে চলবে না।"
+        },
+        {
+          "type": "math",
+          "title": "সাধারণ Minkowski Distance সূত্র",
+          "body": "d_p(x,z)=\\left(\\sum_j|x_j-z_j|^p\\right)^{1/p},\\quad p\\ge1"
+        },
+        {
+          "type": "text",
+          "title": "Manhattan, Euclidean এবং স্থানাঙ্কের এককের প্রভাব",
+          "body": "উপরের Minkowski সূত্রে `p = 1` বসালে পাওয়া যায় অক্ষ বরাবর হাঁটার দূরত্ব বা Manhattan Distance, আর `p = 2` বসালে পাওয়া যায় সরলরৈখিক Euclidean Distance। কিন্তু কাঁচা ডেটায় সরাসরি এই সূত্র বসালে বড় সংখ্যার Feature পুরো হিসাবকে একাই গ্রাস করে ফেলে—যেমন বয়সের `10` বছরের পার্থক্য আর শিক্ষার `1` ধাপের পার্থক্য কাঁচা দূরত্বে মোটেও এক পাল্লায় মাপা যায় না! প্রতিটি কলামকে তার Training অংশের Standard Deviation দিয়ে ভাগ করলে স্থানীয় জ্যামিতির আপেক্ষিক গুরুত্ব বদলে যায়। মনে রাখবেন, এই Scaling কোনো 'নিরপেক্ষ' গাণিতিক কাজ নয়; এটি আসলে আপনার বেছে নেওয়া একটি সুনির্দিষ্ট Metric অনুমান।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে উদাহরণ: Scaling যেভাবে ক্রম উল্টে দেয়",
+          "body": "একটি ছোট উদাহরণে দেখুন কীভাবে Scaling প্রতিবেশীর ক্রম পুরোপুরি উল্টে দিতে পারে। ধরি আমাদের Query বিন্দুটি মূলবিন্দু `(0, 0)`-তে অবস্থিত, এবং ভাণ্ডারে দুটি বিন্দু আছে: `A = (3, 0)` ও `B = (0, 2)`। কাঁচা Euclidean দূরত্বে `A`-এর দূরত্ব `3` এবং `B`-এর দূরত্ব `2`—অর্থাৎ `B` বেশি কাছে।\n\nকিন্তু ধরুন Training ডেটা থেকে দেখা গেল প্রথম ও দ্বিতীয় অক্ষের স্কেল যথাক্রমে `(10, 1)`। এবার ভাগ করলে `A`-এর দূরত্ব কমে দাঁড়ায় `3 / 10 = 0.3`, আর `B`-এর দূরত্ব থাকে `2 / 1 = 2`—ফলে মুহূর্তেই সবচেয়ে কাছের প্রতিবেশী হয়ে যায় `A`! দুটি নিয়ম সবসময় মনে রাখবেন: নতুন Query বিন্দু কখনো নিজের ওপর গড় বা বিচ্যুতি ফিট করবে না; আর জোড়ায় জোড়ায় দূরত্ব মাপার সময় উভয় বিন্দু থেকে একই গড় বিয়োগ করলে তা কাটাকাটি হয়ে গেলেও ভাগ করার স্কেল কখনো কাটাকাটি হয় না।"
+        },
+        {
+          "type": "code",
+          "title": "কোডে কাঁচা বনাম Scaled Distance তুলনা",
+          "body": "import numpy as np\n\nquery = np.array([0.0, 0.0])\npool = np.array([[3.0, 0.0], [0.0, 2.0]])\nraw = np.linalg.norm(pool - query, axis=1)\nscaled = np.linalg.norm((pool - query) / np.array([10.0, 1.0]), axis=1)\nassert raw.argmin() == 1 and scaled.argmin() == 0\nassert np.allclose(np.abs(pool - query).sum(axis=1), [3, 2])\nprint(raw, scaled)\n"
+        },
+        {
+          "type": "knn_lab",
+          "title": "Interactive Neighbor Lab: দূরত্ব, Scaling ও k যাচাই",
+          "body": "নিচের ইন্টারঅ্যাক্টিভ ক্যালকুলেটরে `64`টি প্রকৃত Training সারি এবং বাস্তব Held-out Query বিন্দুর ওপর Euclidean বনাম Manhattan দূরত্ব, কাঁচা বনাম Training-Standardized স্কেলিং এবং বিভিন্ন `k`-এর আচরণ নিজে পরখ করে দেখুন। লক্ষ্য করবেন, গ্রাফের বিন্দুগুলোকে সহজে চেনার জন্য মূল কাঁচা স্থানাঙ্কে বসানো হয়েছে, কিন্তু সংযোগ রেখাগুলো আঁকা হয়েছে আপনার বেছে নেওয়া Metric-এর প্রকৃত ক্রম অনুযায়ী—তাই পর্দার চোখের আন্দাজের দূরত্বকে প্রকৃত র‍্যাঙ্কিংয়ের বিকল্প ভাববেন না।"
+        },
+        {
+          "type": "text",
+          "title": "Cosine Distance, Categorical কোড ও মিশ্র ডেটার সতর্কতা",
+          "body": "সব ডেটায় সাধারণ Euclidean দূরত্ব খাটে না। ভেক্টরগুলো যদি একক দৈর্ঘ্যে L2-Normalized থাকে, তবে বর্গকৃত Euclidean দূরত্ব এবং Cosine Distance একই ক্রম বজায় রাখে—তবে শূন্য ভেক্টরের ক্ষেত্রে Cosine অসংজ্ঞায়িত থাকে বলে তার জন্য আলাদা নীতি রাখতে হয়। আবার শহরের নাম বা পেশাকে `1, 2, 3` সংখ্যায় লিখে সরাসরি দূরত্ব মাপলে একটি অর্থহীন কৃত্রিম ক্রম তৈরি হয়ে যায়! তাই অনুপস্থিত মান (Missing Values), মিশ্র প্রকৃতির Feature কিংবা ডেটা থেকে শেখা দূরত্ব (Metric Learning) সমস্যার ধরন বুঝে যত্নের সাথে পরিচালনা করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "নিজে চিন্তা করার অনুশীলন",
+          "body": "একই Dataset-এ Min-Max Scaling এবং Standard Deviation দিয়ে Scaling করলে প্রতিবেশীদের তালিকা কেন বদলে যেতে পারে, বিশেষ করে যদি ডেটায় দু-একটি বড় Outlier থাকে? আর কেউ যদি Cross-Validation-এর বাইরে পুরো ডেটার ওপর Feature Selection বা Metric Learning ফিট করে নেয়, তবে কীভাবে Data Leakage ঘটে? ইন্টারভিউতে উত্তর দেওয়ার ভঙ্গিতে দূরত্ব ফাংশনের একক ও অনুমানগুলো গুছিয়ে বলার চর্চা করুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch11_votes",
+      "title": "kNN Voting, Tie-breaking এবং Exact Match",
+      "subtitle": "স্থিতিশীল র‍্যাঙ্কিং, Inverse-Distance ওজন এবং kNN Regression",
+      "duration": "51 min",
+      "icon": "functions",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Uniform Voting ও Tie-breaking নীতি",
+          "body": "দূরত্ব মাপার পর নির্বাচিত `k`-সংখ্যক প্রতিবেশীর Label থেকে আমরা কীভাবে সিদ্ধান্তে পৌঁছাব? সমান ওজনের (Uniform) নিয়মে ওই `k` জন প্রতিবেশীর মধ্যে ধনাত্মক ক্লাসের অনুপাতই হলো আমাদের প্রাক্কলিত ভগ্নাংশ, আর সংখ্যাগরিষ্ঠ Class-টিই হয় চূড়ান্ত Prediction। অনেকেই মনে করেন বিজোড় সংখ্যক `k` নিলেই বুঝি সব ধরনের Tie বা সমতা মিটে যায়! বিজোড় `k` কেবল দুই ক্লাসের সাধারণ ভোট গণনার সমতা কমাতে পারে; কিন্তু `k`-তম ও `(k+1)`-তম বিন্দুর দূরত্ব সমান হয়ে যাওয়া (Distance Cutoff Tie), বহু ক্লাসের সমতা কিংবা ওজনযুক্ত ভোটের সমতা কিন্তু বিজোড় `k` দিয়ে দূর হয় না। তাই প্রোডাকশন কোডে Tie ভাঙার নিয়ম সবসময় স্পষ্ট রাখতে হয়।"
+        },
+        {
+          "type": "math",
+          "title": "ওজনযুক্ত স্থানীয় Probability প্রাক্কলন",
+          "body": "\\widehat p(y=1\\mid x)=\\frac{\\sum_{i\\in N_k(x)}w_i\\mathbf1(y_i=1)}{\\sum_{i\\in N_k(x)}w_i}"
+        },
+        {
+          "type": "text",
+          "title": "Inverse-Distance ওজন এবং শূন্য দূরত্বের বিশেষ নিয়ম",
+          "body": "দূরের প্রতিবেশীর চেয়ে একদম কাছের প্রতিবেশীর মতামতকে বেশি গুরুত্ব দিতে সাধারণত দূরত্বের ব্যস্তানুপাতিক ওজন `w_i = 1 / d_i` ব্যবহার করা হয়। এখানে দুটি সংখ্যাগত কৌশল খুব জরুরি। এক, সব ধনাত্মক দূরত্ব যদি খুব ক্ষুদ্র হয়, তবে বিশাল সংখ্যা তৈরি হয়ে Overflow হতে পারে—তাই নির্বাচিত সব ওজনকে একটি সাধারণ উৎপাদক (যেমন সর্বনিম্ন দূরত্ব) দিয়ে স্কেল করে নিলে মান নিরাপদ থাকে এবং ভাগফলের চূড়ান্ত অনুপাতও বদলায় না।\n\nদুই, যদি নির্বাচিত প্রতিবেশীদের মধ্যে কারও দূরত্ব হুবহু শূন্য (`d_i = 0`) হয়, তবে `1 / 0` অসংজ্ঞায়িত হয়ে যাবে! হরে ইচ্ছেমতো ক্ষুদ্র `epsilon` যোগ করে প্রকাণ্ড মনগড়া ওজন বানানোর বদলে এই অধ্যায়ের সুনির্দিষ্ট নিয়ম হলো: শূন্য দূরত্বের হুবহু মিলে যাওয়া বিন্দু পাওয়া গেলে কেবল তাদেরকেই সমান ধনাত্মক ওজন দেওয়া হবে, আর বাকি সব অশূন্য দূরত্বের প্রতিবেশীর ওজন হবে `0`।"
+        },
+        {
+          "type": "text",
+          "title": "অভিন্ন স্থানাঙ্কের একাধিক সারি (Duplicate Feature Vectors)",
+          "body": "বাস্তব সারণি ডেটায় শূন্য দূরত্ব কেন দেখা যায়? কারণ দুজন ভিন্ন মানুষের বয়স ও শিক্ষার বছর হুবহু এক হতেই পারে, অথচ তাদের প্রকৃত Label হতে পারে আলাদা! অর্থাৎ স্থানাঙ্ক মিলে যাওয়া মানেই একই ব্যক্তি নয়। আমাদের নিয়মে নির্বাচিত `k`-এর ভেতরে যতগুলো শূন্য দূরত্বের সারি থাকবে, তাদের Label-গুলোর গড় নেওয়া হবে। আরেকটি সূক্ষ্ম বিষয় হলো, যদি সীমান্তে `k`-তম এবং `(k+1)`-তম বিন্দুর দূরত্ব সমান হয়ে যায়, তবে Training সারির ক্রম বদলালেই নির্বাচিত প্রতিবেশীর দল বদলে যেতে পারে—তাই সমতার ক্ষেত্রে সব লাইব্রেরি হুবহু একই উত্তর দেবে এমন নিশ্চয়তা ধরে নেবেন না।"
+        },
+        {
+          "type": "code",
+          "title": "শূন্য দূরত্বের Exact Match হেল্পার যাচাই",
+          "body": "from pathlib import Path\nimport runpy\nimport numpy as np\n\napi = runpy.run_path(str(Path(\"assets/datasets/adult/classical_workflow.py\")))\nX = np.array([[0.0], [0.0], [1.0]])\ny = np.array([0, 1, 1])\np, details = api[\"knn_predict\"](X, y, [[0.0]], k=3, weighted=True)\nassert p[0] == 0.5\nassert details[0][\"weights\"].tolist() == [1.0, 1.0, 0.0]\nprint(p)\n"
+        },
+        {
+          "type": "text",
+          "title": "k-এর মান ও Bias-Variance ভারসাম্য",
+          "body": "`k`-এর মান বাছাই করা মানে সরাসরি Bias এবং Variance-এর মধ্যে ভারসাম্য টানা। `k = 1` নিলে সীমানা অত্যন্ত স্থানীয় ও খাঁজকাটা হয়—ফলে নয়েজ বা ডুপ্লিকেট বিন্দুর প্রভাবে ফলাফল দ্রুত বদলে যায় (উচ্চ Variance)। বিপরীতে `k` অনেক বড় করলে সীমানা মসৃণ হয় ঠিকই, কিন্তু সূক্ষ্ম স্থানীয় ক্লাসের অঞ্চলগুলো মুছে যেতে পারে (উচ্চ Bias)। সঠিক `k` নির্ভর করে Sample সংখ্যা, মাত্রা, স্থানীয় Density, Class Imbalance এবং Distance সূত্রের ওপর। খেয়াল করুন, সমান ওজনে `k = n` নিলে Model সব বিন্দুতেই কেবল পুরো Training ডেটার Positive Mean (Global Prior) ফিরিয়ে দেয়; তবে দূরত্ব-ওজনযুক্ত `k = n` নিলে তখনো কাছের বিন্দুর প্রাধান্য বজায় থাকে।"
+        },
+        {
+          "type": "text",
+          "title": "kNN Regression ও Extrapolation সীমাবদ্ধতা",
+          "body": "একই কাঠামো দিয়ে খুব সহজেই সংখ্যাসূচক Regression করা যায়: সমান ওজনে প্রতিবেশীদের Target মানের সাধারণ গড়, আর দূরত্ব-ওজনে তাদের ওজনযুক্ত গড় নেওয়া হয়। যেহেতু যেকোনো অঋণাত্মক ওজনযুক্ত গড় সবসময় সর্বনিম্ন ও সর্বোচ্চ মানের ভেতরেই আটকে থাকে, তাই kNN Regressor স্থানীয়ভাবে ধাপে ধাপে কাজ করে এবং Training ডেটায় দেখা সর্বনিম্ন বা সর্বোচ্চ Target সীমার বাইরে কখনোই Extrapolate করতে পারে না! এ ছাড়া নির্দিষ্ট `k`-এর বদলে নির্দিষ্ট ব্যাসার্ধের (`Radius`) ভেতরের প্রতিবেশীদের নেওয়ার পদ্ধতিও আছে—সে ক্ষেত্রে প্রতিবেশীর সংখ্যা একেক জায়গায় একেক রকম হয় এবং ব্যাসার্ধের ভেতরে কাউকেই না পাওয়া গেলে কী হবে তার স্পষ্ট নিয়ম রাখতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ ডিবাগিং প্রশ্ন",
+          "body": "ইন্টারভিউতে যদি বলা হয়: 'দুটি আলাদা লাইব্রেরিতে একই `k`, একই Metric ও একই Scaling দেওয়ার পরেও কিছু বিন্দুতে প্রাক্কলিত Probability আলাদা আসছে—কেন?' প্রথমেই যাচাই করতে বলবেন: সীমান্তে সমান দূরত্বের Tie ভাঙার ক্রম, ডুপ্লিকেট Row, Class-এর ক্রম, শূন্য দূরত্বের নিয়ম এবং ফ্লোটিং-পয়েন্ট হিসাবের সূক্ষ্মতা। পাশাপাশি আরেকটি মৌলিক শর্ত মনে রাখবেন: `k`-এর বৈধ সীমা কিন্তু Feature-এর মাত্রা `d` দিয়ে বাঁধা নয় (`k > d` হতে কোনো বাধা নেই), বরং এর উপরের সীমা হলো মোট Training সারির সংখ্যা `k ≤ n_train`।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে প্রতিটি Neighbor-এর অবদান হিসাব",
+          "body": "চলুন ছোট একটি সংখ্যার উদাহরণে সমান ওজন ও ব্যস্তানুপাতিক ওজনের তফাত দেখি। ধরি একমাত্রিক রেখায় Query বিন্দুটি `0`, সংরক্ষিত তিনটি বিন্দুর অবস্থান `[1, 2, 4]` এবং তাদের Label যথাক্রমে `[0, 1, 1]`। এখানে `k = 3` নিলে সাধারণ Uniform নিয়মে ধনাত্মক অনুপাত হয় `2 / 3`।\n\nকিন্তু Inverse-Distance নিয়মে ওজনগুলো দাঁড়ায় `[1, 1/2, 1/4]`। ফলে ধনাত্মক ক্লাসের ওজনযুক্ত অনুপাত নেমে আসে `(1/2 + 1/4) / (1 + 1/2 + 1/4) = (3/4) / (7/4) = 3 / 7`-এ! দেখুন, হুবহু একই তিনজন প্রতিবেশী নিয়েও কেবল ভোটের নিয়ম বদলানোয় `0.5` Threshold-এ চূড়ান্ত সিদ্ধান্ত উল্টে গেল। আর যদি দূরত্বের মধ্যে `0` থাকত, তবে এই ভাগের আগেই আমাদের শূন্য দূরত্বের নিয়মটি কার্যকর হতো।"
+        },
+        {
+          "type": "code",
+          "title": "কোডে Uniform, Weighted ও Exact-Match তুলনা",
+          "body": "import numpy as np\n\ndistances = np.array([1.0, 2.0, 4.0])\nlabels = np.array([0.0, 1.0, 1.0])\n# Common scaling preserves normalized weights and avoids huge reciprocals.\nweights = distances.min() / distances\nfraction = float(weights @ labels / weights.sum())\nzero_distances = np.array([0.0, 0.0, 2.0])\nzero_labels = np.array([0.0, 1.0, 1.0])\nexact_fraction = zero_labels[zero_distances == 0].mean()\nprint(round(labels.mean(), 6), round(fraction, 6), exact_fraction)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে ভেবে উত্তর দিন",
+          "body": "`k = 1` রেখে যদি প্রতিটি Training সারি নিজেকেই নিজের প্রতিবেশী হিসেবে বেছে নেওয়ার সুযোগ পায়, তবে সেখান থেকে পাওয়া Training Accuracy কেন মারাত্মক বিভ্রান্তিকর হতে পারে?",
+          "solution": "প্রতিটি বিন্দুর নিজের থেকে নিজের দূরত্ব `0` হওয়ায় সে নিজেকেই নিকটতম প্রতিবেশী হিসেবে বেছে নিয়ে নিজের Label ফেরত দিতে পারে—অথচ বাস্তব অদেখা ডেটায় Prediction করার সময় বিন্দুটির নিজের ফলাফল কখনোই জানা থাকে না! একইভাবে একই ব্যক্তি বা একই গ্রুপের ডুপ্লিকেট তথ্য যদি Train ও Test দুই পাশেই থেকে যায়, তবুও মূল্যায়ন কৃত্রিমভাবে সহজ হয়ে পড়ে। তাই শুরুতেই সঠিক Split Unit এবং নিজ-বিন্দু বাদ দেওয়ার নিয়ম নির্ধারণ করা জরুরি।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch11_dimension",
+      "title": "kNN-এর জটিলতা ও উচ্চমাত্রিক স্থানের চ্যালেঞ্জ",
+      "subtitle": "Brute Force, Spatial Tree, Approximate Nearest Neighbors এবং Data Retention",
+      "duration": "32 min",
+      "icon": "functions",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Brute-Force অনুসন্ধানের সময় ও মেমোরি বাজেট",
+          "body": "ধরুন আপনার কাছে `n`টি সংরক্ষিত সারি, `d`টি Feature এবং একসাথে `q`টি নতুন Query এসেছে। পুরো ডেটা জমিয়ে রাখতে মেমোরি লাগবে `O(nd)`। প্রতিটি Query-এর সাথে সব সারির নিখুঁত দূরত্ব মাপতে মোট হিসাবের খরচ পড়বে আনুমানিক `O(qnd)`। এরপর প্রতিটি Query-এর জন্য সব প্রার্থীকে পুরোপুরি সাজাতে (`Full Sort`) গেলে লাগত `O(n log n)` সময়, কিন্তু বাস্তবে কেবল সেরা `k` জনকে বাছাই করার অ্যালগরিদম বা Heap ব্যবহার করে পুরো সাজানোর খরচ এড়ানো যায়। আরেকটি বড় প্রকৌশলগত সতর্কতা: বিশাল ব্যাচের ক্ষেত্রে পুরো `q × n` দূরত্বের ম্যাট্রিক্স একসাথে মেমোরিতে তৈরি করতে গেলে RAM ফুরিয়ে যেতে পারে, তাই ছোট ছোট খণ্ডে (Chunking) ভাগ করে হিসাব চালানো আবশ্যিক।"
+        },
+        {
+          "type": "text",
+          "title": "Spatial Search Index: KD-Tree এবং Ball Tree",
+          "body": "প্রতিবার সব বিন্দু তল্লাশি না করে গতি বাড়ানোর জন্য কম বা মাঝারি মাত্রার ডেটায় `KD-Tree` কিংবা `Ball Tree`-এর মতো স্থানিক ইনডেক্স বেশ কাজে আসে। এরা স্থানটিকে শাখা-প্রশাখায় ভাগ করে ফেলে, যাতে দূরের পুরো একটি শাখাকে এক ঝটকায় বাদ (Pruning) দেওয়া যায়। তবে মনে রাখবেন, মাত্রা `d` অনেক বেড়ে গেলে, ডেটার Density বা ব্যবহৃত Metric প্রতিকূল হলে এই শাখা ছাঁটাইয়ের ক্ষমতা দ্রুত কমে যায়—এমনকি তখন সাধারণ ভেক্টরাইজড Brute Force-ই উল্টো সমান বা দ্রুততর হয়ে উঠতে পারে! অর্থাৎ Spatial Tree মানেই সব পরিস্থিতিতে নিশ্চিত `O(log n)` গতি নয়, এবং ইনডেক্স তৈরি ও হালনাগাদ করার নিজস্ব খরচও হিসাবের মধ্যে রাখতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Curse of Dimensionality: যখন দূরত্ব তার অর্থ হারায়",
+          "body": "মাত্রার সংখ্যা হু হু করে বাড়লে কেন স্থানীয় প্রতিবেশী খোঁজা কঠিন হয়ে পড়ে? একে বলা হয় Curse of Dimensionality। ডেটায় যদি প্রচুর অপ্রাসঙ্গিক বা নয়েজপূর্ণ Feature যোগ হতে থাকে, তবে প্রতিটি অক্ষের ছোট ছোট এলোমেলো পার্থক্য যোগ হয়ে সব বিন্দুর দূরত্বকে প্রায় কাছাকাছি মানে জড়ো করে ফেলে (Distance Concentration) এবং স্থানীয় অঞ্চলগুলো ভীষণ ফাঁকা (Sparse) হয়ে পড়ে। ফলে অর্থবহ প্রতিবেশী পেতে প্রয়োজনীয় ডেটার পরিমাণ সূচকীয় হারে বেড়ে যায়। এ অবস্থায় Feature Selection বা Dimensionality Reduction (যা আমরা Book 2 · Chapter 7-এ বিস্তারিত শিখব) উপকারী হতে পারে—তবে তা অবশ্যই শুধুমাত্র Training ফোল্ডে ফিট করে মূল টাস্কের পারফরম্যান্স দিয়ে যাচাই করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "বড় স্কেলে সমাধান: Approximate Nearest Neighbors (ANN)",
+          "body": "কোটি কোটি ভেক্টরের ভিড়ে কয়েক মিলিসেকেন্ডে উত্তর দিতে আধুনিক সিস্টেমগুলো নিখুঁত অনুসন্ধানের বদলে Approximate Nearest Neighbors (ANN) ব্যবহার করে—যা Latency, Memory এবং প্রতিবেশী খুঁজে পাওয়ার হার (`Recall@k`)-এর মধ্যে একটি বাস্তবসম্মত সমঝোতা তৈরি করে। এখানে একটি সূক্ষ্ম পার্থক্য গুলিয়ে ফেলবেন না: নিখুঁত প্রতিবেশী খুঁজে পাওয়ার `Recall@k` এবং চূড়ান্ত Classifier Accuracy কিন্তু এক জিনিস নয়! আনুমানিক ইনডেক্সের সামান্য বিচ্যুতি সীমানার কাছাকাছি বা Tie থাকা বিন্দুগুলোতে ভোটের ফলাফল বদলে দিতে পারে; তাই যেকোনো লাইব্রেরি বেছে নেওয়ার আগে নিজস্ব ডেটায় সীমান্তবর্তী স্থিতিশীলতা অবশ্যই মেপে দেখবেন।"
+        },
+        {
+          "type": "code",
+          "title": "উচ্চমাত্রিক স্থানে দূরত্বের বিস্তার: একটি সংখ্যাসূচক চিত্র",
+          "body": "import numpy as np\n\nrng = np.random.default_rng(42)\nX = rng.normal(size=(100, 50))\nquery = np.zeros(50)\ndistance = np.linalg.norm(X - query, axis=1)\nassert distance.shape == (100,) and np.isfinite(distance).all()\nprint(float(distance.min()), float(distance.max()))\n# Constructed Gaussian points illustrate distance scale, not a universal theorem.\n"
+        },
+        {
+          "type": "text",
+          "title": "Serving আর্টিফ্যাক্ট, গোপনীয়তা (Privacy) ও Data Retention",
+          "body": "প্রোডাকশনে kNN ডিপ্লয় করার একটি বড় বাস্তব দিক হলো এর মডেল ফাইলের ভেতরে সরাসরি আসল Training উদাহরণগুলো জমা থাকতে পারে! তাই কোনো ব্যবহারকারী নিজের ডেটা মুছে ফেলার আবেদন করলে কীভাবে তা সরানো হবে, কীভাবে হালনাগাদ চলবে, কারা ওই সার্ভিং মেমোরিতে প্রবেশাধিকার পাবে এবং মেমোরির আকার কত হবে—এসব নীতি আগেভাগে ভাবতে হয়। অবশ্য মনে রাখবেন, Kernel SVM-এর সংরক্ষিত Support Vector কিংবা Naive Bayes-এর পরিসংখ্যান থেকেও সংবেদনশীল তথ্যের ঝুঁকি তৈরি হতে পারে; আমাদের ব্যবহৃত উন্মুক্ত ঐতিহাসিক ডেটাসেটটি কখনোই ব্যক্তিগত গোপনীয়তা সুরক্ষার প্রমাণপত্র নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Distribution Shift ও দূরবর্তী Query-তে মিথ্যা আত্মবিশ্বাস",
+          "body": "ভাবুন, নতুন একটি Query এল যা আপনার পরিচিত সব Training ডেটার অঞ্চল থেকে যোজন যোজন দূরে অবস্থিত (Out-of-Distribution)। তবুও কিন্তু kNN ভাণ্ডারের সবচেয়ে 'কাছের' `k` জনকে ঠিকই খুঁজে আনবে, এবং তারা সবাই যদি একই ক্লাসের হয় তবে মডেল পূর্ণ আত্মবিশ্বাসের ভঙ্গিতে `1.0` ভগ্নাংশ দেখাতে পারে! তাই বাস্তব সিস্টেমে Distribution Shift সামলাতে প্রতিবেশীদের দূরত্ব পর্যবেক্ষণ করা এবং দূরত্ব একটি নিরাপদ সীমা ছাড়িয়ে গেলে উত্তর দেওয়া থেকে বিরত থাকার (`Abstention Threshold`) ব্যবস্থা রাখা অত্যন্ত বুদ্ধিমানের কাজ।"
+        },
+        {
+          "type": "text",
+          "title": "System Design Interview-এ যেভাবে উত্তর সাজাবেন",
+          "body": "সিস্টেম ডিজাইন ইন্টারভিউতে যদি প্রশ্ন আসে: '`100 million` সারি, উচ্চমাত্রিক Embedding এবং মাত্র কয়েক মিলিসেকেন্ডের সময়সীমা—এখানে নিখুঁত kNN নাকি ANN বেছে নেবেন?' উত্তরের সময় ছোট ডেটার পাঠ্যপুস্তকীয় হিসাব এবং বিশাল প্রোডাকশন সিস্টেমের পার্থক্য স্পষ্ট করে তুলে ধরুন। তুলনা করার জন্য পাঁচটি মাপকাঠি সাজিয়ে বলুন: মোট Memory খরচ, ইনডেক্স পুনর্গঠনের সময় ও তথ্যের বাসি হওয়া (Staleness), প্রতিবেশী উদ্ধারের `Recall@k`, পিক সময়ের Latency এবং সর্বোপরি চূড়ান্ত ব্যবসায়িক বা মডেল Metric-এর ওপর এর প্রকৃত প্রভাব।"
+        }
+      ]
+    },
+    {
+      "id": "ch11_bayes",
+      "title": "Naive Bayes: Generative চিন্তাধারা",
+      "subtitle": "Conditional Independence, Log-Space হিসাব এবং Posterior Odds",
+      "duration": "51 min",
+      "icon": "functions",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Generative Factorization ও Conditional Independence",
+          "body": "এবার আমরা আমাদের তৃতীয় পরিবার Naive Bayes-এ পা রাখছি। SVM যেখানে জ্যামিতিক Margin খোঁজে এবং kNN স্থানীয় প্রতিবেশী দেখে, সেখানে Naive Bayes প্রথমে ডেটা তৈরির গল্পটি মডেল করে: শুরুতে Class Prior `P(y)` এবং প্রতিটি Class অনুযায়ী Feature পাওয়ার Likelihood `P(x | y)` প্রাক্কলন করা হয়, তারপর Bayes-এর সূত্র খাটিয়ে বের করা হয় Posterior `P(y | x)`।\n\nউচ্চমাত্রিক স্থানে সব Feature-এর Joint Distribution সরাসরি শেখা প্রায় অসম্ভব বলে Naive Bayes একটি সাহসী সরল অনুমান ধরে নেয়: **কোনো পর্যবেক্ষণের Class জানা থাকলে তার Feature-গুলো পরস্পর স্বাধীন (Conditionally Independent)**। এখানে একটি মৌলিক পার্থক্য খুব মন দিয়ে খেয়াল করবেন: এটি কিন্তু মোটেও এমন দাবি করছে না যে পুরো Dataset জুড়ে সব পর্যবেক্ষণ মিলালে Feature-গুলো স্বাধীন বা সম্পর্কহীন থাকবে! বাস্তবে Class অজানা থাকলে দুটি Feature-এর মধ্যে স্পষ্ট Correlation দেখা যেতেই পারে। Conditioning-এর এই সূক্ষ্ম পার্থক্যটি মাথায় রেখে নিচের সমীকরণ দুটি দেখুন।"
+        },
+        {
+          "type": "math",
+          "title": "Posterior সমানুপাতিকতার সূত্র",
+          "body": "P(y=c\\mid x)\\propto P(y=c)\\prod_{j=1}^{d}P(x_j\\mid y=c)"
+        },
+        {
+          "type": "math",
+          "title": "Log-Space স্কোর ও LogSumExp Normalization",
+          "body": "s_c=\\log\\pi_c+\\sum_j\\log P(x_j\\mid c),\\quad\\log P(c\\mid x)=s_c-\\operatorname{logsumexp}_k s_k"
+        },
+        {
+          "type": "text",
+          "title": "কেন সব হিসাব Log-Space-এ করতে হয়?",
+          "body": "কেবল কোন Class-টি জিতবে (`argmax`) তা বের করতে হলে হরের সাধারণ প্রমাণ `P(x)` সব ক্লাসে একই থাকায় তা বাদ দেওয়া যায়। কিন্তু আমরা যখন প্রকৃত Posterior Probability রিপোর্ট করতে চাই, তখন সব ক্লাসের স্কোরকে Normalize করতেই হবে। শত শত ক্ষুদ্র Likelihood পরপর গুণ করলে ফ্লোটিং-পয়েন্ট সংখ্যা দ্রুত শূন্যে মিলিয়ে যেতে পারে (Underflow); তাই লগারিদম নিয়ে গুণফলকে নিরাপদ যোগফলে রূপান্তর করা এবং `LogSumExp` ব্যবহার করাই হলো আদর্শ প্রকৌশলগত সমাধান। মনে রাখবেন, কাঁচা যৌথ লগ-স্কোর (`s_c`) ধনাত্মক বা ঋণাত্মক যা-ই হোক না কেন, Normalize করার আগে সেটি কিন্তু কখনোই Probability নয়।"
+        },
+        {
+          "type": "text",
+          "title": "যখন Independence অনুমান ভাঙে: Overconfident Posterior",
+          "body": "বাস্তব ডেটায় যদি একই তথ্য বহনকারী বা পরস্পর সম্পর্কযুক্ত দুটি Feature মডেলের ভেতরে যায়, তবে Naive Bayes একই প্রমাণকে দুবার গুণ করে ফেলে (Double-counting)। মজার ব্যাপার হলো, এর ফলে চূড়ান্ত শ্রেণীবিভাগের Decision Boundary তখনো বেশ ভালো কাজ করতে পারে, কিন্তু মডেলের হিসাব করা Posterior Probability অতিরিক্ত আত্মবিশ্বাসী (`0` বা `1`-এর একদম গা ঘেঁষে) হয়ে পড়ে! তাই কেবল ভালো Accuracy দেখেই ধরে নেবেন না যে Model-এর Probability-গুলো সুষমভাবে Calibrated আছে; Feature-গুলোর মধ্যকার সম্পর্ক, Distribution-এর অনুমানভ্রষ্টতা এবং Label Noise সবসময় যাচাই করে দেখবেন।"
+        },
+        {
+          "type": "code",
+          "title": "কোডে LogSumExp দিয়ে স্থিতিশীল Posterior নির্ণয়",
+          "body": "import numpy as np\nfrom scipy.special import logsumexp\n\nprior = np.array([0.75, 0.25])\nlikelihood = np.array([[0.2, 0.5], [0.8, 0.5]])\njoint = np.log(prior) + np.log(likelihood).sum(axis=1)\nposterior = np.exp(joint - logsumexp(joint))\nassert np.isclose(posterior.sum(), 1)\nassert np.isclose(posterior[1], 4 / 7)\nprint(joint, posterior)\n"
+        },
+        {
+          "type": "text",
+          "title": "Feature-এর ধরন অনুযায়ী সঠিক Variant নির্বাচন",
+          "body": "Naive Bayes আসলে একটি একক সূত্র নয়, বরং Likelihood-এর একটি পরিবার: অবিচ্ছিন্ন সংখ্যাসূচক পরিমাপের জন্য Gaussian, শব্দের সংখ্যা বা ঘটনা গণনার জন্য Multinomial, দ্বিমুখী উপস্থিতি-অনুপস্থিতির (`0/1`) জন্য Bernoulli, বিচ্ছিন্ন নামমাত্র ক্যাটাগরির জন্য Categorical এবং অসম সংখ্যাভিত্তিক ডেটার জন্য Complement Naive Bayes। একটি সংস্করণের ইনপুট শর্ত কখনোই অন্ধভাবে অন্য সংস্করণে চাপিয়ে দেবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যে ভুল বক্তব্যটি শোধরাবেন",
+          "body": "ইন্টারভিউতে অনেকেই তাড়াহুড়োয় বলে বসেন, 'Naive Bayes ধরে নেয় সব Feature পরস্পর স্বাধীন।' সাথে সাথে শোধরে বলুন যে এখানে মূল শর্তটি হলো **Class সাপেক্ষে Conditional Independence (Marginal Independence নয়)**! পাশাপাশি ব্যাখ্যা করার প্রস্তুতি রাখুন কেন ডুপ্লিকেট বা সহসম্পর্কিত ইনপুট দিলে Class Accuracy অপরিবর্তিত থাকলেও Posterior Probability অস্বাভাবিক তীক্ষ্ণ হয়ে ওঠে—অর্থাৎ একটি ভালো Classification নিয়ম এবং একটি সুষম Probability Model-এর মানদণ্ড কীভাবে আলাদা।"
+        },
+        {
+          "type": "text",
+          "title": "একই প্রমাণ দুবার গুনলে Posterior কতটা বদলে যায়?",
+          "body": "বিষয়টি সংখ্যার চোখে দেখতে ধরি শুরুতে দুটি ক্লাসের Prior Odds হলো `1` (সমান Prior)। এখন একটি পর্যবেক্ষিত বাইনারি Feature-এর Likelihood Ratio যদি `3` হয়, তবে প্রকৃত Posterior Odds দাঁড়ায় `3`, অর্থাৎ Posterior Probability হয় `3 / 4 = 0.75`।\n\nএবার সেই একই Feature-এর একটি হুবহু কপি বানিয়ে দ্বিতীয় আরেকটি স্বাধীন প্রমাণ হিসেবে Model-এ ঢুকিয়ে দিন! বাস্তবে হুবহু কপি থেকে নতুন এক বিন্দু তথ্যও আসেনি, অথচ Model এখানে Likelihood Ratio দুবার গুণ করে Posterior Odds বানিয়ে ফেলবে `3 × 3 = 9` এবং Posterior Probability দেখাবে `9 / 10 = 0.90`! চূড়ান্ত Label একই থাকলেও Probability কেন কৃত্রিমভাবে অতি-তীক্ষ্ণ হয়ে পড়ে, এই ছোট্ট হিসাবটি তা পরিষ্কার দেখিয়ে দেয়।"
+        },
+        {
+          "type": "code",
+          "title": "ডুপ্লিকেট প্রমাণে Log-Odds ও Posterior Probability-এর স্ফীতি",
+          "body": "import math\n\nlog_likelihood_ratio = math.log(3.0)\nprobabilities = []\nfor copies in (1, 2):\n    log_odds = copies * log_likelihood_ratio\n    probabilities.append(1 / (1 + math.exp(-log_odds)))\nprint(*probabilities)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে ভেবে উত্তর দিন",
+          "body": "প্রতিটি Class জানা থাকা অবস্থায় দুটি Feature পরস্পর স্বাধীন হওয়া সত্ত্বেও পুরো জনসংখ্যা একত্রে মিশিয়ে দেখলে তাদের মধ্যে জোরালো Correlation দেখা যেতে পারে কেন?",
+          "solution": "কারণ দুটি Feature-ই একই অন্তর্নিহিত Class-এর দিকে ইঙ্গিত করতে পারে (যেমন কোনো নির্দিষ্ট অবস্থায় দুটিরই Mean বেশি, অন্য অবস্থায় দুটিরই Mean কম)। ফলে সব Class একসাথে মিশিয়ে দেখলে তাদের মান একসঙ্গে বড় বা ছোট হওয়ার প্রবণতা তৈরি হয়। গাণিতিকভাবে Conditional উৎপাদক `P(x₁, x₂ | y) = P(x₁ | y) P(x₂ | y)` থেকে কখনোই শর্তহীন Marginal Independence পাওয়া যায় না।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch11_gaussian",
+      "title": "Gaussian Naive Bayes",
+      "subtitle": "MLE Mean ও Variance, Variance Smoothing এবং Probability Density-এর ব্যাখ্যা",
+      "duration": "38 min",
+      "icon": "functions",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Class-Conditional Gaussian ও Diagonal Covariance",
+          "body": "যখন ইনপুট Feature-গুলো অবিচ্ছিন্ন সংখ্যা (যেমন বয়স, তাপমাত্রা বা রক্তচাপ) হয়, তখন Gaussian Naive Bayes প্রতিটি Class এবং প্রতিটি Feature-এর জন্য আলাদা `Mean` ও `Variance` ফিট করে। Conditional Independence অনুমানের কারণে এটি আসলে প্রতিটি ক্লাসে একটি Diagonal Covariance বিশিষ্ট Gaussian Distribution ব্যবহার করার সমতুল্য। মনে রাখবেন, এটি আমাদের বেছে নেওয়া একটি গাণিতিক Model মাত্র—বাস্তব ডেটা সত্যিই Joint Gaussian মেনে চলছে তার প্রমাণ নয়। আর অবিচ্ছিন্ন চলকের একক বিন্দুতে Point Probability `0` হলেও তাদের আপেক্ষিক Probability Density-এর অনুপাত থেকেই নিখুঁতভাবে ক্লাসের Posterior হিসাব করা যায়।"
+        },
+        {
+          "type": "math",
+          "title": "একক Feature-এর Gaussian Log-Density",
+          "body": "\\log p(x_j\\mid c)=-\\frac12\\left[\\log(2\\pi\\sigma^2_{cj})+\\frac{(x_j-\\mu_{cj})^2}{\\sigma^2_{cj}}\\right]"
+        },
+        {
+          "type": "text",
+          "title": "MLE প্রাক্কলন এবং Zero Variance-এর বিপদ",
+          "body": "ট্রেনিংয়ের সময় প্রতিটি Class-এর ভেতরে Sample Mean এবং `n` দিয়ে ভাগ করা Variance (`ddof=0`) নেওয়া হয়, যা সরাসরি Maximum Likelihood Estimate (MLE)—এখানে `n - 1` হরের Unbiased প্রাক্কলক ব্যবহৃত হয় না। কিন্তু ভেবে দেখুন, কোনো ক্লাসে একটি Feature-এর মান যদি সব সারিতে ধ্রুবক থাকে বা Variance অতি ক্ষুদ্র হয়ে যায়, তবে উপরের সূত্রে শূন্য দিয়ে ভাগ হয়ে মারাত্মক সংখ্যাগত বিপর্যয় ঘটবে! এটি এড়াতে `GaussianNB` ট্রেনিং ডেটা থেকে হিসাব করা একটি ক্ষুদ্র ধনাত্মক `epsilon` সব Variance-এর সাথে যোগ করে নেয়—যার ফলে কাঁচা এককের প্রভাব এখানে রয়ে যায়।"
+        },
+        {
+          "type": "text",
+          "title": "var_smoothing-এর প্রকৃত অর্থ ও স্কেল সংবেদনশীলতা",
+          "body": "একটি সূক্ষ্ম প্রকৌশলগত নিয়ম খেয়াল রাখুন: scikit-learn-এ `var_smoothing = 0.01` লেখার অর্থ কিন্তু প্রতিটি Variance-এর সাথে সরাসরি `0.01` যোগ করা নয়! প্রকৃতপক্ষে এখানে `epsilon = 0.01 × (Training ডেটার সব Feature-এর মধ্যে সবচেয়ে বড় Variance)` যোগ করা হয়। এর ফলে Dataset-এ যদি বিশাল অঙ্কের একটি টাকার Column থাকে, তবে তার প্রকাণ্ড Variance থেকে তৈরি হওয়া `epsilon` ছোট এককের অন্য একটি সূক্ষ্ম Feature-এর কার্যকর Variance-কেও ভাসিয়ে দিতে পারে! তাই খাতা-কলমের আদর্শ স্কেল-নিরপেক্ষতা (Affine Invariance) এবং বাস্তব কোডের সংখ্যাগত Smoothing-এর প্রভাবকে আলাদা করে বিচার করতে শিখুন।"
+        },
+        {
+          "type": "code",
+          "title": "GaussianNB ও আমাদের Log-Score হেল্পারের সমতুল্যতা যাচাই",
+          "body": "from pathlib import Path\nimport runpy\nimport numpy as np\nfrom sklearn.naive_bayes import GaussianNB\n\napi = runpy.run_path(str(Path(\"assets/datasets/adult/classical_workflow.py\")))\nX = np.array([[0.0, 1.0], [1.0, 2.0], [3.0, 4.0], [4.0, 6.0]])\ny = [0, 0, 1, 1]\nm = GaussianNB().fit(X, y)\njoint, logp, terms = api[\"gaussian_log_scores\"](\n    [[2.0, 3.0]], m.theta_, m.var_, m.class_prior_\n)\nassert np.allclose(logp, m.predict_log_proba([[2.0, 3.0]]))\nassert np.isclose(np.exp(logp).sum(), 1)\nprint(logp, terms)\n"
+        },
+        {
+          "type": "naive_bayes_lab",
+          "title": "Interactive Gaussian NB Lab: প্রমাণ ও Prior পরীক্ষা",
+          "body": "নিচের ইন্টারঅ্যাক্টিভ ল্যাবে বাস্তব Validation Query এবং ফিট করা Mean ও Variance-গুলো দেখুন। Log-Space-এ `age` ও `education` পদের অবদান, Prior, যৌথ স্কোর এবং সবশেষে Normalized Posterior কীভাবে তৈরি হচ্ছে তা ধাপে ধাপে পরখ করুন। কেবল `age` বা কেবল `education` মোড বেছে নিলে বাদ দেওয়া পদগুলো যৌথ স্কোরে যোগ হয় না। আর Prior স্লাইডারটি হলো কেবল একটি 'যদি এমন হতো' (What-if) হিসাব—এটি সরালে `Likelihood`-গুলো নতুন করে ট্রেন হয় না।"
+        },
+        {
+          "type": "text",
+          "title": "Prior সমন্বয় বনাম প্রকৃত Calibration",
+          "body": "বাস্তব ডিপ্লয়মেন্টে নতুন পরিবেশের ক্লাস অনুপাত অনুযায়ী Prior সমন্বয় করার কৌশলটি তখনই কাজ করে, যখন প্রতিটি ক্লাসের ভেতরের `P(x | y)` Distribution স্থির থাকে। কেবল স্লাইডার টেনে `90%` বসিয়ে দিলেই তা বাস্তব জনসংখ্যার Prevalence-এর প্রমাণ হয়ে যায় না! একইভাবে সব ক্লাসের Posterior যোগফল `1` হওয়া মানেই যে Model-এর অনুমানভ্রষ্টতা বা Calibration সমস্যা দূর হয়ে গেছে, তা কিন্তু মোটেও নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যে দুটি নকশাগত প্রশ্ন উঠতে পারে",
+          "body": "ইন্টারভিউতে জিজ্ঞেস করতে পারে: 'কোনো ক্লাসে একটি Feature-এর Variance হুবহু `0` হলে Gaussian সূত্র কী আচরণ করবে?' উত্তরে শূন্য দিয়ে ভাগের সমস্যা, ধনাত্মক Variance Smoothing এবং সুস্পষ্ট ব্যর্থতা-নীতির কথা বলুন। দ্বিতীয় প্রশ্ন: 'Test-এর সময় কোনো একটি Feature অনুপস্থিত (Missing) থাকলে কী করবেন?' তাত্ত্বিকভাবে Conditional Independence মডেলে ওই পদটি বাদ দিয়ে Marginalize করা একটি পথ, আর আগেভাগে মান বসিয়ে Impute করা আরেকটি সম্পূর্ণ ভিন্ন নকশা—আমাদের বর্তমান হেল্পার Function-টি অবশ্যই সম্পূর্ণ ও সসীম সংখ্যার ইনপুট প্রত্যাশা করে।"
+        }
+      ]
+    },
+    {
+      "id": "ch11_book_discriminant",
+      "title": "Generative বনাম Discriminative: GDA ও LDA Boundary",
+      "subtitle": "Shared Covariance থেকে Linear Log-Odds ও Quadratic Decision Boundary প্রতিপাদন",
+      "duration": "18 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Generative ও Discriminative Model-এর সেতুবন্ধন",
+          "body": "Book 2 · Chapter 2-এ আমরা দেখেছি Logistic Regression সরাসরি `P(y | x)` মডেল করে (Discriminative পদ্ধতি)। বিপরীতে Generative ক্লাসিফায়ার প্রথমে `P(x | y)` ও Class Prior শেখে এবং Bayes-এর সূত্র দিয়ে Posterior তৈরি করে। Gaussian Discriminant Analysis বা GDA-তে আমরা প্রতিটি ক্লাসের ভেতরে বহুমাত্রিক Gaussian Distribution ধরে নিই। যদি সব ক্লাসের Covariance Matrix অভিন্ন (Shared) ধরা হয় তবে তাকে বলে Linear Discriminant Analysis বা LDA, আর প্রতিটি ক্লাসের Covariance আলাদা হলে তাকে বলে Quadratic Discriminant Analysis বা QDA (মনে রাখবেন, এখানে LDA মানে রৈখিক বিভাজন বিশ্লেষণ—টেক্সটের Topic Model নয়)।"
+        },
+        {
+          "type": "text",
+          "title": "কেন সমান Covariance হলে সীমানাটি সরলরেখা হয়ে যায়?",
+          "body": "দুটি ক্লাসের Gaussian Density-এর অনুপাতের লগারিদম নিলে একটি চমৎকার গাণিতিক কাটাকাটি ঘটে! যখন দুটি ক্লাস একই Covariance Matrix `Σ` ভাগ করে নেয়, তখন ঘাতের ভেতরের দ্বিঘাত পদ `xᵀΣ⁻¹x` হুবহু সমান হওয়ায় পরস্পরকে কেটে দেয়—ফলে Log-Odds হয়ে ওঠে `x`-এর একটি সরলরৈখিক Function! আর যদি ক্লাসভেদে Covariance আলাদা হয় (QDA), তবে দ্বিঘাত পদগুলো থেকে যায় এবং সীমানাটি বাঁকানো Quadratic রূপ নেয়। লক্ষ্য করুন, Naive Bayes যেখানে Diagonal Matrix ধরে Feature-গুলোর পারস্পরিক সম্পর্ক উপেক্ষা করে, সেখানে LDA একটি পূর্ণাঙ্গ Shared Covariance রেখে Feature-গুলোর মধ্যকার Correlation ধরে রাখতে পারে।"
+        },
+        {
+          "type": "math",
+          "title": "Shared Covariance (LDA)-এ রৈখিক Log-Odds সূত্র",
+          "body": "\\log\\frac{P(y=1\\mid x)}{P(y=0\\mid x)}=(\\mu_1-\\mu_0)^T\\Sigma^{-1}x-\\frac12(\\mu_1^T\\Sigma^{-1}\\mu_1-\\mu_0^T\\Sigma^{-1}\\mu_0)+\\log\\frac{\\pi_1}{\\pi_0}"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে একমাত্রিক উদাহরণ",
+          "body": "চলুন একমাত্রিক একটি পরিষ্কার উদাহরণ কষে দেখি: ধরি দুটি ক্লাসের Mean যথাক্রমে `μ₀ = 0` ও `μ₁ = 2`, উভয়ের Shared Variance `1` এবং দুটির Prior সমান। সূত্রে বসালে Log-Odds দাঁড়ায় `2x - 2`, যার অর্থ সমান Prior-এ Decision Boundary পড়েছে ঠিক মাঝখানে `x = 1` বিন্দুতে। এখন `x = 1.5` বিন্দুতে পরীক্ষা করলে Log-Odds হয় `2(1.5) - 2 = 1`, এবং এর ওপর Sigmoid বসালে Posterior Probability পাওয়া যায় `1 / (1 + e⁻¹) ≈ 0.731059`।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ LDA Log-Odds ও Posterior হিসাব",
+          "body": "import math\n\nx, mean_zero, mean_one, variance = 1.5, 0.0, 2.0, 1.0\n# Equal priors cancel; shared variance cancels the quadratic x term.\nlog_odds = ((mean_one - mean_zero) * x - 0.5 * (mean_one**2 - mean_zero**2)) / variance\nposterior = 1 / (1 + math.exp(-log_odds))\nprint(log_odds, round(posterior, 6))\n"
+        },
+        {
+          "type": "text",
+          "title": "Logistic আকারের Posterior মানেই কি Logistic Regression?",
+          "body": "কোডটি চালালে আউটপুট আসে `1.0` এবং `0.731059`। উচ্চমাত্রিক বাস্তব ডেটায় কখনোই সরাসরি `Σ` ম্যাট্রিক্সের Inverse বের না করে রৈখিক সলভার এবং প্রয়োজনমতো Covariance Shrinkage ব্যবহার করবেন। এখানে একটি গভীর তাত্ত্বিক সত্য খেয়াল করুন: যৌথ Gaussian অনুমান সত্য হলে LDA থেকে ঠিক Logistic Regression-এর মতোই Sigmoid আকৃতির Posterior পাওয়া যায়—কিন্তু তার মানে এই নয় যে Logistic Regression ট্রেনিংয়ের সময় ভেতরে ভেতরে ওই একই Gaussian অনুমান গ্রহণ করছে! দুটির প্যারামিটার শেখার শর্ত ও সংবেদনশীলতা আলাদা।"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব সীমাবদ্ধতা: Singular Covariance ও QDA-এর খরচ",
+          "body": "যখন ফিচারের সংখ্যা `d` বড় কিন্তু স্যাম্পলের সংখ্যা `n` ছোট হয়, তখন প্রাক্কলিত Covariance ম্যাট্রিক্সটি Singular (অবিপরীতযোগ্য) হয়ে পড়তে পারে। আবার বাস্তব ডেটায় Gaussian অনুমান পুরোপুরি ঠিক না হলেও LDA-এর রৈখিক সীমানাটি অনেক সময় ভালো কাজ করে, তবে তখন প্রাক্কলিত সম্ভাব্যতার Calibration আলাদাভাবে যাচাই করে নিতে হয়। অন্যদিকে QDA প্রতিটি ক্লাসের জন্য আলাদা ম্যাট্রিক্স শেখে বলে সীমানা নমনীয় হয় ঠিকই, কিন্তু এতে প্যারামিটারের সংখ্যা ও প্রাক্কলনের Variance অনেক বেড়ে যায়।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে হিসাব করে দেখুন",
+          "body": "উপরের একই উদাহরণে যৌথ Variance বাড়িয়ে যদি `2` করা হয়, তবে একই `x = 1.5` বিন্দুতে Log-Odds কত হবে? আর যদি Class 1-এর Prior কমে যায়, তবে Decision Boundary কোন দিকে সরে যাবে?",
+          "solution": "যৌথ Variance `2` হলে একই বিন্দুতে Log-Odds অর্ধেক হয়ে `0.5` হবে। আর Class 1 বিরল হয়ে পড়লে (Prior কমলে) Log Prior Odds ঋণাত্মক হয়ে যায়—ফলে Class 1 জেতার জন্য আরও বড় মানের `x` প্রয়োজন হয়, অর্থাৎ Decision Boundary ডান দিকে সরে যায়।",
+          "reference": "https://scikit-learn.org/stable/modules/lda_qda.html"
+        }
+      ]
+    },
+    {
+      "id": "ch11_multinomial",
+      "title": "Multinomial Naive Bayes ও টেক্সট Count মডেল",
+      "subtitle": "Laplace Smoothing, Vocabulary পরিধি এবং Sparse Likelihood",
+      "duration": "36 min",
+      "icon": "functions",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "শব্দের সংখ্যা গোনা ও Multinomial Count Model",
+          "body": "টেক্সট বা ডকুমেন্ট বিশ্লেষণে প্রতিটি শব্দের উপস্থিতির সংখ্যা `x_j` সবসময় অঋণাত্মক পূর্ণসংখ্যা হয়। Multinomial Naive Bayes-এ প্রতিটি ক্লাসের সাপেক্ষে প্রতিটি শব্দের ঘটার Probability `θ_cj` শেখা হয়। ডকুমেন্টের দৈর্ঘ্যনির্ভর Multinomial গুণাঙ্কটি সব ক্লাসের তুলনায় অভিন্ন থাকে বলে `argmax` বা অনুপাত নেওয়ার সময় তা বাদ পড়ে যায়। এখানে কোনো শব্দ যতবার পুনরাবৃত্তি হবে, তার লগ-স্কোরে অবদান হবে `x_j log θ_cj`—যা পরের পাঠে দেখতে যাওয়া কেবল উপস্থিতি-অনুপস্থিতির বাইনারি Model থেকে স্পষ্টতই আলাদা।"
+        },
+        {
+          "type": "math",
+          "title": "Additive Smoothing ও ক্লাস স্কোরের সূত্র",
+          "body": "\\theta_{cj}=\\frac{N_{cj}+\\alpha}{N_c+\\alpha V},\\qquad s_c=\\log\\pi_c+\\sum_jx_j\\log\\theta_{cj}"
+        },
+        {
+          "type": "text",
+          "title": "শূন্য মানের বিপদ ও Laplace / Lidstone Smoothing",
+          "body": "মোট `V`টি শব্দের ভোকাবুলারিতে প্রতিটি শব্দের সাথে `α` পরিমাণ কৃত্রিম গণনা (Pseudo-count) যোগ করলে লবে পাওয়া যায় `N_cj + α`, আর সব শব্দের Probability-এর যোগফল ঠিক `1` রাখার জন্য হরে বসে `N_c + αV`। এখানে `α = 1` নিলে তাকে বলা হয় Laplace Smoothing, আর ধনাত্মক ভগ্নাংশ নিলে বলা হয় Lidstone Smoothing।\n\nকেন এই Smoothing অপরিহার্য? কারণ `α = 0` রাখলে Test ডকুমেন্টে এমন একটি নতুন শব্দও যদি আসে যা কোনো একটি ক্লাসের Training-এ দেখা যায়নি, তবে সেটির Probability `0` (এবং লগ-স্কোর `-∞`) হয়ে পুরো ক্লাসের স্কোরকে ধ্বংস করে দেয়! আর যদি কোনো পর্যবেক্ষণ সব ক্লাসেই অসম্ভব হয়ে পড়ে, তবে Normalize করার জন্য কোডে স্পষ্ট বিকল্প নীতি রাখতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "মোট Token সংখ্যা বনাম Document সংখ্যা এবং TF-IDF",
+          "body": "সূত্রের `N_c` পদটি নিয়ে অনেকেই ভুল করেন: মনে রাখবেন, `N_c` হলো ওই ক্লাসের সব ডকুমেন্ট মিলিয়ে **মোট শব্দ বা Token-এর সংখ্যা**—ক্লাসের মোট ডকুমেন্টের সংখ্যা নয়! ক্লাসের ডকুমেন্ট সংখ্যা ব্যবহার করা হয় মূলত ডকুমেন্ট-স্তরের Class Prior বের করতে। বাস্তবে অনেকে `MultinomialNB`-তে পূর্ণসংখ্যার বদলে অঋণাত্মক `TF-IDF` ওজনও ইনপুট দেন—তাতে মডেল প্রায়ই ভালো কাজ করলেও খাঁটি পূর্ণসংখ্যার Generative ব্যাখ্যাটি আর অবিকল থাকে না। আর গড় বিয়োগ করা ঋণাত্মক (Negative) মান দিলে `MultinomialNB`-এর ইনপুট শর্ত সরাসরি ভেঙে যায়।"
+        },
+        {
+          "type": "code",
+          "title": "কোডে Laplace Smoothing ও Class Probability যাচাই",
+          "body": "import numpy as np\nfrom sklearn.naive_bayes import MultinomialNB\n\nX = np.array([[2.0, 0.0], [1.0, 0.0], [0.0, 2.0], [0.0, 1.0]])\ny = [0, 0, 1, 1]\nm = MultinomialNB(alpha=1.0).fit(X, y)\nassert np.allclose(np.exp(m.feature_log_prob_), [[0.8, 0.2], [0.2, 0.8]])\nquery = np.array([[1.0, 0.0]])\nassert np.isclose(m.predict_proba(query)[0, 0], 0.8)\nassert np.allclose(np.exp(m.feature_log_prob_).sum(axis=1), 1)\nprint(m.predict_log_proba(query))\n"
+        },
+        {
+          "type": "text",
+          "title": "Vocabulary ও IDF থেকে Data Leakage রোধ",
+          "body": "টেক্সট পাইপলাইনে সূক্ষ্ম Data Leakage এড়াতে Vocabulary তৈরি, IDF ওজন হিসাব এবং সুপারভাইজড Feature Selection—সবকিছুই শুধুমাত্র Training ফোল্ডের ওপর ফিট করতে হবে। ভবিষ্যতের টেস্ট ডকুমেন্টগুলো মিলিয়ে আগেভাগেই শব্দভাণ্ডার বানিয়ে নিলে মূল্যায়নের নিরপেক্ষতা নষ্ট হয়। টেস্টের সময় অচেনা শব্দ (Unknown Token) এলে তা উপেক্ষা করা হবে নাকি বিশেষ বাকেটে ফেলা হবে, সেই নীতিটি ডকুমেন্ট করে রাখুন। আর কখনোই বর্তমান সারির নিজস্ব Label যেন নিজেরই কোনো Target-ভিত্তিক ফিচারের ভেতরে ঢুকে না পড়ে!"
+        },
+        {
+          "type": "text",
+          "title": "Sparse Matrix গুণন ও ফাঁকা নথির নীতি",
+          "body": "হাজার হাজার শব্দের ভোকাবুলারিতে অধিকাংশ ডকুমেন্টে মাত্র হাতেগোনা কয়েকটি শব্দ থাকে। তাই পুরো `n × V` ঘন Matrix বানিয়ে মেমোরি নষ্ট না করে Sparse Count Matrix-এর সাথে ক্লাসের Log-Probability Vector-এর Dot Product নিলে মুহূর্তেই অত্যন্ত কম খরচে স্কোর বেরিয়ে আসে। কোনো ডকুমেন্টে একটিও পরিচিত শব্দ না থাকলে (Empty Document) কেবল Prior দেখে সিদ্ধান্ত নেওয়া একটি পরিষ্কার নীতি হতে পারে—তবে Training এবং Serving উভয় জায়গায় অচেনা শব্দ সামলানোর নিয়ম হুবহু এক থাকতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এর তিনটি ক্লাসিক প্রশ্ন",
+          "body": "ইন্টারভিউয়ের জন্য তিনটি প্রশ্নের নিখুঁত উত্তর তৈরি রাখুন:\n১. Smoothing ছাড়া একটি অদেখা শব্দ কেন পুরো ক্লাসের গুণফলকে `0` করে দিতে পারে?\n২. হরের মধ্যে কেবল `α` লিখে `αV` লিখতে ভুলে গেলে সব শব্দের Probability-এর যোগফল `1` হওয়ার শর্তটি কেন ভেঙে যায়?\n৩. ডকুমেন্ট-ভিত্তিক Class Prior এবং শব্দ-ভিত্তিক Token Frequency-এর গাণিতিক ভূমিকা ঠিক কীভাবে আলাদা?"
+        }
+      ]
+    },
+    {
+      "id": "ch11_variants",
+      "title": "Bernoulli, Categorical ও Complement Naive Bayes",
+      "subtitle": "উপস্থিতি-অনুপস্থিতি, বিচ্ছিন্ন ক্যাটাগরি এবং অসম ক্লাসের সমাধান",
+      "duration": "34 min",
+      "icon": "functions",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Bernoulli Naive Bayes: যখন অনুপস্থিতিও একটি প্রমাণ",
+          "body": "যখন প্রতিটি Feature কেবল `0` বা `1` বাইনারি মান নেয়, তখন Bernoulli Naive Bayes শব্দের উপস্থিতি এবং অনুপস্থিতি—দুটোকেই সমানভাবে সম্ভাবনার হিসাবে টেনে আনে! পার্থক্যটি খেয়াল করুন: Multinomial মডেলে কোনো শব্দের সংখ্যা `0` হলে সেই পদের অবদান হয় শূন্য, কিন্তু Bernoulli মডেলে `x_j = 0` থাকলেও `log(1 - θ_cj)` পদটি স্কোরে সরাসরি অবদান রাখে! লাইব্রেরি ব্যবহারের সময় সংখ্যাকে বাইনারিতে রূপান্তর করার `binarize` থ্রেশহোল্ড ও ইনপুট চুক্তি সংস্করণ অনুযায়ী পরীক্ষা করে নেবেন।"
+        },
+        {
+          "type": "math",
+          "title": "Bernoulli Naive Bayes-এর Log-Likelihood সূত্র",
+          "body": "\\log P(x\\mid c)=\\sum_j\\left[x_j\\log\\theta_{cj}+(1-x_j)\\log(1-\\theta_{cj})\\right]"
+        },
+        {
+          "type": "text",
+          "title": "Categorical Naive Bayes: নামমাত্র ক্যাটাগরির সঠিক Model",
+          "body": "`CategoricalNB` প্রতিটি বিচ্ছিন্ন Feature-এর জন্য আলাদা Categorical Distribution শেখে। এখানে ক্যাটাগরির কোডগুলো (`0, 1, 2...`) নিছক পরিচয়সূচক নামমাত্র প্রতীক—তাদের সংখ্যার ছোট-বড় মান কোনো দূরত্ব নির্দেশ করে না। ব্যবহারের সময় প্রতিটি Column-এর মোট ক্যাটাগরি সংখ্যা (Cardinality), Test ডেটায় অদেখা নতুন ক্যাটাগরি আসার ঝুঁকি এবং Smoothing নীতি মাথায় রাখবেন। আর মনে রাখবেন, এটি অবিচ্ছিন্ন সংখ্যাসূচক পরিমাপের জন্য তৈরি Gaussian Model-এর সরাসরি বিকল্প নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Complement Naive Bayes: অসম টেক্সট ক্লাসে শক্তিশালী Baseline",
+          "body": "`ComplementNB` একটি চমৎকার ঘুরপথ নেয়: কোনো ক্লাস `c`-এর নিজস্ব পরিসংখ্যান না মেপে, `c` বাদে বাকি সব ক্লাস মিলে যে পরিপূরক (Complement) দল তৈরি হয়, তার পরিসংখ্যান থেকে ওজন তৈরি করে। তীব্র Class Imbalance থাকা টেক্সট বা গণনাভিত্তিক সমস্যায় এটি প্রায়ই সাধারণ Multinomial মডেলের চেয়ে অনেক শক্তিশালী Baseline দেয়। তবে এর ওজন Normalize করার ও স্কোর বানানোর পদ্ধতি আদর্শ Multinomial Posterior থেকে আলাদা—তাই এটি সব ডেটায় জয়ী হবে বা নিখুঁত Calibrated Probability দেবে, এমন গ্যারান্টি ধরে নেবেন না।"
+        },
+        {
+          "type": "code",
+          "title": "কোডে Bernoulli অনুপস্থিতির প্রভাব ও ComplementNB যাচাই",
+          "body": "import numpy as np\nfrom sklearn.naive_bayes import BernoulliNB, ComplementNB\n\nX = np.array([[1, 0], [1, 0], [0, 1], [0, 1]])\ny = [0, 0, 1, 1]\nb = BernoulliNB(alpha=1.0, binarize=None).fit(X, y)\nassert np.allclose(np.exp(b.feature_log_prob_), [[0.75, 0.25], [0.25, 0.75]])\np = b.predict_proba([[0, 0]])\nassert np.allclose(p, [[0.5, 0.5]])\nc = ComplementNB(alpha=1.0).fit(X, y)\nassert np.isfinite(c.predict_proba([[1, 0]])).all()\nprint(p)\n"
+        },
+        {
+          "type": "text",
+          "title": "Streaming ডেটায় পর্যাপ্ত পরিসংখ্যান (Sufficient Statistics) হালনাগাদ",
+          "body": "Naive Bayes পরিবারের একটি বড় প্রকৌশলগত সুবিধা হলো এর প্রয়োজনীয় পরিসংখ্যানগুলো—যেমন ক্লাসের গণনা, মোট ঘটনার যোগফল, Mean ও Variance—নতুন ডেটা আসার সাথে সাথে ধাপে ধাপে (Incrementally) হালনাগাদ করা যায়! scikit-learn-এ `partial_fit` ব্যবহারের সময় শুরুতেই সম্ভাব্য সব Class-এর পূর্ণ তালিকা, স্ট্রিমের Schema এবং ডেটা টাইপের শর্ত কঠোরভাবে মানতে হবে। আর মনে রাখবেন, ক্রমাগত আপডেটের পর পুরোনো Calibration ও ডেটার Distribution স্থির থাকার অনুমানগুলো নতুন করে যাচাই করে নেওয়া আবশ্যিক।"
+        },
+        {
+          "type": "text",
+          "title": "একনজরে কোন ডেটায় কোন Naive Bayes বেছে নেবেন",
+          "body": "মনে মনে এই নির্বাচন ছকটি পরিষ্কার রাখুন: অবিচ্ছিন্ন পরিমাপের জন্য Gaussian; শব্দের সংখ্যা বা ঘটনা গণনার জন্য Multinomial; বাইনারি উপস্থিতি ও অনুপস্থিতির জন্য Bernoulli; কলামভিত্তিক বিচ্ছিন্ন ক্যাটাগরির জন্য Categorical; আর অসম গণনাভিত্তিক ডেটার শক্তিশালী Baseline হিসেবে Complement Naive Bayes। যদি আপনার ডেটাসেটে একই সাথে বয়স, পেশা ও টেক্সট মিশ্রিত থাকে, তবে আলাদা ব্লকের লগ-লাইকলিহুড যোগ করে কাস্টম হাইব্রিড মডেল বানানো সম্ভব—তবে তার জন্য প্রতিটি ব্লকের অনুমান ও একক আলাদাভাবে পরীক্ষা করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে তুলনামূলক উত্তর দেবেন",
+          "body": "ইন্টারভিউতে যদি প্রশ্ন করা হয়: 'কোন ধরনের টেক্সট সমস্যায় শব্দের উপস্থিতি দেখা জরুরি, কিন্তু অনুপস্থিতিকে পেনাল্টি দেওয়া কম উপকারী বা ক্ষতিকর?' শুধু মডেলের নাম বলে থেমে যাবেন না! বার্তার দৈর্ঘ্য (ছোট SMS বনাম দীর্ঘ প্রবন্ধ), বিশাল ভোকাবুলারিতে হাজারো অনুপস্থিত শব্দের সম্মিলিত প্রভাব, Class Prior এবং প্রাসঙ্গিক Evaluation Baseline—সবকটি দিক যুক্তি দিয়ে মিলিয়ে একটি পরিণত প্রকৌশলীর মতো উত্তর দিন।"
+        }
+      ]
+    },
+    {
+      "id": "ch11_implementation",
+      "title": "মৌলিক হিসাবগুলো নিজে কোডে লিখি",
+      "subtitle": "স্পষ্ট Contract, সংখ্যাগত স্থিতিশীলতা এবং স্বতন্ত্র রেফারেন্স যাচাই",
+      "duration": "34 min",
+      "icon": "functions",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "আমাদের তিনটি স্বচ্ছ Helper API",
+          "body": "তত্ত্ব ও সমীকরণ সত্যিকার অর্থে নিজের দখলে এসেছে কি না, তা বোঝার সেরা উপায় হলো মূল গাণিতিক অংশগুলো নিজে হাতে কোডে লিখে ফেলা। আমাদের ওয়ার্কফ্লো স্ক্রিপ্টে তিনটি স্বচ্ছ Function তৈরি করা হয়েছে: `hinge_objective` সুস্পষ্টভাবে Mean Hinge Loss এবং পেনাল্টিমুক্ত Bias ব্যবহার করে; `knn_predict` একটি নিখুঁত সংখ্যাসূচক বাইনারি প্রতিবেশী ক্যালকুলেটর হিসেবে কাজ করে; আর `gaussian_log_scores` ধনাত্মক Variance ও Prior এবং সম্পূর্ণ সসীম ইনপুট যাচাই করে লগ-স্কোর বের করে। অবশ্যই মনে রাখবেন, এগুলো ধারণা স্বচ্ছ করার জন্য তৈরি—একটি পূর্ণাঙ্গ লাইব্রেরির সব অপ্টিমাইজার, স্থানিক ইনডেক্স বা স্ট্রিমিং সুবিধা এখানে বসানো হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "Hinge Subgradient যাচাইয়ের কৌশল",
+          "body": "নিজের লেখা Gradient সূত্রটি ঠিক আছে কি না তা যাচাই করতে অ-অন্তরীকরণযোগ্য কৌণিক বিন্দু (`y f = 1`) থেকে নিরাপদ দূরত্বে থাকা Weight বেছে নিন এবং সেখানে Central Finite Difference চালিয়ে `w` ও `b`-এর Subgradient মিলিয়ে দেখুন। ঠিক `y f = 1` কোণায় কখনোই সাধারণ Derivative-এর সমতা আশা করবেন না! পাশাপাশি Function-টি ইনপুট অ্যারে পরিবর্তন করে ফেলছে কি না (Input Mutation), `C`-এর Sum বনাম Mean নিয়ম এবং Bias পেনাল্টির চুক্তি আলাদাভাবে পরীক্ষা করুন।"
+        },
+        {
+          "type": "text",
+          "title": "kNN হেল্পার যাচাইয়ের কৌশল",
+          "body": "আমাদের প্রতিবেশী র‍্যাঙ্কিংয়ে প্রথমে দূরত্ব এবং সমান দূরত্বের ক্ষেত্রে সংরক্ষিত পুলের ক্রম (Pool Order) ব্যবহার করা হয়েছে; নির্বাচিত শূন্য-দূরত্বের বিন্দুগুলোর একচেটিয়া প্রাধান্য এবং নিরাপদ Normalized ওজন আলাদা টেস্ট দিয়ে যাচাই করুন। খেয়াল রাখবেন, ফাঁকা Query ব্যাচ দিলে যেন ক্র্যাশ না করে বৈধ ফাঁকা আউটপুট ফেরে। সীমান্তে সমান দূরত্বের Tie থাকলে বিভিন্ন লাইব্রেরির অভ্যন্তরীণ সাজানোর ক্রম আলাদা হতে পারে—তাই রেফারেন্স লাইব্রেরির সাথে মেলানোর সময় অনন্য দূরত্বের (Unique-distance) টেস্ট ডেটা ব্যবহার করুন।"
+        },
+        {
+          "type": "text",
+          "title": "Gaussian Log-Score যাচাইয়ের কৌশল",
+          "body": "`gaussian_log_scores` ফাংশনে শুরুতেই ক্লাস ও Feature-এর মাত্রা, `variance > 0`, `priors > 0` এবং সব Prior-এর যোগফল `1` কি না তা কঠোরভাবে পরীক্ষা করুন। এরপর প্রতিটি Feature-এর Log-Density যোগ করে `LogSumExp` দিয়ে নিরাপদে Normalize করুন। চরম গাণিতিক সীমায় Overflow ঘটলে যেন চুপিসারে `NaN` Probability বের না হয়ে সুস্পষ্ট ত্রুটি বার্তা (Exception) দেয়, সেই নীতি কোডে বজায় রাখুন।"
+        },
+        {
+          "type": "code",
+          "title": "Central Finite Difference দিয়ে Hinge Gradient যাচাই",
+          "body": "from pathlib import Path\nimport runpy\nimport numpy as np\n\napi = runpy.run_path(str(Path(\"assets/datasets/adult/classical_workflow.py\")))\nf = api[\"hinge_objective\"]\nX = np.array([[1.0, 0.0], [0.0, 2.0]])\ny = np.array([1, -1])\nw = np.array([0.2, -0.1])\nb = 0.05\nloss, g, gb = f(X, y, w, b, C=2.0)\neps = 1e-6\nnumeric = np.array(\n    [\n        (\n            f(X, y, w + np.eye(2)[j] * eps, b, C=2.0)[0]\n            - f(X, y, w - np.eye(2)[j] * eps, b, C=2.0)[0]\n        )\n        / (2 * eps)\n        for j in range(2)\n    ]\n)\nassert np.allclose(g, numeric, atol=1e-8)\nassert np.isclose(\n    gb, (f(X, y, w, b + eps, C=2.0)[0] - f(X, y, w, b - eps, C=2.0)[0]) / (2 * eps)\n)\nprint(g, gb)\n"
+        },
+        {
+          "type": "text",
+          "title": "গাণিতিক Invariant দিয়ে স্বয়ংক্রিয় পরীক্ষা",
+          "body": "নির্দিষ্ট সংখ্যার উদাহরণের বাইরেও কিছু সার্বজনীন গাণিতিক ধর্ম (Invariants) সবসময় Test স্যুটে রাখবেন: যেমন RBF Matrix-এর প্রতিসাম্য ও কর্ণ বরাবর `1` থাকা; Gaussian Posterior-এর সারিভিত্তিক যোগফল `1` হওয়া; সব ক্লাসের লগ-স্কোরের সাথে একই ধ্রুবক যোগ করলে চূড়ান্ত Posterior Probability অপরিবর্তিত থাকা; এবং সমান ওজনের kNN-এ `k = n` বসালে হুবহু Training Prior ফিরে আসা। ভুল বা অবৈধ ইনপুট সঠিকভাবে প্রত্যাখ্যান করতে পারাও কিন্তু একটি মানসম্মত Function-এর অপরিহার্য গুণ।"
+        },
+        {
+          "type": "text",
+          "title": "শিক্ষণীয় কোড বনাম প্রোডাকশন পারফরম্যান্সের সীমা",
+          "body": "আমাদের শিক্ষণীয় RBF হেল্পারটি Broadcasting ব্যবহার করে `O(nmd)` মেমোরি নেয়, প্রতিবেশী হেল্পারটি পুরো তালিকা সাজায় (`Full Sort`), আর Gaussian হেল্পারটি ঘন অ্যারেতে হিসাব চালায়। বাস্তব প্রোডাকশনে বড় ডেটার জন্য Batching, Chunking কিংবা বিশেষায়িত ইনডেক্সিং সম্পূর্ণ আলাদাভাবে নকশা করতে হয়। তাই ক্ষুদ্র ডেটার রানটাইম দেখে কখনোই অ্যালগরিদমগুলোর সার্বজনীন গতির র‍্যাঙ্কিং ঘোষণা করবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ কোড যাচাইয়ের কথা যেভাবে বলবেন",
+          "body": "ইন্টারভিউতে নিজের ইমপ্লিমেন্টেশন ব্যাখ্যা করার সময় পরিষ্কার করে বলুন ঠিক কোন Objective, কোন সেটিংস, কী আকারের অ্যারে এবং কতটুকু সংখ্যাগত Tolerance-এর ভেতরে আপনার কোড রেফারেন্স লাইব্রেরির সাথে মিলেছে। আর শেষে এই পরিণত মন্তব্যটি যোগ করতে ভুলবেন না: দুই কোডের সংখ্যাগত ফলাফল হুবহু মিলে যাওয়ার অর্থ আপনার গাণিতিক কোডটি সঠিক—কিন্তু বাস্তব ডেটায় মডেলের পরিসংখ্যানগত অনুমানগুলো সত্যি, তার প্রমাণ এটি নয়!"
+        }
+      ]
+    },
+    {
+      "id": "ch11_selection",
+      "title": "Leakage-মুক্ত Model তুলনা ও নির্বাচন",
+      "subtitle": "Training রূপান্তর, Grouped Cross-Validation এবং নির্ধারিত কম্পিউট বাজেট",
+      "duration": "34 min",
+      "icon": "functions",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "অভিন্ন Split ও সুনির্দিষ্ট কম্পিউট বাজেট",
+          "body": "মূল Adult ডেটাসেটের বাইরের (Outer) স্প্লিটে `26,050`টি Training সারি এবং `6,511`টি Validation সারি রয়েছে। দূরত্বভিত্তিক মডেলসহ সব পরিবারের তুলনা স্থির কম্পিউট বাজেটে রাখার জন্য বাইরের Training অংশ থেকে Label-নিরপেক্ষ নির্দিষ্ট র‍্যান্ডম সিড ব্যবহার করে `6,000`টি প্রোফাইল গ্রুপ বেছে নেওয়া হয়েছে—যাতে মোট `6,013`টি বাজেট Training সারি পাওয়া গেছে। খেয়াল রাখবেন, এই কম্পিউট প্রোটোকলটি আগের অধ্যায়গুলোর পূর্ণ-ট্রেনিং পরীক্ষা থেকে আলাদা, এবং পুনর্ব্যবহৃত এই ঐতিহাসিক ডেটাসেটটি কোনো আনকোরা নতুন জনসংখ্যার চূড়ান্ত প্রমাণ (Fresh Confirmation) নয়।"
+        },
+        {
+          "type": "text",
+          "title": "ছয়টি প্রার্থী Model ও নেস্টেড Grouped নির্বাচন",
+          "body": "আমাদের পরীক্ষায় মোট ছয়টি প্রার্থী প্রতিদ্বন্দ্বিতা করছে: `LinearSVC` (`C = 0.1` ও `1.0`), দূরত্ব-ওজনযুক্ত `kNN` (`k = 15` ও `51`), এবং `GaussianNB` (`var_smoothing = 1e-9` ও `0.01`)। ভেতরের তিনটি Grouped ফোল্ডের গড় Average Precision (AP) দেখে সেরা মডেল বেছে নেওয়া হয়, এবং নিখুঁত সমতা হলে পূর্বঘোষিত ক্রম বজায় থাকে। এখানে SVM ও kNN-এর Scaler ফিট হয় প্রতিটি ফোল্ডের নিজস্ব Pipeline-এর ভেতরে; আর GaussianNB কাঁচা সংখ্যাসূচক ফিচার ও ফোল্ডভিত্তিক স্পষ্ট `epsilon` পরিধি ব্যবহার করে।"
+        },
+        {
+          "type": "text",
+          "title": "সৎ Metric চুক্তি: Ranking বনাম Probability",
+          "body": "এখানে SVM-এর `decision_function` ব্যবহার করা হয়েছে কেবল AP র‍্যাঙ্কিং হিসাব করার জন্য—সেটিকে কৃত্রিমভাবে Probability বানিয়ে আমরা কোনো মনগড়া Brier Score রিপোর্ট করিনি! অন্যদিকে kNN বা Naive Bayes-এ যেহেতু নিজস্ব `predict_proba` API আছে, সেখানে ডায়াগনস্টিক হিসেবে Brier Score দেখা যেতে পারে। মনে রাখবেন, একটি অভিন্ন AP মাপকাঠিতে তুলনা করার অর্থ এই নয় যে সব Model-এর Calibration বা প্রোডাকশন উপযোগিতা একই হয়ে গেল।"
+        },
+        {
+          "type": "text",
+          "title": "Profile Grouping-এর উদ্দেশ্য ও সীমাবদ্ধতা",
+          "body": "গ্রুপ তৈরির চাবি (Grouping Key) থেকে ফলাফল-সংশ্লিষ্ট `income` এবং `hours_per_week` কলাম দুটি সচেতনভাবে বাদ রাখা হয়েছে। অবশ্যই এই কাঁচা প্রোফাইলগুলো কোনো যাচাইকৃত ব্যক্তি-শনাক্তকারী (Person ID) নয়; দৃশ্যমান প্রোফাইলের পুনরাবৃত্তি কমানো ডুপ্লিকেট লিকেজ কমায় ঠিকই, কিন্তু পর্যবেক্ষণগুলোর শতভাগ স্বাধীনতার গ্যারান্টি দেয় না। এ ছাড়া জরিপের ওজন কলাম `fnlwgt` এখানে অব্যবহৃত রাখা হয়েছে, অর্থাৎ সব মেট্রিক সারিভিত্তিক সমান ওজনে হিসাব করা।"
+        },
+        {
+          "type": "text",
+          "title": "লুকানো Calibration ছাড়া স্বচ্ছ তুলনা",
+          "body": "আমরা কোথাও কাঁচা SVM স্কোরের ওপর সরাসরি Sigmoid বসিয়ে সেটিকে Posterior বলে চালিয়ে দিইনি। তিনটি পরিবারের Probability মান যদি সত্যিই মুখোমুখি তুলনা করতে হয়, তবে গ্রুপ-সচেতন আলাদা Calibration ডেটা ও স্বতন্ত্র মূল্যায়ন কাঠামো নকশা করতে হবে। পাশাপাশি মনে রাখবেন, Naive Bayes কিংবা kNN-এর প্রতিবেশী ভগ্নাংশও কিন্তু জন্মগতভাবেই নিখুঁত Calibrated থাকে না।"
+        },
+        {
+          "type": "text",
+          "title": "Interactive Lab বনাম মূল Benchmark-এর পরিধি",
+          "body": "ইন্টারঅ্যাক্টিভ ল্যাব এবং মূল বেঞ্চমার্কের পরিধি কখনো গুলিয়ে ফেলবেন না: SVM ল্যাবটি চলছে `1024`টি সারি ও দুটি ফিচারের ওপর, অথচ মূল `LinearSVC` চলছে পাঁচটি ফিচারে; প্রতিবেশী ল্যাবে আছে `64`টি সারির পুল, অথচ মূল `kNN` ব্যবহার করছে পুরো বাজেট-ট্রেনিং পুল; একইভাবে Gaussian ল্যাবে দুটি ফিচার থাকলেও মূল বেঞ্চমার্কে রয়েছে পাঁচটি ফিচার। ল্যাবের ছবিগুলো গাণিতিক অন্তর্দৃষ্টির জন্য, মূল বেঞ্চমার্কের ফলাফল হিসেবে নয়।"
+        },
+        {
+          "type": "text",
+          "title": "নির্বাচনের ইতিহাস (Selection History) ও ডেটার অখণ্ডতা",
+          "body": "Validation গ্রাফ দেখে, বিভিন্ন র‍্যান্ডম সিড ঘুরিয়ে বা বাজেট পাল্টে যদি আপনি মডেলের নকশা বদলান, তবে সেই অনুসন্ধানের ইতিহাস রিপোর্টে স্বচ্ছভাবে উল্লেখ করতে হবে—উপযুক্ত স্বতন্ত্র মূল্যায়ন ছাড়া সরাসরি ডিপ্লয়মেন্টের দাবি করা চলে না। আমাদের পুরো পরীক্ষায় মূল ফাইল অপরিবর্তিত রাখা হয়েছে এবং আলাদা `adult.test` ফাইলটি একবারের জন্যও স্পর্শ করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ Leakage ধরার পূর্ণাঙ্গ তালিকা",
+          "body": "ইন্টারভিউতে সবাই জানে যে পুরো ডেটা আগে স্কেল করে পরে Cross-Validation করলে Data Leakage হয়। আপনি এক ধাপ এগিয়ে গিয়ে বলুন যে ঠিক একইভাবে Class Prior, GaussianNB-এর Smoothing `epsilon`, টেক্সটের Vocabulary ও IDF, এবং ডেটা থেকে শেখা Distance Metric—এগুলোর প্রতিটিই ফোল্ডের ভেতরে সীমাবদ্ধ কি না, তা একই কঠোরতায় অডিট করতে হবে!"
+        }
+      ]
+    },
+    {
+      "id": "ch11_operations",
+      "title": "Calibration, ব্যাখ্যাযোগ্যতা ও প্রোডাকশন Serving",
+      "subtitle": "সিদ্ধান্তের খরচ, Latency ও Memory বাজেট এবং Distribution Shift",
+      "duration": "32 min",
+      "icon": "functions",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "চার ধরনের Serving Artifact ও তাদের পরিচালন খরচ",
+          "body": "প্রোডাকশনে ডিপ্লয় করার সময় কোন মডেল কী জমিয়ে রাখে তা তুলনা করুন: Linear SVM রাখে কেবল ওজন, Bias ও স্কেলার; Kernel SVM রাখে নির্বাচিত Support Vector-গুলো; kNN ধরে রাখে পুরো সংরক্ষিত ডেটা পুল বা ইনডেক্স; আর Naive Bayes রাখে সংক্ষিপ্ত ক্লাস পরিসংখ্যান। ফলে এদের প্রতিটির Training মেমোরি, ফাইলের আকার, Query Latency এবং ডেটা হালনাগাদ বা মুছে ফেলার খরচ সম্পূর্ণ আলাদা।"
+        },
+        {
+          "type": "text",
+          "title": "তিন ধরনের স্কোরের Probability মান যাচাই",
+          "body": "মনে রাখবেন, SVM-এর কাঁচা Margin স্কোর, kNN-এর স্থানীয় প্রতিবেশী ভগ্নাংশ এবং Naive Bayes-এর মডেল-নির্ভর Posterior—তিনটির গাণিতিক উৎস ভিন্ন। তাই সিদ্ধান্তে Probability ব্যবহারের আগে উপযুক্ত Held-out ডেটায় Reliability Curve, Brier Score বা Log-Loss মেপে নিন। ডেটা স্যাম্পলিং, ক্লাসের ওজন পরিবর্তন, Prior Shift কিংবা সময়ের সাথে Drift ঘটলে পুরোনো Calibration ভেঙে পড়তে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "Model-এর অভ্যন্তরীণ ব্যাখ্যা বনাম কার্যকারণ (Causality)",
+          "body": "প্রমিত (Standardized) রৈখিক সহগ, Kernel-এর অবদান, খুঁজে আনা নিকটতম প্রতিবেশী কিংবা Naive Bayes-এর Log-Density পদ—এগুলো চমৎকারভাবে ব্যাখ্যা করে Model ভেতরে ভেতরে **কীভাবে হিসাব করেছে**। কিন্তু এগুলো কখনোই বাস্তব জগতের কার্যকারণ প্রভাব (Causal Effect) প্রমাণ করে না! সহসম্পর্কিত Feature, প্রমাণের দ্বিগুণ গণনা এবং এনটিটি লিকেজ সবসময় আলাদাভাবে পরীক্ষা করে দেখবেন।"
+        },
+        {
+          "type": "text",
+          "title": "খরচ-সংবেদনশীল সিদ্ধান্ত (Cost-Sensitive Threshold)",
+          "body": "হাতে যদি সত্যিকারের Calibrated Probability এবং স্থির ভুলের খরচ (False Positive ও False Negative Cost) থাকে, তবে সেখান থেকে গাণিতিকভাবে সেরা Cost-Sensitive Threshold বের করা যায়। কিন্তু ভুলেও কাঁচা SVM স্কোরের ওপর সরাসরি Probability-ভিত্তিক খরচের সূত্র বসাবেন না! এ ছাড়া পর্যালোচনার দৈনিক সক্ষমতা (Capacity), উত্তর না দেওয়ার নীতি (Abstention) এবং গ্রুপভিত্তিক উপযোগিতা বাস্তব সিস্টেমে আলাদা শর্ত হিসেবে কাজ করে।"
+        },
+        {
+          "type": "text",
+          "title": "চার ধরনের Feature ও Target Drift শনাক্তকরণ",
+          "body": "প্রোডাকশনে ডেটার চরিত্র বদলে গেলে একেক Model একেকভাবে সংকেত দেয়: পরিচিত অঞ্চলের বাইরে চলে যাওয়া দূরত্ব (kNN), Margin স্কোরের Distribution বদলে যাওয়া (SVM), Gaussian Distribution-এর অমিল কিংবা সামগ্রিক Prior Shift—প্রতিটিই আলাদা ব্যর্থতার ধরন। মনে রাখবেন, কেবল ক্লাসের Prior সমন্বয় করার কৌশলটি তখনই খাটে যখন ক্লাসের ভেতরের `P(x | y)` স্থির থাকে; আন্দাজে স্লাইডার ঘোরানো কোনো বৈধ প্রোডাকশন সমাধান নয়।"
+        },
+        {
+          "type": "text",
+          "title": "ডিপ্লয়মেন্টের আগে অপরিহার্য Serving Test",
+          "body": "সার্ভিং পাইপলাইনে কলামের ক্রম, রূপান্তরের প্যারামিটার, Class-এর ক্রম, ফ্লোটিং-পয়েন্ট Precision, শূন্য ভেক্টর বা শূন্য দূরত্বের নীতি এবং অনুপস্থিত মানের আচরণ স্বয়ংক্রিয় টেস্ট দিয়ে বেঁধে ফেলুন। মডেল সংরক্ষণের জন্য বিশ্বস্ত ও সংস্করণ-নিয়ন্ত্রিত ফরম্যাট ব্যবহার করুন—অপরিচিত বা অবিশ্বস্ত উৎস থেকে কখনোই `pickle` ফাইল লোড করবেন না। আমাদের এই অ্যাপটি যেমন কেবল নিরাপদ JSON পাঠক ও ক্যালকুলেটর হিসেবে কাজ করে, সরাসরি Python রানটাইম চালায় না।"
+        },
+        {
+          "type": "text",
+          "title": "কম্পিউট ও নির্ভুলতার বাজেট তুলনা",
+          "body": "বাস্তব নকশায় খরচের পাল্লাগুলো পাশাপাশি রাখুন: SVM-এর Training খরচ বনাম kNN-এর প্রতিটি Query-এর খরচ; আর অন্য পাশে Naive Bayes-এর রৈখিক গতির দ্রুত Prediction বনাম ভুল Distribution অনুমানের কারণে হারানো নির্ভুলতা বা Calibration। Sparse টেক্সট সমস্যায় রৈখিক SVM ও গণনাভিত্তিক Naive Bayes দুটোই চমৎকার Baseline দেয়—তবে চূড়ান্ত সিদ্ধান্তের আগে নিয়ন্ত্রিত মাপজোখ অপরিহার্য।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ Decision Memo যেভাবে সাজাবেন",
+          "body": "ইন্টারভিউতে একটি বাস্তব পরিস্থিতি ভাবুন: 'ধরুন kNN-এ AP সামান্য বেশি এসেছে কিন্তু মেমোরি লাগছে `10×`; SVM খুব দ্রুত কিন্তু Uncalibrated; আর Naive Bayes-এ ধাপে ধাপে অনলাইন আপডেট করা সহজ—আপনি কোনটি বেছে নেবেন?' এখানে মুখস্থ বিজয়ী ঘোষণা না করে পণ্যের প্রকৃত শর্তাবলি (Latency সীমা, মেমোরি বাজেট, Calibration প্রয়োজনীয়তা ও আপডেটের হার) ধরে একটি সুগঠিত প্রকৌশলগত Decision Memo উপস্থাপন করুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch11_workflow",
+      "title": "বাস্তব ডেটায় তিনটি Model পরিবারের পূর্ণাঙ্গ Audit",
+      "subtitle": "Grouped নির্বাচন, গাণিতিক যাচাই এবং পুনরুৎপাদনযোগ্য Lab Asset",
+      "duration": "60 min",
+      "icon": "functions",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "স্ক্রিপ্ট চালানোর নিয়ম ও Execution Contract",
+          "body": "রিপোজিটরির মূল ফোল্ডার থেকে টার্মিনালে চালান: `python assets/datasets/adult/classical_workflow.py --output build/chapter-11-report.json`। এর জন্য `Python 3.12` এবং নির্ধারিত সংস্করণের প্যাকেজগুলো প্রয়োজন হবে (মনে রাখবেন, অ্যাপ নিজে ভেতরে কোনো Python কোড চালায় না)। নিচের চারটি কোড অংশ একই লোকাল সেশনে পরপর চালানো যাবে, যেখানে `DATA` পাথটি রিপোজিটরির সাপেক্ষে নির্ধারিত।"
+        },
+        {
+          "type": "text",
+          "title": "ডেটার উৎস, SHA-256 যাচাই ও পাঁচটি সংখ্যাসূচক Feature",
+          "body": "শুরুতেই মূল UCI Adult ফাইলের `SHA-256` হ্যাশ, পাঁচটি সংখ্যাসূচক Feature এবং আয়ের বাইনারি Label কঠোরভাবে যাচাই করা হয়। বাইরের Training অংশ থেকে নির্দিষ্ট Label-নিরপেক্ষ র‍্যান্ডম জেনারেটর দিয়ে `6,000`টি প্রোফাইল গ্রুপ বেছে নেওয়া হয়। ঐতিহাসিক Validation ডেটার পুনর্ব্যবহার এবং প্রক্সি প্রোফাইল গ্রুপিংয়ের সীমাবদ্ধতাগুলো রিপোর্টে স্পষ্টভাবে নথিভুক্ত থাকে।"
+        },
+        {
+          "type": "code",
+          "title": "উৎস যাচাই, Outer Group Split এবং নির্ধারিত Training বাজেট",
+          "body": "from pathlib import Path\nimport argparse\nimport hashlib\nimport json\nimport platform\nimport warnings\nimport numpy as np\nimport pandas as pd\nimport sklearn\nfrom scipy.special import logsumexp\nfrom threadpoolctl import threadpool_limits\nfrom sklearn.model_selection import GroupShuffleSplit, StratifiedGroupKFold\nfrom sklearn.preprocessing import StandardScaler\nfrom sklearn.pipeline import make_pipeline\nfrom sklearn.svm import SVC, LinearSVC\nfrom sklearn.neighbors import KNeighborsClassifier\nfrom sklearn.naive_bayes import GaussianNB\nfrom sklearn.dummy import DummyClassifier\nfrom sklearn.metrics import average_precision_score, accuracy_score, brier_score_loss\nfrom sklearn.exceptions import ConvergenceWarning\n\nDATA = Path(\"assets/datasets/adult\")\nSOURCE_HASH = \"5b00264637dbfec36bdeaab5676b0b309ff9eb788d63554ca0a249491c86603d\"\nCOLUMNS = [\n    \"age\",\n    \"workclass\",\n    \"fnlwgt\",\n    \"education\",\n    \"education_num\",\n    \"marital_status\",\n    \"occupation\",\n    \"relationship\",\n    \"race\",\n    \"sex\",\n    \"capital_gain\",\n    \"capital_loss\",\n    \"hours_per_week\",\n    \"native_country\",\n    \"income\",\n]\nFEATURES = [\"age\", \"education_num\", \"capital_gain\", \"capital_loss\", \"hours_per_week\"]\n\n\ndef load_source(path):\n    digest = hashlib.sha256(path.read_bytes()).hexdigest()\n    if digest != SOURCE_HASH:\n        raise ValueError(\"Expected original adult.data\")\n    frame = pd.read_csv(path, names=COLUMNS, skipinitialspace=True, na_values=\"?\")\n    label = frame[\"income\"].astype(\"string\").str.strip()\n    if not label.isin([\"<=50K\", \">50K\"]).all():\n        raise ValueError(\"Binary income labels required\")\n    X = frame[FEATURES].to_numpy(dtype=float, copy=True)\n    y = (label == \">50K\").to_numpy(dtype=int)\n    if not np.isfinite(X).all():\n        raise ValueError(\"Finite numeric feature contract\")\n    keys = (\n        frame[[c for c in COLUMNS if c not in (\"income\", \"hours_per_week\")]]\n        .astype(\"string\")\n        .fillna(\"__MISSING__\")\n    )\n    groups = pd.util.hash_pandas_object(keys, index=False).to_numpy()\n    return frame, X, y, groups, digest\n\n\ndef split_and_budget(X, y, groups):\n    outer, valid = next(\n        GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=42).split(\n            X, y, groups\n        )\n    )\n    selected = np.random.default_rng(42).permutation(np.unique(groups[outer]))[:6000]\n    train = outer[np.isin(groups[outer], selected)]\n    if not set(groups[train]).isdisjoint(groups[valid]):\n        raise ValueError(\"Group overlap\")\n    return outer, train, valid\n"
+        },
+        {
+          "type": "text",
+          "title": "কোড পর্যালোচনা ১: শুরুতেই শৃঙ্খলা",
+          "body": "প্রথম খণ্ডের প্রবাহটি দেখুন: উৎস ও Schema যাচাই → বাইরের Group Split → শুধুমাত্র Training অংশ থেকে বাজেট নির্বাচন। এখানে সময়ের ক্রম (Chronology) বা প্রকৃত ব্যক্তি-পরিচয়ের শতভাগ নিশ্চয়তা নেই, সংখ্যাসূচক ফিচারের তালিকা স্থির রাখা হয়েছে এবং পুরো ডেটার ওপর কোনো আগাম Preprocessing ফিট করা হয়নি।"
+        },
+        {
+          "type": "code",
+          "title": "স্বচ্ছ গাণিতিক হেল্পার: সুস্পষ্ট Contract, লুকানো Fit ছাড়া",
+          "body": "def hinge_objective(X, y, w, b, C=1.0):\n    X, y, w = np.asarray(X, dtype=float), np.asarray(y), np.asarray(w, dtype=float)\n    if (\n        X.ndim != 2\n        or min(X.shape) < 1\n        or y.shape != (len(X),)\n        or w.shape != (X.shape[1],)\n        or not np.isfinite(X).all()\n        or not np.isfinite(w).all()\n        or not np.isin(y, [-1, 1]).all()\n        or not np.isfinite(b)\n        or not np.isfinite(C)\n        or C < 0\n    ):\n        raise ValueError(\"Finite aligned signed hinge inputs\")\n    margin = y * (X @ w + b)\n    active = margin < 1\n    loss = 0.5 * np.dot(w, w) + C * np.maximum(0, 1 - margin).mean()\n    gradient = w - C * (X[active].T @ y[active]) / len(y)\n    bias_gradient = -C * y[active].sum() / len(y)\n    return float(loss), gradient, float(bias_gradient)\n\n\ndef rbf_kernel(X, Z, gamma):\n    X, Z = np.asarray(X, dtype=float), np.asarray(Z, dtype=float)\n    if (\n        X.ndim != 2\n        or Z.ndim != 2\n        or X.shape[1] != Z.shape[1]\n        or X.shape[1] == 0\n        or not np.isfinite(X).all()\n        or not np.isfinite(Z).all()\n        or not np.isfinite(gamma)\n        or gamma < 0\n    ):\n        raise ValueError(\"Finite aligned kernel inputs, gamma>=0\")\n    # Direct differences avoid cancellation in ||x||²+||z||²-2x.z on tiny teaching arrays.\n    return np.exp(-gamma * np.sum((X[:, None, :] - Z[None, :, :]) ** 2, axis=2))\n\n\ndef knn_predict(X, y, queries, *, k=5, p=2, weighted=False):\n    X, y, Q = (\n        np.asarray(X, dtype=float),\n        np.asarray(y),\n        np.asarray(queries, dtype=float),\n    )\n    if (\n        X.ndim != 2\n        or min(X.shape) < 1\n        or y.shape != (len(X),)\n        or Q.ndim != 2\n        or Q.shape[1] != X.shape[1]\n        or not np.isfinite(X).all()\n        or not np.isfinite(Q).all()\n        or not np.isin(y, [0, 1]).all()\n        or not isinstance(k, int)\n        or isinstance(k, bool)\n        or not 1 <= k <= len(X)\n        or p not in (1, 2)\n    ):\n        raise ValueError(\"Finite binary neighbor schema, k and p1/2\")\n    predictions = []\n    details = []\n    for query in Q:\n        delta = np.abs(X - query)\n        distance = delta.sum(axis=1) if p == 1 else np.sqrt((delta * delta).sum(axis=1))\n        order = np.lexsort((np.arange(len(X)), distance))[\n            :k\n        ]  # Distance then pool order.\n        selected = distance[order]\n        if weighted:\n            zero = selected == 0\n            weights = (\n                zero.astype(float) if zero.any() else selected.min() / selected\n            )  # Common scale cancels.\n        else:\n            weights = np.ones(k)\n        probability = float(np.dot(weights, y[order]) / weights.sum())\n        predictions.append(probability)\n        details.append({\"indices\": order, \"distances\": selected, \"weights\": weights})\n    return np.asarray(predictions), details\n\n\ndef gaussian_log_scores(X, means, variances, priors):\n    X, means, variances, priors = [\n        np.asarray(v, dtype=float) for v in (X, means, variances, priors)\n    ]\n    if (\n        X.ndim != 2\n        or X.shape[1] == 0\n        or means.shape != (2, X.shape[1])\n        or variances.shape != means.shape\n        or priors.shape != (2,)\n        or any(not np.isfinite(v).all() for v in (X, means, variances, priors))\n        or np.any(variances <= 0)\n        or np.any(priors <= 0)\n        or not np.isclose(priors.sum(), 1)\n    ):\n        raise ValueError(\"Positive finite Gaussian variances/priors and aligned schema\")\n    contributions = -0.5 * (\n        np.log(2 * np.pi * variances)[None, :, :]\n        + (X[:, None, :] - means[None, :, :]) ** 2 / variances[None, :, :]\n    )\n    joint = np.log(priors)[None, :] + contributions.sum(axis=2)\n    normalized = joint - logsumexp(joint, axis=1, keepdims=True)\n    return joint, normalized, contributions\n"
+        },
+        {
+          "type": "text",
+          "title": "কোড পর্যালোচনা ২: চারটি স্বচ্ছ গাণিতিক ফাংশন",
+          "body": "দ্বিতীয় খণ্ডের হেল্পারগুলো সুস্পষ্টভাবে গড়-Hinge গ্র্যাডিয়েন্ট, RBF Kernel, kNN র‍্যাঙ্কিং ও শূন্য-দূরত্বের নীতি এবং Gaussian লগ-নরমালাইজেশন বাস্তবায়ন করে। খেয়াল করুন, Hinge-এর চিহ্নযুক্ত `{-1, +1}` এবং kNN-এর `{0, 1}` Label-এর শর্ত আলাদাভাবে পরীক্ষা করা হয়েছে; ফাঁকা Query ব্যাচ সমর্থিত এবং সব ইনপুট সসীম হওয়া বাধ্যতামূলক।"
+        },
+        {
+          "type": "code",
+          "title": "Inner Grouped তুলনা এবং তিনটি স্বতন্ত্র পরিধির Lab Asset",
+          "body": "def metric_report(estimator, X, y):\n    score = (\n        estimator.decision_function(X)\n        if hasattr(estimator, \"decision_function\")\n        else estimator.predict_proba(X)[:, 1]\n    )\n    result = {\n        \"ap\": float(average_precision_score(y, score)),\n        \"accuracy\": float(accuracy_score(y, estimator.predict(X))),\n    }\n    if hasattr(estimator, \"predict_proba\"):\n        result[\"brier\"] = float(brier_score_loss(y, estimator.predict_proba(X)[:, 1]))\n    return result\n\n\ndef analyse_source(path):\n    frame, X, y, groups, digest = load_source(path)\n    outer, train, valid = split_and_budget(X, y, groups)\n    specs = [\n        (\"linear_c01\", \"linear\", 0.1),\n        (\"linear_c1\", \"linear\", 1.0),\n        (\"knn15\", \"knn\", 15),\n        (\"knn51\", \"knn\", 51),\n        (\"gaussian_small\", \"nb\", 1e-9),\n        (\"gaussian_large\", \"nb\", 0.01),\n    ]\n\n    def build(kind, value):\n        if kind == \"linear\":\n            return make_pipeline(\n                StandardScaler(),\n                LinearSVC(\n                    C=value, dual=False, max_iter=20000, tol=1e-5, random_state=42\n                ),\n            )\n        if kind == \"knn\":\n            return make_pipeline(\n                StandardScaler(),\n                KNeighborsClassifier(\n                    n_neighbors=value, weights=\"distance\", algorithm=\"brute\", n_jobs=1\n                ),\n            )\n        return GaussianNB(var_smoothing=value)\n\n    folds = list(\n        StratifiedGroupKFold(n_splits=3, shuffle=True, random_state=42).split(\n            X[train], y[train], groups[train]\n        )\n    )\n    candidates = []\n    with warnings.catch_warnings():\n        warnings.simplefilter(\"error\", ConvergenceWarning)\n        for name, kind, value in specs:\n            scores = []\n            for fit, held in folds:\n                fit, held = train[fit], train[held]\n                if not set(groups[fit]).isdisjoint(groups[held]):\n                    raise ValueError(\"Inner overlap\")\n                model = build(kind, value).fit(X[fit], y[fit])\n                scores.append(metric_report(model, X[held], y[held])[\"ap\"])\n            candidates.append(\n                {\n                    \"name\": name,\n                    \"family\": kind,\n                    \"value\": value,\n                    \"inner_ap\": float(np.mean(scores)),\n                }\n            )\n        chosen = max(\n            candidates, key=lambda r: r[\"inner_ap\"]\n        )  # Exact ties keep declared order.\n        winner = build(chosen[\"family\"], chosen[\"value\"]).fit(X[train], y[train])\n    baseline = DummyClassifier(strategy=\"prior\").fit(X[train], y[train])\n    # Lab geometry uses a separate bounded training subset and its own scaler.\n    lab_train = train[:1024]\n    lab_scaler = StandardScaler().fit(X[lab_train, :2])\n    Z = lab_scaler.transform(X[lab_train, :2])\n    query_indices = valid[:6]\n    Q = lab_scaler.transform(X[query_indices, :2])\n    snapshots = []\n    for C in [0.01, 0.1, 1.0]:\n        with warnings.catch_warnings():\n            warnings.simplefilter(\"error\", ConvergenceWarning)\n            svc = SVC(\n                kernel=\"linear\", C=C, class_weight=\"balanced\", tol=1e-5, max_iter=200000\n            ).fit(Z, y[lab_train])\n        w = svc.coef_[0]\n        bias = float(svc.intercept_[0])\n        norm = float(np.linalg.norm(w))\n        margin = (2 * y[lab_train] - 1) * (Z @ w + bias)\n        if norm < 1e-8:\n            raise ValueError(\"Degenerate teaching margin\")\n        class_weights = svc.class_weight_\n        alpha = np.zeros(len(Z))\n        alpha[svc.support_] = np.abs(svc.dual_coef_[0])\n        upper = C * class_weights[y[lab_train]]\n        if (\n            np.max(alpha - upper) > 1e-6\n            or abs(np.dot(alpha, 2 * y[lab_train] - 1)) > 1e-6\n        ):\n            raise ValueError(\"Dual feasibility\")\n        np.testing.assert_allclose(Q @ w + bias, svc.decision_function(Q), atol=1e-10)\n        snapshots.append(\n            {\n                \"C\": C,\n                \"weights\": w.tolist(),\n                \"bias\": bias,\n                \"norm\": norm,\n                \"support_count\": int(len(svc.support_)),\n                \"class_weights\": class_weights.tolist(),\n                \"query_scores\": svc.decision_function(Q).tolist(),\n                \"support_flags\": [bool(i in set(svc.support_)) for i in range(48)],\n                \"primal_weighted_hinge_sum\": float(\n                    0.5 * norm**2\n                    + C * np.dot(class_weights[y[lab_train]], np.maximum(0, 1 - margin))\n                ),\n            }\n        )\n    source = {\n        \"source\": \"UCI Adult, Becker & Kohavi (1996), CC BY 4.0\",\n        \"sha256\": digest,\n    }\n\n    def observation(i):\n        return {\n            \"source_row_1based\": int(i + 1),\n            \"values\": X[i, :2].tolist(),\n            \"positive\": int(y[i]),\n        }\n\n    svm_asset = {\n        **source,\n        \"scope\": \"Fixed balanced-weight linear SVC on first1024 budget-training rows, age/education only; separate lab specification.\",\n        \"mean\": lab_scaler.mean_.tolist(),\n        \"scale\": lab_scaler.scale_.tolist(),\n        \"training_rows\": len(lab_train),\n        \"points\": [observation(i) for i in lab_train[:48]],\n        \"queries\": [observation(i) for i in query_indices],\n        \"snapshots\": snapshots,\n    }\n    # Neighbor pool is a bounded real subset. Its tie policy is distance then pool order.\n    pool_indices = train[:64]\n    neighbor_scaler = StandardScaler().fit(X[train, :2])\n    knn_asset = {\n        **source,\n        \"scope\": \"64 actual budget-training rows, two features; calculator, not full-model performance.\",\n        \"mean\": neighbor_scaler.mean_.tolist(),\n        \"scale\": neighbor_scaler.scale_.tolist(),\n        \"pool\": [observation(i) for i in pool_indices],\n        \"queries\": [observation(i) for i in query_indices],\n    }\n    gaussian = GaussianNB(var_smoothing=1e-9).fit(X[train, :2], y[train])\n    joint, log_probability, contributions = gaussian_log_scores(\n        X[query_indices, :2], gaussian.theta_, gaussian.var_, gaussian.class_prior_\n    )\n    np.testing.assert_allclose(\n        log_probability, gaussian.predict_log_proba(X[query_indices, :2]), atol=1e-10\n    )\n    nb_asset = {\n        **source,\n        \"scope\": \"Fixed two-feature GaussianNB fitted on budget-training rows; log densities, not discrete masses.\",\n        \"means\": gaussian.theta_.tolist(),\n        \"variances\": gaussian.var_.tolist(),\n        \"priors\": gaussian.class_prior_.tolist(),\n        \"epsilon\": float(gaussian.epsilon_),\n        \"queries\": [observation(i) for i in query_indices],\n        \"reference_log_probability\": log_probability.tolist(),\n    }\n    report = {\n        **source,\n        \"versions\": {\n            \"python\": platform.python_version(),\n            \"numpy\": np.__version__,\n            \"pandas\": pd.__version__,\n            \"sklearn\": sklearn.__version__,\n        },\n        \"scope\": \"Reused historical development source; bounded compute, no fresh confirmation or deployment claim\",\n        \"features\": FEATURES,\n        \"seed\": 42,\n        \"outer_training_rows\": len(outer),\n        \"budget_training_groups\": int(len(np.unique(groups[train]))),\n        \"budget_training_rows\": len(train),\n        \"validation_rows\": len(valid),\n        \"inner_folds\": 3,\n        \"candidates\": candidates,\n        \"selected\": chosen,\n        \"winner_train\": metric_report(winner, X[train], y[train]),\n        \"winner_validation\": metric_report(winner, X[valid], y[valid]),\n        \"baseline_validation\": metric_report(baseline, X[valid], y[valid]),\n        \"svm_lab_support_counts\": [s[\"support_count\"] for s in snapshots],\n        \"svm_lab_widths\": [2 / s[\"norm\"] for s in snapshots],\n        \"nb_lab_epsilon\": float(gaussian.epsilon_),\n        \"assumptions\": [\n            \"6000 groups chosen from outer training with fixed label-independent RNG; compute-budget protocol differs from earlier chapters.\",\n            \"Raw-profile grouping excludes income/hours outcomes; groups are proxies, not verified independent people.\",\n            \"Scalers fit within each training fold; lab scalers have separately stated training scopes.\",\n            \"LinearSVC squared hinge/intercept regularization differs from the standard unpenalized-bias hinge derivation.\",\n            \"No invented SVM probabilities: AP uses decision scores, and Brier is omitted when predict_proba is unavailable.\",\n            \"Neighbor tie policy is explicit; equal-distance cutoff ties need not match a library arbitrary ordering.\",\n            \"fnlwgt unused; unweighted row metrics, no causal/current-population/canonical benchmark claim.\",\n        ],\n    }\n    return report, svm_asset, knn_asset, nb_asset\n\n\ndef run_analysis(path):\n    with threadpool_limits(limits=1):\n        return analyse_source(path)\n"
+        },
+        {
+          "type": "text",
+          "title": "কোড পর্যালোচনা ৩: Model নির্বাচন ও Lab স্ন্যাপশট যাচাই",
+          "body": "তৃতীয় খণ্ডে ছয়টি প্রার্থীর ভেতরকার Grouped CV চলে এবং বিজয়ী পাইপলাইনটিকে পুরো বাজেট Training ডেটায় পুনরায় ফিট করা হয়—যেখানে যেকোনো `ConvergenceWarning` সরাসরি ব্যর্থতা হিসেবে গণ্য হয়। পাশাপাশি ল্যাবের আলাদা SVC-টি Balanced ক্লাস ওজন ও কেবল নিজস্ব সাবসেটের Scaler ব্যবহার করে। এখানে Dual Feasibility শর্ত, Decision Score রেফারেন্স এবং Gaussian Log-Posterior-এর স্বতন্ত্র গাণিতিক যাচাই (`assert`) যুক্ত রয়েছে।"
+        },
+        {
+          "type": "code",
+          "title": "নিরাপদ CLI ও পুনরুৎপাদনযোগ্য JSON রিপোর্ট তৈরি",
+          "body": "def main(argv=None):\n    parser = argparse.ArgumentParser(description=__doc__)\n    parser.add_argument(\"--output\", type=Path)\n    parser.add_argument(\"--write-labs\", action=\"store_true\")\n    args = parser.parse_args(argv)\n    report, svm, knn, nb = run_analysis(DATA / \"adult.data\")\n    if args.write_labs:\n        for name, asset in [\n            (\"classical_svm_lab.json\", svm),\n            (\"classical_knn_lab.json\", knn),\n            (\"classical_nb_lab.json\", nb),\n        ]:\n            (DATA / name).write_text(\n                json.dumps(asset, indent=2, allow_nan=False) + \"\\n\", encoding=\"utf-8\"\n            )\n    rendered = json.dumps(report, indent=2, allow_nan=False)\n    if args.output:\n        args.output.parent.mkdir(parents=True, exist_ok=True)\n        temporary = args.output.with_name(args.output.name + \".tmp\")\n        temporary.write_text(rendered + \"\\n\", encoding=\"utf-8\")\n        temporary.replace(args.output)\n    print(rendered)\n    return report\n\n\nreport, svm_asset, knn_asset, nb_asset = run_analysis(DATA / \"adult.data\")\nprint(json.dumps(report, indent=2, allow_nan=False))\n"
+        },
+        {
+          "type": "text",
+          "title": "কোড পর্যালোচনা ৪: পরমাণুসম ফাইল লিখন ও অফলাইন স্বয়ংসম্পূর্ণতা",
+          "body": "চতুর্থ খণ্ডে রয়েছে ইমপোর্ট-নিরাপদ CLI: `--output` দিলে অস্থায়ী ফাইলের মাধ্যমে নিরাপদে (Atomic) রিপোর্ট লেখা হয় এবং `--write-labs` দিলে তিনটি ল্যাব অ্যাসেট নতুন করে তৈরি হয়। চূড়ান্ত রিপোর্টে হ্যাশ, লাইব্রেরি সংস্করণ, বাজেট, সব প্রার্থীর স্কোর ও অনুমানের তালিকা সংরক্ষিত থাকে—কোনো বাইরের টেস্ট ফাইল বা ইন্টারনেট সংযোগ ছাড়াই।"
+        },
+        {
+          "type": "text",
+          "title": "যাচাইকৃত সংখ্যাসূচক ফলাফল (Verified Outputs)",
+          "body": "নির্ধারিত পরিবেশে স্ক্রিপ্টটি চালালে পাওয়া যায়: `6,000`টি গ্রুপে মোট `6,013`টি বাজেট Row; সেরা প্রার্থী `linear_c1`, যার ভেতরের গড় `AP ≈ 0.644491`; এবং ডেভেলপমেন্ট Validation সেটে `AP ≈ 0.661661` ও `Accuracy ≈ 0.808478`। বিজয়ী Model-টি সরাসরি Probability Estimator নয় বলে এর জন্য কোনো মনগড়া Brier Score দেওয়া হয়নি। আর ভিন্ন কম্পিউট বাজেটের আগের ফলাফলের সাথে একে মিলিয়ে কোনো শ্রেষ্ঠত্বের দাবি করা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "তিনটি Lab Asset-এর সংখ্যাসূচক Audit",
+          "body": "ল্যাবের সংরক্ষিত মানগুলোও মিলিয়ে নিন: `1024` সারির Balanced SVC ল্যাবে `C = 0.01`, `0.1` ও `1.0`-এর জন্য মোট Support Vector সংখ্যা যথাক্রমে `808`, `738` ও `730`, এবং প্রমিত এককে Margin প্রস্থ যথাক্রমে প্রায় `2.32386`, `2.02435` ও `2.01505`। দুই-ফিচারের Gaussian ল্যাবে Variance ফ্লোর `epsilon ≈ 1.88140e-7`। মনে রাখবেন, গ্রাফে দৃশ্যমান `48`টি বিন্দু কেবল প্রদর্শনের জন্য, আর পূর্ণ ফিটের Support Vector সংখ্যা আলাদা; পাশাপাশি Query-এর প্রকৃত Label কেবল ফলাফল বোঝার ডায়াগনস্টিক হিসেবে দেখানো হয়।"
+        },
+        {
+          "type": "text",
+          "title": "নিজের ভাষায় পূর্ণাঙ্গ Audit রিপোর্ট লিখুন",
+          "body": "এবার পুরো প্রক্রিয়াটির একটি সংক্ষিপ্ত প্রকৌশলগত সারাংশ নিজের ভাষায় লিখুন—যেখানে উৎস ফাইলের হ্যাশ, গ্রুপ বাজেট, ফোল্ড গঠন, Objective ও আউটপুটের নিয়ম, সমতা ও শূন্য দূরত্বের নীতি, রূপান্তরের পরিধি এবং Calibration-এর সীমা স্পষ্টভাবে থাকবে। সবশেষে Validation সেটের একটি ভুল Prediction বেছে নিয়ে মডেলের নিজস্ব গাণিতিক মেকানিক্স দিয়ে তা ব্যাখ্যা করুন; কোনো মনগড়া কার্যকারণ গল্প তৈরি করবেন না।"
+        }
+      ]
+    },
+    {
+      "id": "ch11_project",
+      "title": "স্বতন্ত্র কোডিং প্রজেক্ট: তৈরি, পরীক্ষা ও প্রতিরক্ষা",
+      "subtitle": "নিজ হাতে ইমপ্লিমেন্টেশন, টেস্ট স্যুট, পুনরুৎপাদন এবং মৌখিক ব্যাখ্যা",
+      "duration": "34 min",
+      "icon": "functions",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ধাপ ১: Hinge Objective, Subgradient ও Kernel যাচাই",
+          "body": "প্রথম কাজ হিসেবে গড়-Hinge Objective, এর Subgradient এবং একটি Finite-Difference চেকার নিজে লিখুন। সেখানে `C`-এর নরমালাইজেশন, পেনাল্টিমুক্ত Bias এবং কৌণিক বিন্দুর (`y f = 1`) নীতি স্পষ্ট করে উল্লেখ করুন। পাশাপাশি একটি ছোট Gram ম্যাট্রিক্সের PSD যাচাই লিখুন—তবে সসীম ম্যাট্রিক্সের এই পরীক্ষাকে সার্বজনীন গাণিতিক প্রমাণ বলে দাবি করবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "ধাপ ২: নির্ভুল Binary kNN ক্যালকুলেটর",
+          "body": "দ্বিতীয় ধাপে একটি সংখ্যাসূচক বাইনারি kNN ফাংশন তৈরি করুন—যা দূরত্ব ও পুল-ক্রমের র‍্যাঙ্কিং, `k ≤ n` শর্ত, সমান ও ব্যস্তানুপাতিক ওজন, শূন্য দূরত্বের Exact Match এবং ফাঁকা Query ব্যাচ নিখুঁতভাবে সামলাবে। অনন্য দূরত্বের উদাহরণে রেফারেন্স লাইব্রেরির সাথে মিল এবং ডুপ্লিকেট শূন্য-দূরত্বের কেসগুলো আলাদাভাবে টেস্ট করুন।"
+        },
+        {
+          "type": "text",
+          "title": "ধাপ ৩: Naive Bayes পরিবার ও সংখ্যাগত স্থিতিশীলতা",
+          "body": "তৃতীয় ধাপে Gaussian Log-Density, Class Prior এবং `LogSumExp` নরমালাইজেশন কোডে লিখুন—যার শুরুতেই Variance, মাত্রা, Class-এর ক্রম ও সসীম মান যাচাই থাকবে। এর সাথে ছোট উদাহরণ বানিয়ে Multinomial-এর Laplace Smoothing এবং Bernoulli-তে অনুপস্থিত শব্দের (`x_j = 0`) অবদানের পার্থক্য আলাদাভাবে দেখান।"
+        },
+        {
+          "type": "text",
+          "title": "ধাপ ৪: বাস্তব Workflow ও Lab সংখ্যার পুনরুৎপাদন",
+          "body": "চতুর্থ ধাপে পুরো ওয়ার্কফ্লো ও ল্যাব অ্যাসেটগুলো নিজের মেশিনে পুনরুৎপাদন করুন। বাইরের `26,050` সারি বনাম বাজেটের `6,013` সারি (`6,000` নির্বাচিত গ্রুপ) এবং পুনর্ব্যবহৃত Validation সেটের প্রেক্ষাপট স্পষ্ট করে লিখুন; এরপর AP, Accuracy এবং প্রযোজ্য ক্ষেত্রে Probability Metric-গুলো রিপোর্ট করুন।"
+        },
+        {
+          "type": "text",
+          "title": "অভ্যাসের দশটি গাণিতিক ও কোডিং অনুশীলনী",
+          "body": "অনুশীলনী অংশে দশটি সুনির্দিষ্ট সমস্যা দেওয়া আছে: Margin প্রস্থ, Hinge Loss, Subgradient, `C` নরমালাইজেশন, RBF Kernel, নিখুঁত kNN ওজন, Gaussian Log-Odds, Laplace Smoothing, Bernoulli অনুপস্থিতি এবং Prior Odds। মনে রাখবেন, অ্যাপের সংখ্যাসূচক পরীক্ষকটি কেবল চূড়ান্ত উত্তরের মান মেলায়, সরাসরি Python চালায় না—তাই নিজের লোকাল পরিবেশে কোড চালিয়ে অনুশীলন করুন।"
+        },
+        {
+          "type": "text",
+          "title": "অর্থবহ Unit Test লেখার কৌশল",
+          "body": "এমন Test লিখুন যা বাস্তব ভুলগুলো ধরতে পারে: যেমন Smoothing-এর হরে `αV` বাদ পড়া, Variance-এ ভুল হর (`n - 1` বনাম `n`) নেওয়া, কাঁচা স্কোরকে Probability ধরে নেওয়া, শূন্য দূরত্বে মনগড়া `epsilon` বসানো কিংবা Class-এর ক্রম উল্টে যাওয়া। নিজের লেখা Function-এর কোড কপি করেই যদি প্রত্যাশিত মান (`expected value`) তৈরি করেন, তবে তা কখনোই স্বতন্ত্র যাচাই নয়!"
+        },
+        {
+          "type": "text",
+          "title": "সময় ধরে অনুশীলনের প্রস্তাবিত ছক",
+          "body": "প্রস্তুতির জন্য সময়ের একটি প্রস্তাবিত ভাগ রাখতে পারেন: `20` মিনিট খাতায় সমীকরণ প্রতিপাদন, `30` মিনিট হেল্পার কোড লেখা, `25` মিনিট টেস্ট স্যুট তৈরি, `30` মিনিট বাস্তব ডেটা অডিট এবং `15` মিনিট না দেখে মুখে মুখে ব্যাখ্যা (Oral Defense)। এগুলো কোনো কঠোর সময়সীমা নয়—যেখানে আটকে যাবেন, তা খাতায় টুকে রেখে নিজে আবার সমাধান করুন।"
+        },
+        {
+          "type": "text",
+          "title": "প্রস্তুতি যাচাই: মুখস্থ নয়, প্রকৌশলগত বিচারবুদ্ধি",
+          "body": "নিজেকে প্রশ্ন করুন: সম্পূর্ণ নতুন একটি সমস্যায় আপনি কি সঠিক Feature Representation, Distance Metric বা Likelihood বেছে নিয়ে তার পক্ষে যুক্তি দাঁড় করাতে পারছেন? মেমোরি বা সময়ের শর্ত বদলে গেলে কেন পদ্ধতি পাল্টাতে হবে তা কি পরিষ্কারভাবে বলতে পারছেন? কুইজের উত্তর মুখস্থ করার চেয়ে স্বতন্ত্র কোড লেখা ও স্পষ্ট ব্যাখ্যার ক্ষমতাই আসল লক্ষ্য।"
+        }
+      ]
+    },
+    {
+      "id": "ch11_readiness",
+      "title": "Interview প্রস্তুতি ও পরবর্তী পাঠ",
+      "subtitle": "Margin, Neighborhood ও Generative Probability-এর চূড়ান্ত পুনরালোচনা",
+      "duration": "28 min",
+      "icon": "functions",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "একটি শক্তিশালী উত্তরের কাঠামো",
+          "body": "যেকোনো কারিগরি প্রশ্নের উত্তর শুরু করুন মূল Task এবং প্রতিটি Observation Unit কী বোঝাচ্ছে তা পরিষ্কার করে। এরপর বলুন কোন Feature Representation নেবেন, মডেলের গাণিতিক Objective কী এবং এর পেছনে কোন অনুমানগুলো কাজ করছে। ছোট একটি সংখ্যার উদাহরণ দিয়ে সূত্রটি দেখিয়ে পরিচ্ছন্ন কোড লিখুন। সবশেষে সময় ও মেমোরির জটিলতা (Complexity), একটি বাস্তব ব্যর্থতার ক্ষেত্র (Failure Case), লিকেজমুক্ত মূল্যায়ন পরিকল্পনা এবং প্রোডাকশন সার্ভিংয়ের সমঝোতাগুলো ব্যাখ্যা করুন। গাদাগাদা পরিভাষা আওড়ানোর চেয়ে আপনার প্রতিটি সিদ্ধান্তের ভেতরকার যৌক্তিক যোগসূত্র দেখানো অনেক বেশি মূল্যবান।"
+        },
+        {
+          "type": "text",
+          "title": "SVM চূড়ান্ত চেকলিস্ট",
+          "body": "না দেখে ব্যাখ্যা করার মতো স্বচ্ছতা আনুন: Functional বনাম Geometric Margin, মোট প্রস্থ `2 / ‖w‖₂`, সাধারণ Hinge বনাম Squared Hinge, `C`-এর Sum বনাম Mean স্কেলিং, Dual ও KKT শর্তাবলি, Kernel-এর PSD শর্ত, RBF-এর `γ`, `LinearSVC` বনাম `SVC` এবং Probability Calibration। পাশাপাশি পরিষ্কার করে বলতে শিখুন কেন ভবিষ্যতের কোনো নতুন Query বিন্দু কখনোই ফিট করা Model-এর Support Vector নয়।"
+        },
+        {
+          "type": "text",
+          "title": "kNN চূড়ান্ত চেকলিস্ট",
+          "body": "নিজের ভাষায় ঝালিয়ে নিন: Feature Scaling ও Distance Metric-এর প্রভাব, সীমান্তবর্তী সমান দূরত্বের Tie, শূন্য দূরত্বের Exact Match, বিজোড় `k`-এর সীমাবদ্ধতা, kNN Regression-এর গড় ও সীমার বাইরে না যাওয়ার ধর্ম, উচ্চমাত্রিক স্থানের চ্যালেঞ্জ এবং Tree ইনডেক্স বনাম ANN-এর বাজেট। আর মনে রাখবেন, নিকটতম প্রতিবেশীদের ভোটের ভগ্নাংশ মানেই স্বয়ংক্রিয় Calibration গ্যারান্টি নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Naive Bayes ও GDA চূড়ান্ত চেকলিস্ট",
+          "body": "স্পষ্টভাবে পার্থক্য করতে শিখুন: Conditional Independence বনাম Marginal Independence, Gaussian MLE ও Probability Density-এর অনুপাত, মোট Token সংখ্যা বনাম ডকুমেন্ট সংখ্যা, Bernoulli মডেলে অনুপস্থিত শব্দের ভূমিকা, Complement ও Categorical সংস্করণের পরিধি, `LogSumExp` নরমালাইজেশন, Smoothing এবং ফোল্ডের ভেতরে সীমাবদ্ধ থেকে Prior ও শব্দভাণ্ডার শেখার শর্ত।"
+        },
+        {
+          "type": "text",
+          "title": "দশটি মৌলিক Interview Case অনুশীলন",
+          "body": "Practice ট্যাবে দশটি মৌলিক FAANG-ধাঁচের প্রকৌশলগত কেস দেওয়া আছে (এগুলো কোনো প্রতিষ্ঠানের ফাঁস হওয়া প্রকৃত প্রশ্ন নয়, বরং দক্ষতা গড়ার জন্য তৈরি)। রেফারেন্স উত্তর খোলার আগে অবশ্যই খাতায় বা মুখে নিজের উত্তরটি সম্পূর্ণ সাজিয়ে নিন; তারপর মিলিয়ে দেখুন কোন সূক্ষ্ম অনুমান বা প্রান্তিক কেসটি আপনার নজর এড়িয়ে গিয়েছিল।"
+        },
+        {
+          "type": "text",
+          "title": "প্রাথমিক রেফারেন্স ও ডকুমেন্টেশন",
+          "body": "অধ্যায়ের প্রয়োজনীয় সব ব্যাখ্যা অফলাইনেই সংযুক্ত আছে। ইন্টারনেট সংযোগ থাকলে নিচের অফিসিয়াল ডকুমেন্টেশনগুলো থেকে আরও গভীরে পড়তে পারেন:\nSVM: https://scikit-learn.org/stable/modules/svm.html\nLinearSVC: https://scikit-learn.org/stable/modules/generated/sklearn.svm.LinearSVC.html\nNeighbors: https://scikit-learn.org/stable/modules/neighbors.html\nNaive Bayes: https://scikit-learn.org/stable/modules/naive_bayes.html\nGaussianNB: https://scikit-learn.org/stable/modules/generated/sklearn.naive_bayes.GaussianNB.html\nCalibration: https://scikit-learn.org/stable/modules/calibration.html"
+        },
+        {
+          "type": "text",
+          "title": "নিজের প্রস্তুতির চূড়ান্ত Audit",
+          "body": "খাতায় এই অধ্যায়ের তিনটি প্রচলিত ভুল ধারণা লিখুন এবং নিজের লেখা ইউনিট টেস্ট দিয়ে অন্তত একটি সূক্ষ্ম বাগ ধরে দেখান। উৎস ফাইলের হ্যাশ, ল্যাব অ্যাসেট ও রিপোর্টের পরিধি যাচাই করুন। সবশেষে ভেবে দেখুন—হঠাৎ ডেটার Distribution বদলে গেলে (Distribution Shift) কিংবা প্রোডাকশনের মেমোরি ও সময়ের বাজেট অর্ধেক হয়ে গেলে আপনি আপনার নকশা কীভাবে পুনর্বিবেচনা করবেন।"
+        },
+        {
+          "type": "text",
+          "title": "পরের অধ্যায়ে যাওয়ার সেতুবন্ধন",
+          "body": "SVM, kNN ও Naive Bayes—এই তিনটি পরিবারের গাণিতিক Objective, উপযুক্ত Feature Representation এবং ব্যর্থতার জায়গাগুলো না দেখে সাবলীলভাবে ব্যাখ্যা করতে পারলে বুঝবেন আপনার ভিত্তি পাকা। এরপর এগিয়ে যান **Book 2 · Chapter 7 (Clustering & Dimensionality Reduction)**-এ, যেখানে কোনো Label ছাড়াই ডেটার অন্তর্নিহিত জ্যামিতিক গঠন ও মাত্রা সংকোচনের কৌশল আমরা ধাপে ধাপে শিখব।"
+        }
+      ]
+    }
+  ],
+  "quizzes": [
+    {
+      "id": "ch11_q1",
+      "question": "SVM-এর কাঁচা আউটপুট স্কোর `f(x)` প্রকৃতপক্ষে কী নির্দেশ করে?",
+      "options": [
+        "একটি চিহ্নযুক্ত Decision Score—এটি স্বয়ংক্রিয়ভাবে Calibrated Probability নয়",
+        "সবসময়ই নিখুঁত Class Posterior Probability",
+        "কাঁচা Feature এককে মাপা সরাসরি ইউক্লিডীয় দূরত্ব",
+        "ডেটাসেটের সামগ্রিক Class Prior অনুপাত"
+      ],
+      "answer": 0,
+      "explanation": "কাঁচা Functional Score `f(x)` মূলত প্যারামিটারের স্কেলিং ও গাণিতিক Objective-এর ওপর নির্ভরশীল। প্রকৃত জ্যামিতিক দূরত্ব পেতে হলে একে `‖w‖` দিয়ে ভাগ করতে হয় (`f(x) / ‖w‖`), আর নির্ভরযোগ্য Probability পেতে আলাদাভাবে Calibration প্রয়োজন।"
+    },
+    {
+      "id": "ch11_q2",
+      "question": "একটি Linear SVM-এ দুটি প্রমিত Supporting Hyperplane `f(x) = +1` এবং `f(x) = -1`-এর মধ্যবর্তী মোট জ্যামিতিক প্রস্থ (Margin Width) কত?",
+      "options": [
+        "1 / ‖w‖",
+        "2 / ‖w‖",
+        "‖w‖²",
+        "2 ‖w‖"
+      ],
+      "answer": 1,
+      "explanation": "কেন্দ্রীয় Decision Boundary `f(x) = 0` থেকে প্রতিটি Supporting Hyperplane-এর লম্ব দূরত্ব `1 / ‖w‖`। ফলে Normal দিক বরাবর তল দুটির মোট জ্যামিতিক ব্যবধান দাঁড়ায় `2 / ‖w‖`।"
+    },
+    {
+      "id": "ch11_q3",
+      "question": "কোনো Sample-এর চিহ্নযুক্ত Label `y = +1` এবং কাঁচা স্কোর `f(x) = 0.5` হলে এর Hinge Loss কত হবে?",
+      "options": [
+        "0",
+        "1",
+        "0.5",
+        "1.5"
+      ],
+      "answer": 2,
+      "explanation": "Hinge Loss-এর সূত্র অনুযায়ী `max(0, 1 − y f(x)) = max(0, 1 − 0.5) = 0.5`। বিন্দুটি Decision Boundary-এর সঠিক পাশে (`f(x) > 0`) থাকলেও নিরাপদ Margin সীমার (`y f(x) ≥ 1`) ভেতরে ঢুকে পড়ায় এই পেনাল্টি গুনতে হচ্ছে।"
+    },
+    {
+      "id": "ch11_q4",
+      "question": "মোট Hinge Loss-এর যোগফল (Sum) বনাম গড় (Mean) ব্যবহার করা দুটি সমীকরণে একই সংখ্যাসূচক `C` বসালে কী ঘটে?",
+      "options": [
+        "দুটি মডেল সবসময় হুবহু একই ফলাফল দেয়",
+        "Sample সংখ্যা n-এর কোনো প্রভাবই থাকে না",
+        "এটি কেবল kNN মডেলের ক্ষেত্রে প্রযোজ্য",
+        "Sample সংখ্যা n অনুযায়ী কার্যকর Regularization পেনাল্টির অনুপাত বদলে যায়"
+      ],
+      "answer": 3,
+      "explanation": "একই `0.5 ‖w‖²` পেনাল্টি অক্ষুণ্ন রেখে `C_sum Σ loss_i` এবং `C_mean × mean(loss)` সমান রাখতে হলে `C_mean = n × C_sum` ধরতে হয়। তাই সমীকরণের ফর্ম না দেখে কেবল সংখ্যাসূচক `C` তুলনা করা ভুল।"
+    },
+    {
+      "id": "ch11_q5",
+      "question": "ভবিষ্যতের কোনো অদেখা Validation বা Test বিন্দুকে কি ফিট করা SVM-এর একটি Support Vector বলা যায়?",
+      "options": [
+        "না; Support Vector হওয়ার পরিচয় কেবল ফিট করা Training সেটের Dual চলকের (α > 0) ধর্ম",
+        "হ্যাঁ, যদি বিন্দুটির স্কোর ঠিক 0 হয়",
+        "হ্যাঁ, যদি মডেল বিন্দুটিকে ভুল Class-এ ফেলে",
+        "হ্যাঁ, যদি বিন্দুটিকে আগে থেকে Standardize করা থাকে"
+      ],
+      "answer": 0,
+      "explanation": "অদেখা Query বিন্দুর জন্য আমরা স্কোর, Margin দূরত্ব বা ডায়াগনস্টিক Hinge Loss হিসাব করতে পারি; কিন্তু কোন বিন্দুগুলো Support Vector হবে তা কেবল Training সেটের Dual Optimization থেকেই নির্ধারিত হয়।"
+    },
+    {
+      "id": "ch11_q6",
+      "question": "আদর্শ Soft-Margin SVM সমাধানে কোনো Training বিন্দুর Dual চলক `0 < α_i < C_i` হলে KKT শর্ত অনুযায়ী বিন্দুটির অবস্থান কোথায়?",
+      "options": [
+        "এর Functional Margin ঠিক 0 হয়",
+        "এর Functional Margin ঠিক 1 হয় (y f(x) = 1)",
+        "বিন্দুটি সবসময় ভুল Class-এ পড়ে",
+        "বিন্দুটির Posterior Probability ঠিক 1 হয়"
+      ],
+      "answer": 1,
+      "explanation": "KKT-এর Complementary Slackness শর্ত অনুযায়ী `0 < α_i < C_i` হলে সংশ্লিষ্ট Slack চলক `ξ_i = 0` হতে বাধ্য, তাই এই মুক্ত (Free) Support Vector-টির Functional Margin হয় ঠিক `1` (বাস্তব সলভারে সংখ্যাসূচক Tolerance ও Degeneracy মাথায় রাখতে হয়)।"
+    },
+    {
+      "id": "ch11_q7",
+      "question": "RBF Kernel `K(x, z) = exp(−γ ‖x − z‖²)`-এ হাইপারপ্যারামিটার `γ` (Gamma)-এর মান বাড়ালে জ্যামিতিকভাবে কী ঘটে?",
+      "options": [
+        "দূরের সব বিন্দু পরস্পরের আরও বেশি সদৃশ হয়ে ওঠে",
+        "কেবল Class Prior অনুপাত পরিবর্তিত হয়",
+        "দূরত্ব বাড়ার সাথে সাথে সাদৃশ্য (Similarity) অনেক দ্রুত কমে যায়",
+        "Regularization প্যারামিটার C আপনাআপনি শূন্য হয়ে যায়"
+      ],
+      "answer": 2,
+      "explanation": "`γ` বাড়ালে প্রতিটি বিন্দুর প্রভাববলয় সংকীর্ণ ও স্থানীয় (Local) হয়ে ওঠে। তবে চূড়ান্ত Generalization কেমন হবে তা `γ`, `C` এবং Feature Scaling—এই তিনের যৌথ মিথস্ক্রিয়ার ওপর নির্ভর করে।"
+    },
+    {
+      "id": "ch11_q8",
+      "question": "`scikit-learn`-এর ডিফল্ট `LinearSVC` এবং `SVC(kernel='linear')`-এর মধ্যে মৌলিক পার্থক্য কোনটি?",
+      "options": [
+        "দুটির ভেতরকার Solver ও গাণিতিক Objective হুবহু এক",
+        "কেবল ক্লাসের নাম আলাদা, কাজে কোনো তফাত নেই",
+        "একই C দিলে দুটি সবসময় হুবহু একই ওজন দেয়",
+        "এদের ডিফল্ট Loss ফাংশন এবং Intercept Regularization-এর নিয়ম আলাদা"
+      ],
+      "answer": 3,
+      "explanation": "ডিফল্ট অবস্থায় `LinearSVC` সাধারণ Hinge-এর বদলে Squared Hinge Loss ব্যবহার করে এবং Intercept প্যারামিটারকেও Regularization-এর আওতায় আনে, যা সাধারণ `SVC(kernel='linear')` থেকে আলাদা।"
+    },
+    {
+      "id": "ch11_q9",
+      "question": "Cross-Validation চালানোর আগেই পুরো Dataset-এর ওপর একসাথে `StandardScaler` ফিট করলে কী ঝুঁকি তৈরি হয়?",
+      "options": [
+        "Held-out Validation অংশের তথ্য আগাম ব্যবহৃত হয়ে Data Leakage ঘটতে পারে",
+        "এটি সবসময়ই সম্পূর্ণ নির্ভুল মূল্যায়ন পদ্ধতি",
+        "এতে কেবল আউটপুট Probability-এর একক বদলায়, র‍্যাঙ্কিং নয়",
+        "কোনো মডেলের ফলাফলেই এর বিন্দুমাত্র প্রভাব পড়ে না"
+      ],
+      "answer": 0,
+      "explanation": "গড় ও পরিমিত ব্যবধানের মতো পরিসংখ্যান অবশ্যই প্রতিটি Training Fold-এর ভেতরে সীমাবদ্ধ রেখে (`Pipeline` ব্যবহার করে) ফিট করতে হয়, যাতে অদেখা Validation ডেটার তথ্য ট্রেনিংয়ে চুইয়ে না ঢোকে।"
+    },
+    {
+      "id": "ch11_q10",
+      "question": "kNN মডেলে Feature-গুলোর স্কেল বদলালে বা Standardize করলে প্রতিবেশীদের ক্রমের (Neighbor Ranking) ওপর কী প্রভাব পড়ে?",
+      "options": [
+        "প্রতিবেশীদের ক্রম কখনোই বদলায় না",
+        "Feature-এর স্কেল বদলালে দূরত্বের জ্যামিতি ও নিকটতম প্রতিবেশীদের ক্রম বদলে যায়",
+        "ডেটাসেটের প্রকৃত Label-গুলো আপনাআপনি বদলে যায়",
+        "হাইপারপ্যারামিটার k-এর মান অকার্যকর হয়ে পড়ে"
+      ],
+      "answer": 1,
+      "explanation": "অসমান স্কেলিংয়ে বড় সংখ্যার Feature-টি দূরত্বের হিসাবকে একচেটিয়াভাবে নিয়ন্ত্রণ করে। উল্লেখ্য, সব বিন্দু থেকে একই ধ্রুবক বিয়োগ করলে (Shared Centering) পারস্পরিক দূরত্ব অপরিবর্তিত থাকে, কিন্তু ভিন্ন স্কেলে গুণ বা ভাগ করলে প্রতিবেশীদের ক্রম বদলে যায়।"
+    },
+    {
+      "id": "ch11_q11",
+      "question": "Binary Classification-এ বিজোড় (Odd) `k` নিলে সাধারণ সংখ্যার ভোটে সমতা কমলেও কোন ধরনের Tie তখনো ঘটতে পারে?",
+      "options": [
+        "আর কোনো ধরনের Tie ঘটার সম্ভাবনাই থাকে না",
+        "কেবল সব Label 0 হলেই Tie হতে পারে",
+        "সীমান্তবর্তী সমান দূরত্বের Cutoff Tie, Multiclass সমতা কিংবা দূরত্ব-ভিত্তিক ওজনের সমতা",
+        "বিজোড় k নিলে কোনো প্রতিবেশীই খুঁজে পাওয়া যায় না"
+      ],
+      "answer": 2,
+      "explanation": "`k`-তম ও `(k + 1)`-তম বিন্দুর দূরত্ব সমান হলে কাকে নেওয়া হবে সেই Cutoff Tie বিজোড় `k` দিয়েও এড়ানো যায় না; পাশাপাশি Multiclass ভোট বা Inverse-Distance ওজনের ক্ষেত্রেও সমতা তৈরি হতে পারে।"
+    },
+    {
+      "id": "ch11_q12",
+      "question": "দূরত্ব-ভিত্তিক ওজনের (Distance Weighting) kNN-এ নির্বাচিত প্রতিবেশীদের ভেতর শূন্য দূরত্বের Exact Match পাওয়া গেলে এই অধ্যায়ের নীতি কোনটি?",
+      "options": [
+        "ইচ্ছেমতো একটি ক্ষুদ্র epsilon দিয়ে ভাগ করে ওজন বানানো",
+        "শূন্য ও অশূন্য দূরত্বের সব প্রতিবেশীকে সমান ওজন দেওয়া",
+        "শূন্য দূরত্বের বিন্দুগুলোকে পুরোপুরি বাদ দেওয়া",
+        "কেবল নির্বাচিত শূন্য দূরত্বের প্রতিবেশীদের সমান ধনাত্মক ওজন দিয়ে বাকিদের ওজন শূন্য ধরা"
+      ],
+      "answer": 3,
+      "explanation": "`1 / 0` এড়াতে মনগড়া `epsilon` না বসিয়ে নির্বাচিত শূন্য-দূরত্বের Exact Match-গুলোকে সমান ধনাত্মক ওজন দেওয়া হয় এবং অশূন্য দূরত্বের প্রতিবেশীদের ওজন `0` ধরা হয়—ফলে ডুপ্লিকেট বিন্দুগুলোর Label সুশৃঙ্খলভাবে গড় হয়।"
+    },
+    {
+      "id": "ch11_q13",
+      "question": "সমান ওজনের (Uniform Weight) kNN-এ `k = n` (অর্থাৎ পুরো Training সেটের সমান) ধরলে যেকোনো Query বিন্দুর Predicted Positive Fraction কত হবে?",
+      "options": [
+        "পুরো Training সেটের Positive Class Prior-এর সমান",
+        "সবসময় ঠিক 0.5",
+        "অদেখা Validation সেটের Class Prior-এর সমান",
+        "Linear SVM-এর কাঁচা স্কোরের সমান"
+      ],
+      "answer": 0,
+      "explanation": "সমান ওজনে `k = n` নিলে প্রতিটি Query বিন্দুর জন্যই সব Training Sample-এর Label-এর সাধারণ গড় বের হয়, যা ধ্রুবক Training Positive Prior-এর সমান (তবে Distance-Weighted ক্ষেত্রে অবস্থানভেদে ওজন বদলায়)।"
+    },
+    {
+      "id": "ch11_q14",
+      "question": "`n` আকারের ও `d` মাত্রার Training সেটে `q`টি Query বিন্দুর জন্য নিখুঁত Brute-Force kNN চালাতে দূরত্ব হিসাবের আনুমানিক সময় জটিলতা (Time Complexity) কত?",
+      "options": [
+        "সব মাত্রাতেই সার্বজনীনভাবে O(log n)",
+        "O(q n d)",
+        "O(1)",
+        "সবসময় কেবল O(d)"
+      ],
+      "answer": 1,
+      "explanation": "প্রতিটি Query-এর সাথে `n`টি বিন্দুর `d`-মাত্রিক দূরত্ব মাপতে মোট কাজ দাঁড়ায় `O(q n d)`। বাস্তব সিস্টেমে এর সাথে ইনডেক্সিং, ব্যাচিং, Top-k বাছাই এবং পুরো `q × n` দূরত্ব ম্যাট্রিক্সের Memory খরচের দিকটিও সমান গুরুত্বপূর্ণ।"
+    },
+    {
+      "id": "ch11_q15",
+      "question": "Naive Bayes মডেলের মূল স্বাধীনতা অনুমানটি (Independence Assumption) সঠিকভাবে কোনটি?",
+      "options": [
+        "সবগুলো Feature শর্তহীনভাবে (Marginally) একে অপরের থেকে স্বাধীন",
+        "কেবল Feature-গুলোর গড় অসম্পর্কিত হওয়াই যথেষ্ট",
+        "নির্দিষ্ট Class দেওয়া থাকলে তার সাপেক্ষে Feature-গুলো শর্তসাপেক্ষে স্বাধীন (Conditionally Independent)",
+        "Target Label সব Feature থেকেই সম্পূর্ণ স্বাধীন"
+      ],
+      "answer": 2,
+      "explanation": "Class-এর শর্তটি (`given class`) বাদ দিলে গাণিতিক বক্তব্যটি ভুল হয়ে যায়। বাস্তবে দুটি Feature সামগ্রিকভাবে সম্পর্কিত (Marginally Correlated) হলেও প্রতিটি নির্দিষ্ট Class-এর ভেতরে তারা শর্তসাপেক্ষে স্বাধীন হতে পারে।"
+    },
+    {
+      "id": "ch11_q16",
+      "question": "বহু মাত্রায় অতি ক্ষুদ্র Likelihood-গুলোর গুণফলে সংখ্যাগত Underflow এড়াতে Naive Bayes কীভাবে Posterior হিসাব করে?",
+      "options": [
+        "ছোট মানগুলোকে সরাসরি শূন্য ধরে নেয়",
+        "কেবল সবচেয়ে বড় একটি Feature-এর Probability রাখে",
+        "কাঁচা Probability Density-গুলোকে সরাসরি যোগ করে দেয়",
+        "Log-Space-এ যোগ করে LogSumExp দিয়ে Normalize করে"
+      ],
+      "answer": 3,
+      "explanation": "গুণফলকে লগারিদমের যোগফলে রূপান্তর করে `LogSumExp` ব্যবহার করলে Underflow ছাড়াই স্থিতিশীল Class Posterior পাওয়া যায়; মনে রাখবেন, নরমালাইজ করার আগের কাঁচা Log-Joint মানগুলো সরাসরি Probability নয়।"
+    },
+    {
+      "id": "ch11_q17",
+      "question": "Gaussian Naive Bayes-এ প্রতিটি Class ও Feature-এর Variance প্রাক্কলনের আদর্শ ভিত্তি কোনটি?",
+      "options": [
+        "MLE সূত্র অনুযায়ী ddof = 0 Variance এবং তার সাথে সুনির্দিষ্ট ধনাত্মক Smoothing যোগ করা",
+        "সবসময় বাধ্যতামূলকভাবে ddof = 1 ব্যবহার করা",
+        "Sample Median ব্যবহার করা",
+        "প্রতিটি Class-এর Variance শূন্য ধরে নেওয়া"
+      ],
+      "answer": 0,
+      "explanation": "Training ডেটার Likelihood সর্বোচ্চকরণের (MLE) সরাসরি ফলাফল হলো `n` দিয়ে ভাগ করা (`ddof = 0`) Variance, নমুনা-অপক্ষপাতদুষ্ট প্রাক্কলক নয়; আর সংখ্যাগত স্থিতিশীলতার জন্য এর সাথে একটি ধনাত্মক `epsilon` যোগ করা হয়।"
+    },
+    {
+      "id": "ch11_q18",
+      "question": "অবিচ্ছিন্ন চলকের ক্ষেত্রে Gaussian Probability Density-এর মান কি কখনো `1`-এর চেয়ে বড় হতে পারে?",
+      "options": [
+        "না, কখনোই 1-এর বেশি হতে পারে না",
+        "হ্যাঁ; কারণ বক্ররেখার নিচের ক্ষেত্রফল (Area) হলো Probability, একক বিন্দুর Density মান নয়",
+        "কেবল ত্রুটিপূর্ণ বা অবৈধ মডেলেই এমনটা ঘটে",
+        "Density 1-এর বড় হলে Posterior হিসাব অসংজ্ঞায়িত হয়ে পড়ে"
+      ],
+      "answer": 1,
+      "explanation": "অবিচ্ছিন্ন চলকের Variance খুব ছোট হলে একক বিন্দুতে Density `1`-এর চেয়ে বড় হতেই পারে এবং এটি পরিমাপের এককের ওপর নির্ভরশীল; তবে সব Class-এর আপেক্ষিক Density-কে Normalize করলে ঠিকই বৈধ Posterior পাওয়া যায়।"
+    },
+    {
+      "id": "ch11_q19",
+      "question": "`scikit-learn`-এর `GaussianNB`-তে `var_smoothing = 0.01` দেওয়ার প্রকৃত অর্থ কী?",
+      "options": [
+        "প্রতিটি Variance-এর সাথে সরাসরি ঠিক 0.01 যোগ করা হয়",
+        "চূড়ান্ত Posterior Probability-এর সর্বনিম্ন সীমা 0.01 বেঁধে দেওয়া হয়",
+        "Training ডেটার সব Feature-এর মধ্যে বৃহত্তম যে Variance, তার 0.01 গুণ প্রতিটি Variance-এ যোগ করা হয়",
+        "সব Class-এর Prior 0.01 ধরে নেওয়া হয়"
+      ],
+      "answer": 2,
+      "explanation": "এই বৈশ্বিক `epsilon`-টি বৃহত্তম Training Feature Variance-এর ভগ্নাংশ হিসেবে নির্ধারিত হয় বলে কাঁচা ডেটার একক ও Feature Scaling-এর ওপর এর সরাসরি প্রভাব পড়ে—একে স্থির ধ্রুবক ভাবলে ভুল হবে।"
+    },
+    {
+      "id": "ch11_q20",
+      "question": "`V` আকারের শব্দভাণ্ডার ও `α` প্যারামিটারের Laplace/Lidstone Smoothing-সহ Multinomial Naive Bayes-এর হরে (Denominator) কোন রাশিটি থাকে?",
+      "options": [
+        "N_c + α",
+        "Documents + αV",
+        "N_c + V",
+        "N_c + αV"
+      ],
+      "answer": 3,
+      "explanation": "শব্দভাণ্ডারের `V`টি শব্দের প্রতিটিতে `α` করে Pseudo-count যোগ হওয়ায় হরে মোট `αV` যোগ করতে হয়; আর `N_c` হলো ওই Class-এর মোট Token সংখ্যা, ডকুমেন্টের সংখ্যা নয়।"
+    },
+    {
+      "id": "ch11_q21",
+      "question": "Bernoulli Naive Bayes মডেলে কোনো শব্দ ডকুমেন্টে অনুপস্থিত থাকলে (`x_j = 0`) তার প্রভাব কীভাবে হিসাব করা হয়?",
+      "options": [
+        "অনুপস্থিতির প্রমাণ হিসেবে log(1 − θ) পদটি সরাসরি Log-Likelihood-এ যোগ হয়",
+        "অনুপস্থিত শব্দগুলো সবসময় পুরোপুরি উপেক্ষা করা হয়",
+        "এটি হুবহু Multinomial Naive Bayes-এর শূন্য পদের মতো আচরণ করে",
+        "তখন কেবল Class Prior দিয়ে সিদ্ধান্ত নেওয়া হয়"
+      ],
+      "answer": 0,
+      "explanation": "Bernoulli মডেলে প্রতিটি শব্দ একটি আলাদা বাইনারি ঘটনা—তাই শব্দটি থাকা (`x_j = 1`) এবং না থাকা (`x_j = 0`) উভয় তথ্যই গাণিতিক প্রমাণের অংশ হিসেবে গণনায় আসে।"
+    },
+    {
+      "id": "ch11_q22",
+      "question": "Naive Bayes মডেলে একই তথ্যের হুবহু ডুপ্লিকেট বা তীব্রভাবে সম্পর্কিত Feature বারবার যুক্ত করলে কী ঝুঁকি তৈরি হয়?",
+      "options": [
+        "আউটপুট Probability সবসময় আরও নিখুঁতভাবে Calibrated হয়ে ওঠে",
+        "একই প্রমাণ একাধিকবার গণনা হয়ে চরম অতি-আত্মবিশ্বাসী (Overconfident) Posterior তৈরি হতে পারে",
+        "Class Prior আপনাআপনি শূন্য হয়ে যায়",
+        "মডেলটি রানটাইমে ক্র্যাশ করতে বাধ্য হয়"
+      ],
+      "answer": 1,
+      "explanation": "একই প্রমাণ Log-Space-এ বারবার যোগ হওয়ায় Posterior Probability চরম প্রান্তের (`0` বা `1`) দিকে ঝুঁকে পড়ে; সাধারণ Classification কখনো কাজ করলেও এর Calibration আলাদাভাবে যাচাই করা জরুরি।"
+    },
+    {
+      "id": "ch11_q23",
+      "question": "ল্যাবের ইন্টারঅ্যাক্টিভ স্লাইডারে Class Prior বাড়িয়ে `90%` করলে সেখান থেকে কোন দাবিটি যৌক্তিকভাবে বৈধ?",
+      "options": [
+        "বাস্তব প্রোডাকশন ট্রাফিকের আসল Prior আবিষ্কৃত হয়ে গেছে",
+        "মডেলটি এখন শতভাগ Calibrated বলে প্রমাণিত হয়েছে",
+        "Likelihood অপরিবর্তিত ধরে নিলে Prior বদলের সাপেক্ষে Posterior-এর 'What-if' সংবেদনশীলতা দেখা যাচ্ছে",
+        "ডেটার ভেতরে একটি কার্যকারণ সম্পর্ক (Causal Effect) পাওয়া গেছে"
+      ],
+      "answer": 2,
+      "explanation": "স্লাইডার ঘোরানো মানে কেবল পূর্বনির্ধারিত Likelihood স্থির রেখে Bayes-এর সূত্রে নতুন Prior বসিয়ে সংবেদনশীলতা পরীক্ষা করা—বাস্তবে Distribution Shift-এর অনুমান সত্যি কি না তা আলাদা প্রশ্ন।"
+    },
+    {
+      "id": "ch11_q24",
+      "question": "এই অধ্যায়ের মূল Adult ওয়ার্কফ্লো পরীক্ষায় মডেল নির্বাচনের জন্য কোন Training পরিধি ব্যবহার করা হয়েছে?",
+      "options": [
+        "পুরো অফিসিয়াল UCI Adult বেঞ্চমার্কের সব সারি",
+        "কেবল ল্যাবের 1,024টি প্রদর্শনী সারি",
+        "কোনো গ্রুপিং ছাড়াই এলোমেলো সম্পূর্ণ ডেটা",
+        "নির্ধারিত কম্পিউট বাজেটের অধীনে বাইরের Training অংশ থেকে নির্বাচিত 6,000টি গ্রুপ (6,013টি সারি)"
+      ],
+      "answer": 3,
+      "explanation": "এটি একটি সুনির্দিষ্ট কম্পিউট বাজেটের প্রোটোকল; তাই আগের অধ্যায়ে (Book 2 · Chapter 5) পুরো Training ডেটা ও ভিন্ন সার্চ বাজেটে পাওয়া ফলাফলের সাথে একে মিলিয়ে কোনো সার্বজনীন শ্রেষ্ঠত্ব দাবি করা যাবে না।"
+    },
+    {
+      "id": "ch11_q_dual_revision",
+      "question": "একমাত্রিক ডেটা `x = [-1, +1]`, চিহ্নযুক্ত Label `y = [-1, +1]` এবং `C = 0.2` হলে দুটি সমান Dual Multiplier `a`-এর অনুকূল (Optimal) মান কত হবে?",
+      "options": [
+        "0.2",
+        "0.5",
+        "1",
+        "2"
+      ],
+      "answer": 0,
+      "explanation": "সমতা শর্ত থেকে দুই বিন্দুর Multiplier সমান ধরে `D(a) = 2a − 2a²` পাওয়া যায়, যার শর্তহীন সর্বোচ্চ বিন্দু `0.5`। কিন্তু Box Constraint `0 ≤ a ≤ 0.2` থাকায় অনুকূল মান `a = 0.2`-এই সীমাবদ্ধ থাকে; তখন `w = 0.4`, দুটি Slack `0.6` এবং Primal ও Dual উভয় Objective-এর মান হয় `0.32`।"
+    },
+    {
+      "id": "ch11_q_gp_revision",
+      "question": "একটি Gaussian Process উদাহরণে নতুন বিন্দুর Latent Function Variance `0.75` এবং স্বাধীন পর্যবেক্ষণ Noise Variance `0.5` হলে নতুন পর্যবেক্ষণের মোট Predictive Variance কত হবে?",
+      "options": [
+        "0.25",
+        "0.75",
+        "1.25",
+        "1.5"
+      ],
+      "answer": 2,
+      "explanation": "নতুন পর্যবেক্ষণ `y* = f* + noise`-এ স্বাধীন Noise যুক্ত থাকায় দুটির Variance সরাসরি যোগ হয়ে `0.75 + 0.5 = 1.25` হয়। খেয়াল রাখবেন, এখানে Variance যোগ হয়—Standard Deviation সরাসরি যোগ করলে এই মান পাওয়া যাবে না।"
+    }
+  ],
+  "exercises": [
+    {
+      "id": "ch11_ex_margin",
+      "title": "জ্যামিতিক Margin প্রস্থ নির্ণয়",
+      "prompt": "দেওয়া আছে Normal Vector `w = [0.5, 0.0]`। দুটি প্রমিত Supporting Hyperplane `f(x) = +1` এবং `f(x) = -1`-এর মধ্যবর্তী মোট জ্যামিতিক প্রস্থ (Margin Width) হিসাব করে `answer` চলকে সংরক্ষণ করুন। যদি `w`-এর Norm শূন্য বা অসীম (`non-finite`) হয়, তবে একটি স্পষ্ট Error ছুড়ে দিন।",
+      "starter": "import numpy as np\n\nw = np.array([0.5, 0.0])\n# TODO width\nanswer = None\n",
+      "solution": "import numpy as np\n\nw = np.array([0.5, 0.0])\nnorm = np.linalg.norm(w)\nif not np.isfinite(norm) or norm == 0:\n    raise ValueError(\"Nonzero finite normal\")\nanswer = float(2 / norm)\nprint(answer)\n",
+      "expected": 4,
+      "explanation": "এখানে `‖w‖₂ = 0.5`, তাই দুটি Supporting Hyperplane-এর মধ্যবর্তী মোট জ্যামিতিক ব্যবধান `2 / 0.5 = 4.0`। মনে রাখবেন, এই দূরত্বটি ব্যবহৃত স্থানাঙ্ক ব্যবস্থার (Transformed Coordinates) এককে মাপা—কাঁচা Feature এককে একই অর্থ ধরে নেওয়ার আগে Feature Scaling যাচাই করে নিতে হয়।"
+    },
+    {
+      "id": "ch11_ex_hinge",
+      "title": "Functional Margin ও Hinge Loss হিসাব",
+      "prompt": "একটি ডেটাবিন্দুর চিহ্নযুক্ত Label `y = +1.0` এবং মডেলের কাঁচা স্কোর `score = 0.25` দেওয়া আছে। বিন্দুটির Hinge Loss হিসাব করে `answer` চলকে রাখুন এবং ভেবে দেখুন—বিন্দুটি Decision Boundary-এর সঠিক পাশে থেকেও কেন ধনাত্মক পেনাল্টি পাচ্ছে।",
+      "starter": "y, score = 1.0, 0.25\n# TODO hinge\nanswer = None\n",
+      "solution": "y, score = 1.0, 0.25\nanswer = max(0.0, 1 - y * score)\nassert score > 0 and answer > 0\nprint(answer)\n",
+      "expected": 0.75,
+      "explanation": "সূত্র অনুযায়ী Hinge Loss হলো `max(0, 1 − y × score) = max(0, 1 − 0.25) = 0.75`। কাঁচা স্কোর ধনাত্মক হওয়ায় বিন্দুটি সঠিক পাশে আছে ঠিকই, কিন্তু এর Functional Margin (`0.25`) কাঙ্ক্ষিত নিরাপদ সীমা `1`-এর চেয়ে কম—অর্থাৎ বিন্দুটি Margin অঞ্চলের ভেতরে ঢুকে পড়ায় পেনাল্টি গুনছে।"
+    },
+    {
+      "id": "ch11_ex_gradient",
+      "title": "Mean-Hinge Objective-এর Subgradient যাচাই",
+      "prompt": "দেওয়া আছে `X = [[1.0, 0.0], [0.0, 2.0]]`, চিহ্নযুক্ত Label `y = [+1.0, -1.0]`, ওজন `w = [0.2, -0.1]`, Bias `b = 0.05` এবং `C = 2.0`। পেনাল্টিমুক্ত Bias-সহ গড় Hinge Objective `0.5 ‖w‖² + C × mean(max(0, 1 − y(Xw + b)))` বিবেচনা করে `w`-এর প্রথম স্থানাঙ্কের (`w[0]`) সাপেক্ষে Gradient নির্ণয় করে `answer` চলকে রাখুন এবং কেন্দ্রীয় Finite Difference দিয়ে মিলিয়ে দেখুন।",
+      "starter": "import numpy as np\n\nX = np.array([[1.0, 0.0], [0.0, 2.0]])\ny = np.array([1.0, -1.0])\nw = np.array([0.2, -0.1])\n# TODO objective and gradient\nanswer = None\n",
+      "solution": "import numpy as np\n\nX = np.array([[1.0, 0.0], [0.0, 2.0]])\ny = np.array([1.0, -1.0])\nw = np.array([0.2, -0.1])\nb = 0.05\nC = 2.0\n\n\ndef objective(v):\n    return 0.5 * (v @ v) + C * np.maximum(0, 1 - y * (X @ v + b)).mean()\n\n\nactive = y * (X @ w + b) < 1\ng = w - C * (X[active].T @ y[active]) / len(y)\nanswer = float(g[0])\neps = 1e-6\nassert np.isclose(\n    answer, (objective(w + [eps, 0]) - objective(w - [eps, 0])) / (2 * eps)\n)\nprint(answer)\n",
+      "expected": -0.8,
+      "explanation": "প্রদত্ত দুটি বিন্দুর ক্ষেত্রেই `y_i (wᵀ x_i + b) < 1`, অর্থাৎ দুটিরই Hinge Loss সক্রিয়। ফলে প্রথম স্থানাঙ্কের Gradient দাঁড়ায় `0.2 − (2.0 / 2) × 1.0 = -0.8`। কেন্দ্রীয় Finite Difference দিয়ে যাচাই করার সময় অ-অন্তরীকরণযোগ্য কৌণিক বিন্দু (`y f = 1`) থেকে নিরাপদ দূরত্বে থাকা জরুরি।"
+    },
+    {
+      "id": "ch11_ex_cscale",
+      "title": "Sum বনাম Mean Hinge-এ সমতুল্য C রূপান্তর",
+      "prompt": "ধরুন Sample সংখ্যা `n = 100` এবং যোগফলভিত্তিক (Sum Hinge) সমীকরণের প্যারামিটার `C_sum = 0.2`। একই `0.5 ‖w‖²` পেনাল্টি অক্ষুণ্ন রেখে ওই একই Objective-কে গড় Hinge Loss (`mean hinge`) আকারে লিখতে হলে সমতুল্য `C_mean` কত হবে তা হিসাব করে `answer` চলকে রাখুন।",
+      "starter": "n, C_sum = 100, 0.2\n# TODO equivalent C_mean\nanswer = None\n",
+      "solution": "import numpy as np\n\nn, C_sum = 100, 0.2\nanswer = n * C_sum\nlosses = np.linspace(0, 1, n)\nassert np.isclose(C_sum * losses.sum(), answer * losses.mean())\nprint(answer)\n",
+      "expected": 20,
+      "explanation": "গড় বের করার সময় হরে যে `n` দিয়ে ভাগ হয় তা পুষিয়ে দিতে `C_mean = n × C_sum = 100 × 0.2 = 20.0` ধরতে হয়। Loss-এর যোগফল না কি গড় নেওয়া হচ্ছে তা বদলে গেলে `C`-এর সংখ্যাসূচক অর্থও সরাসরি বদলে যায়।"
+    },
+    {
+      "id": "ch11_ex_rbf",
+      "title": "RBF Kernel Similarity ও Self-Similarity যাচাই",
+      "prompt": "দুটি বিন্দু `x = [0.0, 0.0]`, `z = [1.0, 0.0]` এবং `gamma = 0.5` দেওয়া আছে। এদের মধ্যকার RBF Kernel মান `exp(−gamma × ‖x − z‖²)` হিসাব করে `answer` চলকে সংরক্ষণ করুন এবং একই বিন্দুর নিজের সাথে সাদৃশ্য (`Self-Similarity`) ঠিক `1` হয় কি না তা যাচাই করুন।",
+      "starter": "import numpy as np\n\nx = np.array([0.0, 0.0])\nz = np.array([1.0, 0.0])\ngamma = 0.5\n# TODO kernel\nanswer = None\n",
+      "solution": "import numpy as np\n\nx = np.array([0.0, 0.0])\nz = np.array([1.0, 0.0])\ngamma = 0.5\nanswer = float(np.exp(-gamma * np.sum((x - z) ** 2)))\nassert np.exp(-gamma * np.sum((x - x) ** 2)) == 1\nprint(answer)\n",
+      "expected": 0.6065306597126334,
+      "explanation": "এখানে বর্গ দূরত্ব `‖x − z‖² = 1.0`, তাই RBF Kernel মান `exp(−0.5) ≈ 0.6065307` (`0.6065306597126334`)। অন্যদিকে একই ইনপুটের ক্ষেত্রে বর্গ দূরত্ব শূন্য হওয়ায় Self-Similarity সবসময় `exp(0) = 1` হয়।"
+    },
+    {
+      "id": "ch11_ex_knn",
+      "title": "শূন্য দূরত্বের Exact Match ওজন নীতি",
+      "prompt": "নির্বাচিত তিনজন নিকটতম প্রতিবেশীর দূরত্ব `d = [0.0, 0.0, 2.0]` এবং তাদের বাইনারি Label `y = [0, 1, 1]` দেওয়া আছে। শূন্য দূরত্বের নীতি অনুসরণ করে কেবল শূন্য দূরত্বের Exact Match বিন্দুগুলো ব্যবহার করে ধনাত্মক Class-এর ভগ্নাংশ (Positive Fraction) হিসাব করুন এবং `answer` চলকে রাখুন।",
+      "starter": "import numpy as np\n\nd = np.array([0.0, 0.0, 2.0])\ny = np.array([0, 1, 1])\n# TODO stable exact-match weights\nanswer = None\n",
+      "solution": "import numpy as np\n\nd = np.array([0.0, 0.0, 2.0])\ny = np.array([0, 1, 1])\nzero = d == 0\nw = zero.astype(float) if zero.any() else d.min() / d\nanswer = float(np.dot(w, y) / w.sum())\nassert w.tolist() == [1.0, 1.0, 0.0]\nprint(answer)\n",
+      "expected": 0.5,
+      "explanation": "দুটি শূন্য দূরত্বের Exact Match বিন্দু সমান ওজন (`1.0`) পাবে এবং অশূন্য দূরত্বের (`2.0`) প্রতিবেশীটি এই নীতিতে কোনো ওজন (`0.0`) পাবে না। ফলে দুটি Exact Match-এর Label-এর গড় দাঁড়ায় `(0 + 1) / 2 = 0.5`।"
+    },
+    {
+      "id": "ch11_ex_gaussian",
+      "title": "Gaussian Naive Bayes-এর Posterior Log-Odds",
+      "prompt": "একটি অবিচ্ছিন্ন Feature `x = 0.0`-এর জন্য দুটি Class-এর গড় `means = [0.0, 2.0]`, উভয় Class-এর Variance `1.0` এবং সমান Class Prior (`[0.5, 0.5]`) দেওয়া আছে। এই Gaussian মডেলের অধীনে Posterior Log-Odds অর্থাৎ `log(P(Class 1 | x) / P(Class 0 | x))` হিসাব করে `answer` চলকে রাখুন।",
+      "starter": "import numpy as np\n\nx = 0.0\nmeans = np.array([0.0, 2.0])\nvariances = np.ones(2)\n# TODO log odds\nanswer = None\n",
+      "solution": "import numpy as np\nfrom scipy.special import logsumexp\n\nx = 0.0\nmeans = np.array([0.0, 2.0])\nvariances = np.ones(2)\njoint = np.log([0.5, 0.5]) - 0.5 * (\n    np.log(2 * np.pi * variances) + (x - means) ** 2 / variances\n)\nlogp = joint - logsumexp(joint)\nanswer = float(logp[1] - logp[0])\nassert np.isclose(np.exp(logp).sum(), 1)\nprint(answer)\n",
+      "expected": -2,
+      "explanation": "`x = 0.0` বিন্দুতে Class 1 থেকে বর্গ ব্যবধান `(0 − 2)² = 4` এবং Class 0 থেকে বর্গ ব্যবধান `0`। সমান Prior ও অভিন্ন ধ্রুবক পদগুলো কাটাকাটি গিয়ে Log-Odds দাঁড়ায় `−0.5 × 4 = -2.0`। এখানে অবিচ্ছিন্ন Density ও একক বিন্দুর Probability-এর পার্থক্যটি সবসময় মনে রাখবেন।"
+    },
+    {
+      "id": "ch11_ex_laplace",
+      "title": "Multinomial Laplace Smoothing হিসাব",
+      "prompt": "একটি নির্দিষ্ট Class-এ দুটি Token-এর মোট সংখ্যা `counts = [3.0, 0.0]`, শব্দভাণ্ডারের আকার `2` এবং Laplace Smoothing প্যারামিটার `alpha = 1.0` দেওয়া আছে। প্রথম Token-টির Smoothed Probability নির্ণয় করে `answer` চলকে সংরক্ষণ করুন।",
+      "starter": "import numpy as np\n\ncounts = np.array([3.0, 0.0])\nalpha = 1.0\n# TODO normalized smoothed probabilities\nanswer = None\n",
+      "solution": "import numpy as np\n\ncounts = np.array([3.0, 0.0])\nalpha = 1.0\ntheta = (counts + alpha) / (counts.sum() + alpha * len(counts))\nanswer = float(theta[0])\nassert np.isclose(theta.sum(), 1) and theta[1] > 0\nprint(answer)\n",
+      "expected": 0.8,
+      "explanation": "সূত্র অনুযায়ী প্রথম Token-টির Smoothed Probability হলো `(3 + 1) / (3 + 0 + 1 × 2) = 4 / 5 = 0.8` এবং দ্বিতীয়টির `0.2`। হরে শব্দভাণ্ডারের প্রতিটি Token-এর Pseudo-count (`αV`) যুক্ত থাকা আবশ্যক।"
+    },
+    {
+      "id": "ch11_ex_absence",
+      "title": "Bernoulli মডেলে অনুপস্থিত শব্দের Log-Likelihood",
+      "prompt": "Bernoulli Naive Bayes মডেলে পর্যবেক্ষিত বাইনারি ভেক্টর `x = [0.0, 0.0]` এবং নির্দিষ্ট Class-এ শব্দ দুটির উপস্থিতির সম্ভাবনা `theta = [0.75, 0.25]` দেওয়া আছে। অনুপস্থিতির পদগুলোসহ (`1 − theta`) মোট Log-Likelihood হিসাব করে `answer` চলকে রাখুন।",
+      "starter": "import numpy as np\n\nx = np.array([0.0, 0.0])\ntheta = np.array([0.75, 0.25])\n# TODO presence plus absence\nanswer = None\n",
+      "solution": "import numpy as np\n\nx = np.array([0.0, 0.0])\ntheta = np.array([0.75, 0.25])\nanswer = float(np.sum(x * np.log(theta) + (1 - x) * np.log1p(-theta)))\nassert np.isclose(np.exp(answer), 0.25 * 0.75)\nprint(answer)\n",
+      "expected": -1.6739764335716716,
+      "explanation": "দুটি Feature-ই অনুপস্থিত থাকায় মোট Log-Likelihood হবে `log(1 − 0.75) + log(1 − 0.25) = log(0.25) + log(0.75) = log(0.1875) ≈ -1.6739764` (`-1.6739764335716716`)। Bernoulli মডেলে অনুপস্থিত শব্দগুলোও এখানে সুস্পষ্ট গাণিতিক প্রমাণ দেয়।"
+    },
+    {
+      "id": "ch11_ex_prior",
+      "title": "Prior Odds ও Likelihood Ratio থেকে Posterior নির্ণয়",
+      "prompt": "ধনাত্মক Class-এর Prior সম্ভাবনা `prior = 0.25` এবং পর্যবেক্ষিত প্রমাণের Likelihood Ratio `likelihood_ratio = 4.0` দেওয়া আছে। প্রথমে Posterior Odds বের করে সেখান থেকে চূড়ান্ত Posterior Positive Probability নির্ণয় করুন এবং `answer` চলকে রাখুন।",
+      "starter": "prior, likelihood_ratio = 0.25, 4.0\n# TODO posterior odds then probability\nanswer = None\n",
+      "solution": "prior, likelihood_ratio = 0.25, 4.0\nodds = prior / (1 - prior) * likelihood_ratio\nanswer = odds / (1 + odds)\nassert abs(answer - 4 / 7) < 1e-12\nprint(answer)\n",
+      "expected": 0.5714285714285714,
+      "explanation": "এখানে Prior Odds হলো `0.25 / 0.75 = 1/3`, তাই Posterior Odds দাঁড়ায় `(1/3) × 4 = 4/3` এবং চূড়ান্ত Posterior Probability হয় `(4/3) / (1 + 4/3) = 4/7 ≈ 0.5714286` (`0.5714285714285714`)। বাস্তবে প্রোডাকশনে এভাবে Prior সমন্বয় করার আগে Class-Conditional বণ্টন স্থির থাকার অনুমানটি আলাদাভাবে যাচাই করে নিতে হয়।"
+    }
+  ],
+  "interviews": [
+    {
+      "title": "Margin জ্যামিতি ও Dual সমাধানের প্রতিপাদন",
+      "tag": "Geometry · 20 min",
+      "prompt": "একই Hyperplane-এর সব প্যারামিটার (`w` এবং `b`) তিনগুণ করলে এর Margin কীভাবে পরিবর্তিত হয়? সেখান থেকে ধাপে ধাপে Maximum-Margin Objective প্রতিপাদন করুন।\n\nএরপর একমাত্রিক ডেটা `x = [-1, +1]`, চিহ্নযুক্ত Label `y = [-1, +1]` এবং `C = 0.2`-এর জন্য হাতে-কলমে Dual সমাধান ও Primal Objective-এর মান বের করে দেখান।",
+      "answer": "প্যারামিটার তিনগুণ করলে কাঁচা Functional Score `f(x) = wᵀx + b` তিনগুণ হয়ে যায় ঠিকই, কিন্তু Hyperplane থেকে যেকোনো বিন্দুর প্রকৃত জ্যামিতিক দূরত্ব `|wᵀx + b| / ‖w‖` হুবহু একই থাকে—কারণ লব ও হর উভয় জায়গাতেই `3` কাটাকাটি যায়। এই স্কেলিংয়ের অস্পষ্টতা দূর করতেই আমরা প্রমিত শর্ত ধরি যেন নিকটতম বিন্দুগুলোর সর্বনিম্ন Functional Margin `1` হয়। তখন দুটি Supporting Hyperplane `f(x) = +1` ও `f(x) = -1`-এর মধ্যবর্তী মোট জ্যামিতিক প্রস্থ দাঁড়ায় `2 / ‖w‖`। তাই রৈখিকভাবে বিভাজ্য (Separable) ডেটায় প্রস্থ সর্বোচ্চ করতে আমরা `y_i f(x_i) ≥ 1` শর্তের অধীনে `(1/2) ‖w‖²` মিনিমাইজ করি।\n\nএর সাথে প্রান্তিক শর্তগুলোও স্পষ্ট রাখা দরকার: `‖w‖ = 0` হলে কোনো বৈধ দিক থাকে না, জ্যামিতিক দূরত্ব ব্যবহৃত স্থানাঙ্কের এককের ওপর নির্ভরশীল, এবং কাঁচা স্কোর কখনোই সরাসরি Posterior Probability নয়। ডেটা অবিভাজ্য হলে আমরা Slack চলক `ξ_i ≥ 0` এবং পেনাল্টি `C` (কিংবা অসম ক্লাসের ক্ষেত্রে Class-ভিত্তিক `C_i`) যুক্ত করে Soft-Margin সমীকরণে যাই।\n\nপ্রদত্ত একমাত্রিক উদাহরণে সমতা শর্ত `α₁ y₁ + α₂ y₂ = 0` থেকে পাওয়া যায় `α₁ = α₂ = a`। এখানে `w = 2a` হওয়ায় Dual Objective দাঁড়ায় `D(a) = 2a − 2a²`। শর্তহীন সর্বোচ্চ বিন্দু `0.5` হলেও Box Constraint `0 ≤ a ≤ 0.2` থাকায় অনুকূল সমাধান হয় `a = 0.2`। ফলে `w = 0.4`, প্রতিসাম্য থেকে `b = 0`, এবং প্রতিটি বিন্দুতে Functional Margin `0.4` হওয়ায় দুটি Slack-ই `1 − 0.4 = 0.6`। চূড়ান্তভাবে Primal Objective `(1/2)(0.4)² + 0.2 × (0.6 + 0.6) = 0.32` এবং Dual Objective `2(0.2) − 2(0.2)² = 0.32`—দুটোই হুবহু মিলে যায়।",
+      "prerequisiteLessons": [
+        "ch11_margin",
+        "ch11_dual"
+      ]
+    },
+    {
+      "title": "Soft-Margin সমীকরণ ও লাইব্রেরির Objective অমিল নির্ণয়",
+      "tag": "Math · 25 min",
+      "prompt": "ধরুন আপনার নিজের লেখা Hinge Loss হেল্পার ফাংশনের ওজন আর `scikit-learn`-এর `LinearSVC` থেকে পাওয়া Coefficient মিলছে না। কোডে বাগ খোঁজার আগে আপনি কোন গাণিতিক ও ইমপ্লিমেন্টেশনগত বিষয়গুলো মিলিয়ে দেখবেন?",
+      "answer": "কোডে বাগ সন্দেহ করার আগে সবার প্রথমে যাচাই করতে হবে দুটি ইমপ্লিমেন্টেশন আদৌ একই গাণিতিক Objective সমাধান করছে কি না। প্রথমত, Hinge Loss কি সব Sample-এর যোগফল (Sum) না কি গড় (Mean) হিসেবে নেওয়া হয়েছে—কারণ এর ওপর নির্ভর করে `C`-এর কার্যকর স্কেল `n` গুণ বদলে যায়। দ্বিতীয়ত, আমাদের হেল্পারে সাধারণ Hinge Loss ব্যবহৃত হয় এবং Bias `b` পেনাল্টিমুক্ত থাকে; অথচ `LinearSVC` ডিফল্টভাবে Squared Hinge Loss নেয় এবং Intercept প্যারামিটারকেও Regularization-এর আওতায় আনে। পাশাপাশি একই Feature Scaling প্রয়োগ হয়েছে কি না, Class Weight দেওয়া আছে কি না এবং সলভারের Stopping Tolerance কত—তা একে একে মেলাতে হবে।\n\nনিজের হেল্পারের Subgradient যাচাই করতে অ-অন্তরীকরণযোগ্য কৌণিক বিন্দু (`y_i f(x_i) = 1`, অর্থাৎ Hinge kink) থেকে নিরাপদ দূরত্বে কেন্দ্রীয় Finite Difference চালাতে হবে এবং অপ্টিমাইজারের Convergence নথিভুক্ত করতে হবে। সবশেষে মনে রাখা জরুরি যে দুটি কোডের সংখ্যাগত উত্তর মিলে যাওয়া কেবল সমীকরণের মিল প্রমাণ করে—মডেলটির পরিসংখ্যানগত বৈধতা বা লিকেজমুক্ত হওয়া আলাদাভাবে যাচাই করতে হয়।"
+    },
+    {
+      "title": "Support Vector-এর অবস্থান, Kernel সূত্র ও প্রোডাকশন খরচ",
+      "tag": "Algorithms · 25 min",
+      "prompt": "সব Support Vector কি সবসময় ঠিক Margin সীমানার ওপরেই বসে থাকে? Kernel SVM-এর Prediction সমীকরণটি লিখুন এবং বাস্তব প্রোডাকশন Serving-এ এর কম্পিউট খরচ ব্যাখ্যা করুন।",
+      "answer": "না, সব Support Vector ঠিক Margin সীমানায় বসে থাকে না। আদর্শ Soft-Margin KKT শর্ত অনুযায়ী কেবল মুক্ত (Free) Support Vector-গুলোর (`0 < α_i < C_i`) Functional Margin ঠিক `1` হয়। কিন্তু যেসব বিন্দু উর্ধ্বসীমায় আটকে থাকে অর্থাৎ Bound Support Vector (`α_i = C_i`), তাদের Slack শূন্যের বেশি হতে পারায় তারা Margin-এর ভেতরে এমনকি Decision Boundary-এর ভুল পাশেও থাকতে পারে। বাস্তব সলভারে সংখ্যাসূচক Tolerance ও Degeneracy-এর দিকটিও মানতে হয়, আর ভবিষ্যতের কোনো অদেখা Query বিন্দুকে কখনোই ফিট করা মডেলের Support Vector বলা হয় না।\n\nKernel SVM-এর Prediction সমীকরণটি হলো `f(x) = Σ α_i y_i K(x_i, x) + b`, যেখানে যোগফলটি কেবল সক্রিয় Support Vector-গুলোর ওপর চলে। ফলে প্রোডাকশন Serving-এ প্রতিটি নতুন বিন্দুর খরচ সরাসরি Support Vector-এর সংখ্যা গুণ প্রতিবার Kernel মূল্যায়নের ব্যয়ের সমানুপাতিক; বিপরীতে Linear SVM-এ ওজন ভেক্টর `w` একবার বের করে রাখলে মাত্র `O(d)` খরচেই উত্তর দেওয়া যায়। এ ছাড়া বৈধ Kernel-এর PSD (Positive Semi-Definite) শর্ত, কেবল Training ডেটায় Feature Scaling এবং RBF-এর `γ` ও `C` একসাথে টিউন করার বাধ্যবাধকতাও মাথায় রাখতে হবে।"
+    },
+    {
+      "title": "নিখুঁত kNN ইমপ্লিমেন্টেশন, সমান দূরত্ব ও ডুপ্লিকেট বিন্দু সামলানো",
+      "tag": "Coding · 30 min",
+      "prompt": "শুরু থেকে একটি নিখুঁত (Exact) kNN প্রেডিক্টর লেখার নকশা বলুন। সমান দূরত্বের Tie, হুবহু ডুপ্লিকেট Feature ভেক্টর, শূন্য দূরত্বের Exact Match এবং ফাঁকা Query ব্যাচ আপনি কীভাবে সামলাবেন?",
+      "answer": "শুরুতেই ইনপুট অ্যারের সসীমতা (Finite মান), মাত্রার সামঞ্জস্য, `1 ≤ k ≤ n` শর্ত, নির্বাচিত Distance Metric এবং কেবল Training ডেটা থেকে শেখা স্কেলিং যাচাই করে নেব। সমান দূরত্বের অস্পষ্টতা দূর করতে প্রতিবেশীদের সাজানোর সময় প্রথমে দূরত্ব এবং দূরত্ব সমান হলে Training পুলের সুনির্দিষ্ট ইনডেক্স ক্রম ব্যবহার করব। দূরত্ব-ভিত্তিক ওজনের ক্ষেত্রে নির্বাচিত প্রতিবেশীদের ভেতর যদি এক বা একাধিক শূন্য দূরত্বের Exact Match থাকে, তবে মনগড়া `epsilon` দিয়ে ভাগ না করে কেবল সেই শূন্য-দূরত্বের বিন্দুগুলোকে সমান ধনাত্মক ওজন দেব এবং বাকিদের ওজন শূন্য ধরব; অন্যথায় সাধারণ স্কেলে নরমালাইজ করা ব্যস্তানুপাতিক দূরত্ব (`d_min / d`) ব্যবহার করব।\n\nফাঁকা Query ব্যাচ এলে ক্র্যাশ না করে সঠিক আকারের ফাঁকা আউটপুট ফেরত দেব। মনে রাখতে হবে, বাস্তব ডেটায় হুবহু একই Feature ভেক্টর দুজন ভিন্ন ব্যক্তির হতে পারে এবং তাদের প্রকৃত Label আলাদা হতে পারে; আবার বিজোড় `k` নিলেও সীমান্তবর্তী সমান দূরত্বের Cutoff Tie বা ওজনভিত্তিক সমতা দূর হয় না। টেস্ট করার সময় অনন্য দূরত্বের কেসে রেফারেন্স লাইব্রেরির সাথে হুবহু মিল যাচাই করব, তবে সীমান্তবর্তী Tie-এ লাইব্রেরির অভ্যন্তরীণ অনির্ধারিত ক্রমের সাথে হুবহু মিল দাবি করব না।",
+      "prerequisiteLessons": [
+        "ch11_votes",
+        "ch11_distance"
+      ]
+    },
+    {
+      "title": "উচ্চমাত্রিক স্থানে ‘নিকটতম’ মানেই কি সত্যিই কাছাকাছি?",
+      "tag": "Systems · 20 min",
+      "prompt": "উচ্চমাত্রিক স্থানে দশ লক্ষ সারির প্রোডাকশন Serving-এ kNN যদি পূর্ণ একমত হয়ে `1.0` ভোট ভগ্নাংশ দেয়, কেবল তা দেখেই কি উচ্চ আত্মবিশ্বাসের সাথে সিদ্ধান্ত নেওয়া যাবে?",
+      "answer": "না, কেবল `1.0` ভোট ভগ্নাংশ দেখেই নিঃসংশয় হওয়া নিরাপদ নয়। যেকোনো Query বিন্দুর জন্য গাণিতিকভাবে ‘সবচেয়ে কাছের’ `k`টি বিন্দু সবসময়ই পাওয়া যাবে, কিন্তু উচ্চমাত্রিক স্থানে তাদের প্রকৃত পরম দূরত্ব (Absolute Distance) অনেক বড় হতে পারে এবং ওই অঞ্চলে আসল Training ডেটার সমর্থন খুবই দুর্বল হতে পারে। উচ্চ মাত্রায় Distance Concentration, অপ্রাসঙ্গিক Feature-এর প্রভাব, সময়ের সাথে Distribution Shift এবং স্থানীয় ভোট ভগ্নাংশের Calibration না থাকার দিকগুলো তাই আলাদাভাবে পরীক্ষা করতে হবে।\n\nসিস্টেম প্রকৌশলের দিক থেকে নিখুঁত Brute-Force অনুসন্ধানের খরচ `O(q n d)` এবং বড় ব্যাচে দূরত্ব ম্যাট্রিক্সের মেমোরি খরচ বিপুল। তাই দশ লক্ষ সারিতে কম Latency পেতে হলে ইনডেক্স বা Approximate Nearest Neighbors (ANN)-এর `Recall@k`, Latency, Memory এবং ইনডেক্স আপডেটের সমঝোতা মাপতে হবে—এবং মনে রাখতে হবে যে প্রতিবেশী খোঁজার `Recall@k` আর চূড়ান্ত Classification নির্ভুলতা এক জিনিস নয়। পাশাপাশি পুরো Training ডেটা সংরক্ষিত থাকায় ব্যবহারকারীর ডেটা মুছে ফেলার শর্ত (Data Deletion) ও অ্যাক্সেস নীতিও নকশায় ভাবতে হবে।"
+    },
+    {
+      "title": "Naive Bayes-এর Conditional Independence ও ডুপ্লিকেট প্রমাণের প্রভাব",
+      "tag": "Probability · 20 min",
+      "prompt": "‘ডেটাসেটের Feature-গুলো পরস্পর সম্পর্কিত (Correlated) হলে Naive Bayes একেবারেই চলবে না’—এই বক্তব্যটি সংশোধন করুন। পাশাপাশি একই Feature ডুপ্লিকেট থাকলে মডেলের ওপর তার কী প্রভাব পড়ে তা ব্যাখ্যা করুন।",
+      "answer": "বক্তব্যটি নিখুঁত নয়, কারণ Naive Bayes-এর মূল অনুমানটি হলো নির্দিষ্ট Class দেওয়া থাকলে তার সাপেক্ষে শর্তসাপেক্ষ স্বাধীনতা (Conditional Independence given Class)—সামগ্রিক বা শর্তহীন (Marginal) স্বাধীনতা নয়। বাস্তবে Feature-গুলো পরস্পর সম্পর্কিত হলেও সঠিক র‍্যাঙ্কিং বা শ্রেণিবিভাগের কাজে Classifier-টি বেশ কার্যকর হতে পারে; তবে ভুল Likelihood অনুমানের কারণে এর আউটপুট Posterior Probability চরম মাত্রায় অতি-আত্মবিশ্বাসী (Overconfident) হয়ে পড়ে। বিশেষ করে কোনো ডুপ্লিকেট Feature থাকলে একই প্রমাণ দুবার গুণ হয়—অর্থাৎ Log-Space-এ একই Log-Likelihood দুবার যোগ হয়ে প্রমাণকে কৃত্রিমভাবে দ্বিগুণ গণনা (Double-count) করে।\n\nতাই Naive Bayes ব্যবহারের সময় সাধারণ Accuracy বা র‍্যাঙ্কিং এবং Probability Calibration-কে সবসময় আলাদাভাবে মূল্যায়ন করতে হয়। পাশাপাশি ডেটার প্রকৃত অর্থ বুঝে সঠিক Generative সংস্করণ—শব্দের অঋণাত্মক Count বনাম অবিচ্ছিন্ন সংখ্যার Density—এবং কেবল Training পরিধি থেকে Class Prior নেওয়ার নিয়ম স্পষ্টভাবে ব্যাখ্যা করতে হবে।",
+      "prerequisiteLessons": [
+        "ch11_bayes"
+      ]
+    },
+    {
+      "title": "Gaussian Naive Bayes-এর নিজস্ব Posterior হিসাব ও সংখ্যাগত সুরক্ষা",
+      "tag": "Coding · 25 min",
+      "prompt": "নিজ হাতে `GaussianNB`-এর Posterior Probability হিসাব করার পদ্ধতি বর্ণনা করুন। শূন্য Variance, সংখ্যাগত Underflow এবং Smoothing-এর পরিধি আপনি কীভাবে সামলাবেন?",
+      "answer": "প্রতিটি Class ও প্রতিটি Feature-এর জন্য আলাদাভাবে MLE গড় এবং `ddof = 0` (`n` দিয়ে ভাগ করা) Variance হিসাব করব, আর শূন্য বা অতি ক্ষুদ্র Variance এড়াতে একটি সুনির্দিষ্ট ধনাত্মক Smoothing নীতি প্রয়োগ করব। এরপর প্রতিটি Class-এর জন্য `log P(y = c)`-এর সাথে সব Feature-এর একমাত্রিক Gaussian Log-Density যোগ করে Log-Joint স্কোর বের করব এবং `LogSumExp` দিয়ে Normalize করে স্থিতিশীল Posterior পাব—যাতে ক্ষুদ্র সংখ্যার গুণফলজনিত Underflow না ঘটে। মনে রাখতে হবে, অবিচ্ছিন্ন Density কোনো একক বিন্দুর সরাসরি Probability নয়।\n\n`GaussianNB`-তে `var_smoothing` সাধারণত পুরো Training ডেটার বৃহত্তম Feature Variance-এর একটি ভগ্নাংশ হিসেবে যোগ হয়, তাই কাঁচা একক ও Feature Scaling-এর ওপর এর সরাসরি প্রভাব থাকে। ইমপ্লিমেন্টেশনে সসীম আকার, ধনাত্মক Variance ও Prior, Class-এর সুনির্দিষ্ট ক্রম এবং রেফারেন্স Log-Probability-এর সাথে মিল অবশ্যই টেস্ট করব। আর চরম সংখ্যাগত Overflow বা অসংগতি দেখা দিলে নীরবে `NaN` Posterior না বানিয়ে স্পষ্ট Error ছুড়ে দেব।",
+      "prerequisiteLessons": [
+        "ch11_gaussian",
+        "ch11_book_discriminant"
+      ]
+    },
+    {
+      "title": "টেক্সট Count, বাইনারি উপস্থিতি ও Naive Bayes সংস্করণ নির্বাচন",
+      "tag": "Model choice · 20 min",
+      "prompt": "ধরুন একটি Spam শনাক্তকরণ সমস্যায় আপনার কাছে শব্দের মোট সংখ্যা (Count), শব্দের বাইনারি উপস্থিতি এবং বিচ্ছিন্ন Category ID রয়েছে। কোন ক্ষেত্রে কোন Naive Bayes সংস্করণটি বেছে নেবেন এবং কোন কোন জায়গায় Data Leakage পরীক্ষা করবেন?",
+      "answer": "ইনপুটের গাণিতিক অর্থ অনুযায়ী সংস্করণ বেছে নেব: অঋণাত্মক শব্দের সংখ্যা বা মোট Token ঘটনার জন্য `MultinomialNB`, কোনো শব্দ ডকুমেন্টে আছে কি নেই সেই বাইনারি উপস্থিতি-অনুপস্থিতির জন্য `BernoulliNB`, এবং প্রতিটি আলাদা কলামের বিচ্ছিন্ন ক্যাটাগরির জন্য `CategoricalNB` উপযুক্ত। আর অসম (Imbalanced) টেক্সট ডেটায় শক্তিশালী Baseline হিসেবে Count-ধাঁচের ইনপুটে `ComplementNB` ব্যবহার করা যায়—তবে নামের ওপর ভিত্তি করে কোনো সংস্করণকেই সার্বজনীন সেরা ধরে নেওয়া যাবে না।\n\nLeakage অডিটের ক্ষেত্রে শব্দভাণ্ডার (Vocabulary) গঠন, IDF ওজন এবং Feature Selection অবশ্যই প্রতিটি Training Fold-এর ভেতরে ফিট করতে হবে, আর অজানা Token ও ফাঁকা ডকুমেন্টের জন্য সুস্পষ্ট নীতি থাকতে হবে। খেয়াল রাখতে হবে, Laplace Smoothing-এর হরে `N_c + αV` বসে (যেখানে `N_c` মোট Token সংখ্যা, ডকুমেন্ট সংখ্যা থেকে আসা Class Prior সম্পূর্ণ আলাদা), এবং Centering করা ঋণাত্মক ইনপুট কখনোই `MultinomialNB`-তে দেওয়া যাবে না। সবশেষে ব্যবহারকারী বা থ্রেড-ভিত্তিক Group ও সময়ের ওভারল্যাপ এবং আউটপুটের Calibration আলাদাভাবে পরীক্ষা করব।"
+    },
+    {
+      "title": "Decision Score `0.9` মানেই `90%` সম্ভাবনা নয়",
+      "tag": "Evaluation · 20 min",
+      "prompt": "একটি রিপোর্টে `LinearSVC`-এর কাঁচা স্কোর `0.9`-কে সরাসরি ‘`90%` সম্ভাবনা’ বলে দাবি করা হয়েছে। এই ভুলটি ব্যাখ্যা করে বলুন আপনি কীভাবে সঠিকভাবে Average Precision (AP) এবং Brier Score তুলনা করবেন?",
+      "answer": "`LinearSVC`-এর কাঁচা স্কোর একটি চিহ্নযুক্ত Margin বা র‍্যাঙ্কিং স্কোর মাত্র—এটি কখনোই Posterior Probability নয়, তাই `0.9` স্কোরকে `90%` সম্ভাবনা বলা গাণিতিকভাবে ভুল। ক্রমভিত্তিক মেট্রিক হিসেবে Average Precision (AP) সরাসরি `decision_function` থেকে বৈধভাবে হিসাব করা যায়; কিন্তু Brier Score নির্ণয় করতে হলে হয় প্রকৃত Probability Estimator দরকার, নয়তো আলাদা ডেটায় সঠিকভাবে ফিট করা Calibration প্রয়োজন। কোনো যাচাই ছাড়া মনগড়া Sigmoid বসিয়ে কাঁচা স্কোরকে Probability বানানো যাবে না।\n\nসঠিক তুলনার জন্য Group-সচেতন ডেটা বিভাজন বজায় রেখে Model নির্বাচন, Calibration ফিট এবং চূড়ান্ত মূল্যায়নের ডেটা পরিধি আলাদা রাখতে হবে। পাশাপাশি মনে রাখতে হবে, Naive Bayes-এর আউটপুট কিংবা kNN-এর স্থানীয় ভোট ভগ্নাংশও স্বয়ংক্রিয়ভাবে সু-ক্যালিব্রেটেড নয়। আর সিদ্ধান্তের খরচ-ভিত্তিক অনুকূল Threshold কেবল তখনই প্রযোজ্য, যখন সম্ভাবনার মানগুলো বাস্তবেই সু-ক্যালিব্রেটেড থাকে।"
+    },
+    {
+      "title": "নির্ধারিত বাজেটের Adult রিপোর্ট ও আন্তঃঅধ্যায় তুলনার যৌক্তিক প্রতিরক্ষা",
+      "tag": "Project · 25 min",
+      "prompt": "এই অধ্যায়ের ওয়ার্কফ্লোতে পাওয়া বিজয়ী মডেলের `AP ≈ 0.662`-কে কেন আগের অধ্যায়ের (Book 2 · Chapter 5: Ensembles & Boosting) `AP ≈ 0.734`-এর সাথে সরাসরি তুলনা করে অ্যালগরিদমের সার্বজনীন র‍্যাঙ্কিং দাবি করা যায় না?",
+      "answer": "কারণ সংখ্যা দুটি সম্পূর্ণ ভিন্ন পরীক্ষামূলক প্রোটোকল ও কম্পিউট বাজেট থেকে এসেছে। বর্তমান অধ্যায়ে নির্ধারিত বাজেটের অধীনে বাইরের Training অংশ থেকে মাত্র `6,000`টি নির্বাচিত গ্রুপ (`6,013`টি সারি) এবং পাঁচটি সংখ্যাসূচক Feature নিয়ে তিনটি ভেতরকার Group Fold-এ ছয়জন প্রার্থীর তুলনা করা হয়েছে; অথচ আগের অধ্যায়ে (Book 2 · Chapter 5) পুরো Training সেট ও ভিন্ন সার্চ বাজেট ব্যবহৃত হয়েছিল। ডেটার পরিধি ও টিউনিং বাজেট সমান না রেখে সরাসরি অ্যালগরিদমের শ্রেষ্ঠত্ব দাবি করা বৈজ্ঞানিকভাবে অসম। তা ছাড়া একই ঐতিহাসিক Validation উৎস বারবার ব্যবহৃত হওয়ায় একে সম্পূর্ণ নতুন স্বাধীন নিশ্চিতকরণ (Fresh Confirmation) বলাও চলে না।\n\nবর্তমান প্রোটোকলে বিজয়ী `LinearSVC` স্কোর `AP ≈ 0.661661` এবং `Accuracy ≈ 0.808478` অর্জন করেছে, আর এটি সরাসরি Probability দেয় না বলে Brier Score বাদ রাখা হয়েছে। পাশাপাশি ল্যাবের অ্যাসেটগুলোও মূল বেঞ্চমার্ক থেকে আলাদা—SVC ল্যাবে `1,024`টি সারি ও দুটি Feature, kNN ল্যাবে `64`টি সারির প্রতিবেশী পুল এবং Gaussian ল্যাবে দুটি সংখ্যাসূচক Feature ব্যবহৃত হয়েছে। তাই রিপোর্টে উৎস ফাইলের হ্যাশ, প্রতিটি ফিটের পরিধি, প্রক্সি গ্রুপ আইডি, `fnlwgt` ব্যবহার না করার সিদ্ধান্ত এবং বাস্তব প্রোডাকশনে ডেপ্লয়মেন্টের সীমাবদ্ধতা স্পষ্টভাবে উল্লেখ করতে হবে।"
+    }
+  ],
+  "book": {
+    "order": 11,
+    "part": "Book 2 · Classical Machine Learning",
+    "prerequisites": [
+      "chapter_05",
+      "chapter_07",
+      "chapter_08"
+    ],
+    "purpose": "Margin optimization (SVM), সাদৃশ্যভিত্তিক Neighborhood অনুসন্ধান (kNN) এবং Probability-ভিত্তিক Generative মডেলিং (Naive Bayes ও Discriminant Analysis)—এই তিনটি ক্ল্যাসিক্যাল পরিবারের গাণিতিক ভিত্তি, অনুমান ও সীমাবদ্ধতা তুলনা করে বাস্তব Dataset-এর চরিত্র অনুযায়ী সঠিক Model বেছে নেওয়ার দক্ষতা অর্জন করা।",
+    "outcomes": [
+      "Functional Margin ও Geometric Margin-এর পার্থক্য বুঝে Hard-Margin ও Soft-Margin SVM-এর Primal, Dual, KKT শর্তাবলি এবং RBF/Polynomial Kernel-এর আচরণ ব্যাখ্যা করতে পারা।",
+      "kNN-এ Distance Metric, Feature Scaling, Tie-breaking এবং উচ্চমাত্রিক স্থানে Curse of Dimensionality ও ইনডেক্সিংয়ের প্রকৌশলগত প্রভাব বিশ্লেষণ করতে পারা।",
+      "Naive Bayes-এর Conditional Independence অনুমান, Gaussian/Multinomial/Bernoulli/Complement সংস্করণ এবং GDA ও LDA-এর Generative বনাম Discriminative Decision Boundary প্রতিপাদন করতে পারা।",
+      "Data Leakage এড়িয়ে Grouped Cross-Validation, Probability Calibration এবং Latency ও Memory বাজেট মিলিয়ে তিনটি Model পরিবারের দায়িত্বশীল তুলনা করতে পারা।"
+    ],
+    "recall": [
+      "Soft-Margin SVM-এ কোনো Training Sample-এর Lagrange Multiplier কখন 0, কখন (0, C)-এর ভেতরে, আর কখন ঠিক C-এর সমান হয়?",
+      "Feature Scaling না করলে kNN এবং RBF SVM উভয়েরই জ্যামিতিক আচরণ কীভাবে বিকৃত হয়ে যায়?",
+      "Naive Bayes-এর Conditional Independence অনুমান সাধারণ Unconditional (Marginal) Independence থেকে ঠিক কোথায় আলাদা?",
+      "দুটি একমাত্রিক Gaussian Class-এর Shared Variance 2 হলে x বিন্দুতে Log-Odds কেমন হয়, এবং Class 1-এর Prior কমলে Decision Boundary কোন দিকে সরে যায়?"
+    ],
+    "bridge": "এই অধ্যায়ে আমরা Label থাকা ডেটার ওপর দাঁড়িয়ে জ্যামিতিক Margin, স্থানীয় Distance ও Probability Density দিয়ে সিদ্ধান্ত নিতে শিখেছি। এর পরের ধাপে আমরা যাব Book 2 · Chapter 7 (Clustering & Dimensionality Reduction)-এ—যেখানে কোনো Label ছাড়াই ঠিক এই Distance ও জ্যামিতির ধারণাগুলো কাজে লাগিয়ে ডেটার ভেতরের সুপ্ত গঠন খুঁজে বের করা হবে। পরের অধ্যায়ে পা রাখার আগে এই অধ্যায়ের Quiz, Coding Exercise ও না-দেখে উত্তর দেওয়ার Interview প্রশ্নগুলো অবশ্যই যাচাই করে নিন।",
+    "bookId": "classical",
+    "bookChapter": 6
+  }
+}

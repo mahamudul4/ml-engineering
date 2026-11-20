@@ -1,0 +1,1632 @@
+{
+  "id": "chapter_33",
+  "number": 33,
+  "title": "Recommendation Evaluation & Feedback Loops",
+  "shortTitle": "Recommendation Evaluation",
+  "displayTitle": "Recommendation Evaluation\nMeasure. Compare. Question.",
+  "subtitle": "শুধু একটি একক Metric নয়—প্রতিটি সংখ্যার পেছনের Target Population, Uncertainty এবং Observation Process গভীরভাবে বুঝুন।",
+  "description": "Compare fairly. Trace the bias.\nMeasure diversity. Plan the experiment.",
+  "difficulty": "Advanced · evaluation & causal limits",
+  "lab": "recommendation_evaluation",
+  "lessons": [
+    {
+      "id": "ch33_contract",
+      "title": "Evaluation Contract: কোন সিদ্ধান্তের জন্য কোন Evidence প্রয়োজন?",
+      "subtitle": "Offline Metric, Policy Quality ও Causal Lift—তিনটি সম্পূর্ণ আলাদা প্রশ্ন",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "সংখ্যা দেখার আগে আসল প্রশ্নটি ঠিক করি",
+          "body": "আগের অধ্যায়ে (Book 5 · Chapter 3: Deep Recommendation & Ranking) আমরা বেশ কিছু শক্তিশালী Ranking Model তৈরি করেছি। কিন্তু একটু ভাবুন তো—কোনো Model-এর Offline Ranking Score বাড়লেই কি বাস্তবে ইউজাররা বেশি সন্তুষ্ট হবেন? কিংবা প্রোডাক্টের দীর্ঘমেয়াদি Retention বা আসল Causal Lift-ও কি নিশ্চিতভাবে বাড়বে? বাস্তবে এগুলো সম্পূর্ণ আলাদা প্রশ্ন। হাতেগোনা কয়েকজন সক্রিয় ইউজারের সুন্দর একটি Top 10 তালিকা দেখে পুরো প্রোডাক্টের সব ইউজার সম্পর্কে চূড়ান্ত সিদ্ধান্ত নেওয়া যায় না।\n\nতাই কোনো Metric হিসাব করার আগেই আমাদের একটি স্পষ্ট Evaluation Contract লিখে নিতে হবে: আমাদের Target Population কারা, ইউজারের Feedback কোন প্রক্রিয়ায় সংগৃহীত হয়েছে, এবং ঠিক কোন Baseline Policy-র সাথে আমরা নতুন Model-এর তুলনা করছি। এই ভিত্তিটি পরিষ্কার করে নিলে পরের পাঠগুলোতে Uncertainty, Exposure Bias, Diversity এবং Online A/B Test-এর পারস্পরিক সম্পর্ক বোঝা অনেক সহজ হয়ে যাবে।"
+        },
+        {
+          "type": "text",
+          "title": "এই অধ্যায়ের কাজের পরিধি ও নিয়ম",
+          "body": "এই অধ্যায়ে আমরা Book 5 · Chapter 3 (Deep Recommendation & Ranking) থেকে পাওয়া Frozen Prediction-গুলোর ওপর দাঁড়িয়েই সব পরীক্ষা-নিরীক্ষা চালাব। আমরা ধাপে ধাপে Paired User Bootstrap, Early ও Late Window তুলনা এবং Cold Cohort-এর Denominator Audit করব; পাশাপাশি একই Candidate 100 Pool-এর ওপর MMR Diversity Reranking চালিয়ে দেখব। পুরো প্রক্রিয়ায় আমরা মূল Dataset বা আগের Model Weight-এ কোনো পরিবর্তন আনব না এবং কৃত্রিমভাবে কোনো Online Event বা কাল্পনিক ইউজার পছন্দও তৈরি করব না।"
+        },
+        {
+          "type": "math",
+          "title": "Evaluation Evidence-এর ছয়টি স্তম্ভ",
+          "body": "\\mathrm{evidence}=\\{\\mathrm{task},\\mathrm{population},\\mathrm{labels},\\mathrm{policy},\\mathrm{time},\\mathrm{uncertainty}\\}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ ল্যাব রিপোর্টের প্রটোকল যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_evaluation_lab.json\").read_text()\n)\n\nassert lab[\"report\"][\"warm_users\"] == 28\nassert lab[\"report\"][\"broad_users\"] == 116 and lab[\"report\"][\"cold_users\"] == 88\nprint(lab[\"paired\"][\"neural50:user_cf:recall\"][\"bootstrap\"][\"mean\"])\nprint(lab[\"report\"][\"protocol\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের Dataset আসলে কাদের প্রতিনিধিত্ব করছে?",
+          "body": "উপরের কোডটি চালালে দেখতে পাবেন, আমাদের বাস্তব MovieLens ল্যাবে মূল মূল্যায়নের জন্য 28 জন Warm Eligible User, বিস্তৃত পরিসরে 116 জন Broad Future-positive User এবং 88 জন Outer-cold User রয়েছেন। এখানে Positive Label তৈরি করা হয়েছে ইউজারের দেওয়া `rating >= 4` থেকে; কিন্তু ইউজার কোন কোন সিনেমা স্ক্রিনে দেখেছেন (Impression), ক্লিক করার সম্ভাবনা কত ছিল (Click Propensity), কিংবা কোনো Online Treatment Assignment এখানে নেই। তাছাড়া যারা নিজ উদ্যোগে রেটিং দিয়েছেন সেই Self-selected Rater-রা কোনো আধুনিক অ্যাপের গড়পড়তা নীরব ইউজারদের হুবহু প্রতিনিধিত্ব করেন না—এই বাস্তব সীমাবদ্ধতাটি মাথায় রেখেই আমাদের প্রতিটি ফলাফল পড়তে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "তিন ধরনের ভিন্ন Evidence গুলিয়ে ফেলবেন না",
+          "body": "এই অধ্যায়ে আমরা তিন ধরনের উপকরণ ব্যবহার করব এবং প্রতিটির চরিত্র আলাদা। প্রথমত, Frozen বাস্তব ডেটার ওপর হিসাব করা সংখ্যাগুলো হলো Empirical Diagnostic। দ্বিতীয়ত, পরের দিকে ব্যবহৃত IPS হিসাব এবং Sample Size নির্ণয়ের উদাহরণগুলো হলো গাণিতিক ধারণা স্পষ্ট করার কাঠামোবদ্ধ উদাহরণ। আর তৃতীয়ত, সত্যিকারের Online Experiment, বাস্তব Causal Lift বা দীর্ঘমেয়াদি Feedback Loop-এর লাইভ ট্রায়াল এই অফলাইন ল্যাবে চালানো হয়নি। এই সীমারেখাগুলো স্পষ্ট করে না বললে যেকোনো অফলাইন প্রোটোটাইপকে ভুলবশত বাস্তব প্রমাণের চেয়ে অনেক বেশি শক্তিশালী মনে হতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "অমীমাংসিত বা নেতিবাচক ফলাফলও মূল্যবান প্রকৌশল শিক্ষা",
+          "body": "কোডের আউটপুটে খেয়াল করুন, `neural50` এবং `user_cf`-এর গড় Recall-এর পার্থক্য `+0.007113` হলেও এর শর্তসাপেক্ষ 95% Confidence Interval কিন্তু `0` অতিক্রম করে—অর্থাৎ এই পার্থক্যটি পরিসংখ্যানগতভাবে নিশ্চিত নয়। একইভাবে পরে আমরা দেখব, MMR দিয়ে তালিকার Diversity বাড়ালে ইউজারের Observed Relevance কিছুটা কমেও যেতে পারে। প্রকৃত ML Engineering-এ এ ধরনের অমীমাংসিত বা Tradeoff-যুক্ত ফলাফল লুকিয়ে না রেখে স্বচ্ছভাবে নথিভুক্ত করাই হলো পেশাদারিত্বের পরিচয়।"
+        },
+        {
+          "type": "text",
+          "title": "ইন্টারভিউ ও Capstone প্রস্তুতির লক্ষ্য",
+          "body": "একজন দক্ষ ML Engineer হিসেবে আপনার লক্ষ্য হওয়া উচিত প্রতিটি Metric-এর সূত্র ব্যাখ্যা করা, Denominator নিরীক্ষা করা, ফলাফলের Uncertainty বিশ্লেষণ করা এবং সবশেষে একটি যুক্তিসংগত Experiment Plan দাঁড় করানো। কেবল একটি চমকপ্রদ Algorithm-এর নাম বা একা একটি `p-value` দেখিয়ে প্রোডাকশন লঞ্চের সিদ্ধান্ত নেওয়া যায় না। Book 5 · Chapter 5 (Recommender Capstone)-এ যাওয়ার আগে নিজেই এমন একটি পূর্ণাঙ্গ Evaluation Contract লেখার অভ্যাস গড়ে তুলুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch33_metrics",
+      "title": "Ranking Metrics: Precision, Recall, NDCG, MRR ও Averaging",
+      "subtitle": "একই Recommendation তালিকাকে ভিন্ন ভিন্ন প্রশ্নের চোখে দেখা",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Precision এবং Recall: তালিকায় কয়টি প্রাসঙ্গিক Item এলো?",
+          "body": "ধরুন আমরা ইউজারকে একটি Top 10 তালিকা দেখালাম। সেই 10টি সুপারিশের মধ্যে কয়টি আমাদের জানা ভবিষ্যৎ পছন্দের তালিকার (Observed Positive) সাথে মিলল, তাকে 10 দিয়ে ভাগ করলে পাওয়া যায় `Precision@10`। অন্যদিকে ইউজারের মোট প্রাপ্য বা Eligible Future Positive আইটেমগুলোর মধ্যে কত শতাংশ আমাদের Top 10 তালিকায় জায়গা পেল, সেটাই হলো `Recall@10`। তবে একটি মৌলিক কথা মনে রাখা জরুরি: তালিকার কোনো Item-এ ইউজারের রেটিং না থাকা মানেই কিন্তু সেটি বস্তুনিষ্ঠভাবে অপ্রাসঙ্গিক নয়, কারণ ইউজার আদৌ সিনেমাটি কখনো দেখেছেন কি না তা আমাদের জানা নেই। তাই আমাদের Label-গুলো মূলত Observed-positive তথ্যের ওপর ভিত্তি করে তৈরি।"
+        },
+        {
+          "type": "text",
+          "title": "তালিকার ক্রম যখন গুরুত্বপূর্ণ: MRR বনাম NDCG",
+          "body": "সাধারণ Precision বা Recall শুধু দেখে Top K-এর ভেতরে প্রাসঙ্গিক Item আছে কি না, কিন্তু সেটি তালিকার 1 নম্বরে আছে নাকি 10 নম্বরে—তা আলাদা করে দেখে না। এই ঘাটতি পূরণ করে ক্রম-সংবেদনশীল (Order-sensitive) মেট্রিকগুলো। যেমন, `MRR` (Mean Reciprocal Rank) কেবল তালিকার প্রথম সফল Hit-টি কত নম্বরে এলো তার বিপরীত মান (`1 / rank`) হিসাব করে; ফলে তালিকার নিচের দিকে দ্বিতীয় বা তৃতীয় আরেকটি ভালো Item যুক্ত হলেও `MRR` অপরিবর্তিত থাকে। বিপরীতে, Binary `NDCG` তালিকার ভেতরে থাকা প্রতিটি Hit-কে তার অবস্থান অনুযায়ী লগারিদমিক Discount দিয়ে যোগ করে (`DCG`) এবং সম্ভাব্য সেরা আদর্শ ক্রমের স্কোর (`IDCG`) দিয়ে ভাগ করে Normalize করে। প্রোডাক্টের লক্ষ্য যদি হয় ইউজারকে দ্রুত একটিমাত্র সঠিক জিনিস খুঁজে দেওয়া, তবে `MRR` দারুণ কাজ করে; আর লক্ষ্য যদি হয় ব্রাউজিংয়ের জন্য একাধিক ভালো সিনেমা সামনে আনা, তবে `NDCG` অনেক বেশি অর্থবহ।"
+        },
+        {
+          "type": "math",
+          "title": "চারটি মূল Ranking Metric-এর গাণিতিক সংজ্ঞা",
+          "body": "P@K=h/K,\\quad R@K=h/|G|,\\quad\\mathrm{MRR}@K=\\frac{\\mathbf1[\\mathrm{hit}]}{\\mathrm{rank}_{first}},\\quad\\mathrm{NDCG}=\\mathrm{DCG}/\\mathrm{IDCG}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Precision, Recall, MRR ও NDCG যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"eval33\", Path(\"assets/datasets/movielens/recommendation_evaluation_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\n\n# Declared mathematical fixture, not a MovieLens performance result.\nv = m.metrics([10, 20, 30, 40, 50], [20, 40, 60], 5)\nassert v[\"precision\"] == 0.4 and v[\"recall\"] == 2 / 3 and v[\"mrr\"] == 0.5\nassert m.metrics([1, 2], [], 2)[\"recall\"] is None\nprint(v)\n"
+        },
+        {
+          "type": "text",
+          "title": "সব ইউজারের স্কোর গড় করার নিয়ম: Macro বনাম Micro",
+          "body": "একজন ইউজারের জন্য হিসাব তো বোঝা গেল, কিন্তু পুরো ইউজার বেসের ওপর গড় নেওয়া হবে কীভাবে? আমরা যদি প্রতিটি Eligible User-এর আলাদা Metric বের করে সবার সমান গুরুত্ব (Equal Weight) দিয়ে গড় করি, তাকে বলে User-macro Averaging। আর যদি সব ইউজারের মোট Hit সংখ্যাকে সব ইউজারের মোট প্রাসঙ্গিক Item সংখ্যা দিয়ে ভাগ করি, তবে সেটি হয় Micro-recall—যেখানে হাতেগোনা কয়েকজন অতি-সক্রিয় ইউজারের আচরণ পুরো ফলাফলকে একচেটিয়াভাবে প্রভাবিত করে। আমাদের কোড ও ল্যাব রিপোর্ট সবসময় User-macro গড় ব্যবহার করে; তুলনার সময় কখনোই এটিকে নিঃশব্দে Event-average বা সামগ্রিক অনুপাতের সাথে গুলিয়ে ফেলবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "যখন ভবিষ্যৎ প্রাসঙ্গিক তালিকা শূন্য (Empty Gold Case)",
+          "body": "কোনো ইউজারের যদি পরীক্ষার সময়সীমায় একটিও প্রাপ্য Positive Item না থাকে (`|G| = 0`), তবে শূন্য দিয়ে ভাগের কারণে তার `Recall`, `NDCG` এবং `MRR` গাণিতিকভাবে অসংজ্ঞায়িত (Undefined) হয়ে যায়—যেরকমটি উপরের কোডে `None` রিটার্ন করার মাধ্যমে দেখানো হয়েছে। `Precision@K`-এ যেহেতু হর হিসেবে স্থির `K` থাকে তাই সেখানে হিসাব করা গেলেও, `Recall` বা `NDCG` রিপোর্ট করার সময় কাদেরকে হিসাবের বাইরে রাখা হচ্ছে সেই নিয়মটি আগেই স্পষ্ট করে লিখতে হবে। কোনো Cohort খালি হলে সেটিকে কৃত্রিমভাবে `0.0` মান না বসিয়ে স্পষ্টভাবে Undefined হিসেবেই দেখানো উচিত।"
+        },
+        {
+          "type": "text",
+          "title": "Relevance Threshold এবং K বেছে নেওয়ার সতর্কতা",
+          "body": "আমাদের ল্যাবে `rating >= 4`-কে Binary Relevance ধরা হয়েছে। কিন্তু বাস্তব প্রোডাক্টে আমরা যদি স্টারের মাত্রা অনুযায়ী Graded Gain, ভিডিও দেখার সময় (Watch Time) কিংবা কেনাকাটার আর্থিক মূল্য ব্যবহার করি, তবে অপটিমাইজেশনের পুরো লক্ষ্যই বদলে যাবে। একইভাবে `K = 5` নেওয়া হবে নাকি `K = 10`, সেটিও ইউজার ইন্টারফেসের ডিজাইনের ওপর নির্ভর করে। সব ফলাফল দেখার পর যে `Threshold` বা যে `K`-তে নিজের Model ভালো দেখায় সেটি বেছে নিয়ে চূড়ান্ত সাফল্য দাবি করা এক ধরনের সূক্ষ্ম Selection Bias—এটি সবসময় এড়িয়ে চলতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "মেট্রিক হিসাবের আগে অপরিহার্য Sanity Check",
+          "body": "মেট্রিকের সমীকরণ নিখুঁত হলেও ডেটা পাইপলাইনের সূক্ষ্ম ভুলে পুরো তুলনা ভণ্ডুল হতে পারে। তাই সবসময় যাচাই করুন: সুপারিশ তালিকায় কোনো ডুপ্লিকেট Item ID নেই তো? তালিকাটি সত্যিই নির্ধারিত Candidate Pool থেকেই এসেছে তো? ইউজার আগে দেখে ফেলেছেন এমন সব Item ঠিকমতো ফিল্টার করা হয়েছে এবং সমান স্কোরের ক্ষেত্রে (Tie-breaking) স্থির নিয়ম মানা হয়েছে তো? মনে রাখবেন, সম্পূর্ণ Fit Catalog-এর বিপরীতে র‍্যাংকিং করা আর মাত্র কয়েকটি Sampled Negative-এর বিপরীতে র‍্যাংকিং করা কখনোই সমান কথা নয়—দ্বিতীয় ক্ষেত্রে স্কোর অস্বাভাবিকভাবে বেশি দেখায়।"
+        }
+      ]
+    },
+    {
+      "id": "ch33_cohorts",
+      "title": "Warm, Cold ও Broad Cohort: Denominator Audit কেন জরুরি?",
+      "subtitle": "কতজন ইউজার বাদ পড়লেন সেই Coverage না জানালে যেকোনো Quality Report অসম্পূর্ণ",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "তিনটি ভিন্ন ইউজার গোষ্ঠী (Cohort) ও তাদের সংজ্ঞা",
+          "body": "যেকোনো গড় মেট্রিক দেখার সময় প্রথম প্রশ্ন হওয়া উচিত: ভগ্নাংশের নিচে থাকা হর বা Denominator-এ আসলে কারা আছেন? আমাদের ল্যাবে তিনটি সুনির্দিষ্ট পরিধি রয়েছে। প্রথমত, `Warm` Eligible User হলেন তারা, যাদের কাটঅফ সময়ের আগে রেটিং ইতিহাস (`|H_u| > 0`) আছে এবং ভবিষ্যতে অন্তত একটি Candidate-eligible পছন্দের সিনেমা (`|G_u^{eligible}| > 0`) রয়েছে। দ্বিতীয়ত, `Broad` Cohort-এ ভবিষ্যতে অন্তত একটি প্রাসঙ্গিক রেটিং দেওয়া সব ইউজারকেই ধরা হয়—এমনকি যেসব নতুন সিনেমা আমাদের পুরোনো ক্যাটালগে না থাকায় সুপারিশ করা অসম্ভব, সেগুলোর ইউজাররাও এতে থাকেন। আর তৃতীয়ত, `Cold` User হলেন তারা, যাদের বাইরের ট্রেনিং সময়সীমায় কোনো ইতিহাসই নেই (`|H_u| = 0`)। বুঝতেই পারছেন, এই তিনটি Denominator সম্পূর্ণ আলাদা গল্প বলে।"
+        },
+        {
+          "type": "text",
+          "title": "কেন অফলাইন মেট্রিক মাঝে মাঝে বিভ্রান্তিকরভাবে ভালো দেখায়?",
+          "body": "আমরা যদি হিসাবের তালিকা থেকে সব Cold ইউজার এবং নাগালের বাইরের কঠিন Target Item-গুলো ছেঁটে ফেলি, তবে কেবল `Warm` ইউজারদের ওপর গড় স্কোর স্বভাবতই অনেক উজ্জ্বল দেখাবে। কেবল ব্যক্তিগতকৃত র‍্যাংকিংয়ের সক্ষমতা মাপার জন্য এই সীমিত পরীক্ষাটি বৈধ হতে পারে, কিন্তু সেই সংখ্যাটিকে কখনোই 'আমাদের সিস্টেম সব ইউজারের জন্য এত ভালো কাজ করে' বলে চালিয়ে দেওয়া যাবে না। তাই যেকোনো মানের রিপোর্টের পাশেই ইউজার Coverage এবং ক্যাটালগের কতটুকু অংশ হিসাবের বাইরে রয়ে গেল তা পাশাপাশি তুলে ধরা বাধ্যতামূলক।"
+        },
+        {
+          "type": "math",
+          "title": "Warm এবং Cold ইউজার সেটের গাণিতিক সংজ্ঞা",
+          "body": "U_{warm}=\\{u:|H_u|>0,|G_u^{eligible}|>0\\},\\quad U_{cold}=\\{u:|H_u|=0,|G_u|>0\\}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ তিন Cohort-এর আকার ও Recall তুলনা",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"eval33\", Path(\"assets/datasets/movielens/recommendation_evaluation_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_evaluation_lab.json\").read_text()\n)\n\nfor scope in [\"warm\", \"broad\", \"cold\"]:\n    rows = m.cohort(lab[\"rows\"], scope)\n    print(scope, len(rows), m.score(lab[\"rows\"], \"neural50\", scope)[\"recall\"])\nassert len(m.cohort(lab[\"rows\"], \"warm\")) == 28\n"
+        },
+        {
+          "type": "text",
+          "title": "Cold-start পরিস্থিতিতে Fallback Policy-র ভূমিকা",
+          "body": "Book 5 · Chapter 3 (Deep Recommendation & Ranking)-এর নিউরাল পাইপলাইনে আমরা দেখেছি, কোনো ইউজারের যদি আগে থেকে Retrieval-positive ইতিহাস না থাকে, তবে সিস্টেম স্বয়ংক্রিয়ভাবে সাধারণ Popularity তালিকা দেখিয়ে দেয়। ফলে `Broad` Cohort-এর সামগ্রিক স্কোরের একটি বড় অংশ আসলে নিউরাল মডেলের নিজস্ব কৃতিত্ব নয়, বরং ওই Baseline Fallback-এর ফল! আবার এই অধ্যায়ে আমরা যখন নতুন MMR পরীক্ষা চালাব, তখন সেটি Cold ইউজারদের ওই Popularity স্কোরগুলোকেও নতুন করে Rerank করবে—অর্থাৎ এটি একটি ঘোষিত নতুন Policy পরিবর্তন, আগের হুবহু অপরিবর্তিত Fallback নয়।"
+        },
+        {
+          "type": "text",
+          "title": "কোন Item-গুলো সুপারিশের যোগ্য (Eligibility Boundary)?",
+          "body": "যেসব সিনেমা আমাদের ট্রেনিং সময়সীমার ক্যাটালগেই (Fit Catalog) কখনো আসেনি, ফ্রোজেন মডেল সেগুলো কখনোই সুপারিশ করতে পারবে না। তাই মূল Eligible Recall হিসাবের সময় সেগুলোকে বাদ রাখা হয়, যদিও `Broad` Denominator-এ সেগুলো ঠিকই না-পাওয়া বা Miss হিসেবে গণ্য হয়। একইভাবে ইউজার আগে দেখে কম রেটিং দিয়েছেন এমন সিনেমাও আমরা বাদ রাখি, কারণ আমাদের বর্তমান কাজটি হলো অদেখা নতুন সিনেমার সন্ধান দেওয়া (Unseen Discovery)। তবে আপনার প্রোডাক্ট যদি গানের অ্যাপ বা বারবার কেনার গ্রোসারি শপ হয় (Repeat Consumption), তবে এই নিয়মটি নতুন করে সংজ্ঞায়িত করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "বিভিন্ন Slice বিশ্লেষণ ও Fairness প্রসঙ্গে সতর্কতা",
+          "body": "ইউজারের সক্রিয়তার মাত্রা, Cold অবস্থা বা সময়ের ভিত্তিতে ফলাফলকে ছোট ছোট অংশে (Slice) ভাগ করে দেখা সিস্টেমের ত্রুটি ধরার দারুণ একটি প্রকৌশল কৌশল। তবে খেয়াল রাখতে হবে, আমাদের এই ডেটাসেটে বয়স, লিঙ্গ বা অঞ্চলের মতো কোনো সংবেদনশীল জনমিতিক (Demographic) তথ্য নেই; তাই এই Slice বিশ্লেষণকে সামাজিক Fairness-এর সনদ হিসেবে দাবি করা যাবে না। কখনোই কেবল User ID বা আচরণের ধরন দেখে অনুমাননির্ভর জনমিতিক পরিচয় আরোপ করবেন না, এবং মনে রাখবেন যে ছোট আকারের যেকোনো Slice-এ পরিসংখ্যানগত Uncertainty অনেক বড় হতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "পেশাদার রিপোর্টিংয়ের সুঅভ্যাস",
+          "body": "যেকোনো মূল্যায়ন টেবিল উপস্থাপনের সময় তার সাথে ইউজারের সংখ্যা, প্রাসঙ্গিক Item-এর সংজ্ঞা, ব্যবহৃত Fallback নিয়ম, Candidate Set এবং সময়সীমা স্পষ্টভাবে উল্লেখ করুন। দুটি পরীক্ষার মডেলের নাম এক হলেও তাদের Denominator বা ফিল্টারিং নিয়ম আলাদা হলে কখনোই ন্যায্য তুলনা (Apples-to-apples Comparison) হয় না। আর সব Slice ঘেঁটে কেবল যে ছোট অংশে নিজের মডেল জিতেছে সেটি বেছে নিয়ে পরে প্রোডাক্ট লঞ্চের অজুহাত তৈরি করবেন না।"
+        }
+      ]
+    },
+    {
+      "id": "ch33_temporal",
+      "title": "Frozen Early/Late Windows ও সময়ের সাথে Generalization",
+      "subtitle": "সময়খণ্ডের ডায়াগনস্টিক মানে মডেলকে নতুন করে Training দেওয়া নয়",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "সময়ের প্রশ্নটি কেন বাস্তব সিস্টেমে এত গুরুত্বপূর্ণ?",
+          "body": "বাস্তব প্রোডাকশনে একটি মডেল ট্রেনিংয়ের পর কতদিন অপরিবর্তিত (Frozen) অবস্থায় চলবে, ইউজারের সাড়া পেতে কতটা সময় লাগবে (Feedback Delay), কিংবা ক্যাটালগের আইটেম কত দ্রুত বদলাবে—আমাদের Evaluation Horizon ঠিক সেই বাস্তব প্রশ্নের আদলেই সাজাতে হয়। এখানে একটি সূক্ষ্ম তথ্যগত পার্থক্যও মনে রাখা দরকার: MovieLens ডেটাসেটের Timestamp হলো ইউজার কখন ওয়েবসাইটে বসে রেটিং এন্ট্রি দিয়েছেন সেই সময়, সিনেমাটি ঠিক কবে দেখেছিলেন সেই প্রকৃত Watch Time নয়। আর আমাদের বর্তমান পরীক্ষাটি একটি স্থির Pre-cutoff Policy যাচাই করছে, প্রতি মুহূর্তে আপডেট হওয়া কোনো Online Model নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Early এবং Late Window কীভাবে ভাগ করা হয়েছে?",
+          "body": "কাটঅফ সময়ের পরের সব ভবিষ্যৎ রেটিংকে সময় অনুযায়ী সাজিয়ে তাদের ঠিক মাঝখানের Median Timestamp `1498029450`-কে আমরা সীমানা হিসেবে নিয়েছি। এই সময়ের সমান বা আগের সব ঘটনা গেছে `Early` Window-তে, আর পরের ঘটনাগুলো গেছে `Late` Window-তে। সবচেয়ে গুরুত্বপূর্ণ বিষয় হলো: দুটি সময়খণ্ডেই কিন্তু মডেলের হুবহু একই Frozen সুপারিশ তালিকা ব্যবহৃত হয়েছে—মাঝপথে মডেল, Feature, ক্যাটালগের পরিসংখ্যান বা Ranking Weight কোনোটিই নতুন করে Refit করা হয়নি।"
+        },
+        {
+          "type": "math",
+          "title": "Median Timestamp দিয়ে ভাগ করা দুটি সময়খণ্ড ও স্থির Policy",
+          "body": "R_{early}:t\\le t_m,\\quad R_{late}:t>t_m,\\quad\\hat\\pi_{early}=\\hat\\pi_{late}=\\hat\\pi_{frozen}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Early ও Late Window-এর ইভেন্ট ও স্কোরকার্ড যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_evaluation_lab.json\").read_text()\n)\n\nassert lab[\"windows\"][\"early\"][\"events\"] + lab[\"windows\"][\"late\"][\"events\"] == 20168\nfor window in [\"early\", \"late\"]:\n    w = lab[\"windows\"][window]\n    print(window, w[\"events\"], w[\"scorecards\"][\"neural50\"])\nprint(\"fixed boundary\", lab[\"report\"][\"future_window_boundary\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "সময় বদলালে শুধু মডেল ক্ষয় হয় না, ইউজারের দলও বদলায়",
+          "body": "কোড চালিয়ে `Early` এবং `Late` অংশের স্কোরের পার্থক্য দেখলে চট করে মনে হতে পারে—সময়ের সাথে সাথে বুঝি মডেলের ধার কমে গেছে (Model Decay)! কিন্তু একটু গভীরভাবে তাকালে দেখবেন, এই দুই সময়খণ্ডে কোন ইউজাররা সক্রিয় ছিলেন এবং তাদের প্রাপ্য Positive সিনেমা কোনগুলো ছিল, সেই Denominator-ও কিন্তু বদলে গেছে। তাই স্কোরের ওঠানামার পেছনে মডেলের পুরোনো হয়ে যাওয়া একমাত্র কারণ নাও হতে পারে; দর্শকদের রুচি ও উপস্থিতির পরিবর্তনও বড় ভূমিকা রাখে। আমরা যদি হুবহু একই ইউজার দলের সময়ের পরিবর্তন মাপতে চাই, তবে শুরুতেই উভয় সময়খণ্ডে উপস্থিত স্থির ইউজারদের নিয়ে নতুন একটি Paired-window Estimand সংজ্ঞায়িত করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "এটি কেন Prequential বা ক্রমান্বয়ে আপডেট হওয়া মূল্যায়ন নয়?",
+          "body": "লক্ষ্য করুন, `Early` সময়খণ্ডে ইউজাররা যেসব নতুন সিনেমায় রেটিং দিয়েছেন, `Late` সময়খণ্ডের মূল্যায়নের আগে আমরা সেগুলোকে ইউজারের ইতিহাসে যোগ করিনি বা তালিকা থেকে সরিয়েও দিইনি। ফলে `Late` অংশের সুপারিশ তালিকায় এমন সিনেমাও থাকতে পারে যা ইউজার ইতিমধ্যে `Early` অংশে দেখে ফেলেছেন। বাস্তব স্ট্রিমিং বা Prequential Serving সিস্টেমে প্রতিদিন ইউজারের ইতিহাস আপডেট হলে সেটি সম্পূর্ণ ভিন্ন একটি ডাইনামিক Policy হয়ে যেত—আমাদের বর্তমান ল্যাব ইন্টারফেসে এই স্থির বা Freeze নিয়মটি স্পষ্টভাবে উল্লেখ করা আছে।"
+        },
+        {
+          "type": "text",
+          "title": "বারবার দেখা ডেটা কখনোই নতুন Blind Test নয়",
+          "body": "আরেকটি গবেষণাধর্মী সততার জায়গা হলো Selection Boundary। কাটঅফের পরের এই পুরো ভবিষ্যৎ সময়সীমাটি কিন্তু আমরা ইতিমধ্যে Book 5 · Chapter 1 থেকে Chapter 3 পর্যন্ত বিভিন্ন মডেল তৈরি ও তুলনার কাজে ব্যবহার করেছি। সেই একই ডেটাকে কেবল Median দিয়ে দুই ভাগে কাটলেই সেটি নতুন কোনো অদেখা Blind Test সেট হয়ে যায় না! এটি দিয়ে সময়ের সাথে মডেলের আচরণের স্থিতিশীলতা (Temporal Robustness) চমৎকারভাবে বিশ্লেষণ করা যায়, কিন্তু এটিকে আনকোরা নতুন ডেটায় চূড়ান্ত প্রমাণ বলে দাবি করা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "ল্যাব ড্যাশবোর্ড ব্যবহারের নির্দেশিকা",
+          "body": "ল্যাবের স্কোরকার্ডে গিয়ে পর্যায়ক্রমে `full`, `early` এবং `late` সময়খণ্ড ও বিভিন্ন Cohort পাল্টে দেখুন ইউজারের সংখ্যা এবং মেট্রিকের হর কীভাবে পরিবর্তিত হয়। খেয়াল রাখবেন, উপরের প্যানেলে দেখানো Bootstrap Confidence Interval সবসময় পূর্ণ সময়সীমার (`full` window) Warm ইউজারদের জোড়ায় জোড়ায় তুলনার ফলাফল দেখায়; নিচের Window পরিবর্তনের কন্ট্রোল সেই Interval-টিকে বদলায় না। তাই প্রতিটি প্যানেলের তথ্যকে তার নিজস্ব প্রটোকলের আলোকে আলাদাভাবে বিশ্লেষণ করুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch33_leakage",
+      "title": "Random ও Per-user Split-এর Global-time Audit",
+      "subtitle": "কোন ধরনের Data Split নেবেন তা ঠিক হয় প্রোডাকশনের Deployment প্রশ্ন থেকে",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "প্রোডাকশন লঞ্চের বাস্তব ছবি ও Global Cutoff",
+          "body": "ভাবুন, আজ রাত ১২টা পর্যন্ত সব ইউজারের সমস্ত আচরণের ইতিহাস নিয়ে আপনি একটি মডেল ট্রেন করলেন, যা আগামীকাল সকাল থেকে সবার জন্য সিনেমা সুপারিশ করবে। বাস্তব জীবনের এই দৃশ্যপটটি যাচাই করার সবচেয়ে বিশ্বস্ত উপায় হলো একটি নির্দিষ্ট সময়ের Global Chronological Cutoff। আমাদের মূল ডেটাসেটে কাটঅফ সময়ের সমান বা আগের সব ঘটনা (`t <= cut`) ট্রেনিংয়ে এবং পরের ঘটনাগুলো (`t > cut`) ভবিষ্যৎ পরীক্ষায় রাখা হয়েছে। এই সীমানার ওপাশের ভবিষ্যৎ ডেটা থেকে আইটেমের জনপ্রিয়তা, ইউজার প্রোফাইল, `IDF` ওজন কিংবা Target দেখে Candidate তালিকায় আইটেম ঢুকিয়ে দিলে সাথে সাথে মারাত্মক Data Leakage ঘটে যাবে।"
+        },
+        {
+          "type": "text",
+          "title": "Random Row Split করলে সময়ের শৃঙ্খলা কীভাবে ভেঙে পড়ে?",
+          "body": "তুলনা বোঝার জন্য আমরা `seed = 330` ব্যবহার করে মূল রেটিংগুলোর 80% সারিকে দৈবচয়নে (Randomly) ট্রেনিং এবং 20% সারিকে টেস্ট হিসেবে ভাগ করে কেবল তাদের Timestamp নিরীক্ষা করেছি। দেখা যায়, এভাবে এলোমেলো ভাগ করলে গ্লোবাল কাটঅফের অনেক পরের ভবিষ্যৎ ঘটনা ট্রেনিংয়ে ঢুকে পড়ে, আবার কাটঅফের আগের পুরোনো ঘটনা টেস্টে চলে যায়! তবে মনে রাখবেন, আমরা কেবল সময়ের এই অসংগতিটুকু দেখানোর জন্যই অডিটটি রেখেছি—এই ত্রুটিপূর্ণ Random Split-এর ওপর কোনো মডেল নতুন করে ট্রেন করে কৃত্রিমভাবে বাড়িয়ে দেখানো স্কোর তৈরি করা হয়নি।"
+        },
+        {
+          "type": "math",
+          "title": "Global Chronological Boundary-র গাণিতিক শর্ত",
+          "body": "\\max t_{fit}<\\min t_{test}\\quad\\text{is a global chronological boundary}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Random ও Per-user Split-এর Timestamp ওভারল্যাপ পরীক্ষা",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_evaluation_lab.json\").read_text()\n)\n\na = lab[\"split_audit\"]\nassert a[\"random_fit_max\"] > a[\"random_test_min\"]\nassert a[\"per_user_fit_max\"] > a[\"per_user_test_min\"]\nprint(a)\n"
+        },
+        {
+          "type": "text",
+          "title": "Per-user Holdout: কেন তবুও গ্লোবাল সময়ের ওভারল্যাপ থেকে যায়?",
+          "body": "অনেকে ভাবেন, প্রতিটি ইউজারের নিজস্ব রেটিংগুলোকে সময় অনুযায়ী সাজিয়ে প্রথম 80% ট্রেনিংয়ে আর শেষ 20% টেস্টে রাখলেই বুঝি সময়ের সব সমস্যার সমাধান হয়ে যায়। কিন্তু উপরের কোডের `assert a[\"per_user_fit_max\"] > a[\"per_user_test_min\"]` লাইনটি খেয়াল করুন! একজন নতুন ইউজারের ট্রেনিংয়ের শেষ দিকের রেটিং অন্য একজন পুরোনো ইউজারের টেস্ট রেটিংয়ের অনেক পরের সময়ের হতে পারে—অর্থাৎ বৈশ্বিক ঘড়িতে ট্রেনিং ও টেস্ট সময়সীমা তখনো একে অপরের ওপর ঢুকে থাকে। নির্দিষ্ট কিছু কাজে Per-user Split অকার্যকর বা ভুল নয়, কিন্তু 'আজকের ডেটা দিয়ে আগামী সপ্তাহের সবার জন্য সুপারিশ কেমন হবে'—সেই Global Launch প্রশ্নের উত্তর এটি দেয় না।"
+        },
+        {
+          "type": "text",
+          "title": "ক্যাটালগ ও মেটাডেটায় লুকিয়ে থাকা সূক্ষ্ম Availability Leakage",
+          "body": "শুধু ইউজারের রেটিংয়ের সময় ঠিক রাখলেই সব Leakage দূর হয়ে যায় না। আমাদের সিনেমার নাম ও Genre মেটাডেটা মূলত 2018 সালের একটি সামগ্রিক স্ন্যাপশট থেকে নেওয়া—অতীতের ঠিক কোন তারিখে কোন তথ্যটি সিস্টেমে যুক্ত হয়েছিল তার ঐতিহাসিক সংস্করণ (Historical Versioning) এখানে নেই। আমরা ট্রেনিংয়ে দেখা আইটেম আইডি দিয়ে ফিল্টার করলেও সেটি শতভাগ প্রমাণ করে না যে তৎকালীন মুহূর্তে ওই মেটাডেটা হুবহু এভাবেই উপলব্ধ ছিল। তাছাড়া কোন সিনেমা কোন দেশে কবে স্ট্রিমিংয়ের অনুমোদন পেয়েছিল বা কখন স্ক্রিনে দেখানো হয়েছিল, সেই তথ্যও রেটিং লগে থাকে না।"
+        },
+        {
+          "type": "text",
+          "title": "Recommender সিস্টেমে Data Leakage ধরার পূর্ণাঙ্গ চেকলিস্ট",
+          "body": "যেকোনো মূল্যায়ন পাইপলাইন যাচাই করার সময় ছয়টি জায়গা আলাদা করে নিরীক্ষা করুন: Target Label কীভাবে তৈরি হয়েছে, Normalization বা Preprocessing কোন ডেটায় Fit হয়েছে, প্রতিটি Feature-এর নিজস্ব Timestamp কাটঅফের আগের কি না, User ও Item গ্রুপিং ঠিক আছে কি না, বাইরের টেবিল Join করার সময় ভবিষ্যৎ তথ্য ঢুকেছে কি না, এবং বারবার টেস্ট সেট দেখে Model Selection করা হচ্ছে কি না। এমনকি ভবিষ্যৎ পজিটিভ লেবেল দেখে নেগেটিভ পুল পরিষ্কার করাও এক ধরনের প্রচ্ছন্ন Leakage।"
+        },
+        {
+          "type": "text",
+          "title": "সিদ্ধান্তের পক্ষে যুক্তি সাজানোর কৌশল",
+          "body": "ইন্টারভিউতে কখনোই Random, Per-user কিংবা Global Split-এর কোনো একটিকে সব সমস্যার চিরন্তন সেরা সমাধান বলে দাবি করবেন না। বরং আগে প্রোডাকশনের Deployment Estimand এবং ডেটার প্রাপ্যতা স্পষ্টভাবে সংজ্ঞায়িত করুন, তারপর সেই প্রশ্নের সাথে মানানসই প্রটোকল বেছে নিন। মনে রাখবেন, কাগজে-কলমে একই ধরনের Split নাম থাকলেও সমান সময়ের ঘটনা সামলানো (Tie Handling), সময়ের দিগন্ত (Horizon) এবং Candidate Pool তৈরির সূক্ষ্ম নিয়মের কারণে চূড়ান্ত ফলাফল আমূল বদলে যেতে পারে।"
+        }
+      ]
+    },
+    {
+      "id": "ch33_bootstrap",
+      "title": "Paired User Bootstrap ও Percentile Confidence Interval",
+      "subtitle": "একই ইউজারের ওপর দুটি Model-এর পার্থক্যের Resampling কেন জরুরি?",
+      "duration": "60 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন আলাদা নয়, বরং Paired তুলনা দরকার?",
+          "body": "ভাবুন, কোনো একজন ইউজারের পছন্দ অনুমান করা স্বভাবতই সহজ, আবার অন্য একজনের রুচি বেশ জটিল। যখন একই ইউজার দুটি ভিন্ন Ranker (`A` এবং `B`)-এর সুপারিশ তালিকা পান, তখন ইউজারের এই নিজস্ব কঠিনতা (User Difficulty) দুই মডেলের ক্ষেত্রেই সমান থাকে। আমরা যদি দুই মডেলের ইউজারদের আলাদাভাবে স্বাধীন ধরে Resample করি, তবে এই জোড়াবদ্ধ সম্পর্কটি হারিয়ে যায় এবং পার্থক্যের Variance অহেতুক বেড়ে যায়। তাই সঠিক পদ্ধতি হলো: আগে প্রতিটি ইউজারের জন্য দুই মডেলের স্কোরের পার্থক্য বের করে রাখা, আর তারপর ইউজারদেরকেই With Replacement পদ্ধতিতে Resample করা।"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের ল্যাবে Bootstrap কীভাবে চালানো হয়েছে?",
+          "body": "আমাদের পরীক্ষায় 28 জন Warm Eligible User রয়েছেন এবং NumPy Generator (`seed = 33`) ব্যবহার করে মোট 5000টি Bootstrap Replicate তৈরি করা হয়েছে। প্রতিটি Replicate হলো পুনর্নির্বাচিত 28টি ইউজার-পার্থক্যের গড় মান। এরপর সাজানো Replicate Distribution থেকে `0.025` এবং `0.975` Linear Quantile নিয়ে তৈরি করা হয়েছে 95% Percentile Confidence Interval। ল্যাব ইন্টারফেসে সংরক্ষিত এই প্রকৃত Replicate-গুলো থেকেই তাৎক্ষণিকভাবে 90%, 95% ও 99% স্তরের ব্যবধি হিসাব করে দেখানো হয়।"
+        },
+        {
+          "type": "math",
+          "title": "Paired Difference এবং Bootstrap গড়ের সমীকরণ",
+          "body": "d_u=M_u(A)-M_u(B),\\quad\\hat\\Delta=\\frac1n\\sum_ud_u,\\quad\\Delta^{*(b)}=\\frac1n\\sum_{j=1}^nd_{u_j^{*(b)}}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ neural50 বনাম user_cf-এর Paired Bootstrap হিসাব",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"eval33\", Path(\"assets/datasets/movielens/recommendation_evaluation_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_evaluation_lab.json\").read_text()\n)\n\ncase = lab[\"paired\"][\"neural50:user_cf:recall\"]\ndifferences = [r[\"treatment\"] - r[\"control\"] for r in case[\"rows\"]]\nactual = m.bootstrap(differences)\nassert actual == case[\"bootstrap\"]\nprint(actual[\"mean\"], actual[\"low\"], actual[\"high\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "এই Confidence Interval ঠিক কতটুকু অনিশ্চয়তা মাপে?",
+          "body": "মনে রাখতে হবে, এই হিসাবটি একটি শর্তসাপেক্ষ (Conditional) পরিধির ভেতরে কাজ করে—যেখানে মডেলের ওজন, মূল Data Split, প্রাসঙ্গিক লেবেল এবং ইউজার তালিকা স্থির রাখা হয়েছে। ট্রেনিংয়ের Random Seed বদলালে কী হতো, সময়ের সাথে ডেটা সরে গেলে কী হতো, কিংবা অদেখা ইউজারদের ওপর Exposure Bias কেমন পড়ত—সেসব অনিশ্চয়তা এই Bootstrap একা ধরতে পারে না। তাছাড়া এখানে ইউজারদের পরস্পর স্বাধীন একক বলে ধরে নেওয়া হয়, যদিও একই সিনেমা অনেকের তালিকায় থাকায় সূক্ষ্ম একটি আন্তঃনির্ভরতা থেকে যায়।"
+        },
+        {
+          "type": "recommendation_paired",
+          "title": "বাস্তব তুলনার ফলাফল: শূন্য রেখা অতিক্রম করার অর্থ",
+          "body": "`neural50` থেকে `user_cf` বিয়োগ করলে গড় Recall-এর পার্থক্য দাঁড়ায় `+0.0071127`, কিন্তু এর 95% Confidence Interval হলো `[-0.0195103, 0.0332913]`। খেয়াল করুন, শূন্য (`0`) মানটি এই ব্যবধির ঠিক ভেতরেই অবস্থান করছে! এর মানে হলো—একটি মডেল অন্যটির চেয়ে নিশ্চিতভাবে সেরা বলার মতো জোরালো প্রমাণ এখানে নেই; তবে এর উল্টোটাও কিন্তু সত্যি নয়, অর্থাৎ দুটি মডেল হুবহু সমান বা তাদের পার্থক্য নিখুঁতভাবে `0`—এমন দাবিও এখান থেকে করা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "Frequentist Confidence Interval পড়ার সঠিক দৃষ্টিভঙ্গি",
+          "body": "95% Frequentist Interval দেখে অনেকেই ভুল করে বলেন, 'আসল পার্থক্যটি এই সীমার ভেতরে থাকার সম্ভাবনা 95%'। কিন্তু তাত্ত্বিকভাবে আসল পার্থক্যটি একটি স্থির সংখ্যা; বরং এই পদ্ধতিতে বারবার নমুনা নিয়ে ব্যবধি তৈরি করলে দীর্ঘমেয়াদে প্রায় 95% ক্ষেত্রে ব্যবধিগুলো আসল মানটিকে ঢেকে রাখবে—এভাবেই বিষয়টি বোঝা উচিত। আর মাত্র 28 জন ইউজারের ছোট নমুনায় Percentile পদ্ধতি একটি কার্যকর আসন্ন মান (Approximation) দেয় মাত্র, কোনো নিখুঁত গ্যারান্টি নয়।"
+        },
+        {
+          "type": "text",
+          "title": "ইন্টারেক্টিভ ল্যাবে যা যাচাই করবেন",
+          "body": "ল্যাব প্যানেলে মডেলের জোড়া এবং Confidence Level পরিবর্তন করে দেখুন `Recall` ও `NDCG`-র পার্থক্যের ব্যবধি কতটা চওড়া বা সরু হয়। তবে সতর্ক থাকবেন—বিভিন্ন Confidence Level ঘুরিয়ে-ফিরিয়ে কোথায় শূন্য বাদ পড়ছে তা খুঁজে বের করে জয় দাবি করা কিন্তু স্পষ্ট Multiple Testing-এর ফাঁদ! আর মনে রাখবেন, এই প্যানেলের ব্যবধিটি সবসময় পূর্ণ সময়সীমার (`full` window) স্থির তুলনা দেখায়, নিচের Window স্কোরকার্ডের থেকে এটি আলাদা।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে প্রমাণ: Pairing কীভাবে Covariance সংরক্ষণ করে?",
+          "body": "একটি ছোট উদাহরণের সাহায্যে বিষয়টি একদম পরিষ্কার করা যাক। ধরুন দুজন ইউজারের জন্য মডেল `A`-এর Recall স্কোর `[0.1, 0.9]` এবং মডেল `B`-এর স্কোর `[0.2, 1.0]`। লক্ষ্য করুন, দুজনের ক্ষেত্রেই `B - A = 0.1`। এখন এই দুজন ইউজার থেকে With Replacement পদ্ধতিতে দুইবার নমুনা নিলে মোট 4টি সম্ভাব্য ইনডেক্স ক্রম পাওয়া যায়, এবং Paired Bootstrap-এ তার প্রতিটিতেই গড় পার্থক্য অবিকল `0.1` থাকে—ফলে Variance হয় `0`! অথচ আমরা যদি `A` ও `B`-এর জন্য ইউজারদের আলাদাভাবে নমুনা নিতাম, তবে মোট 16টি সমন্বয় তৈরি হতো এবং গড় পার্থক্যের Variance লাফিয়ে `0.16` হয়ে যেত। একই ইউজারের দুটি ফলাফল একসাথে বেঁধে রাখার মাধ্যমেই Pairing তাদের মধ্যকার Covariance ধরে রাখে।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ সব সম্ভাব্য Paired ও Independent Resample যাচাই",
+          "body": "import numpy as np\nfrom itertools import product\n\nfirst = np.array([0.1, 0.9])\nsecond = np.array([0.2, 1.0])\ndraws = list(product(range(2), repeat=2))\npaired = [np.mean(second[list(indices)] - first[list(indices)]) for indices in draws]\nindependent = [\n    np.mean(second[list(right)]) - np.mean(first[list(left)])\n    for left in draws\n    for right in draws\n]\nnp.testing.assert_allclose(paired, 0.1)\nprint(\n    round(np.mean(paired), 6), round(np.var(paired), 6), round(np.var(independent), 6)\n)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে ভেবে উত্তর দিন",
+          "body": "উপরের ছোট উদাহরণটিতে Paired Variance শূন্য (`0`) এসেছে দেখে কি দাবি করা যাবে যে নতুন করে মডেল ট্রেন করলেও ফলাফলের সমস্ত Uncertainty শূন্য হবে?",
+          "solution": "মোটেও না! এই গণনায় মডেলের Prediction এবং দুই ইউজারের পার্থক্য আগে থেকেই স্থির ধরে নেওয়া হয়েছে। নতুন করে Training চালানো, Hyperparameter বা Model Selection, ইউজার গোষ্ঠীর পরিবর্তন কিংবা সময়ের বিবর্তন থেকে আসা কোনো ওঠানামাই এতে ধরা পড়েনি। তাই রিপোর্ট করার সময় সবসময় স্পষ্ট করতে হবে আপনি ঠিক কোন এককটিকে (যেমন User) Resample করছেন এবং পাইপলাইনের কোন ধাপগুলো স্থির রেখেছেন।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch33_selection",
+      "title": "Multiple Comparisons ও Winner’s Curse",
+      "subtitle": "বারবার ঘেঁটে দেখা ডায়াগনস্টিক কখনোই আনকোরা নতুন Test নয়",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "সেরা সংখ্যাটি বেছে নেওয়ার অদৃশ্য ফাঁদ (Winner's Curse)",
+          "body": "ধরুন আপনি ডজনখানেক মডেল, ভিন্ন ভিন্ন Random Seed, নানা মানের `K`, একাধিক Relevance Threshold এবং বিভিন্ন Confidence Level পরীক্ষা করলেন—তারপর যেটির ফলাফল সবচেয়ে ঝকঝকে দেখাল কেবল সেটিই রিপোর্টে রাখলেন। এতে কী ঘটবে জানেন? নির্বাচিত ওই সেরা ফলাফলটি প্রকৃত সক্ষমতার পাশাপাশি ডেটার এলোমেলো অনুকূল কোলাহলকেও (Random Noise) নিজের ভেতরে শুষে নেবে! ডায়াগনস্টিক ডেটাকে এভাবে বারবার ঘেঁটে সেরাটি বেছে নিলে সেখানে অনিবার্যভাবেই Selection Uncertainty তৈরি হয়, যা পূর্বঘোষিত চূড়ান্ত পরীক্ষার সমতুল্য নয়।"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের ল্যাবের আটটি তুলনা ও তাদের পারস্পরিক সম্পর্ক",
+          "body": "আমাদের ল্যাবে 4 জোড়া Treatment/Control মডেলের প্রতিটির জন্য `Recall` এবং `NDCG` মিলিয়ে মোট 8টি তুলনামূলক ব্যবধি রাখা আছে। এই ব্যবধিগুলোতে কোনো Multiple Testing সমন্বয় (Adjustment) করা হয়নি এবং এগুলো মূলত অনুসন্ধানমূলক (Exploratory)। নিচের গাণিতিক সূত্রে স্বাধীন পরীক্ষার অনুমান দেখানো হলেও বাস্তবে একই ইউজারদের ওপর হিসাব করায় আমাদের এই 8টি পরিসংখ্যান পরস্পর সম্পর্কযুক্ত (Correlated)—তাই এর নিখুঁত যৌথ বা Family-wise ত্রুটির হার আলাদাভাবে দাবি করা হয়নি।"
+        },
+        {
+          "type": "math",
+          "title": "স্বাধীন Null পরীক্ষার অধীনে অন্তত একটি ভুল সিদ্ধান্তের সম্ভাবনা",
+          "body": "\\Pr(\\text{at least one false rejection})=1-(1-\\alpha)^m\\quad\\text{under independent null tests}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ 8টি তুলনায় False Rejection-এর তাত্ত্বিক ঝুঁকি হিসাব",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_evaluation_lab.json\").read_text()\n)\n\n# Declared algebra example; actual comparisons are not independent tests.\nalpha = 0.05\nm = 8\nprint(1 - (1 - alpha) ** m)\nassert len(lab[\"paired\"]) == 8\n"
+        },
+        {
+          "type": "text",
+          "title": "বিশ্বাসযোগ্য চূড়ান্ত পরীক্ষা (Confirmation Design) কীভাবে সাজাবেন?",
+          "body": "গবেষণা ও প্রোডাকশনে সঠিক শৃঙ্খলা হলো: শুরুতেই একটিমাত্র Primary Metric ও মূল তুলনাটি লিখিতভাবে স্থির করা, Validation ডেটায় সমস্ত টিউনিং শেষ করা, এবং একদম শেষে একটি অস্পৃষ্ট Confirmation সেটে চূড়ান্ত যাচাই চালানো। যে ভবিষ্যৎ ডেটায় ইতিমধ্যে বহুবার চোখ বুলানো হয়ে গেছে, সেটিকে কেবল নতুন নাম দিয়ে খাঁটি Test সেট বলা চলে না—প্রয়োজনে নতুন প্রটোকল বা পরবর্তী সময়ের তাজা ডেটা সংগ্রহ করতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "পার্থক্য প্রমাণিত না হওয়া মানেই 'সমান প্রমাণিত হওয়া' নয়",
+          "body": "যখন কোনো Confidence Interval শূন্য অতিক্রম করে, তখন অনেকেই চট করে বলে বসেন—'দুই মডেলের মধ্যে কোনো পার্থক্য নেই'। কিন্তু পরিসংখ্যানের ভাষায় অনুপস্থিত প্রমাণ আর অনুপস্থিতির প্রমাণ এক কথা নয়! দুটি মডেল কার্যত সমান বা নতুনটি অন্তত পুরোনোটির চেয়ে খারাপ নয় (Equivalence বা Non-inferiority) তা প্রমাণ করতে হলে শুরুতেই গ্রহণযোগ্য পার্থক্যের সীমা (Margin) এবং উপযুক্ত পরীক্ষার নকশা ঠিক করতে হয়। নমুনার আকার ছোট হলে কম Statistical Power-এর কারণেও আসল পার্থক্য অস্পষ্ট থেকে যেতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "Bootstrap কেন Model Selection-এর ঝুঁকি মাপে না?",
+          "body": "একটি সূক্ষ্ম বিষয় খেয়াল রাখুন: আমরা যখন ইউজারদের Resample করে Bootstrap চালাই, তখন কিন্তু প্রতিবার নতুন করে দশটি মডেলের মধ্য থেকে সেরা মডেলটি বেছে নেওয়ার প্রক্রিয়াটি চালানো হয় না। ফলে এই ব্যবধিটি কোনো Selection-adjusted অনিশ্চয়তা দেয় না। তাই রিপোর্টে সবসময় স্বীকার করতে হবে যে এটি একটি নির্দিষ্ট মডেলের শর্তসাপেক্ষ ব্যবধি, এবং চূড়ান্ত মডেলটি পাওয়ার আগে মোট কয়টি বিকল্প কনফিগারেশন চেষ্টা করা হয়েছিল তাও স্বচ্ছভাবে জানাতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "প্রোডাকশন প্রকৌশলীর বাস্তবসম্মত সিদ্ধান্ত",
+          "body": "অফলাইনে পাওয়া যেকোনো উন্নতিকে প্রোডাক্ট লঞ্চের চূড়ান্ত সনদ না ভেবে বরং পরবর্তী ধাপে পরীক্ষা করার একটি শক্তিশালী Hypothesis হিসেবে দেখুন। বাস্তব লঞ্চের সিদ্ধান্তে সম্ভাব্য ক্ষতি, Guardrail Metric, অনিশ্চয়তা, ডেটার মান এবং সুপরিকল্পিত Online Experiment একসাথে বিচার করতে হয়। ফলাফল দেখার পর সুবিধাজনক মেট্রিক বা থ্রেশহোল্ড বেছে নেওয়ার প্রবণতা (Metric Shopping) কখনোই প্রকৃত প্রকৌশল আত্মবিশ্বাসের বিকল্প হতে পারে না।"
+        }
+      ]
+    },
+    {
+      "id": "ch33_exposure",
+      "title": "Exposure Bias ও Missing-Not-At-Random (MNAR) Feedback",
+      "subtitle": "ইউজারকে না দেখানো Item-এ Click বা Rating না থাকা কেন নেতিবাচক পছন্দ নয়?",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ডেটা যেভাবে তৈরি হয় সেই প্রক্রিয়াটিই যখন পক্ষপাতদুষ্ট",
+          "body": "একটি সিনেমার রেটিং আমাদের ডেটাসেটে আসা পর্যন্ত বেশ কয়েকটি ধাপ পেরোতে হয়: প্রথমে প্ল্যাটফর্ম বা অন্য কোনো মাধ্যমে সিনেমাটি ইউজারের সামনে আসতে হয়, ইউজারকে সেটি দেখতে হয়, আর সবশেষে নিজ ইচ্ছায় রেটিং দিতে হয়। এর প্রতিটি ধাপই ইউজারের পূর্বপছন্দ এবং পুরোনো সিস্টেমের সুপারিশ নীতির দ্বারা গভীরভাবে প্রভাবিত। ফলে আমাদের হাতে থাকা স্টার রেটিংগুলো সব ইউজার ও সব সিনেমার সম্ভাব্য ফলাফলের কোনো নিরপেক্ষ Random Sample নয় (একেই বলে `Missing-Not-At-Random` বা `MNAR`)। খালি ঘরগুলোকে ঢালাওভাবে 'ইউজার পছন্দ করেননি' বলে ধরে নিলে এই পুরো নির্বাচন প্রক্রিয়ার পক্ষপাত আড়ালে চলে যায়।"
+        },
+        {
+          "type": "text",
+          "title": "MovieLens ডেটাসেটে কোন কোন তথ্য অনুপস্থিত?",
+          "body": "আমাদের ব্যবহৃত MovieLens ফাইলে কেবল ইউজারের দেওয়া চূড়ান্ত রেটিংগুলো আছে; কিন্তু ইউজার স্ক্রিনে কোন তালিকা দেখেছিলেন (Impression ID), কোন সিনেমা কত নম্বরে দেখানো হয়েছিল (Serving Position), তৎকালীন Logging Policy কোন সম্ভাব্যতায় সেটি বেছে নিয়েছিল, কিংবা কোনো Randomized Treatment Assignment—এর কিছুই এখানে নেই। নিছক একটি সিনেমা মোট কতবার রেটিং পেয়েছে সেই Popularity সংখ্যা দিয়ে কখনোই প্রকৃত Observation Propensity মাপা যায় না। ঠিক এ কারণেই এই বাস্তব ডেটার ওপর আমরা সরাসরি কোনো IPS বা Counterfactual Policy Value হিসাব করার ভান করিনি।"
+        },
+        {
+          "type": "math",
+          "title": "পর্যবেক্ষণ সাপেক্ষ বণ্টন বনাম প্রকৃত পছন্দের বণ্টন",
+          "body": "P(R\\mid O=1,u,i)\\ne P(R\\mid u,i),\\quad O\\;\\text{not independent of}\\; R"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ মূল ডেটা সোর্সের পরিধি ও সীমাবদ্ধতা যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_evaluation_lab.json\").read_text()\n)\n\nassert \"ratings.csv.gz\" in lab[\"report\"][\"source_hashes\"]\nassert lab[\"report\"][\"cold_users\"] == 88\nprint(\"Source has ratings,not impression propensities or randomized assignments.\")\n"
+        },
+        {
+          "type": "text",
+          "title": "Position Bias এবং Popularity-র চক্রাকার প্রভাব",
+          "body": "বাস্তব অ্যাপে তালিকার উপরের দিকের ঘরগুলোতে ইউজারের চোখ বেশি পড়ে বলে সেখানে ক্লিক ও ফিডব্যাকও স্বভাবতই বেশি জমে (Position Bias)। একইভাবে জনপ্রিয় আইটেম বারবার সামনে দেখানো হলে সেগুলো আরও বেশি ফিডব্যাক পায় এবং জনপ্রিয়তার ব্যবধান আরও চওড়া হতে থাকে। এই কার্যকারণ প্রক্রিয়াগুলো বাস্তবে খুবই স্বাভাবিক হলেও কেবল স্থির রেটিং ফাইল দেখে এদের সুনির্দিষ্ট মাত্রা আলাদা করে শনাক্ত (Identify) করা সম্ভব নয়।"
+        },
+        {
+          "type": "text",
+          "title": "ভিন্ন ভিন্ন Target Label-এর ভিন্ন অর্থ",
+          "body": "প্রোডাক্টের লক্ষ্য ও মেট্রিকের মধ্যকার পার্থক্যও এখানে স্পষ্ট বোঝা দরকার। ইউজারের দেওয়া স্টার রেটিং, থাম্বনেইলে ক্লিক করার প্রবণতা (CTR), পুরো সিনেমা শেষ করা (Watch Completion) এবং ইউজারের দীর্ঘমেয়াদি সন্তুষ্টি—এগুলো কিন্তু এক জিনিস নয়। অফলাইনে `Recall@10` বাড়লেই ইউজারের বাস্তব সন্তুষ্টি বেড়ে গেছে এমন দাবি করা যায় না, আবার র‍্যাংকার মডেলের ভেতরের `Sigmoid` স্কোরকে সরাসরি প্রোডাকশনের আসল CTR বলে চালিয়ে দেওয়াও মারাত্মক ভুল।"
+        },
+        {
+          "type": "text",
+          "title": "নিরপেক্ষ মূল্যায়নের জন্য প্রোডাকশনে কী কী লগ করা প্রয়োজন?",
+          "body": "ভবিষ্যতে সঠিক Counterfactual বিশ্লেষণ করতে চাইলে সিস্টেমের প্রতিটি রিকোয়েস্টের প্রেক্ষাপট (Context), যোগ্য Candidate সেট, স্ক্রিনে আসলে কোন অবস্থানে কোন তালিকা দেখানো হয়েছে, সঠিক Timestamp, তৎকালীন Logging Policy-র সংস্করণ ও নিখুঁত Action Probability এবং নির্দিষ্ট সময় পর প্রাপ্ত ফলাফল একসূত্রে গাঁথা থাকতে হয়। অবশ্য বাস্তব সিস্টেমে ইউজারের গোপনীয়তা (Privacy), সম্মতি ও ডেটা সংরক্ষণের নীতিমালা মেনেই এই টেলিমেট্রি ডিজাইন করতে হয়—আমাদের এই অফলাইন শিক্ষামূলক প্রোটোটাইপ কোনো ইউজার ডেটা সংগ্রহ করে না।"
+        },
+        {
+          "type": "text",
+          "title": "পরবর্তী পাঠগুলোর জন্য স্পষ্ট সীমারেখা",
+          "body": "সামনের পাঠগুলোতে আমরা যখন IPS এবং SNIPS-এর গাণিতিক সূত্রগুলো শিখব, তখন সেগুলো বোঝার জন্য সুনির্দিষ্ট ও স্বচ্ছ গাণিতিক উদাহরণ ব্যবহার করব। MovieLens-এর সাধারণ রেটিং ডেটার ওপর অনুমাননির্ভর কৃত্রিম Exposure Log বসিয়ে সেটিকে বাস্তব পরীক্ষার ফল বলে দাবি করব না। ডেটায় কোন জিনিসটি শনাক্তযোগ্য (Identifiable) আর কোনটি নয়—তা অকপটে স্বীকার করাই সুষ্ঠু বৈজ্ঞানিক বিশ্লেষণের প্রথম শর্ত।"
+        }
+      ]
+    },
+    {
+      "id": "ch33_book_bandit_evaluation",
+      "title": "Bandit Feedback: Support, IPS Variance ও Policy Value",
+      "subtitle": "পুরোনো লগ থেকে নতুন Policy-র মান মাপার তত্ত্ব, উদাহরণ ও সীমাবদ্ধতা",
+      "duration": "18 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন Off-policy Evaluation ও Importance Weighting দরকার?",
+          "body": "ধরুন আপনি একটি নতুন Recommendation Policy `π` তৈরি করেছেন, কিন্তু প্রোডাকশনে নামানোর আগেই জানতে চান এটি কেমন কাজ করবে। সমস্যা হলো—অতীতের লগে পুরোনো সিস্টেম যে Action-গুলো নেয়নি, সেগুলোর ফলাফল বা Reward তো আমাদের জানা নেই! এই অদেখা প্রশ্নের উত্তর খুঁজতেই Off-policy Evaluation (OPE)-এ পুরোনো সিস্টেমের প্রদর্শনের সম্ভাব্যতা `b(a|x)` (Logging Propensity) এবং নতুন নীতির সম্ভাব্যতা `π(a|x)`-এর অনুপাত `π / b`-কে Importance Weight হিসেবে ব্যবহার করা হয়। তবে এর সবচেয়ে মৌলিক শর্ত হলো: নতুন নীতি `π` যেসব Action বেছে নিতে চায়, পুরোনো লগে সেগুলোর প্রতিটির সম্ভাব্যতা শূন্যের চেয়ে বড় থাকতে হবে (অর্থাৎ পর্যাপ্ত Support থাকতে হবে)—নইলে নিখুঁত ও পক্ষপাতহীন (Unbiased) হিসাব অসম্ভব।"
+        },
+        {
+          "type": "text",
+          "title": "ধাপে ধাপে IPS ও এর সীমাবদ্ধতা বুঝি",
+          "body": "Contextual Bandit লগে আমরা কেবল সেই একটি Action-এরই Reward দেখতে পাই, যা ইউজারকে তখন দেখানো হয়েছিল। প্রতিটি লগ সারির প্রাপ্ত Reward-কে তার `π / b` ওজন দিয়ে গুণ করে গড় নিলেই পাওয়া যায় `IPS` (Inverse Propensity Scoring) প্রাক্কলন। কিন্তু বিপত্তি ঘটে যখন কোনো Action-এর পুরোনো সম্ভাব্যতা `b` খুব ক্ষুদ্র হয়—তখন ভগ্নাংশটি বিশাল আকার ধারণ করে এবং প্রাক্কলনের Variance প্রচণ্ড বেড়ে যায়। ওজনের ওপর একটি সর্বোচ্চ সীমা বসিয়ে (Weight Clipping) এই অস্থিরতা কমানো যায় বটে, তবে তার বিনিময়ে হিসাবে কিছুটা Bias ঢুকে পড়ে। আর পুরো সেশনজুড়ে ইউজারের অবস্থা বদলাতে থাকলে সেটি পূর্ণাঙ্গ Sequential MDP-র সমস্যা হয়ে দাঁড়ায়, যেখানে সাধারণ এক-ধাপের Bandit সূত্র একাই যথেষ্ট নয়।"
+        },
+        {
+          "type": "math",
+          "title": "Inverse Propensity Scoring (IPS)-এর মূল সমীকরণ",
+          "body": "\\hat V_{IPS}(\\pi)=\\frac1n\\sum_i\\frac{\\pi(a_i\\mid x_i)}{b(a_i\\mid x_i)}r_i"
+        },
+        {
+          "type": "text",
+          "title": "খাতা-কলমে একটি ছোট গাণিতিক উদাহরণ",
+          "body": "সূত্রটি হাতেনাতে মিলিয়ে দেখার জন্য দুটি সারির একটি সরল উদাহরণ ধরা যাক: নতুন Target Policy-র সম্ভাব্যতা `[1, 0]`, পুরোনো Logging Policy-র সম্ভাব্যতা `[0.5, 0.5]` এবং প্রাপ্ত Reward `[1, 1]`। তাহলে দুই সারির Importance Weight দাঁড়াবে `[1 / 0.5, 0 / 0.5] = [2, 0]`। প্রাপ্ত Reward দিয়ে গুণ করলে ওজনযুক্ত মান হয় `[2, 0]`, যার গড় করলে IPS মান আসে `(2 + 0) / 2 = 1.0`। খেয়াল রাখবেন, গাণিতিক নিয়ম বোঝার এই ক্ষুদ্র উদাহরণে মাত্র দুটি সারি থাকায় বাস্তব প্রয়োগের মতো সূক্ষ্ম স্থিতিশীলতা আশা করা যাবে না, এবং বাস্তবে নতুন নীতির সমর্থিত সব Action-ই লগে উপস্থিত থাকতে হবে।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ IPS ও সর্বোচ্চ Importance Weight হিসাব",
+          "body": "target, behavior, rewards = [1.0, 0.0], [0.5, 0.5], [1.0, 1.0]\nif any(b <= 0 for b in behavior):\n    raise ValueError(\"Logged actions require positive propensities\")\nweights = [p / b for p, b in zip(target, behavior)]\nips = sum(w * reward for w, reward in zip(weights, rewards)) / len(rewards)\n# This validates arithmetic only; logged propensity accuracy is an assumption.\nprint(ips, max(weights))\n"
+        },
+        {
+          "type": "text",
+          "title": "কোডের আউটপুট আমাদের কী শেখাচ্ছে?",
+          "body": "কোডটি চালালে আউটপুট হিসেবে `1.0` এবং সর্বোচ্চ ওজন `2.0` পাওয়া যায়। লক্ষ্য করুন, দ্বিতীয় সারিতে নতুন নীতির সম্ভাব্যতা `0.0` হওয়ায় সেখানকার Reward চূড়ান্ত হিসাবে কোনো অবদানই রাখেনি (`0` হয়েছে)। আগেই যেমন বলা হয়েছে, আমাদের MovieLens ডেটাসেটে এমন কোনো সুনিয়ন্ত্রিত র‍্যান্ডমাইজড Exposure Propensity লগ করা নেই—তাই সেখানে আমরা এই সূত্র বসিয়ে কোনো বাস্তব কার্যকারণ মান দাবি করছি না।"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তবে কখন এই হিসাব নির্ভরযোগ্য থাকে না?",
+          "body": "পুরোনো সিস্টেমের প্রকৃত সম্ভাব্যতা যদি সরাসরি লগ না করে পরে অন্য মডেল দিয়ে অনুমান করা হয় এবং সেই অনুমানে ভুল থাকে (Misspecified Propensity), তবে IPS পুরোপুরি ভ্রান্ত ফল দিতে পারে। তাই সবসময় ওজনের লেজ (Weight Tails), দুই নীতির ওভারল্যাপ এবং Effective Sample Size পাশাপাশি রিপোর্ট করতে হয়। এছাড়া ডেটা যদি স্থির নীতির বদলে অনলাইনে ক্রমাগত পরিবর্তনশীল Adaptive Bandit দিয়ে সংগৃহীত হয়, তবে সাধারণ স্বাধীন নমুনার (IID) ব্যবধি খাটে না—এ বিষয়ে আরও গভীরে জানতে Book 3 · Chapter 8 (Reinforcement Learning & Bandits)-এর অন্বেষণ নীতিমালা দেখে নিতে পারেন।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে চেষ্টা করুন",
+          "body": "নতুন Target Policy যে Action নিতে চায় তার পুরোনো Logging Probability যদি `0` হয়, তবে ডেটাসেটের আকার দশগুণ বড় করলে কি সমস্যার সমাধান হবে? আর বড় ওজন কমাতে Clipping ব্যবহার করলে কী ধরনের Tradeoff তৈরি হয়?",
+          "solution": "না, পুরোনো সিস্টেম যদি কোনো Action কখনোই না দেখায় (`b = 0`), তবে কোটি কোটি সারি যোগ করলেও ওই অদেখা Action-এর ফলাফল সম্পর্কে কোনো তথ্যই তৈরি হবে না—অর্থাৎ Support ঘাটতি দূর হবে না। অন্যদিকে Weight Clipping করলে প্রাক্কলনের অস্থিরতা বা Variance কমে, কিন্তু বিনিময়ে হিসাবে নিম্নমুখী বা ভিন্নমুখী Bias যুক্ত হয়; তাই Clipped মানকে কখনোই আদি Unbiased IPS বলে দাবি করা যাবে না।",
+          "reference": "https://www.statlearning.com/"
+        },
+        {
+          "type": "text",
+          "title": "একই লগের আড়ালে দুটি ভিন্ন সম্ভাব্য জগত (Identifiability Gap)",
+          "body": "Support শূন্য হলে কেন কোনো কৌশলেই কাজ হয় না, তা একটি চমৎকার চিন্তন পরীক্ষার মাধ্যমে বোঝা যায়। ধরুন পুরোনো Logger সবসময় কেবল Action `A` দেখায় যেখানে Reward সবসময় `0`, আর আমাদের নতুন Target Policy সবসময় Action `B` বেছে নিতে চায়। এখন দুটি ভিন্ন সম্ভাব্য জগত কল্পনা করুন: প্রথম জগতে `B`-এর আসল Reward `0`, আর দ্বিতীয় জগতে `B`-এর আসল Reward `1`। যেহেতু পুরোনো সিস্টেম কখনোই `B` দেখায় না, তাই এই দুটি সম্পূর্ণ ভিন্ন জগত থেকেই হুবহু একই লগ তৈরি হবে! অথচ নতুন নীতির আসল মান প্রথম জগতে `0` এবং দ্বিতীয় জগতে `1`। একই Logger থেকে যত ডেটাই আনা হোক না কেন, `B`-এর ফলাফল সম্পর্কে এই মৌলিক অজ্ঞতা কখনোই কাটবে না।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "আরেকটু গভীরভাবে ভাবুন",
+          "body": "ভাগ করার সময় শূন্য এড়াতে যদি শূন্য Logging Propensity-র জায়গায় খুব ছোট একটি সংখ্যা `epsilon` বসিয়ে দেওয়া হয়, তবে কি নতুন নীতির আসল মান শনাক্তযোগ্য (Identifiable) হয়ে যাবে?",
+          "solution": "একেবারেই না! হরে কৃত্রিমভাবে `epsilon` বসালে কেবল কোডের `ZeroDivisionError` এড়ানো যায় এবং একটি গাণিতিক সংখ্যা বের হয়, কিন্তু অদেখা Action `B`-র প্রকৃত ফলাফল সম্পর্কে বিন্দুমাত্র নতুন প্রমাণ তৈরি হয় না। এমন ক্ষেত্রে সংখ্যা বানানোর বদলে স্পষ্টভাবে Support Violation রিপোর্ট করতে হবে এবং সুনিয়ন্ত্রিত অন্বেষণমূলক (Exploratory) লগিং অথবা অতিরিক্ত যাচাইযোগ্য অনুমানের সাহায্য নিতে হবে।",
+          "reference": "https://arxiv.org/abs/1502.02362"
+        }
+      ]
+    },
+    {
+      "id": "ch33_ips",
+      "title": "IPS Estimator: Support, Consistency ও Importance Weights",
+      "subtitle": "সুনির্দিষ্ট ও নির্ভুল Logging Probability ছাড়া গাণিতিক সংশোধন সম্ভব নয়",
+      "duration": "60 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Logging Policy এবং Target Policy-র প্রতীক ও সম্পর্ক",
+          "body": "চলুন প্রতীকগুলোকে আরেকটু সুসংহত করি। পুরোনো যে সিস্টেমের মাধ্যমে ডেটা সংগৃহীত হয়েছে তাকে আমরা বলছি Logging Policy `μ(a|x)`—যা বলে দেয় প্রেক্ষাপট `x`-এ Action `a` দেখানোর সম্ভাব্যতা কত ছিল। আর যে নতুন নীতিটিকে আমরা মূল্যায়ন করতে চাই সেটি হলো Target Policy `π(a|x)`। লগে দেখা প্রতিটি Reward-কে `π / μ` অনুপাত দিয়ে ওজন দিলে উপযুক্ত শর্তের অধীনে নতুন নীতির প্রত্যাশিত মান প্রাক্কলন করা যায়। নতুন নীতি `π` যদি পুরোপুরি সুনির্দিষ্ট বা Deterministic হয়, তবে যে লগ সারির Action তার পছন্দের সাথে মিলে যায় সেখানে লব হয় `1`, আর বাকি সব অমিল সারিতে লব হয় `0`।"
+        },
+        {
+          "type": "text",
+          "title": "কেন এবং কখন IPS গাণিতিকভাবে নিখুঁত (Unbiased) মান দেয়?",
+          "body": "গাণিতিকভাবে এই সংশোধনটি কাজ করার পেছনে কয়েকটি অলঙ্ঘনীয় শর্ত রয়েছে। প্রথমত, নতুন নীতি যেখানে ধনাত্মক সম্ভাব্যতা দেয় সেখানে পুরোনো লগারের সম্ভাব্যতাও ধনাত্মক হতে হবে (`μ > 0`)। দ্বিতীয়ত, রেকর্ড করা সম্ভাব্যতাগুলো নিখুঁত হতে হবে এবং পর্যবেক্ষণকৃত Reward যেন সত্যিই ওই Action-এর প্রকৃত সম্ভাব্য ফলাফলকে প্রতিনিধিত্ব করে (Consistency ও Ignorability)। কোনো অদেখা গোপন প্রভাবক (Unmeasured Confounding) থাকলে বা ভুল সম্ভাব্যতা বসালে স্রেফ সূত্র লিখে সঠিক উত্তর পাওয়া যায় না। লক্ষ্য করুন, একটি স্থির প্রেক্ষাপট `x`-এ গড় বা Expectation নিলে দাঁড়ায়: `sum_a μ(a|x) * [π(a|x) / μ(a|x)] * E[R | x, a] = sum_a π(a|x) * E[R | x, a]`। এখানে লব ও হরের `μ(a|x)` কাটাকাটি যাওয়ার জন্যই `μ > 0` এবং নির্ভুল লগিং অপরিহার্য।"
+        },
+        {
+          "type": "math",
+          "title": "সময়ক্রমিক লগের ওপর IPS Estimator-এর সমীকরণ",
+          "body": "\\hat V_{IPS}=\\frac1n\\sum_{t=1}^n\\frac{\\pi(a_t\\mid x_t)}{\\mu(a_t\\mid x_t)}r_t"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ চার সারির উদাহরণে Importance Weight ও IPS যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"eval33\", Path(\"assets/datasets/movielens/recommendation_evaluation_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\n\nfixture = m.propensity_fixture()\nassert fixture[\"weights\"] == [1.25, 5.0, 0, 0]\nassert fixture[\"ips\"] == 1.5625\nprint(fixture)\n"
+        },
+        {
+          "type": "text",
+          "title": "চার সারির উদাহরণের ধাপে ধাপে ব্যবচ্ছেদ",
+          "body": "উপরের কোডে ব্যবহৃত চারটি লগ সারি আমাদের গাণিতিক হিসাব ঝালিয়ে নেওয়ার একটি স্বচ্ছ উদাহরণ। প্রথম দুটি সারিতে নতুন নীতির পছন্দ মিলে যাওয়ায় তাদের ওজন এসেছে যথাক্রমে `1 / 0.8 = 1.25` এবং `1 / 0.2 = 5.0`; আর পরের দুটি সারিতে পছন্দ না মেলায় ওজন হয়েছে `0`। ওজনযুক্ত Reward-গুলোর যোগফল দাঁড়ায় `1.25 + 5.0 + 0 + 0 = 6.25`, যাকে মোট সারির সংখ্যা `4` দিয়ে ভাগ করলে পাওয়া যায় `IPS = 1.5625`।"
+        },
+        {
+          "type": "text",
+          "title": "Reward সব 0 বা 1 হওয়া সত্ত্বেও IPS মান 1-এর চেয়ে বড় হলো কেন?",
+          "body": "সংখ্যাটি দেখে চমকে উঠতে পারেন—প্রতিটি সারির Reward যদি `0` থেকে `1`-এর মধ্যে থাকে, তবে গড় প্রাক্কলন `1.5625` হলো কীভাবে? আসলে সীমিত নমুনায় (Finite Sample) উচ্চ Variance থাকার কারণে সাধারণ IPS অনায়াসেই মূল Reward-এর সর্বোচ্চ সীমা ছাড়িয়ে যেতে পারে! মনে রাখবেন, IPS কোনো সম্ভাব্যতা নয়; এর নিখুঁত হওয়ার গ্যারান্টিটি কাজ করে অসংখ্যবার পুনর্নির্বাচিত নমুনার গড় বা Expectation-এর ক্ষেত্রে—মাত্র চারটি সারির একটি ছোট নমুনায় এটি হুবহু আসল মানের সমান হতে বাধ্য নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Support ভেঙে পড়লে কেন প্রাক্কলন অকেজো হয়ে যায়?",
+          "body": "পুরোনো লগার যদি নতুন নীতির পছন্দের কোনো একটি Action কখনোই না দেখিয়ে থাকে (`μ = 0`), তবে সেই অদেখা পছন্দের ফলাফল অনুমান করার কোনো গাণিতিক ভিত্তিই অবশিষ্ট থাকে না। আগেই যেমন দেখেছি, শূন্যের জায়গায় কাল্পনিক ক্ষুদ্র সংখ্যা বসিয়ে ভাগ করলেও হারানো কার্যকারণ প্রমাণ ফিরে আসে না। তাই বাস্তব প্রোডাকশনে দুটি নীতি তুলনা করার সবার আগে তাদের Support ওভারল্যাপ নিরীক্ষা করে নেওয়া জরুরি।"
+        },
+        {
+          "type": "text",
+          "title": "একক Item বনাম পূর্ণ তালিকা (Slate Recommendation)-র জটিলতা",
+          "body": "আরেকটি বাস্তব সতর্কতা হলো: ইউজারকে যখন একসাথে 10টি সিনেমার একটি পূর্ণ তালিকা বা Slate দেখানো হয়, তখন পুরো তালিকাটির যৌথ সম্ভাব্যতা কিন্তু প্রতিটি আইটেমের একক সম্ভাব্যতার সাধারণ গুণফলের সমান নাও হতে পারে—যদি না অবস্থানভেদে তাদের শর্তসাপেক্ষ স্বাধীনতা গাণিতিকভাবে বৈধ হয়। কোন অবস্থানে কোন আইটেম কার পাশে দেখানো হচ্ছে এবং তাদের পারস্পরিক নির্ভরশীলতা কেমন, তা লগিং প্রটোকলেরই অবিচ্ছেদ্য অংশ। আমাদের বর্তমান একক-পছন্দের উদাহরণটিকে তাই পূর্ণাঙ্গ Slate OPE বেঞ্চমার্ক ভাবা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "Clipping ও একক নমুনার প্রভাব: পপুলেশন স্তরে নিখুঁত হিসাব",
+          "body": "চলুন এবার একটি সুনির্দিষ্ট প্রেক্ষাপটে সম্পূর্ণ বণ্টন ধরে খাতা-কলমে মিলিয়ে দেখি কীভাবে Clipping এবং ছোট নমুনা কাজ করে। ধরুন পুরোনো নীতির সম্ভাব্যতা `[0.9, 0.1]`, নতুন নীতির সম্ভাব্যতা `[0.5, 0.5]` এবং দুই Action-এর Reward যথাক্রমে `[0, 1]`। তাহলে নতুন নীতির প্রকৃত মান `True Value = 0.5 * 0 + 0.5 * 1 = 0.5`। এখানে Importance Weight হলো `[5/9, 5]`, যা দিয়ে পুরোনো বণ্টনের ওপর গড় নিলে IPS-এর প্রত্যাশিত মানও নিখুঁতভাবে `0.5` আসে। কিন্তু আমরা যদি ওজনের সর্বোচ্চ সীমা `cap = 2` বেঁধে দিই, তবে লবের প্রত্যাশিত মান কমে `0.9 * (5/9) * 0 + 0.1 * 2 * 1 = 0.2` হয়ে যায়! ফলে বিশাল নমুনাতেও Clipped Self-normalized অনুপাতের সীমা দাঁড়ায় `0.2 / (0.5 + 0.2) = 2/7` (প্রায় `0.285714`), যা আসল `0.5` থেকে কম। আবার উল্টো দিকে মাত্র একটি লগ সারি হাতে থাকলে সাধারণ অ-ক্লিপড SNIPS হুবহু ওই একবারের প্রাপ্ত Reward-ই ফিরিয়ে দেয়, যার প্রত্যাশিত মান এখানে মাত্র `0.1`! এই একটি উদাহরণেই সসীম নমুনার অনুপাতজনিত Bias এবং Clipping-এর প্রভাব আলাদা করে চোখের সামনে ভেসে ওঠে।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ পপুলেশন Expectation, Clipping ও SNIPS-এর আচরণ যাচাই",
+          "body": "import numpy as np\n\nbehavior = np.array([0.9, 0.1])\ntarget = np.array([0.5, 0.5])\nreward = np.array([0.0, 1.0])\nweights = target / behavior\ntrue_value = target @ reward\nips_expectation = behavior @ (weights * reward)\nclipped = np.minimum(weights, 2)\nclipped_numerator = behavior @ (clipped * reward)\nclipped_ratio_limit = clipped_numerator / (behavior @ clipped)\none_draw_snips_expectation = behavior @ reward\nnp.testing.assert_allclose(true_value, ips_expectation)\nprint(\n    true_value,\n    ips_expectation,\n    clipped_numerator,\n    round(clipped_ratio_limit, 6),\n    one_draw_snips_expectation,\n)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে যাচাই করুন",
+          "body": "উপরের উদাহরণে আমরা যেভাবে নিখুঁত IPS ও Clipped মান হিসাব করলাম, ঠিক সেই একই উপায়ে কি আমাদের MovieLens রেটিং ফাইলের ওপর সরাসরি IPS সংশোধন চালানো সম্ভব?",
+          "solution": "না, সরাসরি চালানো সম্ভব নয়। উপরের গাণিতিক উদাহরণে পুরোনো নীতির নিখুঁত সম্ভাব্যতা এবং প্রতিটি বিকল্পের ফলাফল আমাদের জানা ছিল। কিন্তু MovieLens রেটিং ফাইল থেকে ইউজারকে কোন সিনেমা কত সম্ভাব্যতায় দেখানো হয়েছিল সেই Impression Propensity পাওয়া যায় না। বাস্তব ডেটাসেটে IPS প্রয়োগের আগে অবশ্যই নির্ভুল লগিং তথ্য, Positivity (বা Support) এবং ফলাফলের কার্যকারণ শর্তাবলি বাস্তবে পূরণ হয়েছে কি না তা যাচাই করে নিতে হবে।",
+          "reference": "https://arxiv.org/abs/1502.02362"
+        }
+      ]
+    },
+    {
+      "id": "ch33_snips",
+      "title": "SNIPS, Weight Clipping, ESS ও Doubly Robust-এর সীমা",
+      "subtitle": "Variance কমাতে গিয়ে কখন নতুন করে Bias ঢুকে পড়ে?",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Self-Normalized IPS (SNIPS): ওজনের যোগফল দিয়ে ভাগ করার সুবিধা ও ঝুঁকি",
+          "body": "আগের পাঠে আমরা দেখেছি, সাধারণ IPS প্রাক্কলনে সারির সংখ্যা `n` দিয়ে ভাগ করায় সীমিত নমুনার মান কখনো কখনো Reward-এর সর্বোচ্চ সীমা ছাড়িয়ে যায়। এই অস্থিরতা কমাতেই `SNIPS` (Self-Normalized IPS) লবের ওজনযুক্ত Reward যোগফলকে মোট ওজনের যোগফল (`sum w_t`) দিয়ে ভাগ করে। যেহেতু এটি দুটি দৈব রাশির অনুপাত (Ratio Estimator), তাই সীমিত নমুনায় এতে সামান্য Bias থাকতে পারে এবং যথারীতি সঠিক লগিং ও Support-এর শর্তগুলোও বহাল থাকে। আমাদের চার সারির উদাহরণে দুটি মিলে যাওয়া সারিরই Reward `1` হওয়ায় আন-ক্লিপড ও ক্লিপড—উভয় অবস্থাতেই `SNIPS = 1.0` থাকে; তবে মনে রাখবেন এটি কেবল ওই নির্দিষ্ট সংখ্যার বিন্যাসের ফল, কোনো সার্বজনীন বাস্তব নীতির প্রমাণ নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Weight Clipping: অস্থিরতা বনাম নির্ভুলতার বিনিময়",
+          "body": "চার সারির উদাহরণটিতে আমরা যদি সর্বোচ্চ ওজনের সীমা `cap = 2` করে দিই, তবে ওজনগুলো `[1.25, 5.0, 0, 0]` থেকে কমে `[1.25, 2.0, 0, 0]` হয়ে যায়। এর ফলে সাধারণ `IPS` মান `1.5625` থেকে নেমে আসে `0.8125`-এ এবং কার্যকর নমুনার সূচক (`ESS`) বৃদ্ধি পায়। কিন্তু সাবধান—ওজনের এককেন্দ্রীকরণ কমা মানেই কিন্তু কার্যকারণ Bias কমে যাওয়া নয়; বরং এটি বেশি ওজনের বিরল ঘটনাগুলোর অবদানকে জোর করে ছেঁটে দেয়। আর ফলাফল দেখার পর যে `cap` মানটিতে নিজের পছন্দের উত্তর আসে সেটি বেছে নিলে নতুন করে Selection Bias-ও যোগ হয়।"
+        },
+        {
+          "type": "math",
+          "title": "SNIPS, Effective Sample Size (ESS) এবং Weight Clipping-এর সমীকরণ",
+          "body": "\\hat V_{SNIPS}=\\frac{\\sum_tw_tr_t}{\\sum_tw_t},\\quad\\mathrm{ESS}=\\frac{(\\sum_tw_t)^2}{\\sum_tw_t^2},\\quad w_t^{clip}=\\min(w_t,c)"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Unclipped ও Clipped অবস্থায় IPS, SNIPS ও ESS তুলনা",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"eval33\", Path(\"assets/datasets/movielens/recommendation_evaluation_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\n\nf = m.propensity_fixture()\nc = m.propensity_fixture(2)\nassert f[\"snips\"] == 1 and c[\"snips\"] == 1\nassert c[\"ips\"] == 0.8125 and c[\"ess\"] > f[\"ess\"]\nprint(\"unclipped\", f[\"ips\"], f[\"ess\"], \"clipped\", c[\"ips\"], c[\"ess\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "Effective Sample Size (ESS) আসলে কী নির্দেশ করে?",
+          "body": "`ESS` হলো Importance Weight-গুলো গুটিকয়েক সারির মধ্যে কতটা একচেটিয়াভাবে পুঞ্জীভূত হয়ে আছে তার একটি বীজগাণিতিক সূচক। যদি একটি সারির ওজন বাকি সব সারির চেয়ে হাজার গুণ বড় হয়, তবে হাজারো সারি থাকলেও `ESS` প্রায় `1`-এর কাছাকাছি নেমে আসে! তবে মনে রাখতে হবে, `ESS` বেশি হওয়া মানেই নতুন কোনো স্বাধীন ইউজার তৈরি হওয়া নয়; ইউজারদের ক্লাস্টার-নির্ভরতা, মূল ফলাফলের নিজস্ব Variance কিংবা ভুল লগিংয়ের ত্রুটি এই একটি সংখ্যায় পুরোপুরি ধরা পড়ে না।"
+        },
+        {
+          "type": "text",
+          "title": "Doubly Robust (DR) পদ্ধতির মূল ধারণা ও বাস্তব শর্ত",
+          "body": "Variance ও Bias-এর টানাপোড়েন কমাতে অনেকে `Doubly Robust` (DR) পদ্ধতি ব্যবহার করেন, যা সরাসরি একটি Reward Prediction Model-এর সাথে Propensity Weighting-এর সংশোধনকে যুক্ত করে। তাত্ত্বিকভাবে উপযুক্ত কার্যকারণ শর্ত মানা হলে এবং যেকোনো একটি মডেল (হয় Reward মডেল, নয়তো Propensity মডেল) নির্ভুল থাকলে এটি চমৎকার স্থিতিশীলতা দেয়। কিন্তু দুটোই যদি অনুমাননির্ভর ও ত্রুটিপূর্ণ হয়—বিশেষ করে পুরোনো লগিং সম্ভাব্যতা অজানা থাকে—তবে ইচ্ছেমতো একটি রিগ্রেশন মডেল বসিয়ে সত্যিকারের নীতি-মান উদ্ধার করা সম্ভব নয়। তাই আমাদের বাস্তব MovieLens ডেটায় কোনো অনুমাননির্ভর DR স্কোর চালানো হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব ডেটা ও গাণিতিক উদাহরণের স্পষ্ট সীমানা",
+          "body": "পুনরায় মনে করিয়ে দেওয়া ভালো: আমাদের MovieLens ডেটাসেটে লগিং সম্ভাব্যতা না থাকায় মূল ডেটার ওপর কোনো IPS, SNIPS বা DR র‍্যাংকিং রিপোর্ট করা হয়নি। ল্যাবে দেখানো চার সারির ওজন ও ফলাফলগুলো সম্পূর্ণরূপে সূত্রের আচরণ বোঝার গাণিতিক কাঠামো, যা বাস্তব ডেটাসেটের ফলাফল থেকে আলাদা লেবেল দিয়ে চিহ্নিত রাখা হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "ইন্টারভিউতে যুক্তি উপস্থাপনের কৌশল",
+          "body": "ইন্টারভিউতে যখন Off-policy Evaluation নিয়ে প্রশ্ন আসবে, তখন কেবল সূত্র মুখস্থ না লিখে ছয়টি বিষয় পরপর গুছিয়ে বলুন: আপনার লক্ষ্য Estimand কী, কোন Estimator নিচ্ছেন, দুই নীতির Support ওভারল্যাপ কেমন, লগিং প্রক্রিয়াটি কীভাবে কাজ করেছে, Clipping কীভাবে যাচাই করবেন এবং সহায়ক মডেলগুলোর (Nuisance Models) মান কীভাবে মাপবেন। প্রাক্কলনের মানকে কেবল `0` থেকে `1`-এর ভেতরে আটকে রাখলেই কিন্তু সেটিকে সুষম Calibration বলা যায় না!"
+        }
+      ]
+    },
+    {
+      "id": "ch33_mmr",
+      "title": "MMR Greedy Reranking ও Relevance Scale",
+      "subtitle": "একই Candidate Pool-এর ভেতরে পুনরাবৃত্তি কমিয়ে বৈচিত্র্য আনার কৌশল",
+      "duration": "60 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "স্থির Candidate Pool এবং Relevance Scaling",
+          "body": "শুধু সর্বোচ্চ স্কোরের 10টি সিনেমা নিলে অনেক সময় দেখা যায় পুরো তালিকাটি একই ঘরানার প্রায় অভিন্ন সিনেমায় ভরে গেছে! এই একঘেয়েমি কাটাতে আমরা Book 5 · Chapter 3 (Deep Recommendation & Ranking)-এর নিউরাল রিট্রিভার থেকে পাওয়া 100টি Candidate ID অপরিবর্তিত রেখে তার ওপর `MMR` (Maximal Marginal Relevance) চালাব। এখানে Warm ইউজারের ফ্রোজেন র‍্যাংকার Logit-গুলোকে Min–Max Scaling করে `[0, 1]` পরিসরের Relevance স্কোরে রূপান্তর করা হয়; আর Cold ইউজারের ক্ষেত্রে একইভাবে Popularity গণনাকে স্কেল করে MMR নীতি চালানো হয়।\n\nলক্ষ্য করুন, Cold ইউজারদের ক্ষেত্রে এটি Book 5 · Chapter 3-এর সরাসরি জনপ্রিয় তালিকা দেখানোর তুলনায় একটি সুস্পষ্ট Policy পরিবর্তন। অবশ্যই এই পুরো Reranking প্রক্রিয়ায় ভবিষ্যতের আসল Gold Label কোথাও ব্যবহার করা হয়নি; তাই ফলাফল ব্যাখ্যা করার সময় স্থির Candidate সেট এবং এই নতুন নীতি—দুটোই উল্লেখ করা জরুরি।"
+        },
+        {
+          "type": "text",
+          "title": "Greedy নির্বাচনের সমীকরণ কীভাবে কাজ করে?",
+          "body": "MMR ধাপে ধাপে একটি করে আইটেম বেছে নেয়। ইতিমধ্যে নির্বাচিত সেট `S`-এর সিনেমাগুলোর সাথে নতুন সম্ভাব্য সিনেমার সর্বোচ্চ Genre Cosine Similarity-কে এখানে পুনরাবৃত্তি বা Redundancy হিসেবে ধরা হয়। প্যারামিটার `λ` (Lambda) ঠিক করে দেয় আমরা প্রাসঙ্গিকতাকে কতটা গুরুত্ব দেব: `λ = 1` হলে কেবল Relevance দেখা হয়, আর `λ` কমালে পুনরাবৃত্তির শাস্তি (Penalty) বাড়তে থাকে। তালিকার একদম প্রথম ধাপে যেহেতু নির্বাচিত সেট `S` খালি থাকে, তাই তখন কোনো শাস্তি থাকে না (`0`)—ফলে `λ > 0` হলে সবার আগে সর্বোচ্চ প্রাসঙ্গিক আইটেমটিই নির্বাচিত হয়।"
+        },
+        {
+          "type": "math",
+          "title": "প্রতি ধাপে MMR Greedy Item নির্বাচনের গাণিতিক নিয়ম",
+          "body": "i^*=\\arg\\max_{i\\in C\\setminus S}\\left[\\lambda\\tilde s_i-(1-\\lambda)\\max_{j\\in S}\\cos(g_i,g_j)\\right]"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ 100টি Candidate থেকে MMR Top 10 তালিকা যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_evaluation_lab.json\").read_text()\n)\n\nsample = lab[\"samples\"][0]\nassert len(sample[\"candidates\"]) == 100\nfor name, result in sample[\"results\"].items():\n    assert len(set(result[\"ranked\"])) == 10\n    assert set(result[\"ranked\"]) <= set(sample[\"candidates\"])\n    print(name, result[\"ranked\"][:3])\n"
+        },
+        {
+          "type": "text",
+          "title": "স্কোরের স্কেল মেলানো কেন এতটা গুরুত্বপূর্ণ?",
+          "body": "ভাবুন তো, র‍্যাংকারের অ-স্কেলড Logit যদি `-12` থেকে `+8`-এর মধ্যে ঘোরে, আর ওদিকে Cosine Similarity থাকে `0` থেকে `1`-এর মধ্যে, তবে সরাসরি দুটোকে যোগ-বিয়োগ করলে `λ = 0.5` কথাটির আদৌ কোনো সুনির্দিষ্ট অর্থ থাকবে কি? একদমই না! এজন্যই বর্তমান পুলে স্পষ্টভাবে Min–Max Normalization ব্যবহার করা হয়েছে (এবং সব স্কোর সমান হলে Relevance `0` ধরা হয়)। মনে রাখবেন, স্কেলিংয়ের এই নিয়ম বদলে দিলে চূড়ান্ত নির্বাচিত তালিকাটিও বদলে যেতে পারে।"
+        },
+        {
+          "type": "recommendation_diversity",
+          "title": "এটি দ্রুতগতির Heuristic, কোনো বৈশ্বিক সর্বোত্তম সমাধান নয়",
+          "body": "MMR প্রতিটি ধাপে তাৎক্ষণিকভাবে সর্বোচ্চ উপযোগিতা (Greedy Utility) দেয় এমন আইটেমটি বেছে নেয়। এটি একটি নির্দিষ্ট Candidate পুল ও বর্তমান Genre ভেক্টরের ওপর দাঁড়ানো কার্যকর কৌশল মাত্র—পুরো তালিকার সম্মিলিত বৈশ্বিক সর্বোত্তম সমাধান (Global Optimum), ক্যালিব্রেটেড ইউজার পছন্দ কিংবা কোনো সামাজিক Fairness গ্যারান্টি নয়। ল্যাবে ব্যবহৃত `λ = 1.0`, `0.75` ও `0.5` মানগুলোও নীতি তুলনার পূর্বনির্ধারিত উদাহরণ, টিউন করে বের করা সেরা বিজয়ী নয়।"
+        },
+        {
+          "type": "text",
+          "title": "সমান স্কোরের মীমাংসা (Tie-breaking) ও পূর্ণ ট্রেস সংরক্ষণ",
+          "body": "পুনরুৎপাদনযোগ্যতা বজায় রাখতে প্রতিটি ধাপে উপযোগিতা স্কোরকে দশমিকের পর 12 ঘর পর্যন্ত রাউন্ড করে তুলনা করা হয়, এবং তবুও সমান হলে ছোট সংখ্যাগত `movieId` অনুসারে ক্রম ঠিক করা হয়। প্রতিটি নির্বাচিত আইটেমের মূল স্কোর, স্কেলকৃত Relevance, সর্বোচ্চ Redundancy এবং চূড়ান্ত Utility আমাদের ডেটা ফাইলে সংরক্ষিত আছে এবং অ্যাপটি সরাসরি সেই পুল থেকেই সম্পূর্ণ Reranking পুনর্গণনা করে।"
+        },
+        {
+          "type": "text",
+          "title": "ল্যাব পর্যবেক্ষণ ও অ্যালগরিদমিক জটিলতা (Complexity Optimization)",
+          "body": "ল্যাবে `λ`-এর মান বদলে দেখুন কীভাবে তালিকার Observed `Recall` ও `NDCG`-এর পাশাপাশি Intra-list Diversity এবং Novelty পরিবর্তিত হয়। মাথায় রাখবেন, তালিকায় ভিন্ন ভিন্ন Genre আসা মানেই কিন্তু ইউজারের কাছে সেটি স্বয়ংক্রিয়ভাবে উপকারী বা আনন্দদায়ক হওয়া নয়। আরেকটি দারুণ প্রকৌশল টিপস খেয়াল করুন: সরল পদ্ধতিতে `K` ধাপে `C` সংখ্যক Candidate-এর জন্য নির্বাচিত সেটের সব আইটেমের সাথে বারবার ডট গুণ করলে প্রায় `O(C * K^2 * d)` হিসাব লাগে (যেখানে `d` হলো Genre ভেক্টরের মাত্রা)। কিন্তু প্রতিটি Candidate-এর জন্য চলমান সর্বোচ্চ সাদৃশ্যটি ক্যাশ (Running Maximum Cache) করে রাখলে প্রতি ধাপে কেবল নতুন যুক্ত হওয়া একটি ভেক্টরের সাথে ডট গুণ করেই খরচ কমিয়ে `O(C * K * d)`-এ নামিয়ে আনা যায়! এমন অপটিমাইজেশন করার পর অবশ্যই পরীক্ষা করে দেখবেন যেন Tie-breaking ও চূড়ান্ত তালিকা আদি অ্যালগরিদমের সাথে শতভাগ অভিন্ন থাকে।"
+        },
+        {
+          "type": "text",
+          "title": "খাতা-কলমে প্রতিটি ধাপের Redundancy হিসাব",
+          "body": "চলুন তিনটি আইটেমের একটি ছোট উদাহরণে পুরো প্রক্রিয়াটি হাতে-কলমে দেখি। ধরা যাক স্কেলকৃত Relevance যথাক্রমে `A = 1.0`, `B = 0.9` ও `C = 0.0`, এবং তাদের একক দৈর্ঘ্যের মেটাডেটা ভেক্টর হলো `A = [1, 0]`, `B = [0.95, sqrt(1 - 0.95^2)]` এবং `C = [0, 1]`। যদি `λ = 0.5` ধরা হয়, তবে প্রথম ধাপে কোনো পুনরাবৃত্তি না থাকায় `A` নির্বাচিত হবে (যার Utility `0.5 * 1.0 = 0.5`)। দ্বিতীয় ধাপে `A`-এর সাথে অতি-সাদৃশ্যের কারণে `B`-এর Utility কমে দাঁড়াবে `0.5 * 0.9 - 0.5 * 0.95 = 0.45 - 0.475 = -0.025`, অথচ ভিন্নধর্মী `C`-এর Utility হবে `0.5 * 0.0 - 0.5 * 0.0 = 0.0`! ফলে দ্বিতীয় স্থানে উঠে আসবে `C`, এবং সবশেষে তৃতীয় স্থানে যাবে `B` (যার সর্বোচ্চ Redundancy `0.95` ও Utility `-0.025` অপরিবর্তিত থাকে)। নির্বাচিত সেট বড় হওয়ার সাথে সাথে এভাবেই বাকি প্রতিটি আইটেমের পুনরাবৃত্তির শাস্তি নতুন করে হিসাব হতে থাকে।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ তিন আইটেমের ওপর Greedy MMR-এর সম্পূর্ণ ট্রেস",
+          "body": "import numpy as np\n\nrelevance = np.array([1.0, 0.9, 0.0])\nvectors = np.array([[1.0, 0.0], [0.95, np.sqrt(1 - 0.95**2)], [0.0, 1.0]])\nselected, utilities = [], []\nremaining = set(range(3))\nwhile remaining:\n    candidates = []\n    for index in remaining:\n        redundancy = max(\n            (float(vectors[index] @ vectors[chosen]) for chosen in selected),\n            default=0.0,\n        )\n        utility = 0.5 * relevance[index] - 0.5 * redundancy\n        candidates.append((round(utility, 12), -index, index))\n    utility, _, chosen = max(candidates)\n    selected.append(chosen)\n    utilities.append(utility)\n    remaining.remove(chosen)\nprint(*[index + 1 for index in selected], *utilities)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে হিসাব ও বিশ্লেষণ করুন",
+          "body": "MMR সমীকরণে `λ = 1` বসালে কেমন তালিকা পাওয়া যাবে? আর প্রোডাকশনে `λ` কমিয়ে বৈচিত্র্য বাড়ানোর প্রভাব আপনি কীভাবে মূল্যায়ন করবেন?",
+          "solution": "`λ = 1` বসালে পুনরাবৃত্তির শাস্তির অংশটি শূন্য হয়ে যায়, ফলে মূল প্রাসঙ্গিকতার ক্রমই (Pure Relevance Order) হুবহু ফিরে পাওয়া যায়। অন্যদিকে `λ` কমিয়ে বৈচিত্র্য বাড়ানোর পর কখনোই কেবল একটি মেট্রিক দেখবেন না—একই সাথে Relevance মেট্রিক (`Recall`, `NDCG`), Catalog Coverage, Novelty এবং প্রোডাক্টের মূল কার্যকারিতা পাশাপাশি মাপতে হবে; সেই সাথে মেটাডেটা সাদৃশ্যের সংজ্ঞা ও স্কোর স্কেলিংয়ের নিয়মও স্থির রাখতে হবে।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch33_diversity",
+      "title": "Intra-list Diversity, Catalog Coverage ও Recommendation Entropy",
+      "subtitle": "একটিমাত্র সংখ্যা দিয়ে সুপারিশের সমস্ত বৈচিত্র্য মাপা যায় না",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "তালিকার ভেতরের বৈচিত্র্য: Intra-list Diversity (ILD)",
+          "body": "'তালিকাটি কতটা বৈচিত্র্যময়?'—এই প্রশ্নটির উত্তর নির্ভর করে আপনি একজন ইউজারের তালিকার ভেতরে তাকাচ্ছেন নাকি পুরো প্ল্যাটফর্মের সব তালিকার ওপর তাকাচ্ছেন তার ওপর। একজন ইউজারের Top 10 তালিকায় থাকা সিনেমাগুলোর প্রতি জোড়া Genre ভেক্টরের মধ্যকার গড় Cosine Distance (`1 - cos`)-কে বলা হয় `ILD` (Intra-list Diversity)। তবে মনে রাখতে হবে, এটি বিষয়বস্তুর একটি মোটা দাগের নির্দেশক মাত্র; একই Genre-এর দুটি সিনেমার গল্পের বুনন বা পরিচালনার শৈলী সম্পূর্ণ ভিন্ন হতে পারে, যা এই সরল মেটাডেটা ভেক্টর ধরতে পারে না।"
+        },
+        {
+          "type": "text",
+          "title": "পুরো ক্যাটালগ জুড়ে বিস্তৃতি: Catalog Coverage",
+          "body": "অন্যদিকে সব ইউজারের মূল্যায়নকৃত Top 10 তালিকাগুলো একত্র করলে আমাদের 7867টি সিনেমার ক্যাটালগের মোট কতগুলো অনন্য সিনেমা অন্তত একবার সুপারিশ পেয়েছে, তার অনুপাতই হলো `Catalog Coverage`। খেয়াল করুন, এটি কিন্তু কোনো একক ইউজারের ব্যক্তিগতকরণের মান বা ইউজার Coverage নয়! একজন ইউজারের নিজের তালিকায় বৈচিত্র্য থাকা (`ILD`) আর সমগ্র ইউজার বেসে ক্যাটালগের অনেক আইটেম ছড়িয়ে পড়া (`Catalog Coverage`)—দুটি সম্পূর্ণ আলাদা বৈশিষ্ট্য।"
+        },
+        {
+          "type": "math",
+          "title": "Intra-list Diversity (ILD) এবং Shannon Entropy-র সমীকরণ",
+          "body": "\\mathrm{ILD}(S)=\\frac{2}{K(K-1)}\\sum_{i<j}(1-\\cos(g_i,g_j)),\\quad H=-\\sum_ip_i\\log_2p_i"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ বিভিন্ন নীতির ILD, Catalog Coverage ও Entropy তুলনা",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_evaluation_lab.json\").read_text()\n)\n\nfor name, v in lab[\"diversity\"].items():\n    print(name, v[\"ild\"], v[\"catalog_coverage\"], v[\"recommendation_entropy_bits\"])\nassert lab[\"diversity\"][\"mmr0.5\"][\"ild\"] > lab[\"diversity\"][\"mmr1\"][\"ild\"]\n"
+        },
+        {
+          "type": "text",
+          "title": "সুপারিশের সুষম বণ্টন মাপতে Recommendation Entropy",
+          "body": "শুধু কয়টি অনন্য সিনেমা দেখানো হলো তা দেখলেই চলে না—হয়তো 100টি সিনেমা অন্তত একবার এসেছে, কিন্তু মোট স্লটের 90 শতাংশই দখল করে আছে মাত্র 5টি ব্লকবাস্টার সিনেমা! এই অসমতা ধরার জন্য সব Top 10 স্লটে আইটেমগুলোর উপস্থিতির হার থেকে বিট (Bits) এককে হিসাব করা হয় `Recommendation Entropy`। বণ্টন যত সুষমভাবে ছড়িয়ে পড়ে, Entropy তত বাড়ে। তবে ভুলে গেলে চলবে না যে এগুলো আমাদের মডেলের পরিকল্পিত সুপারিশ স্লট মাত্র—বাস্তব স্ক্রিনের প্রকৃত Impression, ইউজারের মনোযোগ কিংবা নির্মাতাদের ন্যায্য আয়ের (Supplier Fairness) চূড়ান্ত প্রমাণ নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Genre মেটাডেটার গঠন ও অন্তর্নিহিত সীমাবদ্ধতা",
+          "body": "আমাদের হিসাবের জন্য সিনেমার Genre-গুলোকে Multi-hot ভেক্টরে রূপান্তর করে `L2` Normalize করা হয়েছে। কোনো সিনেমায় যদি একটিও Genre লেখা না থাকে তবে সেটি শূন্য ভেক্টর পায়—সেক্ষেত্রে Cosine মান `0` হওয়া মানেই কিন্তু গভীর অর্থগত বৈচিত্র্য নয়! এছাড়া এই শ্রেণিবিন্যাস এবং 2018 সালের সামগ্রিক মেটাডেটা স্ন্যাপশটটি ঐতিহাসিক সময় অনুযায়ী সংস্করণকৃত নয়—বিশ্লেষণের সময় এই তথ্যগত সীমাটুকু মাথায় রাখতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "বৈচিত্র্য বনাম প্রাসঙ্গিকতার বাস্তব Tradeoff",
+          "body": "কোডের আউটপুটে স্পষ্ট দেখা যাচ্ছে, `mmr0.5` নীতিটি তালিকার ভেতরের বৈচিত্র্য (`ILD`) বাড়ালেও আমাদের পর্যবেক্ষণকৃত `Recall` এবং `NDCG` কিছুটা কমিয়ে দেয়। কেবল যান্ত্রিকভাবে Genre-এর ভিন্নতা বাড়ালেই যে ইউজারের কাছে তালিকাটি বেশি কাজের, চমকপ্রদ বা সন্তোষজনক হয়ে উঠবে তার কোনো নিশ্চয়তা নেই। তাই একাধিক মেট্রিক, বাস্তব উদাহরণ এবং উপযুক্ত Online ফলাফল একত্রে মিলিয়েই চূড়ান্ত সিদ্ধান্ত নিতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "কোড বাস্তবায়নের সূক্ষ্ম নিরীক্ষা (Implementation Audit)",
+          "body": "বৈচিত্র্য মেট্রিক লেখার সময় কয়েকটি প্রান্তিক শর্ত সবসময় পরীক্ষা করুন: তালিকায় যেন কোনো ডুপ্লিকেট আইটেম না থাকে, তালিকার দৈর্ঘ্য 2-এর কম হলে `ILD` যেন অসংজ্ঞায়িত থাকে, এবং Entropy-র হরে যেন মোট সুপারিশ স্লটের সংখ্যাই থাকে। নীতিগুলোর ন্যায্য তুলনার জন্য Candidate পুল, মূল স্কোর এবং Tie-breaking নিয়ম অভিন্ন রাখুন—আর খেয়াল রাখুন ভবিষ্যৎ Gold Label যেন কেবল মেট্রিক মাপার সময় ব্যবহৃত হয়, কখনোই তালিকা নির্বাচনের ভেতরে ঢুকে না পড়ে!"
+        }
+      ]
+    },
+    {
+      "id": "ch33_novelty",
+      "title": "Novelty, Long Tail ও Popularity Baseline",
+      "subtitle": "অতীতে কম দেখা বিরল আইটেম মানেই ইউজারের কাছে আনন্দদায়ক চমক নয়",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Smoothed Historical Rarity হিসেবে Novelty-র হিসাব",
+          "body": "ক্যাটালগের পরিচিত ব্লকবাস্টারের বাইরে মডেল কতটা অপ্রচলিত সিনেমা তুলে আনছে, তা মাপার একটি প্রচলিত উপায় হলো স্ব-তথ্য বা Self-information ভিত্তিক `Novelty`। আমাদের ল্যাবে ট্রেনিং সময়সীমায় প্রতিটি সিনেমায় কতজন ইউজার পজিটিভ রেটিং দিয়েছেন তার সাথে `1` যোগ করে (Add-one Smoothing) আপেক্ষিক হার বের করা হয়, যেখানে হরে থাকে মোট পজিটিভ সংখ্যা যোগ ক্যাটালগের আকার (`7867`)। এরপর তার ঋণাত্মক `log2` নিলে বিট এককে পাওয়া যায় ঐতিহাসিক বিরলতা—অর্থাৎ সিনেমাটি যত বিরল, তার Novelty বিট তত বেশি। এই পুরো হিসাবে ভবিষ্যতের কোনো লেবেল বা অজানা Exposure সম্ভাব্যতা ব্যবহার করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "এই মেট্রিকটি আসলে কী প্রমাণ করে না?",
+          "body": "নাম `Novelty` হলেও একটি গুরুত্বপূর্ণ সূক্ষ্ম পার্থক্য গুলিয়ে ফেলবেন না: অতীতে কম রেটিং পাওয়া একটি সিনেমা কোনো নির্দিষ্ট ইউজারের কাছে সত্যিই নতুন, চমকপ্রদ বা উপকারী লাগবে কি না—এই সংখ্যাটি তা প্রমাণ করে না! হতেই পারে সিনেমাটি খুব নির্দিষ্ট রুচির (Niche), আগে কখনো প্রচার পায়নি, কিংবা কেবল রেটিং দেওয়া দর্শকদের মাঝে কম প্রচলিত। সত্যিকারের ব্যক্তিগতকৃত নতুনত্ব (Personalized Novelty) ও আনন্দদায়ক আবিষ্কার (Serendipity) মাপার জন্য ইউজারের নিজস্ব পরিচিতির ইতিহাস ও সরাসরি প্রতিক্রিয়ার তথ্য প্রয়োজন হয়।"
+        },
+        {
+          "type": "math",
+          "title": "Add-one Smoothed Novelty (Self-Information)-এর সমীকরণ",
+          "body": "\\mathrm{novelty}(i)=-\\log_2\\frac{n_i^++1}{\\sum_jn_j^++|I|}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ ক্যাটালগের আকার ও নির্বাচিত আইটেমের Novelty হিসাব",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_evaluation_lab.json\").read_text()\n)\n\ncounts = dict(lab[\"popularity\"])\ntotal = sum(counts.values())\ncatalog = len(counts)\nimport math\n\nitem = lab[\"samples\"][0][\"results\"][\"mmr0.5\"][\"ranked\"][0]\nprint(item, -math.log2((counts[item] + 1) / (total + catalog)))\nassert len(counts) == 7867\n"
+        },
+        {
+          "type": "text",
+          "title": "Popularity Baseline কেন তবুও অফলাইনে এত শক্তিশালী দেখায়?",
+          "body": "অনেক সময় দেখা যায়, সাধারণ Popularity Baseline কেবল হাতেগোনা কয়েকটি শীর্ষ জনপ্রিয় (Head) সিনেমা সবাইকে দেখিয়েই অফলাইন টেস্টে বেশ ভালো Overlap স্কোর পেয়ে যায়! এর কারণ হলো ঐতিহাসিক রেটিং সংখ্যাগুলোর ভেতরে দর্শকদের প্রকৃত পছন্দের পাশাপাশি পুরোনো প্ল্যাটফর্মের প্রদর্শন ও স্ব-নির্বাচনের ঝোঁকও মিশে আছে। তাই আমরা এই জনপ্রিয়তার সংখ্যাকে কেবল একটি সহজ Baseline হিসেবেই দেখছি, কখনোই এটিকে নিখুঁত Logging Propensity বা পক্ষপাতমুক্ত উপযোগিতা বলছি না।"
+        },
+        {
+          "type": "text",
+          "title": "Long Tail বিশ্লেষণের নিয়ম ও সীমারেখা",
+          "body": "ক্যাটালগের কম জনপ্রিয় অংশ বা `Long Tail` নিয়ে কথা বলতে হলে শুরুতেই স্পষ্ট করতে হয় কত সংখ্যার নিচে গেলে তাকে Tail ধরা হবে এবং ক্যাটালগের পরিধি কতটুকু। আমাদের ল্যাবে কোনো খেয়ালখুশিমতো কাটঅফ না বসিয়ে অবিচ্ছিন্ন (Continuous) বিরলতা মেট্রিক ব্যবহার করা হয়েছে—কারণ ফলাফল দেখার পর সুবিধাজনক সীমা টেনে সাফল্য দাবি করা অনুচিত। আর যথারীতি ট্রেনিং ক্যাটালগ ও নির্ধারিত 100 Candidate পুলের বাইরের কোনো আইটেম এখানে পরিবেশন করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "খুব সহজেই যেভাবে Novelty মেট্রিককে ফাঁকি দেওয়া যায় (Metric Gaming)",
+          "body": "একটু ভাবলেই বুঝবেন, ক্যাটালগের সবচেয়ে অকেজো ও অপ্রাসঙ্গিক বিরল সিনেমাগুলো দিয়ে পুরো তালিকা ভরিয়ে দিলে `Novelty` স্কোর কিন্তু আকাশচুম্বী হয়ে যাবে! প্রাসঙ্গিকতা ও মানের পাহারাদার (Guardrails) ছাড়া কেবল বিরলতা অপটিমাইজ করলে ইউজারের অভিজ্ঞতা মুহূর্তেই নষ্ট হয়ে যেতে পারে। ঠিক এ কারণেই আমাদের ল্যাবে একই স্থির Candidate পুল রেখে Relevance, Diversity এবং Novelty—তিনটি মেট্রিক সবসময় একসাথে পাশাপাশি দেখানো হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "ইন্টারভিউ সতর্কতা: উচ্চ Entropy বা Novelty মানেই কি Fairness?",
+          "body": "ইন্টারভিউতে অনেকেই বলে ফেলেন, 'আমাদের সুপারিশের Entropy ও Novelty বেশি, তাই সিস্টেমটি সম্পূর্ণ ন্যায্য বা Fair'। এটি একটি ভ্রান্ত ধারণা! একই ইউজার বারবার বিরক্তিকর পরীক্ষা-নিরীক্ষার শিকার হচ্ছেন কি না, ক্ষুদ্র নির্মাতারা প্রকৃত দর্শক ও আয় পাচ্ছেন কি না, কিংবা কোনো সংরক্ষিত জনগোষ্ঠীর ক্ষতি হচ্ছে কি না—এগুলো সম্পূর্ণ স্বতন্ত্র প্রশ্ন। আমাদের বর্তমান ডেটাসেটে এসব মাপার মতো তথ্য নেই, তাই আমরা কোনো ঢালাও সামাজিক Fairness বা কল্যাণের দাবিও করছি না।"
+        }
+      ]
+    },
+    {
+      "id": "ch33_feedback",
+      "title": "Feedback Loops ও Performative Recommendations",
+      "subtitle": "আজকের Policy আগামীর ডেটা বদলায়, আর সেই ডেটাই গড়ে দেয় পরের Policy",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "সুপারিশ সিস্টেমের চক্রাকার প্রভাব কীভাবে তৈরি হয়?",
+          "body": "ক্লাসিক্যাল মেশিন লার্নিংয়ে আমরা ধরে নিই আমাদের মডেল কেবল জগতকে পর্যবেক্ষণ করে, জগতকে বদলে দেয় না। কিন্তু Recommender System নিজেই বাস্তবতাকে প্রভাবিত করে (Performative)! বর্তমান Policy যেসব আইটেম ইউজারের সামনে তুলে ধরে, কেবল সেগুলোরই ক্লিক বা রেটিং পাওয়ার সুযোগ তৈরি হয়। পরের সপ্তাহে যখন সেই সংগৃহীত ডেটার ওপরই নতুন মডেল ট্রেন করা হয়, তখন জনপ্রিয় জিনিস আরও জনপ্রিয় হওয়ার চক্র (Rich-get-richer) বা ইউজারের রুচি সংকুচিত হয়ে যাওয়ার প্রবণতা তৈরি হতে পারে। প্রক্রিয়াটি তাত্ত্বিকভাবে খুবই বাস্তব, যদিও কেবল স্থির ঐতিহাসিক রেটিং ফাইল থেকে এই চক্রের প্রকৃত কার্যকারণ তীব্রতা মাপা সম্ভব নয়।"
+        },
+        {
+          "type": "text",
+          "title": "অফলাইন তালিকার গণনা আর জীবন্ত Feedback Loop এক নয়",
+          "body": "পরের কোড ব্লকে আমরা আমাদের ফ্রোজেন সুপারিশ তালিকার স্লটগুলোতে কোন সিনেমা কতবার জায়গা পেয়েছে তার বণ্টন গুনে দেখব। কিন্তু খুব সতর্কভাবে মনে রাখুন: এগুলো কেবল মডেলের পরিকল্পিত সুপারিশ স্লটের হিসাব—বাস্তব ইউজারের দেখা Impression, ক্লিক কিংবা দীর্ঘমেয়াদি আচরণের সিমুলেশন নয়। আমরা এখানে কৃত্রিমভাবে কোনো কাল্পনিক ইউজার সাড়া বসিয়ে নকল Feedback Loop-এর ফলাফল তৈরি করিনি।"
+        },
+        {
+          "type": "math",
+          "title": "সময়ের সাথে Policy, Exposure এবং নতুন ডেটার চক্রাকার প্রবাহ",
+          "body": "\\pi_t\\to\\mathrm{exposure}_t\\to\\mathrm{observed\\ feedback}_t\\to D_{t+1}\\to\\pi_{t+1}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ 28 জন Warm ইউজারের পরিকল্পিত সুপারিশ স্লটের বণ্টন গণনা",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_evaluation_lab.json\").read_text()\n)\n\n# These are recommendation-slot counts,not observed impressions/clicks.\nrows = [r for r in lab[\"rows\"] if r[\"train_count\"] and r[\"eligible\"]]\nfrom collections import Counter\n\ncounts = Counter(i for r in rows for i in r[\"rankings\"][\"mmr1\"])\nassert sum(counts.values()) == 28 * 10\nprint(\"planned slots\", sum(counts.values()), \"distinct items\", len(counts))\n"
+        },
+        {
+          "type": "text",
+          "title": "চক্র ভাঙতে সুনিয়ন্ত্রিত Exploration-এর প্রয়োজনীয়তা",
+          "body": "অদেখা নতুন বা Long-tail আইটেমগুলোর প্রকৃত মান জানতে হলে সিস্টেমে সামান্য পরিমাণে পরিকল্পিত অন্বেষণ বা `Exploration` রাখা দারুণ কাজে আসে। তবে এর একটি বাস্তব খরচও আছে—বেশি আনাড়ি আইটেম দেখালে ইউজার বিরক্ত হতে পারেন! তাই প্রোডাকশনে Exploration চালানোর সময় সঠিক Randomization Unit, সুনির্দিষ্ট Action সম্ভাব্যতা, ফলাফল দেখার সময়সীমা এবং কঠোর Guardrail আগে থেকেই নির্ধারণ করতে হয়; স্রেফ অতীতের জনপ্রিয়তার সংখ্যা দিয়ে এই পরীক্ষামূলক নকশার অভাব পূরণ করা যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "বিলম্বিত ফলাফল (Delayed Outcomes)-এর জটিলতা",
+          "body": "বাস্তব প্ল্যাটফর্মে সব সিগন্যাল এক মুহূর্তে আসে না: থাম্বনেইলে ক্লিক পাওয়া যায় কয়েক সেকেন্ডে, পুরো সিনেমা দেখা শেষ হয় কয়েক ঘণ্টা বা দিনে, আর সাবস্ক্রিপশন নবায়ন বা Retention বোঝা যায় এক মাস পরে! যেসব সেশনের দীর্ঘমেয়াদি ফলাফল এখনো পরিপক্ব (Matured) হয়নি সেগুলোকে তড়িঘড়ি করে `0` ধরে নিলে দুই গ্রুপের সময়ের ব্যবধানের কারণে মারাত্মক Bias ঢুকে যেতে পারে। অফলাইন উইন্ডো বিশ্লেষণের ক্ষেত্রেও তাই ঠিক কোন সময়ের কোন ফলাফল মাপা হচ্ছে তা পরিষ্কার রাখা জরুরি।"
+        },
+        {
+          "type": "text",
+          "title": "এক ইউজারের সুপারিশ যখন অন্যকে প্রভাবিত করে (Interference)",
+          "body": "সাধারণ পরীক্ষায় আমরা ধরে নিই একজন ইউজারের আচরণ অন্য ইউজারের থেকে সম্পূর্ণ স্বাধীন (`SUTVA` শর্ত)। কিন্তু সীমিত স্টকের ই-কমার্স পণ্য, ক্রিয়েটর ইকোনমি বা সোশ্যাল ফিডে এক ইউজারের সুপারিশ অন্য ইউজারের প্রাপ্যতা কিংবা নির্মাতার উৎসাহকে সরাসরি বদলে দিতে পারে! এমন নেটওয়ার্ক বা মার্কেট-স্তরের প্রভাব থাকলে সাধারণ ইউজার-ভিত্তিক বিভাজনের বদলে Cluster বা Market-level পরীক্ষার নকশা প্রয়োজন হয়।"
+        },
+        {
+          "type": "text",
+          "title": "প্রোডাকশনে দীর্ঘমেয়াদি স্বাস্থ্য নজরদারি (Monitoring Plan)",
+          "body": "একটি জীবন্ত সিস্টেমকে সুস্থ রাখতে সময়ের সাথে Policy-র সংস্করণ, কত শতাংশ রিকোয়েস্ট Fallback-এ যাচ্ছে, ক্যাটালগ Coverage, ইনপুট Feature Drift, ইউজারের অভিযোগ এবং পরিপক্ব দীর্ঘমেয়াদি উপযোগিতা নিয়মিত মনিটর করতে হয়। অবশ্য ড্যাশবোর্ডের সাধারণ ওঠানামা মানেই সরাসরি কার্যকারণ নির্ণয় নয়—সঠিক ব্যাখ্যার জন্য নিখুঁত লগিং বংশলতিকা (Lineage) এবং নিয়ন্ত্রিত পরীক্ষার তুলনা অপরিহার্য।"
+        }
+      ]
+    },
+    {
+      "id": "ch33_online",
+      "title": "Online Experiment: Randomization Unit ও Estimand",
+      "subtitle": "নমুনার আকার হিসাবের ক্যালকুলেটর মানেই বাস্তব পরীক্ষামূলক প্রমাণ নয়",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "অনলাইন পরীক্ষা শুরুর আগে চারটি মৌলিক প্রশ্ন",
+          "body": "অফলাইন মূল্যায়নের সব সীমাবদ্ধতা পেরিয়ে যখন আমরা সত্যিকারের Causal Lift মাপতে অনলাইন A/B Test-এর পরিকল্পনা করি, তখন সবার আগে চারটি বিষয় লিখিতভাবে স্থির করতে হয়: কাদের ওপর পরীক্ষা চলবে (Population), ঠিক কোন Policy পরিবর্তন করা হচ্ছে, কোন ফলাফলটি মাপা হবে (Outcome) এবং কতদিন ধরে দেখা হবে (Horizon)। বিশেষ করে খেয়াল রাখুন—ইউজারকে পুরো সময় একই গ্রুপে রাখা (User-level Sticky Randomization) আর প্রতিটি রিকোয়েস্টে নতুন করে টস করা (Request-level Randomization) কিন্তু সম্পূর্ণ আলাদা নির্ভরশীলতা ও আলাদা Estimand তৈরি করে! কারা পরীক্ষায় ঢোকার যোগ্য এবং কখন ট্রিগার হবে সেই চুক্তিও আগেই চূড়ান্ত করতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "মূল লক্ষ্য (Primary Metric) ও সুরক্ষাকবচ (Guardrails)",
+          "body": "একটি সুশৃঙ্খল পরীক্ষায় শুরুতেই একটি প্রধান সাফল্যের মাপকাঠি (Primary Utility Metric), সিস্টেমের সুরক্ষাকবচ বা Guardrail মেট্রিকসমূহ (যেমন Latency, অ্যাপ ক্র্যাশ, ইউজারের অভিযোগ বা আনসাবস্ক্রাইব হার) এবং ব্যবসায়িকভাবে অর্থবহ ন্যূনতম উন্নতির মাত্রা ঘোষণা করতে হয়। নইলে চটকদার থাম্বনেইল দেখিয়ে তাৎক্ষণিক ক্লিক বাড়লেও আড়ালে দীর্ঘমেয়াদি Retention ধসে পড়তে পারে! একাধিক মেট্রিক থাকলে কীভাবে চূড়ান্ত সিদ্ধান্ত নেওয়া হবে সেই নিয়মও পূর্বনির্ধারিত থাকা চাই।"
+        },
+        {
+          "type": "math",
+          "title": "নির্ধারিত এককে Randomization-এর অধীনে গড় Treatment Effect",
+          "body": "\\Delta=E[Y\\mid Z=1]-E[Y\\mid Z=0],\\quad Z\\ \\text{randomized at a declared unit}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ ল্যাবের Sample Size Planner-এর প্যারামিটার যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_evaluation_lab.json\").read_text()\n)\n\nprint(lab[\"planner\"])\nassert lab[\"planner\"][\"baseline\"] == 0.1 and lab[\"planner\"][\"mde\"] == 0.01\nprint(\"No treatment assignments or real online outcomes exist in this dataset.\")\n"
+        },
+        {
+          "type": "text",
+          "title": "গ্রুপে বরাদ্দ হওয়া (Assignment) বনাম প্রকৃতপক্ষে দেখা (Exposure)",
+          "body": "ধরুন আপনি 10 লক্ষ ইউজারকে নতুন র‍্যাংকারের গ্রুপে বরাদ্দ করলেন (`Z = 1`), কিন্তু তাদের মধ্যে মাত্র 3 লক্ষ ইউজার অ্যাপের ওই নির্দিষ্ট পাতায় গেলেন যেখানে নতুন র‍্যাংকারটি কাজ করে। এখানে পুরো বরাদ্দকৃত দলের ওপর গড় হিসাব করাকে বলে `Intention-to-Treat` (ITT), আর যারা সত্যিই ফিচারটির মুখোমুখি হয়েছেন তাদের হিসাব আলাদা। খুব সতর্ক থাকবেন—ট্রিটমেন্ট দেওয়ার পর তৈরি হওয়া কোনো আচরণের ভিত্তিতে ইউজার ছেঁটে নিলে (Post-treatment Conditioning) আপনার নিখুঁত র‍্যান্ডমাইজেশন ভেঙে গিয়ে মারাত্মক Selection Bias ঢুকে পড়তে পারে!"
+        },
+        {
+          "type": "recommendation_exposure",
+          "title": "আমাদের ল্যাবে কোনো অনলাইন পরীক্ষা চালানো হয়নি",
+          "body": "স্বচ্ছতার খাতিরে আবারও মনে করিয়ে দিই: আমাদের MovieLens ডেটাসেটে কোনো র‍্যান্ডমাইজড Treatment Assignment বা লাইভ অনলাইন ফলাফল নেই। চার সারির IPS উদাহরণ এবং পরের পাঠের Sample Size ক্যালকুলেটরটি সম্পূর্ণরূপে পরিকল্পনা শেখার গাণিতিক উপকরণ—এখান থেকে কোনো বাস্তব অনলাইন Uplift, `p-value` বা A/B বিজয়ী দাবি করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "অনলাইন পরীক্ষার নিখুঁত Logging Contract",
+          "body": "একটি নির্ভুল অনলাইন পরীক্ষার জন্য রিকোয়েস্টের প্রেক্ষাপট, Assignment Unit, চালু থাকা Policy সংস্করণ, স্ক্রিনে প্রদর্শিত যোগ্য তালিকা, জানা সম্ভাব্যতা এবং নির্দিষ্ট সময় পর পরিপক্ব হওয়া ফলাফল যেন নিখুঁতভাবে একসাথে Join করা যায় তা নিশ্চিত করতে হয়। পাশাপাশি ডেটা হারানোর হারও (Telemetry Loss) নিয়মিত নিরীক্ষা করতে হয়। আমাদের এই অফলাইন শিক্ষামূলক অ্যাপটি অবশ্য ইউজারের কোনো আচরণগত টেলিমেট্রি সংগ্রহ করে না।"
+        },
+        {
+          "type": "text",
+          "title": "পরিকল্পনা পর্যালোচনার প্রকৌশল শৃঙ্খলা",
+          "body": "যেকোনো Experiment Plan-এ প্রত্যাশিত সুবিধার সংখ্যাটি হলো একটি অনুমান বা Hypothesis মাত্র, অর্জিত ফলাফল নয়। অফলাইনে দেখা প্রাসঙ্গিকতা ও বৈচিত্র্যের Tradeoff আমাদের একটি ভালো পরীক্ষা সাজাতে সাহায্য করে বটে, কিন্তু সেটি কখনোই র‍্যান্ডমাইজড অনলাইন প্রমাণের বিকল্প হতে পারে না। সঠিক Guardrail ও কার্যকারণ শর্তাবলি ছাড়া স্রেফ গাণিতিক সূত্র বসিয়ে ভালো সিদ্ধান্ত নেওয়া অসম্ভব।"
+        }
+      ]
+    },
+    {
+      "id": "ch33_power",
+      "title": "MDE, Statistical Power ও আনুমানিক Sample Size নির্ণয়",
+      "subtitle": "Absolute Percentage Point পরিবর্তন এবং Relative Lift কখনোই এক জিনিস নয়",
+      "duration": "60 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Sample Size পরিকল্পনার মৌলিক অনুমানসমূহ",
+          "body": "অনলাইন পরীক্ষা শুরু করার আগে সবচেয়ে বাস্তব প্রশ্নটি হলো: 'পরীক্ষাটি নির্ভরযোগ্যভাবে চালাতে প্রতি গ্রুপে অন্তত কতজন ইউজার লাগবে?' আমাদের ল্যাবের প্ল্যানারটি কয়েকটি প্রমিত অনুমানের ওপর দাঁড়িয়ে হিসাব করে: দ্বিমুখী (Binary) ফলাফলের ক্ষেত্রে বর্তমান `Baseline = 0.10` (অর্থাৎ 10%), শনাক্তযোগ্য ন্যূনতম পরম পার্থক্য `Absolute MDE = 0.01` (অর্থাৎ 1 Percentage Point), দুই প্রান্তিক পরীক্ষায় `α ≈ 0.05` (`z = 1.96`), কাঙ্ক্ষিত `Statistical Power ≈ 0.80` (`z = 0.84`), দুটি সমান আকারের স্বাধীন গ্রুপ এবং একটি স্থির সময়সীমা। মনে রাখবেন, এটি সাধারণ Normal Approximation ব্যবহার করে—অতি বিরল ঘটনা, ক্লাস্টারযুক্ত ডেটা কিংবা ক্রমিক (Sequential) পরীক্ষার নিখুঁত সূত্র নয়।"
+        },
+        {
+          "type": "text",
+          "title": "সমীকরণটি কীভাবে আসে তার সহজ স্বজ্ঞা",
+          "body": "দুটি স্বাধীন গ্রুপের সাফল্যের হারের পার্থক্যের Variance হলো আনুমানিক `2 * p * (1 - p) / n`। এখন আমরা যে ন্যূনতম উন্নতি `δ` (Delta) ধরতে চাই, সেটিকে অবশ্যই এলোমেলো কোলাহলের পাল্লা—অর্থাৎ Critical মান (`z_{1 - α/2}`) ও Power মান (`z_{1 - β}`)-এর যোগফল গুণককে অতিক্রম করতে হবে। এই শর্তটিকে বীজগাণিতিকভাবে সাজিয়ে নিলেই প্রতি গ্রুপের প্রয়োজনীয় ইউজার সংখ্যা `n_{arm}`-এর পরিচিত সূত্রটি পাওয়া যায়। উল্লেখ্য, এখানে ব্যবহৃত `0.10` বেসলাইনটি পরিকল্পনার উদাহরণ মাত্র, MovieLens-এর কোনো ক্লিক ডেটা থেকে নেওয়া নয়।"
+        },
+        {
+          "type": "math",
+          "title": "প্রতি গ্রুপের আনুমানিক Sample Size নির্ণয়ের সমীকরণ",
+          "body": "n_{arm}\\approx\\frac{2(z_{1-\\alpha/2}+z_{1-\\beta})^2p(1-p)}{\\delta^2}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ প্রতি গ্রুপের ইউজার সংখ্যা ও MDE অর্ধেক করার প্রভাব যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"eval33\", Path(\"assets/datasets/movielens/recommendation_evaluation_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_evaluation_lab.json\").read_text()\n)\n\nbaseline = 0.1\nmde = 0.01\nresult = m.sample_size(baseline, mde)\nassert result == lab[\"planner\"][\"per_arm\"]\nprint(\"users per arm\", result, \"total\", 2 * result)\nprint(\"half MDE approximately quadruples n\", m.sample_size(baseline, 0.005))\n"
+        },
+        {
+          "type": "text",
+          "title": "Absolute Percentage Point বনাম Relative পরিবর্তনের মারাত্মক বিভ্রান্তি",
+          "body": "প্রোডাক্ট মিটিংয়ে সবচেয়ে বেশি যে ভুলটি হয় তা হলো পরম ও আপেক্ষিক শতাংশ গুলিয়ে ফেলা! বর্তমান বেসলাইন যদি `10%` হয়, তবে তার ওপর পরম `1 Percentage Point` (`+0.01`) বৃদ্ধি মানে নতুন হার `11%` হওয়া—যা আপেক্ষিক হিসাবে কিন্তু `10% Relative Lift`! ল্যাবের স্লাইডারে `0.5`, `1.0` ও `2.0` মানগুলো সব পরম Percentage Point এককে দেওয়া। সূত্রে ভগ্নাংশ `0.01`-এর বদলে ভুল করে `1` বসিয়ে দিলে প্রয়োজনীয় ইউজারের সংখ্যা দশ হাজার গুণ কম-বেশি হয়ে পুরো পরিকল্পনা পণ্ড হয়ে যাবে!"
+        },
+        {
+          "type": "text",
+          "title": "ক্ষুদ্র উন্নতি ধরার বর্গাকার খরচ (Quadratic Cost)",
+          "body": "সমীকরণের হরে `δ^2` থাকার অর্থ হলো প্রয়োজনীয় নমুনার আকার `1 / δ^2`-এর সমানুপাতিক। তাই আপনি যদি `MDE` অর্ধেক করে দেন (যেমন `0.01` থেকে কমিয়ে `0.005` করেন), তবে প্রতি গ্রুপে ইউজারের সংখ্যা দ্বিগুণ নয়, বরং প্রায় চারগুণ (`4x`) লেগে যাবে! খুব সূক্ষ্ম উন্নতি ধরতে তাই বিপুল সংখ্যক স্বাধীন একক প্রয়োজন হয়। আর দৈনিক ট্রাফিকের হার না জেনে কেবল এই সংখ্যা দেখে 'কত দিন পরীক্ষা চলবে' তা বলা যায় না; তাছাড়া ইউজারের প্রাথমিক কৌতূহল (Novelty Effect) ও সাপ্তাহিক আচরণের ছন্দও ন্যূনতম সময়সীমা নির্ধারণে বড় ভূমিকা রাখে।"
+        },
+        {
+          "type": "text",
+          "title": "Design Effect: যখন সারিগুলো পরস্পর স্বাধীন নয়",
+          "body": "একই ইউজারের করা 10টি রিকোয়েস্ট কিন্তু 10 জন ভিন্ন ইউজারের মতো পরস্পর স্বাধীন একক নয়! একই ইউজারের ভেতরের আন্তঃসম্পর্ক (Cluster Correlation) সামগ্রিক Variance বাড়িয়ে দিতে পারে। দুই গ্রুপের অনুপাত অসমান হলে, ক্লাস্টার ধরে বরাদ্দ করলে কিংবা ফলাফলের বণ্টন অতি-বিষম হলে এই সরল ক্যালকুলেটরের বদলে পূর্ণাঙ্গ Variance মডেল ব্যবহার করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব প্রোডাকশনে এই হিসাবের সঠিক ব্যবহার",
+          "body": "এই গাণিতিক হিসাবটি মূলত পরীক্ষাটি আদৌ চালানো সম্ভব কি না তার একটি প্রাথমিক সম্ভাব্যতা যাচাই (Feasibility Estimate)—কোনো লঞ্চ অনুমোদন নয়। পরীক্ষা চালুর আগেই বেসলাইন, `MDE`, `Power`, Guardrail, সময়সীমা, থামার নিয়ম ও বিশ্লেষণের কোড চূড়ান্ত করে লক করতে হয়। মাঝপথে শুরুর ফলাফল দেখে মেট্রিক বা `MDE` পাল্টে ফেললে পরিসংখ্যানগত চুক্তির পুরো ভিত্তিই ভেঙে পড়ে।"
+        },
+        {
+          "type": "text",
+          "title": "ডেটার সারি (Rows) আর Randomization Unit কেন এক নয়: হাতে-কলমে হিসাব",
+          "body": "চলুন একটি চমৎকার সংখ্যার উদাহরণে দেখি কীভাবে ক্লাস্টারিং কাজ করে। ধরুন আমাদের পরীক্ষায় `100` জন স্বাধীন ইউজার আছেন এবং প্রত্যেকের `10`টি করে পর্যবেক্ষণ সারি রয়েছে (মোট `1000`টি সারি)। প্রতিটি সারির নিজস্ব `Variance = 1` এবং একই ইউজারের যেকোনো দুটি সারির মধ্যকার `Correlation = 0.2`। তাহলে সব সারির গড় মানের প্রকৃত Variance দাঁড়াবে `(1 + (10 - 1) * 0.2) / 1000 = 2.8 / 1000 = 0.0028`। অথচ আমরা যদি ভুল করে হাজারটি সারিকে পরস্পর স্বাধীন (`IID`) ভাবতাম, তবে Variance মনে হতো মাত্র `1 / 1000 = 0.001`! এখানে অনুপাতটি হলো `Design Effect = 2.8`—অর্থাৎ এই প্রকৃত Variance-টি আসলে প্রায় `1000 / 2.8 = 357.142857`টি স্বাধীন পর্যবেক্ষণের সমতুল্য। আর ভুলে গেলে চলবে না যে পরীক্ষায় প্রকৃত স্বাধীন Randomization Unit কিন্তু এখানে মাত্র `100` জন ইউজার! তাই Power হিসাবের সময় বরাদ্দের নকশা ও Covariance শর্ত সবসময় একসাথে বিচার করতে হয়।"
+        },
+        {
+          "type": "math",
+          "title": "সমান আকারের Cluster-এ গড় মানের Variance সমীকরণ",
+          "body": "\\operatorname{Var}(\\bar X)=\\frac{\\sigma^2}{N}[1+(m-1)\\rho],\\qquad N=Cm"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Diagonal ও Off-diagonal Covariance যোগ করে Design Effect হিসাব",
+          "body": "clusters, size, correlation = 100, 10, 0.2\nrows = clusters * size\ncovariance_sum = clusters * (size + size * (size - 1) * correlation)\nmean_variance = covariance_sum / rows**2\niid_variance = 1 / rows\ndesign_effect = mean_variance / iid_variance\nequivalent_iid_rows = rows / design_effect\nprint(mean_variance, design_effect, round(equivalent_iid_rows, 6), clusters)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে ভেবে উত্তর দিন",
+          "body": "উপরের হিসাবে প্রায় 357টি সমতুল্য IID পর্যবেক্ষণ পাওয়া গেল দেখে কি আমরা পরীক্ষায় 357 জন স্বাধীন ইউজার আছেন ধরে সাধারণ সূত্র চালাতে পারি?",
+          "solution": "না, তা করা যাবে না! এখানে আমাদের প্রকৃত Randomization Unit হলেন সেই 100 জন স্বতন্ত্র ইউজারই। সমতুল্য IID সারির সংখ্যাটি কেবল একটি নির্দিষ্ট Covariance মডেলের অধীনে গড়ের Variance কতটুকু বাড়ল তা বোঝার একটি গাণিতিক উপমা মাত্র। সঠিক Statistical Power এবং ব্যবধি নির্ণয়ের জন্য অবশ্যই ক্লাস্টারের আকার, আন্তঃসম্পর্ক, বরাদ্দের একক এবং প্রকৃত Degrees of Freedom বিবেচনায় নিতে হবে।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch33_guardrails",
+      "title": "SRM, Peeking, Interference ও Telemetry Loss",
+      "subtitle": "যেকোনো A/B Test-এর গড় বিয়োগ করার আগে পরিমাপ ব্যবস্থার বিশ্বাসযোগ্যতা যাচাই করুন",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Sample Ratio Mismatch (SRM): র‍্যান্ডমাইজেশন কি আদৌ ঠিকমতো কাজ করেছে?",
+          "body": "ধরুন আপনি ঠিক করলেন ঠিক 50% ইউজার যাবেন Control গ্রুপে আর 50% যাবেন Treatment গ্রুপে; কিন্তু সপ্তাহ শেষে লগ খুলে দেখলেন একদিকে গেছে 52.3% আর অন্যদিকে 47.7%! পরিকল্পিত অনুপাত ও প্রাপ্ত সংখ্যার এই অপ্রত্যাশিত অমিলকেই বলা হয় `SRM` (Sample Ratio Mismatch)। এমনটি দেখলে ফলাফল বিশ্লেষণ সাথে সাথে থামিয়ে আগে যাচাই করুন—ইউজারের যোগ্যতা নির্ধারণ, হ্যাশিং লজিক, পেজ রিডাইরেক্ট কিংবা লগিং পাইপলাইনে কোথাও ত্রুটি ঘটেনি তো? মনে রাখবেন, `SRM` হলো পরিমাপ ব্যবস্থার স্বাস্থ্য পরীক্ষা, প্রোডাক্টের সাফল্যের পরীক্ষা নয়। আমাদের MovieLens ফাইলে যেহেতু কোনো গ্রুপ বরাদ্দের ডেটা নেই, তাই এখানে কোনো SRM পরীক্ষা চালানো হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "বারবার উঁকি দেওয়ার বিপদ (Peeking Problem)",
+          "body": "নির্দিষ্ট সময়ের (Fixed-horizon) জন্য পরিকল্পিত একটি পরীক্ষা চলাকালীন প্রতিদিন ড্যাশবোর্ডে উঁকি দিয়ে যেই মুহূর্তে `p < 0.05` দেখা গেল অমনি পরীক্ষা থামিয়ে বিজয় ঘোষণা করলে ভুল সিদ্ধান্তের ঝুঁকি (False Positive Rate) মারাত্মকভাবে বেড়ে যায়! মাঝপথে থামার বৈধ সুযোগ রাখতে চাইলে শুরু থেকেই সুনির্দিষ্ট Sequential Testing, Alpha Spending কিংবা সর্বদা বৈধ Confidence Sequence পদ্ধতি ব্যবহার করতে হয়—আমাদের সাধারণ স্থির-মেয়াদি Sample Size ক্যালকুলেটর কিন্তু এ ধরনের আগাম থামার অনুমোদন দেয় না।"
+        },
+        {
+          "type": "math",
+          "title": "Sample Ratio Mismatch (SRM)-এর মৌলিক সংকেত",
+          "body": "\\mathrm{SRM}:\\quad\\mathrm{observed\\ allocation}\\not\\approx\\mathrm{planned\\ allocation}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ ল্যাবের প্ল্যানার মান ও টেলিমেট্রি সীমারেখা যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_evaluation_lab.json\").read_text()\n)\n\nprint(\"Source has no assignment or telemetry-loss logs;no SRM test was run.\")\nassert lab[\"planner\"][\"z_alpha\"] == 1.96\nassert lab[\"planner\"][\"z_power\"] == 0.84\n"
+        },
+        {
+          "type": "text",
+          "title": "Telemetry Loss: নতুন ফিচার যখন নিজেই লগিং ভেঙে দেয়",
+          "body": "ভাবুন আপনার নতুন সুপারিশ মডেলটি পুরোনো ফোনে বেশি মেমোরি নেওয়ায় অ্যাপটি ক্র্যাশ করছে অথবা ইভেন্ট পাঠানোর আগেই সংযোগ কেটে যাচ্ছে! এমন অবস্থায় কেবল যাদের লগ সার্ভারে পৌঁছেছে তাদের ওপর গড় হিসাব করলে ফলাফল পুরোপুরি পক্ষপাতদুষ্ট হয়ে যাবে, কারণ দুই গ্রুপে ডেটা হারানোর হার সমান নয়। তাই মেট্রিক দেখার আগে বরাদ্দকৃত ইউজার সংখ্যা, টেবিল Join-এর অখণ্ডতা, বিলম্বিত ইভেন্ট এবং ফলাফলের পরিপক্বতা কড়াকড়িভাবে মিলিয়ে দেখতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Interference এবং সময়ের রেশ (Carryover Effect)",
+          "body": "যখন এক ইউজারের আচরণ প্ল্যাটফর্মের নির্মাতা, সীমিত ইনভেন্টরি, প্রমোশনাল বাজেট বা সোশ্যাল নেটওয়ার্কের মাধ্যমে অন্য গ্রুপের ইউজারকেও প্রভাবিত করে, তখন সাধারণ ইউজার-বিভাজন কাজ করে না। পরিস্থিতি ভেদে তখন সময়-ভিত্তিক পালাবদল (`Switchback`) বা অঞ্চল/ক্লাস্টার-ভিত্তিক নকশা বেছে নিতে হয়, এবং সেই নতুন নকশার Estimand, নির্ভরশীলতা ও Variance নতুন করে নিরীক্ষা করতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Guardrail ভাঙলে প্রোডাক্ট সিদ্ধান্ত কী হবে?",
+          "body": "প্রধান মেট্রিক সামান্য বাড়লেও যদি অ্যাপ ক্র্যাশ, পেজ লোড হওয়ার সময় কিংবা ইউজারের অভিযোগের Guardrail খারাপ হয়ে যায়, তবে পূর্বঘোষিত নীতি মেনেই লঞ্চ আটকে দিতে হবে। ফলাফল হাতে পাওয়ার পর সুবিধাজনক সময়খণ্ড কেটে নেওয়া বা নির্দিষ্ট ইউজারদের বাদ দিয়ে সুন্দর গল্প সাজানো প্রকৌশল নৈতিকতার পরিপন্থী। আর কোনো পরীক্ষায় স্পষ্ট জয় না আসা (Null Result) মানেই যে আইডিয়াটি চিরতরে মূল্যহীন তার প্রমাণ নয়—বরং সেটি আমাদের অনুমান ও পরিমাপের সীমা নতুন করে ভাবতে শেখায়।"
+        },
+        {
+          "type": "text",
+          "title": "ইন্টারভিউতে উত্তর সাজানোর সোনালি ক্রম",
+          "body": "অনলাইন পরীক্ষার ফলাফল ব্যাখ্যা করার সময় সবসময় চারটি ধাপের এই ক্রমটি অনুসরণ করুন: প্রথমে পরিমাপের বিশ্বাসযোগ্যতা (`Measurement Trust`), তারপর প্রভাবের প্রাক্কলন (`Effect Estimate`), এরপর অনিশ্চয়তা (`Uncertainty`), এবং সবশেষে ব্যবসায়িক ও প্রকৌশল সিদ্ধান্ত (`Decision`)। নিছক একটি পরিসংখ্যানগত সীমা পার হওয়াই কিন্তু কোডের নির্ভুলতা, প্রোডাক্টের উপযোগিতা বা সম্ভাব্য ক্ষতির বিকল্প হতে পারে না।"
+        }
+      ]
+    },
+    {
+      "id": "ch33_evaluation",
+      "title": "বাস্তব ফলাফলের Uncertainty ও Relevance–Diversity Tradeoff",
+      "subtitle": "একই স্থির রান থেকে পাওয়া সব মেট্রিকের পূর্ণাঙ্গ ও নির্মোহ চিত্র",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "মূল র‍্যাংকিং বনাম বৈচিত্র্যময় নীতির সরাসরি তুলনা",
+          "body": "চলুন এবার আমাদের ল্যাবের একই স্থির 100 Candidate পুলের ওপর চালানো বাস্তব সংখ্যাগুলো একনজরে মিলিয়ে দেখি। `MMR (λ = 1.0)` নীতিটি এককভাবে প্রাসঙ্গিকতা-ভিত্তিক ক্রম ফিরিয়ে দেয়, যেখানে 28 জন Warm ইউজারের গড় `Recall = 0.0591408` এবং `NDCG = 0.1238999`। আমরা যখন বৈচিত্র্য বাড়াতে `λ = 0.75` করি, তখন `Recall` হয় `0.0484169` এবং `NDCG` হয় `0.1203175`; আর `λ = 0.5`-এ নামালে `Recall` দাঁড়ায় `0.0479315` এবং `NDCG` নেমে আসে `0.1092079`-এ। লক্ষ্য করুন, বৈচিত্র্য বাড়ানোর বিনিময়ে পর্যবেক্ষণকৃত প্রাসঙ্গিকতা কমার এই বাস্তব খরচটুকু আমরা লুকিয়ে রাখিনি—তাই বৈচিত্র্যকে একতরফা নিঃশর্ত জয় বলা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "পার্থক্যের ব্যবধি ও পরিসংখ্যানগত অনিশ্চয়তা",
+          "body": "`mmr0.5` থেকে `mmr1` বিয়োগ করলে গড় Recall-এর পার্থক্য আসে `-0.0112093`, যার শর্তসাপেক্ষ 95% Bootstrap ব্যবধি হলো `[-0.0345053, +0.0109930]`। শূন্য মানটি এই ব্যবধির ভেতরে থাকায় আমরা যেমন নিঃসংশয়ে বলতে পারি না যে দুটি নীতি হুবহু সমান, তেমনি মাত্র 28 জনের ছোট Cohort-এ যথেষ্ট অনিশ্চয়তা রয়েছে তাও স্পষ্ট বোঝা যায়। মনে রাখবেন, আমাদের ল্যাবের 8টি পরস্পর-সম্পর্কিত ব্যবধিই কোনো সমন্বয় ছাড়া অনুসন্ধানমূলক তুলনার জন্য রাখা হয়েছে।"
+        },
+        {
+          "type": "math",
+          "title": "একসাথে বিচার করার পাঁচটি অবিচ্ছেদ্য মাত্রা",
+          "body": "\\mathrm{tradeoff}=\\{\\mathrm{relevance},\\mathrm{diversity},\\mathrm{novelty},\\mathrm{coverage},\\mathrm{uncertainty}\\}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ তিন MMR নীতির স্কোরকার্ড, বৈচিত্র্য ও Bootstrap ব্যবধি প্রিন্ট",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_evaluation_lab.json\").read_text()\n)\n\nfor name in [\"mmr1\", \"mmr0.75\", \"mmr0.5\"]:\n    print(name, lab[\"scorecards\"][name][\"warm\"], lab[\"diversity\"][name])\nfor key in [\"neural50:user_cf:recall\", \"mmr0.5:mmr1:recall\"]:\n    b = lab[\"paired\"][key][\"bootstrap\"]\n    print(key, b[\"mean\"], b[\"low\"], b[\"high\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "বৈচিত্র্য ও নতুনত্বের প্রকৃত পরিধি",
+          "body": "একই 28 জন Warm ইউজার, সংরক্ষিত সম্পূর্ণ সুপারিশ তালিকা এবং মূল সিনেমার Genre ভেক্টর থেকেই হিসাব করা হয়েছে `ILD`, `Novelty`, `Catalog Coverage` এবং পরিকল্পিত স্লটের `Entropy`। তালিকায় Genre-এর দূরত্ব বাড়া মানেই কিন্তু স্বয়ংক্রিয়ভাবে ইউজারের বাস্তব সন্তুষ্টি, ন্যায্যতা কিংবা অনলাইন সাফল্য প্রমাণিত হওয়া নয়—তবে প্রতিটি ইউজারের পূর্ণ ট্রেস সংরক্ষিত থাকায় যে কেউ প্রতিটি সিদ্ধান্ত পুঙ্খানুপুঙ্খ নিরীক্ষা করতে পারেন।"
+        },
+        {
+          "type": "text",
+          "title": "সময়খণ্ড ও Data Split অডিটের সারসংক্ষেপ",
+          "body": "`Early` এবং `Late` সময়খণ্ডে আমরা একই ফ্রোজেন তালিকা রেখে আলাদা যোগ্য ইউজার ও ভবিষ্যৎ লক্ষ্য পরীক্ষা করেছি, যেখানে মাঝপথে কোনো পুনঃট্রেনিং বা চলমান ইতিহাস আপডেট করা হয়নি—তাই দুই অংশের পার্থক্যকে সরাসরি মডেল ক্ষয়ের কার্যকারণ প্রমাণ বলা যাবে না। একইভাবে Random এবং Per-user Split অডিট কেবল সময়ের ওভারল্যাপটুকু দেখায়; ওই ত্রুটিপূর্ণ বিভাজনে মডেল চালিয়ে কোনো কৃত্রিম স্কোর বানানো হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "এই অফলাইন ল্যাবে কোন কোন প্রমাণ অনুপস্থিত?",
+          "body": "একজন সচেতন প্রকৌশলী হিসেবে স্পষ্ট তালিকা করে রাখুন এখানে কী কী নেই: বাস্তব MovieLens ডেটার ওপর কোনো IPS বা DR প্রাক্কলন নেই, লাইভ অনলাইন A/B Test নেই, CTR ক্যালিব্রেশন নেই, ইউজারের পাল্টা আচরণের সিমুলেশন নেই, জনমিতিক Fairness ডেটা নেই এবং প্রোডাকশন সার্ভারের Latency মাপা হয়নি। গাণিতিক উদাহরণের সংখ্যাগুলোকে কখনোই বাস্তব ইউজার ইন্টারঅ্যাকশনের ফলাফল হিসেবে চালানো হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "প্রোটোটাইপ থেকে প্রোডাকশনের সেতুবন্ধন",
+          "body": "একটি অফলাইন প্রোটোটাইপ গাণিতিক ও কোডের দিক থেকে শতভাগ নিখুঁত হলেও বাস্তব প্রোডাক্টে সেটি কতটা লাভ দেবে তা অনলাইন পরীক্ষা ছাড়া অজানা থাকতে পারে। পরের অধ্যায়ে (Book 5 · Chapter 5: Recommender Capstone) আপনাকে ডেটা, মডেল ও মূল্যায়নের এই পুরো চুক্তিটি একসূত্রে গেঁথে উপস্থাপন করতে হবে—যেখানে আকর্ষণীয় গড় স্কোরের পাশেই এই সীমাবদ্ধতাগুলো অকপটে তুলে ধরা হবে।"
+        }
+      ]
+    },
+    {
+      "id": "ch33_artifacts",
+      "title": "Reproducible Evaluation Artifacts ও Offline State",
+      "subtitle": "মূল Dataset ও পুরোনো Frozen Model সম্পূর্ণ অক্ষত রেখে স্বচ্ছ নিরীক্ষা",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "স্বয়ংসম্পূর্ণ JSON Artifact-এ কী কী সংরক্ষিত আছে?",
+          "body": "আমাদের মূল্যায়ন পাইপলাইনের উৎপাদিত JSON ফাইলটিতে মূল ডেটা ও ফ্রোজেন ল্যাবের ক্রিপ্টোগ্রাফিক Hash, 116 জন ইউজারের Prediction, সব MMR নীতি, চারটি নমুনা কেসের পূর্ণ Candidate পুল ও ধাপে ধাপে নির্বাচনের ট্রেস, 8টি জোড়াবদ্ধ তুলনার প্রতিটির 5000টি করে Bootstrap Replicate, সময়খণ্ডের লক্ষ্যমাত্রা, Split অডিট, বৈচিত্র্য মেট্রিক এবং ঘোষিত গাণিতিক উদাহরণগুলো নিখুঁতভাবে সংরক্ষিত আছে। পুরো প্রক্রিয়ায় আগের কোনো মূল ডেটা ফাইল বা মডেলের অ্যাসেট বিন্দুমাত্র পরিবর্তন করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "শতভাগ পুনরুৎপাদনযোগ্য (Deterministic) গণনা",
+          "body": "এই অধ্যায়ের কোনো হিসাবে নতুন করে মডেল ট্রেনিং বা GPU-র প্রয়োজন নেই। Bootstrap-এর জন্য স্থানীয় `Generator(33)` এবং Random Split অডিটের জন্য `Generator(330)` স্থির রাখা হয়েছে; আর MMR-এ 12 ঘর পর্যন্ত রাউন্ড করা উপযোগিতা ও সংখ্যাগত `movieId` দিয়ে Tie-breaking পুরোপুরি সুনির্দিষ্ট রাখা হয়েছে। ফলে নির্ধারিত সফটওয়্যার পরিবেশে সম্পূর্ণ বিশ্লেষণটি হুবহু পুনরুৎপাদন করা যায় (যদিও ভিন্ন অপারেটিং সিস্টেম বা ভিন্ন লাইব্রেরি সংস্করণে শেষ বিট পর্যন্ত অভিন্নতার অবাস্তব দাবি করা হয়নি)।"
+        },
+        {
+          "type": "math",
+          "title": "অডিটযোগ্য মূল্যায়ন Artifact-এর ছয়টি উপাদান",
+          "body": "\\mathrm{audit}=\\{\\mathrm{hashes},\\mathrm{IDs},\\mathrm{windows},\\mathrm{metrics},\\mathrm{replicates},\\mathrm{policies}\\}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ মূল ফাইলের Hash এবং 5000টি Bootstrap Replicate যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"eval33\", Path(\"assets/datasets/movielens/recommendation_evaluation_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_evaluation_lab.json\").read_text()\n)\n\nfor name, h in lab[\"report\"][\"source_hashes\"].items():\n    assert m.digest(m.DATA / name) == h\nassert len(lab[\"paired\"]) == 8\nassert all(len(c[\"bootstrap\"][\"replicates\"]) == 5000 for c in lab[\"paired\"].values())\nprint(\n    \"Reproduce: python assets/datasets/movielens/recommendation_evaluation_workflow.py --artifact-dir <output>\"\n)\n"
+        },
+        {
+          "type": "text",
+          "title": "কমান্ড-লাইন ইন্টারফেস (CLI) চুক্তির নিয়ম",
+          "body": "স্ক্রিপ্টটি সাধারণভাবে ইমপোর্ট বা রান করলে সম্পূর্ণ অফলাইনে চলে এবং অ্যাপের কোনো মূল ফাইল স্পর্শ করে না। কেবল সচেতনভাবে `--write-lab` ফ্ল্যাগ দিলেই ল্যাবের JSON ফাইলটি পুনর্নির্মিত হয়, আর `--artifact-dir` দিলে অন্য একটি ফোল্ডারে ফলাফল ও চেকসাম এক্সপোর্ট হয়। মনে রাখবেন, এটি একটি বিশ্লেষণী রিপোর্ট আর্টিফ্যাক্ট—কোনো নিউরাল নেটওয়ার্কের ওজন চেকপয়েন্ট নয়, এবং এখানে কোনো বাহ্যিক সার্ভার, API বা টেলিমেট্রি যুক্ত করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "স্বতন্ত্র যাচাইকরণ ও অ্যাপের পুনর্গণনা",
+          "body": "টেস্ট স্যুটে মূল টেবিলের Join, সময়ের সীমানা, ইউজার Cohort, স্বতন্ত্র মেট্রিক ও Quantile হিসাব, Greedy তালিকা ও ট্রেস, Cosine দূরত্ব, Novelty, Entropy, IPS উদাহরণ এবং Sample Size গণনা আলাদাভাবে যাচাই করা হয়। অ্যাপের ভেতরে Dart কোড নিজে থেকেই মেট্রিক, Quantile এবং নির্বাচিত কেসের MMR তালিকা পুনর্গণনা করে মিলিয়ে দেখে, আর সংরক্ষিত 5000টি Bootstrap Replicate স্থির ডায়াগনস্টিক বণ্টন হিসেবে ব্যবহৃত হয়।"
+        },
+        {
+          "type": "text",
+          "title": "শিক্ষার্থীর অগ্রগতি সংরক্ষণ ও অফলাইন গোপনীয়তা",
+          "body": "ক্যাটালগ আপডেটের সময় আগের সব অধ্যায়ের আইডি অক্ষত রেখে নতুন অধ্যায় যুক্ত হয়। আপনার লেখা নোট, বুকমার্ক, পাঠ সমাপ্তি, কুইজের উত্তর, কোড খসড়া ও থিম সবই ডিভাইসের নিজস্ব অধ্যায়-ভিত্তিক SQLite ডাটাবেসে থাকে। ল্যাবের স্লাইডার নাড়াচাড়া করা কোনো ইউজার প্রোফাইল তৈরি করে না বা বাইরে কোনো ইভেন্ট লগ পাঠায় না।"
+        },
+        {
+          "type": "text",
+          "title": "কোড চালানোর পরিবেশ ও চেকারের পরিধি",
+          "body": "পাঠের Python কোডগুলো আপনার লোকাল কম্পিউটারের পরিবেশে চালানোর জন্য দেওয়া হয়েছে। অ্যাপের ভেতরে সিনট্যাক্স-হাইলাইটেড কোড ও খসড়া খাতা দেখা যায় এবং সংখ্যাগত অনুশীলনীর চেকার আপনার দেওয়া চূড়ান্ত সংখ্যার নির্ভুলতা মেলায়—যেকোনো ইচ্ছেমতো Python সোর্স কোড রান করে যাচাই করে না। ফন্ট, সমীকরণ, ডেটাসেট ও ল্যাব সবই অফলাইনে বান্ডেল করা আছে।"
+        }
+      ]
+    },
+    {
+      "id": "ch33_review",
+      "title": "Evaluation Interview Defense ও চূড়ান্ত প্রস্তুতি চেকলিস্ট",
+      "subtitle": "হাতে থাকা প্রমাণের চেয়ে কখনোই বড় কোনো সিদ্ধান্ত দাবি করবেন না",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "হোয়াইটবোর্ড ইন্টারভিউ প্রস্তুতির ধারাবাহিক পথরেখা",
+          "body": "ইন্টারভিউ বোর্ডে মার্কার হাতে নিয়ে প্রথমে Ranking মেট্রিক ও তাদের Denominator থেকে শুরু করুন; এরপর ধাপে ধাপে Paired Bootstrap, সময়ের সীমানা ও ভূমিকা, ডেটা পর্যবেক্ষণের প্রক্রিয়া (Exposure Mechanism), IPS-এর কার্যকারণ শর্ত, MMR ও Novelty-র সমীকরণ এবং সবশেষে অনলাইন পরীক্ষার Randomization Unit ও Power সূত্র প্রতিপাদন করে দেখান। প্রতিটি সমীকরণ লেখার আগেই তার অন্তর্নিহিত অনুমানগুলো স্পষ্ট করে বলার অভ্যাস করুন।"
+        },
+        {
+          "type": "text",
+          "title": "কোডিং রাউন্ডের অপরিহার্য সতর্কতা",
+          "body": "নিজে হাতে কোড লিখে প্রতি ইউজারের মেট্রিক, খালি তালিকার প্রান্তিক শর্ত, Linear Quantile, Greedy MMR ও তার Tie-breaking, সময়খণ্ডের Join এবং গাণিতিক উদাহরণের Estimator-গুলো অনুশীলন করুন। সবসময় মূল আইডি ও সোর্স ফাইলের Hash অক্ষত রাখুন; আর কখনোই ভিন্ন ইউজার দল বা ভিন্ন Candidate পুলের মধ্যে তুলনা করে কৃত্রিম সাফল্য দেখাবেন না।"
+        },
+        {
+          "type": "math",
+          "title": "যেকোনো কারিগরি সিদ্ধান্ত রক্ষার পাঁচটি স্তম্ভ",
+          "body": "\\mathrm{defense}=\\mathrm{estimand}+\\mathrm{protocol}+\\mathrm{uncertainty}+\\mathrm{identification}+\\mathrm{limits}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ চূড়ান্ত যাচাই ও পরবর্তী অধ্যায়ের প্রস্তুতি",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_evaluation_lab.json\").read_text()\n)\n\nassert lab[\"report\"][\"warm_users\"] == 28\nassert lab[\"planner\"][\"mde\"] == 0.01\nprint(\"Next after review: Chapter34 Recommender Capstone\")\n"
+        },
+        {
+          "type": "text",
+          "title": "অমীমাংসিত ও Tradeoff ফলাফল ব্যাখ্যা করার দক্ষতা",
+          "body": "ইন্টারভিউয়ার যদি জিজ্ঞেস করেন: 'গড় পার্থক্য ধনাত্মক হওয়া সত্ত্বেও Confidence Interval শূন্য অতিক্রম করলে কেন সেটিকে শক্তিশালী জয় বলা যায় না, আবার কেনই বা দুই মডেলকে সমান বলা যায় না?'—তার স্বচ্ছ পরিসংখ্যানগত উত্তর প্রস্তুত রাখুন। একইভাবে Genre বৈচিত্র্য বাড়া মানেই কেন সামাজিক কল্যাণের প্রমাণ নয় এবং পরিকল্পিত স্লট গণনা কেন বাস্তব Impression নয়, তাও যুক্তি দিয়ে বুঝিয়ে বলুন।"
+        },
+        {
+          "type": "text",
+          "title": "Counterfactual ও অনলাইন পরীক্ষার পরিকল্পনা রক্ষা",
+          "body": "ডেটায় প্রকৃত প্রদর্শনের সম্ভাব্যতা না থাকলে কোনো রকম রাখঢাক না করে সরাসরি IPS-এর Identifiability ঘাটতি স্বীকার করুন। আর অনলাইন পরীক্ষার নকশা বলার সময় প্রধান মেট্রিক, বরাদ্দের একক, Guardrail, `SRM`, টেলিমেট্রি ক্ষয়, ইউজারদের পারস্পরিক প্রভাব (`Interference`) এবং পরীক্ষা থামানোর নিয়ম একসাথে তুলে ধরুন—মনে রাখবেন একটি Sample Size ক্যালকুলেটর মানেই বাস্তবে সম্পন্ন হওয়া পরীক্ষা নয়।"
+        },
+        {
+          "type": "text",
+          "title": "অনুশীলনী ও কেস স্টাডি সমাধানের লক্ষ্য",
+          "body": "এই অধ্যায়ের 10টি সংখ্যাগত অনুশীলনী নিজে কোড লিখে সমাধান করার সময় কেবল চূড়ান্ত উত্তর নয়, মাঝখানের প্রতিটি Importance Weight, মেট্রিক ও Greedy নির্বাচনের ধাপগুলো মিলিয়ে দেখুন। পাশাপাশি 10টি ইন্টারভিউ প্রশ্নের প্রতিটিতে সমস্যা স্পষ্টীকরণ, গাণিতিক ভিত্তি, কম্পিউটেশনাল জটিলতা এবং ব্যর্থতার ঝুঁকি বিশ্লেষণ করুন—স্রেফ কুইজের উত্তর মুখস্থ করা কিন্তু প্রকৃত দক্ষতা নয়।"
+        },
+        {
+          "type": "text",
+          "title": "পরবর্তী গন্তব্য: Recommender Capstone",
+          "body": "নতুন অধ্যায়ে যাওয়ার আগে না দেখে খাতায় একবার Paired Resampling, IPS/SNIPS, MMR এবং Randomization Unit-এর শর্তগুলো নিজে লিখে ফেলুন। এই ভিত্তিটি মজবুত হলেই পরের অধ্যায়ে—Book 5 · Chapter 5 (Recommender Capstone)—আমরা মডেল নির্বাচন, আর্টিফ্যাক্ট ব্যবস্থাপনা ও প্রোডাকশন সার্ভিং চুক্তি একসাথে জোড়া লাগাতে পারব।"
+        }
+      ]
+    }
+  ],
+  "quizzes": [
+    {
+      "id": "ch33_q1",
+      "question": "আমাদের ল্যাবে `Warm` Eligible Cohort-এ অন্তর্ভুক্ত হতে একজন ইউজারের কী কী শর্ত পূরণ করতে হয়?",
+      "options": [
+        "কাটঅফ সময়ের আগের রেটিং ইতিহাস এবং অন্তত একটি Candidate-eligible ভবিষ্যৎ Positive থাকা",
+        "ট্রেনিং সময়সীমায় সম্পূর্ণ Cold ইউজার হওয়া",
+        "মূল 610 জন ইউজারের যেকোনো একজন হওয়া",
+        "ভবিষ্যতের প্রোফাইল থেকে ট্রেনিং Feature তৈরি করা"
+      ],
+      "answer": 0,
+      "explanation": "আমাদের ল্যাবে এই দুটি শর্ত পূরণ করা Warm ইউজার আছেন 28 জন (যেখানে Broad তালিকায় 116 জন এবং Cold ইউজার 88 জন)। কেবল এই 28 জনের স্কোর দেখিয়ে সমগ্র দর্শকের ওপর মডেলের মান দাবি করা যায় না।"
+    },
+    {
+      "id": "ch33_q2",
+      "question": "`MRR@10` মেট্রিকটি সুপারিশ তালিকার ঠিক কোন তথ্যটি ব্যবহার করে?",
+      "options": [
+        "তালিকায় থাকা সব প্রাসঙ্গিক Hit-এর অবস্থানের গড়",
+        "কেবল সর্বশেষ প্রাসঙ্গিক Hit-টির অবস্থান",
+        "সম্পূর্ণ ক্যাটালগের মোট সিনেমার সংখ্যা",
+        "তালিকায় পাওয়া প্রথম প্রাসঙ্গিক Item-এর Reciprocal Rank (`1 / rank`)"
+      ],
+      "answer": 3,
+      "explanation": "প্রথম প্রাসঙ্গিক আইটেমটি 2 নম্বরে থাকলে তার Reciprocal Rank হয় `0.5`। তালিকার নিচে দ্বিতীয় বা তৃতীয় আরেকটি Hit যুক্ত হলেও `MRR` বদলায় না; একাধিক Hit-এর অবস্থান হিসাব করতে `NDCG` ব্যবহৃত হয়।"
+    },
+    {
+      "id": "ch33_q3",
+      "question": "কোনো ইউজারের ভবিষ্যৎ প্রাসঙ্গিক তালিকা (Gold Set) খালি হলে তার `Recall` কীভাবে রিপোর্ট করা উচিত?",
+      "options": [
+        "সবসময় `0` হিসেবে",
+        "`-1` হিসেবে",
+        "`Undefined` হিসেবে",
+        "সবসময় `1` হিসেবে"
+      ],
+      "answer": 2,
+      "explanation": "প্রাসঙ্গিক আইটেমের সংখ্যা শূন্য হলে `Recall`-এর হর শূন্য হয়ে যায়। তাই আগেই স্পষ্ট Cohort নীতি ঠিক করতে হয়; খালি লক্ষ্যমাত্রাকে কৃত্রিমভাবে শূন্য ধরে আমাদের User-macro গড়কে লঘু করা হয়নি।"
+    },
+    {
+      "id": "ch33_q4",
+      "question": "`User-macro Recall` বলতে ঠিক কী বোঝায়?",
+      "options": [
+        "প্রতিটি ইভেন্টের সক্রিয়তা অনুযায়ী ওজনযুক্ত গড়",
+        "প্রতিটি যোগ্য ইউজারের আলাদা `Recall` বের করে সবার সমান ওজনে নেওয়া গড়",
+        "কেবল সবচেয়ে সক্রিয় ইউজারের একক `Recall`",
+        "সব ইউজারের মোট Hit সংখ্যা ভাগ মোট প্রাসঙ্গিক আইটেম সংখ্যা"
+      ],
+      "answer": 1,
+      "explanation": "মোট Hit ভাগ মোট প্রাসঙ্গিক আইটেম হলো `Micro-recall`, যেখানে বেশি রেটিং দেওয়া অতি-সক্রিয় ইউজারদের পাল্লা ভারী থাকে। অন্যদিকে `User-macro` পদ্ধতিতে প্রতিটি যোগ্য ইউজার সমান গুরুত্ব পান।"
+    },
+    {
+      "id": "ch33_q5",
+      "question": "আমাদের `Early` ও `Late` Window অডিটে কি মডেল নতুন করে Retrain করা হয়েছে?",
+      "options": [
+        "না; উভয় সময়খণ্ডেই হুবহু একই Frozen Prediction ব্যবহার করা হয়েছে",
+        "হ্যাঁ; `Late` অংশের লেবেল দিয়ে মডেল আপডেট করা হয়েছে",
+        "প্রতিটি সময়খণ্ড শেষে ইউজারের ইতিহাস ক্রমান্বয়ে আপডেট করা হয়েছে",
+        "কেবল Feature Scaler-টি ভবিষ্যৎ ডেটার ওপর নতুন করে Fit করা হয়েছে"
+      ],
+      "answer": 0,
+      "explanation": "সময়খণ্ড ভেদে যোগ্য ইউজার ও ভবিষ্যৎ লক্ষ্য বদলালেও মডেলের ওজন এবং সুপারিশ তালিকা সম্পূর্ণ অপরিবর্তিত থাকে। এটি একটি স্থির ডায়াগনস্টিক পরীক্ষা, চলমান Prequential সার্ভিং মূল্যায়ন নয়।"
+    },
+    {
+      "id": "ch33_q6",
+      "question": "প্রতিটি ইউজারের নিজস্ব সময়ক্রম ধরে `Per-user Chronological Split` করলেই কি বৈশ্বিক ভবিষ্যৎ সীমানা (Global Future Boundary) নিশ্চিত হয়?",
+      "options": [
+        "হ্যাঁ; এতে সব ইউজারের কাটঅফ সময় স্বয়ংক্রিয়ভাবে এক হয়ে যায়",
+        "কেবল `movieId` অনুসারে সাজালেই তা নিশ্চিত হয়ে যায়",
+        "কোনো `Timestamp` ছাড়াই এটি নিশ্চিত করা সম্ভব",
+        "না; ভিন্ন ভিন্ন ইউজারের ট্রেনিং ও টেস্ট সময়সীমা বৈশ্বিক ঘড়িতে ওভারল্যাপ করতে পারে"
+      ],
+      "answer": 3,
+      "explanation": "একজন নতুন ইউজারের ট্রেনিংয়ের ঘটনা অন্য একজন পুরোনো ইউজারের টেস্ট ঘটনার অনেক পরের সময়ের হতে পারে। আমরা কেবল এই সময়ের ওভারল্যাপটুকু নিরীক্ষা করেছি; বিকল্প বিভাজনে মডেল নতুন করে ট্রেন করে তুলনা করিনি।"
+    },
+    {
+      "id": "ch33_q7",
+      "question": "`Paired User Bootstrap` পদ্ধতিতে আমরা প্রতি ধাপে ঠিক কী Resample করি?",
+      "options": [
+        "সিনেমার মেটাডেটা টেবিলের সারিগুলো",
+        "Treatment এবং Control গ্রুপের ইউজারদের সম্পূর্ণ আলাদা ও স্বাধীনভাবে",
+        "একই ইউজারের ওপর দুটি মডেলের স্কোরের পার্থক্য (`Treatment - Control`)",
+        "কেবল সর্বোচ্চ মেট্রিক পাওয়া সেরা ইউজারদের সারিগুলো"
+      ],
+      "answer": 2,
+      "explanation": "প্রতিটি ড্র-তে ইউজার-স্তরের জোড়াবদ্ধ পার্থক্যগুলোকে With Replacement পদ্ধতিতে নমুনায়ন করা হয়। জোড়া ভেঙে দুই গ্রুপ আলাদাভাবে নমুনা নিলে একই ইউজারের ভেতরের আন্তঃসম্পর্ক (Covariance) হারিয়ে যায়।"
+    },
+    {
+      "id": "ch33_q8",
+      "question": "আমাদের ল্যাবের Bootstrap Confidence Interval আসলে কোন ধরনের Uncertainty পরিমাপ করে?",
+      "options": [
+        "অনলাইন পরীক্ষার প্রকৃত Causal Lift-এর অনিশ্চয়তা",
+        "স্থির Data Split ও ফ্রোজেন মডেলের অধীনে পর্যবেক্ষণকৃত ইউজারদের Resample করার শর্তসাপেক্ষ অনিশ্চয়তা",
+        "ভিন্ন ভিন্ন ট্রেনিং Random Seed-এর সামগ্রিক অনিশ্চয়তা",
+        "ভবিষ্যতের দীর্ঘমেয়াদি রুচি পরিবর্তনের সম্পূর্ণ অনিশ্চয়তা"
+      ],
+      "answer": 1,
+      "explanation": "5000 বার ইউজার পুনর্নির্বাচন করলে নতুন কোনো মডেল বা নতুন লগিং নীতি তৈরি হয় না। ছোট ও স্ব-নির্বাচিত ইউজার দল এবং আগে দেখা ডেটা স্প্লিটের সীমাবদ্ধতা এই ব্যবধির বাইরেও থেকে যায়।"
+    },
+    {
+      "id": "ch33_q9",
+      "question": "দুই মডেলের গড় পার্থক্য ধনাত্মক হওয়া সত্ত্বেও যদি 95% Confidence Interval শূন্য (`0`) অতিক্রম করে, তবে সঠিক সিদ্ধান্ত কোনটি?",
+      "options": [
+        "একটির শক্তিশালী শ্রেষ্ঠত্ব প্রমাণিত হয়নি, আবার দুটি মডেল হুবহু সমান (Equivalent) তাও প্রমাণিত হয়নি",
+        "নতুন Treatment মডেলটি নিশ্চিতভাবে সেরা",
+        "দুটি মডেলের সক্ষমতা গাণিতিকভাবে শতভাগ সমান",
+        "নতুন মডেলটি ভালো হওয়ার সম্ভাব্যতা ঠিক 95%"
+      ],
+      "answer": 0,
+      "explanation": "ব্যবধিটি শূন্যের দুই পাশের মানের সাথেই সামঞ্জস্যপূর্ণ। সমতুল্যতা দাবি করতে হলে শুরুতেই সুনির্দিষ্ট Margin ও উপযুক্ত পরীক্ষার নকশা প্রয়োজন; আর Frequentist ব্যবধি কখনোই শ্রেষ্ঠত্বের Posterior Probability দেয় না।"
+    },
+    {
+      "id": "ch33_q10",
+      "question": "ল্যাবে রাখা 8টি তুলনামূলক Confidence Interval-এ কি কোনো `Multiple Comparisons` সমন্বয় করা হয়েছে?",
+      "options": [
+        "হ্যাঁ; সবগুলোতে কঠোর Bonferroni সংশোধন প্রয়োগ করা হয়েছে",
+        "প্রতিটি তুলনা সম্পূর্ণ স্বাধীন হওয়ায় কোনো সমন্বয়ের প্রয়োজন নেই",
+        "আটটি মিলিয়ে সামগ্রিক Family-wise ত্রুটির হার স্বয়ংক্রিয়ভাবে 5% থাকে",
+        "না; এগুলো সমন্বয়হীন এবং অনুসন্ধানমূলক (Exploratory ও Unadjusted)"
+      ],
+      "answer": 3,
+      "explanation": "অনেকগুলো সম্পর্কিত ডায়াগনস্টিক তুলনা ঘেঁটে সেরাটি বেছে নিলে Selection Uncertainty বেড়ে যায়। চূড়ান্ত প্রমাণের জন্য মূল তুলনা ও সমন্বয় নীতি আগেই ঘোষণা করতে হয়।"
+    },
+    {
+      "id": "ch33_q11",
+      "question": "MovieLens ডেটাসেটে কোনো সিনেমার পজিটিভ রেটিংয়ের সংখ্যাকেই কি জানা `Logging Propensity` বলা যায়?",
+      "options": [
+        "হ্যাঁ, সংখ্যার সাথে এক যোগ করে Smoothing করলেই তা Propensity হয়ে যায়",
+        "মোট রেটিং দিয়ে ভাগ করে Normalize করলেই তা নিখুঁত Propensity দেয়",
+        "না, মোটেও না",
+        "কেবল শীর্ষ জনপ্রিয় সিনেমাগুলোর ক্ষেত্রে এটি সত্য"
+      ],
+      "answer": 2,
+      "explanation": "কতজন ইউজার সিনেমাটি পছন্দ করেছেন সেই সংখ্যাটি কখনোই সিস্টেম সিনেমাটি কত সম্ভাব্যতায় দেখিয়েছিল তার সমান নয়। আমাদের সোর্স ডেটায় লগিং নীতির তথ্য না থাকায় বাস্তব ডেটায় কোনো IPS হিসাব দাবি করা হয়নি।"
+    },
+    {
+      "id": "ch33_q12",
+      "question": "`IPS` প্রাক্কলনের ক্ষেত্রে `Positivity` বা `Support` শর্তটি কী?",
+      "options": [
+        "লগে কেবল উচ্চ Reward পাওয়া সারিগুলোই থাকতে হবে",
+        "নতুন `Target Policy` যেসব Action নিতে পারে, পুরোনো লগারে সেগুলোর প্রতিটির সম্ভাব্যতা ধনাত্মক (`> 0`) হতে হবে",
+        "ভবিষ্যতের যেকোনো একটি রেটিং লেবেল থাকলেই চলবে",
+        "পুরোনো লগারের সম্ভাব্যতা শূন্য হলে প্রাক্কলন সবচেয়ে নিখুঁত হয়"
+      ],
+      "answer": 1,
+      "explanation": "পুরোনো সিস্টেম কোনো Action কখনোই না দেখালে তার ফলাফল লগ থেকে শনাক্ত করা অসম্ভব। হরে কৃত্রিমভাবে ক্ষুদ্র `epsilon` বসালেও অনুপস্থিত কার্যকারণ প্রমাণ তৈরি হয় না।"
+    },
+    {
+      "id": "ch33_q13",
+      "question": "চার সারির গাণিতিক উদাহরণে `IPS = 1.5625` আসা আসলে কী বোঝায়?",
+      "options": [
+        "সীমিত নমুনায় উচ্চ Variance-এর কারণে `IPS` প্রাক্কলন মূল Reward-এর সর্বোচ্চ সীমা (`1.0`) ছাড়িয়ে যেতে পারে",
+        "কোডে নিশ্চিতভাবে কোনো গাণিতিক বাগ রয়ে গেছে",
+        "এটি একটি সুষমভাবে ক্যালিব্রেটেড সম্ভাব্যতা",
+        "এটি MovieLens ইউজারদের পরিমাপকৃত প্রকৃত CTR"
+      ],
+      "answer": 0,
+      "explanation": "ছোট লগিং সম্ভাব্যতা দিয়ে ভাগ করার ফলে সীমিত নমুনায় বড় ওজন তৈরি হয়। সূত্রের আচরণ বোঝার এই চারটি সারি থেকে কোনো বাস্তব প্রোডাক্টের সত্যতা দাবি করা যায় না।"
+    },
+    {
+      "id": "ch33_q14",
+      "question": "`Importance Weight`-এ সর্বোচ্চ সীমা বসিয়ে `Clipping` করলে মূলত কী পরিবর্তন ঘটে?",
+      "options": [
+        "যেকোনো কার্যকারণ Bias চিরতরে দূর হয়ে যায়",
+        "ডেটাসেটে নতুন স্বাধীন ইউজারের তথ্য যুক্ত হয়",
+        "অজানা Logging Probability স্বয়ংক্রিয়ভাবে নির্ভুল প্রমাণিত হয়",
+        "Variance কমার বিপরীতে নতুন করে Bias আসার একটি `Bias–Variance Tradeoff` তৈরি হয়"
+      ],
+      "answer": 3,
+      "explanation": "চার সারির উদাহরণে `cap = 2` দিলে IPS কমে `0.8125` হয় এবং `ESS` বাড়ে, কিন্তু বড় ওজনের সারির অবদান ছেঁটে যাওয়ায় Bias ঢোকে। তাছাড়া সুবিধাজনক উত্তর দেখে `cap` বেছে নেওয়াও এক ধরনের Selection Bias।"
+    },
+    {
+      "id": "ch33_q15",
+      "question": "সাধারণভাবে সীমিত নমুনায় (Finite Sample) `SNIPS` প্রাক্কলন কি সবসময় সম্পূর্ণ পক্ষপাতহীন (`Unbiased`)?",
+      "options": [
+        "যেকোনো ধরনের Weight Clipping থাকলেই এটি পক্ষপাতহীন হয়",
+        "হ্যাঁ, সব আকারের নমুনাতেই সর্বদা পক্ষপাতহীন",
+        "না",
+        "কেবল দুটি ধনাত্মক ওজন থাকলেই এটি পক্ষপাতহীন হয়"
+      ],
+      "answer": 2,
+      "explanation": "`SNIPS` হলো ওজনযুক্ত Reward যোগফল ও মোট ওজনের যোগফলের একটি অনুপাত (Ratio Estimator)। তাই সীমিত নমুনায় এতে অনুপাতজনিত Bias থাকতে পারে এবং যথারীতি সঠিক লগিং ও Support শর্তও অপরিহার্য থাকে।"
+    },
+    {
+      "id": "ch33_q16",
+      "question": "পূর্ণ সুপারিশ তালিকা বা `Slate Recommendation`-এর Propensity কীভাবে নির্ধারণ করতে হয়?",
+      "options": [
+        "আইটেমগুলোর ঐতিহাসিক জনপ্রিয়তার ক্রম থেকে",
+        "পুরো তালিকার যৌথ Logging Policy অথবা গাণিতিকভাবে বৈধ শর্তসাপেক্ষ উৎপাদকে বিশ্লেষণ (Factorization) থেকে",
+        "এলোমেলো Genre গণনা থেকে",
+        "সবসময় প্রতিটি আইটেমের একক সম্ভাব্যতা চোখ বুজে গুণ করে"
+      ],
+      "answer": 1,
+      "explanation": "তালিকার অবস্থান ও আইটেম নির্বাচন পরস্পর নির্ভরশীল হতে পারে। স্বাধীনতা বা শর্তসাপেক্ষ গঠন প্রমাণ না করে একক প্রান্তিক সম্ভাব্যতা গুণ করলে সঠিক যৌথ Propensity পাওয়া যায় না।"
+    },
+    {
+      "id": "ch33_q17",
+      "question": "আমাদের `MMR` নির্বাচন নীতি কি তালিকা সাজানোর সময় ভবিষ্যতের আসল `Gold Label` ব্যবহার করে?",
+      "options": [
+        "না",
+        "হ্যাঁ, প্রতিটি ধাপে ভবিষ্যৎ রেটিং দেখে আইটেম নেয়",
+        "ভবিষ্যতে পছন্দ করা সিনেমাগুলো দিয়ে আগে Candidate ফিল্টার করে নেয়",
+        "সবার প্রথমে নিশ্চিত প্রাসঙ্গিক সিনেমাটি বসিয়ে নেয়"
+      ],
+      "answer": 0,
+      "explanation": "MMR নির্বাচনের ইনপুট হলো কেবল ফ্রোজেন Candidate স্কোর এবং তাদের Genre ভেক্টরের পুনরাবৃত্তি। ভবিষ্যৎ Gold Label শুধুমাত্র তালিকা তৈরি হয়ে যাওয়ার পর তার মান মাপার ডায়াগনস্টিক মেট্রিকে ব্যবহৃত হয়।"
+    },
+    {
+      "id": "ch33_q18",
+      "question": "`MMR` সমীকরণে প্যারামিটার `λ = 1` বসালে কী ঘটে?",
+      "options": [
+        "কেবল বৈচিত্র্যই অপটিমাইজ হয়",
+        "তালিকাটি সম্পূর্ণ এলোমেলোভাবে সাজানো হয়",
+        "পুরো নিউরাল মডেল নতুন করে ট্রেন হয়",
+        "পুনরাবৃত্তির শাস্তি শূন্য হয়ে কেবল একক প্রাসঙ্গিকতার ক্রম (`Relevance-only Ordering`) পাওয়া যায়"
+      ],
+      "answer": 3,
+      "explanation": "`λ = 1` হলে `(1 - λ)` গুণকটি শূন্য হয়ে যায়। আমাদের ডেটাসেটের 116 জন ইউজারের সবার ক্ষেত্রেই `λ = 1` মূল `neural100` তালিকার অবিকল ক্রম ফিরিয়ে দেয়।"
+    },
+    {
+      "id": "ch33_q19",
+      "question": "আমাদের ল্যাবে কোনো নীতির `ILD` (Intra-list Diversity) বেশি হওয়ার সুনির্দিষ্ট অর্থ কী?",
+      "options": [
+        "মূল ডেটার অজানা প্রদর্শনের সম্ভাব্যতা উদঘাটিত হয়েছে",
+        "ইউজারের সন্তুষ্টি এবং সামাজিক Fairness দুটোই প্রমাণিত হয়েছে",
+        "তালিকার সিনেমাগুলোর এনকোড করা `Genre` ভেক্টরের গড় দূরত্ব বেশি",
+        "সব ইউজার আগের চেয়ে নিশ্চিতভাবে বেশি খুশি হয়েছেন"
+      ],
+      "answer": 2,
+      "explanation": "Genre Cosine দূরত্ব হলো বিষয়বস্তুর একটি মোটা দাগের সূচক মাত্র। এটি দিয়ে সরাসরি ব্যক্তিগত উপযোগিতা, আনন্দদায়ক চমক বা সংরক্ষিত জনগোষ্ঠীর Fairness প্রমাণিত হয় না।"
+    },
+    {
+      "id": "ch33_q20",
+      "question": "এই অধ্যায়ে আইটেমের `Novelty` বিট হিসাব করতে কোন সংখ্যাটি ব্যবহার করা হয়েছে?",
+      "options": [
+        "জনমিতিক Fairness স্কোর",
+        "কাটঅফ সময়ের আগের ট্রেনিং ডেটার `Add-one Smoothed` পজিটিভ রেটিং সংখ্যা",
+        "কৃত্রিমভাবে তৈরি করা এলোমেলো Reward",
+        "ভবিষ্যতের অনলাইন ক্লিক সম্ভাব্যতা"
+      ],
+      "answer": 1,
+      "explanation": "এটি ঐতিহাসিক বিরলতা মাপে: `-log2((count + 1) / (total positives + catalog size))`। কোনো নির্দিষ্ট ইউজারের কাছে সিনেমাটি ব্যক্তিগতভাবে কতটা বিস্ময়কর তা এখানে মাপা হয়নি।"
+    },
+    {
+      "id": "ch33_q21",
+      "question": "পরিকল্পিত সুপারিশ স্লটের `Recommendation Entropy` কি বাস্তব স্ক্রিনের পরিমাপকৃত `Impression Entropy`-র সমান?",
+      "options": [
+        "না; আমাদের ডেটায় বাস্তবে দেখানো কোনো Impression লগ নেই",
+        "হ্যাঁ, দুটি সবসময় গাণিতিকভাবে অভিন্ন",
+        "কেবল Cold ইউজারদের ক্ষেত্রে দুটি সমান",
+        "পরিকল্পিত তালিকার প্রতিটি সিনেমাই ইউজার দেখেছেন বলে ধরে নেওয়া যায়"
+      ],
+      "answer": 0,
+      "explanation": "ফ্রোজেন Top 10 তালিকায় কোন আইটেম কতবার এসেছে সেই গণনা থেকেই এই Entropy বের করা হয়েছে—এটি বাস্তব প্রদর্শন, ক্লিক বা দীর্ঘমেয়াদি ফিডব্যাক সিমুলেশনের ফল নয়।"
+    },
+    {
+      "id": "ch33_q22",
+      "question": "বর্তমান `Baseline = 10%` এবং পরম `Absolute MDE = 1 Percentage Point` হলে লক্ষ্যমাত্রার নতুন হার কত দাঁড়ায়?",
+      "options": [
+        "10.1%",
+        "20%",
+        "1%",
+        "11%"
+      ],
+      "answer": 3,
+      "explanation": "পরম বৃদ্ধি `+0.01` হওয়ায় হারটি `10%` থেকে বেড়ে `11%` হয় (যা আপেক্ষিক হিসাবে `10% Relative Lift`)। পরম ও আপেক্ষিক একক গুলিয়ে ফেললে Sample Size হিসাব সম্পূর্ণ ভুল হয়ে যায়।"
+    },
+    {
+      "id": "ch33_q23",
+      "question": "অন্যান্য সব শর্ত স্থির রেখে `MDE` অর্ধেক করে দিলে আনুমানিক প্রয়োজনীয় `Sample Size` কত গুণ হবে?",
+      "options": [
+        "দ্বিগুণ",
+        "অর্ধেক",
+        "চারগুণ",
+        "একই থাকবে"
+      ],
+      "answer": 2,
+      "explanation": "Normal Approximation সূত্রে প্রয়োজনীয় নমুনার আকার `1 / δ^2`-এর সমানুপাতিক। তাই `δ` অর্ধেক হলে স্বাধীন সমান গ্রুপের স্থির-মেয়াদি পরীক্ষায় ইউজার সংখ্যা প্রায় চারগুণ লাগে।"
+    },
+    {
+      "id": "ch33_q24",
+      "question": "স্থির সময়সীমার (Fixed-horizon) একটি পরীক্ষা চলাকালীন বারবার ফলাফল দেখে অনুকূল সংখ্যা পেলেই পরীক্ষা থামিয়ে দিলে কী ঘটে?",
+      "options": [
+        "কেবল পজিটিভ ড্যাশবোর্ড দেখে থামলে কোনো পরিসংখ্যানগত সমস্যা হয় না",
+        "বৈধ Sequential Stopping নকশা ছাড়া এভাবে থামলে ভুল সিদ্ধান্তের হার (Error Rate) বেড়ে যায়",
+        "`SRM` সমস্যাটি স্বয়ংক্রিয়ভাবে সমাধান হয়ে যায়",
+        "আগের সাধারণ Significance সীমা সবসময় হুবহু বৈধ থাকে"
+      ],
+      "answer": 1,
+      "explanation": "মাঝপথে থামার সুযোগ রাখতে চাইলে শুরুতেই বৈধ Sequential Testing বা Alpha Spending নিয়ম নির্ধারণ করতে হয়। আর `SRM` হলো বরাদ্দের নিরীক্ষা, প্রোডাক্টের প্রভাব মাপার পরীক্ষা নয়।"
+    },
+    {
+      "id": "ch33_q_snips_revision",
+      "question": "লগে যদি কেবল একটিমাত্র সারি থাকে এবং তার `Importance Weight` ধনাত্মক হয়, তবে `SNIPS`-এর মান কত হবে?",
+      "options": [
+        "ওই একটি সারিতে পাওয়া `Observed Reward`-এর সমান",
+        "সবসময় নতুন `Target Policy`-র প্রকৃত মানের সমান",
+        "ওজনের বর্গের সমান",
+        "সবসময় শূন্য (`0`)"
+      ],
+      "answer": 0,
+      "explanation": "মাত্র একটি ধনাত্মক ওজন `w` থাকলে `(w * r) / w = r` হয়ে ওজন কাটাকাটি চলে যায়! ফলে এক-নমুনার প্রত্যাশিত মান পুরোনো লগিং বণ্টনের গড় Reward-ই থেকে যায়—এটিই সসীম নমুনায় অনুপাতজনিত Bias-এর প্রকৃষ্ট উদাহরণ।"
+    },
+    {
+      "id": "ch33_q_cluster_revision",
+      "question": "`100` জন ইউজারের প্রত্যেকের `10`টি করে সারি আছে। একই ইউজারের সারিগুলোর মধ্যকার `Correlation = 0.2` হলে সমান আকারের ক্লাস্টারের `Design Effect` কত?",
+      "options": [
+        "1",
+        "2.8",
+        "10",
+        "100"
+      ],
+      "answer": 1,
+      "explanation": "সূত্র অনুযায়ী `1 + (m - 1) * rho = 1 + (10 - 1) * 0.2 = 2.8`। মনে রাখবেন, এখানে প্রকৃত স্বাধীন Randomization Unit হলেন সেই `100` জন ইউজারই—তাই Power হিসাবের সময় ক্লাস্টারের আকার ও আন্তঃসম্পর্ক স্পষ্টভাবে ধরতে হয়।"
+    }
+  ],
+  "exercises": [
+    {
+      "id": "ch33_ex_delta",
+      "title": "বাস্তব ডেটায় Paired Recall পার্থক্যের গড়",
+      "prompt": "একই 28 জন Warm ইউজারের জন্য প্রতিটি ইউজারের `neural50` Recall থেকে `user_cf` Recall বিয়োগ করুন। প্রাপ্ত জোড়াবদ্ধ পার্থক্যগুলোর গড় (Mean) মান লিখুন।",
+      "starter": "# Run Python locally; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_evaluation_lab.json\").read_text()\n)\nrows = lab[\"paired\"][\"neural50:user_cf:recall\"][\"rows\"]\ndifferences = [r[\"treatment\"] - r[\"control\"] for r in rows]\nresult = sum(differences) / len(differences)\nprint(result)\n",
+      "expected": 0.007112694636190876,
+      "explanation": "সঠিক গড় পার্থক্য হলো প্রায় `0.007112695`। প্রতিটি ইউজারের সঠিক `userId` এবং প্রাপ্য Gold Denominator মিলিয়ে জোড়ায় জোড়ায় বিয়োগ করতে হবে। তবে কেবল এই অফলাইন পার্থক্য থেকেই সরাসরি প্রোডাক্টের Causal Lift দাবি করা যাবে না।"
+    },
+    {
+      "id": "ch33_ex_quantile",
+      "title": "Bootstrap বণ্টনের নিম্নসীমা (Lower Bound) নির্ণয়",
+      "prompt": "সংরক্ষিত 5000টি Bootstrap Replicate ছোট থেকে বড় ক্রমে সাজান (`sort` করুন)। এরপর `h = (n - 1) * 0.025` অবস্থানের `floor` এবং `ceil` ইনডেক্সের মান ব্যবহার করে সরাসরি Linear Interpolation-এর মাধ্যমে 95% ব্যবধির নিম্নসীমা (Lower Endpoint) বের করে লিখুন (সরাসরি NumPy-এর রেডিমেড `quantile` ফাংশন ব্যবহার করবেন না)।",
+      "starter": "# Run Python locally; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json, math\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_evaluation_lab.json\").read_text()\n)\nx = sorted(lab[\"paired\"][\"neural50:user_cf:recall\"][\"bootstrap\"][\"replicates\"])\nh = (len(x) - 1) * 0.025\nlo, hi = math.floor(h), math.ceil(h)\nresult = x[lo] + (x[hi] - x[lo]) * (h - lo)\nprint(result)\n",
+      "expected": -0.019510250870683195,
+      "explanation": "নিম্নসীমার মান আসে প্রায় `-0.01951025`। এখানে ফ্রোজেন ডায়াগনস্টিক Prediction-গুলোকে ইউজার স্তরে পুনর্নির্বাচন করা হয়েছে; মডেল পুনঃট্রেনিং বা আর্কিটেকচার খোঁজার অনিশ্চয়তা এই ব্যবধির বাইরে থাকে।"
+    },
+    {
+      "id": "ch33_ex_mrr",
+      "title": "তালিকার ক্রম থেকে MRR@3 হিসাব",
+      "prompt": "ধরা যাক একটি সুপারিশ তালিকা `ranking = [10, 20, 30]` এবং ইউজারের প্রাসঙ্গিক সেট `gold = {20, 30}`। এই তালিকাটির `MRR@3` মান কত হবে তা লিখুন।",
+      "starter": "# Run Python locally; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "ranked = [10, 20, 30]\ngold = {20, 30}\nresult = next((1 / (j + 1) for j, i in enumerate(ranked) if i in gold), 0)\nprint(result)\n",
+      "expected": 0.5,
+      "explanation": "তালিকার প্রথম প্রাসঙ্গিক আইটেম `20` রয়েছে `rank = 2` অবস্থানে, তাই এর Reciprocal Rank হলো `1 / 2 = 0.5`। একটি একক তালিকার `MRR` কেবল প্রথম সফল Hit-টির অবস্থান থেকেই নির্ধারিত হয়।"
+    },
+    {
+      "id": "ch33_ex_mmr",
+      "title": "বাস্তব Candidate পুলে Greedy MMR বাস্তবায়ন",
+      "prompt": "ল্যাবের প্রথম নমুনা কেসের (`samples[0]`) 100টি Candidate-এর ওপর `lambda = 0.5` দিয়ে Greedy MMR অ্যালগরিদম চালান। Genre ভেক্টরের L2 Normalization, পুলের স্কোরের Min–Max Scaling, শুরুতে খালি সেটের জন্য `penalty = 0`, উপযোগিতা স্কোর দশমিকের পর 12 ঘর রাউন্ড করা এবং সমান স্কোরে ছোট সংখ্যাগত `movieId` নেওয়ার নিয়ম অনুসরণ করুন। সম্পূর্ণ Top 10 তালিকাটি সংরক্ষিত ট্রেসের সাথে মেলান এবং একদম প্রথম ধাপের নির্বাচিত আইটেমের `utility` মানটি লিখুন।",
+      "starter": "# Load the original pool/scores and genre vectors.\n# Implement greedy selection without using stored rankings as input.\n# Assert all10 selections match, then enter first-step utility.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json, math\n\nroot = Path(\"assets/datasets/movielens\")\nlab = json.loads((root / \"recommendation_evaluation_lab.json\").read_text())\nbase = json.loads((root / \"recommendation_lab.json\").read_text(encoding=\"utf-8\"))\nsample = lab[\"samples\"][0]\nids, scores = sample[\"candidates\"], sample[\"scores\"]\ngenres = {}\nfor item, title, names in base[\"movies\"]:\n    v = [float(g in names) for g in base[\"genres\"]]\n    norm = math.sqrt(sum(x * x for x in v))\n    genres[item] = [x / norm if norm else 0 for x in v]\nlo, hi = min(scores), max(scores)\nrelevance = [(s - lo) / (hi - lo) if hi > lo else 0 for s in scores]\nselected = []\ntrace = []\nfor step in range(10):\n    candidates = []\n    for n, item in enumerate(ids):\n        if item in selected:\n            continue\n        redundancy = max(\n            (sum(a * b for a, b in zip(genres[item], genres[s])) for s in selected),\n            default=0.0,\n        )\n        utility = 0.5 * relevance[n] - 0.5 * redundancy\n        candidates.append((utility, item))\n    utility, item = min(candidates, key=lambda pair: (-round(pair[0], 12), pair[1]))\n    selected.append(item)\n    trace.append(utility)\n# Stored gold-free reference used only after the complete computation.\nassert selected == sample[\"results\"][\"mmr0.5\"][\"ranked\"]\nassert all(\n    abs(a - b[\"utility\"]) < 1e-12\n    for a, b in zip(trace, sample[\"results\"][\"mmr0.5\"][\"trace\"])\n)\nresult = trace[0]\nprint(result)\n",
+      "expected": 0.5,
+      "explanation": "প্রথম ধাপে নির্বাচিত সেট খালি থাকায় কোনো পুনরাবৃত্তির শাস্তি থাকে না, তাই সর্বোচ্চ স্কেলকৃত স্কোর `1.0` থেকে প্রথম ধাপের `utility = 0.5 * 1.0 = 0.5` আসে। পরবর্তী প্রতিটি ধাপে নির্বাচিত সেট বড় হওয়ার সাথে সাথে বাকি Candidate-দের সর্বোচ্চ সাদৃশ্য নতুন করে হিসাব করতে হয়।"
+    },
+    {
+      "id": "ch33_ex_ips",
+      "title": "চার সারির উদাহরণ থেকে Unclipped IPS হিসাব",
+      "prompt": "ল্যাবে দেওয়া চার সারির প্রপেনসিটি উদাহরণ (`propensity_fixture`) থেকে কোনো Clipping ছাড়াই সাধারণ `IPS` প্রাক্কলনের মানটি পুনর্গণনা করে লিখুন।",
+      "starter": "# Run Python locally; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_evaluation_lab.json\").read_text()\n)\nrows = lab[\"fixture\"][\"rows\"]\nweighted = [\n    r[\"reward\"] / r[\"logging\"] if r[\"action\"] == r[\"target\"] else 0 for r in rows\n]\nresult = sum(weighted) / len(rows)\nprint(result)\n",
+      "expected": 1.5625,
+      "explanation": "ওজনযুক্ত যোগফল `1.25 + 5.0 + 0 + 0 = 6.25`-কে মোট `4`টি সারি দিয়ে ভাগ করলে পাওয়া যায় `IPS = 1.5625`। লক্ষ্য করুন, সীমিত নমুনায় উচ্চ Variance-এর কারণে এই মানটি `1.0`-এর চেয়েও বড় হয়েছে।"
+    },
+    {
+      "id": "ch33_ex_ess",
+      "title": "Importance Weight থেকে Effective Sample Size (ESS) নির্ণয়",
+      "prompt": "ধরা যাক চারটি লগ সারির `importance weights = [1.25, 5, 0, 0]`। সূত্র `ESS = (sum w)^2 / sum(w^2)` ব্যবহার করে কার্যকর নমুনার সূচক `ESS`-এর মান লিখুন।",
+      "starter": "# Run Python locally; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "weights = [1.25, 5.0, 0.0, 0.0]\nresult = sum(weights) ** 2 / sum(w * w for w in weights)\nprint(result)\n",
+      "expected": 1.4705882352941178,
+      "explanation": "ওজনের যোগফলের বর্গ `6.25^2 = 39.0625` এবং বর্গের যোগফল `1.5625 + 25 = 26.5625`; ভাগ করলে পাওয়া যায় `ESS ≈ 1.4705882`। এটি দেখায় ওজনগুলো গুটিকয়েক সারির মধ্যে কতটা পুঞ্জীভূত হয়ে আছে।"
+    },
+    {
+      "id": "ch33_ex_coverage",
+      "title": "বাস্তব ডেটায় MMR নীতির Catalog Coverage হিসাব",
+      "prompt": "28 জন Warm ইউজারের প্রতিটির `lambda = 0.5` নীতির Top 10 সুপারিশ তালিকা একত্র করে মোট কতগুলো অনন্য (Unique) সিনেমা সুপারিশ পেয়েছে তা বের করুন। এরপর সেই সংখ্যাকে মূল ট্রেনিং ক্যাটালগের আকার `7867` দিয়ে ভাগ করে `Catalog Coverage`-এর মান লিখুন।",
+      "starter": "# Run Python locally; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_evaluation_lab.json\").read_text()\n)\nrows = [r for r in lab[\"rows\"] if r[\"train_count\"] and r[\"eligible\"]]\nunion = {i for r in rows for i in r[\"rankings\"][\"mmr0.5\"]}\nresult = len(union) / len(lab[\"popularity\"])\nprint(result)\n",
+      "expected": 0.021482140587263252,
+      "explanation": "অনন্য সুপারিশকৃত সিনেমার অনুপাত বা `Catalog Coverage` আসে প্রায় `0.02148214`। এটি ক্যাটালগের কত অংশ অন্তত একবার সামনে এসেছে তা জানায়; তবে ইউজার Coverage বা নির্মাতাদের ন্যায্যতা বিচারে অতিরিক্ত মেট্রিক প্রয়োজন।"
+    },
+    {
+      "id": "ch33_ex_power",
+      "title": "অনলাইন পরীক্ষার আনুমানিক Sample Size নির্ণয়",
+      "prompt": "দুটি সমান ও স্বাধীন গ্রুপের Normal Approximation সূত্র ব্যবহার করুন। দেওয়া আছে বর্তমান `p = 0.10`, পরম `MDE = 0.01`, `z_alpha = 1.96` এবং `z_power = 0.84`। প্রতি গ্রুপে (Per Arm) আনুমানিক কতজন ইউজার প্রয়োজন তা হিসাব করে লিখুন।",
+      "starter": "# Run Python locally; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "import math\n\np = 0.1\nmde = 0.01\nresult = math.ceil(2 * (1.96 + 0.84) ** 2 * p * (1 - p) / (mde * mde))\nprint(result)\n",
+      "expected": 14112.0,
+      "explanation": "সূত্র `2 * (1.96 + 0.84)^2 * 0.1 * 0.9 / 0.01^2` হিসাব করলে প্রতি গ্রুপে ঠিক `14112` জন ইউজার পাওয়া যায়। বাস্তব প্রয়োগের সময় অবশ্যই স্থির সময়সীমার শর্ত এবং ইউজার-স্তরের Randomization Unit নিশ্চিত করতে হবে।"
+    },
+    {
+      "id": "ch33_ex_novelty",
+      "title": "নির্বাচিত প্রথম সিনেমার Novelty বিট হিসাব",
+      "prompt": "প্রথম নমুনা কেসে (`samples[0]`) `lambda = 0.5` নীতিতে নির্বাচিত একদম প্রথম সিনেমাটি নিন এবং ট্রেনিং ক্যাটালগের পজিটিভ সংখ্যা ব্যবহার করে তার Add-one Smoothed বিরলতা বা `Novelty` বিট হিসাব করে লিখুন।",
+      "starter": "# Run Python locally; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_evaluation_lab.json\").read_text()\n)\nimport math\n\ncounts = dict(lab[\"popularity\"])\nitem = lab[\"samples\"][0][\"results\"][\"mmr0.5\"][\"ranked\"][0]\nresult = -math.log2((counts[item] + 1) / (sum(counts.values()) + len(counts)))\nprint(result)\n",
+      "expected": 12.202154440972489,
+      "explanation": "সিনেমাটির ঐতিহাসিক বিরলতা স্কোর আসে প্রায় `12.2021544` বিট। এটি কাটঅফের আগের ডেটায় সিনেমাটি কতটা অপ্রচলিত ছিল তা নির্দেশ করে; ইউজারের ব্যক্তিগত বিস্ময় মাপতে আলাদা প্রতিক্রিয়ার তথ্য প্রয়োজন।"
+    },
+    {
+      "id": "ch33_ex_window",
+      "title": "Late Frozen Window-তে যোগ্য ইউজারের সংখ্যা গণনা",
+      "prompt": "`Late` ফ্রোজেন সময়খণ্ডে কাটঅফের আগের ট্রেনিং ইতিহাস আছে এবং ওই সময়খণ্ডে অন্তত একটি Candidate-eligible পজিটিভ রেটিং আছে—এমন ইউজারের সংখ্যা গুনে লিখুন।",
+      "starter": "# Run Python locally; enter numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_evaluation_lab.json\").read_text()\n)\nrows = lab[\"windows\"][\"late\"][\"rows\"]\nresult = sum(bool(r[\"train_count\"] and r[\"eligible\"]) for r in rows)\nprint(result)\n",
+      "expected": 18.0,
+      "explanation": "`Late` সময়খণ্ডে এমন যোগ্য ইউজার আছেন মোট `18` জন। ওই অংশের মেট্রিক হিসাব করার সময় এই `18` জনের Denominator-ই ব্যবহৃত হয়, এবং এখানে শুরুর দিকের রেটিং দিয়ে ইতিহাস ক্রমান্বয়ে আপডেট করা হয়নি।"
+    }
+  ],
+  "interviews": [
+    {
+      "title": "অফলাইন মেট্রিকের উন্নতি দেখে লঞ্চ সিদ্ধান্তের প্রতিরক্ষা",
+      "tag": "Experiment review",
+      "prompt": "অফলাইন পরীক্ষায় দেখা গেল `neural50` মডেলের গড় Recall পুরোনো মডেলের চেয়ে বেশি এসেছে। আপনি কি এখনই এটি প্রোডাকশনে লঞ্চ করার সুপারিশ দেবেন?",
+      "answer": "না, কেবল একটি গড় সংখ্যা দেখে এখনই লঞ্চের অনুমোদন দেওয়া যাবে না। সবার আগে আমি যাচাই করব দুটি মডেলের তুলনায় হুবহু একই ইউজার Cohort, একই যোগ্য ক্যাটালগ, একই Gold সংজ্ঞা, ফিল্টার এবং Data Split ব্যবহৃত হয়েছে কি না। যদি দুটি পূর্ণ পাইপলাইনের Candidate সংখ্যা বা কম্পিউট বাজেট আলাদা হয় তবে তা স্পষ্টভাবে জানাতে হবে, আর শুধু র‍্যাংকারের সক্ষমতা দেখতে চাইলে একই Retrieved পুলের ওপর তুলনা করতে হবে।\n\nএরপর পরিসংখ্যানগত অনিশ্চয়তা দেখুন: আমাদের ল্যাবে গড় জোড়াবদ্ধ পার্থক্য `+0.00711` হলেও এর শর্তসাপেক্ষ 95% Confidence Interval হলো `[-0.01951, +0.03329]`—যা শূন্য অতিক্রম করে! ফলে এটি যেমন শক্তিশালী শ্রেষ্ঠত্ব প্রমাণ করে না, তেমনি সমতুল্যতাও প্রমাণ করে না। পাশাপাশি `NDCG`-এর আচরণ, 88 জন Cold ইউজারের ওপর প্রভাব এবং বারবার মডেল ঘেঁটে দেখার Selection ঝুঁকিও বিচার করতে হবে। সর্বোপরি অফলাইন রেটিং ডেটায় Exposure Bias থাকে; তাই সুনির্দিষ্ট Primary Metric ও কঠোর Guardrail সহ একটি সুপরিকল্পিত Online A/B Test ছাড়া চূড়ান্ত লঞ্চ সিদ্ধান্ত নেওয়া উচিত নয়।"
+    },
+    {
+      "title": "Paired User Bootstrap সঠিক নিয়মে বাস্তবায়ন",
+      "tag": "Statistics / coding",
+      "prompt": "একই ইউজার দলের ওপর দুটি ভিন্ন মডেলের মেট্রিক দেওয়া আছে। আপনি কীভাবে একটি নির্ভরযোগ্য Paired Confidence Interval তৈরি করবেন এবং এর সীমাবদ্ধতা কী বলবেন?",
+      "answer": "প্রথমে `userId` ধরে দুই মডেলের ফলাফল একসাথে Join করে প্রতিটি ইউজারের জন্য পার্থক্য `d_u = treatment_u - control_u` বের করে নেব। এরপর একটি নির্ধারিত Random Seed ব্যবহার করে ওই `n` জন ইউজারের পার্থক্য থেকে With Replacement পদ্ধতিতে বারবার `n` আকারের নমুনা নেব এবং প্রতিবার গড় বের করে 5000টি Bootstrap Replicate তৈরি করব। সবশেষে সাজানো বণ্টনের `0.025` এবং `0.975` Linear Percentile Quantile নিয়ে 95% ব্যবধি নির্ধারণ করব। কখনোই Treatment ও Control ইউজারদের জোড়া ভেঙে আলাদাভাবে স্বাধীন নমুনা নেব না, কারণ তাতে ইউজারের নিজস্ব কঠিনতার Covariance হারিয়ে যায়।\n\nসীমাবদ্ধতা হিসেবে আমি স্পষ্টভাবে উল্লেখ করব যে এটি স্থির মডেল ও স্থির Data Split-এর শর্তসাপেক্ষ ব্যবধি—ট্রেনিংয়ের র‍্যান্ডমনেস, সময়ের বিবর্তন বা Exposure Bias এতে ধরা পড়ে না। এছাড়া ছোট নমুনার আকার, শেয়ার করা আইটেমের সূক্ষ্ম নির্ভরশীলতা এবং একাধিক তুলনার প্রভাবও রিপোর্টে জানাব।",
+      "prerequisiteLessons": [
+        "ch33_bootstrap"
+      ]
+    },
+    {
+      "title": "সময়ভিত্তিক Data Split ও Leakage নিরীক্ষা",
+      "tag": "Data design",
+      "prompt": "প্রতিটি ইউজারের সর্বশেষ 20% ঘটনা টেস্টে রেখে তৈরি করা `Per-user Holdout`-কে কি প্রোডাকশনের বৈশ্বিক ভবিষ্যৎ পরীক্ষা (Global Future Test) বলা চলে?",
+      "answer": "সব ক্ষেত্রে তা বলা চলে না। কারণ একজন নতুন বা দেরিতে আসা ইউজারের প্রথম 80% ট্রেনিং ডেটা অন্য একজন পুরোনো ইউজারের শেষ 20% টেস্ট ঘটনার অনেক পরের তারিখের হতে পারে—ফলে বৈশ্বিক ঘড়িতে ভবিষ্যতের প্রবণতা ট্রেনিংয়ের ভেতরে ঢুকে পড়ে। প্রোডাকশনের প্রশ্নটি যদি হয় 'আজকের তারিখ পর্যন্ত সবার ইতিহাস জেনে আগামী সপ্তাহে কেমন সুপারিশ দেব', তবে সব ইউজারের ওপর একটি নির্দিষ্ট সময়ের Global Chronological Cutoff প্রয়োজন।\n\nমনে রাখতে হবে, Random, Per-user এবং Global Split আসলে ভিন্ন ভিন্ন Deployment প্রশ্নের উত্তর দেয়। আমাদের ল্যাবে কেবল সময়ের ওভারল্যাপটুকু নিরীক্ষা করা হয়েছে, ত্রুটিপূর্ণ বিভাজনে মডেল চালিয়ে কোনো কৃত্রিম স্কোর দাবি করা হয়নি। বাস্তবে সময়ের সীমানার পাশাপাশি ঐতিহাসিক মেটাডেটার প্রাপ্যতা, সমান সময়ের ঘটনা সামলানো (Tie Handling), সময়ের দিগন্ত এবং Candidate তৈরির নিয়মও কঠোরভাবে পরীক্ষা করতে হবে।"
+    },
+    {
+      "title": "Exposure Log ছাড়া IPS প্রয়োগের সীমা ও গাণিতিক হিসাব",
+      "tag": "Causal reasoning",
+      "prompt": "আপনার কাছে কেবল ইউজারের স্টার রেটিং এবং আইটেমের ঐতিহাসিক জনপ্রিয়তার সংখ্যা আছে। কেউ যদি নতুন নীতির Counterfactual Policy Value জানতে চান তবে কী বলবেন?\n\nপাশাপাশি একটি প্রেক্ষাপটে পুরোনো সম্ভাব্যতা `[0.9, 0.1]`, নতুন নীতির সম্ভাব্যতা `[0.5, 0.5]` এবং Reward `[0, 1]` দেওয়া থাকলে আসল মান, IPS-এর প্রত্যাশিত মান এবং `cap = 2` দেওয়ার প্রভাব হিসাব করে দেখান।",
+      "answer": "প্রথম অংশের উত্তরে আমি স্পষ্টভাবে বলব যে কেবল রেটিং এবং জনপ্রিয়তার সংখ্যা দিয়ে প্রকৃত Counterfactual Policy Value শনাক্ত (Identify) করা সম্ভব নয়। জনপ্রিয়তার গণনা কোনো প্রদর্শনের সম্ভাব্যতা (Logging Propensity) নয়। বৈধ IPS হিসাবের জন্য পুরোনো ও নতুন নীতির সুনির্দিষ্ট সম্ভাব্যতা, পর্যাপ্ত Support (`μ > 0`), Consistency এবং Ignorability শর্ত পূরণ হতে হয়। ডেটার এই ঘাটতি লুকাতে আমরা কখনোই অনুমাননির্ভর কৃত্রিম অনলাইন Uplift বানাব না (যেমন ল্যাবের চার সারির `IPS = 1.5625` কেবল উচ্চ Variance বোঝানোর একটি গাণিতিক উদাহরণ মাত্র)।\n\nদ্বিতীয় অংশের গাণিতিক হিসাবে: নতুন নীতির আসল মান `True Value = 0.5 * 0 + 0.5 * 1 = 0.5`। Importance Weight `[5/9, 5]` দিয়ে পুরোনো বণ্টনের ওপর গড় নিলে আন-ক্লিপড IPS-এর প্রত্যাশিত মানও নিখুঁতভাবে `0.5` আসে। কিন্তু ওজনের সীমা `cap = 2` করে দিলে লবের প্রত্যাশিত মান কমে `0.9 * (5/9) * 0 + 0.1 * 2 * 1 = 0.2` হয়ে যায়, এবং Clipped Self-normalized প্রাক্কলনের বৃহৎ-নমুনার অনুপাত দাঁড়ায় `0.2 / (0.5 + 0.2) = 2/7`। আর মাত্র একটি লগ সারি হাতে থাকলে সাধারণ অ-ক্লিপড SNIPS-এর প্রত্যাশিত মান হয় পুরোনো বণ্টনের গড় `0.1`—যা সসীম নমুনায় অনুপাতজনিত Bias এবং Clipping-এর প্রভাব স্পষ্ট করে দেয়।",
+      "prerequisiteLessons": [
+        "ch33_ips",
+        "ch33_book_bandit_evaluation"
+      ]
+    },
+    {
+      "title": "Weight Clipping, SNIPS এবং ESS-এর সঠিক ব্যাখ্যা",
+      "tag": "Math",
+      "prompt": "চার সারির গাণিতিক উদাহরণে সাধারণ `IPS = 1.5625` এসেছে, কিন্তু `cap = 2` বসালে তা কমে `0.8125` হয়। এর মধ্যে কোন সংখ্যাটি আসল সত্য প্রকাশ করে?",
+      "answer": "আসলে মাত্র চারটি সারির এই ক্ষুদ্র উদাহরণ থেকে নতুন নীতির চূড়ান্ত আসল মান নিশ্চিতভাবে জানা যায় না! সাধারণ `IPS` সীমিত নমুনায় বড় ওজনের কারণে উচ্চ Variance দেখায় এবং মূল Reward-এর সর্বোচ্চ সীমা (`1.0`) ছাড়িয়ে যেতে পারে; অন্যদিকে `cap = 2` দিয়ে Clipping করলে অস্থিরতা কমে বটে, কিন্তু বড় ওজনের সারির অবদান ছেঁটে যাওয়ায় নতুন করে Bias ঢুকে পড়ে। আবার `SNIPS` একটি অনুপাত হওয়ায় সীমিত নমুনায় তাতেও Bias থাকতে পারে।\n\nএখানে Clipping করার ফলে `ESS` প্রায় `1.47` থেকে বেড়ে প্রায় `1.90` হওয়া কেবল ওজনের এককেন্দ্রীকরণ কমার একটি বীজগাণিতিক সংকেত মাত্র—এতে নতুন কোনো স্বাধীন ইউজার বা ডেটা তৈরি হয়ে যায়নি এবং সঠিক লগিং ও Support-এর শর্ত তখনো সমানভাবে অপরিহার্য থাকে। তাছাড়া বিভিন্ন `cap` ঘুরিয়ে যেটিতে নিজের মনের মতো উত্তর আসে সেটি বেছে নিলে গুরুতর Selection Bias তৈরি হবে।"
+    },
+    {
+      "title": "নির্ভুলভাবে Greedy MMR বাস্তবায়ন ও ইউনিট টেস্ট",
+      "tag": "Algorithms",
+      "prompt": "একটি স্থির Candidate পুলের ওপর কীভাবে নির্ভুলভাবে MMR অ্যালগরিদম লিখবেন এবং কোন কোন আচরণের জন্য ইউনিট টেস্ট রাখবেন?",
+      "answer": "প্রথমে একই Candidate পুলের র‍্যাংকার স্কোরগুলোকে Min–Max Scaling করে `[0, 1]` পরিসরে আনব এবং সিনেমার Genre ভেক্টরগুলোকে L2 Normalize করে নেব। এরপর প্রতিটি ধাপে অবশিষ্ট আইটেমগুলোর মধ্য থেকে `λ * relevance - (1 - λ) * max_selected_cosine` সূত্রের সর্বোচ্চ মানটি বেছে নেব। প্রথম ধাপে নির্বাচিত সেট খালি থাকায় পুনরাবৃত্তির শাস্তি `0` থাকবে, সমান স্কোর এড়াতে উপযোগিতাকে 12 দশমিক ঘর পর্যন্ত রাউন্ড করে সংখ্যাগত `movieId` দিয়ে Tie-break করব এবং ডুপ্লিকেট আইটেম বর্জন নিশ্চিত করব।\n\nইউনিট টেস্টে আমি যাচাই করব: `λ = 1` দিলে মূল বেসলাইন ক্রম হুবহু ফিরে আসে কি না, ছোট `λ` মানের ধাপে ধাপে ট্রেস মিলে কি না, সব স্কোর সমান হলে কোড ঠিকমতো কাজ করে কি না, এবং খালি বা একক আইটেম তালিকায় `ILD` সঠিকভাবে হ্যান্ডেল হয় কি না। অবশ্যই খেয়াল রাখব ভবিষ্যৎ Gold Label যেন নির্বাচনের ইনপুটে না যায়, এবং মনে রাখব যে এই Greedy কৌশলটি বৈশ্বিক সর্বোত্তম সমাধান বা Fairness-এর প্রমাণ নয়।",
+      "prerequisiteLessons": [
+        "ch33_mmr"
+      ]
+    },
+    {
+      "title": "বৈচিত্র্য বৃদ্ধি বনাম প্রাসঙ্গিকতা হ্রাসের সিদ্ধান্ত গ্রহণ",
+      "tag": "Product metrics",
+      "prompt": "MMR চালানোর পর দেখা গেল তালিকার `ILD` বেড়েছে, কিন্তু অফলাইন `Recall` কমে গেছে। এই ফলাফল কীভাবে রিপোর্ট করবেন এবং প্রোডাক্ট সিদ্ধান্ত কীভাবে নেবেন?",
+      "answer": "আমি একই Candidate পুল ও একই ইউজার Cohort-এর অধীনে প্রাসঙ্গিকতা (`Recall`, `NDCG`), `ILD`, `Novelty`, `Catalog Coverage` এবং পরিসংখ্যানগত Uncertainty—সবগুলো মেট্রিক পাশাপাশি স্বচ্ছভাবে রিপোর্ট করব। যেমন আমাদের ল্যাবে `λ = 0.5` নীতিতে গড় Recall `0.04793` এসেছে যেখানে `λ = 1.0`-এ ছিল `0.05914`, এবং তাদের পার্থক্যের 95% ব্যবধি শূন্য অতিক্রম করে।\n\nসিদ্ধান্ত নেওয়ার সময় আমি স্পষ্ট করব যে Genre ভেক্টরের দূরত্ব ইউজারের প্রকৃত সন্তুষ্টি নয় এবং পরিকল্পিত স্লটের Entropy বাস্তব Impression নয়। তাই প্রোডাক্টের মূল লক্ষ্য ও Guardrail সামনে রেখে এটিকে একটি পরীক্ষাযোগ্য Hypothesis হিসেবে নেওয়া যেতে পারে এবং উপযুক্ত Online Experiment চালিয়ে বাস্তব প্রভাব মাপা যেতে পারে—কখনোই ফলাফল দেখার পর কেবল যে মেট্রিকটি বেড়েছে সেটি দেখিয়ে কৃত্রিম সাফল্য দাবি করব না।"
+    },
+    {
+      "title": "র‍্যাংকার পরিবর্তনের জন্য পূর্ণাঙ্গ Online A/B Test নকশা",
+      "tag": "System design",
+      "prompt": "প্রোডাকশনে একটি নতুন র‍্যাংকিং মডেল পরীক্ষা করার জন্য একটি রক্ষণযোগ্য (Defensible) অনলাইন A/B Test পরিকল্পনা কীভাবে সাজাবেন?",
+      "answer": "পরীক্ষা শুরুর আগেই আমি লিখিতভাবে চূড়ান্ত করব: লক্ষ্য ইউজার কারা (Population), কখন পরীক্ষাটি ট্রিগার হবে, ইউজার-স্তরের স্থির বরাদ্দ একক (Sticky Randomization Unit), একটি প্রধান সাফল্যের মাপকাঠি (Primary Metric), সুরক্ষাকবচ বা Guardrail মেট্রিকসমূহ (যেমন Latency, ক্র্যাশ, অভিযোগ), ব্যবসায়িকভাবে অর্থবহ `MDE` ও `Statistical Power`, পরীক্ষার ন্যূনতম মেয়াদ এবং থামানোর সুনির্দিষ্ট নিয়ম।\n\nডেটা পাইপলাইনে বরাদ্দ, প্রকৃত প্রদর্শন (Exposure), নীতির সংস্করণ এবং পরিপক্ব দীর্ঘমেয়াদি ফলাফল একসাথে Join করে নিয়মিত `SRM`, টেলিমেট্রি ক্ষয় ও ইউজারদের পারস্পরিক প্রভাব (`Interference`) নিরীক্ষা করব। আমাদের ল্যাবের `p = 0.10` ও `MDE = 0.01`-এর ক্যালকুলেটরটি স্বাধীন গ্রুপের একটি প্রাথমিক ধারণা দেয় মাত্র; ক্লাস্টারযুক্ত বা দীর্ঘমেয়াদি ফলাফলে উপযুক্ত পূর্ণাঙ্গ Variance নকশা ব্যবহার করতে হবে।",
+      "prerequisiteLessons": [
+        "ch33_power",
+        "ch33_online"
+      ]
+    },
+    {
+      "title": "পজিটিভ ড্যাশবোর্ডের আড়ালে SRM ও লগিং ত্রুটি ডিবাগিং",
+      "tag": "Debugging",
+      "prompt": "লাইভ পরীক্ষার ড্যাশবোর্ডে প্রধান মেট্রিক সবুজ (পজিটিভ) দেখাচ্ছে, কিন্তু দুই গ্রুপের ইউজার অনুপাত মেলেনি (`SRM`) এবং কিছু লগ হারিয়ে যাওয়ার সংকেত পাওয়া যাচ্ছে। আপনি সবার আগে কী করবেন?",
+      "answer": "আমি সাথে সাথে ফলাফল উদযাপন থামিয়ে সবার আগে পরিমাপ ব্যবস্থার বিশ্বাসযোগ্যতা (`Measurement Trust`) পরীক্ষা করব! দুই গ্রুপে ইউজার বরাদ্দের হ্যাশিং, যোগ্যতা ফিল্টার, পেজ রিডাইরেক্ট বা ক্লায়েন্ট সাইড ক্র্যাশের কারণে ট্রিটমেন্ট গ্রুপে অসমভাবে টেলিমেট্রি হারিয়ে যাচ্ছে কি না (Post-treatment Missingness), তা পুঙ্খানুপুঙ্খ অডিট করব।\n\nএকই সাথে দেখব স্থির সময়সীমার ড্যাশবোর্ডে বারবার উঁকি দিয়ে অকাল সিদ্ধান্ত নেওয়া হচ্ছে কি না—কারণ বৈধ Sequential নকশা ছাড়া মাঝপথে থামলে ভুলের হার বেড়ে যায়। কেবল `SRM` ও লগিং ত্রুটির মূল কারণ সম্পূর্ণ সারিয়ে এবং Guardrail, ফলাফলের পরিপক্বতা ও এককের নির্ভরশীলতা যাচাই করার পরেই নতুন পরিচ্ছন্ন ডেটা থেকে প্রকৃত প্রভাব ও অনিশ্চয়তা বিচার করব; ত্রুটিপূর্ণ বরাদ্দের ওপর দাঁড়িয়ে কোনোভাবেই প্রোডাক্ট জয় দাবি করব না।"
+    },
+    {
+      "title": "স্থির অফলাইন রেটিং ও দীর্ঘমেয়াদি Feedback Loop-এর প্রমাণ",
+      "tag": "Interview defense",
+      "prompt": "ইন্টারভিউয়ার যদি জানতে চান—কেবল এই ফ্রোজেন MovieLens রেটিং ফাইল থেকেই কীভাবে দীর্ঘমেয়াদি Feedback Loop-এর চূড়ান্ত ফলাফল বের করে দেখাবেন, তবে আপনার উত্তর কী হবে?",
+      "answer": "আমি বিনয়ের সাথে কিন্তু দৃঢ়ভাবে বলব যে প্রদর্শন ও ইউজারের ধারাবাহিক পাল্টা সাড়ার প্রকৃত ডেটা ছাড়া কেবল স্থির ঐতিহাসিক রেটিং ফাইল থেকে দীর্ঘমেয়াদি Feedback Loop-এর বাস্তব ফলাফল তৈরি করা সম্ভব নয়—এবং কৃত্রিম অনুমান বসিয়ে তেমন দাবি করা বৈজ্ঞানিকভাবে ভুল হবে।\n\nএর বদলে আমি চক্রটির কার্যকারণ প্রক্রিয়া (`Policy -> Exposure -> Observed Feedback -> Retraining -> Updated Policy`) স্পষ্টভাবে ব্যাখ্যা করব এবং দেখাব কীভাবে আমরা অফলাইনে পরিকল্পিত স্লটের ঘনত্ব, ক্যাটালগ Coverage ও বিরলতা নিরীক্ষা করতে পারি (মনে করিয়ে দেব যে পরিকল্পিত স্লট মানে বাস্তব ক্লিক নয়)। এরপর বাস্তব সিস্টেমে এই চক্র পরিমাপ ও নিয়ন্ত্রণের জন্য সুনিয়ন্ত্রিত অন্বেষণ (`Exploration`), নির্ভুল Propensity লগিং এবং দীর্ঘমেয়াদি সময়ের অনলাইন পরীক্ষার সুনির্দিষ্ট পরিকল্পনা তুলে ধরব।"
+    }
+  ],
+  "book": {
+    "order": 39,
+    "part": "Book 5 · Recommender Systems",
+    "prerequisites": [
+      "chapter_32",
+      "chapter_05",
+      "chapter_41"
+    ],
+    "purpose": "আগের অধ্যায়গুলোতে তৈরি করা Recommender Model-গুলো আসলে কতটা কার্যকর? এই অধ্যায়ে আমরা Ranking Metric, Exposure Bias, Bandit-ভিত্তিক Counterfactual Evaluation এবং দীর্ঘমেয়াদি Feedback Loop একসাথে বিচার করতে শিখব, যাতে কোনো Offline সংখ্যার ভ্রান্তিতে ভুল প্রোডাক্ট সিদ্ধান্ত না নিই।",
+    "outcomes": [
+      "Paired User Bootstrap ও Cohort Denominator Audit ব্যবহার করে Ranking Evaluation-এর পাশাপাশি IPS ও SNIPS-এর Support শর্ত এবং Adaptive Policy-র সীমাবদ্ধতা স্পষ্টভাবে ব্যাখ্যা করতে পারা।",
+      "বাস্তব উদাহরণ, গাণিতিক সমীকরণ ও Python কোডের সাহায্যে Bandit Feedback, IPS Variance, MMR Diversity Reranking এবং Online Experiment-এর Sample Size ও Guardrail বিচার করতে পারা।"
+    ],
+    "recall": [
+      "কোনো একটি Item-এ ইউজারের Observed Click বা Rating না থাকলেই কেন সেটিকে নিশ্চিতভাবে Negative Preference বলা যায় না?",
+      "Target Policy যে Item দেখাতে চায় তার Logging Probability 0 হলে বিশাল Dataset দিয়েও কেন সমস্যার সমাধান হয় না, আর Importance Weight-এ Clipping করলে কী ধরনের Bias–Variance Tradeoff তৈরি হয়?"
+    ],
+    "bridge": "পরের ধাপ: Book 5 · Chapter 5 (Recommender Capstone)। নতুন প্রজেক্টে যাওয়ার আগে এই অধ্যায়ের Quiz, Coding Exercise এবং না দেখে ব্যাখ্যা করার Interview প্রশ্নগুলো নিজে যাচাই করে নিন।",
+    "bookId": "recsys",
+    "bookChapter": 4
+  }
+}

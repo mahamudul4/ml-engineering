@@ -1,0 +1,1619 @@
+{
+  "id": "chapter_19",
+  "number": 19,
+  "title": "Sequence Models",
+  "shortTitle": "Sequence Models",
+  "displayTitle": "Sequence Models\nRNN, LSTM & GRU",
+  "subtitle": "সময়ের ক্রম ও Hidden State বুঝে নির্ভুলভাবে Causal Sequence Prediction গড়ে তুলি।",
+  "description": "From the next timestep to the full sequence.\nTrace the gates. Respect the lengths. Fix the forecast origin.",
+  "difficulty": "Deep learning · sequences",
+  "lab": "sequence",
+  "lessons": [
+    {
+      "id": "ch19_contract",
+      "title": "Sequence Models: সময়ের ক্রম ও State কেন জরুরি",
+      "subtitle": "একটি একক Time Step থেকে পূর্ণাঙ্গ Causal Workflow",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ক্রম বদলালে অর্থও বদলে যায়",
+          "body": "আগের অধ্যায়ে (Book 3 · Chapter 4: CNNs, Computer Vision & Transfer Learning) আমরা দেখেছি কীভাবে ছবির স্থানিক গঠন বা Spatial Grid থেকে বৈশিষ্ট্য বের করতে হয়। কিন্তু বাস্তব জগতের অনেক ডেটায় স্থান নয়, বরং সময়ের ক্রমই মূল অর্থ বহন করে। ঠিক একই ঘটনা ভিন্ন ক্রমে ঘটলে তার অর্থ পুরোপুরি পাল্টে যেতে পারে। তাই Text, Time Series কিংবা User-event Sequence বিশ্লেষণের সময় শুধু কোন মানগুলো (Values) এসেছে তা জানলেই চলে না—সেগুলো কখন এবং কোন ক্রমে এসেছে, সেটিও সমান গুরুত্বপূর্ণ।\n\nএকটি Recurrent Neural Network (RNN) আগের ধাপের সারাংশ বা Hidden State এবং বর্তমান ধাপের Input একসাথে মিলিয়ে এই ধারাবাহিকতা ধরে রাখে, যেখানে প্রতিটি Time Step-এ ঠিক একই Parameter বারবার ব্যবহৃত হয়। কিন্তু একটি ছোট আকারের Hidden State কি সত্যিই সুদীর্ঘ অতীত নিখুঁতভাবে মনে রাখতে পারে? এই অধ্যায়ে আমরা হাতে-কলমে RNN, LSTM ও GRU-এর ভেতরের হিসাব কষে দেখব এরা আসলে কী শিখতে পারে, কোথায় গিয়ে এদের Gradient দুর্বল হয়ে পড়ে এবং সামান্য অসতর্কতায় কীভাবে ভবিষ্যতের তথ্য (Future Leakage) আমাদের Forecasting Pipeline-এ ঢুকে পড়তে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "Model বাছাইয়ের আগে Task Contract ঠিক করুন",
+          "body": "যেকোনো Sequence Model লেখার আগে আপনার সমস্যার Input-Output সম্পর্কটি পরিষ্কারভাবে সংজ্ঞায়িত করা জরুরি। খেয়াল করুন, পুরো Sequence পড়ে শেষে একটি সিদ্ধান্ত দেওয়া (Many-to-one Forecasting বা Classification), প্রতিটি ধাপে আলাদা Label দেওয়া (Many-to-many Tagging), আর এক Sequence থেকে আরেকটি নতুন Sequence তৈরি করা (Encoder-Decoder Generation)—এই তিনটির গঠন ও শর্ত সম্পূর্ণ আলাদা। তাই শুধু 'একটি RNN বসাব' বললেই সমস্যার সমাধান হয় না; প্রথমে Sequence Length, Feature Dimension, কোন সময় পর্যন্ত Context জানা আছে এবং ঠিক কোন সময়ের Target অনুমান করতে হবে—এই চারটি বিষয় খাতায় স্পষ্ট করে লিখে নিন।"
+        },
+        {
+          "type": "math",
+          "title": "Recurrent State ও Output-এর মূল সমীকরণ",
+          "body": "h_t=f_\\theta(x_t,h_{t-1}),\\quad\\widehat y=g_\\psi(h_T)"
+        },
+        {
+          "type": "code",
+          "title": "PyTorch-এ GRU Output ও Hidden Shape যাচাই",
+          "body": "import torch\n\ncell = torch.nn.GRU(1, 3, batch_first=True, dtype=torch.float64)\nx = torch.zeros(2, 14, 1, dtype=torch.float64)  # Mathematical shape illustration.\noutput, hidden = cell(x)\nassert output.shape == (2, 14, 3) and hidden.shape == (1, 2, 3)\nprint(output.shape, hidden.shape)\n"
+        },
+        {
+          "type": "text",
+          "title": "এই অধ্যায়ের Dataset ও সময়ের নিয়ম",
+          "body": "উপরের কোডে আমরা Tensor-এর আকৃতি দেখলাম; এবার দেখা যাক বাস্তব কোন ডেটার ওপর আমরা এই Model-গুলো পরীক্ষা করব। এখানে আমরা UCI Bike Sharing-এর দৈনিক ভাড়ার (Daily Counts) প্রকৃত ডেটা ব্যবহার করব। ২০১১ সালের পুরো ডেটা থাকবে আমাদের Training অংশে, আর ২০১২ সালের জানুয়ারি থেকে জুন পর্যন্ত অংশটি ব্যবহৃত হবে Diagnostic Development হিসেবে; শেষের 184 দিনের ফলাফল আমাদের কোনো পরীক্ষা বা Lab-এ স্পর্শই করা হয়নি। আমাদের কার্যপ্রণালীর শর্ত (Availability Assumption) খুবই স্পষ্ট: একটি দিন শেষ হওয়ার পরেই কেবল সেদিনের মোট ভাড়ার সংখ্যা জানা যায়, এবং বিগত 14 দিনের সংখ্যার ওপর ভিত্তি করে পরের দিনের Prediction দিতে হয়। ভবিষ্যতের প্রকৃত আবহাওয়া বা Target দিনের ভেতরের কোনো আংশিক হিসাব (যেমন Casual বা Registered ভাড়ার ভাগ) এখানে Input হিসেবে দেওয়ার কোনো সুযোগ নেই।"
+        },
+        {
+          "type": "text",
+          "title": "তিনটি হাতে-কলমে Offline Lab",
+          "body": "তত্ত্বকে চোখের সামনে জীবন্ত করে তুলতে এই অধ্যায়ে আমরা তিনটি বিশেষ দিক পরীক্ষা করব: প্রকৃত 14 দিনের Window-র ওপর RNN, GRU ও LSTM-এর ভেতরের State এবং Gate-গুলোর মান পর্যবেক্ষণ করা, ছোট-বড় Sequence একসাথে চালানোর সময় Right-padding ও প্রকৃত দৈর্ঘ্যের (Valid Length) হিসাব মেলানো, এবং Causal One-step ও Recursive Multi-step Forecast-এর পার্থক্য যাচাই করা। এখানে মূল Forecasting-এর জন্য একটি নির্দিষ্ট Trained GRU ব্যবহার করা হয়েছে, আর RNN ও LSTM-এর Untrained Reference Cell রাখা হয়েছে যেন আপনি প্রতি ধাপের গাণিতিক কৌশল নিখুঁতভাবে মিলিয়ে দেখতে পারেন। অ্যাপের ভেতরে Dart সরাসরি এই Recurrence সমীকরণগুলো চালায়—ব্যাকগ্রাউন্ডে লুকিয়ে কোনো Python Training চালানো হয় না।"
+        },
+        {
+          "type": "text",
+          "title": "ফলাফলের সততা ও প্রত্যাশার পরিধি",
+          "body": "ইঞ্জিনিয়ারিং সততার জায়গা থেকে দুটি বিষয় শুরুতেই মনে রাখা ভালো। প্রথমত, এই একই ডেটা সোর্সের Development অংশটি আমরা আগে Book 2 · Chapter 8 (Anomaly Detection & Time Series Foundations)-এ বিশ্লেষণ করেছি, তাই একে সম্পূর্ণ অদেখা নতুন ডেটার চূড়ান্ত প্রমাণ হিসেবে ধরা যাবে না। দ্বিতীয়ত, আমাদের মূল GRU Model-টি এই পরীক্ষায় অতি সাধারণ 'গতকালকের মানই আগামীকালের Prediction' (Last-day Baseline)-এর চেয়ে বেশি Error দিয়েছে—এবং আমরা সেই প্রকৃত ফলাফলটিই কোনো রকম লুকোছাপা ছাড়া সামনে রাখব। এটি আমাদের একটি অমূল্য শিক্ষা দেয়: Model-এর জটিলতা বা Gate যোগ করলেই যে সব Dataset-এ Baseline-এর চেয়ে ভালো ফল মিলবে, তার কোনো নিশ্চয়তা নেই।"
+        },
+        {
+          "type": "text",
+          "title": "এই অধ্যায় শেষে আপনার দক্ষতার লক্ষ্য",
+          "body": "অধ্যায়টি শেষ করার পর আপনার লক্ষ্য হবে প্রতিটি Tensor Axis, প্রতিটি Gate Equation, বৈধ Time Step এবং Forecast Origin-এর হিসাব নিজের ভাষায় ব্যাখ্যা করতে পারা। কখন Hidden State শূন্য (Reset) করতে হবে, কীভাবে Padding ও Masked Loss সামলাতে হবে, এবং প্রকৃত মান দেখে এক ধাপ এগোনো (Observed One-step) আর নিজের Prediction-এর ওপর ভর করে বহু ধাপ এগোনোর (Recursive Rollout) মধ্যে পার্থক্য কোথায়—তা যেন আপনি কোড এবং গণিত দুই দিক থেকেই আত্মবিশ্বাসের সাথে তুলে ধরতে পারেন।"
+        }
+      ]
+    },
+    {
+      "id": "ch19_windows",
+      "title": "Causal Windows ও Target Alignment",
+      "subtitle": "t − 14 থেকে t − 1: ঠিক কোন মুহূর্ত পর্যন্ত তথ্য আমাদের জানা?",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "সঠিক Window Slicing-এর শর্ত",
+          "body": "Sequence Model-এ সবচেয়ে নীরব অথচ ভয়াবহ ভুলটি ঘটে ডেটা থেকে Window কাটার সময়। ধরুন, আপনি সময় সূচক `t`-এর মান অনুমান করতে চান। তাহলে আপনার Input Window-তে কেবল `t − 14` থেকে `t − 1` পর্যন্ত সূচকের মানই থাকতে পারবে। Python-এ Slice লেখার সময় কোন প্রান্ত অন্তর্ভুক্ত (Inclusive) আর কোন প্রান্ত বাদ (Exclusive), তা নিয়ে বিন্দুমাত্র দ্বিধা রাখা চলবে না। যেমন, ভুল করে `y[t - 13 : t + 1]` লিখে ফেললে দৈর্ঘ্য ঠিকই 14 থাকবে, কোনো কোড ক্র্যাশও করবে না—কিন্তু স্বয়ং Target `y[t]` আপনার Input-এর শেষ ঘরে ঢুকে বসে থাকবে! তাই যেকোনো Shift বা Rolling Feature তৈরির আগে নিজেকে প্রশ্ন করুন: যে মুহূর্তে দাঁড়িয়ে Prediction দিচ্ছি, সে মুহূর্তে এই মানটি কি আদৌ আমার হাতে থাকা সম্ভব?"
+        },
+        {
+          "type": "text",
+          "title": "দিন শেষের তথ্য বনাম বাস্তব Deployment Latency",
+          "body": "গাণিতিক Slice ঠিক রাখার পাশাপাশি বাস্তব সিস্টেমে তথ্য আসার সময়টুকুও ভাবতে হয়। আমাদের এই পরীক্ষায় ধরে নেওয়া হয়েছে যে একটি দিন শেষ হওয়ার সাথে সাথেই সেদিনের মোট ভাড়ার সংখ্যা (`cnt`) জানা যায়, এবং তা দিয়ে পরের দিনের Forecast তৈরি করা হয়। সে কারণে ভবিষ্যতের আবহাওয়া, কিংবা Target দিনের Casual ও Registered ভাড়ার কোনো অংশ এখানে Input হিসেবে নেই। তবে বাস্তব Production সিস্টেমে যদি ডেটাবেস আপডেট হতে পরের দিন দুপুর পর্যন্ত দেরি (Ingestion Latency) হয়, তাহলে সকালবেলা দাঁড়িয়ে গতকালের সংখ্যাও কিন্তু আপনার হাতে থাকবে না—তখন আপনার Window Contract-ও সেই বাস্তব সময়ের সাথে মিলিয়ে পিছিয়ে নিতে হবে।"
+        },
+        {
+          "type": "math",
+          "title": "14 দিনের Causal Input ও পরের দিনের Target",
+          "body": "X_t=[y_{t-14},\\ldots,y_{t-1}],\\quad\\mathrm{target}=y_t"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ তারিখ ও Index মিলিয়ে Window যাচাই",
+          "body": "from pathlib import Path\nimport pandas as pd, numpy as np\n\nframe = pd.read_csv(Path(\"assets/datasets/bike_sharing/day.csv\"))\ny = frame[\"cnt\"].to_numpy(dtype=float)[:547]\nt = 365\npast = y[t - 14 : t]\ntarget = y[t]\nassert len(past) == 14 and frame.iloc[t - 1][\"dteday\"] == \"2011-12-31\"\nprint(frame.iloc[t][\"dteday\"], past.tolist(), target)\n"
+        },
+        {
+          "type": "text",
+          "title": "Training ও Development Split-এর নিখুঁত হিসাব",
+          "body": "উপরের কোডটি খেয়াল করলে আমাদের সময়রেখার হিসাবটি একদম পরিষ্কার হয়ে যাবে। ২০১১ সালে মোট 365 দিনের পর্যবেক্ষণ রয়েছে (Index `0` থেকে `364`)। যেহেতু প্রথম 14 দিন (`0` থেকে `13`) কেবল প্রথম ইতিহাস তৈরির কাজে লাগে, তাই আমাদের বৈধ Training Target শুরু হয় Index `14` থেকে এবং চলে `364` পর্যন্ত—অর্থাৎ মোট `351`টি Training Window পাওয়া যায়। ডেটার Mean ও Std কেবল এই প্রথম 365টি মানের ওপরই Fit করা হয়। এরপর Index `365` (অর্থাৎ `2012-01-01`) থেকে শুরু হয় Development অংশ। লক্ষ করুন, One-step প্রোটোকলে `2012-01-01`-এর Prediction দেওয়ার সময় আগের 14 দিনের (`2011-12-18` থেকে `2011-12-31`) প্রকৃত মান ব্যবহার করা সম্পূর্ণ বৈধ, কারণ সেগুলো সবই অতীতের ঘটনা।"
+        },
+        {
+          "type": "text",
+          "title": "পাশাপাশি Window-র Overlap এবং ভুল Split-এর বিপদ",
+          "body": "Time Series Window নিয়ে কাজ করার সময় আরেকটি সূক্ষ্ম ফাঁদ হলো পাশাপাশি দুটি Window-র মধ্যকার বিশাল মিল। একটু ভেবে দেখুন, আজকের 14 দিনের Window আর গতকালকের 14 দিনের Window-র মধ্যে পাক্কা 13 দিনের ডেটাই কিন্তু হুবহু এক! আপনি যদি সাধারণ Tabular ডেটার মতো সবগুলো Window একত্র করে এলোমেলোভাবে (Random Split) Train ও Validation-এ ভাগ করেন, তবে প্রায় অভিন্ন ইতিহাস দুই দিকেই ছড়িয়ে পড়বে এবং Model না শিখেই দারুণ Validation Score দেখাবে। তাই সবসময় সময়ের ক্রম মেনে (Chronological Split) Target-এর ভূমিকা আলাদা করুন। একই কারণে মনে রাখবেন, পরস্পর 13 দিন Overlap থাকা Sample-গুলো মোটেও স্বাধীন (Independent) নয়—তাই এদের ওপর সাধারণ স্বাধীন ডেটার সূত্র বসিয়ে সরলভাবে Uncertainty বা Confidence Interval হিসাব করা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "Input ও Target-এর Standardization",
+          "body": "নিউরাল নেটওয়ার্কের Gradient স্থিতিশীল রাখতে আমরা Input Window এবং Regression Target উভয়কেই একই Training Mean ও Training Std দিয়ে Standardize করি। Model যে স্কেল করা মানটি Prediction দেয়, সেটিকে পরে আবার Inverse Transform করে প্রকৃত ভাড়ার এককে (Count Units) ফিরিয়ে আনা হয়। এখানে যদি ভুলেও ২০১২ সালের ফলাফলসহ পুরো Dataset-এর ওপর Mean ও Std হিসাব করা হতো, তবে ভবিষ্যতের গড় প্রবণতা বা বৃদ্ধির খবর আগেই Training স্কেলের ভেতর দিয়ে Model-এর কাছে ফাঁস (Data Leakage) হয়ে যেত।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে যাচাইয়ের অভ্যাস",
+          "body": "নিজের কোডের ওপর শতভাগ ভরসা পাওয়ার সবচেয়ে ভালো উপায় হলো যেকোনো একটি নির্দিষ্ট Target তারিখ বেছে নিয়ে তার আগের 14টি তারিখ খাতায় লিখে কোডের Slice-এর সাথে মিলিয়ে দেখা। এমনকি আপনি একটি ছোট স্বয়ংক্রিয় Unit Test লিখে রাখতে পারেন: ভবিষ্যতের সব মান (`y[t:]`) ইচ্ছেমতো পাল্টে দিলেও সময় `t`-এর Input Window এক চুলও বদলায় কি না! যদি না বদলায়, তবেই বুঝবেন আপনার Window প্রস্তুতি সত্যিকার অর্থে Causal।"
+        }
+      ]
+    },
+    {
+      "id": "ch19_shapes",
+      "title": "Sequence Tensor Shapes ও Hidden Layouts",
+      "subtitle": "batch_first=True দিলেও কিন্তু Hidden State-এর Axis ক্রম বদলায় না!",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "প্রতিটি Axis-এর সুনির্দিষ্ট অর্থ",
+          "body": "সঠিক সময়ের Window তো কাটা হলো, কিন্তু সেটিকে PyTorch-এর ভেতরে পাঠাতে গেলেই নতুনদের সবচেয়ে বেশি ভোগান্তি হয় Tensor-এর Shape নিয়ে। এখানে চারটি মাত্রা বা Dimension পরিষ্কারভাবে আলাদা রাখা দরকার: Batch Size (`B`), Sequence বা Time Length (`T`), প্রতিটি ধাপের Input Feature সংখ্যা (`F`), এবং ভেতরের Hidden Size (`H`)। PyTorch-এ `batch_first=True` ব্যবহার করলে Input দাঁড়ায় `[B, T, F]` এবং Output হয় `[B, T, D * H]`। কিন্তু খুব সাবধান! `batch_first=True` দিলেও চূড়ান্ত Hidden State `h_n`-এর আকৃতি কিন্তু `[L * D, B, H]`-ই থেকে যায় (যেখানে `L` হলো Layer সংখ্যা এবং `D` হলো Direction সংখ্যা)। LSTM-এর ক্ষেত্রে Cell State `c_n`-ও একই নিয়ম মানে, কেবল বিশেষ Projection চালু থাকলে `h_n` ও `c_n`-এর শেষ মাত্রাটি আলাদা হতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "Output Tensor বনাম Final Hidden State",
+          "body": "অনেকেই প্রশ্ন করেন: মডিউল থেকে যে `output` এবং `h_n` দুটি জিনিস বেরোয়, তাদের পার্থক্য কী? আসলে `output` দেয় প্রতিটি Time Step-এ সর্বশেষ Layer-এর বৈশিষ্ট্য (Features), আর `h_n` দেয় প্রতিটি Layer ও প্রতিটি Direction-এর একদম শেষ ধাপের Hidden State। যদি আপনার Model-টি একটিমাত্র Unidirectional Layer হয় এবং Batch-এর সবগুলো Sequence-ই পুরো দৈর্ঘ্য পর্যন্ত বৈধ থাকে, তবে `output[:, -1, :]` আর `h_n[-1]`-এর মান হুবহু মিলে যাবে। কিন্তু যেই মুহূর্তে ডেটায় Padding যোগ হবে কিংবা Model-টি Bidirectional হবে, অমনি এই দুটি রাশি সম্পূর্ণ ভিন্ন অর্থ বহন করবে—তখন অন্ধের মতো এদের সমান ধরে নিলে বড় ধরনের বাগ তৈরি হবে।"
+        },
+        {
+          "type": "math",
+          "title": "Input, Output ও Hidden Tensor-এর মাত্রা",
+          "body": "X:[B,T,F],\\quad output:[B,T,DH],\\quad h_n:[LD,B,H]"
+        },
+        {
+          "type": "code",
+          "title": "Multi-layer Bidirectional LSTM-এ Shape পরীক্ষা",
+          "body": "import torch\n\nlstm = torch.nn.LSTM(\n    2, 3, num_layers=2, batch_first=True, bidirectional=True, dtype=torch.float64\n)\nx = torch.zeros(4, 5, 2, dtype=torch.float64)  # Shape illustration.\noutput, (h, c) = lstm(x)\nassert output.shape == (4, 5, 6) and h.shape == c.shape == (4, 4, 3)\nprint(output.shape, h.shape, c.shape)\n"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের মূল GRU Model-এর Shape প্রবাহ",
+          "body": "উপরের সাধারণ নিয়মটি এবার আমাদের Bike Sharing Model-এর ওপর বসিয়ে দেখা যাক। এখানে আমাদের Input হলো `[B, 14, 1]` (অর্থাৎ 14 দিনের প্রতিটিতে 1টি করে Count Feature), এবং আমরা ব্যবহার করছি `H = 3` আকারের এক Layer-বিশিষ্ট Unidirectional GRU। ফলে এর `output` হবে `[B, 14, 3]`, চূড়ান্ত Hidden State হবে `[1, B, 3]`, এবং শেষের `Linear(3, 1)` Layer-টি থেকে বেরোবে `[B, 1]` আকারের ফলাফল। একে `[B]` আকারের Vector বানাতে আমরা সবসময় সুনির্দিষ্টভাবে `.squeeze(-1)` লিখব। ভুলেও খালি `.squeeze()` লিখবেন না—কারণ Inference-এর সময় যখন `B = 1` হবে, তখন খালি `.squeeze()` আপনার Batch Axis-টিকেও মুছে দিয়ে Tensor-কে 0D Scalar বানিয়ে ফেলবে!"
+        },
+        {
+          "type": "text",
+          "title": "একাধিক Layer, Direction এবং Dropout-এর নিয়ম",
+          "body": "যখন একাধিক Recurrent Layer পরপর সাজানো (Stacked) হয়, তখন নিচের Layer-এর পুরো `output` Sequence-টি পরের Layer-এর Input হিসেবে ঢোকে। আর Bidirectional Model-এ সামনের ও পেছনের দুই দিকের বৈশিষ্ট্য প্রতিটি Time Step-এ পাশাপাশি জোড়া (Concatenate) লেগে মাত্রা `2H` হয়ে যায়। এখানে PyTorch-এর একটি গুরুত্বপূর্ণ নিয়ম মনে রাখুন: Recurrent মডিউলে `dropout` আর্গুমেন্ট দিলে সেটি কেবল এক Layer থেকে পরের Layer-এ যাওয়ার পথে প্রযোজ্য হয়, একই Layer-এর ভেতর এক Time Step থেকে পরের Time Step-এর Recurrent সংযোগে নয়। আমাদের মূল Model-টি এক Layer-এর হওয়ায় এতে কোনো মধ্যবর্তী Dropout নেই।"
+        },
+        {
+          "type": "text",
+          "title": "সংরক্ষিত আকার বনাম প্রকৃত বৈধ দৈর্ঘ্য",
+          "body": "আরেকটি বাস্তব সমস্যা হলো Tensor-এর বাহ্যিক আকার দেখে ভেতরের আসল তথ্যের দৈর্ঘ্য বোঝা যায় না। যেমন, আমাদের Padding সংক্রান্ত পরীক্ষায় একটি Tensor-এর বরাদ্দকৃত দৈর্ঘ্য `T = 14` হলেও কোনো একটি নির্দিষ্ট Sample-এর প্রকৃত বৈধ ডেটা হয়তো কেবল প্রথম `5` দিন পর্যন্ত আছে, বাকি ঘরগুলো নিছক শূন্য দিয়ে ভরাট করা। স্বয়ং Tensor-এর Shape এই পার্থক্য জানে না! তাই প্রতিটি Sample-এর প্রকৃত দৈর্ঘ্য (Valid Lengths), Mask, সাজানো বা পুনর্বিন্যাস করার সূচক এবং Target Alignment—এগুলো আলাদা Metadata হিসেবে সযত্নে বহন করতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "কোড লেখার সময় নিজেকে যাচাই করার কৌশল",
+          "body": "বাস্তব প্রজেক্টে যেকোনো Sequence Pipeline লেখার সময় `B = 1` ও `B = 4`, একাধিক Layer, Bidirectional মোড এবং ভিন্ন ভিন্ন বৈধ দৈর্ঘ্যের ছোট টেস্ট কেস বানিয়ে প্রতি ধাপে `assert` দিয়ে Shape যাচাই করার অভ্যাস গড়ুন। আর মনে রাখবেন, ভুলবশত Batch ও Time মাত্রা উল্টে গেলেও অনেক সময় সংখ্যার কাকতালে কোড নির্বিঘ্নে চলে যায়—তাই শুধু Shape মেলানোই যথেষ্ট নয়, মূল তারিখের সূচক মিলিয়ে সময়ের অর্থ ঠিক আছে কি না তাও পরীক্ষা করতে হবে।"
+        }
+      ]
+    },
+    {
+      "id": "ch19_rnn",
+      "title": "Vanilla RNN: হাতে-কলমে Shared Recurrence",
+      "subtitle": "Input Affine, Recurrent Affine এবং tanh Activation-এর সমন্বয়",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "প্রতি ধাপে কীভাবে Hidden State হালনাগাদ হয়",
+          "body": "Tensor-এর মাপজোখ তো বুঝলাম; এবার একটি Recurrent Cell-এর একদম ভেতরে ঢুকে দেখা যাক সেখানে ঠিক কী হিসাব চলে। সবচেয়ে মৌলিক Vanilla RNN প্রতি ধাপে বর্তমান Input `x_t` এবং আগের ধাপের Hidden State `h_{t-1}`-এর ওপর আলাদা দুটি রৈখিক রূপান্তর (Affine Transform) চালায়, তারপর তাদের যোগফলের ওপর `tanh` Function প্রয়োগ করে নতুন `h_t` তৈরি করে। খাতায় কলমে লেখার সময় আমরা অনেক সময় দুটি Bias-কে একসাথে মিলিয়ে একটি `b` লিখি, কিন্তু PyTorch ভেতরে `b_ih` এবং `b_hh` নামের দুটি আলাদা Bias Vector সংরক্ষণ করে। তাই ট্রেন করা Weight বাইরে Export করে নিজের কোডে চালানোর সময় এই দুটি Bias-ই যোগ করতে হবে। আর সবচেয়ে সুন্দর দিক হলো, পুরো Sequence জুড়ে প্রতিটি Time Step-এ হুবহু একই Weight ও Bias বারবার ব্যবহৃত হয়।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে কষা একটি ছোট উদাহরণ",
+          "body": "চলুন ছোট কয়েকটি সংখ্যা বসিয়ে নিজের চোখে দেখি কেন এখানে ক্রম এত গুরুত্বপূর্ণ। ধরুন, `H = 1`, শুরুর অবস্থা `h_0 = 0`, Input Weight `w_ih = 1.0`, Recurrent Weight `w_hh = 0.5` এবং উভয় Bias শূন্য। প্রথম ধাপে যদি `x_1 = 1.0` আসে, তবে `h_1 = tanh(1.0 * 1.0 + 0.5 * 0) = tanh(1.0)`। পরের ধাপে `x_2 = 0.0` এলে `h_2 = tanh(1.0 * 0.0 + 0.5 * h_1) = tanh(0.5 * tanh(1.0))`। কিন্তু যদি Input দুটির ক্রম উল্টে `[0.0, 1.0]` দেওয়া হতো? তাহলে প্রথম ধাপে `h_1 = 0` থাকত এবং দ্বিতীয় ধাপে `h_2 = tanh(1.0)` হয়ে যেত! অর্থাৎ সাধারণ গড় বা যোগ করার (Commutative Pooling) মতো এখানে ক্রম ওলটপালট করলে ফলাফল এক থাকে না—Recurrence প্রকৃতপক্ষেই ঘটনার পূর্বাপর ক্রম ধরে রাখে।"
+        },
+        {
+          "type": "math",
+          "title": "Vanilla RNN-এর গাণিতিক সূত্র",
+          "body": "h_t=\\tanh(W_{ih}x_t+b_{ih}+W_{hh}h_{t-1}+b_{hh})"
+        },
+        {
+          "type": "code",
+          "title": "PyTorch RNNCell দিয়ে হাতের হিসাবের প্রমাণ",
+          "body": "import torch\n\ncell = torch.nn.RNNCell(1, 1, dtype=torch.float64)  # Mathematical illustration.\nwith torch.no_grad():\n    cell.weight_ih.fill_(1)\n    cell.weight_hh.fill_(0.5)\n    cell.bias_ih.zero_()\n    cell.bias_hh.zero_()\nh = torch.zeros(1, 1, dtype=torch.float64)\nfor x in [1.0, 0.0]:\n    h = cell(torch.tensor([[x]], dtype=torch.float64), h)\nexpected = torch.tanh(0.5 * torch.tanh(torch.tensor(1.0, dtype=torch.float64)))\ntorch.testing.assert_close(h.squeeze(), expected)\n"
+        },
+        {
+          "type": "text",
+          "title": "স্মৃতির সীমাবদ্ধতা ও তথ্যের সংকোচন",
+          "body": "এই Cell-এর গঠন যত সহজ, এর একটি বড় সীমাবদ্ধতাও ঠিক ততটাই স্পষ্ট। পুরো অতীতের সব তথ্যকে সে প্রতিটি ধাপে একটি নির্দিষ্ট আকারের (`H` মাত্রার) ছোট Vector-এর ভেতর ঠেসে সংকুচিত (Compress) করতে বাধ্য হয়। Model ট্রেনিংয়ের সময় তার Weight ও Loss Objective অনুযায়ী ঠিক করে কোন তথ্যটুকু সে ধরে রাখবে আর কোনটুকু ভুলে যাবে। ফলে অনেক আগের কোনো ঘটনার সাথে বর্তমানের সম্পর্ক (Long-term Dependency) শেখা এর জন্য বেশ কঠিন হয়ে পড়ে। কেবল Hidden Size `H` বাড়িয়ে দিলেই যে দীর্ঘ দূরত্বের Gradient সমস্যা বা ডেটার পরিসংখ্যানগত সীমাবদ্ধতা আপনা-আপনি মিটে যাবে—এমন ভাবার কোনো কারণ নেই।"
+        },
+        {
+          "type": "text",
+          "title": "Activation বাছাই ও আমাদের Reference Cell",
+          "body": "সাধারণ Vanilla RNN-এ `tanh` ছাড়াও কখনো কখনো `ReLU` ব্যবহারের সুযোগ থাকে, তবে সে ক্ষেত্রে মান অসীমে ছুটে যাওয়ার (Exploding Activation) ঝুঁকি আর `tanh`-এর ক্ষেত্রে প্রান্তে গিয়ে চ্যাপ্টা হয়ে যাওয়ার (Saturation) আচরণ আলাদাভাবে বিবেচনা করতে হয়। এই অধ্যায়ে আমরা আদর্শ `tanh` সংস্করণটিই অনুসরণ করছি। আমাদের অ্যাপের ভেতরে যে ম্যানুয়াল বা Dart ভিত্তিক Recurrence হিসাব দেখানো হয়েছে, তা PyTorch-এর প্রকৃত Hidden State Trace-এর সাথে হুবহু মিলিয়ে যাচাই করা—যদিও মনে রাখবেন, এখানকার Vanilla RNN Cell-টি কেবল অভ্যন্তরীণ কলকব্জা বোঝানোর জন্য রাখা একটি Untrained Reference।"
+        },
+        {
+          "type": "text",
+          "title": "Parameter-এর সঠিক হিসাব",
+          "body": "ইন্টারভিউতে প্রায়ই যেকোনো Layer-এর Parameter সংখ্যা মুখে মুখে হিসাব করতে বলা হয়। আমাদের `F = 1, H = 3` আকারের Vanilla RNN-টির কথাই ধরুন: Input Weight `W_ih`-এ আছে `3 × 1 = 3`টি মান, Recurrent Weight `W_hh`-এ আছে `3 × 3 = 9`টি মান, এবং দুটি Bias (`b_ih` ও `b_hh`) মিলিয়ে আছে `3 + 3 = 6`টি মান—অর্থাৎ এই Layer-এ মোট Parameter হলো `18`টি। এর মাথায় একটি `Linear(3, 1)` Regression Head বসালে আরও `3 + 1 = 4`টি যোগ হয়ে মোট দাঁড়ায় `22`টি Parameter। লক্ষ করুন, Sequence Length `T` বা Batch Size `B` যত বড়ই হোক না কেন, Model-এর Parameter সংখ্যা কিন্তু এক চুলও বদলায় না; কেবল ট্রেনিংয়ের সময় প্রতি ধাপের মধ্যবর্তী Activation জমে মেমোরির খরচ `T`-এর সাথে পাল্লা দিয়ে বাড়ে।"
+        },
+        {
+          "type": "text",
+          "title": "নিজের কোড নিখুঁত রাখার অনুশীলন",
+          "body": "হাত পাকানোর জন্য যেকোনো ছোট ওজন বসিয়ে অন্তত দুটি Time Step খাতায় নিজে কষে দেখুন। বাস্তবে নিজের হাতে Recurrence ইমপ্লিমেন্ট করার সময় তিনটি ভুল সবচেয়ে বেশি ঘটে: দুটির বদলে একটি Bias যোগ করা, নতুন Window শুরুর সময় আগের Hidden State ভুলবশত রেখে দেওয়া, কিংবা Time ও Batch মাত্রা উল্টে ফেলা। এগুলোর পাশাপাশি শূন্য দৈর্ঘ্যের (Empty) Sequence বা `NaN`/`Inf` মান যেন শুরুতেই ধরা পড়ে, তার জন্য স্পষ্ট Guard বা Check বসিয়ে রাখার অভ্যাস করুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch19_bptt",
+      "title": "Backpropagation Through Time (BPTT)",
+      "subtitle": "সময়ের পথে একই Weight-এর Gradient যোগ হওয়া ও দীর্ঘ গুণফলের আচরণ",
+      "duration": "57 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "সময়ের রেখায় খোলা Computation Graph",
+          "body": "Vanilla RNN তো সামনের দিকে এগিয়ে ফলাফল দিল, কিন্তু ভুল করলে সে শিখবে কীভাবে? Recurrence-কে যদি আমরা Time Axis-এ পরপর খুলে (Unroll করে) কল্পনা করি, তবে দেখা যাবে এটি আসলে গভীর একটি নেটওয়ার্ক, যার প্রতিটি Layer-এ হুবহু একই Weight Matrix বসে আছে। যেহেতু একই Parameter সময়ের একাধিক ধাপে ব্যবহৃত হচ্ছে, তাই Backward Pass-এর সময় Chain Rule মেনে প্রতিটি Time Step থেকে আসা অবদানগুলো একসাথে যোগ (Sum) হয়ে মোট Gradient তৈরি করে। সামনের দিকে এগোনোর সময় একই Parameter বারবার ব্যবহার করে মেমোরি বাঁচানো গেলেও, পেছনে ফেরার জন্য প্রতিটি ধাপের মধ্যবর্তী Activation-গুলো ঠিকই মেমোরিতে জমা রাখতে হয়—যা Sequence-এর দৈর্ঘ্য বাড়ার সাথে সাথে সমানুপাতিক হারে বাড়তে থাকে।"
+        },
+        {
+          "type": "text",
+          "title": "Vanishing এবং Exploding Gradient কেন ঘটে?",
+          "body": "দীর্ঘ Sequence-এ আসল বিপত্তি ঘটে যখন শেষ ধাপের Loss থেকে শুরুর দিকের কোনো ধাপে সংকেত (Gradient) পাঠাতে হয়। সমীকরণের দিকে তাকালেই দেখবেন, অনেক আগের একটি ধাপ `t` থেকে শেষ ধাপ `T` পর্যন্ত পৌঁছাতে হলে মাঝখানের সবগুলো ধাপের Jacobian Matrix পরপর গুণ করতে হয়। এই গুণফলের মান যদি প্রতি ধাপে `1`-এর চেয়ে ছোট হতে থাকে, তবে কয়েক ডজন ধাপ পেরোতে না পেরোতেই শুরুর সংকেত ক্ষুদ্রাতিক্ষুদ্র হয়ে কার্যত মিলিয়ে যায়—যাকে বলে Vanishing Gradient। আবার গুণফল `1`-এর চেয়ে বড় হতে থাকলে সংকেত বিস্ফোরিত হয়ে বিশাল আকার ধারণ করে—যাকে বলে Exploding Gradient। নিচের কোডে `0.5^20`-এর ছোট উদাহরণটি কেবল মূল গাণিতিক অনুভূতিটি দেওয়ার জন্য; বাস্তব নন-লিনিয়ার Model-এ Activation-এর Derivative, Recurrent Matrix-এর গঠন এবং ডেটার গতিপথ মিলে এই আচরণ নির্ধারণ করে।"
+        },
+        {
+          "type": "math",
+          "title": "দীর্ঘ Jacobian গুণফল ও Shared Weight-এর মোট Gradient",
+          "body": "{\\partial h_T\\over\\partial h_t}=\\prod_{k=t+1}^T J_k,\\quad\\nabla_WL=\\sum_t\\left.\\nabla_WL\\right|_t"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ 20 ধাপের রৈখিক গুণফলে Gradient ক্ষয়ে যাওয়া",
+          "body": "import torch\n\nh = torch.tensor(\n    1.0, dtype=torch.float64, requires_grad=True\n)  # Linear recurrence illustration.\nvalue = h\nfor _ in range(20):\n    value = 0.5 * value\n# Backward accumulates into .grad; the seed or reduction sets the scale.\nvalue.backward()\nassert abs(h.grad.item() - 0.5**20) < 1e-15\nprint(h.grad.item())\n"
+        },
+        {
+          "type": "text",
+          "title": "Gradient Clipping কী পারে আর কী পারে না",
+          "body": "হঠাৎ কোনো Batch-এ Gradient বিস্ফোরিত হয়ে যাতে Model-এর Weight নষ্ট না করে ফেলে, সে জন্য একটি পরীক্ষিত ও কার্যকর উপায় হলো Gradient Clipping—অর্থাৎ মোট Gradient Norm একটি নির্দিষ্ট সীমার (যেমন আমাদের মূল GRU Model-এ Global Norm `1.0`) ওপরে উঠলেই সেটিকে স্কেল করে নামিয়ে আনা। এর Pre-clip ও Post-clip Norm-এর খুঁটিনাটি আমরা আগেই Book 3 · Chapter 3 (Reliable Training)-এ দেখেছি। তবে একটি বিষয় পরিষ্কার মনে রাখবেন: Gradient Clipping কেবল অস্থিতিশীল বড় ধাক্কা সামলায়; এটি মিলিয়ে যাওয়া Vanishing Gradient-কে কখনোই ফিরিয়ে আনতে পারে না, আর আপনার ডেটায় যদি Target Alignment বা Tensor Shape-এ ভুল থাকে, সেটিকেও মেরামত করতে পারে না।"
+        },
+        {
+          "type": "text",
+          "title": "Truncated BPTT: মান ধরে রেখে ইতিহাসের সুতো কাটা",
+          "body": "হাজার হাজার ধাপের লম্বা Stream-এ পুরো ইতিহাস জুড়ে Backprop চালানো মেমোরি ও সময়ের দিক থেকে অসম্ভব হয়ে দাঁড়ায়। তখন আমরা ব্যবহার করি Truncated BPTT। এর কৌশলটি দারুণ: লম্বা Sequence-কে ছোট ছোট খণ্ডে (Chunks) ভাগ করে এক খণ্ডের শেষ Hidden State-এর সংখ্যাসূচক মানটি পরের খণ্ডের শুরুতে ঠিকই পাঠানো হয়, কিন্তু মাঝখানে `.detach()` কল করে পুরোনো Computation Graph-এর সুতোটি কেটে দেওয়া হয়। খেয়াল করবেন, State-কে শূন্য করে দেওয়া (Reset) আর Graph থেকে `.detach()` করা মোটেও এক কথা নয়! এতে মেমোরি বাঁচে এবং সামনের খণ্ড পুরোনো প্রেক্ষাপটও পায়, তবে বিনিময়ে Model-টি খণ্ডের সীমানা পেরিয়ে অনেক দূরের প্রভাব সরাসরি শেখার সুযোগ হারায় (Truncation Bias)।"
+        },
+        {
+          "type": "text",
+          "title": "Batch-এর ক্রম ও স্বাধীন Window বনাম ধারাবাহিক Stream",
+          "body": "Truncated BPTT ব্যবহারের সময় একটি মারাত্মক ভুল প্রায়ই দেখা যায়। আপনার ডেটা যদি এলোমেলোভাবে সাজানো (Shuffled) স্বাধীন ছোট ছোট Window হয়, আর আপনি এক Batch-এর শেষ Hidden State পরের Batch-এ পাঠিয়ে দেন, তবে সম্পূর্ণ সম্পর্কহীন দুটি ভিন্ন সময়ের Sample অযথাই একে অপরের সাথে জুড়ে যাবে! কেবল যখন প্রতিটি Batch Lane একটি অবিচ্ছিন্ন ধারাবাহিক ডেটা প্রবাহ (Stateful Stream) বহন করে, তখনই State এগিয়ে নেওয়া অর্থবহ। আমাদের মূল Bike Sharing পরীক্ষায় প্রতিটি 14 দিনের Window স্বতন্ত্রভাবে শূন্য Hidden State থেকে শুরু হয়—এটি কোনো Stateful Online Training নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে গুছিয়ে ব্যাখ্যা করবেন",
+          "body": "ইন্টারভিউ বোর্ডে BPTT নিয়ে প্রশ্ন এলে স্রেফ মুখস্থ সংজ্ঞা না দিয়ে একটি ছোট Scalar সমীকরণ বোর্ডে লিখে দেখান কীভাবে শুরুর ধাপের Gradient লম্বা গুণফলের ভেতর দিয়ে আসে। স্পষ্ট করে বুঝিয়ে বলুন কেন মাঝপথে Hidden State `.detach()` করলে Forward Pass-এর ফলাফল একদম অভিন্ন থাকে, অথচ Gradient-এর মান বদলে যায়। সেই সাথে তিনটি ভিন্ন ধারণাকে গুলিয়ে না ফেলে আলাদা করে দেখান: পরের ধাপে State-এর মান এগিয়ে নেওয়া, `backward(retain_graph=True)` দেওয়া, এবং `zero_grad()` না ডেকে Optimizer-এ Gradient জমা (Accumulate) করা।"
+        },
+        {
+          "type": "text",
+          "title": "সংখ্যায় প্রমাণ: Shared Weight-এর Gradient কীভাবে সব ধাপ থেকে আসে",
+          "body": "চলুন এই পুরো বিষয়টি একটি ছোট গাণিতিক উদাহরণ দিয়ে হাতেনাতে মিলিয়ে নিই। ধরুন আমাদের সরল Recurrence সমীকরণটি হলো `h_t = a * h_{t-1} + x_t`, যেখানে Parameter `a = 0.5`, শুরুর মান `h_0 = 0`, এবং তিনটি ধাপের Input হলো `[1, 2, 3]`। তাহলে সামনের দিকে এগোলে পরপর তিনটি State দাঁড়াবে `h_1 = 1`, `h_2 = 2.5` এবং `h_3 = 4.25`।\n\nএবার Parameter `a`-এর সাপেক্ষে Derivative নিলে পাই `dh_t / da = h_{t-1} + a * (dh_{t-1} / da)`। ধাপে ধাপে মান বসালে তিনটি ধাপের Derivative আসে যথাক্রমে `[0, 1, 3]`—অর্থাৎ চূড়ান্ত Gradient হলো `3.0`। কিন্তু আমরা যদি দ্বিতীয় ধাপের (`h_2 = 2.5`) ঠিক পরেই `hidden.detach()` করে দিই? তাহলে শেষ ধাপের Forward মান কিন্তু ঠিকই `0.5 * 2.5 + 3 = 4.25` থাকবে, অথচ `h_2` এখন ধ্রুবক হয়ে যাওয়ায় তার ভেতরের পুরোনো পথের অবদান কেটে যাবে এবং চূড়ান্ত Derivative কমে দাঁড়াবে শুধু `h_2 = 2.5`-এ! এভাবেই Graph কেটে দিলে Model-এর শেখার সংকেত বদলে যায়।"
+        },
+        {
+          "type": "math",
+          "title": "State ও Shared Parameter-এর Derivative সমীকরণ",
+          "body": "h_t=a h_{t-1}+x_t,\\qquad D_t=\\frac{\\partial h_t}{\\partial a}=h_{t-1}+aD_{t-1},\\quad D_0=0"
+        },
+        {
+          "type": "code",
+          "title": "Full Graph বনাম Truncated Graph-এ Gradient তুলনা",
+          "body": "import torch\n\n\ndef unroll(parameter, truncate):\n    hidden = torch.zeros((), dtype=parameter.dtype)\n    for step, value in enumerate([1.0, 2.0, 3.0]):\n        hidden = parameter * hidden + value\n        if truncate and step == 1:\n            hidden = hidden.detach()\n    return hidden\n\n\nfull_parameter = torch.tensor(0.5, dtype=torch.float64, requires_grad=True)\ntruncated_parameter = full_parameter.detach().clone().requires_grad_()\nfull_output = unroll(full_parameter, False)\ntruncated_output = unroll(truncated_parameter, True)\nfull_gradient = torch.autograd.grad(full_output, full_parameter)[0]\ntruncated_gradient = torch.autograd.grad(truncated_output, truncated_parameter)[0]\ntorch.testing.assert_close(full_output, truncated_output)\nprint(full_output.item(), full_gradient.item(), truncated_gradient.item())\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে হিসাব করুন",
+          "body": "উপরের উদাহরণে দ্বিতীয় ধাপের পর Hidden State-কে `.detach()` করা আর সেটিকে শূন্য দিয়ে Reset করার মধ্যে Forward Pass-এর ফলাফলে ঠিক কী পার্থক্য ঘটবে?",
+          "solution": "`.detach()` করলে সংখ্যাসূচক State (`2.5`) হুবহু পরের ধাপে এগিয়ে যায়, কেবল তার পেছনের Derivative-এর ইতিহাসটুকু কাটা পড়ে—তাই শেষ Output `4.25`-ই থাকে। অন্যদিকে, State-কে শূন্য দিয়ে Reset করলে সংখ্যার মানটিই বদলে `0` হয়ে যায়; ফলে উপরের উদাহরণে তৃতীয় ধাপের শেষ Output `4.25` না হয়ে `0.5 * 0 + 3 = 3.0` হতো। তাই আপনার ডেটায় আগের খণ্ডের ধারাবাহিক প্রেক্ষাপট সত্যিই দরকার কি না, তার ওপর ভিত্তি করেই Detach নাকি Reset করবেন তা ঠিক করতে হবে।",
+          "reference": "https://d2l.ai/"
+        }
+      ]
+    },
+    {
+      "id": "ch19_lstm",
+      "title": "LSTM: Cell Memory ও চারটি Gate-এর সমন্বয়",
+      "subtitle": "Forget, Input, Candidate ও Output Gate-এর নিজস্ব ভূমিকা",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন একটির বদলে দুটি State?",
+          "body": "Vanilla RNN-এ আমরা দেখলাম প্রতি ধাপে বারবার Matrix গুণ ও `tanh`-এর ভেতর দিয়ে যাওয়ার ফলে দীর্ঘ পথের সংকেত দ্রুত ক্ষয়ে যেতে পারে। এই সমস্যার একটি চমৎকার স্থাপত্যগত সমাধান নিয়ে আসে Long Short-Term Memory বা LSTM। এটি শুধু একটি Hidden State `h_t` নয়, পাশাপাশি একটি আলাদা মেমোরি লাইন বা Cell State `c_t` বহন করে। `c_t`-এর সবচেয়ে বড় বৈশিষ্ট্য হলো এটি সরাসরি গুণফলের বদলে নিয়ন্ত্রিত যোগের (Additive Gated Update) মাধ্যমে হালনাগাদ হয়। ফলে দীর্ঘ সময়ের তথ্য ধরে রাখা এবং পেছনে Gradient প্রবাহিত হওয়া অনেক সহজ হয়—যদিও তার মানে এই নয় যে যেকোনো পরিস্থিতিতে সব ধরনের Vanishing Gradient জাদুমন্ত্রে চিরতরে উধাও হয়ে যাবে! আর মনে রাখবেন, এখানকার Gate-গুলো কিন্তু কড়া `0` বা `1`-এর সুইচ নয়; এরা `Sigmoid` Function থেকে পাওয়া `0` থেকে `1`-এর মধ্যবর্তী নরম ওজন (Continuous Weights)।"
+        },
+        {
+          "type": "text",
+          "title": "PyTorch-এ চারটি Gate-এর সাজানো ক্রম (i, f, g, o)",
+          "body": "LSTM-এর ভেতরে মোট চারটি অংশ একসাথে কাজ করে: Input Gate (`i`), Forget Gate (`f`), নতুন তথ্যের প্রস্তাব বা Candidate (`g`), এবং Output Gate (`o`)। অত্যন্ত গুরুত্বপূর্ণ একটি প্রকৌশলগত খুঁটিনাটি হলো: PyTorch তার ভেতরের বড় Weight Matrix ও Bias Vector-গুলোতে ঠিক `i, f, g, o`—এই নির্দিষ্ট ক্রমেই সারিগুলো সাজিয়ে রাখে! চারটির প্রতিটির জন্যই আলাদা Input Weight, Recurrent Weight এবং দুটি করে Bias অংশ থাকে। আপনি যদি নিজের হাতে কোড বা কাস্টম কার্নেল লেখার সময় ভুল করে বইয়ের অন্য কোনো ক্রমে (যেমন `f, i, g, o`) Tensor-কে চার টুকরো (Chunk) করেন, তবে আকার-আকৃতি সব মিলে যাওয়ায় কোনো Error দেখাবে না, অথচ ভেতরে তৈরি হবে সম্পূর্ণ ভিন্ন ও ভুল একটি Model! সংখ্যার হিসাবে `F = 1, H = 3` আকারের একটি LSTM Layer-এ Parameter সংখ্যা হয় Vanilla RNN-এর ঠিক চার গুণ, অর্থাৎ `4 × 18 = 72`টি; আর মাথায় `4`টি Parameter-এর Regression Head যোগ করলে মোট দাঁড়ায় `76`টি।"
+        },
+        {
+          "type": "math",
+          "title": "LSTM-এর চারটি Gate, Cell State ও Hidden State সমীকরণ",
+          "body": "i=\\sigma(a_i),\\ f=\\sigma(a_f),\\ g=\\tanh(a_g),\\ o=\\sigma(a_o),\\quad c_t=f\\odot c_{t-1}+i\\odot g,\\quad h_t=o\\odot\\tanh(c_t)"
+        },
+        {
+          "type": "code",
+          "title": "শূন্য Weight ও শূন্য Bias অবস্থায় LSTMCell পরীক্ষা",
+          "body": "import torch\n\ncell = torch.nn.LSTMCell(1, 1, dtype=torch.float64)  # Mathematical illustration.\nwith torch.no_grad():\n    for p in cell.parameters():\n        p.zero_()\nh, c = cell(\n    torch.zeros(1, 1, dtype=torch.float64),\n    (torch.zeros(1, 1, dtype=torch.float64), torch.ones(1, 1, dtype=torch.float64)),\n)\nassert c.item() == 0.5\ntorch.testing.assert_close(\n    h.squeeze(), 0.5 * torch.tanh(torch.tensor(0.5, dtype=torch.float64))\n)\n"
+        },
+        {
+          "type": "text",
+          "title": "সব Weight শূন্য হলেও কেন পুরোনো স্মৃতি মুছে যায় না?",
+          "body": "উপরের কোডটির ফলাফল মনোযোগ দিয়ে দেখলে একটি দারুণ অন্তর্দৃষ্টি পাওয়া যায়। যখন সব Weight ও Bias শূন্য এবং বর্তমান Input-ও শূন্য, তখন চারটি Gate-এর ভেতরের রৈখিক যোগফল (Affine Pre-activation) দাঁড়ায় `0`। কিন্তু খেয়াল করুন, `sigmoid(0) = 0.5` এবং `tanh(0) = 0`! ফলে `i = f = o = 0.5` এবং নতুন Candidate `g = 0` হয়। তাই আগের ধাপের Cell State যদি `c_{t-1} = 1.0` থাকে, তবে নতুন Cell State শূন্য না হয়ে দাঁড়ায় `c_t = 0.5 * 1.0 + 0.5 * 0 = 0.5`, এবং নতুন Hidden State হয় `h_t = 0.5 * tanh(0.5)`। অর্থাৎ সব ওজন শূন্য থাকলেও পুরোনো স্মৃতি পুরোপুরি মুছে যায় না, বরং Forget Gate-এর `0.5` ভগ্নাংশের কারণে তার অর্ধেকটা পরের ধাপে টিকে থাকে!"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব Window-তে LSTM Reference পর্যবেক্ষণ",
+          "body": "আমাদের ইন্টারেক্টিভ Cell Inspector-এ আপনি প্রকৃত Bike Sharing ডেটার Window-র ওপর এই LSTM Cell-এর চূড়ান্ত State ও প্রতিটি Gate-এর মান সরাসরি দেখতে পাবেন। সেখানে আমাদের মূল GRU Model-এর মানের সাথে এর পার্থক্য দেখা যাবে, তবে ভুলেও সেটিকে দুই Model-এর ভালো-মন্দের প্রতিযোগিতা (Performance Ranking) মনে করবেন না! কারণ মূল Forecasting-এর জন্য কেবল নির্দিষ্ট GRU Model-টিকেই ট্রেন করা হয়েছে, আর RNN ও LSTM Cell দুটি রাখা হয়েছে স্বচ্ছ গাণিতিক Reference হিসেবে—যাতে আপনি প্রতিটি সমীকরণের কাজ নিজের হাতে মিলিয়ে নিতে পারেন।"
+        },
+        {
+          "type": "text",
+          "title": "শুরুর অবস্থা (h_0, c_0) নিয়ে নকশাগত সিদ্ধান্ত",
+          "body": "LSTM চালানোর শুরুতে `h_0` এবং `c_0` দুটোই দিতে হয়। সাধারণ স্বাধীন Window-র ক্ষেত্রে আমরা প্রচলিত নিয়মে দুটোকেই শূন্য (Default Zeros) ধরি। তবে সমস্যার ধরন ভেদে কখনো শুরুর এই State দুটিকেও ট্রেনিংয়ের মাধ্যমে শেখা (Learned Initial States) হয়, আবার ধারাবাহিক Stream-এ আগের খণ্ড থেকে বয়ে আনা হয়। ভবিষ্যতে যখন আমরা Encoder-Decoder বা Bidirectional স্থাপত্য নিয়ে কাজ করব, তখন এই দুটি আলাদা State (`h` ও `c`) কীভাবে এক অংশ থেকে আরেক অংশে রূপান্তর (Map বা Project) করে পাঠাতে হবে, তা খুব যত্ন নিয়ে ঠিক করতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে অনুশীলন ও পরিমিত দাবি",
+          "body": "নিজের দখল পাকা করতে ছোট মান বসিয়ে অন্তত একটি Time Step-এর `c_t` ও `h_t` নিজে হিসাব করুন। আর ইন্টারভিউতে যখন বলবেন কেন Forget Gate `1`-এর কাছাকাছি থাকলে দীর্ঘ পথে সংকেত ভালোভাবে প্রবাহিত হয়, তখন সরাসরি `c_{t-1}` থেকে `c_t`-এর রৈখিক পথটির Derivative দেখিয়ে যুক্তি দিন। তবে কখনোই ঢালাওভাবে দাবি করবেন না যে 'LSTM-এ কখনোই Gradient ক্ষয়ে যায় না'—কারণ Gate-গুলোর নিজের Sigmoid স্যাচুরেশন এবং অন্যান্য পরোক্ষ পথের ওপরও কিন্তু সামগ্রিক Optimization নির্ভর করে।"
+        }
+      ]
+    },
+    {
+      "id": "ch19_gru",
+      "title": "GRU: Reset ও Update Gate এবং PyTorch-এর নিয়ম",
+      "subtitle": "Candidate হিসাব করার সময় Matrix গুণ ও Reset-এর ক্রম নিখুঁত রাখি",
+      "duration": "57 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "চারটির বদলে দুটি Gate দিয়ে স্মার্ট সমন্বয়",
+          "body": "LSTM-এ আমরা চারটি Gate এবং আলাদা একটি Cell State দেখেছিলাম। তখন স্বভাবতই প্রশ্ন জাগে—আলাদা Cell State না রেখে কি আরও ছিমছাম গঠনে দীর্ঘ স্মৃতি নিয়ন্ত্রণ করা যায়? ঠিক সেই ভাবনা থেকেই তৈরি হয়েছে Gated Recurrent Unit বা GRU। এতে কোনো আলাদা `c_t` থাকে না; কেবল দুটি Gate পুরো কাজটি সামলায়: Reset Gate (`r`) ঠিক করে নতুন প্রস্তাব বা Candidate (`n`) তৈরির সময় পুরোনো স্মৃতির রৈখিক অংশটুকু কতটা নেওয়া হবে, আর Update Gate (`z`) ঠিক করে আগের ধাপের Hidden State `h_{t-1}` কতটুকু ধরে রেখে বাকি অংশে নতুন Candidate মেশানো হবে। তবে একটি জরুরি সতর্কতা: বিভিন্ন গবেষণাপত্রে কখনো `z` আর `(1 − z)`-এর জায়গা অদলবদল করে লেখা হয়, তাই শুধু Gate-এর নাম শুনে অনুমান না করে সবসময় ব্যবহৃত ফ্রেমওয়ার্কের হুবহু গাণিতিক সমীকরণটি দেখে নেওয়া উচিত।"
+        },
+        {
+          "type": "text",
+          "title": "PyTorch-এর সূক্ষ্ম পার্থক্য: Reset কখন গুণ হয়?",
+          "body": "GRU নিজের হাতে ইমপ্লিমেন্ট করতে গেলে সবচেয়ে বড় হোঁচট খেতে হয় Candidate `n`-এর সমীকরণে। PyTorch-এর নিয়মে Candidate হিসাব হয় `tanh(input_affine + r ⊙ hidden_affine)` সূত্র ধরে, যেখানে `hidden_affine = W_{hn} h_{t-1} + b_{hn}`—অর্থাৎ আগে Matrix গুণ ও Recurrent Bias যোগ সম্পন্ন হয়, তারপর তার ওপর উপাদানভিত্তিক (Elementwise) Reset Gate `r` গুণ করা হয়! অথচ অনেক পাঠ্যবইয়ে আগে `r ⊙ h_{t-1}` করে তারপর সেটিকে `W_{hn}` দিয়ে গুণ করতে দেখা যায়। মনে রাখবেন, Matrix গুণন এবং উপাদানভিত্তিক গুণন কিন্তু পরস্পর বিনিময়যোগ্য (Commutative) নয়, আর Recurrent Bias-এর ওপর `r` গুণ হচ্ছে কি না সেটিও মান বদলে দেয়!"
+        },
+        {
+          "type": "math",
+          "title": "PyTorch-এর নিয়মে GRU-এর পূর্ণাঙ্গ সমীকরণ",
+          "body": "r=\\sigma(a_r+b_r),\\ z=\\sigma(a_z+b_z),\\ n=\\tanh(a_n+r\\odot b_n),\\quad h_t=(1-z)\\odot n+z\\odot h_{t-1}"
+        },
+        {
+          "type": "code",
+          "title": "শূন্য Parameter-এ GRUCell-এর আচরণ পরীক্ষা",
+          "body": "import torch\n\ncell = torch.nn.GRUCell(1, 1, dtype=torch.float64)  # Mathematical illustration.\nwith torch.no_grad():\n    for p in cell.parameters():\n        p.zero_()\nh = cell(torch.zeros(1, 1, dtype=torch.float64), torch.ones(1, 1, dtype=torch.float64))\nassert h.item() == 0.5\nprint(h.item())\n"
+        },
+        {
+          "type": "text",
+          "title": "Gate-এর ক্রম (r, z, n) ও Parameter সংখ্যা",
+          "body": "LSTM-এর মতোই PyTorch-এ GRU-এর অভ্যন্তরীণ Weight ও Bias সারিগুলো একটি সুনির্দিষ্ট ক্রমে সাজানো থাকে, আর তা হলো `r, z, n`। আমাদের `F = 1, H = 3` Model-এর হিসাব কষলে দেখা যায়: Input Weight `W_ih`-এ আছে `9`টি, Recurrent Weight `W_hh`-এ আছে `27`টি, এবং দুটি Bias মিলিয়ে আছে `18`টি—অর্থাৎ GRU Layer-এ মোট Parameter হলো `3 × 18 = 54`টি। এর সাথে মাথার `Linear(3, 1)` Layer-এর `4`টি যোগ করলে সম্পূর্ণ Model-এর আকার দাঁড়ায় `58`টি Parameter। Vanilla RNN-এর চেয়ে এই বাড়তি Parameter অবশ্যই Model-এর প্রকাশক্ষমতা ও Optimization-এর গতিপথ বদলে দেয়, কিন্তু তার মানে এই নয় যে যেকোনো Dataset-এ এটি চোখ বুজে বেশি নিখুঁত ফলাফল দেবে।"
+        },
+        {
+          "type": "sequence_recurrent_lab",
+          "title": "ইন্টারেক্টিভ Recurrence Lab: ধাপে ধাপে ভেতরের হিসাব",
+          "body": "নিচের ইন্টারেক্টিভ Lab-এ প্রকৃত 14 দিনের Standardized Bike Sharing ডেটার ওপর আমাদের প্রারম্ভিক ও ট্রেন করা GRU (যা 80টি Optimizer Step ধরে শেখানো হয়েছে), এবং নির্ধারিত Seed-এ রাখা RNN ও LSTM Cell বেছে নিয়ে প্রতিটি Time Step-এ Hidden State ও Gate-গুলোর মান কীভাবে বদলায় তা নিজের চোখে পরখ করুন। এখানে মূল ডেটার তারিখ বা ভাড়ার সংখ্যা কোনোভাবেই পরিবর্তন করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "প্রান্তিক মান বোঝা ও অতি-ব্যাখ্যা এড়ানো",
+          "body": "সমীকরণ থেকে সহজেই বোঝা যায়, Update Gate `z`-এর মান `1`-এর কাছাকাছি থাকলে Model আগের `h_{t-1}`-কেই প্রায় অক্ষত ধরে রাখে, আর `0`-এর কাছাকাছি নামলে পুরোনো কথা ভুলে নতুন Candidate `n`-কে প্রাধান্য দেয়। তবে Gate-গুলো প্রান্তে গিয়ে স্যাচুরেট করছে কি না, Input-এর স্কেল কেমন এবং ডেটায় পর্যাপ্ত বৈচিত্র্য আছে কি না—এসবই ট্রেনিংয়ের Gradient প্রবাহকে প্রভাবিত করে। কখনোই একটি বা দুটি ইউনিটের Gate-এর সংখ্যা দেখেই চটজলদি গল্প বানিয়ে ফেলবেন না যে 'Model-টি মানুষের মতো ঋতুচক্রের ধারণা শিখে ফেলেছে'!"
+        },
+        {
+          "type": "text",
+          "title": "কোডিং দক্ষতার লক্ষ্য",
+          "body": "আপনার লক্ষ্য হওয়া উচিত PyTorch থেকে Export করা Weight ও Bias নিয়ে সরাসরি নিজের হাতে `r, z, n`-এর সমীকরণ লিখে প্রতিটি Time Step-এর ফলাফল PyTorch-এর সাথে দশমিকের শেষ ঘর পর্যন্ত মিলিয়ে ফেলা। আর নিজের কোডে কোনো সূক্ষ্ম ভুল লুকিয়ে আছে কি না তা ধরার জন্য অবশ্যই অশূন্য (Non-zero) Hidden State এবং অশূন্য Recurrent Bias দিয়ে টেস্ট চালাবেন।"
+        },
+        {
+          "type": "text",
+          "title": "সংখ্যায় প্রমাণ: Reset আগে ও পরে বসালে মান কেন আলাদা হয়?",
+          "body": "চলুন একটি অশূন্য উদাহরণ দিয়ে হাতেনাতে দেখি কেন Reset বসানোর জায়গাটি এত সংবেদনশীল। ধরুন, আগের Hidden State `h = [1, 2]`, Reset Gate `r = [0.25, 0.75]` এবং Update Gate `z = [0.5, 0.5]`। Candidate অংশের Recurrent Matrix ধরা যাক `W = [[0.2, 0.4], [0.6, 0.8]]` এবং Recurrent Bias `b = [0.1, −0.1]`।\n\nপ্রথমে `W h + b` হিসাব করলে পাই `[1.1, 2.1]`। ফলে PyTorch-এর নিয়মে Candidate-এর ভেতরের মান দাঁড়ায় `r ⊙ (W h + b) = [0.275, 1.575]`। কিন্তু আপনি যদি ভুল করে Matrix গুণের আগেই `h`-এর ওপর Reset প্রয়োগ করেন, তবে `W (r ⊙ h) + r ⊙ b` হয়ে মানটি দাঁড়াবে `[0.675, 1.275]`! যেহেতু Matrix গুণের সময় একটি স্থানাঙ্ক অন্য স্থানাঙ্কের সাথে মিশে যায় (Cross-coordinate Mixing), তাই দুটি হিসাব সম্পূর্ণ ভিন্ন ফলাফল দেয়।"
+        },
+        {
+          "type": "code",
+          "title": "হাতে লেখা Gate সমীকরণের সাথে PyTorch GRUCell মেলানো",
+          "body": "import torch\n\ndtype = torch.float64\nprevious = torch.tensor([[1.0, 2.0]], dtype=dtype)\nreset = torch.tensor([0.25, 0.75], dtype=dtype)\nrecurrent = torch.tensor([[0.2, 0.4], [0.6, 0.8]], dtype=dtype)\nbias = torch.tensor([0.1, -0.1], dtype=dtype)\ncell = torch.nn.GRUCell(1, 2, dtype=dtype)\nwith torch.no_grad():\n    for parameter in cell.parameters():\n        parameter.zero_()\n    cell.bias_ih[:2].copy_(torch.logit(reset))  # Gate order is r, z, n.\n    cell.weight_hh[4:].copy_(recurrent)\n    cell.bias_hh[4:].copy_(bias)\nactual = cell(torch.zeros(1, 1, dtype=dtype), previous)\nafter_affine = reset * (previous @ recurrent.T + bias)\nbefore_affine = (reset * previous) @ recurrent.T + reset * bias\nmanual = 0.5 * after_affine.tanh() + 0.5 * previous\ntorch.testing.assert_close(actual, manual)\nassert not torch.allclose(after_affine, before_affine)\nprint(*after_affine.flatten().tolist(), *before_affine.flatten().tolist())\nprint(*[round(value, 6) for value in actual.flatten().tolist()])\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে হিসাব করুন",
+          "body": "কেন শুধুমাত্র শূন্য Weight ও শূন্য Bias দিয়ে কোড পরীক্ষা করলে GRU-এর এই Reset-placement বাগটি কখনোই ধরা পড়বে না?",
+          "solution": "কারণ Recurrent Weight ও Bias সব শূন্য হলে পুরো রৈখিক অংশটির মান এমনিতেই `0` হয়ে যায়—তখন তার আগে বা পরে যেখানেই Reset গুণ করুন না কেন, ফলাফল সেই একই `0` আসবে! সূত্রের এই সূক্ষ্ম পার্থক্যটি কেবল তখনই ধরা পড়ে যখন অশূন্য Hidden State, ভিন্ন ভিন্ন স্থানাঙ্কের মিশ্রণ ঘটানো Weight Matrix এবং অশূন্য Recurrent Bias একসাথে উপস্থিত থাকে।",
+          "reference": "https://docs.pytorch.org/docs/2.15/generated/torch.nn.GRU.html"
+        }
+      ]
+    },
+    {
+      "id": "ch19_comparison",
+      "title": "RNN, LSTM ও GRU তুলনার সঠিক মাপকাঠি",
+      "subtitle": "গাণিতিক গঠন, Parameter Budget এবং বাস্তব ফলাফলের নিরপেক্ষ বিচার",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "তিনটি স্থাপত্যের মূল পার্থক্য কোথায়?",
+          "body": "এখন পর্যন্ত আমরা তিনটি প্রধান Recurrent পরিবার দেখলাম: Vanilla RNN কেবল একটি সাধারণ নন-লিনিয়ার রূপান্তর দিয়ে স্মৃতি এগিয়ে নেয়; GRU দুটি Gate ব্যবহার করে পুরোনো ও নতুন Hidden State-এর মিশ্রণ ঘটায়; আর LSTM চারটি Gate দলের সাহায্যে আলাদা Cell Memory ও Hidden State পরিচালনা করে। স্বভাবতই এদের প্রতিটির Parameter সংখ্যা, হিসাবের খরচ (Compute) এবং মেমোরির চাহিদা আলাদা। সমস্যার ধরন, Sequence-এর দৈর্ঘ্য এবং ডেটার পরিমাণের ওপর ভিত্তি করে একেক পরিস্থিতিতে একেকটি স্থাপত্য সুবিধাজনক হতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "ন্যায্য তুলনা (Fair Comparison) করতে কী কী লাগে?",
+          "body": "গবেষণা বা প্রজেক্টে 'GRU-এর চেয়ে LSTM ভালো'—এমন কোনো দাবি করার আগে তুলনাটি আসলেই ন্যায্য কি না তা যাচাই করা জরুরি। ন্যায্য তুলনার জন্য দুটি Model-এরই ঠিক একই Data Split ও সময়ের প্রাপ্যতা (Availability Contract), অভিন্ন Preprocessing, সমান Hyperparameter খোঁজার বাজেট, সামঞ্জস্যপূর্ণ Training Schedule, একাধিক Random Seed এবং কাজের উপযোগী মূল্যায়ন সূচক থাকতে হবে। খেয়াল করুন, দুই Model-এ একই `H` বসালেই কিন্তু তাদের Parameter সংখ্যা সমান হয় না—LSTM-এ Vanilla RNN-এর চার গুণ Parameter থাকে! আবার Parameter সংখ্যা সমান করে দিলেও ভেতরের গড়ন আলাদা হওয়ায় Optimization-এর আচরণ এক হয় না।"
+        },
+        {
+          "type": "math",
+          "title": "তিনটি পরিবারের Parameter সংখ্যার সাধারণ সূত্র",
+          "body": "P_{RNN}=H(F+H+2),\\quad P_{GRU}=3H(F+H+2),\\quad P_{LSTM}=4H(F+H+2)"
+        },
+        {
+          "type": "code",
+          "title": "PyTorch-এ F = 1, H = 3 আকারের Parameter গণনা",
+          "body": "from torch import nn\n\ncounts = {}\nfor name, kind in [(\"rnn\", nn.RNN), (\"gru\", nn.GRU), (\"lstm\", nn.LSTM)]:\n    cell = kind(1, 3, batch_first=True)\n    counts[name] = sum(p.numel() for p in cell.parameters())\nassert counts == {\"rnn\": 18, \"gru\": 54, \"lstm\": 72}\nprint(counts)\n"
+        },
+        {
+          "type": "text",
+          "title": "এই অধ্যায়ে রাখা তিনটি Cell-এর প্রকৃত ভূমিকা",
+          "body": "আমাদের এই অধ্যায়ের পরীক্ষায় কেবল একটি নির্দিষ্ট রেসিপিতে একটিমাত্র GRU Model ট্রেন করা হয়েছে। অ্যাপের ভেতরে যে RNN ও LSTM-এর Trace দেখানো হয়েছে, সেগুলো কেবল প্রারম্ভিক (Initialized) Parameter দিয়ে চালানো—কোনো ট্রেন করা প্রতিযোগী Model নয়। পাশাপাশি রেখে সংখ্যাগুলো দেখানোর একমাত্র উদ্দেশ্য হলো Gate সমীকরণগুলো কীভাবে কাজ করে তা স্পষ্ট করা; এখানকার সংখ্যার ছোট-বড় মান দেখে ভুলেও কোনো Model-কে জয়ী বা পরাজিত ঘোষণা করা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব ফলাফল: যখন নিউরাল নেটওয়ার্ক সাধারণ Baseline-এর কাছে হেরে যায়",
+          "body": "এবার আমাদের মূল পরীক্ষার ফলাফলের দিকে তাকানো যাক। Development ডেটায় আমাদের ট্রেন করা GRU Model-এর `MAE` এসেছে প্রায় `1245.91`, অথচ অতি সরল 'গতকালকের ভাড়াই আজকের Prediction' (Naive Last-day Baseline) পদ্ধতিতে `MAE` পাওয়া গেছে প্রায় `900.60`! অর্থাৎ Training চলাকালীন `MSE` সুন্দরভাবে কমলেও বাস্তবে ভবিষ্যতের দিনগুলো অনুমান করার বেলায় Model-টি সাধারণ Baseline-কেও টপকাতে পারেনি। এর পেছনে ২০১১ থেকে ২০১২ সালে চাহিদা বেড়ে যাওয়া (Trend Shift), আবহাওয়া বা ছুটির দিনের তথ্যের বদলে কেবল একটিমাত্র সংখ্যার ওপর নির্ভর করা (Univariate Limit), মাত্র 14 দিনের ছোট প্রেক্ষাপট ও ক্ষুদ্র ক্ষমতা, কিংবা 80 ধাপের নির্দিষ্ট Optimization—এমন অনেক কারণ থাকতে পারে। একজন দক্ষ ইঞ্জিনিয়ার আন্দাজে একটি কারণকে চূড়ান্ত দোষী না সাজিয়ে প্রতিটি অনুমান আলাদাভাবে পরীক্ষা করে দেখেন।"
+        },
+        {
+          "type": "text",
+          "title": "বারবার টিউন করার অদৃশ্য মূল্য (Selection Cost)",
+          "body": "এই খারাপ ফলাফল দেখে আপনার হয়তো এক্ষুনি ইচ্ছে হতে পারে Validation ডেটার দিকে তাকিয়ে বারবার Hidden Size, Learning Rate বা Epoch সংখ্যা বাড়িয়ে স্কোরটা ভালো করে ফেলতে! কিন্তু মনে রাখবেন, Validation ফলাফল দেখে আপনি যতবার Model বদলাবেন, ততই আপনার পরীক্ষার নিরপেক্ষতা ক্ষয়ে যাবে। তার ওপর এই Development অংশটি আমরা আগেই Book 2 · Chapter 8-এ ঘেঁটে দেখেছি, তাই এটি আনকোরা নতুন কোনো অন্ধ পরীক্ষাও নয়। কখনোই পুরোনো ব্যর্থতা ঢাকতে বেছে বেছে একটি ভালো দেখানো Checkpoint তুলে এনে সেটিকে মূল পরীক্ষার ফল বলে চালিয়ে দেবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে পরিপক্ব উত্তর দেবেন",
+          "body": "ইন্টারভিউতে কোনো নির্দিষ্ট সমস্যার জন্য আপনাকে RNN, GRU বা LSTM বেছে নিতে বললে সরাসরি একটি নাম ছুঁড়ে দেবেন না। বরং আপনার ডেটার আকার, Latency বাজেট ও মেমোরির সীমাবদ্ধতা উল্লেখ করে একটি পরিমাপযোগ্য পরীক্ষার পরিকল্পনা বলুন। শুধু Model-এর নাম শুনে 'এটি অনন্তকাল সব মনে রাখবে' বা 'সবখানে এটিই সেরা'—এমন অবৈজ্ঞানিক দাবি এড়িয়ে চলুন, এবং কোনো জটিল Model সরল Baseline-এর কাছে হেরে গেলে সেটিকেও একটি গুরুত্বপূর্ণ প্রকৌশলগত ফলাফল হিসেবে স্পষ্টভাবে তুলে ধরুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch19_padding",
+      "title": "Padding ও Packed Sequences",
+      "subtitle": "Tensor-এর সংরক্ষিত আকার আর প্রকৃত বৈধ ডেটার দৈর্ঘ্য কখনোই এক নয়",
+      "duration": "57 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন Padding দরকার এবং শূন্য মানের সূক্ষ্ম ফাঁদ",
+          "body": "বাস্তব জগতে ব্যবহারকারীর সেশন বা বাক্যের দৈর্ঘ্য সবসময় সমান হয় না। কিন্তু GPU-তে একসাথে একটি Batch পাঠাতে হলে সবগুলো Sequence-কে একটি অভিন্ন আয়তাকার Tensor-এর ভেতর সাজাতে হয়—আর ছোট Sequence-গুলোর বাড়তি খালি জায়গা ভরাট করার এই কৌশলকেই বলে Padding। এখানে নতুনরা একটি মারাত্মক ভুল ধারণা পোষণ করেন: তাঁরা ভাবেন Padding হিসেবে `0.0` বসালে বুঝি ভেতরের Cell নিজে থেকেই থেমে থাকবে! মোটেও তা নয়। Input শূন্য হলেও Cell-এর ভেতরের Bias এবং আগের ধাপের Hidden State মিলে প্রতি ধাপে নতুন নতুন রূপান্তর চালাতেই থাকে। তার ওপর আমাদের Standardized ডেটায় `0.0` সংখ্যাটির অর্থ হলো 'প্রশিক্ষণ ডেটার গড় মান'—এটি কোনো বিশেষ ফাঁকা চিহ্ন নয়! তাই কোন Sample-এর আসল দৈর্ঘ্য কতটুকু, সেই তথ্য (Length Metadata) আলাদাভাবে না রাখলে পুরো হিসাব নষ্ট হয়ে যাবে।"
+        },
+        {
+          "type": "text",
+          "title": "pack_padded_sequence কীভাবে সমস্যার সমাধান করে?",
+          "body": "অপ্রয়োজনীয় Padding ধাপগুলোর ওপর দিয়ে যাতে Cell-টি আদৌ না চলে, সে জন্য PyTorch দেয় `pack_padded_sequence`। এটি প্রতিটি Sample-এর প্রকৃত বৈধ দৈর্ঘ্য মেনে ঠিক ততটুকু ধাপ পর্যন্তই Recurrence চালায়। এটি ব্যবহারের তিনটি শর্ত খেয়াল রাখুন: দৈর্ঘ্যের তালিকাটি সাধারণত CPU Tensor হতে হয়, প্রতিটি দৈর্ঘ্য অবশ্যই শূন্যের চেয়ে বড় ধনাত্মক সংখ্যা হতে হবে, এবং Padding থাকতে হবে ডান পাশে (Right-padding)। আপনার Batch যদি দৈর্ঘ্যের ক্রমানুসারে সাজানো না থাকে, তবে `enforce_sorted=False` দিলে PyTorch ভেতরে ভেতরে নিজেই সাজিয়ে কাজ সেরে শেষে আপনার মূল Sample-এর ক্রম অনুযায়ীই চূড়ান্ত Hidden State ফিরিয়ে দেয়।"
+        },
+        {
+          "type": "math",
+          "title": "বৈধ দৈর্ঘ্য অনুযায়ী প্রকৃত শেষ State নির্ধারণ",
+          "body": "\\ell_i\\le T,\\quad h_i^{valid}=output[i,\\ell_i-1],\\quad \\ell=[5,14,9]"
+        },
+        {
+          "type": "code",
+          "title": "Packed Sequence বনাম আলাদাভাবে চালানো GRU-এর অভিন্নতা যাচাই",
+          "body": "import torch\nfrom torch.nn.utils.rnn import pad_sequence, pack_padded_sequence\n\nsequences = [\n    torch.ones(n, 1, dtype=torch.float64) for n in [2, 4, 3]\n]  # Mathematical shape illustration.\npadded = pad_sequence(sequences, batch_first=True)\ngru = torch.nn.GRU(1, 3, batch_first=True, dtype=torch.float64)\npacked = pack_padded_sequence(\n    padded, torch.tensor([2, 4, 3]), batch_first=True, enforce_sorted=False\n)\n_, h = gru(packed)\nfor i, s in enumerate(sequences):\n    _, single = gru(s[None])\n    torch.testing.assert_close(h[:, i : i + 1], single)\n"
+        },
+        {
+          "type": "text",
+          "title": "একমুখী শর্টকাট কেন দ্বিমুখী (Bidirectional) Model-এ কাজ করে না?",
+          "body": "একটি সাধারণ একমুখী (Unidirectional) Model-এ যদি ডান পাশে Padding থাকে, তবে Packing না করেও সরাসরি Dense Output থেকে `output[i, length - 1]` সূচকের মান তুলে নিলে বৈধ অংশের শেষ State পাওয়া যায়—কারণ ডান পাশের নকল শূন্যগুলো আসে তার পরে। অবশ্যই সেখানেও অন্ধের মতো শেষ ঘর `output[:, -1]` নেওয়া যাবে না। কিন্তু Model-টি যদি Bidirectional হয়, তখন আর এই সহজ শর্টকাট খাটে না! কারণ পেছন থেকে সামনে আসা (Reverse) পথটি শুরুই করে ডান পাশের ওই নকল Padding ঘরগুলো পড়ে, ফলে আসল ডেটায় ঢোকার আগেই তার ভেতরের State দূষিত হয়ে পড়ে।"
+        },
+        {
+          "type": "sequence_padding_lab",
+          "title": "ইন্টারেক্টিভ Padding Lab: বৈধ দৈর্ঘ্য বনাম অন্ধ শেষ ধাপ",
+          "body": "নিচের Lab-এ আমরা আমাদের প্রকৃত Bike Sharing ডেটার তিনটি Window নিয়ে তাদের বৈধ দৈর্ঘ্য যথাক্রমে `5`, `14` এবং `9` নির্ধারণ করে বাকিটা শূন্য দিয়ে ভরাট করেছি (মূল ট্রেনিংয়ে যদিও পূর্ণ `14` দিনই ব্যবহৃত হয়েছে)। এখানে পরখ করে দেখুন কীভাবে Packed Sequence-এর চূড়ান্ত State, প্রতিটি ছোট অংশ আলাদাভাবে চালানোর ফল এবং হাতে কষা বৈধ অংশের হিসাব একদম মিলে যায়—অথচ বৈধ দৈর্ঘ্য উপেক্ষা করে সরাসরি শেষ ঘরটি নিলে মান কতটা বদলে যায়!"
+        },
+        {
+          "type": "text",
+          "title": "Loss-এ Mask বসানো আর State থামানো এক কথা নয়",
+          "body": "অনেকেই ভাবেন, শেষে Loss হিসাব করার সময় Padding ঘরগুলোকে Mask দিয়ে শূন্য করে দিলেই বুঝি সব ঝামেলা চুকে গেল! একটু তলিয়ে ভাবুন: Target Loss-এ Mask বসালে কেবল ওই ঘরগুলোর ত্রুটি যোগফল থেকে বাদ পড়ে, কিন্তু Model-এর ভেতরে যে Hidden State নকল ঘরের ওপর দিয়ে হাঁটতে হাঁটতে বদলে গেছে, তা কিন্তু আপনা-আপনি ঠিক হয় না। বিশেষ করে আপনি যদি পুরো Sequence শেষে চূড়ান্ত Hidden State নিয়ে কোনো Classification বা Regression করেন, তবে শুধু Loss Mask দিয়ে কোনো লাভই হবে না—সেখানে State তোলার জায়গাটিও নিখুঁত হতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে কোড পরীক্ষার কৌশল",
+          "body": "আপনার Padding Pipeline সত্যিই নিশ্ছিদ্র কি না তা জানার একটি চমৎকার পরীক্ষা আছে: ডান পাশের Padded ঘরগুলোতে শূন্যের বদলে ইচ্ছেমতো বড় কোনো আবর্জনা সংখ্যা (`999.0` ইত্যাদি) বসিয়ে দিন, তারপর দেখুন বৈধ দৈর্ঘ্যের ভেতরের Output এবং চূড়ান্ত State বিন্দুমাত্র বদলায় কি না! যদি না বদলায়, তবেই আপনার কোড নিরাপদ। পাশাপাশি শূন্য দৈর্ঘ্য (`length <= 0`) কিংবা বরাদ্দকৃত আকারের চেয়ে বড় দৈর্ঘ্য (`length > T`) এলে কোড যেন সাথে সাথে স্পষ্ট Error দেয়, সেই পরীক্ষাও লিখে রাখুন।"
+        },
+        {
+          "type": "text",
+          "title": "সংখ্যায় প্রমাণ: Bidirectional Model-এ Padding কীভাবে পেছনের পথকে দূষিত করে",
+          "body": "চলুন ছোট একটি সংখ্যার উদাহরণ দিয়ে Bidirectional দূষণের ঘটনাটি স্বচক্ষে দেখি। ধরুন, আমাদের আসল বৈধ Sequence হলো `[1, 2]`, কিন্তু চার ঘরের জায়গায় ডান পাশে শূন্য বসিয়ে রাখা হয়েছে `[1, 2, 0, 0]`। সামনের ও পেছনের উভয় দিকেই Cell-এর সমীকরণ ধরা যাক `ReLU(x + 0.5 * h + 0.2)`।\n\nশুধু বৈধ `[1, 2]` অংশটুকু চালালে সামনের (Forward) পথের শেষ মান হয় `2.8` এবং পেছনের (Reverse) পথের শেষ মান হয় `2.3`। কিন্তু পুরো `[1, 2, 0, 0]` সরাসরি Dense আকারে চালালে সামনের পথের শেষ মান কমে হয়ে যায় `1`, আর পেছনের পথটি ডান পাশের দুটি শূন্যের Bias (`0.2`) গিলতে গিলতে আসল ডেটায় ঢোকায় তার চূড়ান্ত মান `2.3`-এর বদলে দাঁড়ায় `2.375`! লক্ষ করুন, সামনের পথে `output[length - 1]` ঘরে এখনো ঠিকই `2.8` পাওয়া যাবে, কিন্তু পেছনের পথটি ইতিমধ্যেই Padding দ্বারা প্রভাবিত হয়ে গেছে। একমাত্র `pack_padded_sequence` ব্যবহার করলেই Sequence-এর সীমানা অক্ষুণ্ণ রেখে প্রকৃত `[2.8, 2.3]` মান দুটি পাওয়া সম্ভব।"
+        },
+        {
+          "type": "code",
+          "title": "Packed বনাম Dense Bidirectional State-এর সরাসরি তুলনা",
+          "body": "import torch\nfrom torch.nn.utils.rnn import pack_padded_sequence\n\nrecurrent = torch.nn.RNN(\n    1, 1, nonlinearity=\"relu\", bidirectional=True, batch_first=True, dtype=torch.float64\n)\nwith torch.no_grad():\n    for name, parameter in recurrent.named_parameters():\n        if \"weight_ih\" in name:\n            parameter.fill_(1)\n        elif \"weight_hh\" in name:\n            parameter.fill_(0.5)\n        elif \"bias_ih\" in name:\n            parameter.fill_(0.2)\n        else:\n            parameter.zero_()\npadded = torch.tensor([[[1.0], [2.0], [0.0], [0.0]]], dtype=torch.float64)\ndense_output, dense_final = recurrent(padded)\npacked = pack_padded_sequence(\n    padded, torch.tensor([2]), batch_first=True, enforce_sorted=False\n)\n_, valid_final = recurrent(packed)\n_, single_final = recurrent(padded[:, :2])\ntorch.testing.assert_close(valid_final, single_final)\nprint(*[round(value, 6) for value in valid_final.flatten().tolist()])\nprint(\n    *[round(value, 6) for value in dense_final.flatten().tolist()],\n    round(dense_output[0, 1, 0].item(), 6)\n)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে হিসাব করুন",
+          "body": "Dense আকারে চালানো Bidirectional Model-এর `output[length - 1]` ঘরের পুরো Vector-টিকে কি বৈধ Sequence-এর Forward ও Reverse চূড়ান্ত সারাংশ হিসেবে ব্যবহার করা যাবে?",
+          "solution": "না, যাবে না! ওই ঘরের সামনের (Forward) অংশটি ঠিকই বৈধ অংশের শুরু থেকে শেষ পর্যন্ত পড়ে আসা চূড়ান্ত State দেয়। কিন্তু ওই একই ঘরের পেছনের (Reverse) অংশটি কেবল ডান প্রান্তের Padding থেকে শুরু করে `length - 1` অবস্থান পর্যন্ত এসেছে—সেটি না এড়াতে পেরেছে ডান পাশের Padding-কে, আর না দেখেছে তার বাম পাশের শুরুর বৈধ পদগুলোকে (`0` থেকে `length - 2`)! তাই প্রকৃত দ্বিমুখী সারাংশ পেতে হলে `pack_padded_sequence` ব্যবহার করে `h_n`-এর সঠিক Direction সারি থেকে মান নিতে হবে।",
+          "reference": "https://d2l.ai/"
+        }
+      ]
+    },
+    {
+      "id": "ch19_masking",
+      "title": "Masked Loss ও সঠিক Denominator নির্বাচন",
+      "subtitle": "বৈধ Token গণনা, ignore_index এবং ছোট-বড় Sequence-এর ওজন",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "গড় করার সময় হর (Denominator) কী হবে?",
+          "body": "যখন আমরা প্রতিটি Time Step-এ আলাদা Prediction দিই (যেমন বাক্যের প্রতিটি শব্দের Tagging বা পরের শব্দ অনুমান), তখন Padded ঘরগুলোর ভুলকে অবশ্যই আমাদের Loss থেকে বাদ দিতে হবে। কিন্তু বৈধ ঘরগুলোর যোগফলকে আমরা ঠিক কী দিয়ে ভাগ (Divide) করব? এখানে দুটি ভিন্ন গাণিতিক পথ আছে: পুরো Batch-এর মোট বৈধ Token সংখ্যা দিয়ে ভাগ করা (Mean over valid tokens), নাকি আগে প্রতিটি Sequence-এর নিজস্ব গড় বের করে তারপর সব Sequence-এর গড় নেওয়া (Mean per sequence)। প্রথম পদ্ধতিতে একটি লম্বা বাক্য ছোট বাক্যের চেয়ে মোট Loss-এ বেশি ওজন পায়, আর দ্বিতীয় পদ্ধতিতে ছোট-বড় প্রতিটি বাক্য সমান গুরুত্ব পায়। আপনার কাজের লক্ষ্য অনুযায়ী কোনটি যৌক্তিক তা ভেবেচিন্তে ঠিক করুন এবং কোডে এই Denominator-টি একদম স্পষ্টভাবে লিখুন।"
+        },
+        {
+          "type": "text",
+          "title": "CrossEntropyLoss-এ ignore_index ব্যবহারের সতর্কতা",
+          "body": "Classification বা ভাষা Model-এর ক্ষেত্রে PyTorch-এর `CrossEntropyLoss(ignore_index=...)` খুব সহজেই নির্দিষ্ট চিহ্নযুক্ত Padded Target-গুলোকে গড় হিসাব থেকে বাদ দিয়ে দেয়। তবে দুটি বিষয় ভুললে চলবে না: প্রথমত, এটি কেবল শেষের Loss হিসাব থেকে ওই ঘরগুলো বাদ দেয়, শুরুর Embedding বা মাঝখানের RNN Cellকে কিন্তু ওই ঘরের ওপর দিয়ে চলা থেকে থামায় না! দ্বিতীয়ত, আপনি যে সংখ্যাটিকে `ignore_index` বানাচ্ছেন (যেমন `-100` বা কোনো নির্দিষ্ট `pad_id`), সেটি যেন ভুলেও আপনার Dataset-এর কোনো আসল বৈধ Class Index-এর সাথে মিলে না যায়—নইলে Model সেই আসল Class-টিকেও পুরোপুরি উপেক্ষা করতে শুরু করবে!"
+        },
+        {
+          "type": "math",
+          "title": "Mask দিয়ে বৈধ পদের গড় Loss নির্ণয়ের সূত্র",
+          "body": "L={\\sum_{i,t}m_{it}\\ell_{it}\\over\\sum_{i,t}m_{it}}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Mask ব্যবহার করে প্রকৃত গড় (3.2) যাচাই",
+          "body": "import torch\n\nlosses = torch.tensor(\n    [[1.0, 3.0, 99.0], [2.0, 4.0, 6.0]], dtype=torch.float64\n)  # Illustration.\nmask = torch.tensor([[1.0, 1.0, 0.0], [1.0, 1.0, 1.0]], dtype=torch.float64)\nanswer = (losses * mask).sum() / mask.sum()\nassert abs(answer.item() - 3.2) < 1e-12\n"
+        },
+        {
+          "type": "text",
+          "title": "পুরো Batch-ই যদি খালি (All-masked) পড়ে যায়?",
+          "body": "বাস্তব Pipeline-এ ডেটা ফিল্টারিংয়ের পর এমনও হতে পারে যে কোনো একটি ছোট Batch-এ একটিও বৈধ Token অবশিষ্ট নেই! তখন `mask.sum()` শূন্য হয়ে গিয়ে `0 / 0` থেকে নীরবে `NaN` তৈরি করবে এবং পুরো ট্রেনিং করায়ত্ত করে ফেলবে। এই পরিস্থিতি লুকিয়ে না রেখে কোডে স্পষ্ট নিয়ম লিখুন: এমন খালি Batch এলে কি ধাপটি বাদ (Skip) দেবেন, নাকি সাথে সাথে Error ছুড়ে ডেটা Pipeline থামাবেন? আর যদি ধাপটি Skip করেন, তবে Optimizer এবং Learning Rate Scheduler-এর ঘড়ি তখন এক ধাপ এগোবে কি না, সেটিও পরিষ্কার থাকতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "IEEE-754 সংখ্যার ফাঁদ: NaN × 0 কিন্তু শূন্য হয় না!",
+          "body": "ফ্লোটিং-পয়েন্ট গণিতের একটি অতি গুরুত্বপূর্ণ নিয়ম অনেকেই ভুলে যান: কোনো নকল বা Padded ঘরে যদি অসতর্কতাবশত `NaN` বা `Inf` তৈরি হয়ে থাকে, তবে পরে তার গায়ে `0.0` মানের Mask গুণ করলেও ফলাফল শূন্য হয় না—বরং `NaN * 0.0` থেকে আবার `NaN`-ই বেরিয়ে আসে! তাই হয় নিশ্চিত করুন যেন Padded ঘরের ভেতরের Logit ও মানগুলো সবসময় সসীম (Finite) থাকে, নতুবা গুণ করার বদলে সরাসরি বৈধ ঘরগুলোকে ছেঁকে তুলে নিয়ে (`losses[mask.bool()]`) তার ওপর Loss হিসাব করুন।"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের মূল Bike Sharing Model-এর অবস্থান",
+          "body": "আমাদের মূল দৈনিক ভাড়া অনুমানের কাজটি হলো নির্দিষ্ট 14 দিনের Window থেকে একটিমাত্র সংখ্যা বের করা (Many-to-one Regression)—এখানে প্রতিটি ধাপে আলাদা Token Loss বা Padding নেই। আগের পাঠের Padding Lab-টি রাখা হয়েছিল কেবল ভেতরের Hidden State সঠিকভাবে তোলার কৌশল শেখানোর জন্য। আর আমাদের মূল ট্রেনিংয়ে প্রতিটি Window থেকে একটি করে দিনের ত্রুটি আসে বলে সেখানে `MSE` গড়ের হর হলো ঠিক `351`টি বৈধ Training Window।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে কষে পার্থক্য ধরার অনুশীলন",
+          "body": "উপরের কোডের সংখ্যাগুলোই খাতায় নিয়ে পরীক্ষা করুন: প্রথম সারির বৈধ ত্রুটি `[1, 3]` এবং দ্বিতীয় সারির বৈধ ত্রুটি `[2, 4, 6]`। মোট 5টি বৈধ পদের যোগফল `16`-কে `5` দিয়ে ভাগ করলে বৈধ Token-ভিত্তিক গড় দাঁড়ায় `3.2`। ভুল করে পুরো Tensor-এর `6`টি ঘর দিয়ে ভাগ করলে সংখ্যাটি পুরোই ভুল হতো। আবার আপনি যদি প্রতি সারির আলাদা গড় (`2.0` এবং `4.0`) নিয়ে তাদের গড় করতেন, তবে পেতেন `3.0`! খাতায় এই ছোট পার্থক্যটি কষে রাখলে যেকোনো ইন্টারভিউতে আপনি নিখুঁতভাবে নিজের Loss Contract ব্যাখ্যা করতে পারবেন।"
+        }
+      ]
+    },
+    {
+      "id": "ch19_state",
+      "title": "Stateless Windows বনাম Stateful Streams",
+      "subtitle": "State কখন শূন্য (Reset) করব, কখন এগিয়ে নেব (Carry) আর কখন Detach করব?",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "আমাদের মূল পরীক্ষায় কেন Stateless নিয়ম নেওয়া হয়েছে?",
+          "body": "আমাদের মূল GRU Model এবং ইন্টারেক্টিভ Lab—উভয় জায়গাতেই প্রতিটি 14 দিনের Window শুরু করার সময় আমরা প্রারম্ভিক Hidden State `h_0`-কে শূন্য করে দিচ্ছি। যদিও ক্যালেন্ডারের হিসাবে পাশাপাশি দুটি Window-র মধ্যে 13 দিনের মিল আছে, তবুও আগের Sample বা আগের Batch-এর শেষ State আমরা পরেরটিতে বয়ে নিয়ে যাচ্ছি না।\n\nএর সুবিধা হলো প্রতিটি 14 দিনের টুকরোকে একটি সম্পূর্ণ স্বয়ংসম্পূর্ণ উদাহরণ হিসেবে গণ্য করা যায়—কে কার পরে এল তার ওপর ফলাফল নির্ভর করে না। কিন্তু আপনি যদি অবিরাম চলতে থাকা কোনো ডেটা প্রবাহের (Continuous Stream) জন্য সত্যিকারের Stateful Model বানাতে চান, তবে ডেটার ক্রম, প্রতিটি প্রবাহের নিজস্ব পরিচয় এবং ঠিক কখন স্মৃতি মুছে নতুন করে শুরু করতে হবে—তার পুরো নিয়মকানুন নতুন করে সাজাতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "Stateful Stream নকশা করার অপরিহার্য শর্ত",
+          "body": "লম্বা কোনো অডিও, সেন্সর ডেটা বা দীর্ঘ ডকুমেন্টকে যখন ছোট ছোট খণ্ডে কেটে পরপর চালানো হয়, তখন আগের খণ্ডের শেষ Hidden State পরের খণ্ডের শুরুতে এগিয়ে দেওয়া খুবই কাজের। কিন্তু শর্ত হলো: Batch-এর প্রতিটি নির্দিষ্ট সারি (Batch Lane) যেন শুরু থেকে শেষ পর্যন্ত একই উৎস বা একই ব্যবহারকারীর ধারাবাহিক অংশ বহন করে! আপনি যদি ডেটা এলোমেলোভাবে (Shuffle) মিশিয়ে ফেলে এক সেশনের শেষ State সম্পূর্ণ অন্য এক মানুষের সেশনের শুরুতে ঢুকিয়ে দেন, তবে তথ্যের মারাত্মক দূষণ ও বিভ্রান্তি ঘটবে। আর একটি সেশন বা ডকুমেন্ট শেষ হওয়ার সাথে সাথে কেবল সেই নির্দিষ্ট সারির State-টিকে শূন্য করে দেওয়ার ( selective end-of-sequence reset) ব্যবস্থাও থাকতে হবে।"
+        },
+        {
+          "type": "math",
+          "title": "খণ্ড থেকে খণ্ডে State বহন ও Gradient সুতো কাটার নীতি",
+          "body": "h^{chunk2}_0=h^{chunk1}_{last},\\quad \\mathrm{detach}(h)\\text{ preserves values, truncates gradient history}"
+        },
+        {
+          "type": "code",
+          "title": "পূর্ণ 6 ধাপ বনাম দুটি 3 ধাপের খণ্ডে অভিন্ন Forward ফলাফল",
+          "body": "import torch\n\ncell = torch.nn.GRU(1, 3, batch_first=True, dtype=torch.float64)\nx = torch.ones(1, 6, 1, dtype=torch.float64)  # Mathematical illustration.\nfull, hfull = cell(x)\nfirst, h = cell(x[:, :3])\nsecond, h2 = cell(x[:, 3:], h.detach())\ntorch.testing.assert_close(torch.cat([first, second], 1), full)\ntorch.testing.assert_close(h2, hfull)\n"
+        },
+        {
+          "type": "text",
+          "title": "আবারও মনে করিয়ে দেওয়া: Detach বনাম Reset",
+          "body": "উপরের কোডটি দেখুন: 6 ধাপের একটি Sequence একটানা চালানো আর সেটিকে 3 + 3 ধাপের দুটি খণ্ডে ভেঙে প্রথম খণ্ডের `h.detach()` দ্বিতীয় খণ্ডে পাঠানো—সামনের দিকে (Forward Pass) হুবহু একই ফলাফল দেয়! কারণ `.detach()` ভেতরের সংখ্যাগুলো অক্ষুণ্ণ রেখে কেবল পেছনের Computation Graph-এর ইতিহাসটুকু কেটে দেয়। পক্ষান্তরে Reset করলে সংখ্যাটিই মুছে শূন্য হয়ে যেত এবং ফলাফল পুরো বদলে যেত। তবে মনে রাখবেন, নির্দিষ্ট Parameter-এ সামনের ফলাফল এক হলেও ট্রেনিংয়ের সময় দ্বিতীয় খণ্ডের Loss থেকে কোনো সংকেত আর প্রথম খণ্ডের ভেতরে ফিরে যেতে পারবে না।"
+        },
+        {
+          "type": "text",
+          "title": "Training ও Validation-এর সীমানায় সতর্কতা",
+          "body": "Stateful Model মূল্যায়নের সময় একটি নীরব ভুল প্রায়ই ঘটে: ট্রেনিং লুপ শেষ হওয়ার পর ভুলে সেই সর্বশেষ Hidden State-টি নিয়েই সরাসরি Validation ডেটা চালানো শুরু করে দেওয়া! এতে আপনার মূল্যায়নের শর্তই বদলে যায়। অবশ্য বাস্তব অনলাইন সিস্টেমে যদি অতীতের বৈধ পর্যবেক্ষণ চালিয়ে State-কে প্রস্তুত (Warm-start) করে নেওয়া অনুমোদিত থাকে, তবে ঠিক কোন সময়ের কতটুকু ইতিহাস থেকে সেই State তৈরি হয়েছে তা স্পষ্টভাবে নথিবদ্ধ করতে হবে। আর কোনো Stateless Baseline-এর সাথে তুলনা করার সময় দুই পক্ষকেই তথ্যের প্রাপ্যতার দিক থেকে সমান সুযোগ দিতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "মাঝপথে Checkpoint সংরক্ষণের বাড়তি জটিলতা",
+          "body": "Book 3 · Chapter 3 (Reliable Training)-এ আমরা দেখেছিলাম কীভাবে একটি Epoch শেষে Model-এর ওজন ও Optimizer সংরক্ষণ করতে হয়। কিন্তু একটি চলমান Stateful Stream-এর মাঝপথে থেমে আবার ঠিক সেখান থেকেই নিখুঁতভাবে ট্রেনিং শুরু করতে চাইলে শুধু Model-এর ওজন বাঁচালেই চলবে না! তখন চলমান প্রতিটি সারির জীবন্ত Hidden State, ডেটা প্রবাহের বর্তমান অবস্থান (Cursor), কোন সারিতে কোন Stream চলছে তার তালিকা, Optimizer-এর ভেতরের বাফার, Random Number Generator-এর অবস্থা এবং Truncation ধাপের গণনা—সবকিছু একসাথে সংরক্ষণ করতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এর জন্য কোড ও বাগ ধরার প্রস্তুতি",
+          "body": "ইন্টারভিউতে আপনাকে স্বাধীন Window Batching এবং ধারাবাহিক Stream Batching—উভয় পদ্ধতিরই পরিষ্কার Pseudocode লিখতে বলা হতে পারে। এছাড়া আপনার কোডে অজান্তে এক Sample-এর State অন্য Sample-এ চুঁইয়ে পড়ছে কি না (State Leakage), তা ধরার একটি চমৎকার কৌশল মনে রাখুন: Model-কে `eval()` মোডে রেখে (যেখানে কোনো Dropout বা Random Layer নেই) কেবল Batch-এর ভেতরের উদাহরণগুলোর ক্রম ওলটপালট করে দেখুন প্রতিটি উদাহরণের নিজস্ব Prediction হুবহু এক থাকে কি না! যদি ক্রম বদলালেই স্বাধীন হওয়ার কথা এমন উদাহরণের উত্তর বদলে যায়, তবে নিশ্চিত বুঝবেন কোথাও State বা Batch Axis গুলিয়ে গেছে।"
+        }
+      ]
+    },
+    {
+      "id": "ch19_bidirectional",
+      "title": "Bidirectional Context ও Causality",
+      "subtitle": "ভবিষ্যতের পদ দেখা কখন বৈধ আর কখন মারাত্মক Data Leakage?",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "সামনে ও পেছনে—দুই দিক থেকে পড়া",
+          "body": "এতক্ষণ আমাদের Model কেবল বাম থেকে ডানে, অর্থাৎ অতীত থেকে বর্তমানের দিকে এগোচ্ছিল। কিন্তু একটি সম্পূর্ণ বাক্য যখন আমাদের চোখের সামনে লেখা থাকে, তখন কোনো একটি শব্দের অর্থ বুঝতে আমরা তার আগের শব্দের পাশাপাশি পরের শব্দগুলোরও সাহায্য নিই। ঠিক এই কাজটিই করে Bidirectional RNN: এর সামনের (Forward) পথটি শুরুর দিক থেকে পড়ে আসে, আর পেছনের (Reverse) পথটি শেষ দিক থেকে উল্টো দিকে পড়ে আসে। সম্পূর্ণ উপলব্ধ কোনো টেক্সটের Tagging বা Classification-এর জন্য এটি দারুণ কার্যকর। কিন্তু আপনি যদি প্রতি মুহূর্তে দাঁড়িয়ে তাৎক্ষণিক ভবিষ্যৎ অনুমান (Online Prediction) করতে চান, আর তখনও না-ঘটা ভবিষ্যতের পদগুলো পেছনের পথ দিয়ে Model-এর পেটে ঢুকিয়ে দেন, তবে Causality পুরোপুরি ভেঙে পড়বে! মনে রাখবেন, নিউরাল স্থাপত্য নিজে থেকে জানে না কোন তথ্যটি বৈধ অতীত আর কোনটি নিষিদ্ধ ভবিষ্যৎ—সেটি পাহারা দেওয়ার দায়িত্ব আপনার।"
+        },
+        {
+          "type": "text",
+          "title": "অতীত Window-র ভেতরে Bidirectional চালানোর সূক্ষ্ম নিয়ম",
+          "body": "এখানে ইন্টারভিউয়ের একটি অত্যন্ত চমৎকার সূক্ষ্ম প্রশ্ন খেয়াল করুন: ধরুন আজকের দিন `t` শুরু হওয়ার আগেই গত 14 দিনের (`t − 14` থেকে `t − 1`) সম্পূর্ণ ইতিহাস আমাদের হাতে চলে এসেছে। এখন শুধু এই অতীত 14 দিনের টুকরোটির ভেতরে যদি আমরা একটি Bidirectional Encoder চালাই, তবে কি ভবিষ্যতের Target `y_t` ফাঁস (Leak) হবে? মোটেও না! কারণ ওই 14টি দিনের প্রতিটিই Forecast দেওয়ার মুহূর্তের চেয়ে পুরোনো। কিন্তু কাজটি যদি এমন হতো যে একটি লম্বা Sequence-এর ভেতরে প্রতিটি ধাপে দাঁড়িয়ে পরের ধাপের মান অনুমান করতে হচ্ছে, তবে সেখানে পেছনের পথ ব্যবহার করলেই সর্বনাশ ঘটত! তাই শুধু 'Bidirectional' শব্দটি দেখেই ঢালাও রায় না দিয়ে সবসময় প্রতিটি Input পদের Timestamp যাচাই করুন।"
+        },
+        {
+          "type": "math",
+          "title": "Forward ও Reverse Hidden State জোড়া লাগানোর সূত্র",
+          "body": "h_t=[\\overrightarrow h_t;\\overleftarrow h_t]"
+        },
+        {
+          "type": "code",
+          "title": "PyTorch-এ Bidirectional GRU-এর Output ও Hidden Shape",
+          "body": "import torch\n\ncell = torch.nn.GRU(1, 3, batch_first=True, bidirectional=True, dtype=torch.float64)\nx = torch.zeros(2, 5, 1, dtype=torch.float64)  # Shape illustration.\nout, h = cell(x)\nassert out.shape == (2, 5, 6) and h.shape == (2, 2, 3)\nfinal = torch.cat([h[0], h[1]], dim=-1)\nassert final.shape == (2, 6)\n"
+        },
+        {
+          "type": "text",
+          "title": "শেষ ঘরের ফলাফল (output[:, -1]) নেওয়ার ফাঁদ",
+          "body": "একমুখী Model-এ আমরা অবলীলায় `output[:, -1]` নিয়ে পুরো Sequence-এর সারাংশ বানাতাম। কিন্তু Bidirectional Model-এ `output[:, -1]` নিলে আপনি বড়সড় ধোঁকা খাবেন! কারণ শেষ ঘরের প্রথম অর্ধেকটি ঠিকই সামনের পথের সম্পূর্ণ সারাংশ দেয়, কিন্তু তার পরের অর্ধেকটি হলো পেছনের পথের একদম শুরুর ধাপ—যা কেবল শেষ পদটিকেই দেখেছে, আগের পুরো Sequence-কে দেখেইনি! পেছনের পথের পূর্ণ সারাংশ আসলে বসে থাকে একদম প্রথম ঘরে (`output[:, 0, H:]`) কিংবা চূড়ান্ত `h_n`-এর নির্দিষ্ট দিকনির্দেশক সারিতে। তাই উপরের কোডের মতো `h_n` থেকে সঠিক সারি দুটি তুলে জোড়া লাগান এবং Packing-এর বৈধ দৈর্ঘ্য যাচাই করে নিন।"
+        },
+        {
+          "type": "text",
+          "title": "Padding-এর সাথে দ্বিমুখী পথের সংঘর্ষ",
+          "body": "আগের Padding পাঠে আমরা যেমনটা সংখ্যা দিয়ে দেখেছিলাম, ডান পাশে শূন্য দিয়ে ভরাট করা Tensor সরাসরি Bidirectional Model-এ পাঠালে পেছনের পথটি প্রথমেই ওই নকল Padding ঘরগুলোর ওপর দিয়ে হাঁটতে শুরু করে। একমুখী Model-এ কেবল বৈধ শেষ সূচক তুলে নিলেই কাজ চলে যেত, কিন্তু দ্বিমুখী Model-এ আসল ডেটাকে দূষণমুক্ত রাখতে `pack_padded_sequence` বা নিখুঁত Masking অপরিহার্য।"
+        },
+        {
+          "type": "text",
+          "title": "হিসাবের খরচ ও বাস্তব ব্যবহারের সীমা",
+          "body": "দুই দিকে দুটি আলাদা পথ চালানোর কারণে Bidirectional Model-এ Parameter সংখ্যা ও হিসাবের খরচ প্রায় দ্বিগুণ হয়ে যায়। তাছাড়া পেছনের পথটি শুরুই হতে পারে না যতক্ষণ না পুরো Sequence-টি শেষ পর্যন্ত হাতে আসছে—ফলে সরাসরি রিয়েল-টাইম স্ট্রিমিংয়ে এর Latency অনেক বেড়ে যায়। আমাদের মূল Bike Sharing পরীক্ষায় আমরা একটি সরল একমুখী GRU ব্যবহার করেছি; সেখানে কোনো দ্বিমুখী Model-এর সাথে পারফরম্যান্স প্রতিযোগিতা চালানো হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে যাচাইয়ের অনুশীলন",
+          "body": "নিজের কোডে একটি কঠোর `assert` লিখে পরীক্ষা করুন যেন Input Window-র প্রতিটি তারিখই আপনার Forecast Origin-এর আগের তারিখ হয়। পাশাপাশি একটি ছোট কোড চালিয়ে মিলিয়ে দেখুন `h[1]` (পেছনের পথের চূড়ান্ত State) ঠিক কোন ঘরের `output` স্লাইসের সমান হয়। আর খাতায় স্পষ্ট করে লিখে রাখুন কেন বাক্যের Token Tagging এবং সময়ের Many-to-one Forecasting-এ তথ্যের প্রাপ্যতার নিয়ম আলাদা।"
+        }
+      ]
+    },
+    {
+      "id": "ch19_embeddings",
+      "title": "Token IDs, Embeddings ও Sequence প্রস্তুতি",
+      "subtitle": "Vocabulary তৈরির গণ্ডি এবং Padding ID-এর সঠিক আচরণ",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "বিচ্ছিন্ন সংখ্যা (Token ID) থেকে অর্থবহ Vector",
+          "body": "সংখ্যাভিত্তিক Time Series-এর বাইরে যখন আমরা ভাষা বা ব্যবহারকারীর ক্লিক-ইভেন্ট নিয়ে কাজ করি, তখন প্রতিটি শব্দ বা ঘটনাকে একটি পূর্ণসংখ্যা বা Token ID দিয়ে প্রকাশ করা হয়। খেয়াল রাখবেন, এই ID স্রেফ একটি ক্রমিক নম্বর—`ID 50` মানেই যে তা `ID 25`-এর দ্বিগুণ কিছু, কিংবা `5` আর `6` খুব কাছাকাছি অর্থের শব্দ, ব্যাপারটি মোটেও তা নয়! এই বিচ্ছিন্ন সূচকগুলোকে অর্থবহ অবিচ্ছিন্ন (Continuous) জগতে আনতেই ব্যবহৃত হয় `Embedding` টেবিল, যা প্রতিটি ID-র বিপরীতে একটি শেখা যায় এমন Vector ফিরিয়ে দেয়। বাস্তব সিস্টেমে আপনার Vocabulary, Tokenizer, বিশেষ চিহ্নগুলো (`BOS`, `EOS`, `PAD`, `UNK`) এবং অপরিচিত শব্দ সামলানোর নিয়ম—সবই Model-এর অবিচ্ছেদ্য অংশ। পূর্ণাঙ্গ LLM ও Tokenization নিয়ে আমরা Book 4 · Chapter 1 (LLM Foundations) ও Book 4 · Chapter 2 (Embeddings & Retrieval)-এ বিস্তারিত জানব; এখানে আমরা কেবল Recurrent Model-এর Input শর্তটুকু বুঝে নিচ্ছি।"
+        },
+        {
+          "type": "text",
+          "title": "Vocabulary তৈরির গণ্ডি: এখানেও হতে পারে Leakage!",
+          "body": "আপনি যদি নিজের ডেটা থেকে শব্দের তালিকা (Vocabulary) এবং ন্যূনতম উপস্থিতির সীমা (Frequency Threshold) তৈরি করেন, তবে তা অবশ্যই শুধুমাত্র Training টেক্সটের ওপর ভিত্তি করেই করতে হবে। পুরো Dataset একত্র করে Vocabulary বানালে Validation বা Test অংশে কোন নতুন শব্দ কতবার এসেছে, সেই ভবিষ্যৎ তথ্য আগেই Model-এর গঠনে ঢুকে পড়ে। আর যদি বাইরে থেকে প্রস্তুত করা (Pretrained) কোনো Tokenizer ব্যবহার করেন, তবে তার উৎস ও সংস্করণ স্পষ্টভাবে উল্লেখ করতে হবে। সেই সাথে মনে রাখবেন, Tokenizer তৈরি করা (শব্দ ভাঙার নিয়ম ঠিক করা) আর Model-এর ভেতরের `Embedding` ওজন ট্রেন করা—দুটি সম্পূর্ণ আলাদা কাজ।"
+        },
+        {
+          "type": "math",
+          "title": "Embedding Lookup টেবিলের গাণিতিক রূপ",
+          "body": "E\\in\\mathbb R^{V\\times d},\\quad x_t=E[\\mathrm{id}_t]"
+        },
+        {
+          "type": "code",
+          "title": "padding_idx=0 দিলে Gradient শূন্য থাকার প্রমাণ",
+          "body": "import torch\n\nembedding = torch.nn.Embedding(6, 3, padding_idx=0, dtype=torch.float64)\nids = torch.tensor(\n    [[1, 2, 0], [3, 4, 5]], dtype=torch.long\n)  # Mathematical token-ID illustration.\n# Backward accumulates into .grad; the seed or reduction sets the scale.\nx = embedding(ids)\nx.sum().backward()\nassert (\n    x.shape == (2, 3, 3) and torch.count_nonzero(embedding.weight.grad[0]).item() == 0\n)\n"
+        },
+        {
+          "type": "text",
+          "title": "padding_idx দিলেই কিন্তু RNN নিজে থেকে থেমে যায় না!",
+          "body": "উপরের কোডে আমরা দেখলাম `padding_idx=0` ব্যবহার করলে `0` নম্বর সারির Embedding Vector-এ কোনো Gradient জমা হয় না—অর্থাৎ ট্রেনিং জুড়ে ওই সারিটি অপরিবর্তিত শূন্যই থেকে যায়। কিন্তু এখানে একটি পুরোনো ফাঁদ আবারও মনে করিয়ে দিই: Embedding থেকে শূন্য Vector বেরোল মানেই কিন্তু পরের Layer-এর RNN Cell ওই ধাপটি লাফ দিয়ে এড়িয়ে যাবে না! শূন্য Vector পেলেও Cell-এর ভেতরের Recurrent Bias এবং আগের Hidden State মিলে ঠিকই অবস্থার পরিবর্তন ঘটাতে থাকবে। তাই সঠিক ফলাফলের জন্য বৈধ দৈর্ঘ্যের হিসাব ও Packing আগের মতোই জরুরি।"
+        },
+        {
+          "type": "text",
+          "title": "কাজের ধরন ভেদে Target ও বিশেষ চিহ্নের নিয়ম",
+          "body": "আপনার Sequence কাজের ধরন অনুযায়ী Target-এর চেহারাও বদলে যায়: পুরো বাক্যের Classification-এ প্রতি উদাহরণে থাকে একটিমাত্র Label, শব্দের Tagging-এ প্রতি পদের জন্য থাকে আলাদা Label, আর পরের শব্দ অনুমানের (Next-token) Model-এ মূল বাক্যকেই এক ঘর বামে সরিয়ে (Shifted) Target বানানো হয়। শুরু ও শেষের বিশেষ চিহ্ন (`BOS`, `EOS`, `PAD`)গুলোর মধ্যে কোনটি Loss হিসাবে ঢুকবে আর কোনটি বাদ পড়বে তা আগেভাগেই সুনির্দিষ্ট করুন, এবং নিশ্চিত করুন যেন `ignore_index`-এর মান কোনো বৈধ শ্রেণির সংখ্যার সাথে মিলে না যায়।"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের Bike Sharing ডেটার সাথে এর পার্থক্য",
+          "body": "পাঠকের মনে যাতে কোনো বিভ্রান্তি না থাকে সে জন্য স্পষ্ট করে বলি: আমাদের মূল Bike Sharing ডেটায় প্রতিদিনের ভাড়ার সংখ্যা হলো অবিচ্ছিন্ন বাস্তব সংখ্যা (Continuous Scalar)—সেখানে কোনো শব্দ বা বিচ্ছিন্ন Token ID নেই, তাই কোনো Embedding Lookup-ও ব্যবহৃত হয়নি। এখানকার ছোট কোড উদাহরণগুলো কেবল বিচ্ছিন্ন Sequence-এর Shape ও Gradient প্রবাহ শেখানোর জন্য দেওয়া হয়েছে; আমাদের মূল পরীক্ষার ফলাফল পুরোটাই ওই সংখ্যাসূচক ভাড়ার Regression-এর ওপর ভিত্তি করে।"
+        },
+        {
+          "type": "text",
+          "title": "কোড লেখার সময় যাচাইয়ের তালিকা",
+          "body": "যখনই Token ID নিয়ে কাজ করবেন, শুরুতেই যাচাই করুন Tensor-টির ধরন `torch.long` কি না, সব সংখ্যার মান `0` থেকে `V − 1`-এর ভেতরে আছে কি না, এবং `[B, T]` আকারের ID থেকে ঠিকমতো `[B, T, d]` আকারের Embedding বেরোচ্ছে কি না। অপরিচিত শব্দ (`UNK`), লম্বা বাক্য কেটে ছোট করা (Truncation) এবং Padding সারির পরবর্তী প্রভাবের জন্য আলাদা ছোট Unit Test লিখে রাখা একজন দক্ষ ইঞ্জিনিয়ারের পরিচায়ক।"
+        }
+      ]
+    },
+    {
+      "id": "ch19_seq2seq",
+      "title": "Encoder-Decoder ও Teacher Forcing",
+      "subtitle": "এক ঘর সরানো Target, Decoding কৌশল এবং Exposure Bias-এর চ্যালেঞ্জ",
+      "duration": "57 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "এক Sequence থেকে আরেক Sequence: Encoder-Decoder কাঠামো",
+          "body": "অনেক বাস্তব সমস্যায় আমাদের Input এবং Output—দুটোই ভিন্ন দৈর্ঘ্যের দুটি আলাদা Sequence হয়; যেমন এক ভাষা থেকে আরেক ভাষায় অনুবাদ কিংবা একগুচ্ছ অতীতের তথ্য থেকে ভবিষ্যতের পুরো একটি ধারা তৈরি করা। এই কাজের ধ্রুপদী কাঠামোটি হলো Encoder-Decoder: প্রথমে Encoder পুরো উৎস Sequence-টি পড়ে তার নির্যাস একটি ভেতরের প্রতিনিধিত্বে (Context বা State) জমা করে; এরপর Decoder সেই নির্যাস এবং নিজের তৈরি আগের পদগুলোর ওপর ভিত্তি করে একের পর এক নতুন পদ তৈরি করতে থাকে। তবে আস্ত একটি লম্বা বাক্যকে মাত্র একটি নির্দিষ্ট আকারের ছোট Vector-এ ঠেসে ধরতে গেলে তথ্যের যে তীব্র সংকোচন (Bottleneck) তৈরি হয়, ঠিক সেই সীমাবদ্ধতা দূর করতেই পরের অধ্যায়ে (Book 3 · Chapter 6: Attention & Transformers) আমরা শিখব Attention কৌশল!"
+        },
+        {
+          "type": "text",
+          "title": "Teacher Forcing এবং এক ঘরের ভুলের (Off-by-one) বিপদ",
+          "body": "ট্রেনিংয়ের শুরুতে Decoder যখন কাঁচা থাকে, তখন সে প্রথম শব্দেই ভুল করলে তার পরের পুরো বাক্যটিই লাইনচ্যুত হয়ে যায়। ট্রেনিংকে স্থিতিশীল ও দ্রুত করতে আমরা প্রায়ই ব্যবহার করি Teacher Forcing—অর্থাৎ প্রতি ধাপে Model-এর নিজের ভুল অনুমান না খাইয়ে আগের ধাপের প্রকৃত সঠিক পদটি (`y_{t-1}`) পরের ধাপের Input হিসেবে দেওয়া হয়। এখানে সূচকের হিসাব এক চুল এদিক-ওদিক হলেই সর্বনাশ: ধাপ `t`-এর Target `y_t` অনুমান করার সময় যদি ভুলে সেই `y_t`-কেই ওই ধাপের Input বানিয়ে দেন, তবে Model কোনো পরিশ্রম না করেই Input কপি করে ১০০% নম্বর পেয়ে যাবে! তাই শুরু ও শেষের চিহ্ন (`BOS`, `EOS`) এবং এক ঘর সরানো (Shifted) Target একদম নিখুঁত রাখুন। আর মনে রাখবেন, বাস্তব Inference-এর সময় ভবিষ্যতের আসল উত্তর তো আমাদের জানা থাকে না—তখন Model-কে নিজের তৈরি পদের ওপর ভর করেই এগোতে হয়।"
+        },
+        {
+          "type": "math",
+          "title": "উৎস ও পূর্ববর্তী পদের শর্তাধীন Autoregressive সম্ভাবনা",
+          "body": "P(y\\mid x)=\\prod_tP(y_t\\mid y_{<t},\\mathrm{encode}(x))"
+        },
+        {
+          "type": "code",
+          "title": "BOS থেকে EOS: এক ঘর সরিয়ে Decoder Input ও Target তৈরি",
+          "body": "import torch\n\ntarget = torch.tensor(\n    [[2, 4, 5, 3]], dtype=torch.long\n)  # Illustrative BOS2,EOS3 token IDs.\ndecoder_input = target[:, :-1]\ndecoder_target = target[:, 1:]\nassert decoder_input.tolist() == [[2, 4, 5]] and decoder_target.tolist() == [[4, 5, 3]]\n"
+        },
+        {
+          "type": "text",
+          "title": "Exposure Bias: অনুশীলনের পরিবেশ বনাম খেলার মাঠ",
+          "body": "Teacher Forcing-এর একটি বড় পার্শ্বপ্রতিক্রিয়া হলো Exposure Bias। ট্রেনিংয়ের পুরোটা সময় Model কেবল নিখুঁত ও পরিচ্ছন্ন অতীত পদ দেখার অভ্যাস করে; কিন্তু বাস্তবে নামার পর তাকে নিজেরই তৈরি করা সামান্য ত্রুটিযুক্ত পদের ওপর দাঁড়িয়ে পরের পদ অনুমান করতে হয়। ট্রেনিংয়ে এমন পরিস্থিতি কখনো না দেখার কারণে একটি ছোট ভুল ক্রমেই বড় হতে হতে পুরো Rollout-কে বিপথে নিয়ে যেতে পারে। এই ব্যবধান কমানোর জন্য Scheduled Sampling-সহ নানা কৌশল নিয়ে গবেষণা হয়েছে; তবে আমাদের মূল Bike Sharing GRU Model-টি কোনো Teacher-forced Seq2Seq Decoder নয়, বরং সরাসরি এক ধাপের সংখ্যাসূচক Regressor।"
+        },
+        {
+          "type": "text",
+          "title": "অবিচ্ছিন্ন সংখ্যার ক্ষেত্রে এক ধাপ বনাম বহু ধাপের প্রোটোকল",
+          "body": "আমাদের মূল GRU Model-টি বিগত 14 দিনের ভাড়ার সংখ্যা দেখে পরের 1 দিনের সংখ্যা অনুমান করে। যখন আমরা এটি দিয়ে একটানা 7 দিনের ভবিষ্যৎ অনুমান (Recursive 7-day Forecast) চালাই, তখন প্রথম দিনের অনুমানটিকে পরের দিনের Window-র শেষ ঘরে ঢুকিয়ে ক্রমান্বয়ে এগোনো হয়। পক্ষান্তরে Rolling One-step মূল্যায়নে প্রতিটি নতুন দিনের আগে বাস্তবে ঘটে যাওয়া প্রকৃত ভাড়ার সংখ্যা পাওয়া যায়—ফলে এই দুটি মূল্যায়ন আসলে সম্পূর্ণ ভিন্ন দুটি ব্যবহারিক প্রশ্নের উত্তর দেয়।"
+        },
+        {
+          "type": "text",
+          "title": "Decoding কৌশল: কখন কোনটি প্রযোজ্য?",
+          "body": "শব্দ বা বিচ্ছিন্ন Token তৈরির সময় প্রতি ধাপে Probability Distribution থেকে পদ বেছে নেওয়ার বেশ কিছু উপায় আছে—যেমন সবচেয়ে বড় সম্ভাবনার পদটি নেওয়া (Greedy / Argmax), একসাথে কয়েকটি সম্ভাব্য পথ বাঁচিয়ে রাখা (Beam Search), কিংবা সম্ভাবনা মেনে লটারি করা (Sampling)। এগুলোর প্রতিটিই Output-এর বৈচিত্র্য ও হিসাবের খরচ বদলে দেয়, এবং মনে রাখা ভালো যে Beam Search বেশি সম্ভাবনার বাক্য খুঁজলেও সেটিই যে সবসময় মানুষের কাছে সবচেয়ে ভালো উত্তর হবে তার কোনো নিশ্চয়তা নেই। অন্যদিকে আমাদের ভাড়ার সংখ্যার মতো Continuous Regression Model-এ মাথায় কেবল একটি `Linear` Layer থাকে—সেখানে এ ধরনের কোনো Categorical Decoding-এর প্রয়োজন পড়ে না।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে চিত্র এঁকে বোঝাবেন",
+          "body": "ইন্টারভিউতে Seq2Seq বা Autoregressive Model নিয়ে প্রশ্ন এলে সাদা বোর্ডে একটি ছোট Token সারি লিখে তার নিচে এক ঘর সরানো Input ও Target তীর চিহ্ন দিয়ে এঁকে দেখান। স্পষ্ট করে ব্যাখ্যা করুন কেন Forecast Origin পেরিয়ে যাওয়ার পরও প্রকৃত মান খাইয়ে Teacher Forcing করলে বহু-ধাপের মূল্যায়ন পুরোপুরি ফাঁস (Leak) হয়ে যায়। আর সাথে এটিও ইঙ্গিত দিয়ে রাখুন কেন একটিমাত্র স্থির Context Vector-এর সীমাবদ্ধতা আমাদের পরের অধ্যায়ের Attention কাঠামোর দিকে নিয়ে যায়।"
+        },
+        {
+          "type": "text",
+          "title": "সংখ্যায় প্রমাণ: BOS থেকে EOS পর্যন্ত নিখুঁত Alignment ও Loss",
+          "body": "চলুন Token সাজানো এবং Masked Loss-এর পুরো হিসাবটি সংখ্যায় মিলিয়ে নিই। ধরুন আমাদের একটি উদাহরণে Token সারিটি হলো `[BOS=2, 4, 5, EOS=3, PAD=0]`। এক ঘর করে কাটলে Decoder Input দাঁড়ায় `[2, 4, 5, 3]` এবং তার বিপরীতে Target দাঁড়ায় `[4, 5, 3, 0]`। খেয়াল করুন: শুরুর `BOS` (`2`) দেখে Model প্রথম আসল Token `4` অনুমান করে, শেষ আসল Token `5` দেখে সে থামার সংকেত `EOS` (`3`) অনুমান করে, আর শেষের `PAD` (`0`) ঘরটি আমরা হিসাব থেকে বাদ দিই।\n\nফলে এখানে বৈধ Target সংখ্যা হলো `3`। আমাদের Vocabulary আকার যদি `6` হয় এবং শুরুতে সব Logit যদি `0` থাকে, তবে প্রতি পদের সমান সম্ভাবনা (`1/6`) থাকায় প্রতিটি বৈধ পদের Loss হবে ঠিক `log(6)` (প্রায় `1.791759`), এবং বাদ দেওয়া শেষ `PAD` ঘরটির ওপর কোনো Gradient-ই পড়বে না (মান থাকবে নিখুঁত `0`)!"
+        },
+        {
+          "type": "code",
+          "title": "Shifted Target, ignore_index=0 ও Gradient যাচাই",
+          "body": "import torch\nimport torch.nn.functional as F\n\ntokens = torch.tensor([[2, 4, 5, 3, 0]])\ndecoder_inputs, targets = tokens[:, :-1], tokens[:, 1:]\nlogits = torch.zeros(1, 4, 6, dtype=torch.float64, requires_grad=True)\nvalid = targets != 0\nassert valid.any() and decoder_inputs.shape == targets.shape\nloss = (\n    F.cross_entropy(\n        logits.reshape(-1, 6), targets.reshape(-1), ignore_index=0, reduction=\"sum\"\n    )\n    / valid.sum()\n)\ngradient = torch.autograd.grad(loss, logits)[0]\ntorch.testing.assert_close(gradient[0, -1], torch.zeros(6, dtype=logits.dtype))\nprint(\n    valid.sum().item(),\n    round(loss.item(), 6),\n    round(gradient[0, 0, 4].item(), 6),\n    gradient[0, -1].abs().sum().item(),\n)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে হিসাব করুন",
+          "body": "উপরের মতো Loss হিসাবে `ignore_index=0` ব্যবহার করলেই কি নিশ্চিতভাবে বলা যায় যে Input-এর ভেতরে থাকা Padded ঘরগুলো Model-এর Recurrent State-এ কোনো প্রভাব ফেলবে না?",
+          "solution": "মোটেও বলা যায় না! Loss Mask কেবল এটিই ঠিক করে যে কোন কোন ঘরের Target ত্রুটি চূড়ান্ত Loss-এর যোগফলে ঢুকবে। কিন্তু Input সারির ভেতর দিয়ে চলার সময় Recurrent রূপান্তর কোথায় থামবে কিংবা কোন ঘরের চূড়ান্ত State পরবর্তী কাজে নেওয়া হবে—সেটি সম্পূর্ণ আলাদা বিষয়। তার জন্য আপনাকে আলাদাভাবে বৈধ দৈর্ঘ্য (`lengths`), `pack_padded_sequence` বা সুনির্দিষ্ট State Masking ব্যবহার করতেই হবে।",
+          "reference": "https://d2l.ai/"
+        }
+      ]
+    },
+    {
+      "id": "ch19_book_scheduled_sampling",
+      "title": "Teacher Forcing, Exposure Bias ও Multi-step Rollout",
+      "subtitle": "তত্ত্ব, সমীকরণ ও সংখ্যার উদাহরণ মিলিয়ে এক-ধাপ ও বহু-ধাপের ব্যবধান বুঝি",
+      "duration": "18 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ধারণাটি কেন এত জরুরি?",
+          "body": "ধরুন, একজন শিক্ষার্থী অনুশীলনের সময় প্রতিটি অঙ্কের আগের লাইনটি বইয়ের নিখুঁত সমাধান দেখে পরের লাইনটি লেখে; কিন্তু মূল পরীক্ষায় তাকে নিজের লেখা আগের লাইনের ওপর ভর করেই পরের লাইনে যেতে হয়। প্রথম লাইনে সামান্য ভুল হলেই পরের সব লাইন ভুল হতে থাকে! Sequence Model-এও ঠিক এটিই ঘটে: Teacher Forcing-এ ট্রেনিংয়ের সময় Model আগের আসল পদ পায়, কিন্তু বাস্তবে বহু ধাপ এগোনোর সময় (Rollout) তাকে নিজের অনুমান করা পদের ওপরই নির্ভর করতে হয়। একইভাবে Time Series-এও বাস্তবে দেখা গত কালের মান আর Model-এর অনুমান করা গত কালের মানের পরিসংখ্যানগত আচরণ এক থাকে না—তাই শুধু এক ধাপের (One-step) পারফরম্যান্স দেখে কখনোই দীর্ঘ পাল্লার Rollout কতটা ভালো হবে তা বিচার করা যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "দুটি মূল্যায়ন পদ্ধতির ধাপগুলো আলাদা করি",
+          "body": "বিষয়টি একদম স্বচ্ছভাবে ধরার জন্য একটি অতি সরল গুণিতক নিয়ম কল্পনা করুন: `ŷ_t = a × input_{t−1}`। এখন আমরা যদি Teacher-forced ভঙ্গিতে প্রতি ধাপে যাচাই করি, তবে প্রতিবারই Input হিসেবে আগের দিনের প্রকৃত মান `y_{t−1}` বসাব। কিন্তু আমরা যদি আজ দাঁড়িয়ে আগামী কয়েক দিনের Fixed-origin Rollout করি, তবে কেবল প্রথম ধাপেই শেষ দেখা আসল মানটি পাওয়া যাবে—দ্বিতীয় ধাপ থেকে Model নিজের তৈরি আগের অনুমানটিকেই Input হিসেবে গিলতে বাধ্য হবে! (অবশ্য বিকল্প আরেকটি নকশা হলো Direct Multi-horizon Model, যেখানে প্রতিটি ভবিষ্যৎ দূরত্বের জন্য আলাদা আলাদা Model বা Output মাথা শেখানো হয়।) তাই যেকোনো মূল্যায়নের কোড লেখার আগে কোন মুহূর্তে কোন প্রকৃত মানটি হাতে থাকা সম্ভব, তা পরিষ্কার করে লিখে নিতে হবে।"
+        },
+        {
+          "type": "math",
+          "title": "নিজের অনুমান ব্যবহার করা Rollout বনাম Teacher Forcing Input",
+          "body": "\\hat y_{T+h}=f_\\theta(\\hat y_{T+h-1},\\ldots),\\qquad \\text{teacher forcing input at }t:\\ y_{t-1}"
+        },
+        {
+          "type": "text",
+          "title": "খাতা-কলমে একটি সংখ্যার উদাহরণ",
+          "body": "চলুন ছোট কয়েকটি সংখ্যা বসিয়ে পার্থক্যটি নিজের চোখে দেখি। ধরা যাক, Model-এর গুণক `a = 1.1` এবং সর্বশেষ দেখা প্রকৃত মান `10.0`; আর বাস্তবে আগামী দিনগুলোতেও প্রকৃত মান স্থিরভাবে `10.0`-ই থাকবে। এখন Model-টিকে যদি নিজের অনুমানের ওপর ভর করে (Recursive Rollout) দুই ধাপ চালাতে দিই, তবে প্রথম ধাপে সে বলবে `1.1 × 10.0 = 11.0`, এবং দ্বিতীয় ধাপে নিজের সেই `11.0` ব্যবহার করে সে বলে বসবে `1.1 × 11.0 = 12.1`! অথচ দ্বিতীয় ধাপে যদি Teacher Forcing পদ্ধতিতে আবার আসল `10.0` Input দেওয়া হতো, তবে তার উত্তর আসত `11.0`-ই। দেখুন, Model কিন্তু হুবহু একই আছে, কিন্তু মূল্যায়নের প্রশ্ন বদলে যাওয়ায় ফলাফল ও ত্রুটির মাত্রা বদলে গেল!"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ দুই ধাপের Rollout ও Teacher Forcing-এর তুলনা",
+          "body": "factor, last_observed = 1.1, 10.0\nprediction = last_observed\nrollout = []\nfor _ in range(2):\n    prediction *= factor\n    rollout.append(prediction)  # Feed the model's own output into the next step.\nteacher_forced_second = factor * 10.0\nprint(round(rollout[1], 6), teacher_forced_second)\n"
+        },
+        {
+          "type": "text",
+          "title": "কোডটির ফলাফল আমাদের কী শেখায়?",
+          "body": "কোডটি চালালে Output আসে `12.1` এবং `11.0`—যা আমাদের হাতের হিসাবের সাথে হুবহু মিলে যায়। বাস্তব প্রজেক্টে যখন পূর্ণাঙ্গ নিউরাল নেটওয়ার্ক দিয়ে এমন বহু-ধাপের Rollout চালাবেন, তখন শুধু আগের দিনের অনুমানই নয়, বরং বাইরের সহায়ক বৈশিষ্ট্যগুলো (Exogenous Features) ভবিষ্যতে আদৌ জানা থাকবে কি না, প্রতিবার Hidden State কীভাবে রিসেট হচ্ছে এবং স্কেল থেকে মূল এককে ফেরানোর (Inverse Scaling) কাজটি ঠিকমতো হচ্ছে কি না—সবকিছুই এই একই কঠোর নিয়ম মেনে চলতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "Scheduled Sampling কি সব সমস্যার জাদুকরী সমাধান?",
+          "body": "ট্রেনিং ও বাস্তবের এই ব্যবধান কমাতে অনেকেই Scheduled Sampling ব্যবহারের কথা বলেন—যেখানে ট্রেনিং চলাকালীন মাঝে মাঝে আসল পদের বদলে Model-এর নিজের তৈরি পদ Input হিসেবে মিশিয়ে দেওয়া হয়। মনে রাখবেন, এটি একটি ব্যবহারিক কৌশল (Heuristic) মাত্র; এটি প্রচলিত Maximum Likelihood-এর মূল গাণিতিক লক্ষ্যকে (Statistical Objective) বদলে দেয় এবং সব ক্ষেত্রে নিখুঁত কাজ করার নিশ্চয়তা দেয় না। তাই একে সর্বজনীন সমাধান মনে না করে সবসময় প্রকৃত Long-horizon Validation এবং শক্তিশালী Baseline-এর বিপরীতে পরীক্ষা করে সিদ্ধান্ত নিন।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে চেষ্টা করুন",
+          "body": "উপরের উদাহরণে শুরুর মান `10.0` রেখে গুণক `Factor = 0.9` ধরলে দুই ধাপের Rollout শেষে মান কত দাঁড়াবে? আর One-step Rolling Backtest করার সময় আগের দিনের প্রকৃত মান `y_{t−1}` ব্যবহার করা কি সবসময়ই Data Leakage বলে গণ্য হবে?",
+          "solution": "গুণক `0.9` হলে প্রথম ধাপে `9.0` এবং দ্বিতীয় ধাপে `9.0 × 0.9 = 8.1` পাওয়া যাবে। আর দ্বিতীয় প্রশ্নের উত্তর হলো: না, সবসময় Leakage নয়! বাস্তবে যে মুহূর্তে দাঁড়িয়ে আপনি পরের দিনের Prediction দিচ্ছেন, সে মুহূর্তে যদি আগের দিনের প্রকৃত ফলাফল সত্যিই চূড়ান্ত হয়ে আপনার হাতে চলে আসে, তবে Rolling One-step মূল্যায়নে তা ব্যবহার করা শতভাগ বৈধ। কেবল একটি নির্দিষ্ট দিনে দাঁড়িয়ে একসাথে বহু দূরের ভবিষ্যৎ অনুমানের (Fixed-origin Multi-step Forecast) সময় অনাগত দিনের আসল মান ব্যবহার করলেই তা Leakage হবে।",
+          "reference": "https://d2l.ai/chapter_recurrent-modern/seq2seq.html"
+        }
+      ]
+    },
+    {
+      "id": "ch19_training",
+      "title": "GRU Training Loop: Shape, Scale ও State Reset",
+      "subtitle": "নির্দিষ্ট 80টি Update-এ চালানো একটি স্বচ্ছ ও অকৃত্রিম পরীক্ষা",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Model-এর নিবন্ধন ও মোট 58টি Parameter",
+          "body": "এতক্ষণ শেখা সবগুলো টুকরো এবার জোড়া দিয়ে আমাদের মূল `SequenceGRU` Model-এর পূর্ণাঙ্গ Training Loop তৈরি করার পালা। এখানে একটি একক PyTorch মডিউলের ভেতর আমাদের এক Layer-এর GRU (`54`টি Parameter) এবং চূড়ান্ত `Linear(3, 1)` মাথা (`4`টি Parameter) নিবন্ধিত করা হয়েছে—যাতে `model.parameters()` কল করলেই মোট `58`টি Parameter একসাথে Optimizer-এর হাতে পৌঁছে যায়। এই নির্দিষ্ট রেসিপিতে কোনো Recurrent Dropout, একাধিক Layer, Bidirectional পথ কিংবা শেখা যায় এমন প্রারম্ভিক State রাখা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "পরীক্ষার অপরিবর্তনীয় রেসিপি (Fixed Recipe)",
+          "body": "ফলাফল যেন যে কেউ হুবহু পুনরুৎপাদন করতে পারেন, সে জন্য পুরো রানটি চালানো হয়েছে সুনির্দিষ্ট নিয়মে: `seed = 19`, CPU `float64`, `hidden_size = 3` এবং `lookback = 14` দিন। Optimizer হিসেবে নেওয়া হয়েছে `Adam` (`lr = 0.01`), এবং অস্থিতিশীল ধাক্কা ঠেকাতে Global Gradient Norm Clipping-এর সীমা বাঁধা হয়েছে `1.0`-এ। ২০১১ সালের সবগুলো (`351`টি) বৈধ Window একত্রে একটি Full Batch বানিয়ে মোট `80`টি Update চালানো হয়েছে।\n\nট্রেনিং শুরুর আগের প্রারম্ভিক অবস্থা (`epoch 0`) থেকে শুরু করে প্রতিটি Update-এর পরের Standardized Training `MSE` সযত্নে সংরক্ষণ করা হয়েছে। এখানে Validation স্কোর দেখে মাঝপথে থামা (Early Stopping) বা বারবার Hyperparameter ঘুরিয়ে সেরা সংখ্যা খোঁজার কাজ ইচ্ছে করেই করা হয়নি, আর প্রতিটি ধাপে প্রারম্ভিক Hidden State শূন্য থেকেই শুরু হয়েছে।"
+        },
+        {
+          "type": "math",
+          "title": "2011 সালের স্কেলে রূপান্তরিত Training MSE-এর সূত্র",
+          "body": "L={1\\over351}\\sum_t\\left(\\widehat z_t-z_t\\right)^2,\\quad z_t={y_t-\\mu_{2011}\\over s_{2011}}"
+        },
+        {
+          "type": "code",
+          "title": "Zero Grad, Forward, MSE Backward ও Norm Clipping ধাপ",
+          "body": "import torch\n\ncell = torch.nn.GRU(1, 3, batch_first=True, dtype=torch.float64)\nhead = torch.nn.Linear(3, 1, dtype=torch.float64)\nx = torch.zeros(2, 14, 1, dtype=torch.float64)\ny = torch.zeros(2, dtype=torch.float64)  # Shape illustration.\nopt = torch.optim.Adam(list(cell.parameters()) + list(head.parameters()), lr=0.01)\n# Gradients accumulate: clear them at the intended optimizer-step boundary.\nopt.zero_grad(set_to_none=True)\nout, _ = cell(x)\npred = head(out[:, -1]).squeeze(-1)\n# Backward accumulates into .grad; the seed or reduction sets the scale.\ntorch.nn.functional.mse_loss(pred, y).backward()\ntorch.nn.utils.clip_grad_norm_(\n    list(cell.parameters()) + list(head.parameters()), 1.0, error_if_nonfinite=True\n)\nopt.step()\nassert pred.shape == (2,)\n"
+        },
+        {
+          "type": "text",
+          "title": "কঠোর Shape শর্ত: [B] বনাম [B, 1]-এর চোরাবালি",
+          "body": "PyTorch-এ Regression করার সময় একটি কুখ্যাত নীরব বাগ ঘটে যদি আপনার Prediction-এর আকার হয় `[B, 1]` আর Target-এর আকার হয় `[B]`! তখন `mse_loss` কোনো ক্র্যাশ না করেই Broadcasting-এর নিয়মে `[B, B]` আকারের একটি জোড়ায়-জোড়ায় পার্থক্য ছক তৈরি করে সম্পূর্ণ ভুল একটি গড় Loss বের করে দেয়! এই বিপদ এড়াতে আমরা `.squeeze(-1)` দিয়ে নিশ্চিত করেছি যেন Prediction ও Target উভয়েরই আকার হুবহু `[B]` থাকে, এবং Model-এর মুখে `[B, 14, 1]` ছাড়া অন্য কোনো আকার এলে তা সরাসরি প্রত্যাখ্যান করা হয়। এছাড়া আমাদের Output যেকোনো বাস্তব সংখ্যা হতে পারে—ঋণাত্মক Prediction এলে সেটিকে লুকিয়ে শূন্য দিয়ে ঢেকে দেওয়া হয় না।"
+        },
+        {
+          "type": "text",
+          "title": "Training স্কেলিং এবং মূল এককে মূল্যায়ন",
+          "body": "কেবল ২০১১ সালের মূল ৩৬৫ দিনের ডেটা থেকে হিসাব করা `Mean ≈ 3405.761644` এবং `Scale (Std) ≈ 1376.863667` দিয়ে ডেটাকে Standardize করা হয়েছে। Optimizer-এর সুবিধার্থে আমরা ট্রেনিংয়ের সময় এই স্কেল করা এককে `MSE` কমালেও, Model-টি বাস্তবে কতটা কাজের তা বিচার করার সময় আবার মূল ভাড়ার সংখ্যায় (Raw Counts) ফিরিয়ে এনে `MAE` ও `RMSE` মাপি। মনে রাখবেন, এটি একটি সংখ্যাসূচক Regression কাজ—তাই এখানে Classification-এর মতো 'Accuracy' খোঁজার কোনো অর্থ নেই, এবং একক বদলালে ত্রুটির সংখ্যার মানও সেই অনুপাতে বদলে যায়।"
+        },
+        {
+          "type": "text",
+          "title": "ট্রেনিং সফল হওয়া মানেই কিন্তু ভালো Generalization নয়!",
+          "body": "এই `80`টি ধাপে আমাদের Model-এর Standardized Training `MSE` বেশ সুন্দরভাবেই `≈ 0.920577` থেকে কমে `≈ 0.286623`-এ নেমে আসে। অর্থাৎ আমাদের কোডে কোনো ভাঙাচোরা বাগ নেই, Optimizer তার গাণিতিক দায়িত্ব ঠিকঠাকই পালন করেছে! কিন্তু তা সত্ত্বেও ২০১২ সালের Development অংশে গিয়ে দেখা যায় এর পারফরম্যান্স সরল Last-day Baseline-এর চেয়ে খারাপ। এটি আমাদের চোখের আঙুল দিয়ে দেখিয়ে দেয় যে Training Loss কমা মানেই বাস্তব ভবিষ্যৎ অনুমানে সাফল্য নিশ্চিত নয়—এবং আমরা পর্দার আড়ালে `Hidden Size` বা `Learning Rate` পাল্টে এই প্রকৃত ফলাফলটিকে মেকি সাফল্যে রূপ দিইনি।"
+        },
+        {
+          "type": "text",
+          "title": "নিজের Training Loop নিশ্ছিদ্র করার অনুশীলন",
+          "body": "যেকোনো Recurrent Model ট্রেন করার আগে একটিমাত্র Window আলাদা করে চালিয়ে দেখুন তার Output আপনার হাতে লেখা Recurrence হিসাবের সাথে মেলে কি না। পাশাপাশি `B = 1` আকারের ছোট Batch, ভুল দৈর্ঘ্যের Input, সঠিক তারিখের সাথে Target-এর জোড় মেলানো এবং প্রতিটি Layer-এর Gradient সসীম (Finite) থাকছে কি না—এই চারটি বিষয়ের জন্য স্বয়ংক্রিয় টেস্ট রাখুন। আর ভবিষ্যতে যদি নতুন কোনো Hyperparameter পরীক্ষা করেন, তবে আগের ব্যর্থ বা সফল সব চেষ্টার ইতিহাস স্বচ্ছভাবে নথিবদ্ধ রাখুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch19_evaluation",
+      "title": "Rolling One-step বনাম Fixed-origin Recursion",
+      "subtitle": "প্রকৃত অতীত দেখে এক ধাপ এগোনো আর নিজের অনুমানের ওপর ভর করে বহু ধাপ এগোনো সম্পূর্ণ আলাদা",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Rolling One-step মূল্যায়ন আসলে কী?",
+          "body": "Time Series Model মূল্যায়নের সময় সবচেয়ে আগে ঠিক করতে হয়—প্রতিটি নতুন দিনে দাঁড়িয়ে Model আসলে কতটুকু ইতিহাস দেখতে পাবে? Rolling One-step প্রোটোকলে Development পর্বের প্রতিটি দিন `t`-এর জন্য তার ঠিক আগের 14 দিনের প্রকৃত ঘটে যাওয়া ভাড়ার সংখ্যা দিয়ে পরের একটিমাত্র দিনের Prediction নেওয়া হয়। যেহেতু দিন শেষ হলেই সেদিনের প্রকৃত ফলাফল জানা যায়, তাই পরের দিনগুলোতে এগোনোর সাথে সাথে Window-র ভেতরে আগের দিনগুলোর প্রকৃত মান ঢুকতে থাকে। খেয়াল রাখবেন, এর মানে কিন্তু প্রতিদিন Model-কে নতুন করে ট্রেন (Refit) করা নয়—Model-এর ওজন ২০১১ সালেই স্থির হয়ে আছে, কেবল প্রতিদিনের বৈধ তাজা Input দিয়ে এক ধাপ করে অনুমান নেওয়া হচ্ছে।"
+        },
+        {
+          "type": "text",
+          "title": "Fixed-origin Multi-step: এক বিন্দুতে দাঁড়িয়ে বহু দূরের পথ দেখা",
+          "body": "কিন্তু আপনার ব্যবসায়িক প্রশ্নটি যদি এমন হয়—'রবিবার রাতে দাঁড়িয়ে আগামী পুরো সপ্তাহের ৭টি দিনের ভাড়া আমাকে এখনই একসাথে বলতে হবে', তখন কী হবে? তখন একটি নির্দিষ্ট তারিখে (Origin) দাঁড়িয়ে আপনার প্রকৃত ইতিহাস স্থির (Freeze) হয়ে যাবে! প্রথম দিনের অনুমান পাওয়ার পর দ্বিতীয় দিন অনুমান করার সময় বাস্তব সোমবারের ভাড়া তো আপনার জানা নেই—তাই Model বাধ্য হয়ে নিজের অনুমান করা সংখ্যাটিই Window-র শেষে জুড়ে দিয়ে পরের ধাপে এগোবে। একে বলে Fixed-origin Recursive Forecasting। এখানে প্রতি ধাপের ছোট ভুল পরের ধাপের Input-এ ঢুকে চক্রবৃদ্ধি হারে বাড়তে পারে। (বিকল্প হিসেবে প্রতিটি দূরত্বের জন্য আলাদা Direct Multi-horizon Model-ও বানানো যায়, যদিও আমাদের এই পরীক্ষায় তা ট্রেন করা হয়নি।)"
+        },
+        {
+          "type": "math",
+          "title": "নিজের পূর্ববর্তী অনুমান ব্যবহার করে Recursive Forecasting সূত্র",
+          "body": "\\widehat y_{t+k}=f(\\ldots,\\widehat y_t,\\ldots,\\widehat y_{t+k-1})\\quad\\text{for recursive fixed-origin forecasting}"
+        },
+        {
+          "type": "code",
+          "title": "sequence_lab.json থেকে 7 দিনের Recursive ও Seasonal তুলনা",
+          "body": "from pathlib import Path\nimport json\n\na = json.loads(Path(\"assets/datasets/bike_sharing/sequence_lab.json\").read_text())\nq = a[\"queries\"][0]\nassert q[\"history_dates\"][-1] < \"2012-01-01\" and len(q[\"recursive_gru\"]) == 7\nprint(q[\"recursive_gru\"], q[\"seasonal7_fixed_origin\"], q[\"future_counts\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "Baseline-এর সাথে ন্যায্য তুলনার নিয়ম",
+          "body": "তুলনা তখনই সৎ ও অর্থবহ হয় যখন সবাইকে ঠিক একই নিয়মের মাঠে নামানো হয়। আমাদের Rolling One-step পরীক্ষায় যেমন GRU-এর পাশাপাশি সরল Last-day (`y_{t−1}`) এবং সাপ্তাহিক Seasonal Lag-7 (`y_{t−7}`) Baseline দুটিকেও হুবহু একই `182`টি দিনের ওপর মাপা হয়েছে। আবার ৭ দিনের Fixed-origin পরীক্ষায় সাপ্তাহিক Baseline হিসেবে সর্বশেষ দেখা প্রকৃত সপ্তাহটির ৭টি মান (`y[t − 7 : t]`) হুবহু পুনরাবৃত্তি করা হয়েছে। কখনোই এক প্রোটোকল বা এক দূরত্বের স্কোরের সাথে অন্য প্রোটোকলের স্কোর মিলিয়ে কোনো একক র‍্যাঙ্কিং তৈরি করবেন না, আর প্রকৃত ভবিষ্যৎ মানগুলো কেবল শেষে উত্তর মেলানোর কাজেই ব্যবহার করবেন।"
+        },
+        {
+          "type": "sequence_forecast_lab",
+          "title": "ইন্টারেক্টিভ Forecast Lab: তিনটি বাস্তব তারিখে ৭ দিনের পথরেখা",
+          "body": "নিচের ইন্টারেক্টিভ Lab-এ ২০১২ সালের তিনটি সুনির্দিষ্ট ঐতিহাসিক বিন্দুতে—`January 1`, `February 5` এবং `June 24`—দাঁড়িয়ে এক-ধাপের অনুমান এবং টানা ৭ দিনের Recursive পথরেখা পরখ করে দেখুন। লক্ষ করুন, সর্বশেষ `June 24` বিন্দু থেকে ৭ দিন এগোলেও তা `June 30`-এর ভেতরেই শেষ হয়, ফলে আমাদের সংরক্ষিত শেষ ১৮৪ দিনের সীমানায় কোনো হাত পড়ে না। আর এখানে Model-এর Output অবাধ বাস্তব সংখ্যা রাখা হয়েছে, কৃত্রিমভাবে কোনো মান কেটে বা ঘষামাজা করে সুন্দর দেখানো হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "প্রকাশিত ফলাফল ও প্রকৌশলগত সততা",
+          "body": "Development পর্বের পূর্ণাঙ্গ Rolling One-step ফলাফল আমাদের সামনে স্পষ্ট: সরল Last-day Baseline-এর `MAE ≈ 900.60`, সাপ্তাহিক Seasonal Lag-7-এর `MAE ≈ 1090.79`, আর আমাদের ট্রেন করা GRU Model-এর `MAE ≈ 1245.91`! একইভাবে `RMSE`-এর হিসাবেও তিনটি স্কোর যথাক্রমে `≈ 1273.46`, `1469.17` এবং `1490.49`। এই নির্দিষ্ট ছোট রেসিপিতে নিউরাল নেটওয়ার্কটির পিছিয়ে পড়ার এই বাস্তব চিত্রটিই আমরা স্বচ্ছ প্রমাণ হিসেবে ধরে রাখছি—একে জোর করে কোনো চূড়ান্ত কার্যকারণ তত্ত্ব বা সরাসরি Production-এ বসানোর সুপারিশ হিসেবে দাবি করছি না।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ মূল্যায়ন কাঠামো যেভাবে সাজাবেন",
+          "body": "ইন্টারভিউতে যেকোনো Forecasting সিস্টেমের নকশা করতে দিলে পাঁচটি বিষয় শুরুতেই বোর্ডে লিখুন: ঠিক কোন সময়ে দাঁড়িয়ে অনুমান দেওয়া হচ্ছে (Issue Time), কত দূরের লক্ষ্য (Target Horizon), আসল ফলাফল আসতে কত দেরি হয় (Outcome Latency), কত দিন পরপর Model নতুন করে ট্রেন হবে (Retraining Policy), এবং Input Feature কখন হালনাগাদ হবে (Feature Refresh Rule)। সেই সাথে যেকোনো Recursive Function রিভিউ করার সময় সবার আগে চেক করুন তার আর্গুমেন্ট তালিকায় ভুল করেও `actual_future` জাতীয় কিছু ঢুকে বসে আছে কি না!"
+        }
+      ]
+    },
+    {
+      "id": "ch19_workflow",
+      "title": "Offline Sequence Source ও Cell Helpers",
+      "subtitle": "মূল ক্যালেন্ডার যাচাই থেকে শুরু করে Training-only Window এবং Manual Cell-এর ভিত্তি",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "নিজের মেশিনে চালানোর নিয়ম",
+          "body": "আপনি চাইলে নিজের কম্পিউটারেই পুরো Pipeline-টি চালিয়ে প্রতিটি সংখ্যা যাচাই করে নিতে পারেন। প্রথমে `python -m pip install -r tool/requirements-pytorch-qa.txt` কমান্ড দিয়ে পরীক্ষিত CPU প্যাকেজগুলো ইনস্টল করে নিন; এরপর চালান `python assets/datasets/bike_sharing/sequence_workflow.py --output build/chapter-19-workflow-report.json --artifact-dir build/chapter-19-artifacts`। উল্লেখ্য, আমাদের মোবাইল বা ডেস্কটপ অ্যাপটি চালানোর জন্য কোনো Python ইনস্টলেশন লাগে না—এই স্ক্রিপ্টটি কেবল ডেভেলপমেন্ট ও গাণিতিক স্বচ্ছতা যাচাইয়ের জন্য।"
+        },
+        {
+          "type": "text",
+          "title": "মূল ডেটা ফাইলের অখণ্ডতা ও সীমানা চুক্তি",
+          "body": "মূল `day.csv` ফাইলটির SHA-256 Hash এবং ক্যালেন্ডারের ধারাবাহিকতা যাচাইয়ের জন্য আমরা Book 2 · Chapter 8 (Anomaly Detection & Time Series Foundations)-এর পরীক্ষিত Helper মডিউলটিই পুনর্ব্যবহার করছি। ফাইলটি অক্ষত আছে কি না তা দেখার সময় পুরো ফাইল পড়া হলেও, আমাদের Modelিং ও এক্সপোর্টের কাজ কঠোরভাবে `y[:547]`-এর মধ্যেই সীমাবদ্ধ রাখা হয়েছে—যাতে ৩০ জুনের পরের সংরক্ষিত ফলাফল কোনোভাবেই ব্যবহৃত না হয়। এখানকার প্রতিটি দিনের সংখ্যা অঋণাত্মক ও সসীম; কোনো কাল্পনিক ডেটা বানানো হয়নি (উৎস: UCI Bike Sharing, Fanaee-T 2013, `CC BY 4.0`)।"
+        },
+        {
+          "type": "code",
+          "title": "ডেটা প্রস্তুতি, ২০১১ স্কেলিং ও Causal Window তৈরির কোড",
+          "body": "from pathlib import Path\nimport argparse, hashlib, importlib.util, json, platform, sys\nimport numpy as np\nimport torch\nfrom torch import nn\nfrom torch.nn.utils.rnn import pack_padded_sequence\n\nDATA = Path(\"assets/datasets/bike_sharing\").resolve()\nLOOKBACK = 14\n\n\ndef prepare(path):\n    spec = importlib.util.spec_from_file_location(\n        \"ch19_temporal_source\", path.with_name(\"temporal_workflow.py\")\n    )\n    module = importlib.util.module_from_spec(spec)\n    sys.modules[spec.name] = module\n    spec.loader.exec_module(module)\n    frame, y = module.load_source(path)\n    # Do not consume reserved outcomes after June30 in modeling/reference evidence.\n    observed = y[:547].copy()\n    mean = float(observed[:365].mean())\n    scale = float(observed[:365].std(ddof=0))\n    if scale <= 0:\n        raise ValueError(\"Positive training count scale\")\n    return (\n        frame.dteday.iloc[:547].dt.strftime(\"%Y-%m-%d\").tolist(),\n        observed,\n        mean,\n        scale,\n    )\n\n\ndef windows(y, mean, scale, start, end):\n    y = np.asarray(y, dtype=float)\n    if (\n        y.ndim != 1\n        or not np.isfinite(y).all()\n        or not np.isfinite(mean)\n        or not np.isfinite(scale)\n        or scale <= 0\n        or start < 14\n        or end > len(y)\n        or start >= end\n    ):\n        raise ValueError(\"Finite causal window contract\")\n    ids = np.arange(start, end)\n    X = np.stack([(y[t - 14 : t] - mean) / scale for t in ids])[:, :, None]\n    target = (y[ids] - mean) / scale\n    return (\n        torch.tensor(X, dtype=torch.float64),\n        torch.tensor(target, dtype=torch.float64),\n        ids,\n    )\n"
+        },
+        {
+          "type": "code",
+          "title": "SequenceGRU, PyTorch Gate Layout ও Recursive Helper",
+          "body": "class SequenceGRU(nn.Module):\n    def __init__(self):\n        super().__init__()\n        self.recurrent = nn.GRU(1, 3, batch_first=True, dtype=torch.float64)\n        self.head = nn.Linear(3, 1, dtype=torch.float64)\n\n    def forward(self, X):\n        if X.ndim != 3 or X.shape[1:] != (14, 1):\n            raise ValueError(\"X[B,14,1]\")\n        output, _ = self.recurrent(X)\n        return self.head(output[:, -1]).squeeze(-1)\n\n\ndef parameters(cell, head=None):\n    record = {\n        \"w_ih\": cell.weight_ih_l0.detach().tolist(),\n        \"w_hh\": cell.weight_hh_l0.detach().tolist(),\n        \"b_ih\": cell.bias_ih_l0.detach().tolist(),\n        \"b_hh\": cell.bias_hh_l0.detach().tolist(),\n    }\n    if head is not None:\n        record.update(\n            head_weight=head.weight.detach()[0].tolist(),\n            head_bias=head.bias.detach().item(),\n        )\n    return record\n\n\ndef sigmoid(x):\n    return np.exp(-np.logaddexp(0, -x))\n\n\ndef manual(sequence, p, kind, length=None):\n    x = np.asarray(sequence, dtype=float)\n    length = len(x) if length is None else length\n    if (\n        x.ndim != 1\n        or not len(x)\n        or not np.isfinite(x).all()\n        or not isinstance(length, int)\n        or length < 1\n        or length > len(x)\n        or kind not in [\"rnn\", \"gru\", \"lstm\"]\n    ):\n        raise ValueError(\"Finite sequence, valid length/cell\")\n    W = np.asarray(p[\"w_ih\"])\n    U = np.asarray(p[\"w_hh\"])\n    a = np.asarray(p[\"b_ih\"])\n    b = np.asarray(p[\"b_hh\"])\n    rows = {\"rnn\": 3, \"gru\": 9, \"lstm\": 12}[kind]\n    if (\n        W.shape != (rows, 1)\n        or U.shape != (rows, 3)\n        or a.shape != (rows,)\n        or b.shape != (rows,)\n        or any(not np.isfinite(v).all() for v in [W, U, a, b])\n    ):\n        raise ValueError(\"Hidden3 PyTorch gate layout\")\n    h = np.zeros(3)\n    c = np.zeros(3)\n    trace = []\n    for value in x[:length]:\n        ih = W[:, 0] * value + a\n        hh = U @ h + b\n        if kind == \"rnn\":\n            h = np.tanh(ih + hh)\n            gates = {}\n        elif kind == \"gru\":\n            r = sigmoid(ih[:3] + hh[:3])\n            z = sigmoid(ih[3:6] + hh[3:6])\n            n = np.tanh(ih[6:] + r * hh[6:])\n            h = (1 - z) * n + z * h\n            gates = {\"reset\": r.tolist(), \"update\": z.tolist(), \"candidate\": n.tolist()}\n        else:\n            gates4 = ih + hh\n            i = sigmoid(gates4[:3])\n            f = sigmoid(gates4[3:6])\n            g = np.tanh(gates4[6:9])\n            o = sigmoid(gates4[9:])\n            c = f * c + i * g\n            h = o * np.tanh(c)\n            gates = {\n                \"input\": i.tolist(),\n                \"forget\": f.tolist(),\n                \"candidate\": g.tolist(),\n                \"output\": o.tolist(),\n            }\n        trace.append(\n            {\n                \"hidden\": h.tolist(),\n                \"cell\": c.tolist() if kind == \"lstm\" else [],\n                \"gates\": gates,\n            }\n        )\n    return trace\n\n\ndef recursive(model, history, mean, scale, horizon):\n    prefix = list(history)\n    if horizon < 1 or horizon > 7 or len(prefix) < 14:\n        raise ValueError(\"History>=14, horizon1..7\")\n    result = []\n    model.eval()\n    with torch.no_grad():\n        for _ in range(horizon):\n            X = torch.tensor(\n                (np.array(prefix[-14:]) - mean) / scale, dtype=torch.float64\n            ).reshape(1, 14, 1)\n            value = model(X).item() * scale + mean\n            result.append(value)\n            prefix.append(value)\n    return result\n"
+        },
+        {
+          "type": "text",
+          "title": "তথ্যের প্রাপ্যতার কঠোর গণ্ডি",
+          "body": "উপরের `prepare` এবং `windows` Function দুটির দিকে তাকালেই দেখবেন আমাদের ডেটার সীমানা কতটা পরিষ্কার: ২০১১ সালের ৩৬৫ দিন দিয়ে স্কেলিং ও ট্রেনিং, আর ২০১২ সালের জানুয়ারি থেকে জুন পর্যন্ত অংশটি কেবলই ডায়াগনস্টিক মূল্যায়নের জন্য। এখানে কেবল দিন শেষের মোট ভাড়ার সংখ্যাই নেওয়া হয়েছে—Target দিনের Casual/Registered উপাদান কিংবা সেদিনের ঘটে যাওয়া প্রকৃত আবহাওয়া এখানে প্রবেশের কোনো সুযোগ পায়নি।"
+        },
+        {
+          "type": "text",
+          "title": "Manual Cell ও সহায়ক Function-গুলোর ভূমিকা",
+          "body": "দ্বিতীয় কোড ব্লকটিতে আমাদের `SequenceGRU` মডিউল, সংখ্যাসূচকভাবে স্থিতিশীল `sigmoid`, PyTorch-এর হুবহু সারি বিন্যাস (`3`, `9` ও `12` সারি) মেনে লেখা ম্যানুয়াল `RNN`/`GRU`/`LSTM` ট্রেস Function এবং ৭ দিনের `recursive` রোলআউট Function সংজ্ঞায়িত করা হয়েছে। প্রতিটি Function-এর শুরুতেই কঠোর Input ও আকার যাচাই (Schema Checks) বসানো আছে; পরের পাঠে আমরা এই সহায়ক Functionগুলো ব্যবহার করেই সম্পূর্ণ পরীক্ষাটি চালাব।"
+        },
+        {
+          "type": "text",
+          "title": "সংরক্ষিত স্থানীয় Artifact ও নিরাপত্তা",
+          "body": "যখন আপনি `--artifact-dir` উল্লেখ করে স্ক্রিপ্টটি চালাবেন, তখন সেখানে `gru.pt`, `schema.json` এবং `checksums.json` তৈরি হবে। Schema ফাইলে মূল ডেটার Hash, ২০১১ সালের গড় ও স্কেল, নির্দিষ্ট `[B, 14, 1]` Input আকার এবং প্রতি Window-তে শূন্য State-এ ফেরার নিয়ম লেখা থাকে। নিরাপত্তার স্বার্থে সবসময় কেবল নিজের তৈরি বিশ্বস্ত ও সামঞ্জস্যপূর্ণ Checkpoint ফাইলই লোড করবেন; আর আমাদের অ্যাপ সরাসরি নিরাপদ সংখ্যাসূচক JSON Parameter পড়ে কাজ চালায়।"
+        },
+        {
+          "type": "text",
+          "title": "গাণিতিক প্রমাণ বনাম পরিসংখ্যানগত প্রমাণ",
+          "body": "আমাদের হাতে লেখা ম্যানুয়াল Function-এর সাথে PyTorch-এর ফলাফলের দশমিকের ১২ ঘর পর্যন্ত হুবহু মিলে যাওয়া প্রমাণ করে যে আমাদের সমীকরণ ও ইমপ্লিমেন্টেশন শতভাগ নির্ভুল। তবে মনে রাখবেন, সমীকরণ নির্ভুল হওয়া আর অদেখা ডেটায় চূড়ান্ত ব্যবসায়িক সাফল্য পাওয়া এক কথা নয়—যেহেতু Development অংশটি আগেই বিশ্লেষিত এবং শেষ ১৮৪ দিন আমরা স্পর্শ করিনি, তাই এই ফলাফলকে আমরা একটি স্বচ্ছ ডায়াগনস্টিক প্রতিবেদন হিসেবেই দেখব।"
+        }
+      ]
+    },
+    {
+      "id": "ch19_experiment",
+      "title": "পূর্ণাঙ্গ Recurrent Experiment ও Reference Assets",
+      "subtitle": "একই স্ক্রিপ্টে Training, Cell Trace, Packing, Forecasting এবং নিরীক্ষা",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "স্বয়ংসম্পূর্ণ ও পুনরুৎপাদনযোগ্য স্ক্রিপ্ট",
+          "body": "নিচের কোড ব্লকে ডেটা পড়া, স্কেলিং, নির্দিষ্ট রেসিপিতে GRU ট্রেনিং, Baseline তুলনা, Manual Cell-এর ধাপে ধাপে Trace, বিভিন্ন দৈর্ঘ্যের Packing পরীক্ষা এবং ৭ দিনের Recursive Forecast—সবকিছু একসাথে সাজানো আছে। স্ক্রিপ্টটি এমনভাবে লেখা হয়েছে যাতে যেকোনো ডিরেক্টরি থেকে চালালেও এটি সঠিক ডেটা খুঁজে পায়, আবার অন্য কোনো মডিউল থেকে একে শুধু `import` করলে যেন অযথা ট্রেনিং শুরু না হয়ে যায়।"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব Window-র ওপর চারটি Cell-এর নিখুঁত মিল",
+          "body": "পরীক্ষার ভেতরে Development অংশের তিনটি প্রকৃত ১৪ দিনের ঐতিহাসিক Window (`t = 365, 400, 540`) নেওয়া হয়েছে এবং চারটি ভিন্ন Parameter সেট (`rnn_initial`, `gru_initial`, `gru_trained` এবং `lstm_initial`) দিয়ে ১৪টি ধাপের প্রতিটির হিসাব মেলানো হয়েছে। প্রতিটি ধাপের ম্যানুয়াল Hidden State সরাসরি PyTorch-এর Output-এর সাথে `1e-12` সূক্ষ্মতায় মিলিয়ে দেখা হয়েছে (`assert_allclose`), এবং স্বয়ংক্রিয় QA টেস্টে LSTM-এর Cell State ও সব Gate সমীকরণও আলাদাভাবে যাচাই করা থাকে।"
+        },
+        {
+          "type": "code",
+          "title": "সম্পূর্ণ পরীক্ষা ও Asset তৈরির স্বয়ংসম্পূর্ণ কোড",
+          "body": "from pathlib import Path\nimport argparse, hashlib, importlib.util, json, platform, sys\nimport numpy as np\nimport torch\nfrom torch import nn\nfrom torch.nn.utils.rnn import pack_padded_sequence\n\nDATA = Path(\"assets/datasets/bike_sharing\").resolve()\nLOOKBACK = 14\n\n\ndef prepare(path):\n    spec = importlib.util.spec_from_file_location(\n        \"ch19_temporal_source\", path.with_name(\"temporal_workflow.py\")\n    )\n    module = importlib.util.module_from_spec(spec)\n    sys.modules[spec.name] = module\n    spec.loader.exec_module(module)\n    frame, y = module.load_source(path)\n    # Do not consume reserved outcomes after June30 in modeling/reference evidence.\n    observed = y[:547].copy()\n    mean = float(observed[:365].mean())\n    scale = float(observed[:365].std(ddof=0))\n    if scale <= 0:\n        raise ValueError(\"Positive training count scale\")\n    return (\n        frame.dteday.iloc[:547].dt.strftime(\"%Y-%m-%d\").tolist(),\n        observed,\n        mean,\n        scale,\n    )\n\n\ndef windows(y, mean, scale, start, end):\n    y = np.asarray(y, dtype=float)\n    if (\n        y.ndim != 1\n        or not np.isfinite(y).all()\n        or not np.isfinite(mean)\n        or not np.isfinite(scale)\n        or scale <= 0\n        or start < 14\n        or end > len(y)\n        or start >= end\n    ):\n        raise ValueError(\"Finite causal window contract\")\n    ids = np.arange(start, end)\n    X = np.stack([(y[t - 14 : t] - mean) / scale for t in ids])[:, :, None]\n    target = (y[ids] - mean) / scale\n    return (\n        torch.tensor(X, dtype=torch.float64),\n        torch.tensor(target, dtype=torch.float64),\n        ids,\n    )\n\n\nclass SequenceGRU(nn.Module):\n    def __init__(self):\n        super().__init__()\n        self.recurrent = nn.GRU(1, 3, batch_first=True, dtype=torch.float64)\n        self.head = nn.Linear(3, 1, dtype=torch.float64)\n\n    def forward(self, X):\n        if X.ndim != 3 or X.shape[1:] != (14, 1):\n            raise ValueError(\"X[B,14,1]\")\n        output, _ = self.recurrent(X)\n        return self.head(output[:, -1]).squeeze(-1)\n\n\ndef parameters(cell, head=None):\n    record = {\n        \"w_ih\": cell.weight_ih_l0.detach().tolist(),\n        \"w_hh\": cell.weight_hh_l0.detach().tolist(),\n        \"b_ih\": cell.bias_ih_l0.detach().tolist(),\n        \"b_hh\": cell.bias_hh_l0.detach().tolist(),\n    }\n    if head is not None:\n        record.update(\n            head_weight=head.weight.detach()[0].tolist(),\n            head_bias=head.bias.detach().item(),\n        )\n    return record\n\n\ndef sigmoid(x):\n    return np.exp(-np.logaddexp(0, -x))\n\n\ndef manual(sequence, p, kind, length=None):\n    x = np.asarray(sequence, dtype=float)\n    length = len(x) if length is None else length\n    if (\n        x.ndim != 1\n        or not len(x)\n        or not np.isfinite(x).all()\n        or not isinstance(length, int)\n        or length < 1\n        or length > len(x)\n        or kind not in [\"rnn\", \"gru\", \"lstm\"]\n    ):\n        raise ValueError(\"Finite sequence, valid length/cell\")\n    W = np.asarray(p[\"w_ih\"])\n    U = np.asarray(p[\"w_hh\"])\n    a = np.asarray(p[\"b_ih\"])\n    b = np.asarray(p[\"b_hh\"])\n    rows = {\"rnn\": 3, \"gru\": 9, \"lstm\": 12}[kind]\n    if (\n        W.shape != (rows, 1)\n        or U.shape != (rows, 3)\n        or a.shape != (rows,)\n        or b.shape != (rows,)\n        or any(not np.isfinite(v).all() for v in [W, U, a, b])\n    ):\n        raise ValueError(\"Hidden3 PyTorch gate layout\")\n    h = np.zeros(3)\n    c = np.zeros(3)\n    trace = []\n    for value in x[:length]:\n        ih = W[:, 0] * value + a\n        hh = U @ h + b\n        if kind == \"rnn\":\n            h = np.tanh(ih + hh)\n            gates = {}\n        elif kind == \"gru\":\n            r = sigmoid(ih[:3] + hh[:3])\n            z = sigmoid(ih[3:6] + hh[3:6])\n            n = np.tanh(ih[6:] + r * hh[6:])\n            h = (1 - z) * n + z * h\n            gates = {\"reset\": r.tolist(), \"update\": z.tolist(), \"candidate\": n.tolist()}\n        else:\n            gates4 = ih + hh\n            i = sigmoid(gates4[:3])\n            f = sigmoid(gates4[3:6])\n            g = np.tanh(gates4[6:9])\n            o = sigmoid(gates4[9:])\n            c = f * c + i * g\n            h = o * np.tanh(c)\n            gates = {\n                \"input\": i.tolist(),\n                \"forget\": f.tolist(),\n                \"candidate\": g.tolist(),\n                \"output\": o.tolist(),\n            }\n        trace.append(\n            {\n                \"hidden\": h.tolist(),\n                \"cell\": c.tolist() if kind == \"lstm\" else [],\n                \"gates\": gates,\n            }\n        )\n    return trace\n\n\ndef recursive(model, history, mean, scale, horizon):\n    prefix = list(history)\n    if horizon < 1 or horizon > 7 or len(prefix) < 14:\n        raise ValueError(\"History>=14, horizon1..7\")\n    result = []\n    model.eval()\n    with torch.no_grad():\n        for _ in range(horizon):\n            X = torch.tensor(\n                (np.array(prefix[-14:]) - mean) / scale, dtype=torch.float64\n            ).reshape(1, 14, 1)\n            value = model(X).item() * scale + mean\n            result.append(value)\n            prefix.append(value)\n    return result\n\n\ndef analyse_source(path, artifact_dir=None):\n    dates, y, mean, scale = prepare(path)\n    X, target, train_ids = windows(y, mean, scale, 14, 365)\n    V, vy, dev_ids = windows(y, mean, scale, 365, 547)\n    with torch.random.fork_rng(devices=[]):\n        torch.manual_seed(19)\n        model = SequenceGRU()\n        initial = parameters(model.recurrent, model.head)\n        opt = torch.optim.Adam(model.parameters(), lr=0.01, foreach=False)\n        history = []\n        for epoch in range(81):\n            model.eval()\n            with torch.no_grad():\n                history.append(\n                    {\n                        \"epoch\": epoch,\n                        \"train_mse_scaled\": nn.functional.mse_loss(\n                            model(X), target\n                        ).item(),\n                    }\n                )\n            if epoch == 80:\n                break\n            model.train()\n            opt.zero_grad(set_to_none=True)\n            loss = nn.functional.mse_loss(model(X), target)\n            loss.backward()\n            nn.utils.clip_grad_norm_(model.parameters(), 1.0, error_if_nonfinite=True)\n            opt.step()\n        torch.manual_seed(20)\n        rnn = nn.RNN(1, 3, batch_first=True, dtype=torch.float64)\n        torch.manual_seed(21)\n        lstm = nn.LSTM(1, 3, batch_first=True, dtype=torch.float64)\n    model.eval()\n    with torch.no_grad():\n        pred = model(V).numpy() * scale + mean\n    baselines = {\"naive\": y[dev_ids - 1], \"seasonal7\": y[dev_ids - 7], \"gru\": pred}\n    scores = {\n        name: {\n            \"mae\": float(np.abs(values - y[dev_ids]).mean()),\n            \"rmse\": float(np.sqrt(np.mean((values - y[dev_ids]) ** 2))),\n        }\n        for name, values in baselines.items()\n    }\n    cells = [\n        {\"name\": \"rnn_initial\", \"kind\": \"rnn\", \"parameters\": parameters(rnn)},\n        {\"name\": \"gru_initial\", \"kind\": \"gru\", \"parameters\": initial},\n        {\n            \"name\": \"gru_trained\",\n            \"kind\": \"gru\",\n            \"parameters\": parameters(model.recurrent, model.head),\n        },\n        {\"name\": \"lstm_initial\", \"kind\": \"lstm\", \"parameters\": parameters(lstm)},\n    ]\n    queries = []\n    for t in [365, 400, 540]:\n        values = y[t - 14 : t]\n        seq = ((values - mean) / scale).tolist()\n        refs = []\n        for entry in cells:\n            trace = manual(seq, entry[\"parameters\"], entry[\"kind\"])\n            refs.append({\"name\": entry[\"name\"], \"trace\": trace})\n            cell = {\n                \"rnn_initial\": rnn,\n                \"gru_initial\": None,\n                \"gru_trained\": model.recurrent,\n                \"lstm_initial\": lstm,\n            }[entry[\"name\"]]\n            if cell is None:\n                cell = nn.GRU(1, 3, batch_first=True, dtype=torch.float64)\n                with torch.no_grad():\n                    for attr, key in [\n                        (\"weight_ih_l0\", \"w_ih\"),\n                        (\"weight_hh_l0\", \"w_hh\"),\n                        (\"bias_ih_l0\", \"b_ih\"),\n                        (\"bias_hh_l0\", \"b_hh\"),\n                    ]:\n                        getattr(cell, attr).copy_(\n                            torch.tensor(entry[\"parameters\"][key], dtype=torch.float64)\n                        )\n            with torch.no_grad():\n                output, _ = cell(\n                    torch.tensor(seq, dtype=torch.float64).reshape(1, 14, 1)\n                )\n            np.testing.assert_allclose(\n                [r[\"hidden\"] for r in trace], output[0], atol=1e-12, rtol=1e-12\n            )\n        queries.append(\n            {\n                \"target_index\": t,\n                \"target_date\": dates[t],\n                \"history_dates\": dates[t - 14 : t],\n                \"counts\": values.tolist(),\n                \"standardized\": seq,\n                \"future_dates\": dates[t : t + 7],\n                \"future_counts\": y[t : t + 7].tolist(),\n                \"cell_references\": refs,\n                \"recursive_gru\": recursive(model, y[:t], mean, scale, 7),\n                \"seasonal7_fixed_origin\": y[t - 7 : t].tolist(),\n            }\n        )\n    # Different valid lengths are explicit truncations of actual history windows.\n    lengths = [5, 14, 9]\n    seqs = [q[\"standardized\"][:length] for q, length in zip(queries, lengths)]\n    padded = nn.utils.rnn.pad_sequence(\n        [torch.tensor(s, dtype=torch.float64)[:, None] for s in seqs], batch_first=True\n    )\n    with torch.no_grad():\n        packed = pack_padded_sequence(\n            padded, torch.tensor(lengths), batch_first=True, enforce_sorted=False\n        )\n        _, correct = model.recurrent(packed)\n        all_output, naive = model.recurrent(padded)\n    mask_refs = []\n    for j, (seq, length) in enumerate(zip(seqs, lengths)):\n        trace = manual(padded[j, :, 0].tolist(), cells[2][\"parameters\"], \"gru\")\n        valid = manual(seq, cells[2][\"parameters\"], \"gru\")\n        np.testing.assert_allclose(valid[-1][\"hidden\"], correct[0, j], atol=1e-12)\n        mask_refs.append(\n            {\n                \"query\": j,\n                \"length\": length,\n                \"padded\": padded[j, :, 0].tolist(),\n                \"valid_hidden\": correct[0, j].tolist(),\n                \"naive_hidden\": naive[0, j].tolist(),\n                \"all_hidden\": [s[\"hidden\"] for s in trace],\n            }\n        )\n    provenance = {\n        \"source\": \"UCI Bike Sharing, Fanaee-T (2013), CC BY 4.0\",\n        \"sha256\": \"a6bcf826782d3c0fbfdcbeead17cd0884185a0dafe8ff10cd48a874ee7ba18be\",\n    }\n    report = {\n        **provenance,\n        \"versions\": {\n            \"python\": platform.python_version(),\n            \"torch\": torch.__version__,\n            \"numpy\": np.__version__,\n        },\n        \"device\": \"cpu\",\n        \"dtype\": \"float64\",\n        \"train_days\": 365,\n        \"train_windows\": 351,\n        \"development_windows\": 182,\n        \"reserved_outcomes_used\": 0,\n        \"mean\": mean,\n        \"scale\": scale,\n        \"lookback\": 14,\n        \"hidden\": 3,\n        \"parameters\": 58,\n        \"epochs\": 80,\n        \"learning_rate\": 0.01,\n        \"seed\": 19,\n        \"initial_train_mse_scaled\": history[0][\"train_mse_scaled\"],\n        \"final_train_mse_scaled\": history[-1][\"train_mse_scaled\"],\n        \"rolling_one_step\": scores,\n        \"assumptions\": [\n            \"Counts observed after each day closes; input t-14:t excludes target t and later values.\",\n            \"Scale fits only2011 counts. Jan-Jun2012 development previously explored; not fresh confirmation.\",\n            \"One fixed GRU58-parameter recipe; RNN/LSTM and initial-GRU cell references are untrained mechanics comparisons, not fitted-model rankings.\",\n            \"Each window resets hidden state to zero; shuffled independent windows never carry state.\",\n            \"Rolling one-step uses earlier observed development counts; recursive7-day examples feed predictions after fixed origin. Protocols are distinct.\",\n            \"Padding lengths5/14/9 are declared history truncations, not missing source observations; packed final states checked against individual sequences.\",\n            \"Final184 outcomes after June30 are not scored/exported. CSV integrity calendar checks may read full original file.\",\n            \"CPU float64 only; no accelerator throughput, causal, current-demand or production forecasting claim.\",\n        ],\n    }\n    asset = {\n        **provenance,\n        \"mean\": mean,\n        \"scale\": scale,\n        \"lookback\": 14,\n        \"hidden\": 3,\n        \"parameter_count\": 58,\n        \"cells\": cells,\n        \"queries\": queries,\n        \"padding_references\": mask_refs,\n        \"train_history\": history,\n        \"rolling_metrics\": scores,\n        \"dtype\": \"float64\",\n        \"train_end\": \"2011-12-31\",\n        \"development_end\": \"2012-06-30\",\n        \"torch_version\": torch.__version__,\n    }\n    if artifact_dir:\n        folder = Path(artifact_dir)\n        folder.mkdir(parents=True, exist_ok=True)\n        torch.save(model.state_dict(), folder / \"gru.pt\")\n        (folder / \"schema.json\").write_text(\n            json.dumps(\n                {\n                    \"input\": [\"B\", 14, 1],\n                    \"hidden_reset\": \"zero each window\",\n                    \"mean\": mean,\n                    \"scale\": scale,\n                    \"source_sha256\": provenance[\"sha256\"],\n                },\n                indent=2,\n            )\n            + \"\\n\"\n        )\n        (folder / \"checksums.json\").write_text(\n            json.dumps(\n                {\n                    n: hashlib.sha256((folder / n).read_bytes()).hexdigest()\n                    for n in [\"gru.pt\", \"schema.json\"]\n                },\n                indent=2,\n            )\n            + \"\\n\"\n        )\n    return report, asset\n\n\ndef run_analysis(path, artifact_dir=None):\n    previous = torch.get_num_threads()\n    try:\n        torch.set_num_threads(1)\n        with torch.random.fork_rng(devices=[]):\n            return analyse_source(path, artifact_dir)\n    finally:\n        torch.set_num_threads(previous)\n\n\nreport, asset = run_analysis(DATA / \"day.csv\")\nprint(report)\n"
+        },
+        {
+          "type": "code",
+          "title": "Window সংখ্যা, সংরক্ষিত সীমানা ও স্কোর যাচাই",
+          "body": "assert report[\"train_windows\"] == 351 and report[\"development_windows\"] == 182\nassert report[\"reserved_outcomes_used\"] == 0\nprint(report[\"rolling_one_step\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "Padding পরীক্ষার স্বচ্ছতা",
+          "body": "কোডের ভেতরে `[5, 14, 9]` দৈর্ঘ্যের যে তিনটি উদাহরণ তৈরি করা হয়েছে, সেগুলো ওই তিনটি প্রকৃত ঐতিহাসিক Window-র প্রথম কয়েকটি দিন কেটে নিয়েই বানানো—ডেটায় কোনো নকল নিখোঁজ দিন (Fabricated Missing Days) তৈরি করা হয়নি। প্রতিটি উদাহরণ শূন্য প্রারম্ভিক State থেকে শুরু হয় এবং `enforce_sorted=False` দিয়ে অগোছালো ক্রমে পাঠিয়ে প্রমাণ করা হয়েছে যে Packed অবস্থায় পাওয়া বৈধ চূড়ান্ত State এবং এককভাবে চালানো ছোট Sequence-এর ফলাফল হুবহু এক, যেখানে দৈর্ঘ্য উপেক্ষা করা সাধারণ Dense রান ভিন্ন মান দেয়।"
+        },
+        {
+          "type": "text",
+          "title": "দুই ভিন্ন প্রোটোকলের ফলাফল আলাদা রাখা",
+          "body": "লক্ষ করুন, রিপোর্টে দুটি মূল্যায়ন সম্পূর্ণ আলাদা নামে সংরক্ষিত হয়েছে: `June 24` বা তার আগের বিন্দু থেকে করা ৭ দিনের `recursive_gru` ও সাপ্তাহিক পুনরাবৃত্তির পথরেখা রাখা হয়েছে `queries`-এর ভেতরে (যেখানে আসল ভবিষ্যৎ সংখ্যাগুলো কেবল পরে গ্রাফে তুলনা দেখানোর জন্য রাখা), আর পুরো `182`টি Development Window-র এক-ধাপের মেট্রিক রাখা হয়েছে `rolling_one_step` নামের অধীনে।"
+        },
+        {
+          "type": "text",
+          "title": "ফাইল লেখার স্পষ্ট নিয়ম ও পরিবেশ সুরক্ষা",
+          "body": "স্ক্রিপ্টটি সাধারণভাবে চালালে কেবল রিপোর্ট প্রিন্ট করে—অ্যাপের সাথে যুক্ত কোনো মূল ডেটা বা JSON ফাইল নিজে থেকে বদলে দেয় না। কেবল `--write-labs` ফ্ল্যাগ দিলেই `sequence_lab.json` নতুন করে লেখা হয়, আর `--artifact-dir` দিলে Checkpoint ও Hash সংরক্ষিত হয়। এমনকি `run_analysis` শেষ হওয়ার পর কলকারীর আগের CPU Thread সংখ্যা এবং Random Number Generator-এর অবস্থাও অবিকল ফিরিয়ে দেওয়া হয়; বাইরে কোনো নেটওয়ার্ক কল বা Model ডাউনলোডের বালাই নেই।"
+        },
+        {
+          "type": "text",
+          "title": "ইঞ্জিনিয়ারিং সফলতার আসল অর্থ",
+          "body": "এই পরীক্ষার সফলতা এখানেই যে ট্রেনিং `MSE` প্রত্যাশামতো কমেছে, প্রতিটি গাণিতিক ও Tensor Contract চুলচেরা মিলেছে, মূল ডেটার একটি বাইটও বিকৃত হয়নি এবং সংরক্ষিত ভবিষ্যৎ অক্ষত থেকেছে—অথচ বাস্তব Forecasting-এ Model-টি সাধারণ Baseline-কে হারাতে পারেনি বলে আমরা ফলাফল পাল্টে ফেলার কোনো অসৎ চেষ্টা করিনি। নির্ভরযোগ্য মেশিন লার্নিং ইঞ্জিনিয়ারিংয়ের মূল ভিত্তিই হলো এই নির্মোহ স্বচ্ছতা।"
+        }
+      ]
+    },
+    {
+      "id": "ch19_diagnostics",
+      "title": "Sequence Failure Analysis ও Evaluation Uncertainty",
+      "subtitle": "ডেটার Drift, শক্তিশালী Baseline এবং লুকানো State বাগগুলোকে আলাদা করে চিনি",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Training Loss কমল, তবু কেন Model পিছিয়ে পড়ল?",
+          "body": "যখন দেখবেন ট্রেনিং লুপে Loss বেশ কমছে কিন্তু Validation ডেটায় সরল Baseline-ই জিতে যাচ্ছে, তখন তড়িঘড়ি করে অনুমাননির্ভর সিদ্ধান্ত নেবেন না। এর পেছনে একাধিক সম্ভাব্য কারণ থাকতে পারে: সময়ের সাথে চাহিদার ধরন বা স্কেল বদলে যাওয়া (Data / Trend Shift), কেবল একটিমাত্র Feature ও ছোট ১৪ দিনের প্রেক্ষাপটের সীমাবদ্ধতা, ক্ষুদ্র `H = 3` ক্ষমতা ও নির্দিষ্ট ৮০ ধাপের Optimization, কিংবা সমস্যার উপস্থাপন। নিয়ন্ত্রিত Ablation পরীক্ষা ছাড়া এর কোনো একটিকে একমাত্র কারণ বলে রায় দেওয়া ঠিক নয়। প্রথম কাজ হলো ক্যালেন্ডারের তারিখ ও মাস ধরে Model-এর ত্রুটিগুলো প্লট করে দেখা—ভুলগুলো কি নির্দিষ্ট কোনো ঋতুতে বা উচ্চ চাহিদার দিনেই বেশি হচ্ছে?"
+        },
+        {
+          "type": "text",
+          "title": "স্থাপত্যকে দোষ দেওয়ার আগে কোডের State বাগ খুঁজুন!",
+          "body": "বাস্তব অভিজ্ঞতায় দেখা যায়, অনেক সময় Model-এর চেয়ে Pipeline-এর সূক্ষ্ম বাগই খারাপ ফলের আসল হোতা। তাই সবার আগে ছয়টি জায়গা তল্লাশি করুন: ভুল করে এক Sample-এর প্রারম্ভিক State অন্যটিতে চলে যাচ্ছে কি না, Batch ও Time Axis উল্টে গেছে কি না, পুরোনো Graph ঝুলে আছে কি না, Window কাটায় এক ঘরের (Off-by-one) ভুল আছে কি না, Padding-এর শেষ ঘর পড়া হচ্ছে কি না, এবং Inverse Scaling ঠিকমতো হচ্ছে কি না। মনে রাখবেন, নিচের স্তরের Cell-এর অঙ্ক মিলে গেলেও ওপরের Layer-এর ডেটা Pipeline বা মূল্যায়ন প্রোটোকলে মারাত্মক ভুল লুকিয়ে থাকতে পারে!"
+        },
+        {
+          "type": "math",
+          "title": "মূল এককে Mean Absolute Error (MAE) ও Root Mean Squared Error (RMSE)",
+          "body": "\\mathrm{MAE}={1\\over N}\\sum_i|\\widehat y_i-y_i|,\\qquad\\mathrm{RMSE}=\\sqrt{{1\\over N}\\sum_i(\\widehat y_i-y_i)^2}"
+        },
+        {
+          "type": "code",
+          "title": "Rolling Metrics-এ Naive Baseline-এর চেয়ে GRU-এর বেশি MAE যাচাই",
+          "body": "from pathlib import Path\nimport json\n\na = json.loads(Path(\"assets/datasets/bike_sharing/sequence_lab.json\").read_text())\nmetrics = a[\"rolling_metrics\"]\nassert metrics[\"gru\"][\"mae\"] > metrics[\"naive\"][\"mae\"]\nprint(metrics)\n"
+        },
+        {
+          "type": "text",
+          "title": "চাহিদার বৃদ্ধি (Shift) ও ভবিষ্যৎ আবহাওয়ার ফাঁদ",
+          "body": "Bike Sharing ডেটার একটি পরিচিত বৈশিষ্ট্য হলো ২০১১ সালের তুলনায় ২০১২ সালে সাইকেল ভাড়ার সামগ্রিক চাহিদা অনেকখানি বেড়ে গিয়েছিল। ২০১১ সালের গড় দিয়ে স্কেল করা শতভাগ সঠিক নিয়ম হলেও, সীমাবদ্ধ `tanh` Activation-যুক্ত ছোট Model-টির জন্য ট্রেনিং সীমার বাইরের ওই উঁচু চাহিদা অনুমান করা (Extrapolation) কঠিন হতে পারে। আবার সাবধান: এই ত্রুটি কমাতে গিয়ে যদি আপনি পরের দিনের *প্রকৃত ঘটে যাওয়া* আবহাওয়া Feature হিসেবে যোগ করে Backtest স্কোর বাড়িয়ে ফেলেন, তবে তা হবে নিরেট Future Leakage! কেবল অনুমান দেওয়ার মুহূর্তে যা সত্যিই জানা থাকে (যেমন আগামীকালের ক্যালেন্ডার বার, সরকারি ছুটি, বা আগের দিন প্রকাশিত আবহাওয়ার Forecast), তা দিয়েই কেবল বৈধ নতুন Model নকশা করা যেতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "সময়-নির্ভর ডেটায় অনিশ্চয়তা (Uncertainty) মাপার সতর্কতা",
+          "body": "পরিসংখ্যানগত বিচারের সময় আরেকটি বড় ভুল হলো পাশাপাশি দিনের ত্রুটিগুলোকে পরস্পর স্বাধীন (IID) মনে করা। যেখানে পরপর দুটি Window-র মধ্যে ১৩ দিনের ডেটা অভিন্ন এবং আজকের আবহাওয়া বা ট্রেন্ড আগামীকালকেও প্রভাবিত করে, সেখানে সাধারণ এলোমেলো Row Bootstrap বা সরল `s / √N` সূত্র ব্যবহার করলে অনিশ্চয়তার মাত্রা কৃত্রিমভাবে অনেক ছোট দেখায়! এ ধরনের সময়-নির্ভর ডেটায় সঠিক মূল্যায়নের জন্য প্রয়োজন Block Bootstrap বা সময়-সচেতন পদ্ধতি এবং সম্পূর্ণ নতুন কালানুক্রমিক ডেটা। সে কারণেই আমাদের বর্তমান রিপোর্টে কোনো সরল Confidence Interval দাবি করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "এই Dataset থেকে কী দাবি করা যাবে আর কী যাবে না",
+          "body": "এই Dataset-টি ঐতিহাসিক পর্যবেক্ষণমূলক (Observational) ডেটা—এ থেকে স্টেশনের তাৎক্ষণিক রিয়েল-টাইম চাহিদা, কোনো নীতির কার্যকারণ প্রভাব (Causal Claim) বা সরাসরি Production সক্ষমতার সিদ্ধান্ত টানা যাবে না। ৩০ জুনের পরের শেষ `184` দিনের ফলাফল আমরা স্পর্শ না করে আলাদা রেখেছি; আর যেহেতু জানুয়ারি–জুন Development অংশটি ইতিমধ্যেই বহুবার দেখা হয়ে গেছে, তাই ভবিষ্যতে নতুন কোনো Model চূড়ান্তভাবে অনুমোদন করতে হলে আনকোরা নতুন সময়ের ডেটায় পরীক্ষা সাজাতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ ব্যর্থ Model-এর ব্যবচ্ছেদ যেভাবে করবেন",
+          "body": "ইন্টারভিউতে যদি প্রশ্ন করা হয়—'আপনার GRU Model-টি সাধারণ Baseline-এর চেয়ে খারাপ করছে, এখন কী করবেন?', তবে ভুলেও এককথায় বলে বসবেন না যে 'আমি LSTM বা Transformer লাগিয়ে দেব'! বরং একজন অভিজ্ঞ ইঞ্জিনিয়ারের মতো ধাপে ধাপে রোগ নির্ণয়ের ছক বলুন: প্রথমে ডেটা ও সময়ের চুক্তি যাচাই → এরপর Cell-এর সংখ্যাসূচক আচরণ ও স্কেলিং পরীক্ষা → শক্তিশালী Seasonal ও সরল Baseline-এর সাথে ত্রুটির ধরন তুলনা → মূল্যায়ন প্রোটোকল নিরীক্ষা → এবং সবশেষে সুনির্দিষ্ট অনুমান ধরে নতুন Feature বা স্থাপত্যের নিয়ন্ত্রিত পরীক্ষা।"
+        }
+      ]
+    },
+    {
+      "id": "ch19_readiness",
+      "title": "Sequence Coding ও Interview প্রস্তুতি",
+      "subtitle": "Gate সমীকরণ থেকে শুরু করে Causal মূল্যায়ন প্রোটোকল—সবকিছু যুক্তি দিয়ে প্রতিষ্ঠা করি",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ভেতরের কলকব্জা নিজের ভাষায় ব্যাখ্যা করার সক্ষমতা",
+          "body": "পরবর্তী অধ্যায়ে পা রাখার আগে নিজেকে যাচাই করুন: আপনি কি না দেখে Vanilla RNN, LSTM ও GRU-এর প্রতিটি সমীকরণ এবং PyTorch-এ তাদের ভেতরের Weight সারির ক্রম (`i, f, g, o` এবং `r, z, n`) লিখতে পারছেন? BPTT-তে সময়ের পথে কীভাবে Gradient যোগ হয়, State কখন Reset, Detach বা Carry করতে হয়, কেন `batch_first=True` দিলেও `h_n`-এর Axis বদলায় না, এবং কোন পরিস্থিতিতে Bidirectional Context বৈধ—এগুলো কি উদাহরণসহ বোঝাতে পারছেন? বিশেষ করে মনে রাখুন: Input Padding (`pack_padded_sequence`), Target Loss Mask (`ignore_index`) এবং Embedding-এর `padding_idx`—এই তিনটি কিন্তু সম্পূর্ণ আলাদা স্তরের তিনটি ভিন্ন কৌশল!"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে কোডিং অনুশীলনের লক্ষ্য",
+          "body": "এই অধ্যায়ের শেষে থাকা ১০টি Coding Exercise কোনো নোট না দেখে নিজে সমাধান করার চেষ্টা করুন। নিজের লেখা যেকোনো Functionকে সবসময় কঠিন প্রান্তিক পরিস্থিতি দিয়ে বাজিয়ে দেখুন: `Batch Size = 1`, শূন্য বা অবৈধ দৈর্ঘ্য, `NaN`/`Inf` Input, ডান পাশের Padding ঘরে আবর্জনা মান এবং ভবিষ্যতের সংখ্যা বদলে দিয়ে অতীত Window অপরিবর্তিত থাকার পরীক্ষা। প্রতিটি Mask এবং সময়ের সূচক কেন ঠিক ওইভাবে লেখা হলো, তা মুখে ব্যাখ্যা করার অভ্যাস করুন।"
+        },
+        {
+          "type": "math",
+          "title": "একটি নিশ্ছিদ্র Sequence Pipeline-এর পাঁচটি স্তম্ভ",
+          "body": "\\mathrm{sequence\\ contract}=\\mathrm{order}+\\mathrm{length}+\\mathrm{state}+\\mathrm{availability}+\\mathrm{loss}"
+        },
+        {
+          "type": "code",
+          "title": "অধ্যায়ের মূল সংখ্যাগত চুক্তিগুলোর চূড়ান্ত যাচাই",
+          "body": "from pathlib import Path\nimport json\n\na = json.loads(Path(\"assets/datasets/bike_sharing/sequence_lab.json\").read_text())\nassert a[\"lookback\"] == 14 and a[\"hidden\"] == 3 and a[\"parameter_count\"] == 58\nassert a[\"train_end\"] == \"2011-12-31\" and a[\"development_end\"] == \"2012-06-30\"\nassert [r[\"length\"] for r in a[\"padding_references\"]] == [5, 14, 9]\nprint(\"Defend state, lengths, gate layouts and forecast availability.\")\n"
+        },
+        {
+          "type": "text",
+          "title": "নিজের পরীক্ষাকে যুক্তির কাঠগড়ায় দাঁড় করানো",
+          "body": "আপনি যেন স্পষ্টভাবে দেখাতে পারেন কেন স্কেলিং কেবল ২০১১ সালের ডেটায় সীমাবদ্ধ ছিল, কেন Rolling One-step মূল্যায়নে আগের দিনের প্রকৃত সংখ্যা নেওয়া বৈধ অথচ ৭ দিনের Recursive Rollout-এ কেবল Model-এর নিজস্ব অনুমানই Input হতে পারে, এবং কেন ৩০ জুনের পরের অংশটি সম্পূর্ণ বাইরে রাখা হয়েছে। সেই সাথে কোনো মনগড়া গল্প না বানিয়ে পরিষ্কারভাবে ব্যাখ্যা করুন কেন ট্রেনিং সফল হওয়া সত্ত্বেও আমাদের নির্দিষ্ট GRU Model-টি সরল Baseline-এর চেয়ে বেশি ত্রুটি দিয়েছে এবং ভবিষ্যতে টিউন করলে সেটিকে কীভাবে Selection প্রক্রিয়ার অংশ হিসেবে নথিবদ্ধ করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তবমুখী ১০টি Interview অনুশীলন",
+          "body": "অধ্যায়ের মূল্যায়ন অংশে কোডিং, Debugging এবং বাস্তব সিস্টেমের সীমাবদ্ধতা নিয়ে ১০টি মৌলিক ইন্টারভিউ প্রশ্ন সাজানো হয়েছে (এগুলো কোনো প্রতিষ্ঠানের ফাঁস হওয়া প্রশ্ন নয়, বরং প্রকৃত প্রকৌশলগত দক্ষতা যাচাইয়ের মৌলিক সমস্যা)। যেকোনো প্রশ্নের উত্তরে Model সুপারিশ করার সময় অবশ্যই Latency বাজেট, উপলব্ধ Context, State ব্যবস্থাপনা, বৈধ দৈর্ঘ্য এবং মূল্যায়ন প্রোটোকলের শর্তগুলো স্পষ্টভাবে উল্লেখ করবেন।"
+        },
+        {
+          "type": "text",
+          "title": "প্রাথমিক ডকুমেন্টেশন ও ডেটা উৎস",
+          "body": "আরও গভীরে পড়ার জন্য মূল ডকুমেন্টেশনগুলো হাতের কাছে রাখতে পারেন—RNN: https://docs.pytorch.org/docs/2.15/generated/torch.nn.RNN.html । LSTM: https://docs.pytorch.org/docs/2.15/generated/torch.nn.LSTM.html । GRU: https://docs.pytorch.org/docs/2.15/generated/torch.nn.GRU.html । Packing: https://docs.pytorch.org/docs/2.15/generated/torch.nn.utils.rnn.pack_padded_sequence.html । মূল ডেটা ও লাইসেন্স: https://archive.ics.uci.edu/dataset/275/bike+sharing+dataset । আমাদের অ্যাপের ভেতরে প্রয়োজনীয় সব পাঠ্য ও রেফারেন্স ডেটা অফলাইনেই সংযুক্ত রয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "পরের অধ্যায়ের সেতুবন্ধন",
+          "body": "Recurrence সমীকরণ, সময়ের পথে Shared Weight-এর Gradient, পরিবর্তনশীল দৈর্ঘ্যের Padding এবং এক ঘর সরানো Decoder Target—এই চারটি ভিত্তি নিজের হাতে আরেকবার ঝালিয়ে নিন। কারণ একটি নির্দিষ্ট আকারের Hidden State-এ পুরো ইতিহাস চেপে রাখার এই সীমাবদ্ধতা পেরিয়েই আমরা এবার পা রাখব পরের অধ্যায়ে—Book 3 · Chapter 6 (Attention & Transformers), যেখানে আমরা শিখব কীভাবে Model সরাসরি অতীতের যেকোনো বৈধ পদের দিকে মনোযোগ (Attention) দিতে পারে!"
+        }
+      ]
+    }
+  ],
+  "quizzes": [
+    {
+      "id": "ch19_q1",
+      "question": "সময় সূচক t-এর পরের দিনের ভাড়ার সংখ্যা অনুমান করার জন্য আমাদের পরীক্ষায় বৈধ Input Window কোনটি?",
+      "options": [
+        "y[t − 13 : t + 1]",
+        "y[t − 14 : t]",
+        "ভবিষ্যতের পরবর্তী 7 দিনের প্রকৃত সংখ্যা",
+        "Target দিনের Casual ও Registered ভাড়ার অংশ"
+      ],
+      "answer": 1,
+      "explanation": "সময় সূচক t-এর মান অনুমান করতে কেবল অতীতের t − 14 থেকে t − 1 পর্যন্ত মানই ব্যবহার করা বৈধ; স্বয়ং Target y[t] বা তার পরের কোনো মান Input-এ ঢুকলে তা সরাসরি Data Leakage ঘটাবে।"
+    },
+    {
+      "id": "ch19_q2",
+      "question": "PyTorch-এ batch_first=True ব্যবহার করলেও চূড়ান্ত Hidden State (h_n)-এর Tensor Shape কেমন থাকে?",
+      "options": [
+        "সবসময় [B, T, H]",
+        "[B, H, T]",
+        "[layers × directions, B, H]",
+        "[T, B, H]"
+      ],
+      "answer": 2,
+      "explanation": "batch_first=True কেবল Input এবং Output Tensor-এর Batch ও Time Axis-এর ক্রম বদলায়; চূড়ান্ত Hidden State h_n সবসময় [layers × directions, B, H] আকারেই থাকে।"
+    },
+    {
+      "id": "ch19_q3",
+      "question": "আমাদের মূল GRU Model ও তার Output মাথার Input থেকে চূড়ান্ত Prediction পর্যন্ত Shape চুক্তি কোনটি?",
+      "options": [
+        "[B, 14] → [14]",
+        "[14, B] → []",
+        "[B, 3] → [B, 14]",
+        "[B, 14, 1] → [B]"
+      ],
+      "answer": 3,
+      "explanation": "[B, 14, 1] Input থেকে GRU দেয় [B, 14, 3] Output; তার শেষ ধাপ Linear(3, 1)-এর ভেতর দিয়ে গিয়ে .squeeze(-1) করার পর [B] আকারের চূড়ান্ত Prediction দেয়।"
+    },
+    {
+      "id": "ch19_q4",
+      "question": "Recurrent Model-এ একই Shared Parameter-এর মোট Gradient কেন সবগুলো ধাপ জুড়ে যোগ (Sum) হয়?",
+      "options": [
+        "কারণ সময়ের একাধিক Time Step-এর পথ ধরে আসা অবদানগুলো Chain Rule অনুযায়ী একত্রে যোগ হয়",
+        "কারণ প্রতিটি Time Step-এ সম্পূর্ণ ভিন্ন ভিন্ন Weight ব্যবহৃত হয়",
+        "কারণ সব ধাপের Gradient সবসময় শূন্য থাকে",
+        "কারণ কেবল সর্বশেষ Input-ই Parameter-কে প্রভাবিত করে"
+      ],
+      "answer": 0,
+      "explanation": "BPTT-তে সময়ের পথে খোলা (Unrolled) গ্রাফে একই Parameter বারবার ব্যবহৃত হওয়ায় প্রতিটি Time Step থেকে আসা Partial Derivative যোগ হয়ে মোট Gradient তৈরি করে।"
+    },
+    {
+      "id": "ch19_q5",
+      "question": "PyTorch-এর অভ্যন্তরীণ Weight ও Bias Matrix-এ LSTM-এর চারটি Gate কোন ক্রমে সাজানো থাকে?",
+      "options": [
+        "r, z, n",
+        "i, f, g, o",
+        "o, g, f, i",
+        "f, i, o, z"
+      ],
+      "answer": 1,
+      "explanation": "PyTorch-এ LSTM-এর সারিগুলো Input (i), Forget (f), Candidate (g) এবং Output (o)—ঠিক এই ক্রমেই দুটি আলাদা Bias Vector-সহ সংরক্ষিত থাকে।"
+    },
+    {
+      "id": "ch19_q6",
+      "question": "একটি LSTM Cell-এ সব রৈখিক যোগফল (Affine Pre-activation) 0 হলে এবং আগের Cell State c_{t−1} = 1 হলে নতুন Cell State c_t কত হবে?",
+      "options": [
+        "0",
+        "1",
+        "0.5",
+        "2"
+      ],
+      "answer": 2,
+      "explanation": "রৈখিক যোগফল 0 হলে i = f = o = sigmoid(0) = 0.5 এবং Candidate g = tanh(0) = 0 হয়; ফলে নতুন Cell State দাঁড়ায় 0.5 × 1 + 0.5 × 0 = 0.5।"
+    },
+    {
+      "id": "ch19_q7",
+      "question": "PyTorch-এর নিয়মানুযায়ী GRU Cell-এর Candidate (n) নির্ণয়ের সঠিক সমীকরণ কোনটি?",
+      "options": [
+        "tanh(W_h (r ⊙ h)) — যা সব ক্ষেত্রেই হুবহু একই মান দেয়",
+        "শুধুমাত্র sigmoid(h)",
+        "Candidate অংশে কোনো Recurrent Bias থাকে না",
+        "tanh(input_affine + r ⊙ hidden_affine)"
+      ],
+      "answer": 3,
+      "explanation": "PyTorch আগে Recurrent ওজন গুণ ও Bias যোগ সম্পন্ন করে (hidden_affine = W_{hn} h + b_{hn}), তারপর তার ওপর Reset Gate r উপাদানভিত্তিক গুণ করে—যা অনেক পাঠ্যবইয়ের ক্রম থেকে আলাদা ফলাফল দেয়।"
+    },
+    {
+      "id": "ch19_q8",
+      "question": "PyTorch-এর GRU সমীকরণ h_t = (1 − z) ⊙ n + z ⊙ h_{t−1}-এ Update Gate (z) সরাসরি কোন অংশটিকে ধরে রাখে?",
+      "options": [
+        "আগের ধাপের Hidden State (h_{t−1})",
+        "শুধুমাত্র নতুন Candidate (n)",
+        "LSTM-এর আলাদা Cell State",
+        "পুরো Batch-এর দৈর্ঘ্য"
+      ],
+      "answer": 0,
+      "explanation": "এই সমীকরণে z গুণিতকটি সরাসরি পূর্ববর্তী Hidden State h_{t−1} কতটুকু টিকে থাকবে তা নিয়ন্ত্রণ করে; অন্য গবেষণাপত্রে উল্টো চিহ্ন থাকতে পারে বলে সবসময় মূল সমীকরণটি দেখে নেওয়া জরুরি।"
+    },
+    {
+      "id": "ch19_q9",
+      "question": "F = 1, H = 3 আকারের এক Layer-এর Unidirectional GRU এবং তার মাথার Linear(3, 1) স্তর মিলিয়ে মোট Parameter সংখ্যা কত?",
+      "options": [
+        "54",
+        "58",
+        "76",
+        "22"
+      ],
+      "answer": 1,
+      "explanation": "GRU Layer-এ Input Weight 9 + Recurrent Weight 27 + দুটি Bias 18 = 54টি এবং Linear(3, 1) স্তরে 3 + 1 = 4টি মিলে মোট 58টি Parameter থাকে।"
+    },
+    {
+      "id": "ch19_q10",
+      "question": "Standardized ডেটায় ডান পাশে 0.0 দিয়ে Padding করলে কি RNN নিজে থেকেই ওই অতিরিক্ত ধাপগুলো এড়িয়ে যায়?",
+      "options": [
+        "হ্যাঁ, সবসময় নিজে থেকেই এড়িয়ে যায়",
+        "শুধুমাত্র batch_first=True থাকলে এড়িয়ে যায়",
+        "না, ভেতরের Bias ও আগের Hidden State মিলে রূপান্তর চলতেই থাকে",
+        "শুধুমাত্র float64 ডেটায় এড়িয়ে যায়"
+      ],
+      "answer": 2,
+      "explanation": "Input 0.0 হলেও Cell-এর অভ্যন্তরীণ Bias এবং আগের Hidden State মিলে প্রতি ধাপে নতুন মান তৈরি করতে থাকে; তাই প্রকৃত দৈর্ঘ্য মেনে Packing বা সঠিক সূচক থেকে State তোলা অপরিহার্য।"
+    },
+    {
+      "id": "ch19_q11",
+      "question": "শুধু Target Loss-এ Mask বসালেই কি Padding-এর কারণে হওয়া চূড়ান্ত Hidden State দূষণের সমস্যা মিটে যায়?",
+      "options": [
+        "হ্যাঁ, পুরোপুরি মিটে যায়",
+        "শুধুমাত্র GRU Model-এর ক্ষেত্রে মিটে যায়",
+        "এতে Tensor-এর সংরক্ষিত আকার নিজে থেকেই ছোট হয়ে যায়",
+        "না, Loss থেকে ত্রুটি বাদ দেওয়া আর ভেতরের State পরিবর্তন থামানো দুটি আলাদা বিষয়"
+      ],
+      "answer": 3,
+      "explanation": "Loss Mask কেবল নির্দিষ্ট ঘরের ত্রুটি যোগফল থেকে বাদ দেয়; কিন্তু Model যদি Dense আকারে শেষ ঘর output[:, -1] পড়ে সিদ্ধান্ত নেয়, তবে নকল ঘরের ওপর দিয়ে বদলে যাওয়া State ওই Mask দিয়ে ঠিক হয় না।"
+    },
+    {
+      "id": "ch19_q12",
+      "question": "একমুখী (Unidirectional) Model-এ ডান পাশে Padding থাকলে বৈধ অংশের সর্বশেষ Output কোন সূচকে (0-based Index) পাওয়া যায়?",
+      "options": [
+        "length − 1",
+        "সবসময় T − 1",
+        "length",
+        "সবসময় 0"
+      ],
+      "answer": 0,
+      "explanation": "0-ভিত্তিক সূচকে বৈধ অংশ শেষ হয় ঠিক length − 1 অবস্থানে; তবে মনে রাখবেন Bidirectional Model-এ পেছনের পথের জন্য এই সহজ শর্টকাট কাজ করে না।"
+    },
+    {
+      "id": "ch19_q13",
+      "question": "দৈর্ঘ্যের ক্রমানুসারে সাজানো নয় (Unsorted) এমন Batch-কে সরাসরি pack_padded_sequence-এ পাঠাতে কোন আর্গুমেন্টটি দিতে হয়?",
+      "options": [
+        "শুধুমাত্র batch_first=False",
+        "enforce_sorted=False",
+        "কোনো বৈধ দৈর্ঘ্যের তালিকাই দিতে হয় না",
+        "বাম পাশে Padding দিলেই চলে"
+      ],
+      "answer": 1,
+      "explanation": "enforce_sorted=False দিলে PyTorch ভেতরে নিজেই ক্রম সাজিয়ে হিসাব সেরে নেয় এবং শেষে মূল Sample ক্রম অনুযায়ীই ফলাফল ফিরিয়ে দেয়।"
+    },
+    {
+      "id": "ch19_q14",
+      "question": "দুই খণ্ডের মাঝখানে Hidden State-এর ওপর .detach() কল করলে ঠিক কী ঘটে?",
+      "options": [
+        "সংখ্যার মান মুছে 0 হয়ে যায়",
+        "Optimizer-এর সব জমা হওয়া Gradient মুছে যায়",
+        "সংখ্যাসূচক মান অক্ষুণ্ণ থাকে, কিন্তু পেছনের Computation Graph-এর ইতিহাস কেটে যায়",
+        "মূল Dataset এলোমেলোভাবে Shuffle হয়ে যায়"
+      ],
+      "answer": 2,
+      "explanation": ".detach() সংখ্যার মান পরের খণ্ডে ঠিকই এগিয়ে দেয় কিন্তু পুরোনো ধাপগুলোতে Gradient ফিরে যাওয়ার পথ বন্ধ করে—যা Truncated BPTT-এর মূল কৌশল।"
+    },
+    {
+      "id": "ch19_q15",
+      "question": "পরস্পর সম্পর্কহীন ও এলোমেলোভাবে সাজানো (Shuffled) স্বাধীন Window নিয়ে ট্রেনিং করার সময় Hidden State কীভাবে সামলানো উচিত?",
+      "options": [
+        "সবসময় আগের Batch থেকে পরের Batch-এ বয়ে নেওয়া উচিত",
+        "এলোমেলো সংখ্যার Label দিয়ে ভর্তি করা উচিত",
+        "Validation-এর শেষ State দিয়ে ট্রেনিং শুরু করা উচিত",
+        "প্রতিটি Window-র শুরুতে শূন্য দিয়ে Reset করা উচিত, নইলে অসম্পর্কিত উদাহরণের তথ্য মিশে যাবে"
+      ],
+      "answer": 3,
+      "explanation": "স্বাধীন Window-তে আগের উদাহরণের State বয়ে নিলে সম্পর্কহীন সময়ের তথ্য মিশে দূষণ ঘটায়; কেবল ধারাবাহিক একই উৎস বহনকারী Stateful Stream-এই State এগিয়ে নেওয়া চলে।"
+    },
+    {
+      "id": "ch19_q16",
+      "question": "Forecast দেওয়ার বিন্দুর (Origin) আগের একটি সম্পূর্ণ পর্যবেক্ষিত অতীত Window-র ভেতরে Bidirectional Encoder চালালে কি স্বয়ংক্রিয়ভাবে Target ফাঁস (Leak) হয়?",
+      "options": [
+        "না, যদি ওই Window-র প্রতিটি Input পদই Forecast দেওয়ার মুহূর্তের চেয়ে পুরোনো ও বৈধ হয়",
+        "হ্যাঁ, সবসময়ই ভবিষ্যতের Target ফাঁস হয়ে যায়",
+        "এটি চালাতে সবসময় ভবিষ্যতের উত্তর Input-এ দিতেই হয়",
+        "শুধুমাত্র LSTM ব্যবহার করলেই তা বৈধ হয়"
+      ],
+      "answer": 0,
+      "explanation": "Causality ভাঙল কি না তা নির্ভর করে Input-এর সময়ের ওপর—পুরো 14 দিনের ইতিহাসই অতীতের ঘটনা হলে তার ভেতরে দুই দিক থেকে পড়া ভবিষ্যৎ Target ফাঁস করে না (যদিও প্রতি ধাপে অনলাইন Prediction-এর কাজে তা নিষিদ্ধ)।"
+    },
+    {
+      "id": "ch19_q17",
+      "question": "nn.Embedding-এ padding_idx ব্যবহার করলেই কি পরবর্তী Layer-এর RNN-এ আর Packing বা বৈধ দৈর্ঘ্য দেখার দরকার থাকে না?",
+      "options": [
+        "হ্যাঁ, আর কিছুরই দরকার থাকে না",
+        "না, এটি মোটেও RNN Packing-এর বিকল্প নয়",
+        "শুধুমাত্র ছবির RGB ডেটায় কাজ চলে যায়",
+        "এতে স্বয়ংক্রিয়ভাবে Hidden Size বদলে যায়"
+      ],
+      "answer": 1,
+      "explanation": "padding_idx কেবল ওই সারির Embedding ওজনে Gradient যাওয়া থামায়; কিন্তু শূন্য Vector বেরোলেও পরবর্তী RNN Cell-এর Bias ও আগের State ঠিকই অবস্থার পরিবর্তন ঘটাতে থাকে।"
+    },
+    {
+      "id": "ch19_q18",
+      "question": "দুটি Sequence-এর বৈধ পদগুলোর ত্রুটি যদি যথাক্রমে [1, 3] এবং [2, 4, 6] হয়, তবে বৈধ Token-ভিত্তিক সামগ্রিক গড় Loss কত?",
+      "options": [
+        "16 / 6",
+        "4.0",
+        "3.2",
+        "16.0"
+      ],
+      "answer": 2,
+      "explanation": "মোট 5টি বৈধ পদের যোগফল 1 + 3 + 2 + 4 + 6 = 16; একে বৈধ পদসংখ্যা 5 দিয়ে ভাগ করলে গড় আসে 3.2 (বরাদ্দকৃত 6 ঘর দিয়ে ভাগ করলে ভুল হবে)।"
+    },
+    {
+      "id": "ch19_q19",
+      "question": "Teacher Forcing পদ্ধতিতে Decoder ট্রেনিংয়ের সময় Input ও Target কীভাবে সাজানো হয়?",
+      "options": [
+        "বর্তমান ধাপের সঠিক উত্তরই ঠিক একই ধাপের Input হিসেবে দেওয়া হয়",
+        "ভবিষ্যতের সম্পূর্ণ বাক্যটি সবসময় শুরুতেই Input দেওয়া হয়",
+        "Loss হিসাব করার আগেই Argmax দিয়ে গ্রাফ কেটে দেওয়া হয়",
+        "আগের ধাপের প্রকৃত পদগুলো Decoder Input হয় এবং এক ঘর পরের পদগুলো Target Label হয়"
+      ],
+      "answer": 3,
+      "explanation": "BOS থেকে শুরু করে এক ঘর সরিয়ে Input ও Target তৈরি করা হয় যাতে Model আগের বৈধ পদের ওপর দাঁড়িয়ে পরের পদ অনুমান শেখে, যদিও বাস্তব Inference-এ ভবিষ্যতের আসল পদ অজানা থাকে।"
+    },
+    {
+      "id": "ch19_q20",
+      "question": "আমাদের Rolling One-step মূল্যায়ন প্রোটোকলে কোন কাজটি সম্পূর্ণ বৈধ?",
+      "options": [
+        "আগের দিনগুলোতে ইতিমধ্যে ঘটে যাওয়া Development ফলাফল পরবর্তী দিনের ইতিহাসে ব্যবহার করা",
+        "আজকের বা ভবিষ্যতের অজানা Target মান Input-এ ঢুকিয়ে দেওয়া",
+        "প্রতিদিন নতুন করে Validation ডেটার ওপর Model-এর ওজন ট্রেন করা",
+        "অতীতের কোনো সংখ্যাই ব্যবহার না করা"
+      ],
+      "answer": 0,
+      "explanation": "দিন শেষ হলেই সেদিনের ভাড়ার সংখ্যা জানা যায়—এই শর্তে পরের দিনের এক-ধাপের অনুমানে আগের ঘটে যাওয়া দিনগুলো ব্যবহার করা বৈধ, যেখানে Model-এর ওজন ২০১১ সালেই স্থির থাকে।"
+    },
+    {
+      "id": "ch19_q21",
+      "question": "একটি নির্দিষ্ট তারিখে দাঁড়িয়ে টানা ৭ দিনের Fixed-origin Recursive অনুমান চালানোর সময় দ্বিতীয় দিন থেকে Input-এ কী ব্যবহৃত হয়?",
+      "options": [
+        "ওই ভবিষ্যৎ দিনগুলোর প্রকৃত ঘটে যাওয়া ভাড়ার সংখ্যা",
+        "নির্ধারিত বিন্দু পার হওয়ার পর Model-এর নিজের তৈরি পূর্ববর্তী Prediction-গুলো",
+        "ভবিষ্যতে ঘটবে এমন প্রকৃত আবহাওয়ার পরিমাপ",
+        "সব দিনের ফলাফল মিলিয়ে নতুন করে ট্রেন করা Model"
+      ],
+      "answer": 1,
+      "explanation": "নির্ধারিত তারিখের পর বাস্তব ভবিষ্যৎ অজানা থাকে বলে Model নিজের অনুমান করা সংখ্যাগুলোকেই ক্রমান্বয়ে Window-র শেষে জুড়ে দিয়ে সামনের দিকে এগোয়।"
+    },
+    {
+      "id": "ch19_q22",
+      "question": "আমাদের পরীক্ষায় ডেটা Standardize করার জন্য Mean ও Scale (Std) ঠিক কোন অংশ থেকে হিসাব করা হয়েছে?",
+      "options": [
+        "পুরো Dataset-এর সবগুলো 731 দিন থেকে",
+        "সংরক্ষিত শেষ 184 দিন থেকে",
+        "২০১১ সালের প্রথম 365 দিনের ভাড়ার সংখ্যা থেকে",
+        "শুধুমাত্র ২০১২ সালের Development অংশের গড় থেকে"
+      ],
+      "answer": 2,
+      "explanation": "ভবিষ্যতের গড় প্রবণতা যেন স্কেলিংয়ের মাধ্যমে ফাঁস না হয়, সে জন্য কেবল ২০১১ সালের ৩৬৫টি Training পর্যবেক্ষণ থেকেই Mean ও Scale নির্ধারণ করা হয়েছে।"
+    },
+    {
+      "id": "ch19_q23",
+      "question": "আমাদের পরীক্ষায় ট্রেন করা নির্দিষ্ট GRU Model-টির সাথে সাধারণ Baseline-এর তুলনার প্রকৃত ফলাফল কী?",
+      "options": [
+        "GRU সব মেট্রিকেই নিশ্চিতভাবে সেরা হয়েছে",
+        "ট্রেন করা LSTM Model-টি প্রথম স্থান অধিকার করেছে",
+        "এখানে তুলনা করার মতো কোনো Baseline রাখা হয়নি",
+        "Development ডেটায় সরল Last-day Baseline-এর MAE আমাদের নির্দিষ্ট GRU Model-এর চেয়ে কম এসেছে"
+      ],
+      "answer": 3,
+      "explanation": "Development অংশে GRU-এর MAE এসেছে প্রায় 1245.91, যেখানে সরল Last-day Baseline দিয়েছে প্রায় 900.60—যা প্রমাণ করে শুধু Training Loss কমলেই ভালো Generalization নিশ্চিত হয় না।"
+    },
+    {
+      "id": "ch19_q24",
+      "question": "২০১২ সালের ৩০ জুনের পরের সংরক্ষিত (Reserved) ১৮৪ দিনের ফলাফল এই অধ্যায়ে কীভাবে ব্যবহৃত হয়েছে?",
+      "options": [
+        "এই অধ্যায়ের কোনো Model স্কোরিং, টিউনিং বা এক্সপোর্টে সেগুলো মোটেও ব্যবহার করা হয়নি",
+        "সেরা Epoch বেছে নেওয়ার কাজে ব্যবহৃত হয়েছে",
+        "৭ দিনের Recursive অনুমানের Input হিসেবে দেওয়া হয়েছে",
+        "ডেটা স্কেলিংয়ের গড় বের করতে ব্যবহৃত হয়েছে"
+      ],
+      "answer": 0,
+      "explanation": "মূল CSV ফাইলের অখণ্ডতা পরীক্ষায় পুরো ফাইল পড়া গেলেও Modelিং ও মূল্যায়নের সব কাজ প্রথম 547 দিনের ভেতরেই সীমাবদ্ধ রাখা হয়েছে।"
+    },
+    {
+      "id": "ch19_q_truncate_revision",
+      "question": "ধরুন h_t = a h_{t−1} + x_t সমীকরণে a = 0.5, h_0 = 0 এবং x = [1, 2, 3]। দ্বিতীয় ধাপের পরের State-কে .detach() করলে চূড়ান্ত মান এবং a-এর সাপেক্ষে Gradient কত হবে?",
+      "options": [
+        "চূড়ান্ত মান 4.25 এবং Gradient 3.0",
+        "চূড়ান্ত মান 3.0 এবং Gradient 0.0",
+        "চূড়ান্ত মান 4.25 এবং Gradient 2.5",
+        "চূড়ান্ত মান 2.5 এবং Gradient 4.25"
+      ],
+      "answer": 2,
+      "explanation": "দ্বিতীয় ধাপের মান h_2 = 2.5 সামনের দিকে ঠিকই এগিয়ে যায় বলে শেষ মান 0.5 × 2.5 + 3 = 4.25 থাকে; কিন্তু আগের গ্রাফ কাটা পড়ায় চূড়ান্ত ধাপে a-এর Derivative কেবল h_2 = 2.5-এই সীমাবদ্ধ থাকে।"
+    },
+    {
+      "id": "ch19_q_gru_reset_revision",
+      "question": "PyTorch-এর GRU Cell-এ Candidate নির্ণয়ের সময় পুরোনো স্মৃতির রৈখিক অংশটি কোন আকারে যুক্ত হয়?",
+      "options": [
+        "W (r ⊙ h) + b",
+        "r ⊙ (W h + b)",
+        "r + W h + b",
+        "W (h + r)"
+      ],
+      "answer": 1,
+      "explanation": "PyTorch-এ আগে W h + b হিসাব হয় এবং তার পুরো ফলের ওপর Reset Gate r উপাদানভিত্তিক গুণ হয়; সাধারণ Matrix W-এ আগে r গুণ করলে ফলাফল এক থাকে না।"
+    }
+  ],
+  "exercises": [
+    {
+      "id": "ch19_ex_gru",
+      "title": "এক ধাপের GRU হিসাব",
+      "prompt": "`input_size = 1` এবং `hidden_size = 1` আকারের একটি `GRUCell` কল্পনা করুন, যার সব Weight ও Bias শূন্য (`0`)। বর্তমান `input = 0` এবং আগের ধাপের `previous hidden = 1` হলে নতুন Hidden State-এর মান কত হবে তা হিসাব করে `answer` ভেরিয়েবলে রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "import torch\n\ncell = torch.nn.GRUCell(1, 1, dtype=torch.float64)\nwith torch.no_grad():\n    for p in cell.parameters():\n        p.zero_()\nanswer = cell(\n    torch.zeros(1, 1, dtype=torch.float64), torch.ones(1, 1, dtype=torch.float64)\n).item()\n",
+      "expected": 0.5,
+      "explanation": "সব Parameter শূন্য হওয়ায় Reset ও Update Gate উভয়ের মান `sigmoid(0) = 0.5` এবং Candidate-এর মান `tanh(0) = 0` হয়। ফলে PyTorch-এর সমীকরণ অনুযায়ী নতুন Hidden State হয় `(1 − 0.5) × 0 + 0.5 × 1 = 0.5`।"
+    },
+    {
+      "id": "ch19_ex_lstm",
+      "title": "এক ধাপের LSTM Cell State হালনাগাদ",
+      "prompt": "`input_size = 1` এবং `hidden_size = 1` আকারের একটি `LSTMCell` কল্পনা করুন, যার সব Weight ও Bias শূন্য (`0`)। বর্তমান `input = 0`, আগের `previous hidden = 0` এবং আগের `previous cell = 1` হলে নতুন Cell State-এর মান কত হবে তা `answer`-এ রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "import torch\n\ncell = torch.nn.LSTMCell(1, 1, dtype=torch.float64)\nwith torch.no_grad():\n    for p in cell.parameters():\n        p.zero_()\nh, c = cell(\n    torch.zeros(1, 1, dtype=torch.float64),\n    (torch.zeros(1, 1, dtype=torch.float64), torch.ones(1, 1, dtype=torch.float64)),\n)\nanswer = c.item()\n",
+      "expected": 0.5,
+      "explanation": "সব রৈখিক যোগফল শূন্য হওয়ায় Input, Forget ও Output Gate-এর মান `0.5` এবং Candidate-এর মান `0` হয়। তাই নতুন Cell State দাঁড়ায় `0.5 × 1 + 0.5 × 0 = 0.5` (এর পরের ধাপে Output Gate ও `tanh` লেগে Hidden State তৈরি হয়)।"
+    },
+    {
+      "id": "ch19_ex_count",
+      "title": "GRU Model-এর মোট Parameter গণনা",
+      "prompt": "`input_size = 1`, `hidden_size = 3`, Bias চালু থাকা একটি এক Layer-এর Unidirectional `GRU` এবং তার মাথার `Linear(3, 1)` Layer—সব মিলিয়ে মোট কতটি Parameter আছে তা হিসাব করে `answer`-এ রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "from torch import nn\n\ncell = nn.GRU(1, 3, batch_first=True)\nhead = nn.Linear(3, 1)\nanswer = float(\n    sum(p.numel() for p in cell.parameters())\n    + sum(p.numel() for p in head.parameters())\n)\n",
+      "expected": 58,
+      "explanation": "GRU Layer-এ Input Weight `9`টি, Recurrent Weight `27`টি এবং দুটি Bias Vector-এ `18`টি মিলিয়ে মোট `54`টি Parameter থাকে। এর সাথে মাথার `Linear(3, 1)` Layer-এর `3 + 1 = 4`টি যোগ করলে মোট দাঁড়ায় `58`টি।"
+    },
+    {
+      "id": "ch19_ex_windows",
+      "title": "বৈধ Causal Training Window গণনা",
+      "prompt": "মোট `365`টি দৈনিক Training পর্যবেক্ষণ থেকে `lookback = 14` দিনের অতীত ইতিহাস নিয়ে পরের দিনের Target গঠন করলে সম্পূর্ণ Training সীমার ভেতরে মোট কতটি বৈধ Window পাওয়া যাবে? সংখ্যাটি `answer`-এ রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "answer = float(365 - 14)\n",
+      "expected": 351,
+      "explanation": "প্রথম ১৪ দিন (`0` থেকে `13`) ইতিহাস গড়তে ব্যবহৃত হওয়ায় বৈধ Target সূচক শুরু হয় `14` থেকে এবং চলে `364` পর্যন্ত—অর্থাৎ মোট `365 − 14 = 351`টি Window পাওয়া যায়।"
+    },
+    {
+      "id": "ch19_ex_mask",
+      "title": "বৈধ Token-ভিত্তিক গড় Loss নির্ণয়",
+      "prompt": "প্রতিটি পদের Loss ছক `[[1, 3, 99], [2, 4, 6]]` এবং সারি দুটির প্রকৃত বৈধ দৈর্ঘ্য যথাক্রমে `[2, 3]` হলে ডান পাশের Padding বাদ দিয়ে সামগ্রিক বৈধ Token-ভিত্তিক গড় Loss কত হবে তা `answer`-এ রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "import torch\n\nloss = torch.tensor([[1.0, 3.0, 99.0], [2.0, 4.0, 6.0]], dtype=torch.float64)\nmask = torch.tensor([[1.0, 1.0, 0.0], [1.0, 1.0, 1.0]], dtype=torch.float64)\nanswer = ((loss * mask).sum() / mask.sum()).item()\n",
+      "expected": 3.2,
+      "explanation": "বৈধ ৫টি পদের (`1, 3, 2, 4, 6`) যোগফল `16`-কে মোট বৈধ পদসংখ্যা `5` দিয়ে ভাগ করলে গড় দাঁড়ায় `3.2`। লক্ষ করুন, প্রতিটি Sequence-এর গড় আলাদা করে নিয়ে তাদের গড় নিলে ফলাফল ভিন্ন (`3.0`) আসত।"
+    },
+    {
+      "id": "ch19_ex_valid",
+      "title": "বৈধ সর্বশেষ Output সূচক নির্ণয়",
+      "prompt": "ডান পাশে Padding দেওয়া একটি Tensor-এর সংরক্ষিত দৈর্ঘ্য `14`, কিন্তু একটি নির্দিষ্ট Sequence-এর প্রকৃত বৈধ দৈর্ঘ্য `5`। শূন্য-ভিত্তিক সূচকে (0-based Index) ওই Sequence-টির সর্বশেষ বৈধ Time Step কোন ঘরে রয়েছে তা `answer`-এ রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "length = 5\nanswer = float(length - 1)\n",
+      "expected": 4,
+      "explanation": "প্রথম ৫টি বৈধ পদ থাকে সূচক `0, 1, 2, 3, 4`-এ; তাই সর্বশেষ বৈধ সূচক হলো `5 − 1 = 4`। শেষ ঘর `13` পড়লে ডান পাশের নকল Padding ঘরগুলো হিসাবে ঢুকে যেত।"
+    },
+    {
+      "id": "ch19_ex_bptt",
+      "title": "সময়ের পথে রৈখিক Gradient ক্ষয়",
+      "prompt": "সরল রৈখিক Recurrence `h_t = 0.5 * h_{t−1}` পরপর `10`টি ধাপ চালানো হলো, যেখানে শুরুর `h_0 = 1` একটি শেখা যায় এমন চলক। চূড়ান্ত ধাপের সাপেক্ষে শুরুর ধাপের Derivative `dh_{10} / dh_0` কত হবে তা `answer`-এ রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "import torch\n\nh = torch.tensor(1.0, dtype=torch.float64, requires_grad=True)\nvalue = h\nfor _ in range(10):\n    value = 0.5 * value\nvalue.backward()\nanswer = h.grad.item()\n",
+      "expected": 0.0009765625,
+      "explanation": "প্রতি ধাপে `0.5` করে গুণ হওয়ায় ১০ ধাপ পরের Derivative দাঁড়ায় `0.5**10 = 0.0009765625`। নন-লিনিয়ার RNN-এ এই গুণফল নির্ভর করে প্রতি ধাপের Activation Derivative ও Weight Matrix-এর ওপর।"
+    },
+    {
+      "id": "ch19_ex_shape",
+      "title": "Bidirectional Output-এর প্রস্থ নির্ণয়",
+      "prompt": "`hidden_size = 3` আকারের একটি Bidirectional Recurrent Layer ব্যবহার করলে প্রতিটি Time Step-এ সর্বশেষ Layer-এর Output বৈশিষ্ট্য Vector-এর প্রস্থ (Feature Width) কত হবে তা `answer`-এ রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "hidden = 3\ndirections = 2\nanswer = float(hidden * directions)\n",
+      "expected": 6,
+      "explanation": "সামনের ও পেছনের উভয় দিকের `3` মাত্রার Hidden Vector পাশাপাশি জোড়া (Concatenate) লেগে প্রতিটি ধাপের প্রস্থ হয় `3 + 3 = 6`।"
+    },
+    {
+      "id": "ch19_ex_shift",
+      "title": "Decoder-এর এক ঘর সরানো প্রথম Target",
+      "prompt": "একটি Token সারি `[BOS=2, 4, 5, EOS=3]` দিয়ে এক ঘর সরানো (Shifted) Decoder ট্রেনিং সাজালে প্রথম ধাপের Target ID কোনটি হবে তা `answer`-এ রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "target = [2, 4, 5, 3]\ndecoder_input = target[:-1]\ndecoder_target = target[1:]\nanswer = float(decoder_target[0])\n",
+      "expected": 4,
+      "explanation": "Decoder Input হয় `[2, 4, 5]` এবং তার বিপরীতে Target হয় `[4, 5, 3]`—অর্থাৎ শুরুর `BOS` (`2`) দেখে Model প্রথম আসল Token `4` অনুমান করে।"
+    },
+    {
+      "id": "ch19_ex_inverse",
+      "title": "Standardized মান থেকে মূল এককে রূপান্তর",
+      "prompt": "Training ডেটার `mean = 100` এবং `scale = 20`। Model যদি Standardized স্কেলে `0.5` মানের Prediction দেয়, তবে মূল ভাড়ার এককে (Original Count Units) সেই Prediction কত হবে তা `answer`-এ রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "mean = 100.0\nscale = 20.0\nstandardized = 0.5\nanswer = standardized * scale + mean\n",
+      "expected": 110,
+      "explanation": "বিপরীত রূপান্তর (Inverse Transform) সূত্র অনুযায়ী মূল এককের মান হলো `0.5 × 20 + 100 = 110`। Inference-এর সময় সবসময় Training থেকে পাওয়া স্থির স্কেলই ব্যবহার করতে হয়।"
+    }
+  ],
+  "interviews": [
+    {
+      "title": "PyTorch-এর ওজন থেকে নির্ভুলভাবে GRU ধাপ ইমপ্লিমেন্ট করা",
+      "tag": "SEQUENCE ML CODING · 30 MIN",
+      "prompt": "PyTorch থেকে Export করা GRU Weight ও Bias দিয়ে আপনাকে নিজের হাতে একটি ম্যানুয়াল Recurrence Function লিখতে বলা হয়েছে। কোন কোন সূক্ষ্ম জায়গায় ভুল হওয়ার ঝুঁকি থাকে এবং কীভাবে তা যাচাই করবেন?",
+      "answer": "প্রথমেই আমি PyTorch-এর অভ্যন্তরীণ সারি বিন্যাস `r, z, n` এবং দুটি আলাদা Bias Vector (`b_ih` ও `b_hh`) স্পষ্ট করে লিখে নেব। এরপর সমীকরণ বসাব: `r = sigmoid(a_r + b_r)`, `z = sigmoid(a_z + b_z)`, `n = tanh(a_n + r ⊙ b_n)` এবং `h_t = (1 − z) ⊙ n + z ⊙ h_{t−1}`।\n\nএখানে সবচেয়ে সংবেদনশীল জায়গা হলো Candidate `n`-এর হিসাব: অনেক বইয়ের মতো আগে `r ⊙ h` করে পরে Matrix গুণ করলে চলবে না, বরং আগে `W_{hn} h + b_{hn}` সম্পন্ন করে তার ওপর `r` গুণ করতে হবে। কোড যাচাই করার জন্য আমি কখনোই শুধু শূন্য ওজন দিয়ে পরীক্ষা করব না—বরং অশূন্য Input, অশূন্য Hidden State ও অশূন্য Recurrent Bias দিয়ে প্রতি ধাপের Output সরাসরি PyTorch `GRUCell`-এর সাথে `1e-12` সূক্ষ্মতায় মিলিয়ে নেব এবং Input-এর আকার ও সসীমতার (`isfinite`) শর্ত পরীক্ষা করব।",
+      "prerequisiteLessons": [
+        "ch19_gru"
+      ]
+    },
+    {
+      "title": "Loss Mask থাকা সত্ত্বেও Padding কেন ফলাফল বদলে দিচ্ছে?",
+      "tag": "SEQUENCE ML CODING · 30 MIN",
+      "prompt": "আপনার দলে একজন ইঞ্জিনিয়ার পরিবর্তনশীল দৈর্ঘ্যের Sequence Model-এ সঠিকভাবে Loss Mask বসিয়েছেন, তবুও ডান পাশে Padding বাড়ালে ছোট Sequence-গুলোর Prediction বদলে যাচ্ছে। কীভাবে এই বাগ খুঁজে বের ও সমাধান করবেন?",
+      "answer": "আমি প্রথমেই দেখব Model-টি চূড়ান্ত সিদ্ধান্ত নেওয়ার জন্য সরাসরি Dense Tensor-এর শেষ ঘর `output[:, -1]` পড়ছে কি না! কারণ Target Loss-এ Mask বসালে কেবল ত্রুটির যোগফল থেকে নকল ঘর বাদ পড়ে, কিন্তু Cell-এর ভেতরে শূন্য Input ও অশূন্য Bias মিলে যে অতিরিক্ত ধাপগুলো চলেছে তা থামে না।\n\nএকমুখী Model-এ ডান পাশের Padding এড়াতে হয় `pack_padded_sequence` ব্যবহার করব, নতুবা প্রতিটি উদাহরণের প্রকৃত শেষ বৈধ ঘর `output[i, length - 1]` তুলে নেব। আর Model-টি যদি Bidirectional হয়, তবে পেছনের পথটি শুরুই করে ডান পাশের Padding পড়ে—সেখানে নিছক সূচক তোলার শর্টকাট কাজ করবে না, বাধ্যতামূলকভাবে `pack_padded_sequence` (অগোছালো Batch-এ `enforce_sorted=False`-সহ) ব্যবহার করে `h_n` থেকে সঠিক দিকনির্দেশক State নিতে হবে। শেষে ডান পাশের Padding ঘরে ইচ্ছেমতো বড় সংখ্যা বসিয়ে ফলাফল অপরিবর্তিত থাকে কি না তার Unit Test লিখব।",
+      "prerequisiteLessons": [
+        "ch19_padding",
+        "ch19_masking"
+      ]
+    },
+    {
+      "title": "Batch-এর ক্রম বদলালেই স্বাধীন উদাহরণের উত্তর বদলে যাওয়া",
+      "tag": "SEQUENCE ML CODING · 30 MIN",
+      "prompt": "Model `eval()` মোডে থাকা সত্ত্বেও দেখা যাচ্ছে একটি Batch-এর ভেতরের স্বাধীন Window-গুলোর ক্রম ওলটপালট করলেই একই উদাহরণের Prediction পাল্টে যাচ্ছে! এর পেছনে কী কারণ থাকতে পারে?",
+      "answer": "স্বাধীন উদাহরণের উত্তর যদি Batch-এর ক্রমের ওপর নির্ভর করে, তবে সবার আগে সন্দেহ করতে হবে অসতর্কতাবশত এক Sample বা এক কল থেকে পরের কলে `Hidden State` বয়ে নেওয়া হচ্ছে কি না! আমাদের মতো স্বাধীন ১৪ দিনের Window-তে প্রতিটি উদাহরণের শুরুতে `h_0` অবশ্যই শূন্য হতে হবে; কেবল ধারাবাহিক একই উৎস বহনকারী Stateful Stream-এই নির্দিষ্ট সারির ক্রম ও সীমানা মেনে State এগিয়ে নেওয়া চলে (এবং মনে রাখতে হবে `.detach()` কেবল গ্রাফ কাটে, সংখ্যার মান শূন্য করে না)।\n\nএর পাশাপাশি আমি আরও তিনটি প্রযুক্তিগত জায়গা পরীক্ষা করব: Batch ও Time Axis (`[B, T, F]` বনাম `[T, B, F]`) কোথাও উল্টে গিয়ে অন্য উদাহরণের সাথে মিশে যাচ্ছে কি না, ট্রেনিংয়ের পুরোনো কোনো ক্যাশ করা State Validation-এ ঢুকে পড়ছে কি না, এবং Model-এর ভেতরে ভুল করে কোনো BatchNorm বা সক্রিয় Dropout Layer চালু রয়ে গেছে কি না।"
+    },
+    {
+      "title": "অবিশ্বাস্য ভালো Forecast স্কোরের পেছনে লুকানো Data Leakage",
+      "tag": "SEQUENCE ML CODING · 30 MIN",
+      "prompt": "পরের দিনের চাহিদা অনুমানের একটি Model Backtest-এ অবিশ্বাস্য ভালো স্কোর দেখাচ্ছে, কিন্তু পরে দেখা গেল সেখানে Target দিনের ঘটে যাওয়া কিছু তথ্য Feature হিসেবে ঢুকে গেছে। কীভাবে আপনি পুরো Pipeline-টি নিরীক্ষা করবেন?",
+      "answer": "যেকোনো নিরীক্ষার শুরুতে আমি খাতায় স্পষ্ট করে লিখব ঠিক কোন মুহূর্তে দাঁড়িয়ে Prediction দেওয়া হচ্ছে (Issue Time) এবং সে মুহূর্তে কোন কোন তথ্য বাস্তবে চূড়ান্ত হয়ে আমাদের হাতে থাকে। আমাদের নিয়মে দিন `t` অনুমান করতে কেবল `t − 14` থেকে `t − 1` পর্যন্ত সংখ্যা বৈধ—Target `y_t`, সেদিনের Casual/Registered উপাদান কিংবা সেদিনের ঘটে যাওয়া প্রকৃত আবহাওয়া কোনোভাবেই Input-এ থাকতে পারবে না।\n\nএরপর আমি চারটি জায়গায় স্বয়ংক্রিয় পরীক্ষা বসাব: Window স্লাইসিংয়ে `t + 1` জাতীয় এক ঘরের ভুল আছে কি না, Scaling-এর Mean ও Std শুধুমাত্র অতীত Training ডেটা থেকেই নেওয়া হয়েছে কি না, এলোমেলো Split-এর বদলে কালানুক্রমিক Split মানা হয়েছে কি না, এবং ভবিষ্যতের পুরো অংশ (`y[t:]`) ইচ্ছেমতো সংখ্যা দিয়ে বদলে দিলেও সময় `t`-এর Input Feature অপরিবর্তিত থাকছে কি না (Prefix-invariance Test)।"
+    },
+    {
+      "title": "Rolling One-step বনাম 7-day Recursive স্কোরের তুলনা",
+      "tag": "SEQUENCE ML CODING · 30 MIN",
+      "prompt": "একজন সহকর্মী এক-ধাপের Rolling Model-এর স্কোর আর ৭ দিনের Recursive Model-এর স্কোর একই সারিতে বসিয়ে তুলনা করছেন। কেন এই তুলনা ত্রুটিপূর্ণ এবং সঠিক নিয়ম কী?",
+      "answer": "এই দুটি প্রোটোকলের অনুমানের দূরত্ব (Horizon) এবং তথ্যের প্রাপ্যতা সম্পূর্ণ আলাদা, তাই এদের স্কোর সরাসরি এক পাল্লায় মাপা চলে না। Rolling One-step প্রোটোকলে প্রতিটি নতুন দিনের আগে আগের দিনের প্রকৃত ঘটে যাওয়া সংখ্যা হাতে চলে আসে বলে Input ইতিহাস প্রতিদিন তাজা হয়। অন্যদিকে Fixed-origin ৭ দিনের Recursive প্রোটোকলে শুরুর বিন্দুতে ইতিহাস স্থির হয়ে যায়—দ্বিতীয় দিন থেকে Model নিজের অনুমান করা সংখ্যাগুলোকেই Input হিসেবে ব্যবহার করতে বাধ্য হয়, ফলে ত্রুটি জমতে থাকে।\n\nন্যায্য তুলনার নিয়ম হলো: এক-ধাপের Model-কে কেবল একই এক-ধাপের Baseline-এর (`y_{t−1}`, `y_{t−7}`) সাথে তুলনা করতে হবে, আর ৭ দিনের স্থির বিন্দুর রোলআউটকে তুলনা করতে হবে একই বিন্দুতে দাঁড়িয়ে করা ৭ দিনের Seasonal পুনরাবৃত্তি বা আলাদাভাবে ট্রেন করা Direct Multi-horizon Model-এর সাথে।"
+    },
+    {
+      "title": "বাস্তব সমস্যার জন্য RNN, LSTM নাকি GRU—কীভাবে বেছে নেবেন?",
+      "tag": "SEQUENCE ML CODING · 30 MIN",
+      "prompt": "একটি নতুন Sequence সমস্যার জন্য আপনাকে RNN, LSTM ও GRU-এর মধ্যে থেকে একটি স্থাপত্য বেছে নিতে বলা হলো। আপনি কোন কোন মাপকাঠিতে সিদ্ধান্ত নেবেন?",
+      "answer": "শুধু নামের মোহে কোনো স্থাপত্যকে সর্বজনীন সেরা ঘোষণা না করে আমি প্রথমে সমস্যার কাঠামোগত শর্তগুলো দেখব: Output-এর ধরন (Many-to-one নাকি প্রতি ধাপে Tagging), রিয়েল-টাইম Latency ও মেমোরি বাজেট, Dataset-এর আকার এবং নির্ভরযোগ্য সরল Baseline-এর স্কোর।\n\nগাণিতিক গঠনের দিক থেকে একই Hidden Size `H`-এ Vanilla RNN সবচেয়ে হালকা (`H(F+H+2)` Parameter) কিন্তু দীর্ঘ পথে সংকেত ধরে রাখতে দুর্বল; GRU তিন গুণ Parameter-এ আলাদা Cell State ছাড়াই স্মার্ট Gated মিশ্রণ দেয়; আর LSTM চার গুণ Parameter-এ আলাদা যোগমূলক Cell Memory দিয়ে দীর্ঘ দূরত্বের Optimization সহজ করে। চূড়ান্ত বাছাইয়ের জন্য আমি অভিন্ন Data Split, অভিন্ন Preprocessing, সমান Parameter বা সার্চ বাজেট এবং একাধিক Random Seed চালিয়ে বাস্তব মেট্রিকের ওপর ভিত্তি করে সিদ্ধান্ত নেব।"
+    },
+    {
+      "title": "Forecasting-এ কি Bidirectional Model সবসময়ই নিষিদ্ধ?",
+      "tag": "SEQUENCE ML CODING · 30 MIN",
+      "prompt": "ইন্টারভিউয়ার প্রশ্ন করলেন: 'যেহেতু Forecasting ভবিষ্যতের কথা বলে, তাই কি সেখানে যেকোনো জায়গায় Bidirectional RNN ব্যবহার করলেই Data Leakage হবে?' আপনার উত্তর কী হবে?",
+      "answer": "আমার উত্তর হবে: না, সবসময় নয়—এটি নির্ভর করে Input পদগুলোর সময়ের (Timestamp) ওপর, কেবল স্থাপত্যের নামের ওপর নয়! যদি আমাদের কাজ হয় একটি নির্দিষ্ট সময়ের বিন্দুতে দাঁড়িয়ে পরের দিনের মান অনুমান করা (Many-to-one), এবং আমাদের Input Window-র সব কটি পদই (`t − 14` থেকে `t − 1`) ওই বিন্দুর আগে সম্পূর্ণরূপে পর্যবেক্ষিত হয়ে থাকে, তবে ওই অতীত ইতিহাসটুকুকে সামনে ও পেছনে দুই দিক থেকে পড়লে ভবিষ্যতের Target `y_t` মোটেও ফাঁস হয় না।\n\nকিন্তু কাজটি যদি এমন হয় যে একটি চলমান Sequence-এর প্রতিটি ধাপে দাঁড়িয়ে পরের ধাপ অনুমান করতে হচ্ছে (Causal Many-to-many), তখন পেছনের পথ ব্যবহার করলেই অনাগত ভবিষ্যতের পদ চলে আসবে এবং তা নিরেট Leakage হবে। পাশাপাশি Bidirectional ব্যবহার করলে `output[:, -1]`-এর ফাঁদ এড়িয়ে `h_n` থেকে সঠিক দিকনির্দেশক সারাংশ নেওয়া এবং Padding দূষণ সামলানোও নিশ্চিত করতে হবে।"
+    },
+    {
+      "title": "Vanishing Gradient নির্ণয় এবং Truncated BPTT-এর গাণিতিক হিসাব",
+      "tag": "SEQUENCE ML CODING · 30 MIN",
+      "prompt": "দীর্ঘ Sequence-এ শুরুর দিকের সংকেত হারিয়ে যাচ্ছে—কীভাবে কারণ নির্ণয় করবেন? সাথে `h_t = 0.5 h_{t−1} + x_t` (`h_0 = 0`, `x = [1, 2, 3]`) সমীকরণে গুণক `a = 0.5`-এর পূর্ণ Gradient এবং দ্বিতীয় ধাপের পর State `.detach()` করলে যে Gradient পাওয়া যায় তা হিসাব করে দেখান।",
+      "answer": "দীর্ঘ Sequence-এ শুরুর সংকেত ক্ষয়ে যাওয়ার পেছনে পরপর বহু ধাপের Jacobian গুণফল ছোট হয়ে যাওয়া, `Sigmoid`/`tanh`-এর প্রান্তিক স্যাচুরেশন এবং ওজনের স্কেল কাজ করে। মনে রাখতে হবে, `Gradient Clipping` কেবল বিস্ফোরণমুখী বড় ধাক্কা আটকায়, হারিয়ে যাওয়া ক্ষুদ্র সংকেত ফেরাতে পারে না; আর LSTM/GRU-এর Gate দীর্ঘ পথ সহজ করলেও শতভাগ নিশ্চয়তা দেয় না। লম্বা Stream-এ মেমোরি বাঁচাতে আমরা খণ্ডে খণ্ডে State এগিয়ে নিয়ে `.detach()` করি (Truncated BPTT), তবে আগে ছোট `float64` উদাহরণে সংখ্যাসূচক বাগ নেই তা নিশ্চিত করে নিই।\n\nগাণিতিক অংশের সমাধান: সামনের দিকে এগোলে পরপর তিনটি State দাঁড়ায় `h_1 = 1`, `h_2 = 2.5` এবং `h_3 = 4.25`। পূর্ণ গ্রাফে `D_t = dh_t / da = h_{t−1} + a D_{t−1}` (`D_0 = 0`) সূত্র বসালে পাই `D_1 = 0`, `D_2 = 1 + 0 = 1`, এবং `D_3 = 2.5 + 0.5 × 1 = 3.0`—অর্থাৎ পূর্ণ Gradient হলো `3.0`। কিন্তু দ্বিতীয় ধাপের পর `h_2 = 2.5`-কে `.detach()` করলে চূড়ান্ত মান `4.25`-ই থাকে, অথচ আগের পথ কেটে যাওয়ায় `a`-এর সাপেক্ষে চূড়ান্ত Gradient কমে দাঁড়ায় কেবল `h_2 = 2.5`!",
+      "prerequisiteLessons": [
+        "ch19_bptt",
+        "ch19_state"
+      ]
+    },
+    {
+      "title": "Teacher Forcing-এ এক ঘরের (Off-by-one) মারাত্মক ভুল",
+      "tag": "SEQUENCE ML CODING · 30 MIN",
+      "prompt": "একটি Seq2Seq Decoder ট্রেনিংয়ে দেখা গেল প্রথম Epoch-এই Training Loss প্রায় শূন্য হয়ে গেছে, কিন্তু বাস্তবে চালালে Model অর্থহীন শব্দ তৈরি করছে! কীভাবে সমস্যাটি ধরবেন?",
+      "answer": "Training Loss অস্বাভাবিকভাবে দ্রুত শূন্য হয়ে যাওয়া দেখলেই আমার প্রথম সন্দেহ হবে Decoder-এর Input ও Target সাজাতে এক ঘরের (Off-by-one) ভুল হয়েছে—অর্থাৎ ধাপ `t`-তে যে Token-টি অনুমান করার কথা, ভুলবশত ঠিক সেই Token-টিই ওই ধাপের Input হিসেবে চলে গেছে! আমি সাথে সাথে বোর্ডে `[BOS, w_1, w_2, EOS]` লিখে নিশ্চিত করব যেন Input হয় `tokens[:, :-1]` আর Target হয় `tokens[:, 1:]`।\n\nএই বাগ সারানোর পরও যদি ট্রেনিং ও বাস্তবের মধ্যে পারফরম্যান্সের বড় তফাৎ থাকে, তবে তা হতে পারে Exposure Bias-এর কারণে—যেখানে ট্রেনিংয়ে নিখুঁত আসল অতীত দেখে অভ্যস্ত Model বাস্তবে নিজের তৈরি ত্রুটিযুক্ত পদের ওপর দাঁড়িয়ে পথ হারিয়ে ফেলে। এছাড়া Vocabulary কেবল ট্রেনিং টেক্সট থেকে তৈরি কি না এবং `PAD` Token-এ সঠিক `ignore_index` বসেছে কি না তাও যাচাই করব।",
+      "prerequisiteLessons": [
+        "ch19_seq2seq"
+      ]
+    },
+    {
+      "title": "Baseline-এর চেয়ে খারাপ ফলাফল যুক্তি ও সততার সাথে ব্যাখ্যা করা",
+      "tag": "SEQUENCE ML CODING · 30 MIN",
+      "prompt": "আপনার ট্রেন করা GRU Model-এর Training MSE সুন্দরভাবে কমেছে, কিন্তু Development ডেটায় দেখা যাচ্ছে অতি সাধারণ Last-day Baseline-এর ত্রুটিই আপনার Model-এর চেয়ে কম! স্টেকহোল্ডার বা ইন্টারভিউয়ারের সামনে ফলাফলটি কীভাবে উপস্থাপন করবেন?",
+      "answer": "আমি কোনো অজুহাত বা ফলাফল লুকানোর চেষ্টা না করে স্বচ্ছভাবে জানাব যে নির্দিষ্ট রেসিপিতে Training Loss কমা কেবল Optimizer কাজ করার প্রমাণ দেয়, বাস্তব ভবিষ্যৎ অনুমানে শ্রেষ্ঠত্বের নিশ্চয়তা দেয় না।\n\nএরপর আমি আমার নিরীক্ষার ক্রম তুলে ধরব: প্রথমেই ডেটা স্লাইসিং, স্কেলিং, শূন্য State রিসেট এবং Manual Cell-এর হিসাব মিলিয়ে নিশ্চিত হয়েছি যে এটি কোনো কোডিং বাগের ফল নয় এবং উভয় Model একই ন্যায্য প্রোটোকলে মাপা হয়েছে। এরপর সম্ভাব্য বৈজ্ঞানিক কারণগুলো (যেমন ২০১১ থেকে ২০১২ সালে চাহিদা বেড়ে যাওয়ার Trend Shift, কেবল একটি সংখ্যার সীমিত তথ্য, ছোট ১৪ দিনের প্রেক্ষাপট ও ক্ষুদ্র ক্ষমতা) আলাদা অনুমান হিসেবে চিহ্নিত করব। সবশেষে বলব, সংরক্ষিত শেষ ১৮৪ দিনের ডেটা স্পর্শ না করে এবং প্রতিটি নতুন টিউনিং চেষ্টাকে Selection প্রক্রিয়ার অংশ হিসেবে নথিবদ্ধ রেখে আমরা পরবর্তী নিয়ন্ত্রিত পরীক্ষা (যেমন Calendar Feature বা ট্রেন্ড নরমালাইজেশন) সাজাব।"
+    }
+  ],
+  "book": {
+    "order": 19,
+    "part": "Book 3 · Deep Learning & RL",
+    "prerequisites": [
+      "chapter_17",
+      "chapter_13"
+    ],
+    "purpose": "Sequence Data-তে সময়ের ক্রম (Order), Hidden State এবং Causality কীভাবে কাজ করে তা গভীরভাবে বোঝা—যাতে Training-এর Context এবং Inference-এর Multi-step Rollout-এর পার্থক্য নিখুঁতভাবে ধরা যায়।",
+    "outcomes": [
+      "RNN, LSTM ও GRU-এর অভ্যন্তরীণ সমীকরণ এবং Masked Loss নিজের হাতে লিখে নির্ভুল Free-running Evaluation Contract তৈরি করতে পারা।",
+      "গাণিতিক উদাহরণ, কোড ও আত্মমূল্যায়নের মাধ্যমে Teacher Forcing, Exposure Bias এবং Multi-step Rollout-এর বাস্তব আচরণ ব্যাখ্যা করতে পারা।"
+    ],
+    "recall": [
+      "কোন ধরনের Forecasting পরিস্থিতিতে Bidirectional Context ব্যবহার করলে মারাত্মক Future Leakage তৈরি হয়?",
+      "Decay Factor 0.9 হলে দুই ধাপের Rollout-এ গুণিতক কত দাঁড়ায়, এবং One-step Rolling Backtest-এ আগের দিনের প্রকৃত মান y_{t−1} ব্যবহার করা কি সবসময় Data Leakage?"
+    ],
+    "bridge": "পরের অধ্যায়: Book 3 · Chapter 6 (Attention & Transformers)। সেখানে যাওয়ার আগে এই অধ্যায়ের Quiz, Coding Exercise এবং না দেখে ব্যাখ্যা করার অনুশীলনগুলো যাচাই করে নিন—যাতে Sequence Bottleneck কেন Attention-এর জন্ম দিয়েছে তা সহজেই ধরতে পারেন।",
+    "bookId": "deep_learning",
+    "bookChapter": 5
+  }
+}

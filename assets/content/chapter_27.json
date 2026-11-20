@@ -1,0 +1,1521 @@
+{
+  "id": "chapter_27",
+  "number": 27,
+  "title": "Generative Models: VAE & GAN",
+  "shortTitle": "Generative Models: VAE & GAN",
+  "displayTitle": "Generative Models: VAE & GAN\nInfer. Sample. Diagnose.",
+  "subtitle": "Latent Variable, ELBO এবং Adversarial Learning—গাণিতিক ভিত্তি থেকে হাতে-কলমে Reproducible Code",
+  "description": "Encode uncertainty. Inspect generation.\nFollow gradients and audit the evidence.",
+  "difficulty": "Generative AI · foundations",
+  "lab": "generative",
+  "lessons": [
+    {
+      "id": "ch27_contract",
+      "title": "Generative Modeling: Distribution থেকে নতুন Sample তৈরি",
+      "subtitle": "Prediction, Reconstruction আর Generation কেন তিনটি আলাদা কাজ?",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন Generative Model আলাদা?",
+          "body": "আগের অধ্যায়গুলোতে আমরা মূলত এমন সব Predictive বা Discriminative Model দেখেছি, যারা একটি Input x দেখে তার Label y অনুমান করার চেষ্টা করে—অর্থাৎ Conditional Probability p(y|x) শেখে। যেমন, হাতে লেখা কোনো সংখ্যার Image দেখে সেটি 3 নাকি 8, তা চিনে ফেলা। কিন্তু যদি আমাদের লক্ষ্য হয় সম্পূর্ণ নতুন ও বাস্তবসম্মত সংখ্যার Image তৈরি করা? তখন শুধু Class Boundary চিনলেই চলে না; পুরো Data Distribution p(x)-এর গঠন আমাদের বুঝতে হয়, যেন সেখান থেকে নতুন Sample তৈরি করা যায়।\n\nএই অধ্যায়ে আমরা দেখব VAE এবং GAN কীভাবে এই চ্যালেঞ্জটি সমাধান করে। শুরুতেই একটি গুরুত্বপূর্ণ বিষয় মনে রাখা দরকার—চোখে দেখতে সুন্দর Sample পাওয়া, Input Image নিখুঁতভাবে Reconstruction করা, আর পুরো Data Distribution-এর সব বৈচিত্র্য (Coverage) ধরতে পারা—এই তিনটি কিন্তু সম্পূর্ণ আলাদা পরীক্ষা!"
+        },
+        {
+          "type": "text",
+          "title": "একই লক্ষ্যে দুটি ভিন্ন দর্শন",
+          "body": "Data Distribution শেখার জন্য VAE এবং GAN সম্পূর্ণ ভিন্ন দুটি পথ বেছে নেয়। VAE কাজ করে একটি স্পষ্ট Probabilistic Latent-Variable Model ধরে, যেখানে Approximate Inference এবং Reconstruction Objective একসাথে ব্যবহৃত হয়। অন্যদিকে GAN সরাসরি কোনো Likelihood সমীকরণ না লিখে একটি Generator এবং একটি Discriminator-এর মধ্যে প্রতিদ্বন্দ্বিতামূলক খেলা (Adversarial Game) সাজায়। ধারণাগুলো যাতে কালো বাক্সের মতো না থেকে একদম স্বচ্ছ হয়ে ওঠে, সেজন্য এই অধ্যায়ে আমরা দুটি ক্ষেত্রেই ছোট MLP Architecture, বাস্তব 8×8 আকারের UCI Handwritten Digits Dataset এবং 2-মাত্রিক (Dimension 2) Latent Space ব্যবহার করব।"
+        },
+        {
+          "type": "math",
+          "title": "Marginal Likelihood-এর মূল সমীকরণ",
+          "body": "p_\\theta(x)=\\int p_\\theta(x\\mid z)p(z)\\,dz"
+        },
+        {
+          "type": "code",
+          "title": "Dataset ও সংরক্ষিত Lab Artifact যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/digits/generative_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nassert lab[\"report\"][\"train_count\"] == 1438\nassert lab[\"report\"][\"diagnostic_count\"] == 359\nassert len(lab[\"samples\"]) == 16\nprint(lab[\"report\"][\"notes\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "এই অধ্যায়ে আমাদের শেখার ধারাবাহিকতা",
+          "body": "উপরের সমীকরণ ও কোড থেকেই আমাদের কাজের পথরেখা স্পষ্ট হয়ে যায়। আমরা প্রথমে Latent-Variable Probability Model-এর ধারণা গড়ব এবং সেখান থেকে ধাপে ধাপে ELBO ও Diagonal Gaussian-এর KL Divergence Derive করব। এরপর দেখব কীভাবে Reparameterization Trick র‍্যান্ডম Sampling-এর ভেতর দিয়েও Gradient Path সচল রাখে এবং কীভাবে সঠিক Reconstruction Likelihood বেছে নিতে হয়। পরের অংশে আমরা GAN-এর Minimax Game, Gradient Saturation ও Alternating Update হাতে-কলমে পরীক্ষা করব। সবশেষে Sample Quality, Mode Coverage, Memorization এবং বাস্তব Deployment-এর সীমাবদ্ধতাগুলো আলাদাভাবে বিচার করতে শিখব।"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব Weight ও Offline Inference-এর স্বচ্ছতা",
+          "body": "এখানে ব্যবহৃত প্রতিটি উদাহরণ কোনো সাজানো ছবির সংগ্রহ নয়; Python দিয়ে সত্যিকারের VAE ও GAN Model Train করে তাদের Weight সংরক্ষণ (Export) করা হয়েছে। অ্যাপের ভেতরে আপনি যখন কোনো Output দেখেন, তখন সংরক্ষিত সেই Weight দিয়েই সরাসরি পুরো Forward Pass চালানো হয়—কোনো রিমোট Image API বা বাহ্যিক সার্ভিস ব্যবহার করা হয় না। অর্থাৎ যে Output-গুলো দেখছেন সেগুলো শতভাগ আমাদের ছোট Model দুটিরই তৈরি; তাই এগুলোকে Production মানের ঝকঝকে হাতের লেখা না ভেবে Model-এর গাণিতিক আচরণ বোঝার প্রামাণ্য উদাহরণ হিসেবে দেখাই যুক্তিসঙ্গত।"
+        },
+        {
+          "type": "text",
+          "title": "Dataset Split ও সিদ্ধান্তের সীমা",
+          "body": "আমরা এখানে ঐতিহাসিক UCI Handwritten Digits-এর অংশবিশেষ ব্যবহার করছি এবং ধারাবাহিকতা বজায় রাখতে Book 3 · Chapter 4 (Vision CNNs)-এ ব্যবহৃত পরিচিত Data Split-টিই পুনর্ব্যবহার করেছি—যেখানে 1438টি Row থাকছে Training-এ এবং 359টি Row থাকছে Diagnostic পর্যবেক্ষণে। যেহেতু এই 359টি Diagnostic Row আগেও দেখা হয়েছে, তাই এগুলোকে সম্পূর্ণ অদেখা Blind Test Set বলা যাবে না। তা ছাড়া এই Dataset-এ কোন সংখ্যা কে লিখেছেন তার কোনো Writer ID নেই; ফলে নতুন কোনো লেখকের হাতের লেখার ওপর Writer-independent Generalization অর্জিত হয়েছে—এমন কোনো দাবি এখানে করা হচ্ছে না।"
+        },
+        {
+          "type": "text",
+          "title": "Interview টিপস: কাজের শুরুতে সঠিক প্রশ্ন",
+          "body": "Interview-এ যখন আপনাকে একটি Generative Model বেছে নিতে বলা হবে, তখন কেবল জনপ্রিয়তার জোরে কোনো Model Family বেছে নেবেন না। আগে সমস্যার শর্তগুলো স্পষ্ট করে নিন: আমাদের কি Conditional নাকি Unconditional Generation দরকার? ডেটার সরাসরি Likelihood বা Anomaly Score হিসাব করা জরুরি কি না? Input থেকে Latent Representation বের করার (Inference) প্রয়োজন আছে কি? পাশাপাশি Latency, Memory সীমা এবং সাফল্য মাপার Evaluation Metric কী হবে—এই বাস্তব শর্তগুলো থেকেই সঠিক Architecture নির্ধারিত হয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch27_dataset",
+      "title": "বাস্তব Data, Split ও Preprocessing-এর নিয়মকানুন",
+      "subtitle": "Label ছাড়া Training মানেই Evaluation ছাড়া অন্ধভাবে এগোনো নয়",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Dataset-এর উৎস ও গঠন",
+          "body": "যেকোনো ভালো ML কাজের শুরু হয় কাঁচা Data ভালোভাবে চিনে নেওয়ার মাধ্যমে। এখানে Alpaydin ও Kaynak-এর তৈরি UCI Optical Recognition of Handwritten Digits Dataset-এর scikit-learn সংস্করণের মূল Byte-গুলো অপরিবর্তিত রাখা হয়েছে এবং সাথে এর SHA-256 হ্যাশ ও License সংযুক্ত আছে। প্রতিটি Row-তে 0 থেকে 16 পাল্লার 64টি পূর্ণসংখ্যার Pixel এবং 0 থেকে 9 পর্যন্ত সংখ্যার Label রয়েছে; তবে আমাদের Generative Model Input হিসেবে কেবল Pixel-গুলোই পায়। মূল Source Row নম্বর ধরে UI-এর যেকোনো Image সরাসরি খুঁজে বের করা যায়।"
+        },
+        {
+          "type": "text",
+          "title": "Training ও Diagnostic Split-এর স্পষ্ট সীমানা",
+          "body": "পূর্ববর্তী কাজের সাথে সামঞ্জস্য রাখতে আমরা Book 3 · Chapter 4 (Vision CNNs)-এ ব্যবহৃত StratifiedGroupKFold (5টি Fold, seed = 18)-এর প্রথম Split-টিই এখানে ব্যবহার করেছি। এতে মোট 1438টি Row থাকছে Training-এর জন্য এবং বাকি 359টি Row থাকছে Diagnostic যাচাইয়ের জন্য। হুবহু একরকম Pixel-hash থাকা Group-গুলো দুই ভাগে ছড়িয়ে পড়েনি (Disjoint)। তবে মনে রাখতে হবে, হুবহু নকল Image আটকানো গেলেও প্রায়-একই রকম Image (Near-duplicates) বা একই লেখকের ভিন্ন লেখার স্বাধীনতা এর মাধ্যমে প্রমাণিত হয় না।"
+        },
+        {
+          "type": "math",
+          "title": "Pixel Scaling-এর সমীকরণ",
+          "body": "x_j=\\frac{\\mathrm{pixel}_j}{16},\\quad x\\in[0,1]^{64}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Data Split ও Pixel Range যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter27_local\", Path(\"assets/datasets/digits/generative_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\n\nraw, y, fit, diag = m.source()\nassert raw.shape == (1797, 8, 8)\nassert set(fit).isdisjoint(diag)\nassert len(fit) + len(diag) == len(raw)\nprint(len(fit), len(diag), raw.min(), raw.max())\n"
+        },
+        {
+          "type": "text",
+          "title": "Preprocessing ও Output Scale-এর সামঞ্জস্য",
+          "body": "উপরের সমীকরণে প্রতিটি Pixel-কে যে 16 দিয়ে ভাগ করা হয়েছে, তা Diagnostic Data থেকে হিসাব করা কোনো পরিসংখ্যান নয়—বরং উৎস Dataset-এর পূর্বনির্ধারিত সর্বোচ্চ মান। ফলে এখানে Data Leakage-এর কোনো ঝুঁকি নেই এবং সব Input সুন্দরভাবে [0, 1] পাল্লায় চলে আসে। আমাদের GAN-এর Sigmoid Output এবং VAE-এর Sigmoid Mean-ও ঠিক একই [0, 1] পাল্লায় কাজ করে। ভবিষ্যতে আপনি যদি 0–255 পাল্লার Image Pipeline বা [-1, 1] পাল্লার tanh Output ব্যবহার করেন, তবে এই Preprocessing ও Likelihood দুটোই সেই অনুযায়ী বদলাতে হবে। এখানে [B, 1, 8, 8] আকারের ছবির Batch-কে চ্যাপ্টা করে [B, 64] Shape-এ নেওয়া হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "Unconditional Training-এ Label-এর ভূমিকা",
+          "body": "একটি বিষয় স্পষ্ট করে নেওয়া জরুরি: আমাদের Training Objective-এর ভেতরে সংখ্যার Label কখনোই প্রবেশ করে না। Label কেবল উৎস যাচাই করতে, Split-এ বিভিন্ন সংখ্যার ভারসাম্য (Stratification) ঠিক রাখতে এবং প্রতিটি সংখ্যার প্রথম Diagnostic Image-টি খুঁজে দেখাতে ব্যবহৃত হয়েছে—এটি মোটেও কোনো Supervised Generator নয়। আপনি যদি নির্দিষ্ট সংখ্যা বলে দিয়ে ছবি তৈরি করাতে (Conditional Generation) চান, তবে Model-এর Input এবং Training Objective দুটোই স্পষ্টভাবে পরিবর্তন করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "পরীক্ষণের শৃঙ্খলা ও Cherry-picking এড়ানো",
+          "body": "Generative Modeling-এ সবচেয়ে সুন্দর ছবি আসা Seed বা Checkpoint বেছে নেওয়ার প্রবণতা খুব সাধারণ একটি ফাঁদ। তা এড়াতে আমরা শুরু থেকেই seed = 27, নির্দিষ্ট Epoch সংখ্যা ও Learning Rate স্থির রেখেছি। একইভাবে Generator-এর যে 16টি Sample দেখানো হয়েছে, সেগুলো পূর্বনির্ধারিত seed = 271 থেকে সরাসরি নেওয়া একটি স্থির পর্যবেক্ষণ সেট—পুরো Population-এর প্রতিনিধিত্বকারী মানের পরিমাপ নয়। আর UI-তে Slider ঘুরিয়ে ফলাফল দেখা মানে নিয়ন্ত্রিত পরিবর্তন পরীক্ষা করা, র‍্যান্ডম Sampling Distribution দেখা নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Coding অভ্যাস: ডেটার শর্তগুলো কোডেই নিশ্চিত করুন",
+          "body": "Data Pipeline লেখার সময়ই assert ব্যবহার করে Row-এর ক্রম, হ্যাশ, ডেটার পাল্লা, প্রতিটি Class-এর সংখ্যা এবং Disjoint Split ID যাচাই করে নিন। ডেটা থেকে কোনো Normalizer শেখাতে হলে তা অবশ্যই কেবল Training অংশের ওপর Fit করবেন। আর একই পরিচিত Split-এ বারবার নতুন Model চালিয়ে সেটিকে আনকোরা Test ফলাফল বলে দাবি করবেন না; চূড়ান্ত যাচাইয়ের জন্য সবসময় সম্পূর্ণ নতুন Confirmation Data বা আরও কঠোর Split আলাদাভাবে প্রস্তুত রাখতে হয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch27_latent",
+      "title": "Latent Variable, Prior ও Posterior-এর ধারণা",
+      "subtitle": "Probabilistic Model-এর ভেতরে Encoder আসলে কোন ভূমিকা পালন করে?",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Latent Space-এর মূল ভাবনা ও সতর্কতা",
+          "body": "হাতে লেখা একটি সংখ্যার দৃশ্যমান 64টি Pixel-এর আড়ালে আসলে অল্প কিছু মূল বৈশিষ্ট্য কাজ করে—যেমন কলমের দাগের পুরুত্ব, হেলানো কোণ বা বাঁকের ধরন। আমরা একটি সংক্ষিপ্ত লুকানো রূপ বা Latent Representation দিয়ে এই বৈচিত্র্যকে প্রকাশ করতে চাই। তবে শুরুতেই একটি সতর্কতা মনে রাখা দরকার: এই সহজাত ধারণাটির মানে এই নয় যে, Unsupervised উপায়ে শেখা প্রতিটি Latent Axis আপনাআপনি মানুষের নাম দেওয়া বৈশিষ্ট্যগুলোর সাথে হুবহু মিলে যাবে! ঘূর্ণন প্রতিসাম্য (Rotational Ambiguity) ও Identifiability-এর সীমাবদ্ধতার কারণে শেখা Coordinate-গুলোতে একাধিক বৈশিষ্ট্য মিশে থাকতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "ছবি তৈরির দিক: Generative Model",
+          "body": "নতুন Data তৈরির প্রক্রিয়াটি দুই ধাপে এগোয়: প্রথমে Prior Distribution p(z) থেকে একটি বিন্দু z Sample করুন, তারপর Decoder pθ(x|z) ব্যবহার করে সেখান থেকে x তৈরি করুন। এখানে আমাদের Standard Normal Prior দুটি পরস্পর স্বাধীন (Independent) Coordinate দেয়। অ্যাপের পর্দায় আমরা আসলে Decoder-এর Sigmoid Mean Image প্রদর্শন করি; মনে রাখবেন, এই Mean Image হলো Distribution-এর Parameter মাত্র, প্রতিটি Pixel থেকে আলাদা করে টানা Bernoulli Sample নয়। Generation-এর সংজ্ঞা দেওয়ার সময় এই পার্থক্যটুকু স্পষ্ট রাখা জরুরি।"
+        },
+        {
+          "type": "math",
+          "title": "Bayes-এর সূত্র ও Posterior Distribution",
+          "body": "p_\\theta(z\\mid x)=\\frac{p_\\theta(x\\mid z)p(z)}{p_\\theta(x)},\\quad p(z)=\\mathcal N(0,I)"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ একটি ছবির Encoded Parameter দেখা",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/digits/generative_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nimport numpy as np\n\nmu = np.array(lab[\"images\"][0][\"mu\"])\nlv = np.array(lab[\"images\"][0][\"logvar\"])\nassert mu.shape == lv.shape == (2,)\nsigma = np.exp(0.5 * lv)\nassert (sigma > 0).all()\nprint(mu, sigma)\n"
+        },
+        {
+          "type": "text",
+          "title": "উল্টো দিকের চ্যালেঞ্জ: কেন Encoder দরকার?",
+          "body": "এবার উল্টো প্রশ্নটি ভাবুন: আমাদের হাতে একটি বাস্তব ছবি x থাকলে, কোন Latent বিন্দু z থেকে সেটি আসার সম্ভাবনা সবচেয়ে বেশি? Bayes-এর সূত্র বলছে, এই আসল Posterior pθ(z|x) বের করতে হলে হরে থাকা Marginal Likelihood pθ(x) দরকার—যা Neural Decoder-এর ক্ষেত্রে সাধারণত একটি দুরূহ ও অগণনযোগ্য (Intractable) Integral। এই বাধা পেরোতেই আমরা একটি Encoder Network qφ(z|x) ব্যবহার করি, যা আসল Posterior-কে কাছ থেকে অনুমান (Approximate) করে। অর্থাৎ Encoder কোনো নিখুঁত Posterior হিসাবকারী জাদুকর নয়, বরং একটি শেখা Approximate Posterior।"
+        },
+        {
+          "type": "text",
+          "title": "Amortized Inference: এক Network-এ সবার সমাধান",
+          "body": "প্রতিটি ছবির জন্য আলাদা আলাদাভাবে Variational Parameter Optimize না করে আমরা একটি যৌথ (Shared) Encoder ব্যবহার করি, যা যেকোনো ছবি দেখেই সরাসরি তার μ এবং Log-variance অনুমান করে দেয়। একে বলা হয় Amortized Inference। এতে Inference অত্যন্ত দ্রুত হয় ঠিকই, তবে সীমিত আকারের Distribution Family এবং Encoder-এর নিজস্ব ধারণক্ষমতার (Capacity) কারণে আসল Posterior থেকে কিছুটা ব্যবধান বা Approximation Gap থেকে যেতে পারে। মনে রাখবেন, এই Variational Gap আর সাধারণ Optimization Error এক জিনিস নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Diagonal Gaussian অনুমানের অর্থ ও সীমা",
+          "body": "আমরা যখন qφ(z|x)-কে Diagonal Gaussian ধরি, তার অর্থ হলো একটি নির্দিষ্ট x দেওয়া থাকলে Latent Coordinate-গুলোর মধ্যকার Covariance Matrix কর্ণাকার (Diagonal)। কিন্তু এর মানে মোটেও এই নয় যে পুরো Dataset-এর সামগ্রিক (Aggregate) Latent Distribution কিংবা আসল Posterior pθ(z|x)-এর উপাদানগুলো পরস্পর স্বাধীন! চাইলে Full Covariance বা Normalizing Flow ব্যবহার করে আরও নমনীয় Variational Family গড়া যায়, তবে তাতে হিসাবের খরচ ও Training-এর স্থিতিশীলতার সমীকরণ বদলে যায়।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে গুছিয়ে বলবেন",
+          "body": "Interview-এ প্রশ্ন এলে চারটি Distribution—Prior p(z), Likelihood pθ(x|z), আসল Posterior pθ(z|x) এবং Variational Posterior qφ(z|x)—তাদের Input ও Output-সহ স্পষ্ট করে লিখুন। সাথে দুটি গুরুত্বপূর্ণ তুলনা তুলে ধরুন: প্রথমত, সাধারণ Vanilla GAN কোনো Encoder ছাড়াই নতুন Sample তৈরি করতে পারে, কিন্তু x থেকে সরাসরি z বের করার সহজাত (Native) Inference পথ সেখানে থাকে না; দ্বিতীয়ত, VAE-তে Encoder থাকলেই যে আমরা সরাসরি নিখুঁত (Exact) Likelihood পেয়ে যাই তা নয়, আমরা পাই তার একটি Lower Bound।"
+        }
+      ]
+    },
+    {
+      "id": "ch27_elbo",
+      "title": "ELBO: Jensen's Inequality ও KL দিয়ে প্রতিপাদন",
+      "subtitle": "সত্যিকারের Likelihood না জেনেও আমরা ঠিক কোন রাশিটি Optimize করি?",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ধাপ ১: Integral-এর ভেতরে q(z|x) যুক্ত করা",
+          "body": "সরাসরি log pθ(x) হিসাব করা কঠিন হলেও একটি চমৎকার বীজগাণিতিক কৌশলে আমরা সামনে এগোতে পারি। আমরা pθ(x) = ∫ pθ(x, z) dz সমীকরণের ভেতরে Encoder Distribution qφ(z|x) দিয়ে গুণ ও ভাগ করে লিখতে পারি ∫ qφ(z|x) [pθ(x, z) / qφ(z|x)] dz (যেখানে Support শর্ত মানা জরুরি, অর্থাৎ pθ(x, z) > 0 হলে qφ(z|x) > 0 হতে হবে)। এবার লগারিদমের ভেতরে পাওয়া এই Expectation-এর ওপর অবতল (Concave) Function-এর Jensen's Inequality প্রয়োগ করলেই পাওয়া যায়: log pθ(x) ≥ Eq[log pθ(x, z) − log qφ(z|x)]। ভেতরে যত জটিল Neural Network-ই থাকুক না কেন, Probability-র এই বীজগণিত কিন্তু শতভাগ অপরিবর্তিত থাকে।"
+        },
+        {
+          "type": "text",
+          "title": "ধাপ ২: Joint Distribution ভেঙ্গে দুটি অর্থবহ পদ",
+          "body": "এবার Joint Distribution-কে pθ(x, z) = pθ(x|z)p(z) আকারে ভেঙ্গে বসালেই আমরা পেয়ে যাই ELBO (Evidence Lower Bound)-এর পরিচিত রূপ: প্রথম পদটি হলো Expected Log Reconstruction Likelihood Eq[log pθ(x|z)], আর দ্বিতীয়টি হলো −KL(qφ(z|x) || p(z))। প্রথম পদটি দেখে Decoder লুকানো সংকেত z থেকে প্রদত্ত Observation x-কে কতটা ভালোভাবে ব্যাখ্যা করতে পারছে; আর দ্বিতীয় পদটি মাপে আমাদের Encoded Distribution-টি Prior থেকে কতটা দূরে সরে যাচ্ছে তার মাশুল। লক্ষ্য করুন, এটি বাইরে থেকে জোড়াতালি দিয়ে বানানো কোনো 'Reconstruction Loss যোগ Regularizer' কৌশল নয়—সরাসরি Probability Model থেকেই পদ দুটি বেরিয়ে এসেছে!"
+        },
+        {
+          "type": "math",
+          "title": "ELBO এবং Log-Likelihood-এর পূর্ণাঙ্গ সম্পর্ক",
+          "body": "\\begin{aligned}\\log p_\\theta(x)&=\\mathcal L(x)+D_{KL}(q_\\phi(z|x)\\Vert p_\\theta(z|x))\\\\\\mathcal L(x)&=\\mathbb E_q[\\log p_\\theta(x|z)]-D_{KL}(q_\\phi(z|x)\\Vert p(z))\\end{aligned}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Reconstruction ও KL পদের হিসাব",
+          "body": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter27_local\", Path(\"assets/datasets/digits/generative_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\n\n# Explicit mathematical illustration, not an empirical likelihood claim.\nmu = torch.tensor([[1.0, 0.0]], dtype=torch.float64)\nlv = torch.zeros_like(mu)\nx = torch.zeros(1, 64, dtype=torch.float64)\nr, k = m.vae_terms(torch.zeros_like(x), x, mu, lv)\nassert abs(k.item() - 0.5) < 1e-12\nprint(\"negative ELBO surrogate:\", (r + k).item())\n"
+        },
+        {
+          "type": "text",
+          "title": "ধাপ ৩: ELBO Gap কখন শূন্য হয়?",
+          "body": "Bayes-এর অভেদ ব্যবহার করলে একটি গভীর সত্য ধরা পড়ে: log pθ(x) − ELBO = KL(qφ(z|x) || pθ(z|x)) ≥ 0। অর্থাৎ আসল Log-Likelihood এবং ELBO-র মাঝখানের ব্যবধানটি হলো আসল Posterior-এর সাপেক্ষে আমাদের Encoder-এর KL Divergence! ফলে এই Lower Bound পুরোপুরি আঁটসাঁট (Tight) হবে কেবল তখনই, যখন qφ(z|x) প্রায় সর্বত্র আসল Posterior pθ(z|x)-এর সমান হবে। একটি খুব প্রচলিত ভুল ধারণা এড়িয়ে চলুন: Prior-এর সাথে KL শূন্য হয়ে যাওয়া মানেই কিন্তু Bound Tight হওয়া নয়, কারণ Prior p(z) এবং আসল Posterior pθ(z|x) সম্পূর্ণ আলাদা দুটি Distribution!"
+        },
+        {
+          "type": "text",
+          "title": "চিহ্নের হিসাব: Maximization থেকে Minimization",
+          "body": "তাত্ত্বিকভাবে আমরা ELBO বাড়াতে (Maximize) চাইলেও PyTorch-এর Optimizer সাধারণত Loss কমাতে (Minimize) অভ্যস্ত। তাই কোডে আমরা চিহ্ন উল্টে দিয়ে Reconstruction Negative Log-Likelihood + KL মিনিমাইজ করি, যা আদর্শ β = 1 অবস্থায় আসলে Negative ELBO-এরই একটি Estimator। ট্রেনিংয়ের সময় Expected Reconstruction পদটি র‍্যান্ডম Sample টেনে Monte Carlo পদ্ধতিতে প্রাক্কলন করা হয়। খেয়াল রাখবেন, অ্যাপের UI-তে যখন ε = 0 বসিয়ে সরাসরি Deterministic Mean Reconstruction দেখানো হয়, সেটি কিন্তু গাণিতিক Expected Reconstruction-এর সমান নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Grayscale ডেটায় BCE ব্যবহারের তাত্ত্বিক সীমা",
+          "body": "আমাদের বর্তমান Grayscale ছবিতে x / 16 করার পর যে ভগ্নাংশ মান (Soft Target) পাওয়া যায়, তার ওপর আমরা কোডে BCE Objective চালিয়েছি। কঠোর গাণিতিক বিচারে ভগ্নাংশ মানকে আক্ষরিক Bernoulli Observation (যা কেবল 0 বা 1 হয়) বলা ঠিক নয়; এখানে শেখার সুবিধার্থে এটি একটি কার্যকর Surrogate Objective হিসেবে ব্যবহৃত হয়েছে। ঠিক এ কারণেই সংরক্ষিত Mean-decode BCE + KL মানটিকে আমরা নিখুঁত Grayscale Negative Log-Likelihood বা কড়াকড়িভাবে মাপা ELBO বলে দাবি করিনি।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে উপস্থাপন করবেন",
+          "body": "Interview-এ ELBO Derive করার সময় তিনটি বিষয়ে নিখুঁত থাকুন: Jensen's Inequality-র অসমতার দিক (≥), সমীকরণে থাকা দুটি ভিন্ন KL-এর ভেতরকার Distribution জোড়া, এবং Loss Minimize করার সময় চিহ্নের পরিবর্তন। পাশাপাশি এটিও পরিষ্কার করে বলুন যে, কেবল কম Training Loss বা ভালো Likelihood Bound দেখেই ছবির চাক্ষুষ সৌন্দর্য (Perceptual Quality) সম্পর্কে নিশ্চিত হওয়া যায় না—Bound Tightness, Inference Approximation এবং Sample Quality তিনটি পৃথক প্রশ্ন।"
+        }
+      ]
+    },
+    {
+      "id": "ch27_gaussian",
+      "title": "Diagonal Gaussian-এর KL Divergence হাতে-কলমে প্রতিপাদন",
+      "subtitle": "কোড লেখার সময় Log-variance আর Log-standard-deviation যেন কখনোই গুলিয়ে না যায়",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Log Density Ratio থেকে Closed-form সূত্র",
+          "body": "যদি Encoder q এবং Prior p উভয়ই Gaussian হয়, তবে KL Divergence কোনো র‍্যান্ডম Sampling ছাড়াই সরাসরি বীজগাণিতিক সূত্রে বের করা যায়। সংজ্ঞা অনুযায়ী q-এর সাপেক্ষে (log q − log p)-এর Expectation নিন। এক মাত্রায় q = N(μ, σ²) এবং p = N(0, 1) হলে আমরা জানি E[(z − μ)²] = σ² এবং E[z²] = μ² + σ²। দুই দিকের Normalizing Constant কাটাকাটি চলে গেলে প্রতিটি Dimension-এ অবশিষ্ট থাকে ঠিক 0.5 * (μ² + σ² − 1 − log σ²)। যেহেতু আমাদের Covariance কর্ণাকার (Diagonal), তাই সবগুলো Dimension বরাবর স্রেফ যোগ (Sum) করলেই পুরো KL পাওয়া যায়।"
+        },
+        {
+          "type": "text",
+          "title": "কেন Network সরাসরি Log-variance Output দেয়?",
+          "body": "যেকোনো Distribution-এর Variance σ² অবশ্যই ধনাত্মক হতে হয়, কিন্তু সাধারণ Neural Network Layer যেকোনো ঋণাত্মক বা ধনাত্মক সংখ্যা তৈরি করতে পারে। তাই সীমাবদ্ধতা এড়াতে Network-কে আমরা সরাসরি সীমাহীন (Unconstrained) রাশি ℓ = log σ² বা Log-variance আউটপুট দিতে বলি। এখান থেকে Variance পাওয়া যায় exp(ℓ) দিয়ে, আর Standard Deviation পাওয়া যায় exp(0.5 * ℓ) দিয়ে। ভুল করে exp(ℓ) দিয়ে Reparameterization করলে প্রকৃত Variance বর্গ হয়ে যাবে! এখানে শেখা Mean μ সীমাহীন থাকলেও ℓ অতিরিক্ত বড় ধনাত্মক সংখ্যা হলে Exponential Overflow ঘটতে পারে—সেদিকে খেয়াল রাখা জরুরি।"
+        },
+        {
+          "type": "math",
+          "title": "Diagonal Gaussian KL-এর চূড়ান্ত সমীকরণ",
+          "body": "D_{KL}(q\\Vert\\mathcal N(0,I))=\\frac12\\sum_j(\\mu_j^2+e^{\\ell_j}-1-\\ell_j),\\quad\\ell_j=\\log\\sigma_j^2"
+        },
+        {
+          "type": "code",
+          "title": "PyTorch-এর Built-in KL-এর সাথে আমাদের সূত্রের যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter27_local\", Path(\"assets/datasets/digits/generative_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\n\nq = torch.distributions.Normal(torch.tensor([1.0, 0.0]), torch.tensor([2.0, 1.0]))\np = torch.distributions.Normal(torch.zeros(2), torch.ones(2))\nkl = torch.distributions.kl_divergence(q, p).sum()\nmanual = 0.5 * (1 + 4 - 1 - torch.log(torch.tensor(4.0)))\nassert torch.allclose(kl, manual)\nprint(kl.item())\n"
+        },
+        {
+          "type": "text",
+          "title": "সূত্র যাচাইয়ের দ্রুত পরীক্ষা (Sanity Checks)",
+          "body": "সূত্র লেখার পর কয়েকটি চেনা মান বসিয়ে দ্রুত পরীক্ষা করে নেওয়া ভালো। যেমন, μ = 0 এবং ℓ = 0 হলে q নিজেই Standard Normal হয়ে যায়, ফলে KL = 0 আসে। আবার একক Dimension-এ μ = 1 এবং ℓ = 0 বসালে KL = 0.5 পাওয়া যায়। অন্যদিকে σ → 0 কিংবা σ → ∞—দুই চরম অবস্থাতেই মাশুল বাড়তে থাকে। Debug করার সময় খেয়াল রাখবেন, Floating-point আসন্নীকরণের কারণে আসা অতি ক্ষুদ্র ঋণাত্মক মান (যেমন -1e-7) আর ভুল সূত্রের কারণে আসা সত্যিকারের ঋণাত্মক মান এক জিনিস নয়; দুটোকে আলাদাভাবে চিহ্নিত করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "Reduction-এর নিয়ম: কোথায় Sum আর কোথায় Mean?",
+          "body": "Batch Tensor-এ হিসাব করার সময় সঠিক নিয়ম হলো: প্রতিটি উদাহরণের সবগুলো Latent Dimension বরাবর sum নেওয়া, এবং এরপর পুরো Batch বরাবর mean নেওয়া। ভুল করে সব উপাদান মিলিয়ে একসাথে mean নিলে Latent Dimension বাড়ানো বা কমানোর সাথে সাথে Regularization-এর পাল্লা অজান্তেই বদলে যাবে! একইভাবে একটি ছবির সব Pixel-এর Reconstruction Loss যোগ (sum) করে এবং KL-এর সব Dimension যোগ করে একই Per-example এককে রাখুন, এবং দেখবেন Optimizer যেন Batch Size দিয়ে স্কেলিং দুবার ভাগ না করে ফেলে।"
+        },
+        {
+          "type": "text",
+          "title": "Gradient কীভাবে Latent Space-কে গুছিয়ে রাখে?",
+          "body": "সূত্রটির Partial Derivative নিলে দেখা যায় dKL/dμ = μ এবং dKL/dℓ = 0.5 * (exp(ℓ) − 1)। এর অর্থ খুবই পরিষ্কার: Prior-এর সাথে এই KL পদটি সবসময় Mean-কে টেনে 0-এর দিকে এবং Variance-কে টেনে 1-এর দিকে আনতে চায়। ঠিক এর বিপরীতে Reconstruction পদটি চায় Input ছবির দরকারি তথ্য ধরে রাখতে যাতে ছবিগুলো আলাদা করে চেনা যায়। এই দুই বিপরীত শক্তির ভারসাম্যই শেষ পর্যন্ত Training-এর গতিপ্রকৃতি এবং শেখা Representation-এর মান নির্ধারণ করে।"
+        },
+        {
+          "type": "text",
+          "title": "Coding অনুশীলন ও সতর্কতা",
+          "body": "নিজের হাতে লেখা KL Function-টিকে সবসময় PyTorch-এর Independent Normal KL-এর সাথে মিলিয়ে পরীক্ষা করুন। বিশেষ করে শূন্য KL, 1-এর ভিন্ন অন্য কোনো Variance, পূর্ণ Batch Shape এবং খুব বড় বা ছোট Log-variance দিয়ে Test চালান। সংখ্যাসূচক স্থিতিশীলতার অজুহাতে নীরবে খুব ছোট পরিসরে মান আটকে (Clip করে) অন্য আরেকটি Model বানিয়ে ফেলবেন না; যদি কোনো Clipping Policy ব্যবহার করতেই হয়, তবে তা স্পষ্টভাবে উল্লেখ করে রাখুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch27_reparameterization",
+      "title": "Reparameterization Trick: র‍্যান্ডম Sampling রেখেও Gradient প্রবাহ",
+      "subtitle": "একটি র‍্যান্ডম বিন্দু টানার ভেতর দিয়েও Backpropagation কীভাবে কাজ করে?",
+      "duration": "60 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Sampling-এর ভেতরে মূল বাধাটি কোথায়?",
+          "body": "একটি শেখা Distribution থেকে সরাসরি র‍্যান্ডম Sample টানলে তার ভেতর দিয়ে সাধারণত স্বয়ংক্রিয় কোনো Differentiable Path তৈরি হয় না। অথচ Optimizer-কে জানতে হবে যে, Encoder-এর Parameter সামান্য বদলে Distribution পরিবর্তন করলে Sample-এর অবস্থান ঠিক কীভাবে বদলাবে। এই Gradient সংযোগটি না থাকলে Reconstruction পদ থেকে কোনো শেখার সংকেত Encoder পর্যন্ত পৌঁছাবে না, ফলে Encoder কাজের কোনো কোডও শিখতে পারবে না।"
+        },
+        {
+          "type": "text",
+          "title": "Pathwise সমাধান: র‍্যান্ডমনেসকে বাইরে সরিয়ে নেওয়া",
+          "body": "Reparameterization Trick কাজটিকে চমৎকারভাবে ঘুরিয়ে দেয়। প্রথমে কোনো Parameter-এর ওপর নির্ভর করে না এমন একটি স্থির Standard Normal Distribution থেকে নয়েজ ε Sample করুন। এরপর একটি সম্পূর্ণ সুনির্দিষ্ট ও Differentiable রূপান্তর z = μ + σ ⊙ ε চালিয়ে z তৈরি করুন! এখন একটি নির্দিষ্ট ε স্থির ধরে μ ও σ-এর সাপেক্ষে সহজেই Derivative নেওয়া যায়। এতে Expected Objective-এর Gradient প্রাক্কলনে Sampling-জনিত তারতম্য (Variance) থাকলেও Encoder Parameter পর্যন্ত যাওয়ার পথটি পুরোপুরি অটুট থাকে।"
+        },
+        {
+          "type": "math",
+          "title": "Reparameterization ও তার Partial Derivative",
+          "body": "z=\\mu+e^{\\ell/2}\\odot\\epsilon,\\quad\\epsilon\\sim\\mathcal N(0,I),\\quad\\frac{\\partial z}{\\partial\\ell}=\\tfrac12 e^{\\ell/2}\\odot\\epsilon"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Autograd দিয়ে Gradient যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter27_local\", Path(\"assets/datasets/digits/generative_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\n\nmu = torch.tensor([1.0, -1.0], dtype=torch.float64, requires_grad=True)\nlv = torch.zeros(2, dtype=torch.float64, requires_grad=True)\neps = torch.tensor([2.0, -2.0], dtype=torch.float64)\nz = mu + torch.exp(0.5 * lv) * eps\n# Backward accumulates into .grad; the seed or reduction sets the scale.\nz.sum().backward()\nassert torch.allclose(mu.grad, torch.ones(2, dtype=torch.float64))\nassert torch.allclose(lv.grad, eps / 2)\nprint(z.detach().tolist(), lv.grad.tolist())\n"
+        },
+        {
+          "type": "text",
+          "title": "Chain Rule কীভাবে দুই শাখায় কাজ করে?",
+          "body": "সমীকরণটি থেকে সরাসরি দেখা যাচ্ছে dz/dμ = 1 এবং dz/dℓ = 0.5 * exp(0.5 * ℓ) ⊙ ε। ফলে Decoder থেকে আসা সংকেত dL/dz সরাসরি Chain Rule বেয়ে μ ও ℓ উভয় শাখায় পৌঁছে যায়, আর তার সাথে যোগ হয় আমাদের হাতে বের করা নিখুঁত KL Gradient। এখানে একটি বিষয়ে খুব সতর্ক থাকবেন: বাহ্যিক নয়েজ ε-এ Gradient না থাকলেও কোনো ক্ষতি নেই, কিন্তু আপনি যদি ভুল করে μ কিংবা z-কে detach() করে ফেলেন, তবে সাথে সাথে Encoder-এর Reconstruction শেখার পথটি ভেঙে যাবে!"
+        },
+        {
+          "type": "generative_vae_lab",
+          "title": "Interactive Lab: নিজের হাতে Latent নয়েজ ঘুরিয়ে দেখুন",
+          "body": "নিচের ল্যাবে একটি বাস্তব Diagnostic Image বেছে নিয়ে তার μ, Log-variance, Reconstruction এবং KL-এর মান পরীক্ষা করুন। এখানকার ε = [e, −e] Slider-টি নিয়ন্ত্রিতভাবে প্রভাব দেখানোর জন্য তৈরি—এটি প্রতিবার নতুন র‍্যান্ডম Standard Normal Sample টানছে না। Slider-এ ε = 0 বসালে z = μ পাওয়া যায় ঠিকই, তবে মনে রাখবেন যে একটি Non-linear Decoder-এর ক্ষেত্রে Expected আউটপুট E[Decoder(z)] সাধারণত Mean বিন্দুর আউটপুট Decoder(E[z])-এর সমান হয় না।"
+        },
+        {
+          "type": "text",
+          "title": "PyTorch-এ rsample() বনাম sample()",
+          "body": "PyTorch-এর Normal Distribution ব্যবহার করলে মনে রাখবেন: Normal.rsample() আপনাকে সেই কাঙ্ক্ষিত Pathwise Reparameterized Sample ও Autograd পথটি দেয়, কিন্তু সাধারণ Normal.sample() গ্রাফ বিচ্ছিন্ন রাখে বলে কোনো Gradient দেয় না। আমাদের কোডে স্বচ্ছতার জন্য সরাসরি torch.randn এবং সুনির্দিষ্ট গাণিতিক রূপান্তরটি লেখা হয়েছে। তবে খেয়াল রাখবেন, বিচ্ছিন্ন বা Categorical Latent Variable-এর ক্ষেত্রে এই একই Gaussian সূত্র সরাসরি খাটে না।"
+        },
+        {
+          "type": "text",
+          "title": "প্রচলিত Bug ও Debugging অনুশীলন",
+          "body": "VAE কোড Debug করার সময় চারটি সূক্ষ্ম ভুল সবার আগে খুঁজুন: 0.5 গুণকটি বাদ পড়া, প্রতিটি Dimension-এ আলাদা নয়েজ না নিয়ে [B, 1] আকারের একই নয়েজ সব Dimension-এ Broadcast হয়ে যাওয়া, ভুল করে একই ε বারবার পুনর্ব্যবহার করা, এবং অসতর্ক detach()। কেবল কোনো একটি Random Seed-এ Loss কমতে দেখলেই Gradient সঠিক আছে বলে ধরে নেবেন না; একটি স্থির ইনপুট ও নয়েজ বসিয়ে μ ও ℓ-এর Autograd মানকে হাতে হিসাব করা নিখুঁত মানের সাথে মিলিয়ে দেখুন।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে একটি পূর্ণাঙ্গ Pathwise Gradient হিসাব",
+          "body": "চলুন একটি ছোট সংখ্যার উদাহরণ শুরু থেকে শেষ পর্যন্ত হাতে কষে মিলিয়ে দেখি। ধরা যাক μ = 1, Log-variance = log(4) (অর্থাৎ σ = 2), এবং আমরা দুটি সুনির্দিষ্ট নয়েজ মান নিলাম ε = [−1, +1]। তাহলে দুটি Latent মান দাঁড়াবে z = [−1, 3], এবং বর্গের Mean Loss হবে mean(z²) = 5। এবার Derivative হিসাব করলে পাই dL/dμ = mean(2z) = 2 এবং dL/dlogvar = mean(z * σ * ε) = 4। মজার বিষয় হলো, এই প্রতিসম নয়েজ জোড়াটির কারণে ফলাফলটি Quadratic Function-এর তাত্ত্বিক Normal Expectation μ² + σ² = 5 এবং তার Derivative-এর সাথেও হুবহু মিলে গেছে—যদিও সাধারণ Monte Carlo Training-এ প্রতি ধাপে ε র‍্যান্ডমভাবেই Base Distribution থেকে টানা হয়।"
+        },
+        {
+          "type": "code",
+          "title": "Mean ও Log-variance-এর Gradient হাতে-কলমে যাচাই",
+          "body": "import math\nimport torch\n\nmean = torch.tensor(1.0, dtype=torch.float64, requires_grad=True)\nlog_variance = torch.tensor(math.log(4.0), dtype=mean.dtype, requires_grad=True)\nnoise = torch.tensor([-1.0, 1.0], dtype=mean.dtype)\nstandard_deviation = torch.exp(0.5 * log_variance)\nlatent = mean + standard_deviation * noise\nloss = latent.square().mean()\nd_mean, d_log_variance = torch.autograd.grad(loss, (mean, log_variance))\ntorch.testing.assert_close(d_mean, (2 * latent.detach()).mean())\ntorch.testing.assert_close(\n    d_log_variance, (latent.detach() * standard_deviation.detach() * noise).mean()\n)\nprint(*latent.detach().tolist(), loss.item(), d_mean.item(), d_log_variance.item())\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে যাচাই করুন",
+          "body": "উপরের উদাহরণে (যেখানে logvar = log(4)) কেউ যদি ভুল করে 0.5 গুণ না দিয়ে সরাসরি Variance exp(logvar)-কেই Standard Deviation ধরে Sample করে, তবে নয়েজের স্কেল ও Distribution-এর প্রকৃত Variance-এ কী ভুল হবে?",
+          "solution": "তখন Sample নয়েজের স্কেল প্রয়োজনীয় 2-এর বদলে 4 হয়ে যেত, আর তৈরি হওয়া Distribution-এর প্রকৃত Variance 4-এর জায়গায় বর্গ হয়ে 16 দাঁড়াত! তাই কোড লেখার সময় logvar → exp(0.5 * logvar) রূপান্তর এবং এর Gradient দুটোই একসাথে যাচাই করে নেওয়া জরুরি।",
+          "reference": "https://arxiv.org/abs/1312.6114"
+        }
+      ]
+    },
+    {
+      "id": "ch27_likelihood",
+      "title": "Reconstruction Likelihood: BCE বনাম MSE ও Observation Model",
+      "subtitle": "Loss লেখার আগেই ঠিক করুন আপনার ডেটার একক ও Observation Model কী",
+      "duration": "60 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Bernoulli Likelihood ও Conditional Independence",
+          "body": "অনেকেই অভ্যাসবশত VAE-তে যেকোনো একটি Reconstruction Loss বসিয়ে দেন, কিন্তু প্রতিটি Loss Function-এর পেছনে আসলে একটি সুনির্দিষ্ট Observation Model কাজ করে। ছবির Pixel-গুলো যদি বাইনারি (0 বা 1) এবং Latent বিন্দু z দেওয়া থাকলে পরস্পর স্বাধীন (Conditionally Independent) হয়, তবে Decoder-এর আউটপুট π = sigmoid(logits) নির্দেশ করে প্রতিটি Pixel-এর Bernoulli Probability। সেক্ষেত্রে Negative Log-Likelihood (NLL) দাঁড়ায় সবগুলো Pixel-এর Binary Cross-Entropy (BCE)-এর যোগফল (Sum)। মনে রাখবেন, এই স্বাধীনতা কেবল z দেওয়া থাকলেই প্রযোজ্য—সামগ্রিকভাবে ছবির পাশের Pixel-গুলো স্বাধীন বলে দাবি করা হচ্ছে না। আর সত্যিকারের নতুন Sample x টানতে হলে এই π থেকে Bernoulli Sample তুলতে হয়; সরাসরি Mean Image দেখানো আলাদা ধরনের আউটপুট।"
+        },
+        {
+          "type": "text",
+          "title": "Grayscale ডেটায় বিকল্প Observation Model",
+          "body": "আমাদের UCI Dataset-এর প্রতিটি Pixel আসলে 17টি ধূসর স্তরে (0 থেকে 16) বিন্যস্ত। তাই x / 16 করে পাওয়া ভগ্নাংশ মানের (Soft Target) ওপর BCE চালানো একটি কাজের Reconstruction Surrogate হলেও এটি নিখুঁত Continuous Grayscale Density নয়। বিকল্প হিসেবে স্থির Variance-এর Gaussian Likelihood (যা MSE-এর সমতুল্য) অথবা 17-স্তরের Discretized Categorical Pixel Likelihood ব্যবহার করা যেতে পারে। তবে খেয়াল রাখবেন, প্রতিটি পছন্দের সাথে সাথে ডেটার Support, একক এবং Loss-এর পাল্লা বদলে যায়।"
+        },
+        {
+          "type": "math",
+          "title": "Bernoulli Negative Log-Likelihood সমীকরণ",
+          "body": "-\\log p(x|z)=-\\sum_j[x_j\\log \\pi_j+(1-x_j)\\log(1-\\pi_j)]"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ চরম Logit মানেও স্থিতিশীল BCE হিসাব",
+          "body": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter27_local\", Path(\"assets/datasets/digits/generative_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\n\nlogits = torch.tensor([[1000.0, -1000.0, 0.0]], dtype=torch.float64)\nx = torch.tensor([[1.0, 0.0, 0.5]], dtype=torch.float64)\nloss = torch.nn.functional.binary_cross_entropy_with_logits(logits, x, reduction=\"none\")\nassert torch.isfinite(loss).all()\nassert abs(loss.sum().item() - __import__(\"math\").log(2)) < 1e-12\nprint(loss.tolist())\n"
+        },
+        {
+          "type": "text",
+          "title": "Numerical Stability: কেন BCEWithLogits অপরিহার্য?",
+          "body": "কোড লেখার সময় আলাদা করে Sigmoid নিয়ে তারপর log করার বদলে সবসময় BCEWithLogits বা স্থিতিশীল softplus(a) − x·a রূপটি ব্যবহার করুন। কারণ চরম Logit মানে Sigmoid স্যাচুরেট হয়ে গেলে log(0) থেকে সাথে সাথে NaN বা অসীম মান চলে আসতে পারে! আরেকটি সাধারণ ভুল এড়িয়ে চলুন: Decoder বা Discriminator যদি কাঁচা Logit আউটপুট দেয়, তবে BCEWithLogits-এ পাঠানোর আগে ভুলেও আবার Sigmoid বসাবেন না; কেবল UI-তে দেখানোর জন্য Probability দরকার হলে তখন আলাদাভাবে Sigmoid ব্যবহার করুন।"
+        },
+        {
+          "type": "text",
+          "title": "Reduction-এর ফাঁদ: Pixel Sum বনাম Pixel Mean",
+          "body": "একটি ছবিতে 64টি Pixel যোগ (sum) করলে Loss থাকে পুরো একটি ছবির পাল্লায়, আর গড় (mean) নিলে তা সাথে সাথে 64 গুণ কমে যায়। এখন আপনি যদি KL-এর বেলায় মাত্রাগুলোর sum ঠিক রেখে Reconstruction-এ করে দেন Pixel Mean, তবে অজান্তেই কার্যকর (Effective) β একলাফে 64 গুণ বেড়ে যাবে! তা ছাড়া Batch Mean এবং Feature বা Pixel Mean সম্পূর্ণ আলাদা দুটি অপারেশন; তাই ফলাফল রিপোর্ট করার সময় কোন Axis-এ কী Reduction নিয়েছেন তা নামসহ স্পষ্টভাবে উল্লেখ করুন।"
+        },
+        {
+          "type": "text",
+          "title": "ভিন্ন Model-এর কাঁচা Loss সরাসরি তুলনা করবেন না",
+          "body": "একটি জরুরি সতর্কতা: MSE, BCE, ELBO Estimate এবং GAN-এর Generator Loss মোটেও একই এককের পরিমাপ নয়। ভিন্ন Likelihood বা ভিন্ন Normalization ব্যবহার করা দুটি Model-এর কাঁচা Loss দেখে সরাসরি র‍্যাংকিং করা চলে না। আমাদের রিপোর্টে যে Diagnostic MSE দেখানো হয়েছে, তা কেবল একই Normalized Pixel পাল্লায় সাধারণ Train-mean Baseline-এর সাথে একটি বর্ণনামূলক তুলনা মাত্র।"
+        },
+        {
+          "type": "text",
+          "title": "Interview টিপস: ছবির Resolution দ্বিগুণ হলে কী ঘটবে?",
+          "body": "Interview-এ প্রায়ই জিজ্ঞেস করা হয়: একই VAE Model-এ ছবির দৈর্ঘ্য ও প্রস্থ দ্বিগুণ হলে Reconstruction Sum ও KL-এর ভারসাম্যে কী পরিবর্তন আসবে? উত্তরটি হলো, দৈর্ঘ্য-প্রস্থ দ্বিগুণ হলে মোট Pixel সংখ্যা চার গুণ হয়ে যায়, ফলে Pixel Sum নিলে Reconstruction পদের পাল্লাও চার গুণ ভারী হয়ে পড়ে। তখন আপনার Normalization Policy এবং Objective-এর পরিবর্তন পরিষ্কারভাবে ব্যাখ্যা করতে হবে। একইভাবে ছবির ঝাপসা ভাব (Blur) কমাতে Loss বদলালে তার Probabilistic ব্যাখ্যা কীভাবে বদলে যাচ্ছে সেটিও উল্লেখ করুন।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে হিসাব: Pixel Reduction কীভাবে গোপনে β বদলে দেয়",
+          "body": "চলুন ছোট একটি সংখ্যার উদাহরণে বিষয়টি পরখ করি। ধরা যাক আমাদের কাছে 2টি ছবি আছে, যেখানে প্রতি ছবির 4টি করে Pixel-এর প্রতিটির NLL = 1 এবং প্রতি ছবির মোট Latent KL = 1। প্রতিটি ছবির Pixel যোগ (sum) করে Batch Mean নিলে Reconstruction = 4, KL = 1 এবং মোট Loss = 5 পাওয়া যায়। কিন্তু সব Pixel-এর একত্রে mean নিলে Reconstruction = 1 এবং মোট Loss = 2 হয়ে যায়! দ্বিতীয় এই Objective-কে 4 দিয়ে গুণ করলে দেখবেন সেটি আসলে Reconstruction Sum (4) এবং তার সাথে 4 গুণ ওজনের KL (4) হয়ে গেছে। অর্থাৎ Pixel Dimension-এ গড় নেওয়া মানে লুকানো Latent Regularization-এর আপেক্ষিক শক্তি বদলে দেওয়া!"
+        },
+        {
+          "type": "code",
+          "title": "Event Dimension ও Batch Dimension-এর প্রভাব যাচাই",
+          "body": "import torch\n\npixel_nll = torch.ones(2, 4, dtype=torch.float64)\nlatent_kl = torch.ones(2, dtype=pixel_nll.dtype)\nreconstruction = pixel_nll.sum(dim=1).mean()\ncorrect = reconstruction + latent_kl.mean()\npixel_mean = pixel_nll.mean() + latent_kl.mean()\nscaled_pixel_mean = 4 * pixel_mean\ntorch.testing.assert_close(scaled_pixel_mean, reconstruction + 4 * latent_kl.mean())\nprint(\n    reconstruction.item(), correct.item(), pixel_mean.item(), scaled_pixel_mean.item()\n)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে যাচাই করুন",
+          "body": "কেউ যদি Pixel-এর পাশাপাশি Latent KL-এর Dimension-গুলোকেও sum না করে mean করে দেয়, তবে পরীক্ষার নথিতে (Experiment Record) কী কী তথ্য স্পষ্টভাবে লিখে রাখতে হবে?",
+          "solution": "তখন Reconstruction এবং KL উভয়ের Event Dimension সংখ্যা, কোন কোন Axis বরাবর sum বা mean নেওয়া হয়েছে, এবং সুনির্দিষ্ট β-এর মান স্পষ্টভাবে লিখে রাখতে হবে। পাশাপাশি Image-এর আকার বা Latent Dimension-এর প্রস্থ বদলালে কার্যকর (Effective) Objective একই থাকছে কি না, তাও পরীক্ষা করে দেখতে হবে।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch27_training",
+      "title": "VAE Training Loop: Tensor Shape, Reduction ও Checkpoint",
+      "subtitle": "শুরু থেকে শেষ পর্যন্ত একটি Reproducible Local Training কীভাবে সাজাবেন?",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Network Architecture ও Parameter-এর হিসাব",
+          "body": "আমাদের ছোট VAE নেটওয়ার্কটির ডেটা প্রবাহ একদম সোজাসাপ্টা: ইনপুট [B, 64] প্রথমে Linear(64 → 32) ও ReLU পেরিয়ে দুটি আলাদা Linear(32 → 2) হেডে যায়, যারা দেয় μ এবং Log-variance। এরপর [B, 2] আকারের Latent কোড z ঢোকে Decoder-এ: Linear(2 → 32) + ReLU হয়ে শেষে Linear(32 → 64) থেকে পাওয়া যায় ছবির কাঁচা Logit। পুরো VAE-তে শেখার যোগ্য (Trainable) Parameter আছে ঠিক 4420টি। মনে রাখবেন, নতুন Sample তৈরির (Generation) সময় কেবল Decoder থাকলেই চলে, কিন্তু ছবির Reconstruction করতে হলে Encoder ও Decoder দুটোই প্রয়োজন হয়।"
+        },
+        {
+          "type": "text",
+          "title": "হুবহু Training সেটআপ ও শর্তাবলি",
+          "body": "পুরো পরীক্ষণটি যাতে হুবহু পুনরুৎপাদনযোগ্য থাকে, সেজন্য আমরা সব মাপকাঠি আগে থেকেই স্থির রেখেছি: CPU-তে float64 প্রিসিশন, মূল seed = 27, ডেটা শাফল করার জেনারেটর seed = 270, Adam Optimizer-এ lr = 0.003, Batch Size = 128, এবং 60টি Epoch (মোট 720টি Update)। প্রতিটি Row-তে Pixel BCE Sum ও Latent KL Sum যোগ করে তারপর পুরো Batch-এর Mean নেওয়া হয়েছে। এখানে কোনো Validation টিউনিং, Early Stopping বা সেরা Epoch খোঁজার বাছাই প্রক্রিয়া চালানো হয়নি—সরাসরি শেষ Epoch-এর Checkpoint সংরক্ষণ করা হয়েছে।"
+        },
+        {
+          "type": "math",
+          "title": "Minibatch Objective-এর সমীকরণ",
+          "body": "\\mathcal J=\\frac1B\\sum_{i=1}^B[\\mathrm{BCEsum}_i+\\mathrm{KLsum}_i]"
+        },
+        {
+          "type": "code",
+          "title": "সংরক্ষিত Weight লোড করে Shape ও Parameter যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter27_local\", Path(\"assets/datasets/digits/generative_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/digits/generative_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nv = m.VAE()\nv.load_state_dict(\n    {k: torch.tensor(a, dtype=torch.float64) for k, a in lab[\"weights\"][\"vae\"].items()}\n)\nx = torch.tensor([lab[\"images\"][0][\"pixels\"]], dtype=torch.float64)\nlogits, mu, lv = v(x, torch.zeros(1, 2, dtype=torch.float64))\nr, k = m.vae_terms(logits, x, mu, lv)\nassert logits.shape == (1, 64) and mu.shape == lv.shape == (1, 2)\nassert sum(p.numel() for p in v.parameters()) == 4420\nprint(r.item(), k.item())\n"
+        },
+        {
+          "type": "text",
+          "title": "Training Loop-এর সঠিক ক্রম ও সতর্কতা",
+          "body": "প্রতিটি ধাপে অপারেশনের ক্রমটি হলো: zero_grad → Encoder → Reparameterize → Decoder → Reconstruction ও KL হিসাব → backward → step। একটি সূক্ষ্ম পার্থক্য খেয়াল রাখবেন: প্রতি Epoch-এর Training Loss সংগৃহীত হয় প্রতি ধাপে বদলাতে থাকা Weight-গুলোর আপডেটের মধ্য দিয়ে; অন্যদিকে ট্রেনিং শেষে স্থির (Frozen) ফাইনাল মডেল দিয়ে Diagnostic সেটের Forward Pass আলাদাভাবে চালানো হয়। তাই Epoch চলাকালীন Loss-এর ইতিহাসকে কোনো একটি স্থির অপরিবর্তনীয় Model-এর মূল্যায়ন রেখা ভাবা ঠিক নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Reproducibility-এর বাস্তব সীমানা",
+          "body": "আমাদের বান্ডেলে মূল ডেটার হ্যাশ, প্রতিটি ভাগের Row ID, সব Hyperparameter, প্যাকেজের সংস্করণ এবং সংরক্ষিত Weight দেওয়া আছে; এমনকি Function শেষে কলারের RNG ও Thread State-ও আগের অবস্থায় ফিরিয়ে দেওয়া হয়। একই CPU ও প্যাকেজ পরিবেশে পুনরায় চালালে আপনি হুবহু একই ফলাফল পাবেন। তবে মনে রাখবেন, ভিন্ন হার্ডওয়্যার বা লাইব্রেরির সংস্করণ বদলে গেলে বিট-পর্যায়ে অভিন্ন (Bit-identical) ফলাফলের কোনো সার্বজনীন গ্যারান্টি দেওয়া যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "নিরাপদ Artifact ও Checkpoint ব্যবস্থাপনা",
+          "body": "সাধারণ CLI কমান্ড চালালে বান্ডেল করা মূল ফাইলগুলো বদলায় না; কেবল স্পষ্টভাবে --write-labs দিলেই JSON নতুন করে তৈরি হয় এবং --artifact-dir দিলে লোকাল ডিরেক্টরিতে State Dictionary, রিপোর্ট ও Checksum লেখা হয়। নিরাপত্তার স্বার্থে সবসময় বিশ্বস্ত ও সামঞ্জস্যপূর্ণ উৎস থেকে weights_only মোডে Checkpoint লোড করুন—অপরিচিত জায়গা থেকে নামানো Pickle ফাইল কখনোই এক্সিকিউট করবেন না। আর অ্যাপের ভেতরে কোনো PyTorch Runtime চলে না; সংরক্ষিত JSON Weight দিয়েই সব হিসাব সম্পন্ন হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Coding অনুশীলন: Save ও Reload-এর পর মিলিয়ে দেখা",
+          "body": "যেকোনো Model সংরক্ষণ ও পুনরায় লোড করার পর একটি নির্দিষ্ট Held-out ইনপুটে Forward Pass চালিয়ে আগের আউটপুটের সাথে মিলিয়ে দেখুন। পাশাপাশি মোট Parameter সংখ্যা, Tensor Shape, সব আউটপুট সসীম (Finite) কি না এবং মূল Row-এর পরিচয় assert দিয়ে পরীক্ষা করুন। মনে রাখবেন, Optimizer-এর নিজস্ব Checkpoint ছাড়া মাঝপথ থেকে Training পুনরায় শুরু (Resume) করলে হুবহু আগের গতিপথ পাওয়া যাবে না; আমাদের বর্তমান Artifact-টি স্থির Inference এবং শুরু থেকে পূর্ণ রিরানের জন্যই তৈরি।"
+        }
+      ]
+    },
+    {
+      "id": "ch27_beta",
+      "title": "β-VAE, Rate–Distortion ও তথ্যের ভারসাম্য",
+      "subtitle": "একই স্থির Weight-এর ওপর Slider ঘোরানো আর নতুন করে Model Train করা এক জিনিস নয়",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "β গুণকের ভূমিকা ও মূল ভারসাম্য",
+          "body": "KL পদের সামনে একটি গুণক β বসালে আমরা দুটি লক্ষ্যের ভারসাম্য নিয়ন্ত্রণ করতে পারি। β বাড়ালে Encoded Distribution-গুলোকে Prior-এর কাছাকাছি রাখার চাপ বাড়ে, যার ফলে সূক্ষ্ম Reconstruction তথ্য হারিয়ে যেতে পারে। উল্টোদিকে β কমালে Reconstruction আরও নিখুঁত হতে পারে ঠিকই, কিন্তু তখন Prior থেকে টানা নতুন Sample-গুলো Latent Space-এর ফাঁকা বা দুর্বল অঞ্চলে গিয়ে পড়ার ঝুঁকি বাড়ে। কোন Representation সবচেয়ে কাজের হবে তা নির্ভর করে নির্দিষ্ট কাজের চাহিদার ওপর—বড় β মানেই স্বয়ংক্রিয়ভাবে ভালো Model নয়।"
+        },
+        {
+          "type": "text",
+          "title": "সাধারণ ELBO থেকে β-VAE কেন আলাদা?",
+          "body": "গাণিতিকভাবে মনে রাখা দরকার যে কেবল β = 1 হলো আদর্শ Objective Weighting। যখনই β ≠ 1 ধরা হয়, তখন সেটি আর মূল Model-এর সাধারণ Negative ELBO অভেদ থাকে না; বিশেষ করে β > 1-এর বাড়তি মাশুল মূল Log-Likelihood-এর Lower Bound-কে আরও ঢিলে (Loose) করে দিতে পারে। তাই সবসময় ব্যবহৃত Objective-এর নাম, Likelihood অনুমান ও Reduction স্পষ্ট করে উল্লেখ করুন, এবং শুধু বড় গুণক দেখেই স্বয়ংক্রিয়ভাবে Disentanglement অর্জিত হয়েছে বলে দাবি করবেন না।"
+        },
+        {
+          "type": "math",
+          "title": "β-VAE Objective-এর সমীকরণ",
+          "body": "\\mathcal J_\\beta=\\mathbb E_q[-\\log p(x|z)]+\\beta D_{KL}(q(z|x)\\Vert p(z))"
+        },
+        {
+          "type": "code",
+          "title": "স্থির Weight-এ ভিন্ন ভিন্ন β বসিয়ে মোট Loss হিসাব",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/digits/generative_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nrow = lab[\"images\"][0]\nvalues = [row[\"bce\"] + beta * row[\"kl\"] for beta in [0.0, 1.0, 4.0]]\nassert values[0] <= values[1] <= values[2]\nprint(values)  # Fixed weights and mean decode; no beta retraining.\n"
+        },
+        {
+          "type": "text",
+          "title": "Rate–Distortion ও Information Theory-র দৃষ্টিকোণ",
+          "body": "Information Theory-র চোখে দেখলে প্রথম পদটি হলো Distortion (পুনর্গঠনের ত্রুটি), আর Expected KL পদটিকে দেখা যায় তথ্যের হার বা Rate-এর প্রতিনিধি এবং Input ও Latent কোডের Mutual Information-এর একটি Upper Bound হিসেবে। তবে এই KL-এর ভেতরে সামগ্রিক Aggregate Posterior Distribution-এর অমিলও মিশে থাকে; তাই KL-এর মানটিকে সরাসরি 'কতটুকু অর্থবহ বৈশিষ্ট্য শেখা হয়েছে' বলে ধরে নেওয়া অতি-সরলীকরণ হবে। প্রাকৃতিক লগারিদম ব্যবহার করায় এখানে হিসাবের একক হলো nats।"
+        },
+        {
+          "type": "text",
+          "title": "স্থির Weight-এ Slider ঘোরানোর সীমাবদ্ধতা",
+          "body": "অ্যাপের β কন্ট্রোলটি আসলে ইতিমধ্যে ট্রেন করা একই স্থির Weight-এর ওপর কেবল Reconstruction + β·KL রাশিটি নতুন করে হিসাব করে দেখায়। যেহেতু ভেতরের Weight কিংবা z কিছুই বদলায় না, তাই Slider ঘোরালে জেনারেটেড ছবির আউটপুটও পরিবর্তিত হয় না। নতুন কোনো β-তে ট্রেন করলে Model কেমন ছবি বানাত তা জানতে হলে শুরু থেকে আলাদা নিয়ন্ত্রিত Training রান চালাতে হবে—আমাদের বর্তমান পরীক্ষণটি কেবল β = 1-এ ট্রেন করা।"
+        },
+        {
+          "type": "text",
+          "title": "KL Warm-up ও Schedule ব্যবহারের শর্ত",
+          "body": "ট্রেনিংয়ের শুরুতে KL Warm-up বা Cyclical Schedule অনেক সময় Optimization সহজ করতে সাহায্য করে, কিন্তু এর ফলে নতুন Hyperparameter এবং মডেল বাছাইয়ের বাড়তি নিয়ম যুক্ত হয়। কোনো Schedule সত্যিই উন্নতি এনেছে কি না তা দাবি করতে হলে সমান কম্পিউট বাজেট, অভিন্ন Data Split, একাধিক Seed এবং সুনির্দিষ্ট Stopping Rule রেখে তুলনা করতে হবে। আমাদের এই স্থির পরীক্ষণে কোনো Schedule ব্যবহার করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে ব্যাখ্যা করবেন",
+          "body": "Interview-এ বুঝিয়ে বলুন কীভাবে Per-pixel Mean Loss-এর সাথে Latent-sum KL বসালে গোপনে কার্যকর (Effective) β বদলে যায়। সাথে এটিও স্পষ্ট করুন যে, স্থির মডেলে শুধু গুণক বদলে স্কোর পরিবর্তন করা আর নতুন করে ট্রেন করে ভিন্ন Representation শেখা এক কথা নয়। পর্যাপ্ত Data, সুষম Training Budget এবং নিরপেক্ষ Evaluation ছাড়া স্রেফ একটি Slider-এর স্ক্রিনশট দেখিয়ে কোনো পদ্ধতির শ্রেষ্ঠত্ব দাবি করা যায় না।"
+        }
+      ]
+    },
+    {
+      "id": "ch27_book_elbo_gap",
+      "title": "ELBO Gap, Posterior Collapse ও Generative Evaluation",
+      "subtitle": "ধারণা, সমীকরণ ও নিখুঁত গাণিতিক উদাহরণ মিলিয়ে দেখে শেষে Python-এ নিজে যাচাই করি",
+      "duration": "33 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ধারণাটি কেন এত গুরুত্বপূর্ণ?",
+          "body": "VAE-তে সরাসরি Log Evidence (log p(x)) হিসাব করা দুরূহ বলে আমরা তার গণনাযোগ্য বিকল্প (Tractable Surrogate) হিসেবে ELBO ম্যাক্সিমাইজ করি। কিন্তু আসল log p(x) এবং ELBO-র মাঝখানের ব্যবধান বা Gap নির্ভর করে আমাদের Approximate Posterior q(z|x) এবং আসল Posterior p(z|x)-এর মধ্যকার KL Divergence-এর ওপর। আরেকটি বড় শিক্ষা হলো, কেবল Reconstruction ভালো হওয়া মানেই যে Latent কোড খুব কাজের কিছু শিখেছে তা নয়—অনেক সময় শক্তিশালী কোনো Decoder লুকানো সংকেত z-কে পুরোপুরি উপেক্ষা করেই কাজ চালিয়ে দিতে পারে!"
+        },
+        {
+          "type": "text",
+          "title": "ধাপে ধাপে সমীকরণের গঠন বুঝি",
+          "body": "হিসাবটি আরেকবার মিলিয়ে নিই: log p(x) = log [p(x, z) / p(z|x)] লিখে তার ওপর q(z|x)-এর Expectation নিন। এরপর ভেতরে log q(z|x) যোগ ও বিয়োগ করলেই তিনটি অংশ পাওয়া যায়: Reconstruction Expectation বিয়োগ Prior KL (যাদের মিলে গঠিত হয় ELBO), এবং তার সাথে যোগ আকারে থাকে Posterior KL। শেষের এই KL কখনোই ঋণাত্মক হয় না (≥ 0) বলেই ELBO সবসময় একটি খাঁটি Lower Bound। তবে β-VAE-তে যখন আমরা Prior KL-এর সামনের গুণকটি বদলে দিই, তখন মূল ELBO অভেদটি আর অবিকল বজায় থাকে না।"
+        },
+        {
+          "type": "math",
+          "title": "Log Evidence, ELBO ও Posterior Gap-এর অভেদ",
+          "body": "\\log p_\\theta(x)=\\mathcal L(x)+D_{KL}(q_\\phi(z\\mid x)\\Vert p_\\theta(z\\mid x))"
+        },
+        {
+          "type": "text",
+          "title": "খাতা-কলমে একটি সহজ উদাহরণ",
+          "body": "ধরা যাক এক মাত্রার একটি Gaussian উদাহরণে আমাদের Standard Normal Prior-এর বিপরীতে এনকোডার দিল μ = 0 এবং σ² = 1; তখন Prior KL হবে ঠিক 0। আর যদি μ = 1 এবং σ² = 1 হয়, তবে Prior KL হবে 0.5। ট্রেনিংয়ের পর সব ইনপুটেই KL প্রায় 0 হয়ে থাকাটা ইঙ্গিত দেয় যে Latent কোডটি হয়তো কোনো তথ্যই ধরে রাখছে না (Uninformative); তবে শুধু এই একটি সংখ্যাই Posterior Collapse-এর একক প্রমাণ নয়—পাশাপাশি Decoder-এর z-নির্ভরতা এবং Reconstruction Diagnostics-ও পরীক্ষা করে দেখতে হবে।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ এক মাত্রার Normal KL হিসাব",
+          "body": "import math\n\n\ndef normal_kl(mean, variance):\n    if variance <= 0:\n        raise ValueError(\"Variance must be positive\")\n    # KL(N(mean, variance) || N(0, 1)) for one latent coordinate.\n    return 0.5 * (mean**2 + variance - math.log(variance) - 1)\n\n\nprint(normal_kl(0.0, 1.0), normal_kl(1.0, 1.0))\n"
+        },
+        {
+          "type": "text",
+          "title": "Code চালালে কী দেখতে পাচ্ছি?",
+          "body": "কোডটি চালালে আমরা যথাক্রমে 0.0 এবং 0.5 আউটপুট পাই। যখন আমাদের Encoder Distribution q পরস্পর স্বাধীন Diagonal Gaussian হয়, তখন প্রতিটি Coordinate-এর এই একক KL মানগুলো যোগ করলেই মোট KL পাওয়া যায়। শুধু খেয়াল রাখবেন, নেটওয়ার্ক যদি Log-variance দেয়, তবে সেখান থেকে আগে variance = exp(logvar) বের করে নিতে হবে—Variance আর Standard Deviation যেন কখনোই গুলিয়ে না যায়।"
+        },
+        {
+          "type": "text",
+          "title": "মূল্যায়নের সময় কোন সীমাগুলো মনে রাখবেন?",
+          "body": "মনে রাখবেন, GAN-এর Discriminator Loss কিংবা VAE-এর ELBO দিয়ে ভিন্ন ভিন্ন পরিবারের Model-কে নির্বিচারে মানের ক্রমানুসারে সাজানো যায় না। জনপ্রিয় FID মেট্রিকও কিন্তু Sample সংখ্যা কম হলে এবং ব্যবহৃত Feature Extractor ভেদে সংবেদনশীল হয়ে পড়ে; তা ছাড়া ডেটা হুবহু মুখস্থ করা (Memorization), বৈচিত্র্য ধরা (Coverage) এবং ছবির নিখুঁত মান (Precision) তিনটি আলাদা বিষয়। একইভাবে আমাদের এই ছোট 8×8 সংখ্যার ফলাফলকে জটিল মানুষের মুখ তৈরির প্রমাণ হিসেবে ধরে নেওয়াও সমীচীন নয়।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে হিসাব করুন (১)",
+          "body": "একটি 1D Gaussian-এ μ = 0 এবং Variance = 4 হলে Standard Normal Prior-এর সাপেক্ষে KL কত হবে? আর মডেল ট্রেনিংয়ে β বাড়ালে Reconstruction ও Latent তথ্যের ভারসাম্যে কী হতে পারে?",
+          "solution": "সূত্রে মান বসালে KL = 0.5 * (4 − log(4) − 1) ≈ 0.806853 পাওয়া যাবে। ট্রেনিংয়ে β বাড়ালে Prior-এর দিকে চাপ বাড়তে পারে, ফলে Latent তথ্যের পরিমাণ কমে যাওয়া বা Reconstruction ক্ষতিগ্রস্ত হওয়ার সম্ভাবনা থাকে; বাস্তব Diagnostics ছাড়া কেবল বড় β দিয়েই Disentanglement-এর নিশ্চয়তা পাওয়া যায় না।",
+          "reference": "https://arxiv.org/abs/1312.6114"
+        },
+        {
+          "type": "text",
+          "title": "Prior KL শূন্য হলেও কেন Posterior Gap থাকতে পারে?",
+          "body": "চলুন একটি নিখুঁত সমাধানযোগ্য Gaussian উদাহরণ দিয়ে একটি গুরুত্বপূর্ণ ভ্রান্তি দূর করি। ধরা যাক z ~ N(0, 1), x|z ~ N(z, 1), এবং আমরা পর্যবেক্ষণ করলাম x = 1। এখানে Marginal Evidence হলো x ~ N(0, 2) এবং আসল Posterior হলো N(0.5, 0.5)। এখন আমরা যদি q = N(0, 1) ধরি, তবে Prior KL ঠিকই 0 হবে! কিন্তু তখন Expected Reconstruction হয় প্রায় −1.918939, অথচ আসল Log Evidence হলো প্রায় −1.515512—অর্থাৎ মাঝখানে প্রায় 0.403426 মানের একটি Posterior KL Gap থেকেই যাচ্ছে! কেবল যখন আমরা q-কে আসল Posterior N(0.5, 0.5)-এর সমান ধরব, তখনই ELBO নিখুঁতভাবে Log Evidence-এর সমান হবে।"
+        },
+        {
+          "type": "code",
+          "title": "Gaussian Expectation ও দুই ধরনের KL আলাদা করে যাচাই",
+          "body": "import math\n\nobserved = 1.0\nlog_evidence = -0.5 * (math.log(4 * math.pi) + observed**2 / 2)\n\n\ndef elbo(mean, variance):\n    expected_residual = (observed - mean) ** 2 + variance\n    reconstruction = -0.5 * (math.log(2 * math.pi) + expected_residual)\n    prior_kl = 0.5 * (mean**2 + variance - math.log(variance) - 1)\n    return reconstruction - prior_kl\n\n\nloose_bound = elbo(0.0, 1.0)\ntight_bound = elbo(0.5, 0.5)\nposterior_kl = 0.5 * (math.log(0.5) + (1 + 0.5**2) / 0.5 - 1)\nassert math.isclose(log_evidence - loose_bound, posterior_kl)\nassert math.isclose(tight_bound, log_evidence)\nprint(\n    round(log_evidence, 6),\n    round(loose_bound, 6),\n    round(posterior_kl, 6),\n    round(tight_bound, 6),\n)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে যাচাই করুন (২)",
+          "body": "ELBO-র ভেতরে থাকা Prior KL আর Bound Gap-এর KL—এই দুটি আসলে কোন কোন Distribution-এর মধ্যে তুলনা করে?",
+          "solution": "ELBO Objective-এর ভেতরের Regularizer পদটি তুলনা করে q(z|x) বনাম Prior p(z)-কে। অন্যদিকে Bound Gap-এর KL তুলনা করে q(z|x) বনাম আসল Posterior p(z|x)-কে। একটির মান শূন্য হওয়া থেকে অন্যটির মান আপনাআপনি নির্ধারিত হয় না।",
+          "reference": "https://arxiv.org/abs/1312.6114"
+        }
+      ]
+    },
+    {
+      "id": "ch27_posterior",
+      "title": "Posterior Collapse ও Reconstruction ব্যর্থতা নির্ণয়",
+      "subtitle": "Training-এ KL খুব ছোট হওয়া মানেই সবকিছু ঠিকঠাক চলছে—এমনটা ভাববেন না!",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Posterior Collapse আসলে কী এবং কেন ঘটে?",
+          "body": "যদি সব ইনপুট ছবি x-এর জন্যই আমাদের Encoder ঘুরেফিরে q(z|x) ≈ p(z) আউটপুট দিতে থাকে, তবে তার মানে দাঁড়ায় Latent কোড z ইনপুট সম্পর্কে প্রায় কোনো তথ্যই বহন করছে না। Decoder যদি অন্য কোনো উপায়ে (যেমন গড়পড়তা আউটপুট দিয়ে) কাজ চালিয়ে নিতে শেখে, তবে সে z-কে পুরোপুরি উপেক্ষা করতে পারে। অতিরিক্ত শক্তিশালী Decoder, দুই পদের অসামঞ্জস্যপূর্ণ ওজন এবং শুরুর Optimization গতিপ্রকৃতি—সবই এর কারণ হতে পারে; তাই শুধু Encoder আকারে ছোট বলে একতরফা দোষ দেওয়া ঠিক নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Collapse ধরার কার্যকর সংকেত (Signals)",
+          "body": "সমস্যাটি ধরতে হলে প্রতিটি Dimension-এর আলাদা KL, বিভিন্ন ইনপুটে μ-এর পরিবর্তন (Active Units), ইনপুটগুলোর মধ্যে z অদলবদল করে (Shuffled-z) Reconstruction কেমন হয় তা দেখা, এবং Prior ও Posterior Sample পাশাপাশি তুলনা করা জরুরি। সামগ্রিক KL খুব ছোট হওয়া একটি স্পষ্ট সতর্কবার্তা হলেও সীমিত Sample সংখ্যা, একক ও Posterior Family-র গঠনও হিসাবের মধ্যে রাখতে হবে। আবার উল্টোদিকে KL ধনাত্মক থাকলেই যে অর্থবহ বৈশিষ্ট্য শেখা হয়ে গেছে, তারও নিশ্চয়তা নেই।"
+        },
+        {
+          "type": "math",
+          "title": "Expected KL, Mutual Information ও Marginal KL-এর সম্পর্ক",
+          "body": "\\mathbb E_x D_{KL}(q(z|x)\\Vert p(z))=I_q(X;Z)+D_{KL}(q(z)\\Vert p(z))"
+        },
+        {
+          "type": "code",
+          "title": "আমাদের ট্রেন করা VAE-তে KL ও Diagnostic ফলাফল পরীক্ষা",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/digits/generative_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nimport numpy as np\n\nkl = np.array([r[\"kl\"] for r in lab[\"images\"]])\nassert np.isfinite(kl).all() and (kl >= 0).all()\nprint(\"Ten displayed examples only:\", kl.min(), kl.max())\nprint(\"All diagnostic rows:\", lab[\"report\"][\"vae_diagnostic\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "ছবি ঝাপসা (Blurry) হওয়ার প্রকৃত কারণ",
+          "body": "প্রতি-পিক্সেল স্বাধীন Likelihood ব্যবহার করলে অনিশ্চিত সূক্ষ্ম ডিটেইলগুলোর গড় (Average) তৈরি হয়ে ছবি কিছুটা ঝাপসা হতে পারে; পাশাপাশি মাত্র 2D Latent ধারণক্ষমতা, ছোট MLP এবং 8×8 লো-রেজোলিউশনও এর পেছনে ভূমিকা রাখে। তাই 'VAE সবসময় ঝাপসা আর GAN সবসময় ধারালো'—এমন ঢালাও মন্তব্য করা ভুল। Dataset-এর গঠন, Architecture এবং Loss Function না দেখে পুরো Model Family সম্পর্কে চূড়ান্ত রায় দেবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "Baseline ও Ablation দিয়ে যাচাই",
+          "body": "আপনার Reconstruction আসলেই কাজের কি না তা বুঝতে সাধারণ Train-mean Image Baseline-এর সাথে তুলনা করুন; পাশাপাশি z = 0 বসানো (Zero-latent) কিংবা অন্য ছবির z অদলবদল করার (Shuffled-latent) মতো Ablation পরীক্ষাও খুব কাজের। তবে সেগুলো কেবল সত্যিকারের রান করে মাপা হলেই রিপোর্ট করুন। আমাদের বর্তমান বান্ডেলে প্রকৃত Train-mean Baseline MSE দেওয়া হয়েছে; যেসব Ablation মাপা হয়নি সেগুলোর জন্য কোনো কাল্পনিক সংখ্যা দাবি করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "প্রতিকারমূলক পদক্ষেপ ও তাদের পার্শ্বপ্রতিক্রিয়া",
+          "body": "Posterior Collapse ঠেকাতে বাস্তবে KL Warm-up, Free Bits, Decoder-এর ধারণক্ষমতা নিয়ন্ত্রণ কিংবা আরও সমৃদ্ধ Posterior Family পরীক্ষা করা যেতে পারে। তবে প্রতিটি পদক্ষেপই মূল Objective বা Optimization প্রক্রিয়াকে বদলে দেয়। বিশেষ করে Collapse সারাতে গিয়ে β খুব কমিয়ে ফেললে আবার Prior থেকে নতুন Sample তৈরির ক্ষমতা নষ্ট হয়ে যাচ্ছে কি না তা খেয়াল রাখতে হবে, এবং আলাদা Selection ও Confirmation ধাপে তা যাচাই করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "Interview টিপস: সব ইনপুটে একই ছবি এলে কীভাবে Debug করবেন?",
+          "body": "Model যদি যেকোনো ইনপুটের জন্য হুবহু একই গড়পড়তা Reconstruction ফিরিয়ে দেয়, তবে ধাপে ধাপে পাঁচটি জায়গা পরীক্ষা করুন: Data Normalization ঠিক আছে কি না, Encoder অকেজো (Dead) হয়ে গেছে কি না, ভুল করে কোথাও detach() পড়েছে কি না, KL-এর আপেক্ষিক ওজন অতিরিক্ত বেশি কি না, এবং Decoder খুব দুর্বল কি না। কেবল একটি মেট্রিক দেখে কারণ ঘোষণা না করে Tensor ও Gradient Trace এবং নিয়ন্ত্রিত Ablation চালিয়ে বিকল্প ব্যাখ্যাগুলো যাচাই করুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch27_gan",
+      "title": "GAN-এর Minimax Game ও Optimal Discriminator",
+      "subtitle": "Real বনাম Fake Classification কীভাবে নতুন ছবি তৈরি করতে শেখায়?",
+      "duration": "60 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "দুই খেলোয়াড়ের প্রতিদ্বন্দ্বিতা: Generator বনাম Discriminator",
+          "body": "GAN-এ দুটি নেটওয়ার্ক একে অপরের বিপরীতে শেখে: Generator র‍্যান্ডম কোড z থেকে Image তৈরির ম্যাপ শেখে, আর Discriminator একটি Image দেখে সেটি আসল নাকি তৈরি করা নকল—তার Logit অনুমান করে। Discriminator-এর লক্ষ্য হলো আসল ছবিকে Real = 1 এবং নকল ছবিকে Fake = 0 বলা; আর Generator চেষ্টা করে নকল Sample-কে Discriminator-এর চোখে আসল হিসেবে পাস করিয়ে নিতে। লক্ষ্য করুন, Real/Fake এই বাইনারি সংকেত আসে খোদ Training প্রক্রিয়া থেকেই—তাই ছবিটি কোন অঙ্কের তা চেনার কোনো Label এখানে দরকার হয় না।"
+        },
+        {
+          "type": "text",
+          "title": "স্থির Generator-এর বিপরীতে Optimal Discriminator (D*)",
+          "body": "ধরা যাক আসল ও জেনারেট করা ছবির Distribution দুটি স্থির আছে এবং Discriminator-এর পর্যাপ্ত সীমাহীন ধারণক্ষমতা রয়েছে। তখন প্রতিটি বিন্দুতে সর্বোচ্চ মান বের করলে পাওয়া যায় Optimal Discriminator: D*(x) = p_data(x) / (p_data(x) + p_g(x)), যেখানে হর ধনাত্মক। যখন দুই Distribution হুবহু সমান হয়ে যায়, তখন পুরো Support জুড়ে D*(x) = 0.5 দাঁড়ায়। তবে বাস্তবে সীমিত ডেটায় ট্রেন করা একটি সসীম Discriminator যে সবসময় এই তাত্ত্বিক সর্বোত্তম বিন্দুতে পৌঁছে আছে—তা ধরে নেওয়া যাবে না।"
+        },
+        {
+          "type": "math",
+          "title": "GAN-এর মূল Minimax Objective সমীকরণ",
+          "body": "\\min_G\\max_D V(D,G)=\\mathbb E_{p_{data}}\\log D(x)+\\mathbb E_{p(z)}\\log(1-D(G(z)))"
+        },
+        {
+          "type": "code",
+          "title": "সাম্যাবস্থায় (Logit = 0) Discriminator ও Generator Loss যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter27_local\", Path(\"assets/datasets/digits/generative_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\n\nimport math\n\n# Explicit equilibrium illustration, not a measured quality result.\na = torch.zeros(4, dtype=torch.float64)\nd_loss = (torch.nn.functional.softplus(-a) + torch.nn.functional.softplus(a)).mean()\ng_loss = torch.nn.functional.softplus(-a).mean()\nassert abs(d_loss.item() - 2 * math.log(2)) < 1e-12\nassert abs(g_loss.item() - math.log(2)) < 1e-12\nprint(d_loss.item(), g_loss.item())\n"
+        },
+        {
+          "type": "text",
+          "title": "Jensen–Shannon Divergence-এর সাথে গাণিতিক যোগসূত্র",
+          "body": "মূল সমীকরণে তাত্ত্বিক D*(x) বসালে পুরো রাশিটির মান দাঁড়ায় −log(4) + 2·JSD(p_data || p_g)। মনে রাখতে হবে যে এটি একটি তাত্ত্বিক আদর্শায়ন (Idealization)—সসীম আকারের নেটওয়ার্ক, Optimization জটিলতা এবং সীমিত ডেটায় বাস্তবে এই সমতা অর্জিত হয়েছে বলে দাবি করা যায় না। পাশাপাশি দুই Distribution-এর অবস্থান (Support) পরস্পর বিচ্ছিন্ন হলে যে Gradient সংকট দেখা দেয়, এই সমীকরণটি তার জ্যামিতিক অন্তর্দৃষ্টি বুঝতেও সাহায্য করে।"
+        },
+        {
+          "type": "text",
+          "title": "কোডে Discriminator Loss লেখার প্রথা ও স্কেলিং",
+          "body": "আমাদের কোডে Discriminator Loss হিসাব করা হয়েছে আসল ছবির গড় softplus(−a_real) এবং নকল ছবির গড় softplus(a_fake) আলাদাভাবে যোগ করে। যেহেতু দুটি গড় যোগ করা হয়েছে, তাই উভয় দিকে সমান 0.5 সম্ভাবনা (অর্থাৎ Logit = 0) থাকলে মোট মান আসে 2·log(2)। কেউ যদি আসল ও নকল উদাহরণ এক ব্যাচে মিশিয়ে একটি একক গড় নিত, তবে সংখ্যাটি হতো log(2)—তাই রিপোর্ট করার সময় এই Normalization নিয়মটি সবসময় স্পষ্ট করে জানান।"
+        },
+        {
+          "type": "text",
+          "title": "Generator Objective-এর ব্যবহারিক রূপান্তর",
+          "body": "ব্যবহারিক ট্রেনিংয়ে আমরা মূল Minimax সমীকরণের log(1 − D(fake))-এর বদলে Non-saturating Loss অর্থাৎ softplus(−a_fake) মিনিমাইজ করি। দুটি Objective-এর কাঙ্ক্ষিত আদর্শ স্থির বিন্দু (Fixed Point) এক হলেও ট্রেনিংয়ের পথে তাদের Gradient-এর প্রবলতা এবং মধ্যবর্তী Loss-এর সংখ্যাগত মান সম্পূর্ণ আলাদা আচরণ করে।"
+        },
+        {
+          "type": "text",
+          "title": "Interview টিপস: কম Loss বা 50% Accuracy দেখেই ভুল করবেন না",
+          "body": "Discriminator-এর Accuracy 50% দেখলেই দুই Distribution মিলে গেছে বলে সিদ্ধান্ত নেবেন না; দুর্বল Discriminator, অপর্যাপ্ত Training কিংবা কোডের Bug থেকেও একই ঘটনা ঘটতে পারে! আবার প্রতিদ্বন্দ্বী ও তার Decision Surface প্রতি ধাপে বদলায় বলে শুধু Generator Loss কমাকেও ছবির মান উন্নতির প্রমাণ ধরা যায় না। সবসময় জেনারেটেড ছবি, Mode Coverage, স্বাধীন মেট্রিক ও Baseline একসাথে মিলিয়ে মূল্যায়ন করুন।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে দুই-বিন্দুর উদাহরণে Optimal D ও JSD",
+          "body": "চলুন দুই বিন্দুর দুটি ছোট Distribution দিয়ে পুরো হিসাবটি পরখ করি: ধরা যাক আসল P = [0.8, 0.2] এবং জেনারেটেড Q = [0.2, 0.8]। স্থির Generator-এর বিপরীতে সেরা Discriminator হবে D* = P / (P + Q) = [0.8, 0.2]। এতে Minimax মান Σ [P·log(D*) + Q·log(1 − D*)] আসে প্রায় −1.000805। এবার Mixture Distribution M = (P + Q) / 2 = [0.5, 0.5] ধরে JS Divergence বের করলে পাওয়া যায় প্রায় 0.192745, আর −log(4) + 2·JS হিসাব করলেও হুবহু সেই −1.000805 মানটিই মেলে! যখন P = Q হয়ে যাবে, তখন D* = 0.5 এবং JS = 0 দাঁড়াবে।"
+        },
+        {
+          "type": "math",
+          "title": "Optimal Discriminator ও JS Divergence-এর সমীকরণ",
+          "body": "D^*(x)=\\frac{P(x)}{P(x)+Q(x)},\\qquad V(D^*,G)=-\\log4+2\\operatorname{JS}(P\\Vert Q)"
+        },
+        {
+          "type": "code",
+          "title": "NumPy-তে Minimax Value ও JS অভেদ যাচাই",
+          "body": "import numpy as np\n\nreal = np.array([0.8, 0.2])\ngenerated = np.array([0.2, 0.8])\ndiscriminator = real / (real + generated)\nvalue = np.sum(real * np.log(discriminator) + generated * np.log1p(-discriminator))\nmixture = (real + generated) / 2\njs = 0.5 * (\n    np.sum(real * np.log(real / mixture))\n    + np.sum(generated * np.log(generated / mixture))\n)\nnp.testing.assert_allclose(value, -np.log(4) + 2 * js)\nnp.testing.assert_allclose(\n    real / discriminator - generated / (1 - discriminator), 0, atol=1e-12\n)\nprint(*discriminator, round(js, 6), round(value, 6))\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে যাচাই করুন",
+          "body": "বাস্তব ডেটায় ট্রেন করা একটি সসীম আকারের (Finite) Discriminator থেকে পাওয়া প্রতিটি Loss মানকেই কি সরাসরি নিখুঁত JS Divergence বলা যায়?",
+          "solution": "না, বলা যায় না। কারণ এই গাণিতিক অভেদটি প্রতিষ্ঠা করতে স্থির Distribution-এর বিপরীতে সীমাহীন ক্ষমতার Optimal Discriminator ব্যবহৃত হয়েছে। সীমিত Data, সসীম আকারের Model এবং অসম্পূর্ণ Optimization-এ সেই শর্ত পূরণ হচ্ছে কি না তা আলাদাভাবে যাচাই করতে হয়; তাই লসের পাশাপাশি সবসময় Sample Coverage, Memorization এবং প্রাসঙ্গিক Quality Metric রিপোর্ট করুন।",
+          "reference": "https://arxiv.org/abs/1406.2661"
+        }
+      ]
+    },
+    {
+      "id": "ch27_gradients",
+      "title": "Non-saturating Loss ও Gradient Saturation-এর রহস্য",
+      "subtitle": "শুধু Probability নয়, কাঁচা Logit-এর সাপেক্ষে Derivative কেমন আচরণ করছে তা দেখুন",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Chain Rule ও Logit-এর সাপেক্ষে Derivative",
+          "body": "ধরা যাক নকল ছবির ওপর Discriminator-এর আউটপুট Probability হলো D = σ(a), যেখানে a হলো কাঁচা Logit। মূল Minimax Generator Loss হলো log(1 − σ(a)) = −softplus(a), যার Logit-এর সাপেক্ষে Derivative কষলে পাওয়া যায় −σ(a)। অন্যদিকে Non-saturating Loss হলো −log σ(a) = softplus(−a), যার Derivative দাঁড়ায় σ(a) − 1। মনে রাখবেন, এই Derivative হিসাব করা হয়েছে Logit-এর সাপেক্ষে; নেটওয়ার্কের ভেতরে ঢোকার সময় Chain Rule অনুযায়ী এর সাথে পুরো নেটওয়ার্কের Jacobian গুণ হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Training-এর শুরুতেই কেন Minimax থমকে যায়?",
+          "body": "ট্রেনিংয়ের শুরুতে Generator যখন কাঁচা নয়েজ বানায়, তখন Discriminator খুব আত্মবিশ্বাসের সাথে সেগুলোকে Fake বলে ধরে ফেলে—ফলে a ≪ 0 এবং D ≈ 0 হয়ে যায়। এই অবস্থায় মূল Minimax সমীকরণের Derivative হয়ে পড়ে প্রায় 0 (যাকে বলে Gradient Saturation), কিন্তু Non-saturating সমীকরণের Derivative থাকে প্রায় −1! তাই শুরুর সেই কঠিন সময়ে Non-saturating Objective আমাদের Generator-কে অনেক বেশি শক্তিশালী স্থানীয় সংকেত (Local Signal) দেয়; যদিও একা এটিই সব Optimization জটিলতা দূর করে দেয় না।"
+        },
+        {
+          "type": "math",
+          "title": "Minimax ও Non-saturating Loss-এর Derivative সমীকরণ",
+          "body": "\\frac{d\\log(1-\\sigma(a))}{da}=-\\sigma(a),\\qquad\\frac{d[-\\log\\sigma(a)]}{da}=\\sigma(a)-1"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Logit = −8 বিন্দুতে দুই Gradient-এর তুলনা",
+          "body": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter27_local\", Path(\"assets/datasets/digits/generative_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\n\na = torch.tensor([-8.0], dtype=torch.float64, requires_grad=True)\nmini = -torch.nn.functional.softplus(a)\nnon = torch.nn.functional.softplus(-a)\ngm = torch.autograd.grad(mini, a, retain_graph=True)[0]\ngn = torch.autograd.grad(non, a)[0]\nassert abs(gm.item()) < 0.001 and abs(gn.item()) > 0.999\nprint(gm.item(), gn.item())\n"
+        },
+        {
+          "type": "text",
+          "title": "চিহ্নের হিসাব ও দুই খেলোয়াড়ের বিপরীত লক্ষ্য",
+          "body": "Gradient Descent সবসময় ঋণাত্মক Derivative অনুসরণ করে Logit a বাড়ানোর দিকেই এগোয়। খেয়াল রাখবেন, মূল Minimax Loss নিজে ঋণাত্মক হতে পারে—ঋণাত্মক মান আসা মানেই কোডে ভুল হয়েছে তা নয়। এখানে নকল ছবির জন্য Generator-এর লক্ষ্য থাকে Target = 1, আর Discriminator-এর লক্ষ্য থাকে Target = 0—এবং এই দুটি Loss সম্পূর্ণ আলাদা দুটি আপডেট ধাপে ব্যবহৃত হয়।"
+        },
+        {
+          "type": "generative_gan_lab",
+          "title": "স্থিতিশীল হিসাব ও Interactive GAN Lab",
+          "body": "কোডে সরাসরি −log(sigmoid(a)) না লিখে সবসময় softplus(−a) অথবা Target = 1 দিয়ে BCEWithLogits ব্যবহার করুন। এতে a = ±1000-এর মতো চরম মানেও কোনো সংখ্যাসূচক বিপর্যয় ছাড়াই সসীম ও স্থিতিশীল Loss পাওয়া যাবে। সতর্ক থাকুন: Sigmoid করার পর আবার BCEWithLogits বসালে দ্বিগুণ রূপান্তর ঘটে আপনার শেখার Gradient Objective বদলে যাবে!"
+        },
+        {
+          "type": "text",
+          "title": "Interactive Logit Slider কীভাবে পড়বেন?",
+          "body": "ল্যাবে স্থির (Frozen) GAN আউটপুটের প্রকৃত Discriminator স্কোরের পাশাপাশি আলাদা একটি গাণিতিক Logit Slider দেওয়া হয়েছে। স্লাইডারে Logit = −8 বসালে Saturation-এর পার্থক্যটি চোখের সামনে স্পষ্ট হয়ে ওঠে। মনে রাখবেন, এই Slider ভেতরের Discriminator-কে নতুন করে ট্রেন করে না এবং জেনারেটেড ছবির প্রকৃত স্কোরও বদলায় না—গাণিতিক উদাহরণ আর প্রকৃত পরিমাপ এখানে আলাদা রাখা হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে গুছিয়ে বলবেন",
+          "body": "যদি প্রশ্ন করা হয় কেন Non-saturating Generator Loss-এ নকল ছবির Target = 1 ধরা হয় অথচ Discriminator আপডেটে নকল ছবির Target = 0 ধরা হয়, তবে দুই প্রতিদ্বন্দ্বী খেলোয়াড়ের বিপরীত লক্ষ্যের মাধ্যমে উত্তর দিন। আর Discriminator অতিরিক্ত শক্তিশালী হয়ে গেলে নেটওয়ার্কের Capacity, Learning Rate বা আপডেটের অনুপাত পরীক্ষা করুন—মেট্রিকের মান লুকিয়ে কৃত্রিমভাবে সুষম Loss দেখানোর চেষ্টা করবেন না।"
+        }
+      ]
+    },
+    {
+      "id": "ch27_alternating",
+      "title": "PyTorch-এ Alternating Update, Detach ও Parameter Freeze",
+      "subtitle": "নিজের শাখায় Gradient সচল রাখুন, কিন্তু প্রতিদ্বন্দ্বীর Parameter আপডেট থামিয়ে দিন",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "প্রথম ধাপ: Discriminator Phase ও .detach()",
+          "body": "প্রথম ধাপে আসল ছবির Batch এবং বিচ্ছিন্ন করা নকল ছবি G(z).detach() ব্যবহার করে Discriminator Loss হিসাব করুন, তারপর কেবল D Optimizer-এর zero_grad, backward ও step চালান। এখানে নকল ছবিকে detach() না করলে অব্যবহৃত Generator Gradient জমতে থাকবে—যা মেমোরি অপচয়ের পাশাপাশি অসতর্ক কোডে ভুলবশত G আপডেট ঘটিয়ে ফেলতে পারে। মনে রাখবেন, D আপডেটের উদ্দেশ্য কেবল D-কে শেখানো, G-কে নয়।"
+        },
+        {
+          "type": "text",
+          "title": "দ্বিতীয় ধাপ: Generator Phase ও Parameter Freeze",
+          "body": "পরের ধাপে নতুন র‍্যান্ডম কোড z থেকে G(z) বানিয়ে সদ্য আপডেট হওয়া D-এর ভেতর দিয়ে পাঠিয়ে Non-saturating Loss বের করুন। এ সময় D-এর সব Parameter-এ সাময়িকভাবে requires_grad = False করে দিলে D-এর নিজস্ব ওয়েটে Gradient জমা বন্ধ থাকে, কিন্তু ইনপুট G(z)-এর সাপেক্ষে Derivative ঠিকই সচল থাকে। ভুলেও পুরো D Forward কলটিকে torch.no_grad() দিয়ে ঘিরে দেবেন না—তাহলে Generator পর্যন্ত যাওয়ার শেখার পথটিই ভেঙে যাবে!"
+        },
+        {
+          "type": "math",
+          "title": "দুই খেলোয়াড়ের পর্যায়ক্রমিক Parameter Update সমীকরণ",
+          "body": "\\theta_D\\leftarrow\\theta_D-\\eta_D\\nabla_D L_D,\\qquad\\theta_G\\leftarrow\\theta_G-\\eta_G\\nabla_G L_G"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ D Phase ও G Phase-এর Gradient প্রবাহ যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter27_local\", Path(\"assets/datasets/digits/generative_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\n\nwith torch.random.fork_rng():\n    torch.manual_seed(4)\n    g = m.Generator()\n    d = m.Discriminator()\n    z = torch.ones(3, 2, dtype=torch.float64)\n    # D phase: no G gradient.\n    torch.nn.functional.softplus(d(g(z).detach())).mean().backward()\n    assert all(p.grad is None for p in g.parameters())\n    d.zero_grad(set_to_none=True)\n    for p in d.parameters():\n        p.requires_grad_(False)\n    torch.nn.functional.softplus(-d(g(z))).mean().backward()\n    assert any(p.grad is not None and p.grad.abs().sum() > 0 for p in g.parameters())\n    assert all(p.grad is None for p in d.parameters())\n"
+        },
+        {
+          "type": "text",
+          "title": "Computation Graph-এর আয়ুষ্কাল ও পরিচ্ছন্ন অভ্যাস",
+          "body": "D আপডেট হয়ে যাওয়ার পর তার পুরোনো বাসি (Stale) গ্রাফ ধরে রেখে G-এর backward চালাবেন না; নতুন করে Forward Pass হিসাব করুন—এতে সাধারণত retain_graph দেওয়ার কোনো প্রয়োজন পড়ে না। দুই Optimizer-কেই তাদের নিজ নিজ ধাপে zero_grad করুন। আর উপরের কোডের মতো ছোট টেস্ট লিখে D ও G ধাপের Gradient পরীক্ষা করে নিলে নীরব detach Bug সহজেই ধরা পড়ে যায়।"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের সংরক্ষিত GAN রানটির হুবহু মাপজোখ",
+          "body": "আমাদের Generator-এর গঠন হলো 2 → 32 (ReLU) → 64 (Sigmoid), যাতে মোট 2208টি Parameter আছে; আর Discriminator হলো 64 → 32 (LeakyReLU 0.2) → 1 কাঁচা Logit, যাতে আছে 2113টি Parameter। উভয় ক্ষেত্রেই ব্যবহৃত হয়েছে Adam (lr = 0.001, betas = (0.5, 0.999)), Batch Size = 128 এবং 80টি Epoch—অর্থাৎ প্রতি খেলোয়াড় ঠিক 960টি করে Update পেয়েছে। এখানে কোনো BatchNorm বা Dropout না থাকায় Freeze বনাম train/eval বাফারের বাড়তি জটিলতা তৈরি হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "বড় Architecture-এ BatchNorm ও Dropout থাকলে সতর্কতা",
+          "body": "বড় মডেলে BatchNorm থাকলে মনে রাখবেন যে শুধু requires_grad = False করলেও train মোডে তার Running Statistics বদলাতে পারে; আবার Dropout থাকলে র‍্যান্ডম আচরণ চালু থাকে। উল্টোদিকে না বুঝে অন্ধভাবে eval মোডে পাঠালেও খেলার সমীকরণ বদলে যেতে পারে। তাই বড় নেটওয়ার্কে প্রতিদ্বন্দ্বীর স্টেট ও মোড পলিসি সচেতনভাবে নির্ধারণ করতে হয়—আমাদের সরল MLP সেই জটিলতা এড়িয়ে মূল মেকানিক্সটুকু স্পষ্টভাবে দেখায়।"
+        },
+        {
+          "type": "text",
+          "title": "Interview টিপস: D Loss কমছে কিন্তু G নড়ছে না—কেন?",
+          "body": "যদি দেখেন Discriminator Loss কমছে অথচ Generator-এর Weight অপরিবর্তিত রয়ে গেছে, তবে পাঁচটি জায়গা খতিয়ে দেখুন: G-এর step() বাদ পড়েছে কি না, ভুল জায়গায় detach বা no_grad আছে কি না, G-এর প্যারামিটার Frozen রয়ে গেছে কি না, স্যাচুরেশনে শূন্য Gradient আসছে কি না, অথবা Optimizer-এ ভুল প্যারামিটার দেওয়া হয়েছে কি না। কেবল Loss প্রিন্ট না দেখে Finite Difference ও Parameter পরিবর্তনের মান পরীক্ষা করুন—শুধু Seed Reproducibility কখনোই নিখুঁত গ্রাফের বিকল্প নয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch27_collapse",
+      "title": "Mode Collapse, ভারসাম্যহীনতা ও Training Dynamics",
+      "subtitle": "Loss কম থাকলেই হারিয়ে যাওয়া সংখ্যার বৈচিত্র্য (Missing Modes) আপনাআপনি ফিরে আসে না",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Mode Collapse ও Mode Dropping কী?",
+          "body": "Generator যখন অসংখ্য ভিন্ন Latent ইনপুটকে ঘুরিয়ে-ফিরিয়ে গুটি কয়েক একই ধাঁচের আউটপুটে পাঠাতে শুরু করে, তখন আসল ডেটার বহু ধরন বা Mode বাদ পড়ে যায়—একেই বলে Mode Collapse। কোনো পুরো Class বা ক্যাটাগরি হারিয়ে যাওয়াকে বলে Mode Dropping, আবার একই Class-এর ভেতরের নিজস্ব বৈচিত্র্যও কমে যেতে পারে। তাই একটিমাত্র ধারালো ও সুন্দর ছবি দেখে কখনোই পুরো Distribution-এর Coverage বোঝা যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "বৈচিত্র্য যাচাইয়ের উপায় ও মেট্রিকের সীমা",
+          "body": "বৈচিত্র্য পরীক্ষা করতে হলে স্থির Latent প্যানেলের পাশাপাশি প্রতিবার নতুন র‍্যান্ডম প্যানেল দুটোই দেখুন। যদি আলাদা কোনো Classifier দিয়ে Class Coverage মাপেন, তবে সেই Classifier-এর নিজস্ব Accuracy ও Bias উল্লেখ করুন; তা ছাড়া শুধু সংখ্যার অনুপাত ঠিক থাকলেই যে প্রতিটি সংখ্যার ভেতরের লেখার বৈচিত্র্য বজায় আছে তা প্রমাণিত হয় না। আবার ছবির পারস্পরিক Pixel দূরত্ব স্কেল-সংবেদনশীল এবং সামান্য স্থানান্তরেও বড় দেখাতে পারে, তাই সেটিকেও বৈচিত্র্যের চূড়ান্ত প্রমাণ ধরা যায় না।"
+        },
+        {
+          "type": "math",
+          "title": "Mode Collapse-এর গাণিতিক লক্ষণ",
+          "body": "G(z_1)\\approx G(z_2)\\ \\mathrm{for\\ many}\\ z_1\\ne z_2\\quad\\Rightarrow\\quad\\mathrm{low\\ observed\\ diversity}"
+        },
+        {
+          "type": "code",
+          "title": "সংরক্ষিত 16টি GAN Sample-এর পারস্পরিক Pixel MSE হিসাব",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/digits/generative_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nimport numpy as np\n\npixels = np.array([r[\"gan\"] for r in lab[\"samples\"]])\nassert pixels.shape == (16, 64)\npair = ((pixels[:, None] - pixels[None, :]) ** 2).mean(-1)\noff = pair[~np.eye(16, dtype=bool)]\nprint(\"Fixed 16-sample pairwise pixel MSE:\", off.mean())\nassert np.isfinite(off).all()\n"
+        },
+        {
+          "type": "text",
+          "title": "দুই প্রতিদ্বন্দ্বীর গতিপ্রকৃতি ও Loss-এর দোলাচল",
+          "body": "D ও G-এর ধারণক্ষমতা, Learning Rate, আপডেটের অনুপাত, Saturation এবং Normalization—সবকিছু মিলেই খেলার গতিপথ নির্ধারণ করে। প্রতিদ্বন্দ্বিতামূলক ট্রেনিংয়ে Loss কিছুটা ওঠানামা (Oscillation) করা স্বাভাবিক মিথস্ক্রিয়ার লক্ষণ হতে পারে; শুধু ওঠানামা মানেই Collapse নয়। আবার উল্টোদিকে কেবল একটি ভাগ্যবান Seed সফল হওয়া দেখেই পুরো Training পদ্ধতিকে স্থিতিশীল বলে দাবি করবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "প্রতিকারের সম্ভাব্য কৌশল ও WGAN সতর্কতা",
+          "body": "Mode Collapse কমাতে Feature Matching, Minibatch বৈচিত্র্য তথ্য, Gradient Penalty কিংবা ভিন্ন Adversarial Objective পরীক্ষা করা যায়। তবে WGAN ব্যবহার করলে মনে রাখবেন যে সেখানে Critic স্কোর কোনো Probability নয়, এবং সত্যিকারের Wasserstein ব্যাখ্যার জন্য Lipschitz শর্ত (Constraint) আরোপ করা অপরিহার্য—কেবল BCE বাদ দিয়ে কাঁচা Linear আউটপুট বসিয়ে দিলেই সেটি WGAN হয়ে যায় না!"
+        },
+        {
+          "type": "text",
+          "title": "VAE বনাম GAN: ব্যর্থতার ভিন্ন ধরন",
+          "body": "VAE-এর Reconstruction Objective প্রতিটি ট্রেনিং উদাহরণকে ব্যাখ্যা করার চাপ রাখে বলে সহজে পুরো Mode হারায় না, কিন্তু তার বদলে Posterior Collapse, দুর্বল Prior অঞ্চল বা ঝাপসা গড় আউটপুট দেখা দিতে পারে। অন্যদিকে GAN কোনো Reconstruction গ্যারান্টি দেয় না এবং নীরবে Mode হারাতে পারে। তাই ঢালাওভাবে কোনো একটি পরিবারকে সেরা ঘোষণা না করে তাদের ব্যর্থতার ভিন্ন মেকানিজমগুলো তুলনা করাই সঠিক দৃষ্টিভঙ্গি।"
+        },
+        {
+          "type": "text",
+          "title": "Interview টিপস: সব জেনারেটেড ছবি '8' মনে হলে কী করবেন?",
+          "body": "জেনারেটেড প্রায় সব ছবি যদি অঙ্ক 8-এর মতো দেখায়, তবে চারটি সম্ভাব্য কারণ আলাদাভাবে যাচাই করুন: মূল ডেটায় ভারসাম্যহীনতা (Source Imbalance), ছবি দেখানোর বাছাই প্রক্রিয়ার ত্রুটি, Generator-এর প্রকৃত Mode Collapse, এবং মূল্যায়নকারী Classifier-এর নিজস্ব Bias। আমাদের UI-এর মাত্র 16টি Sample থেকে শতকরা Mode Coverage দাবি করা হয়নি—পরিমাপ করা বাস্তব পর্যবেক্ষণ আর অনুমানকে সবসময় আলাদা রাখুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch27_traversal",
+      "title": "Latent Traversal ও Interpolation যাচাই",
+      "subtitle": "স্থানাঙ্ক মসৃণভাবে ঘোরানো যাচ্ছে মানেই অর্থবহ বৈশিষ্ট্যের ওপর নিয়ন্ত্রণ চলে আসেনি",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "একই Latent Coordinate-এ দুই মডেলের আচরণ",
+          "body": "ল্যাবে z1 ও z2 Slider ঘোরালে সংরক্ষিত Model-এর প্রকৃত Forward Pass চলে, এবং VAE Decoder ও GAN Generator সুইচ করে একই স্থানাঙ্কে দুজনের আউটপুট দেখা যায়। তবে যেহেতু দুটি মডেল সম্পূর্ণ আলাদাভাবে ট্রেন হয়েছে, তাই তাদের Latent Axis-গুলো পরস্পরের সাথে মেলানো (Aligned) নয়—ফলে একই z বিন্দু মানেই দুটি মডেলে একই অঙ্কের অর্থ বহন করে না।"
+        },
+        {
+          "type": "text",
+          "title": "[−3, 3] বর্গাকার Grid ও উচ্চ মাত্রার Typical Set",
+          "body": "ভিজ্যুয়ালাইজ করার সুবিধার জন্য [−3, 3] Coordinate Grid নেওয়া হয়েছে, কিন্তু মনে রাখবেন Gaussian Prior-এর Density মোটেও সর্বত্র সমান (Uniform) নয়। গ্রিডের চার কোণার বিন্দুগুলো Prior-এর খুব কম Density-র অঞ্চলে পড়তে পারে। তা ছাড়া উচ্চ মাত্রায় (High Dimensions) Distribution-এর Typical-set আচরণ আরও ভিন্ন হয়ে যায়; তাই দ্বিমাত্রিক সহজ চিত্রটিকে সরাসরি উচ্চ-মাত্রিক Sampling Policy ধরে নেওয়া যাবে না।"
+        },
+        {
+          "type": "math",
+          "title": "রৈখিক Interpolation-এর সমীকরণ",
+          "body": "z(t)=(1-t)z_a+t z_b,\\quad 0\\le t\\le1"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ (−2, −2) থেকে (2, 2) পর্যন্ত GAN Interpolation যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter27_local\", Path(\"assets/datasets/digits/generative_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/digits/generative_lab.json\").read_text(encoding=\"utf-8\")\n)\n\ng = m.Generator()\ng.load_state_dict(\n    {\n        k: torch.tensor(a, dtype=torch.float64)\n        for k, a in lab[\"weights\"][\"generator\"].items()\n    }\n)\na = torch.tensor([-2.0, -2.0], dtype=torch.float64)\nb = -a\nwith torch.no_grad():\n    images = g(torch.stack([(1 - t) * a + t * b for t in [0.0, 0.5, 1.0]]))\nassert images.shape == (3, 64) and torch.isfinite(images).all()\nprint(images.mean(-1).tolist())\n"
+        },
+        {
+          "type": "text",
+          "title": "Linear বনাম Spherical Interpolation",
+          "body": "Linear Interpolation দুই প্রান্তবিন্দুর মাঝের সরলরৈখিক পথ দেখায়। কিন্তু Gaussian Latent Space-এ সরলরেখার মাঝামাঝি অংশে ভেক্টরের দৈর্ঘ্য (Norm) কমে কেন্দ্রের কাছে চলে আসতে পারে, ফলে বিন্দুর Typicality বদলে যায়। কিছু ক্ষেত্রে দৈর্ঘ্য ধরে রাখতে Spherical Interpolation ব্যবহার করা হয় বটে, কিন্তু সেটিও মাঝপথের অর্থবহ ধারাবাহিকতার (Semantic Continuity) স্বয়ংক্রিয় গ্যারান্টি দেয় না।"
+        },
+        {
+          "type": "generative_latent_lab",
+          "title": "Mean Image বনাম প্রকৃত র‍্যান্ডম Draw",
+          "body": "খেয়াল রাখুন পর্দায় ঠিক কোন রাশিটি দেখানো হচ্ছে: VAE-এর decode(z) দেখায় প্রতিটি পিক্সেলের Sigmoid Mean—স্থির z থেকে আলাদা Pixel Sample টানা হয়নি। অন্যদিকে GAN একটি সুনির্দিষ্ট (Deterministic) ম্যাপ, যেখানে সমস্ত র‍্যান্ডমনেস নিহিত থাকে ইনপুট z-এর ভেতর। ভিন্ন Observation Model হলে Decoder থেকে Sample টানার নিয়মও বদলে যায়; তাই UI-তে প্রদর্শিত বস্তুটির পরিচয় সবসময় স্পষ্ট রাখুন।"
+        },
+        {
+          "type": "text",
+          "title": "উল্টো পথে যাওয়া: x থেকে z খোঁজার সীমা",
+          "body": "VAE-এর Encoder বাস্তব ছবি x থেকে সরাসরি আসন্ন Posterior-এর প্যারামিটার দেয়। কিন্তু সাধারণ Vanilla GAN-এ x → z যাওয়ার কোনো সহজাত Encoder নেই; সেজন্য আলাদা Latent Optimization বা অতিরিক্ত Encoder যুক্ত করতে হয়। এমনকি তখনো উদ্ধার করা Latent বিন্দুটি নিখুঁত বা অনন্য (Unique) বলে ধরে নেওয়া যায় না, কারণ Generator Function-টি এক-এক (Injective) নাও হতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "অনুশীলন সতর্কতা: Inference মানে Model শেখা নয়",
+          "body": "নিজের কোডে স্থির প্রান্তবিন্দু জোড়া, মাঝখানের স্থানাঙ্ক, ছবির পার্থক্য এবং আউটপুটের পাল্লা যাচাই করুন। মনে রাখবেন, Slider ঘুরিয়ে নতুন ছবি আঁকাকে কখনোই Model Learning বলা যাবে না: Learning ভেতরের Weight বদলায়, আর Inference কেবল ইনপুট Coordinate বদলায়। আমাদের অ্যাপটি সম্পূর্ণ অফলাইনে কেবল Forward Pass চালায়, ডিভাইসের ভেতরে কোনো Training চালায় না।"
+        }
+      ]
+    },
+    {
+      "id": "ch27_evaluation",
+      "title": "Quality, Coverage, Memorization ও মূল্যায়নের সীমাবদ্ধতা",
+      "subtitle": "একটিমাত্র একক মেট্রিক দিয়ে Generative Model-এর সব দিক কখনোই মাপা যায় না",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "মূল্যায়নের চারটি ভিন্ন প্রশ্ন",
+          "body": "যেকোনো Generative আউটপুট যাচাই করতে চারটি আলাদা প্রশ্ন তুলুন—Fidelity: আউটপুট কি দেখতে বিশ্বাসযোগ্য? Coverage: পুরো পপুলেশনের সব Mode কি উঠে এসেছে? Reconstruction: প্রদত্ত ইনপুটের তথ্য কি টিকে থাকছে? এবং Memorization বা Privacy: ট্রেনিং ডেটাই কি হুবহু কপি বা ফাঁস হচ্ছে? প্রতিটির জন্য আলাদা প্রমাণ দরকার, আর কম Reconstruction Error পাওয়াটা কোনো Unconditional Generator-এর মূল কাজ নাও হতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের সংরক্ষিত VAE রানের প্রকৃত ফলাফল",
+          "body": "একই [0, 1] পিক্সেল পাল্লায় এবং 359টি Diagnostic Row-তে আমাদের চূড়ান্ত VAE-এর Mean-decode MSE এসেছে প্রায় 0.049779, যেখানে সরল Train-image Mean Baseline-এর MSE হলো প্রায় 0.073775। পাশাপাশি Mean-decode BCE এসেছে প্রায় 23.093754 এবং গড় KL প্রায় 1.662385। মনে রাখবেন, এগুলো স্থির μ বিন্দু থেকে পাওয়া পর্যবেক্ষণমূলক Diagnostic সারাংশ মাত্র—গাণিতিক Expected ELBO নয়।"
+        },
+        {
+          "type": "math",
+          "title": "গড় Pixel MSE-এর সমীকরণ",
+          "body": "\\mathrm{MSE}=\\frac1{64N}\\sum_{i,j}(\\hat x_{ij}-x_{ij})^2"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ VAE Diagnostic MSE, Baseline ও Nearest Neighbor যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/digits/generative_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nr = lab[\"report\"]\nmse = r[\"vae_diagnostic\"][\"mse\"]\nbaseline = r[\"train_mean_baseline_mse\"]\nassert 0 <= mse < baseline < 1\nassert all(\n    s[\"nearest_train_row_1based\"] in r[\"train_rows_1based\"] for s in lab[\"samples\"]\n)\nprint(mse, baseline)\nprint(\"This is a diagnostic reconstruction comparison, not GAN quality ranking.\")\n"
+        },
+        {
+          "type": "text",
+          "title": "GAN পর্যবেক্ষণ ও Nearest-Neighbor অডিট",
+          "body": "বান্ডেলে 16টি স্থির র‍্যান্ডম Latent বিন্দুর আউটপুট, প্রকৃত D(fake) স্কোর, ট্রেনিং ইতিহাস এবং সবচেয়ে কাছের ট্রেনিং ছবির Pixel MSE সংযুক্ত আছে। নিকটতম প্রতিবেশী কেবল 1438টি Training Row-এর মধ্যেই খোঁজা হয়েছে, তাই কোনো Diagnostic Leakage ঘটেনি। খেয়াল রাখবেন, খুব কম দূরত্ব অতিরিক্ত সাদৃশ্যের সতর্কবার্তা হতে পারে, কিন্তু দূরত্ব বেশি হওয়া মানেই যে নতুনত্ব (Novelty) বা Privacy প্রমাণিত হয়ে গেছে—এমন দাবি করা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "জনপ্রিয় FID মেট্রিকের বাস্তব সীমা",
+          "body": "FID একটি নির্দিষ্ট Pretrained Feature Space-এ আসল ও নকল ছবির Mean ও Covariance তুলনা করে; তাই Sample সংখ্যা কম হলে এর ঝোঁক (Finite-sample Bias) এবং ডোমেইনের অমিল অত্যন্ত গুরুত্বপূর্ণ হয়ে ওঠে। যেমন, প্রাকৃতিক ছবির ImageNet Inception Feature সরাসরি 8×8 সংখ্যার মান বিচারের ধ্রুব সত্য নয়। মাত্র 16টি Sample দিয়ে নির্ভরযোগ্য Distribution তুলনা সম্ভব নয় বলে আমাদের অ্যাপে কোনো কৃত্রিম FID বা Inception Score দেখানো হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "একটি নিরপেক্ষ তুলনামূলক পরীক্ষণ যেভাবে সাজাবেন",
+          "body": "ন্যায্য তুলনার জন্য একাধিক Seed, পূর্বঘোষিত Train / Selection / Confirmation ভূমিকা, নির্দিষ্ট Sample সংখ্যা ও কম্পিউট বাজেট, ডোমেইনের উপযোগী বৈধ Feature এবং অনিশ্চয়তার মাত্রা রিপোর্ট করুন। মানুষের মাধ্যমে মূল্যায়ন (Human Review) করলে স্পষ্ট রুব্রিক, Blinded ক্রম এবং ডেটার সম্মতি ও উৎস থাকা আবশ্যক। নিছক Duplicate বা Nearest-neighbor চেক করা কোনো পূর্ণাঙ্গ Privacy গ্যারান্টি নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Interview টিপস: GAN Loss কম অথচ Sample খারাপ—কেন?",
+          "body": "যদি প্রশ্ন করা হয় কেন GAN Loss কম থাকা সত্ত্বেও জেনারেটেড ছবি খারাপ হতে পারে, তবে চলমান প্রতিদ্বন্দ্বী (Moving Opponent), Mode Collapse, দুর্বল Discriminator কিংবা মেট্রিকের অমিলকে কারণ হিসেবে তুলে ধরুন। মূল্যায়ন সবসময় নির্দিষ্ট কাজের লক্ষ্য অনুযায়ী হতে হবে—কেবল Reconstruction MSE দেখিয়ে Unconditional GAN বনাম VAE-এর সার্বজনীন বিজয়ী ঘোষণা করা যায় না।"
+        }
+      ]
+    },
+    {
+      "id": "ch27_conditional",
+      "title": "Conditional Generation, Architecture পছন্দ ও বাস্তব পরিধি",
+      "subtitle": "এই মৌলিক ভিত্তি থেকেই পরবর্তী বড় Generative প্রজেক্ট কীভাবে পরিকল্পনা করবেন?",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Unconditional থেকে Conditional Generation-এর ধারণা",
+          "body": "সাধারণ Unconditional p(x)-এর বদলে আমরা যখন নির্দিষ্ট Label, টেক্সট বা প্রমাণ y দিয়ে p(x|y) থেকে আউটপুট চাই, তখন দরকার হয় Conditional Generation। VAE-এর ক্ষেত্রে Decoder ও Inference Network উভয়েই শর্ত y যোগ করা যায় (চাইলে Conditional Prior নেওয়াও একটি মডেলিং পছন্দ)। একইভাবে cGAN-এ Generator এবং Discriminator—উভয়কেই শর্তটি জানিয়ে দেওয়া জরুরি।"
+        },
+        {
+          "type": "text",
+          "title": "Condition উপেক্ষা করার ঝুঁকি ও যাচাই",
+          "body": "ট্রেনিংয়ে Generator অনেক সময় প্রদত্ত শর্ত উপেক্ষা করতে পারে, আবার Discriminator ক্লাসের ভারসাম্যহীনতাকে শর্টকাট হিসেবে নিতে পারে। তাই ইচ্ছে করে ভুল শর্ত (Mismatched Condition) দিয়ে পরীক্ষা করা, প্রতি শর্তের আলাদা Fidelity ও Coverage মাপা এবং বিরল Label-গুলো অডিট করা অপরিহার্য। শুধু ট্রেনিং ডেটায় Label থাকলেই মডেল অনুরোধ করা Class মেনে চলবে—এমন নিশ্চয়তা নেই। মনে রাখবেন, আমাদের বর্তমান ট্রেন করা মডেলটি Unconditional; এখানে কোনো cGAN ট্রেন করা হয়নি।"
+        },
+        {
+          "type": "math",
+          "title": "Conditional Latent-Variable Model-এর সমীকরণ",
+          "body": "p_\\theta(x|y)=\\int p_\\theta(x|z,y)p(z|y)\\,dz"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Latent কোড ও One-hot Label যুক্ত করার উদাহরণ",
+          "body": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter27_local\", Path(\"assets/datasets/digits/generative_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\n\nwith torch.random.fork_rng():\n    torch.manual_seed(27)\n    z = torch.randn(4, 2, dtype=torch.float64)\n    y = torch.tensor([0, 2, 5, 9])\n    onehot = torch.nn.functional.one_hot(y, 10).to(torch.float64)\n    conditional_input = torch.cat([z, onehot], dim=1)\n    assert conditional_input.shape == (4, 12)\n    print(conditional_input.shape)  # Shape illustration only; not a trained cGAN.\n"
+        },
+        {
+          "type": "text",
+          "title": "কাজ অনুযায়ী সঠিক Architecture নির্বাচন",
+          "body": "বড় ছবির ক্ষেত্রে CNN-এর স্থানিক Inductive Bias, উচ্চতর ধারণক্ষমতা এবং উপযুক্ত Normalization দারুণ কাজে লাগে। আমাদের বর্তমান চ্যাপ্টা MLP-টি ভেতরের গাণিতিক মেকানিক্স স্পষ্টভাবে বোঝানোর জন্য তৈরি—পূর্ণ রেজোলিউশনের ছবি তৈরির বেঞ্চমার্ক নয়। মনে রাখবেন, অতিরিক্ত ধারণক্ষমতা যোগ করলে রিসোর্স খরচ, Overfitting এবং Reproducibility বজায় রাখার দায়ভারও বেড়ে যায়।"
+        },
+        {
+          "type": "text",
+          "title": "ডেটার উৎস, অধিকার ও নিরাপদ ব্যবহার",
+          "body": "যেকোনো প্রজেক্টের শুরুতেই Dataset-এর উৎস, License, সম্মতি (Consent) এবং উদ্দিষ্ট ব্যবহারের পরিধি নথিবদ্ধ করুন। ব্যক্তিগত ছবি বা কপিরাইটযুক্ত উপাদানের Deployment ঝুঁকি সম্পূর্ণভাবে নির্দিষ্ট কাজের ওপর নির্ভরশীল। পাবলিক ডোমেইনের এই ছোট সংখ্যার ফলাফল দেখে বাস্তব মানুষের ছবি তৈরির নীতিমালা বা অধিকার সম্পর্কে কোনো সাধারণ সিদ্ধান্ত টানা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "Production Serving Contract ও প্ল্যাটফর্ম যাচাই",
+          "body": "ডিপ্লয় করার সময় সংরক্ষিত Weight-এর সংস্করণ, ইনপুট স্কেল, Latent Prior, আউটপুটের ধরন, Random Seed Policy এবং রিসোর্স সীমা সুনির্দিষ্টভাবে বেঁধে দিন, এবং বিভিন্ন প্ল্যাটফর্মে আউটপুটের সহনশীলতা পরীক্ষা করুন। আমাদের বর্তমান Flutter অ্যাপটি CPU-তে Dart কোডে Forward Pass চালায়; এখানে কোনো GPU Serving বেঞ্চমার্ক মাপা হয়নি এবং Android রিলিজ অফলাইনে আলাদাভাবে যাচাই করা হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "Interview প্রস্তুতি ও পরের অধ্যায়ের সেতুবন্ধন",
+          "body": "একটি Text-conditioned Image Generator ডিজাইন করতে বলা হলে শুরুতেই কাজের লক্ষ্য, জোড়াবদ্ধ (Paired) ডেটা, Condition Alignment এবং মূল্যায়নের পদ্ধতি নির্ধারণ করুন; এরপর ছবির মান, Latency ও আউটপুট সীমার মধ্যকার ভারসাম্য ব্যাখ্যা করুন। এই অধ্যায়ের ভিত্তির ওপর দাঁড়িয়েই পরের অধ্যায় Book 4 · Chapter 9 (Diffusion & Multimodal Systems)-এ আমরা Diffusion মেকানিক্স ও Multimodal Representation সম্পর্কে বিস্তারিত পড়ব।"
+        }
+      ]
+    },
+    {
+      "id": "ch27_interview",
+      "title": "Interview Synthesis ও হাতে-কলমে Coding প্রস্তুতি",
+      "subtitle": "সমীকরণ Derive করা থেকে শুরু করে সূক্ষ্ম Bug ধরা—একটি পূর্ণাঙ্গ উত্তরের কাঠামো",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "পাঁচ মিনিটে পুরো অধ্যায় গুছিয়ে বলার কাঠামো",
+          "body": "উত্তর শুরু করুন সমস্যার লক্ষ্য ও Data Contract দিয়ে। এরপর VAE-এর p(z), p(x|z) ও q(z|x) লিখে ELBO প্রতিপাদন করুন, এবং GAN-এর D/G Objective ও Non-saturating রূপান্তরটি দেখান। তারপর বাস্তব অভিজ্ঞতার উদাহরণ হিসেবে একটি Gradient Bug এবং একটি Evaluation ব্যর্থতা কীভাবে ধরবেন তা ব্যাখ্যা করুন। শুধু মুখস্থ সূত্র না বলে প্রতিটি সমীকরণের পেছনের অনুমানগুলোও (Assumptions) উল্লেখ করুন।"
+        },
+        {
+          "type": "text",
+          "title": "হোয়াইটবোর্ডে যে হিসাবগুলো নিজের হাতে করতে পারা চাই",
+          "body": "হাতে-কলমে Diagonal Gaussian KL প্রতিপাদন, Reparameterization-এর দুই শাখার Gradient, স্থিতিশীল BCE রূপ এবং GAN-এর Logit-ভিত্তিক dL/da বের করার অভ্যাস রাখুন; সাথে Batch ও Feature Reduction কোন অক্ষে নিচ্ছেন তা স্পষ্টভাবে বলুন। যেমন, μ = [1, 0] এবং Log-variance = [0, 0] হলে যে KL = 0.5 হয়—এটি একটি সুনির্দিষ্ট গাণিতিক উদাহরণ, কোনো Dataset-এর মাপা পারফরম্যান্স নয়।"
+        },
+        {
+          "type": "math",
+          "title": "একটি পূর্ণাঙ্গ ইঞ্জিনিয়ারিং উত্তরের পাঁচটি স্তম্ভ",
+          "body": "\\mathrm{answer}=\\mathrm{assumptions}+\\mathrm{objective}+\\mathrm{gradient}+\\mathrm{evidence}+\\mathrm{limits}"
+        },
+        {
+          "type": "code",
+          "title": "সংরক্ষিত সমস্ত রান ও আপডেট সংখ্যার চূড়ান্ত যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter27_local\", Path(\"assets/datasets/digits/generative_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/digits/generative_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nassert len(lab[\"vae_history\"]) == 60 and len(lab[\"gan_history\"]) == 80\nassert lab[\"report\"][\"vae_updates\"] == 720\nassert lab[\"report\"][\"gan_updates_each\"] == 960\nassert lab[\"report\"][\"vae_parameters\"] == 4420\nprint(\n    \"Reproduce: python assets/datasets/digits/generative_workflow.py --artifact-dir output27\"\n)\n"
+        },
+        {
+          "type": "text",
+          "title": "Coding রাউন্ডের প্রস্তুতি ও আবশ্যিক Unit Test",
+          "body": "সঠিক Shape বজায় রাখা VAE Forward Pass, স্বতন্ত্র KL যাচাই, দুই ধাপের GAN আপডেট এবং নিরাপদ Weight Reload নিজের হাতে লিখে অভ্যাস করুন। আপনার Deterministic Test-গুলো যেন শূন্য KL, চরম Logit, D পর্বে বিচ্ছিন্ন G, G পর্বে সচল Gradient এবং ডেটা স্প্লিটের স্বাতন্ত্র্য পরীক্ষা করে। সবগুলো Layer-এর Parameter আসলেই আপডেট হচ্ছে কি না তা পরীক্ষা না করে কখনোই Training সফল হয়েছে বলে ধরে নেবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "অ্যাপের অনুশীলন পরিবেশ ও লোকাল Python যাচাই",
+          "body": "অ্যাপের কোডিং স্ক্র্যাচপ্যাড আপনার খসড়া কোড ও সংখ্যাসূচক উত্তর SQLite-এ সংরক্ষণ করে, কিন্তু সরাসরি যথেচ্ছ Python কোড এক্সিকিউট করে না। তাই সম্পূর্ণ স্টার্টার ও সমাধান কোড নিজের কম্পিউটারের নির্ধারিত Python পরিবেশে চালিয়ে দেখুন। কেবল চূড়ান্ত সংখ্যাটি মিলে গেলেই কোড শতভাগ নির্ভুল প্রমাণিত হয় না; আমাদের বান্ডেল করা Python QA স্ক্রিপ্ট স্বতন্ত্রভাবে সব সমাধান যাচাই করে।"
+        },
+        {
+          "type": "text",
+          "title": "প্রমাণভিত্তিক উত্তর দেওয়ার শৃঙ্খলা",
+          "body": "আমাদের স্থির পরীক্ষণটির ফলাফল ও সীমাবদ্ধতাগুলো স্পষ্টভাবে বলতে পারা চাই: 1438 / 359 পুনর্ব্যবহৃত ডেটা স্প্লিট, float64 MLP, 2D Latent Space, ভগ্নাংশ টার্গেটে BCE Surrogate, স্থির Mean-decode ডায়াগনস্টিক এবং 16টি নির্দিষ্ট Sample পর্যবেক্ষণ। যে পরীক্ষণ কখনো চালানো হয়নি, সেটির জন্য কোনো কাল্পনিক Accuracy, FID বা বিশাল স্কেলে কাজ করার দাবি তৈরি করবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "চূড়ান্ত চেকলিস্ট ও পরবর্তী অধ্যায়",
+          "body": "পরবর্তী ধাপে যাওয়ার আগে ELBO, Latent Gradient, Likelihood Reduction এবং GAN-এর প্রতিদ্বন্দ্বিতামূলক আপডেটগুলো নিজের কোড চালিয়ে আরেকবার মিলিয়ে দেখুন। এরপর পরের অধ্যায় Book 4 · Chapter 9 (Diffusion & Multimodal Systems)-এ আমরা Diffusion Sampling এবং Multimodal Alignment শিখব।"
+        }
+      ]
+    }
+  ],
+  "quizzes": [
+    {
+      "id": "ch27_q1",
+      "question": "একটি Unconditional Generative Model মূলত কোন Distribution শেখার চেষ্টা করে?",
+      "options": [
+        "পূর্ণ Data Distribution p(x)",
+        "কেবল Conditional Label Probability p(y|x)",
+        "কেবল Training সেটের প্রতিটি Label-এর সংখ্যা",
+        "কেবল সবচেয়ে কাছের উদাহরণের Nearest-neighbor Index"
+      ],
+      "answer": 0,
+      "explanation": "Unconditional Generator পুরো ডেটার অন্তর্নিহিত Distribution p(x) মডেল করতে চায়, যাতে সেখান থেকে নতুন Sample তৈরি করা যায়। সাধারণ Classifier-এর p(y|x), ইনডেক্স খোঁজা বা Label গণনা এর বিকল্প নয়।"
+    },
+    {
+      "id": "ch27_q2",
+      "question": "এই অধ্যায়ের স্থির পরীক্ষণে Diagnostic Row-এর সংখ্যা কয়টি?",
+      "options": [
+        "1438",
+        "359",
+        "16",
+        "1797"
+      ],
+      "answer": 1,
+      "explanation": "এখানে 1438টি Row ব্যবহৃত হয়েছে Training-এ, 359টি পুনর্ব্যবহৃত হয়েছে Diagnostic পর্যবেক্ষণে, আর 16টি হলো সংরক্ষিত জেনারেটেড Sample। মোট 1797টি উদাহরণকে কখনোই অদেখা Blind Test বলা যাবে না।"
+    },
+    {
+      "id": "ch27_q3",
+      "question": "VAE-এর Encoder নেটওয়ার্ক আসলে কোন রাশিটি আউটপুট হিসেবে দেয়?",
+      "options": [
+        "নিখুঁত Marginal Likelihood pθ(x)",
+        "নিখুঁত আসল Posterior pθ(z|x)",
+        "Approximate Posterior qφ(z|x)-এর Parameter (μ ও Log-variance)",
+        "বাধ্যতামূলকভাবে সংখ্যার Class Label"
+      ],
+      "answer": 2,
+      "explanation": "Encoder আসল Posterior-কে অনুমান করার জন্য Approximate Posterior qφ(z|x)-এর Mean μ এবং Log-variance দেয়; এটি সরাসরি নিখুঁত Posterior বা Marginal Likelihood হিসাব করে না।"
+    },
+    {
+      "id": "ch27_q4",
+      "question": "আসল Log-Likelihood এবং ELBO-র মাঝখানের ব্যবধান (ELBO Gap) নিচের কোন KL Divergence-এর সমান?",
+      "options": [
+        "KL(qφ(z|x) || p(z))",
+        "KL(p(z) || qφ(z|x))",
+        "Pixel MSE",
+        "KL(qφ(z|x) || pθ(z|x))"
+      ],
+      "answer": 3,
+      "explanation": "Prior-এর সাথে KL পদটি থাকে খোদ ELBO Objective-এর ভেতরে; আর আসল Posterior pθ(z|x)-এর সাথে qφ(z|x)-এর KL Divergence-ই হলো log pθ(x) এবং ELBO-র মধ্যকার প্রকৃত ব্যবধান।"
+    },
+    {
+      "id": "ch27_q5",
+      "question": "এক মাত্রার একটি Gaussian-এ μ = 1 এবং Log-variance = 0 হলে Standard Normal Prior-এর সাপেক্ষে KL Divergence কত হবে?",
+      "options": [
+        "0.5",
+        "0",
+        "1",
+        "2"
+      ],
+      "answer": 0,
+      "explanation": "সূত্রে মান বসালে 0.5 * (1² + exp(0) − 1 − 0) = 0.5 পাওয়া যায়। কেবল Mean = 0 এবং Variance = 1 একসাথে হলেই KL শূন্য হয়।"
+    },
+    {
+      "id": "ch27_q6",
+      "question": "Encoder-এর আউটপুট Log-variance যদি ℓ হয়, তবে সেখান থেকে Standard Deviation পাওয়ার সঠিক সূত্র কোনটি?",
+      "options": [
+        "exp(ℓ)",
+        "exp(ℓ / 2)",
+        "ℓ²",
+        "sqrt(ℓ)"
+      ],
+      "answer": 1,
+      "explanation": "যেহেতু ℓ = log(σ²), তাই exp(ℓ) দেয় Variance σ², আর তার বর্গমূল exp(ℓ / 2) দেয় Standard Deviation σ। এখানে ℓ ঋণাত্মক বাস্তব সংখ্যাও হতে পারে, তাই সরাসরি sqrt(ℓ) নেওয়া ভুল।"
+    },
+    {
+      "id": "ch27_q7",
+      "question": "Gaussian VAE-তে Reparameterization Trick-এর সঠিক সমীকরণ কোনটি?",
+      "options": [
+        "z = μ + exp(ℓ) · ε",
+        "z = detach(μ) + ε",
+        "z = μ + exp(ℓ / 2) · ε",
+        "Variance বাদ দিয়ে কেবল z = μ · ε"
+      ],
+      "answer": 2,
+      "explanation": "প্যারামিটার-মুক্ত নয়েজ ε এবং Differentiable রূপান্তর z = μ + exp(ℓ / 2) · ε ব্যবহার করলে Encoder পর্যন্ত Gradient পথ অটুট থাকে; ভুল করে detach করলে সেই পথ ভেঙে যায়।"
+    },
+    {
+      "id": "ch27_q8",
+      "question": "অ্যাপে নয়েজ ε = 0 বসিয়ে ছবি ডিকোড করলে আমরা আসলে ঠিক কী দেখতে পাই?",
+      "options": [
+        "নিশ্চিতভাবে গাণিতিক Expected Decoded Image",
+        "Expected Reconstruction-এর একটি নিখুঁত Unbiased Estimate",
+        "Prior Distribution থেকে টানা একটি র‍্যান্ডম Sample",
+        "Posterior Mean বিন্দুতে Decoder-এর আউটপুট"
+      ],
+      "answer": 3,
+      "explanation": "নন-লিনিয়ার Decoder-এর ক্ষেত্রে সাধারণত Decoder(E[z]) এবং E[Decoder(z)] সমান হয় না। তাই ε = 0 বসিয়ে পাওয়া Mean Decode কোনো Monte Carlo ELBO প্রাক্কলন নয়, বরং গড় বিন্দু μ-তে ডিকোডারের আউটপুট।"
+    },
+    {
+      "id": "ch27_q9",
+      "question": "PyTorch-এর BCEWithLogits Loss Function-এ ইনপুট হিসেবে কোনটি পাঠাতে হয়?",
+      "options": [
+        "সরাসরি কাঁচা Logit (Raw Logits)",
+        "আগে থেকে Sigmoid করা Probability",
+        "সংখ্যার Class ID",
+        "KL Divergence-এর মান"
+      ],
+      "answer": 0,
+      "explanation": "সংখ্যাসূচকভাবে স্থিতিশীল এই Function-টি নিজের ভেতরেই Logit রূপান্তর সেরে নেয়; এর আগে আলাদা করে Sigmoid বসালে দ্বিগুণ রূপান্তর ঘটে মূল Objective বদলে যায়।"
+    },
+    {
+      "id": "ch27_q10",
+      "question": "এই অধ্যায়ে Normalized Grayscale ছবির ওপর ব্যবহৃত BCE Loss-কে কীভাবে সংজ্ঞায়িত করা হয়েছে?",
+      "options": [
+        "নিখুঁত Continuous Grayscale Likelihood হিসেবে",
+        "ভগ্নাংশ মানের ওপর একটি Soft-target Reconstruction Surrogate হিসেবে",
+        "সরাসরি FID স্কোর হিসেবে",
+        "Classification Accuracy হিসেবে"
+      ],
+      "answer": 1,
+      "explanation": "আমাদের Pixel মানগুলো [0, 1] পাল্লার ভগ্নাংশ হওয়ায় এটি আক্ষরিক বাইনারি Bernoulli Observation Model নয়; তাই এটিকে নিখুঁত Continuous Density না বলে একটি কার্যকর Reconstruction Surrogate বলা হয়েছে।"
+    },
+    {
+      "id": "ch27_q11",
+      "question": "প্রতিটি ছবির Pixel-গুলোর Reconstruction Loss যোগ (sum) না করে গড় (mean) নিলে, কিন্তু KL-এর যোগফল অপরিবর্তিত রাখলে কী ঘটবে?",
+      "options": [
+        "ট্রেনিংয়ের ভারসাম্যে কিছুই বদলাবে না",
+        "KL স্বয়ংক্রিয়ভাবে শূন্য হয়ে যাবে",
+        "Reconstruction-এর সাপেক্ষে KL-এর আপেক্ষিক ওজন অনেক বেড়ে যাবে",
+        "Sampling পুরোপুরি Deterministic হয়ে যাবে"
+      ],
+      "answer": 2,
+      "explanation": "64টি Pixel-এর গড় নিলে Reconstruction পদটি 64 গুণ ছোট হয়ে যায়, ফলে অপরিবর্তিত KL পদটি তুলনামূলকভাবে 64 গুণ বেশি শক্তিশালী হয়ে ওঠে। তাই স্পষ্ট Reduction নিয়ম মানা জরুরি।"
+    },
+    {
+      "id": "ch27_q12",
+      "question": "অ্যাপের স্থির (Frozen) মডেলে β Slider ঘোরালে আসলে কোন জিনিসটি বদলায়?",
+      "options": [
+        "নেটওয়ার্কের ট্রেন করা Weight",
+        "Dataset-এর আসল Label",
+        "Encoder-এর ভেতরকার Architecture",
+        "স্থির Weight-এর ওপর হিসাব করা যৌথ Objective স্কোর"
+      ],
+      "answer": 3,
+      "explanation": "অ্যাপে সংরক্ষিত Weight স্থির থাকে; তাই Slider কেবল Reconstruction + β·KL স্কোরটি নতুন করে হিসাব করে দেখায়। ভিন্ন β-তে ট্রেন করলে কেমন ফলাফল আসবে তা জানতে আলাদা নিয়ন্ত্রিত Training রান প্রয়োজন।"
+    },
+    {
+      "id": "ch27_q13",
+      "question": "নিচের কোন লক্ষণটি VAE-তে Posterior Collapse ঘটার স্পষ্ট সতর্কবার্তা?",
+      "options": [
+        "সব ইনপুটের জন্যই q(z|x) প্রায় ইনপুট-নিরপেক্ষ Prior-এর কাছাকাছি চলে যাওয়া",
+        "শুধুমাত্র KL-এর মান ধনাত্মক থাকা",
+        "একটি পরিষ্কার ও ধারালো জেনারেটেড ছবি পাওয়া",
+        "Discriminator-এর Accuracy 50% হওয়া"
+      ],
+      "answer": 0,
+      "explanation": "যখন এনকোডার ইনপুট ছবি উপেক্ষা করে সব ক্ষেত্রেই Prior-এর কাছাকাছি Distribution দেয় এবং z তথ্যহীন হয়ে পড়ে, সেটাই Posterior Collapse-এর প্রধান সংকেত; তবে মূল কারণ নিশ্চিত করতে একাধিক ডায়াগনস্টিক পরীক্ষা দরকার।"
+    },
+    {
+      "id": "ch27_q14",
+      "question": "স্থির Distribution ও সীমাহীন ধারণক্ষমতায় তাত্ত্বিক Optimal Discriminator D*(x)-এর সূত্র কোনটি?",
+      "options": [
+        "p_g(x) / p_data(x)",
+        "p_data(x) / (p_data(x) + p_g(x))",
+        "সর্বদা 1",
+        "সর্বদা 0"
+      ],
+      "answer": 1,
+      "explanation": "স্থির p_data ও p_g-এর বিপরীতে প্রতিটি বিন্দুতে ম্যাক্সিমাইজ করলে পাওয়া যায় D*(x) = p_data(x) / (p_data(x) + p_g(x))। তবে সসীম ডেটায় ট্রেন করা বাস্তব Discriminator সবসময় এই বিন্দুতে পৌঁছায় বলে ধরে নেওয়া যায় না।"
+    },
+    {
+      "id": "ch27_q15",
+      "question": "সর্বত্র D = 0.5 হলে আমাদের দুই-পদের যোগফলভিত্তিক (Real Mean + Fake Mean) Discriminator Loss কত হবে?",
+      "options": [
+        "log(2)",
+        "0",
+        "2 log(2)",
+        "−log(2)"
+      ],
+      "answer": 2,
+      "explanation": "আমাদের কোডে আসল ছবির গড় Loss এবং নকল ছবির গড় Loss আলাদাভাবে যোগ করা হয়েছে, তাই দুটির প্রতিটিতে log(2) করে মোট 2 log(2) আসে। উভয় ব্যাচ একসাথে মিশিয়ে একটি গড় নিলে মান আসত log(2)।"
+    },
+    {
+      "id": "ch27_q16",
+      "question": "কাঁচা Logit a-এর সাপেক্ষে Non-saturating Generator Loss-এর Derivative কোনটি?",
+      "options": [
+        "−sigmoid(a)",
+        "1 − a",
+        "সবসময় 0",
+        "sigmoid(a) − 1"
+      ],
+      "answer": 3,
+      "explanation": "মূল Minimax সমীকরণের Derivative হলো −sigmoid(a), যা চরম ঋণাত্মক a-তে শূন্যের কাছে চলে যায়। কিন্তু Non-saturating সমীকরণের Derivative হলো sigmoid(a) − 1, যার মান তখন প্রায় −1 থাকে এবং জোরালো শেখার সংকেত দেয়।"
+    },
+    {
+      "id": "ch27_q17",
+      "question": "Discriminator আপডেট করার ধাপে জেনারেটেড নকল Sample কীভাবে ব্যবহার করা উচিত?",
+      "options": [
+        "G(z).detach() ব্যবহার করে Generator-এর গ্রাফ বিচ্ছিন্ন রেখে",
+        "একই সাথে প্রতিবার Generator Optimizer-এর step চালিয়ে",
+        "প্রতি ধাপে Generator-এর Parameter র‍্যান্ডম করে দিয়ে",
+        "পুরো Discriminator Forward Pass-কে no_grad ব্লকে রেখে"
+      ],
+      "answer": 0,
+      "explanation": "D আপডেটের সময় Generator-এ Gradient পাঠানোর প্রয়োজন নেই বলে G(z).detach() ব্যবহার করা হয়। অন্যদিকে G পর্বে পুরো D-কে no_grad করে দিলে G-এর শেখার পথই বন্ধ হয়ে যাবে।"
+    },
+    {
+      "id": "ch27_q18",
+      "question": "Generator আপডেট করার ধাপে Discriminator-এর Parameter Freeze করলেও কোন পথটি অবশ্যই সচল থাকতে হবে?",
+      "options": [
+        "পুরো Discriminator-এর ওপর torch.no_grad()",
+        "Discriminator-এর ইনপুট G(z)-এর সাপেক্ষে সচল Gradient পথ",
+        "নকল ছবির ওপর .detach()",
+        "Generator-এ requires_grad = False"
+      ],
+      "answer": 1,
+      "explanation": "শুধু D-এর নিজস্ব প্যারামিটারে requires_grad = False করলে ওয়েট আপডেট থামে, কিন্তু ইনপুট G(z) হয়ে Generator পর্যন্ত যাওয়ার Derivative পথটি সচল থাকে—যা G শেখার জন্য অপরিহার্য।"
+    },
+    {
+      "id": "ch27_q19",
+      "question": "GAN ট্রেনিংয়ে Mode Collapse বলতে ঠিক কী বোঝায়?",
+      "options": [
+        "সবসময় কম রেজোলিউশনের ডেটা ব্যবহার করা",
+        "Loss-এর মান ঋণাত্মক হওয়া",
+        "বহু ভিন্ন Latent ইনপুট z-এর জন্য ঘুরেফিরে সীমিত কিছু একই রকম আউটপুট তৈরি হওয়া",
+        "শুধুমাত্র বড় আকারের Latent Dimension নেওয়া"
+      ],
+      "answer": 2,
+      "explanation": "Mode Collapse হলো বৈচিত্র্য ও Coverage হারানোর ব্যর্থতা, যেখানে জেনারেটর পুরো ডেটার সব ধরন না শিখে অল্প কয়েকটি ছাঁচে আটকে যায়। একটিমাত্র সুন্দর ছবি বা কম Generator Loss দেখে এটি ধরা যায় না।"
+    },
+    {
+      "id": "ch27_q20",
+      "question": "কোনো জেনারেটেড ছবির ওপর D(fake)-এর মান খুব বড় (1-এর কাছাকাছি) হওয়ার প্রকৃত অর্থ কী?",
+      "options": [
+        "মানুষের চোখে ছবিটি শতভাগ নিখুঁত হওয়ার গ্যারান্টি",
+        "ডেটার গোপনীয়তা (Privacy) সম্পূর্ণ সুরক্ষিত থাকার প্রমাণ",
+        "ছবিটির নিখুঁত Marginal Likelihood পাওয়া গেছে",
+        "বর্তমান Discriminator ওই জেনারেটেড Sample-টিকে আসল (Real) বলে মনে করছে"
+      ],
+      "answer": 3,
+      "explanation": "Discriminator হলো ওই নির্দিষ্ট খেলার ভেতরকার একটি আপেক্ষিক Classifier মাত্র; এটি কোনো সার্বজনীন মানের বিচারক বা Calibrated Probability পরিমাপক নয়।"
+    },
+    {
+      "id": "ch27_q21",
+      "question": "কোনো জেনারেটেড ছবির সাথে সবচেয়ে কাছের ট্রেনিং ছবির Pixel MSE খুব কম হলে সেটিকে কী বলা যায়?",
+      "options": [
+        "অতিরিক্ত সাদৃশ্যের একটি প্রাথমিক সংকেত, যা নিয়ে আরও গভীর যাচাই প্রয়োজন",
+        "নিশ্চিতভাবে একটি চূড়ান্ত Privacy লঙ্ঘন",
+        "ছবিটি সম্পূর্ণ মৌলিক (Original) হওয়ার সনদ",
+        "মডেলের FID স্কোর কম হওয়ার নিশ্চিত প্রমাণ"
+      ],
+      "answer": 0,
+      "explanation": "সাধারণ Pixel দূরত্ব স্কেল ও সামান্য স্থানান্তরের প্রতি খুব সংবেদনশীল। তাই কম দূরত্ব একটি সতর্ক সংকেত হতে পারে, আবার উল্টোদিকে বেশি দূরত্বও কিন্তু শতভাগ Privacy-র গ্যারান্টি দেয় না।"
+    },
+    {
+      "id": "ch27_q22",
+      "question": "আলাদাভাবে ট্রেন করা VAE ও GAN-এ একই Latent বিন্দু z ইনপুট দিলে কীসের নিশ্চয়তা থাকে?",
+      "options": [
+        "দুটি মডেলই হুবহু একই অঙ্কের ছবি তৈরি করবে",
+        "দুই মডেলের মধ্যে কোনো যৌথ অর্থগত সামঞ্জস্য (Shared Semantic Alignment) থাকার নিশ্চয়তা নেই",
+        "দুটি মডেলের প্রতিটি Pixel মান সমান হবে",
+        "দুটি মডেলের Posterior হুবহু এক হবে"
+      ],
+      "answer": 1,
+      "explanation": "পৃথকভাবে ট্রেন হওয়ায় দুই মডেলের Latent Coordinate অক্ষগুলো একে অপরের সাথে মেলানো থাকে না; একই আকারের Prior নিলেও তারা আপনাআপনি একই অর্থ শেখে না।"
+    },
+    {
+      "id": "ch27_q23",
+      "question": "আমাদের অ্যাপের 16টি জেনারেটেড Sample দিয়ে কোনো FID স্কোর রিপোর্ট না করার মূল কারণ কী?",
+      "options": [
+        "GAN মডেলের কখনোই কোনো মূল্যায়ন করা সম্ভব নয়",
+        "VAE সব পরিস্থিতিতেই GAN-এর চেয়ে সেরা",
+        "অত্যন্ত কম Sample সংখ্যা এবং ডোমেইন-উপযোগী Feature-এর সীমাবদ্ধতা",
+        "Discriminator Loss নিজেই হুবহু FID স্কোরের সমান"
+      ],
+      "answer": 2,
+      "explanation": "মাত্র 16টি ছবির প্যানেল কেবল চোখে দেখে প্রাথমিক পর্যবেক্ষণের জন্য; ডোমেইনের উপযুক্ত Feature Extractor এবং পর্যাপ্ত বড় Sample ছাড়া Distribution-এর মান সম্পর্কে দাবি দুর্বল হয়ে পড়ে।"
+    },
+    {
+      "id": "ch27_q24",
+      "question": "এই অধ্যায়ে ব্যবহৃত 359টি উদাহরণের Diagnostic Split-কে নিচের কোন পরিচয়ে ডাকা সবচেয়ে সঠিক?",
+      "options": [
+        "সম্পূর্ণ নতুন ও স্বাধীন Blind Test Set",
+        "লেখক-নিরপেক্ষ (Writer-independent) বেঞ্চমার্ক",
+        "Production পর্যায়ের OCR Validation সেট",
+        "আগেও পর্যবেক্ষণ করা একটি শিক্ষামূলক Diagnostic সেট"
+      ],
+      "answer": 3,
+      "explanation": "এখানে Book 3 · Chapter 4 (Vision CNNs)-এর স্প্লিট পুনর্ব্যবহৃত হয়েছে এবং ডেটাসেটে কোনো Writer ID নেই। হুবহু একরকম হ্যাশ আলাদা রাখা হলেও তা দিয়ে লেখক-নিরপেক্ষ স্বাধীনতা প্রমাণিত হয় না।"
+    },
+    {
+      "id": "ch27_q_gap_revision",
+      "question": "ELBO Gap-এ থাকা KL Divergence ঠিক কোন দুটি Distribution-এর মধ্যে তুলনা করে?",
+      "options": [
+        "Approximate Posterior q(z|x) এবং আসল Posterior p(z|x)",
+        "Approximate Posterior q(z|x) এবং কাঁচা ইনপুট x",
+        "Prior p(z) এবং Marginal p(x)",
+        "যেকোনো দুটি জেনারেটেড ছবি"
+      ],
+      "answer": 0,
+      "explanation": "গাণিতিক অভেদ অনুযায়ী Log Evidence = ELBO + KL(q(z|x) || p(z|x))। অন্যদিকে Objective-এর ভেতরের Prior Regularizer তুলনা করে q(z|x) || p(z)-কে, যা সম্পূর্ণ আলাদা পদ।"
+    },
+    {
+      "id": "ch27_q_reduction_revision",
+      "question": "প্রতিটি ছবির D সংখ্যক Pixel-এর Reconstruction Loss যোগ (sum) না করে গড় (mean) নিলেন, কিন্তু KL পদটি অপরিবর্তিত রাখলেন। এতে KL-এর আপেক্ষিক ওজন কী হবে?",
+      "options": [
+        "আগের তুলনায় D গুণ বেশি শক্তিশালী হবে",
+        "আগের তুলনায় D গুণ কমে যাবে",
+        "সবসময় হুবহু একই থাকবে",
+        "শূন্য হয়ে যাবে"
+      ],
+      "answer": 0,
+      "explanation": "নতুন গড়ভিত্তিক Objective-কে D দিয়ে গুণ করে আগের স্কেলে আনলে সেটি দাঁড়ায় Reconstruction Sum + D × KL। তাই সবসময় Pixel Reduction এবং β-এর মান একসাথে উল্লেখ করতে হয়।"
+    }
+  ],
+  "exercises": [
+    {
+      "id": "ch27_ex_kl",
+      "title": "Diagonal Gaussian KL হিসাব ও যাচাই",
+      "prompt": "একটি Diagonal Gaussian Distribution-এর জন্য μ = [1, 0] এবং Log-variance = [0, 0] দেওয়া আছে। Standard Normal Prior-এর সাপেক্ষে এর সব Dimension-এর যোগফল (KL sum) বের করে answer-এ রাখুন।",
+      "starter": "import numpy as np\n\nmu = np.array([1.0, 0.0])\nlogvar = np.zeros(2)\n# TODO: result\n",
+      "solution": "import numpy as np\n\nmu = np.array([1.0, 0.0])\nlogvar = np.zeros(2)\nresult = float(0.5 * np.sum(mu**2 + np.exp(logvar) - 1 - logvar))\nassert abs(result - 0.5) < 1e-12\nprint(result)\n",
+      "expected": 0.5,
+      "explanation": "প্রথম Coordinate-এর KL হলো 0.5 * (1 + 1 − 1 − 0) = 0.5 এবং দ্বিতীয়টির 0, ফলে মোট যোগফল হয় 0.5। প্রতিটি উদাহরণের মোট KL পেতে সবগুলো Latent Dimension বরাবর যোগ করতে হয়।"
+    },
+    {
+      "id": "ch27_ex_sample",
+      "title": "Reparameterized Pathwise Sample তৈরি",
+      "prompt": "ধরা যাক μ = [1, −1], Log-variance = [0, 0] এবং স্থির নয়েজ epsilon = [2, −2]। Reparameterization সূত্র প্রয়োগ করে পাওয়া Latent ভেক্টর z-এর প্রথম Coordinate-টি answer-এ রাখুন।",
+      "starter": "import numpy as np\n\n# TODO: reparameterize\n",
+      "solution": "import numpy as np\n\nmu = np.array([1.0, -1.0])\nlogvar = np.zeros(2)\neps = np.array([2.0, -2.0])\nz = mu + np.exp(0.5 * logvar) * eps\nresult = float(z[0])\nassert np.allclose(z, [3.0, -3.0])\nprint(result)\n",
+      "expected": 3,
+      "explanation": "এখানে Standard Deviation হলো exp(0.5 × 0) = 1। সুতরাং প্রথম Coordinate-টির মান হবে z[0] = 1 + 1 × 2 = 3।"
+    },
+    {
+      "id": "ch27_ex_bce",
+      "title": "চরম Logit মানে স্থিতিশীল BCE হিসাব",
+      "prompt": "ধরা যাক কাঁচা logits = [1000, −1000] এবং targets = [0, 1]। সংখ্যাসূচকভাবে স্থিতিশীল (Stable) উপায়ে BCE হিসাব করে তার যোগফল (sum) answer-এ রাখুন।",
+      "starter": "import numpy as np\n\n# TODO: stable loss\n",
+      "solution": "import numpy as np\n\nlogits = np.array([1000.0, -1000.0])\ntarget = np.array([0.0, 1.0])\nloss = np.logaddexp(0, logits) - target * logits\nresult = float(loss.sum())\nassert np.isfinite(result)\nprint(result)\n",
+      "expected": 2000,
+      "explanation": "এখানে দুটি প্রেডিকশনই চরম আত্মবিশ্বাসের সাথে ভুল হওয়ায় প্রতিটির মাশুল আসে প্রায় 1000 করে, ফলে মোট যোগফল হয় 2000। স্থিতিশীল Logit সূত্র ব্যবহার করায় কোনো Overflow ছাড়াই সসীম ফলাফল পাওয়া যায়।"
+    },
+    {
+      "id": "ch27_ex_gradient",
+      "title": "Reparameterization-এ Log-variance Gradient যাচাই",
+      "prompt": "এক মাত্রায় μ = 1, Log-variance = 0 এবং স্থির epsilon = 2 দেওয়া আছে। Autograd ব্যবহার করে Latent z-এর সাপেক্ষে Log-variance-এর Derivative বের করে answer-এ রাখুন।",
+      "starter": "import torch\n\n# TODO: backward\n",
+      "solution": "import torch\n\nlv = torch.tensor(0.0, dtype=torch.float64, requires_grad=True)\nz = 1 + torch.exp(0.5 * lv) * 2\nz.backward()\nresult = lv.grad.item()\nprint(result)\n",
+      "expected": 1,
+      "explanation": "সূত্র অনুযায়ী dz/dℓ = 0.5 × exp(0.5 × 0) × 2 = 1। কোড লেখার সময় Variance এবং Standard Deviation-এর মধ্যকার 0.5 গুণকের Chain Rule সবসময় মিলিয়ে দেখুন।"
+    },
+    {
+      "id": "ch27_ex_reductions",
+      "title": "Batch ও Pixel Reduction-এর সঠিক হিসাব",
+      "prompt": "ধরা যাক Batch Size = 2, প্রতি ছবিতে 64টি করে Pixel, যেখানে সব logits = 0 এবং সব targets = 0। প্রতি ছবির Reconstruction BCE sum-এর সাথে KL মান [1, 3] যোগ করে পুরো Batch-এর গড় (mean) বের করে answer-এ রাখুন। দশমিকের পর 6 ঘর (6 decimal places) পর্যন্ত মান দেওয়া যাবে।",
+      "starter": "import numpy as np\n\n# TODO: per-row reduction\n",
+      "solution": "import numpy as np\n\nlogits = np.zeros((2, 64))\ntarget = np.zeros_like(logits)\nkl = np.array([1.0, 3.0])\nrecon = (np.logaddexp(0, logits) - target * logits).sum(axis=1)\nresult = float((recon + kl).mean())\nprint(result)\n",
+      "expected": 46.3614195558365,
+      "explanation": "প্রতি ছবির Reconstruction sum হলো 64 * log(2) এবং গড় KL হলো (1 + 3) / 2 = 2; ফলে মোট Batch Mean আসে প্রায় 46.361420। এখানে ভুল করে Pixel mean নিলে KL-এর আপেক্ষিক ওজন বদলে যেত।"
+    },
+    {
+      "id": "ch27_ex_detach",
+      "title": "Discriminator পর্বে Generator Gradient বন্ধ রাখা",
+      "prompt": "বান্ডেল করা GAN Architecture ও নির্ধারিত ইনপুট টেনসরে নকল ছবিকে detach() করে শুধুমাত্র Discriminator পর্বে backward() চালান। এ অবস্থায় Generator-এর কয়টি Parameter Tensor-এ Gradient জমা হয়েছে তার সংখ্যা (count) answer-এ রাখুন।",
+      "starter": "import torch\n\n# TODO: detached fake D backward\n",
+      "solution": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter27_local\", Path(\"assets/datasets/digits/generative_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\n\nwith torch.random.fork_rng():\n    torch.manual_seed(27)\n    g = m.Generator()\n    d = m.Discriminator()\n    z = torch.ones(4, 2, dtype=torch.float64)\n    torch.nn.functional.softplus(d(g(z).detach())).mean().backward()\n    result = sum(p.grad is not None for p in g.parameters())\nprint(result)\n",
+      "expected": 0,
+      "explanation": "D পর্বে নকল ছবি G(z)-কে detach() করা হয়েছে বলে Generator-এর কোনো Parameter Tensor-এই Gradient যায়নি, তাই সংখ্যাটি হলো 0। এ সময় কেবল Discriminator-এর নিজস্ব Gradient তৈরি হয়।"
+    },
+    {
+      "id": "ch27_ex_freeze",
+      "title": "Generator পর্বে Parameter Freeze রেখেও Gradient সচল রাখা",
+      "prompt": "Discriminator-এর সব Parameter Freeze (requires_grad False) করে নতুন G Forward Pass এবং Non-saturating Generator Loss-এর ওপর backward() চালান। অশূন্য Gradient পাওয়া Generator Parameter Tensor-এর সংখ্যা (count) answer-এ রাখুন।",
+      "starter": "import torch\n\n# TODO: freeze D parameters only\n",
+      "solution": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter27_local\", Path(\"assets/datasets/digits/generative_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\n\nwith torch.random.fork_rng():\n    torch.manual_seed(27)\n    g = m.Generator()\n    d = m.Discriminator()\n    for p in d.parameters():\n        p.requires_grad_(False)\n    loss = torch.nn.functional.softplus(\n        -d(g(torch.ones(4, 2, dtype=torch.float64)))\n    ).mean()\n    loss.backward()\n    result = sum(\n        p.grad is not None and p.grad.abs().sum().item() > 0 for p in g.parameters()\n    )\n    assert all(p.grad is None for p in d.parameters())\nprint(result)\n",
+      "expected": 4,
+      "explanation": "Generator-এর Hidden ও Output লেয়ারের Weight এবং Bias মিলিয়ে মোট 4টি Tensor-ই অশূন্য Gradient পায়, কারণ প্যারামিটার Freeze থাকলেও Discriminator-এর ইনপুট পথ সচল থাকে।"
+    },
+    {
+      "id": "ch27_ex_parameters",
+      "title": "VAE-এর মোট Trainable Parameter গণনা",
+      "prompt": "বান্ডেল করা আসল VAE Architecture-এ সব লেয়ারের Bias-সহ মোট কয়টি শেখার যোগ্য (Trainable) স্কেলার Parameter রয়েছে, সেই সংখ্যাটি answer-এ রাখুন।",
+      "starter": "from pathlib import Path\n\n# TODO: count parameters\n",
+      "solution": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter27_local\", Path(\"assets/datasets/digits/generative_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\n\nv = m.VAE()\nresult = sum(p.numel() for p in v.parameters() if p.requires_grad)\nassert result == (64 * 32 + 32) + 2 * (32 * 2 + 2) + (2 * 32 + 32) + (32 * 64 + 64)\nprint(result)\n",
+      "expected": 4420,
+      "explanation": "হিসাব মেলালে দেখা যায়: Encoder Hidden লেয়ারে 2080টি, দুটি Latent হেডে মোট 132টি, Decoder Hidden লেয়ারে 96টি এবং Output লেয়ারে 2112টি—সব মিলিয়ে ঠিক 4420টি Parameter।"
+    },
+    {
+      "id": "ch27_ex_roles",
+      "title": "Training ও Diagnostic সেটের Data Leakage যাচাই",
+      "prompt": "বান্ডেল করা উৎস ডেটার fit (Training) এবং diagnostic Row ID-গুলোর সাধারণ অংশের (Intersection) সংখ্যা বের করে answer-এ রাখুন।",
+      "starter": "from pathlib import Path\n\n# TODO: source-role check\n",
+      "solution": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter27_local\", Path(\"assets/datasets/digits/generative_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\n\nraw, y, fit, diagnostic = m.source()\nresult = len(set(fit) & set(diagnostic))\nassert len(fit) == 1438 and len(diagnostic) == 359\nprint(result)\n",
+      "expected": 0,
+      "explanation": "দুই সেটের মধ্যকার সাধারণ উপাদানের সংখ্যা হলো 0, এবং হুবহু একরকম Pixel-hash গ্রুপগুলোও স্প্লিটের সীমানা মেনে চলে। তবে লেখক-নিরপেক্ষ Generalization দাবি করতে হলে আলাদা Writer Metadata প্রয়োজন।"
+    },
+    {
+      "id": "ch27_ex_reload",
+      "title": "সংরক্ষিত Checkpoint লোড ও রেফারেন্স Forward যাচাই",
+      "prompt": "সংরক্ষিত GAN Generator-এর Weight পুনরায় লোড করে 16টি রেফারেন্স Latent ইনপুটে Forward Pass চালান এবং সংরক্ষিত আউটপুটের সাথে কয়টি Sample হুবহু মিলে যাচ্ছে তার সংখ্যা answer-এ রাখুন।",
+      "starter": "import torch\n\n# TODO: state dictionary forward check\n",
+      "solution": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter27_local\", Path(\"assets/datasets/digits/generative_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/digits/generative_lab.json\").read_text(encoding=\"utf-8\")\n)\n\ng = m.Generator()\ng.load_state_dict(\n    {\n        k: torch.tensor(v, dtype=torch.float64)\n        for k, v in lab[\"weights\"][\"generator\"].items()\n    }\n)\nz = torch.tensor([s[\"z\"] for s in lab[\"samples\"]], dtype=torch.float64)\nexpected = torch.tensor([s[\"gan\"] for s in lab[\"samples\"]], dtype=torch.float64)\nwith torch.no_grad():\n    actual = g(z)\nassert torch.allclose(actual, expected, atol=1e-12, rtol=0)\nresult = len(actual)\nprint(result)\n",
+      "expected": 16,
+      "explanation": "Architecture, ইনপুট স্কেল এবং float64 প্রিসিশন ঠিক রাখলে সবগুলো অর্থাৎ 16টি Sample-ই নিখুঁতভাবে মিলে যায়। বাস্তব পরীক্ষায় শুধু সংখ্যা না গুনে পুরো আউটপুট অ্যারে assert করে মেলানো উচিত।"
+    }
+  ],
+  "interviews": [
+    {
+      "title": "হোয়াইটবোর্ডে ELBO প্রতিপাদন ও Bound Gap বিশ্লেষণ",
+      "tag": "Probability · derivation",
+      "prompt": "শুরু থেকে VAE-এর ELBO Objective প্রতিপাদন করুন। এই Lower Bound কখন পুরোপুরি আঁটসাঁট (Tight) হয়? Prior KL শূন্য হলেই কি Bound Tight হয়ে যায়?\n\nধরা যাক Prior হলো N(0, 1), Likelihood হলো N(z, 1), পর্যবেক্ষণ করা মান x = 1, এবং আমরা নিলাম q(z|x) = N(0, 1)। এখানে Prior KL এবং Posterior Gap—দুটোই কি শূন্য হবে?",
+      "answer": "আমরা log p(x) = log E_q[p(x, z) / q(z|x)] লিখে অবতল লগারিদমের ওপর Jensen's Inequality বসালে পাই log p(x) ≥ E_q[log p(x, z) − log q(z|x)] (যেখানে q-এর Support যথাযথ হতে হবে)। এরপর p(x, z) = p(x|z)p(z) বসালে পাওয়া যায় Expected Log-Likelihood বিয়োগ KL(q || Prior)। মূল সমীকরণ থেকে এর প্রকৃত ব্যবধানটি হলো KL(q(z|x) || p(z|x)), যা শূন্য হলেই কেবল Bound পুরোপুরি Tight হয়—কেবল Prior KL শূন্য হওয়া সম্পূর্ণ আলাদা শর্ত। উত্তরের সাথে Monte Carlo প্রাক্কলন, β = 1 আদর্শ শর্ত এবং আমাদের ভগ্নাংশ পিক্সেলের BCE যে নিখুঁত Grayscale Likelihood নয় তা উল্লেখ করুন।\n\nপ্রদত্ত গাণিতিক উদাহরণে q = N(0, 1) নেওয়ায় Prior KL হয় ঠিক 0। কিন্তু এখানে আসল Posterior হলো N(0.5, 0.5)! হিসাব করলে দেখা যায় ELBO আসে প্রায় −1.918939 এবং আসল Log Evidence হয় প্রায় −1.515512; ফলে দুয়ের মাঝে প্রায় 0.403426 মানের একটি Posterior Gap রয়েই যায়—কারণ দুটি KL সম্পূর্ণ ভিন্ন জোড়া Distribution তুলনা করে।",
+      "prerequisiteLessons": [
+        "ch27_elbo",
+        "ch27_book_elbo_gap"
+      ]
+    },
+    {
+      "title": "Diagonal Gaussian KL প্রতিপাদন, Gradient ও Reduction",
+      "tag": "Math · implementation",
+      "prompt": "Standard Normal Prior-এর সাপেক্ষে একটি Diagonal Gaussian-এর KL Divergence প্রতিপাদন করুন এবং μ ও Log-variance ℓ-এর সাপেক্ষে এর Gradient লিখুন। Batch Tensor-এ এর Reduction নিয়ম কী হবে?",
+      "answer": "Gaussian Log-density অনুপাতের Expectation নিলে এবং ধ্রুবক পদ কাটাকাটি গেলে পাওয়া যায় 0.5 * Σ (μ² + exp(ℓ) − 1 − ℓ)। এখান থেকে Derivative নিলে পাওয়া যায় dKL/dμ = μ এবং dKL/dℓ = 0.5 * (exp(ℓ) − 1)। সঠিক একক বজায় রাখতে প্রতিটি উদাহরণের সব Latent Dimension বরাবর sum এবং পুরো Batch বরাবর mean নিতে হয় (ঠিক যেভাবে Reconstruction-এ ছবির সব Pixel বরাবর sum নেওয়া হয়)। কোড যাচাইয়ের জন্য শূন্য KL (μ = 0, ℓ = 0), একক Dimension-এ μ = 1 ও ℓ = 0 বসালে 0.5 আসা, এবং চরম Variance টেস্ট ব্যবহার করুন; সাথে খেয়াল রাখুন Log-variance আর Log-standard-deviation যেন গুলিয়ে না যায়।"
+    },
+    {
+      "title": "Reparameterization-এর Gradient Bug ডিবাগিং",
+      "tag": "Autograd · coding",
+      "prompt": "ধরুন ট্রেনিংয়ের সময় দেখছেন Decoder ঠিকই শিখছে, কিন্তু Reconstruction পদ থেকে Encoder-এ যাওয়া Gradient শূন্য হয়ে আছে! কীভাবে সমস্যাটি খুঁজে বের করবেন?",
+      "answer": "শুরুতেই μ ও ℓ থেকে z হয়ে Decoder পর্যন্ত পুরো Computation Graph ট্রেস করুন। বিশেষভাবে পাঁচটি জায়গা দেখুন: ১) ভুল করে কোথাও .detach() বা torch.no_grad() পড়েছে কি না, ২) PyTorch Distribution-এ .rsample()-এর বদলে সাধারণ .sample() কল হয়েছে কি না, ৩) Optimizer-এ Encoder-এর Parameter নিবন্ধন বাদ পড়েছে কি না, এবং ৪) নয়েজ Broadcasting-এ কোনো ভুল আছে কি না। সঠিক রূপান্তরটি হলো স্বাধীন Standard Normal ε নিয়ে z = μ + exp(0.5 * ℓ) * ε চালানো। সবশেষে মনে রাখবেন, শুধু KL পদ থেকে Encoder-এ Gradient যাওয়া দেখেই Reconstruction পথ সচল আছে বলে ধরে নেওয়া যাবে না—স্থির ইনপুটে হাতে কষা Derivative ও Finite-difference মিলিয়ে নিশ্চিত হতে হবে।",
+      "prerequisiteLessons": [
+        "ch27_reparameterization"
+      ]
+    },
+    {
+      "title": "Observation Likelihood নির্বাচন ও Resolution Scaling",
+      "tag": "Modeling · tradeoff",
+      "prompt": "VAE-তে BCE বনাম MSE কোন যুক্তিতে বেছে নেবেন? একই মডেলে ছবির Resolution বাড়ালে Loss-এর ভারসাম্যে কী প্রভাব পড়বে?",
+      "answer": "পছন্দটি হতে হবে ডেটার Support ও Observation Model অনুযায়ী: বাইনারি ডেটার জন্য Bernoulli (BCE), আর স্থির Variance-এর অবিচ্ছিন্ন মানের জন্য Gaussian (বর্গ ত্রুটি বা MSE)। ধূসর ভগ্নাংশ পিক্সেলে BCE ব্যবহার করলে সেটিকে অবশ্যই একটি কার্যকর Surrogate হিসেবে স্পষ্ট করতে হবে। ছবির দৈর্ঘ্য-প্রস্থ বাড়লে মোট Pixel সংখ্যা জ্যামিতিক হারে বাড়ে, ফলে Pixel sum নিলে Reconstruction পদটি KL sum-এর তুলনায় অনেক ভারী হয়ে ওঠে। কেউ যদি এর বদলে Per-pixel mean নেন, তবে কার্যকর β কীভাবে বদলে যাচ্ছে তা স্পষ্টভাবে হিসাব করে দেখাতে হবে। ভিন্ন Likelihood-এর কাঁচা Loss দিয়ে কখনোই দুটি মডেল র‍্যাংক করবেন না; আউটপুটের মান আলাদাভাবে যাচাই করুন।",
+      "prerequisiteLessons": [
+        "ch27_likelihood"
+      ]
+    },
+    {
+      "title": "Posterior Collapse নির্ণয় ও নিয়ন্ত্রিত প্রতিকার",
+      "tag": "Diagnosis · experiment",
+      "prompt": "ট্রেনিং শেষে দেখলেন KL প্রায় 0 এবং সব ইনপুটের জন্য প্রায় একই রকম গড়পড়তা Reconstruction আসছে। এর সম্ভাব্য কারণ এবং নিয়ন্ত্রিত পরীক্ষার পরিকল্পনা বলুন।",
+      "answer": "যখন সব ইনপুটের জন্যই q(z|x) প্রায় ইনপুট-নিরপেক্ষ Prior হয়ে যায়, তখন Latent কোড তথ্য হারায়। এর কারণ খুঁজতে Encoder-এর Gradient পথ, অতিরিক্ত বড় কার্যকর KL ওজন, শক্তিশালী Decoder Capacity, ডেটা Preprocessing এবং Reduction অক্ষগুলো অডিট করুন। ডায়াগনস্টিক হিসেবে প্রতি Dimension-এর আলাদা KL (Active Units), Shuffled-z বা Zero-z Reconstruction, সাধারণ Train-mean Baseline এবং Prior বনাম Posterior Sample প্যানেল তুলনা করুন। প্রতিকারের জন্য KL Warm-up, Free Bits বা β পরিবর্তন করতে হলে সেগুলোকে আগে থেকে ঘোষিত আলাদা নিয়ন্ত্রিত পরীক্ষণ হিসেবে চালান, এবং খেয়াল রাখুন কম β দিতে গিয়ে যেন Prior থেকে নতুন ছবি তৈরির ক্ষমতা নষ্ট না হয়।"
+    },
+    {
+      "title": "GAN-এর সাম্যাবস্থা ও Non-saturating Objective",
+      "tag": "Math · adversarial game",
+      "prompt": "স্থির Generator-এর বিপরীতে Optimal Discriminator প্রতিপাদন করুন এবং বাস্তবে কেন Non-saturating Generator Objective বেশি কার্যকর তা ব্যাখ্যা করুন।",
+      "answer": "স্থির Density p_data ও p_g-এর বিপরীতে প্রতি বিন্দুতে V(D, G) ম্যাক্সিমাইজ করলে পাওয়া যায় D*(x) = p_data(x) / (p_data(x) + p_g(x))। আদর্শ সমতায় এর মান 0.5 হলেও বাস্তবে সসীম নেটওয়ার্কে 0.5 দেখা মানেই দুই Distribution মিলে গেছে এমন প্রমাণ নয়। Logit a-এর সাপেক্ষে মূল Minimax সমীকরণের Derivative হলো −σ(a), কিন্তু Non-saturating সমীকরণের Derivative হলো σ(a) − 1। ট্রেনিংয়ের শুরুতে Discriminator যখন নকল ছবিকে আত্মবিশ্বাসের সাথে ধরে ফেলে (a ≪ 0), তখন প্রথমটির Gradient প্রায় শূন্য হয়ে থমকে যায়, কিন্তু দ্বিতীয়টি জোরালো সংকেত বজায় রাখে। উত্তরের শেষে দুই-পদের যোগফলভিত্তিক D Loss স্কেলিং এবং চলমান প্রতিদ্বন্দ্বীর কারণে কাঁচা Loss দেখে মান বিচার না করার সতর্কতাটিও যোগ করুন।",
+      "prerequisiteLessons": [
+        "ch27_gan",
+        "ch27_gradients"
+      ]
+    },
+    {
+      "title": "দুই Optimizer-এর GAN কোড রিভিউ ও সূক্ষ্ম Bug",
+      "tag": "PyTorch · debugging",
+      "prompt": "PyTorch-এ GAN ট্রেনিংয়ের ছদ্ম-কোডে (Pseudo-code) কোথায় .detach(), কোথায় Parameter Freeze এবং কোথায় zero_grad() বসাবেন তা ব্যাখ্যা করুন।",
+      "answer": "প্রথমত D পর্বে: নকল ছবিকে G(z).detach() করে বিচ্ছিন্ন রাখুন, D Optimizer-কে zero_grad() করুন, D Loss-এর backward() চালান এবং D-এর step() দিন। দ্বিতীয়ত G পর্বে: সদ্য আপডেট হওয়া D-এর ভেতর দিয়ে নতুন G(z) পাঠান, এ সময় D-এর প্যারামিটারগুলোতে সাময়িকভাবে requires_grad = False করে রাখুন (যাতে ওয়েট গ্র্যাডিয়েন্ট না জমে কিন্তু ইনপুট G(z)-এর পথ সচল থাকে), G Optimizer-কে zero_grad() করুন, Non-saturating Loss-এর backward() ও G-এর step() চালান, এবং শেষে D-এর ফ্ল্যাগ আগের অবস্থায় ফিরিয়ে দিন। G পর্বে ভুলেও পুরো D কলকে torch.no_grad()-এ ঘিরবেন না বা নকল ছবি detach করবেন না। বড় মডেলে BatchNorm বা Dropout থাকলে সেগুলোর মোড ও বাফার আলাদাভাবে সামলাতে হয়, এবং সবশেষে Parameter পরিবর্তনের ইউনিট টেস্ট রাখা জরুরি।"
+    },
+    {
+      "title": "Mode Collapse ঘটনার তদন্ত ও সমাধান কৌশল",
+      "tag": "Failure analysis",
+      "prompt": "লগে ট্রেনিং Loss দেখতে বেশ ভালো মনে হচ্ছে, কিন্তু জেনারেটর ঘুরেফিরে কেবল একই সংখ্যার ছবি তৈরি করছে! কীভাবে ঘটনাটি তদন্ত করবেন?",
+      "answer": "প্রথমেই স্থির Latent প্যানেল এবং সম্পূর্ণ নতুন র‍্যান্ডম প্যানেল পাশাপাশি দেখুন, এবং পারস্পরিক সাদৃশ্য ও স্বাধীন Classifier দিয়ে বৈচিত্র্য যাচাই করুন (Classifier-এর নিজস্ব সীমাবদ্ধতা মাথায় রেখে)। এরপর চারটি প্রযুক্তিগত দিক পরীক্ষা করুন: D ও G-এর ধারণক্ষমতা ও আপডেটের অনুপাত, ডেটা Preprocessing, সচল Gradient পথ এবং মূল ট্রেনিং ডেটার ক্লাস ভারসাম্যহীনতা। একটিমাত্র Loss মান বা একক Seed দেখে সিদ্ধান্ত নেওয়া যাবে না; Gradient Penalty বা ভিন্ন Objective ব্যবহার করতে হলে তা নতুন নিয়ন্ত্রিত পরীক্ষণ হিসেবে চালাতে হবে। মনে রাখবেন, ছবির ধারালো ভাব (Sharpness) আর বৈচিত্র্য (Coverage) আলাদা জিনিস—শক্তিশালী Discriminator স্কোর কখনোই বৈচিত্র্যের সনদ নয়।"
+    },
+    {
+      "title": "VAE বনাম GAN তুলনামূলক পরীক্ষণের নকশা",
+      "tag": "Experimental design · privacy",
+      "prompt": "একটি প্রজেক্টে VAE এবং GAN-কে ন্যায্যভাবে তুলনা করার জন্য আপনি কীভাবে Evaluation Metric ও Data Split সাজাবেন?",
+      "answer": "শুরুতেই পরিষ্কার করে নিন যে ছবির Reconstruction এবং শূন্য থেকে Unconditional Generation দুটি আলাদা কাজ। ন্যায্য তুলনার জন্য ডোমেইনের উপযোগী বৈধ Feature-এ Fidelity ও Coverage মাপুন, পর্যাপ্ত বড় ও স্থির সংখ্যক Sample নিন, একাধিক Seed চালান, Blinded রুব্রিক দিয়ে মানুষের মূল্যায়ন যুক্ত করুন এবং Nearest-neighbor অডিট রাখুন। ডেটাকে আগেভাগেই Train / Selection / Confirmation ভূমিকায় ভাগ করুন এবং একই উৎস বা লেখকের নির্ভরশীলতা নথিবদ্ধ রাখুন। পাশাপাশি স্বল্প Sample বা ভুল ডোমেইনে FID-এর সীমাবদ্ধতা এবং Memorization-সংক্রান্ত Privacy সীমা স্পষ্ট করুন—আমাদের পুনর্ব্যবহৃত 359টি Diagnostic Row বা 16টি ছবির প্যানেল থেকে কোনো সার্বজনীন র‍্যাংকিং দাবি করা সমীচীন নয়।"
+    },
+    {
+      "title": "অফলাইন মোবাইল ডেমো থেকে Production Conditional System ডিজাইন",
+      "tag": "System design · serving",
+      "prompt": "আমাদের ছোট মোবাইল অফলাইন ডেমোটি থেকে একটি পূর্ণাঙ্গ Production-পর্যায়ের Conditional Generator সিস্টেমে যেতে হলে কী কী পরিবর্তন আনতে হবে?",
+      "answer": "প্রথমেই কাজের শর্ত, ইনপুট-আউটপুট স্কেল এবং বৈধ লাইসেন্সযুক্ত জোড়াবদ্ধ (Paired) ডেটার চুক্তি চূড়ান্ত করতে হবে। মডেলিংয়ে G ও D উভয়কে (অথবা Decoder ও Inference নেটওয়ার্ককে) শর্তাধীন করতে হবে, এবং শর্ত উপেক্ষা করা বা বিরল ক্লাস বাদ পড়ার ঝুঁকি অডিট করতে হবে। এরপর মডেলের আকার, Quantization সহনশীলতা, প্রকৃত Latency ও Memory পরিমাপ, Seed ও সংস্করণ ব্যবস্থাপনা এবং সার্ভিং নীতিমালা নির্ধারণ করতে হবে। মনে রাখবেন, আমাদের অ্যাপের স্থির CPU Dart Forward Pass এবং লোকাল Python ট্রেনিং সম্পূর্ণ আলাদা পরিবেশ; তাই একটি নির্দিষ্ট Android ডিভাইসের ফলাফল দেখে অনুমানের ভিত্তিতে iOS বা ক্লাউড GPU-র Latency দাবি করা যাবে না—প্রতিটি প্ল্যাটফর্মে আলাদা যাচাই আবশ্যক।"
+    }
+  ],
+  "book": {
+    "order": 31,
+    "part": "Book 4 · LLMs, RAG & Generative AI",
+    "prerequisites": [
+      "chapter_08",
+      "chapter_17"
+    ],
+    "purpose": "Probability ও Neural Network Training-এর মূলনীতি থেকে VAE এবং GAN-এর Objective ধাপে ধাপে Derive করা, এবং বাস্তব Dataset-এ Generative Model-এর সাফল্য ও সীমাবদ্ধতা নিখুঁতভাবে যাচাই করতে শেখা।",
+    "outcomes": [
+      "ELBO, Reparameterization Trick এবং GAN-এর Minimax ও Non-saturating Update-এর গাণিতিক ভিত্তি বুঝে Bound Tightness, Posterior Collapse ও Mode Collapse নির্ণয় করতে পারবেন।",
+      "হাতে-কলমে গাণিতিক উদাহরণ, Reproducible PyTorch Code এবং নিজস্ব যাচাইয়ের মাধ্যমে ELBO Gap, Reconstruction Likelihood এবং Generative Evaluation-এর সূক্ষ্ম দিকগুলো পরিষ্কারভাবে ব্যাখ্যা করতে পারবেন।"
+    ],
+    "recall": [
+      "Reparameterization Trick-এ বাইরে থেকে Random Noise ε Sample করার পরও Encoder-এর Parameter-এ কীভাবে নিখুঁত Gradient পৌঁছায়?",
+      "একটি 1D Gaussian-এ μ = 0 এবং Variance = 4 হলে Standard Normal Prior-এর সাপেক্ষে KL Divergence কত হবে, এবং β বাড়ালে Reconstruction ও Latent Regularization-এর ভারসাম্যে কী পরিবর্তন আসে?"
+    ],
+    "bridge": "পরের অধ্যায় Book 4 · Chapter 9 (Diffusion & Multimodal Systems)-এ যাওয়ার আগে এই অধ্যায়ের Quiz, Coding Exercise এবং Closed-book প্রশ্নগুলো সমাধান করে নিজের প্রস্তুতি যাচাই করে নিন।",
+    "bookId": "llm",
+    "bookChapter": 8
+  }
+}

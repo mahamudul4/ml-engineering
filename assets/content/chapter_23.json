@@ -1,0 +1,1641 @@
+{
+  "id": "chapter_23",
+  "number": 23,
+  "title": "Embeddings & Semantic Retrieval",
+  "shortTitle": "Embeddings & Retrieval",
+  "displayTitle": "Embeddings & Retrieval\nFrom vectors to evidence",
+  "subtitle": "Baseline থেকে গভীরে: Vector Geometry, Lexical ও Dense Retrieval এবং প্রামাণিক Evaluation",
+  "description": "Encode the query. Inspect the candidates.\nMeasure what the ranking misses.",
+  "difficulty": "LLM · retrieval",
+  "lab": "retrieval",
+  "lessons": [
+    {
+      "id": "ch23_contract",
+      "title": "Retrieval-এর মূল চুক্তি: সাধারণ মিল থেকে কার্যকর Evidence",
+      "subtitle": "Similarity, Relevance এবং সত্যতা কেন এক জিনিস নয়",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Retrieval আসলে কী খুঁজে আনে?",
+          "body": "আগের অধ্যায়ে (Book 4 · Chapter 1: LLM Foundations) আমরা দেখেছি, একটি Language Model কেবল তার Context Window-তে দেওয়া তথ্যের ওপর নির্ভর করেই কথা বলে। তাই যখন ব্যবহারকারী কোনো সুনির্দিষ্ট প্রশ্ন বা Query করেন, তখন হাজারো Document-এর ভিড় থেকে ঠিক যে কয়টি Document প্রশ্নের উত্তর দিতে সাহায্য করবে, সেগুলো খুঁজে বের করাই হলো Retrieval-এর কাজ। এখানে Similarity Score আমাদের Document-গুলোকে সাজাতে (Rank করতে) সাহায্য করে বটে, কিন্তু কোন Document-টি সত্যিই কার্যকর বা Relevant হবে, তা নির্ভর করে ব্যবহারকারীর প্রশ্নের আসল উদ্দেশ্যের ওপর।\n\nশুরুতেই একটি মৌলিক পার্থক্য মনে গেঁথে নেওয়া দরকার: কোনো দাবির (Claim) সাথে শব্দের মিল থাকা, সেই দাবিকে সমর্থন বা খণ্ডন করার মতো প্রামাণিক Evidence খুঁজে পাওয়া, আর দাবিটি বাস্তবে সত্য হওয়া—এই তিনটি সম্পূর্ণ আলাদা বিষয়। এই অধ্যায়ে আমরা বাস্তব বৈজ্ঞানিক ডেটাসেট SciFact-এর উদাহরণ ধরে Lexical ও Dense Representation, Search এবং Retrieval Evaluation-এর প্রতিটি ধাপ আলাদা করে শিখব।"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব ডেটাসেট পরিচিতি: SciFact Corpus",
+          "body": "হাতে-কলমে সব পরীক্ষা চালানোর জন্য আমরা Wadden et al. (2020)-এর তৈরি SciFact ডেটাসেটের BEIR সংস্করণ ব্যবহার করছি। এই Corpus-এ মোট 5,183টি মৌলিক বৈজ্ঞানিক গবেষণাপত্রের Title ও Abstract রয়েছে। এর পাশাপাশি রয়েছে 1,109টি Query টেক্সট, যার মধ্যে 809টি Train এবং 300টি Test পর্যায়ের মূল্যায়নকৃত (Judged) Query হিসেবে দেওয়া আছে। মূল ডেটাসেটের মেটাডেটায় অনেক সময় প্রস্তুতকৃত Evidence Annotation যুক্ত থাকে, কিন্তু আমাদের Retrieval মডেল সেগুলো কখনোই ইনপুট Feature হিসেবে দেখবে না; আর মূল ফাইলের বাইট, Upstream লাইসেন্স ও Hash অবিকল সংরক্ষিত রাখা হয়েছে। নিচের সমীকরণে পুরো প্রক্রিয়াটির গাণিতিক রূপরেখা দেখে নিই।"
+        },
+        {
+          "type": "math",
+          "title": "Query ও Document Encoding থেকে Top-K বাছাই",
+          "body": "q\\xrightarrow{f_q}\\mathbf q,\\quad d_i\\xrightarrow{f_d}\\mathbf d_i,\\quad \\operatorname{TopK}_i s(\\mathbf q,\\mathbf d_i)"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ SciFact ডেটাসেটের হিসাব যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nroot = Path(\"assets/datasets/scifact\")\nlab = json.loads((root / \"retrieval_lab.json\").read_text())\n\nr = lab[\"report\"]\nassert r[\"documents\"] == 5183 and r[\"query_texts\"] == 1109\nassert r[\"evaluation\"][\"train\"][\"queries\"] == 809\nassert r[\"evaluation\"][\"test\"][\"queries\"] == 300\nprint(r[\"recipe\"][\"corpus_fit\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "Lexical থেকে Dense Representation-এর ধারণা",
+          "body": "উপরের কোডে আমরা ডেটাসেটের আকার ও রেসিপি যাচাই করলাম। কিন্তু টেক্সটকে আমরা গাণিতিক Vector-এ রূপান্তর করব কীভাবে? Lexical Sparse Vector-এ প্রতিটি Dimension একেকটি নির্দিষ্ট Vocabulary Term নির্দেশ করে। অন্যদিকে LSA (Latent Semantic Analysis) পুরো Corpus-এ কোন শব্দের সাথে কোন শব্দ বারবার আসে (Co-occurrence), সেই কাঠামো সংকুচিত (Compress) করে একটি 32-মাত্রিক (32D) Dense Vector তৈরি করে। আবার আধুনিক Neural Dual Encoder আলাদা Training Objective ব্যবহার করে অর্থগতভাবে আরও সমৃদ্ধ Representation শিখতে পারে। প্রতিটি গাণিতিক ধাপ চোখের সামনে শতভাগ স্বচ্ছ রাখার জন্য এই অ্যাপে আমরা সরাসরি TF-IDF, LSA এবং Rank Fusion চালিয়ে দেখব; এখানে কোনো বাহ্যিক Pretrained Neural Semantic Encoder বা Generative Model চালানো হচ্ছে না।"
+        },
+        {
+          "type": "text",
+          "title": "সিস্টেমের সীমানা ও দায়িত্বের পার্থক্য",
+          "body": "একটি পূর্ণাঙ্গ Retrieval সিস্টেমে Corpus Indexing, Query Encoding, Candidate Generation, ঐচ্ছিক Reranking এবং ব্যবহারকারীর সামনে ফলাফল উপস্থাপন—প্রতিটিই আলাদা প্রকৌশলগত ধাপ। এখানে সবচেয়ে বড় শর্ত হলো, Query এবং Document-কে যে রূপান্তরের (Transform) মধ্য দিয়ে নেওয়া হচ্ছে, তাদের পরস্পরের সাথে সামঞ্জস্যপূর্ণ (Compatible) হতে হবে। পাশাপাশি মনে রাখতে হবে, Retrieval Score কোনো ক্যালিব্রেটেড Probability নয় এবং খুঁজে পাওয়া কোনো বৈজ্ঞানিক Abstract সরাসরি চিকিৎসা-সংক্রান্ত পরামর্শও নয়। একইভাবে আমরা ধারণাগুলো বাংলায় ব্যাখ্যা করলেও আমাদের মূল Corpus-টি ইংরেজি—তাই এই পাইপলাইন কোনো Cross-lingual সক্ষমতার দাবি করে না।"
+        },
+        {
+          "type": "text",
+          "title": "মূল্যায়নের নিয়ম ও ডেটার সীমাবদ্ধতা",
+          "body": "আমাদের পরীক্ষায় BEIR-এর Train অংশের Relevance Judgment-গুলো কেবল ডায়াগনস্টিক রিপোর্ট দেখার কাজে ব্যবহৃত হয়েছে; এর ওপর ভিত্তি করে কোনো Hyperparameter টিউনিং বা পদ্ধতি বাছাই (Method Selection) করা হয়নি। সম্পূর্ণ নির্দিষ্ট (Fixed) রেসিপি চূড়ান্ত করার পরেই কেবল BEIR Test সেটের ফলাফল দেখা হয়েছে। উল্লেখ্য, এটি SciFact-এর একদম মূল গোপন Leaderboard Test সেট নয়। এছাড়া একই বৈজ্ঞানিক বিষয়ের কাছাকাছি একাধিক Claim ও যৌথ Evidence থাকার কারণে সব Query শতভাগ স্বাধীন (Independent) নয়—তাই একই সেটে বারবার কোড চালানো মানে নতুন কোনো অন্ধ যাচাই (Blind Confirmation) নয়।"
+        },
+        {
+          "type": "text",
+          "title": "এই অধ্যায়ের মূল লক্ষ্য",
+          "body": "এই অধ্যায়ে আমাদের লক্ষ্য খুবই সুনির্দিষ্ট: আমরা নিজ হাতে Vector Geometry-র হিসাব করব, Sparse থেকে Dense পাইপলাইন হুবহু পুনরুৎপাদন (Reproduce) করব, Exact Ranking মিলিয়ে দেখব এবং এমনকি কেন একটি Dense বা Hybrid পদ্ধতি আশানুরূপ ফল দিল না, সেটিও তথ্যপ্রমাণ দিয়ে বিশ্লেষণ করতে শিখব। দিনশেষে একজন দক্ষ ML Engineer-এর প্রধান কাজ হলো—কোনো দরকারি Document খুঁজে না পাওয়া গেলে সেটি ঠিক কোন ধাপে হারিয়ে গেল (Representation, Candidate Pool, Ranking, নাকি Filter), তা নিখুঁতভাবে শনাক্ত করতে পারা।"
+        }
+      ]
+    },
+    {
+      "id": "ch23_geometry",
+      "title": "Dot Product, Cosine Similarity ও Vector Normalization",
+      "subtitle": "ভেক্টরের দিক আর দৈর্ঘ্য কেন একই তথ্য বহন করে না",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Dot Product: দিক ও দৈর্ঘ্যের যুগল প্রভাব",
+          "body": "আগের পাঠে আমরা দেখেছি, Query ও Document-কে Vector-এ রূপান্তর করার পর একটি স্কোরিং ফাংশন দিয়ে তাদের তুলনা করা হয়। সবচেয়ে মৌলিক স্কোরিং ফাংশন হলো Dot Product (বা Inner Product), যা দুটি Vector-এর প্রতিটি স্থানাঙ্কের (Coordinate) গুণফল যোগ করে। কিন্তু খেয়াল করুন, Dot Product-এর মানে ভেক্টরের দিক (Direction) এবং দৈর্ঘ্য বা মান (Magnitude / Norm)—দুটোই সরাসরি প্রভাব ফেলে। কোনো Model যদি ট্রেনিংয়ের সময় ভেক্টরের Norm-এর ভেতরে কোনো দরকারি সংকেত (যেমন তথ্যের নির্দিষ্টতা বা গুরুত্ব) সংরক্ষণ করতে শেখে, তবে না বুঝে Normalization করলে সেই তথ্য মুছে যেতে পারে। তাই সব মডেলের জন্যই যে Cosine Similarity স্বয়ংক্রিয়ভাবে সঠিক মেট্রিক হবে, এমন কোনো কথা নেই; Training এবং Serving-এর গাণিতিক চুক্তি সবসময় এক হতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "Cosine Similarity ও Euclidean Distance-এর সম্পর্ক",
+          "body": "যখন আমরা কেবল দুটি অশূন্য (Nonzero) ভেক্টরের মধ্যবর্তী কোণ বা দিকের মিল মাপতে চাই, তখন প্রতিটি ভেক্টরকে তার L2 Norm দিয়ে ভাগ করে একক দৈর্ঘ্যে (Unit Length) নিয়ে আসি। এই Normalized ভেক্টর দুটির Dot Product-ই হলো Cosine Similarity। কোনো ধনাত্মক সংখ্যা (Positive Scalar) দিয়ে Query ভেক্টরকে গুণ (Scale) করলে Raw Dot Product ঠিক তত গুণ বেড়ে যায়, কিন্তু Cosine Similarity একটুও বদলায় না! আরও চমৎকার জ্যামিতিক সম্পর্ক হলো—দুটি ভেক্টরই যদি Unit Vector হয়, তবে তাদের বর্গকৃত ইউক্লিডীয় দূরত্ব (Squared Euclidean Distance) হয় ঠিক 2 - 2 cosine। অর্থাৎ Unit Sphere-এর ওপর Cosine বড় করা আর L2 Distance ছোট করা হুবহু একই Exact Ranking দেয়; অবশ্য কোনো একটি ভেক্টর শূন্য (Zero Vector) হলে এই সমীকরণ প্রযোজ্য নয়।"
+        },
+        {
+          "type": "math",
+          "title": "Cosine Similarity ও Unit Vector-এর দূরত্বের সমীকরণ",
+          "body": "\\cos(\\mathbf q,\\mathbf d)=\\frac{\\mathbf q^T\\mathbf d}{\\|\\mathbf q\\|_2\\|\\mathbf d\\|_2},\\quad \\|\\hat q-\\hat d\\|_2^2=2-2\\hat q^T\\hat d"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Cosine ও Scaling-এর জ্যামিতিক পরীক্ষা",
+          "body": "from pathlib import Path\nimport importlib.util\n\np = Path(\"assets/datasets/scifact/retrieval_workflow.py\")\nspec = importlib.util.spec_from_file_location(\"chapter23_local\", p)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\n\nimport numpy as np\n\n# Declared geometric illustration, not a learned semantic benchmark.\nq = np.array([3.0, 4.0])\nd = np.array([4.0, 3.0])\nassert np.isclose(m.cosine(q, d), 0.96)\nassert np.isclose(m.cosine(2 * q, d), m.cosine(q, d))\nassert np.isclose((2 * q) @ d, 2 * (q @ d))\nprint(m.cosine(q, d), m.cosine([0.0, 0.0], d))\n"
+        },
+        {
+          "type": "text",
+          "title": "Zero Vector সামলানোর নিয়ম",
+          "body": "উপরের কোডের শেষ লাইনে আমরা [0.0, 0.0] ভেক্টরের সাথে Cosine পরীক্ষা করেছি। বাস্তবে ফাঁকা টেক্সট (Empty Text), সম্পূর্ণ অপরিচিত শব্দের (Out-of-vocabulary) Query, কিংবা Projection-এর সময় তথ্যের বিলুপ্তির কারণে Zero Vector তৈরি হতে পারে। গাণিতিকভাবে শূন্য ভেক্টরের কোনো দিক বা কোণ সংজ্ঞায়িত নয় (Undefined)। তাই আমাদের ইমপ্লিমেন্টেশনে নিরাপদ কনভেনশন হিসেবে Zero Vector-এর ক্ষেত্রে Cosine = 0.0 ফেরত দেওয়া হয় এবং শূন্য Query-র জন্য কোনো Candidate দেখানো হয় না—যাতে ভুল করে কোনো এলোমেলো Document ID-কে আত্মবিশ্বাসী ম্যাচ হিসেবে দেখিয়ে ব্যবহারকারীকে বিভ্রান্ত করা না হয়।"
+        },
+        {
+          "type": "embedding_geometry_lab",
+          "title": "হাতে-কলমে পরীক্ষা: Embedding Geometry Lab",
+          "body": "নিচের ইন্টারঅ্যাক্টিভ ল্যাবে একটি বাস্তব Query-র Raw LSA Vector-কে ছোট-বড় (Scale) করে একটি মূল্যায়নকৃত (Judged) Document-এর সংরক্ষিত Unit Vector-এর সাথে তুলনা করে দেখুন। Dot ও Cosine টগল পাল্টে এবং স্থানাঙ্কের বারগুলো (Coordinate Bars) দেখে নিজের হাতে হিসাব মিলিয়ে নিন। খেয়াল রাখবেন, নিচের বারগুলো কেবল প্রথম 8টি Unit Coordinate দেখাচ্ছে; এগুলো কোনো মানবপাঠ্য অর্থগত Feature Label নয় কিংবা পুরো 32D জ্যামিতির পূর্ণাঙ্গ 2D মানচিত্রও নয়।"
+        },
+        {
+          "type": "text",
+          "title": "সংখ্যাগত সুরক্ষা ও স্কোরের অর্থ",
+          "body": "প্রোডাকশন কোডে ভেক্টরের ভেতরে NaN, Infinity অথবা অসম Dimension থাকলে শুরুতেই তা প্রত্যাখ্যান (Reject) করতে হবে। একইভাবে বিশাল সংখ্যার গুণফলে Overflow ঘটলেও সেটিকে সিস্টেম চুক্তির ব্যর্থতা হিসেবে ধরতে হবে। আরেকটি সূক্ষ্ম বিষয় হলো, LSA-এর উপাদানগুলো (Components) ধনাত্মক ও ঋণাত্মক—উভয় চিহ্নের (Signed) হতে পারে, তাই Cosine স্কোর কখনো কখনো সামান্য ঋণাত্মকও হতে পারে। আর কখনোই ধরে নেবেন না যে Cosine স্কোর বেশি হওয়া মানেই সেই পেপারটি কোনো বৈজ্ঞানিক দাবিকে প্রমাণ করে বা এটি একটি ক্যালিব্রেটেড Relevance Probability।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে গুছিয়ে বলবেন",
+          "body": "ইন্টারভিউতে প্রায়ই জিজ্ঞেস করা হয়: কখন Dot Product, Cosine Similarity এবং L2 Distance একই র‍্যাঙ্কিং দেয়, আর কখন দেয় না? উত্তর দেওয়ার সময় শর্তগুলো স্পষ্ট করে বলুন: কেবল যখন সব Document এবং Query ভেক্টর অশূন্য ও Unit Normalized থাকে, তখনই তিনটির র‍্যাঙ্কিং অভিন্ন হয়। তবে একটি নির্দিষ্ট (Fixed) Query-র জন্য ধনাত্মক সংখ্যা দিয়ে Query-কে গুণ করলে Raw Dot Product-এর র‍্যাঙ্কিং বদলায় না—যদিও পরম স্কোর এবং যেকোনো স্থির Score Threshold বদলে যায়। এ কারণেই একাধিক ভিন্ন Query-র আনক্যালিব্রেটেড স্কোর সরাসরি একে অপরের সাথে তুলনা করার সময় বাড়তি সতর্কতা জরুরি।"
+        }
+      ]
+    },
+    {
+      "id": "ch23_tfidf",
+      "title": "শক্তিশালী Sparse Baseline: TF-IDF",
+      "subtitle": "জটিল মডেলে যাওয়ার আগে বৈজ্ঞানিক পরিভাষা ধরে রাখার ভিত্তি",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন TF-IDF দিয়ে শুরু করব?",
+          "body": "বৈজ্ঞানিক বা কারিগরি ডকুমেন্ট খোঁজার সময় হুবহু শব্দের মিল (Exact Term Match) অনেক সময় যেকোনো জটিল মডেলের চেয়ে বেশি কার্যকর হয়। কোনো ডকুমেন্টে একটি শব্দ বারবার এলে তা প্রাসঙ্গিকতার ইঙ্গিত দেয় বটে, কিন্তু সরাসরি শব্দের সংখ্যা (Raw Count) নিলে বড় ডকুমেন্টগুলো অন্যায্য সুবিধা পেয়ে যায়। তাই আমাদের রেসিপিতে শব্দের উপস্থিতির সংখ্যা ধনাত্মক হলে আমরা সাব-লিনিয়ার TF = 1 + ln(count) নিই, আর শব্দটি না থাকলে তার ওজন হয় 0। অন্যদিকে IDF (Inverse Document Frequency) পুরো Corpus-এ যেসব শব্দ বিরল ও সুনির্দিষ্ট, সেগুলোকে বেশি গুরুত্ব দেয়। নিচের সমীকরণে হর ও লবের + 1 এবং বাইরের + 1 (Smooth IDF ফর্মুলা) খুব খেয়াল করে দেখুন—এগুলোর একটিও বাদ পড়লে scikit-learn-এর হিসাবের সাথে আপনার স্কোর মিলবে না।"
+        },
+        {
+          "type": "text",
+          "title": "Tokenization ও Vocabulary চুক্তি",
+          "body": "আমাদের পাইপলাইনে প্রতিটি ডকুমেন্টের Title, এরপর একটি স্পেস, এবং তারপর Abstract জুড়ে দিয়ে ASCII প্যাটার্ন [A-Za-z0-9]+ দিয়ে Tokenize করা হয় এবং সব অক্ষর Lowercase করা হয়। এখানে min_df = 2 এবং max_features = 4096 নির্ধারণ করা হয়েছে; কোনো Stemming, Stopword ছাঁটাই বা লুকানো Unicode Normalization রাখা হয়নি। ফলে শুধুমাত্র বাংলা হরফে লেখা কোনো Query এই ইংরেজি Vocabulary-তে কোনো মিল পাবে না। আবার বায়োমেডিকেল জগতের জটিল চিহ্ন বা হাইফেনযুক্ত নামগুলো ভেঙে যেতে পারে—এটি আমাদের এই সরল Baseline-এর একটি জানা ও নথিবদ্ধ সীমাবদ্ধতা।"
+        },
+        {
+          "type": "math",
+          "title": "Sublinear TF-IDF ও L2 Normalization সমীকরণ",
+          "body": "w_{t,d}=(1+\\ln c_{t,d})\\left(1+\\ln\\frac{N+1}{df_t+1}\\right),\\quad \\mathbf x_d=\\frac{\\mathbf w_d}{\\|\\mathbf w_d\\|_2}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ সংরক্ষিত TF-IDF Index যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nroot = Path(\"assets/datasets/scifact\")\nlab = json.loads((root / \"retrieval_lab.json\").read_text())\nindex = json.loads((root / \"retrieval_index.json\").read_text())\n\nimport numpy as np\n\nvocab = index[\"vocabulary\"]\nidf = np.asarray(index[\"idf\"])\nassert len(vocab) == 4096 and np.isfinite(idf).all() and (idf >= 1).all()\nrow = index[\"documents\"][0]\nweights = np.asarray(row[\"values\"])\nassert np.isclose(weights @ weights, 1.0)\nprint(len(row[\"indices\"]), vocab[row[\"indices\"][0]])\n"
+        },
+        {
+          "type": "text",
+          "title": "Corpus Fit করার পরিধি ও শর্ত",
+          "body": "উপরের কোডে আমরা দেখলাম 4096 আকারের Vocabulary এবং প্রতিটি ডকুমেন্টের একক দৈর্ঘ্যের (Unit Norm) Sparse ওজন কীভাবে সংরক্ষিত আছে। এখানে একটি গুরুত্বপূর্ণ ইঞ্জিনিয়ারিং প্রশ্ন হলো: Vocabulary এবং IDF কোন ডেটার ওপর Fit করা হয়েছে? এটি করা হয়েছে সার্চযোগ্য সব লেবেলবিহীন (Unlabeled) ডকুমেন্টের ওপর। বাস্তব ডেপ্লয়মেন্টে যখন পুরো সার্চযোগ্য Corpus আগে থেকেই আমাদের ইনডেক্সে থাকে, তখন এটি একটি সম্পূর্ণ বৈধ অনুমান—কারণ এখানে কোনো Query টেক্সট বা Relevance Judgment (Train বা Test লেবেল) ইনডেক্স তৈরিতে ব্যবহৃত হয়নি। তবে ভবিষ্যতে একদম অদেখা নতুন Corpus এলে সেখানেও একই মেট্রিক পাওয়া যাবে—এমন দাবি করা যাবে না; যদি কোনো কাজে ভবিষ্যতের মূল্যায়ন ডকুমেন্ট আগে থেকে দেখা নিষিদ্ধ থাকে, তবে তার জন্য আলাদা প্রোটোকল সাজাতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "Sparse Scoring কীভাবে কাজ করে?",
+          "body": "যেহেতু প্রতিটি ডকুমেন্ট ও Query-র TF-IDF Vector আগে থেকেই L2 Normalized, তাই তাদের Dot Product-ই সরাসরি Cosine Similarity দেয়। ভেক্টরের বেশিরভাগ ঘর শূন্য হওয়ার কারণে কেবল Query-তে থাকা শব্দগুলোর তালিকা ধরে (Sparse Operations বা Inverted Postings ব্যবহার করে) খুব দ্রুত স্কোর বের করা যায়। আমাদের বর্তমান ল্যাব অ্যাপটি স্বচ্ছতার জন্য পুরো ডকুমেন্ট তালিকায় Exact Scan চালায়—এটি বড় প্রোডাকশন সিস্টেমের Inverted Index-এর গতির দাবি করে না। আরেকটি নিয়ম হলো, কেবল ধনাত্মক স্কোর (Strictly Positive Lexical Score) পাওয়া ডকুমেন্টগুলোকেই Candidate হিসেবে ধরা হয়; কোনো শব্দ না মিললে (Zero Overlap) অযথা ডকুমেন্ট ফেরত দেওয়া হয় না।"
+        },
+        {
+          "type": "text",
+          "title": "বিকল্প শক্তিশালী Baseline: BM25",
+          "body": "ইন্ডাস্ট্রিতে আরেকটি অত্যন্ত জনপ্রিয় Lexical Baseline হলো BM25, যা শব্দের পুনরাবৃত্তির মাত্রা নিয়ন্ত্রণ (Term-frequency Saturation) এবং ডকুমেন্টের গড় দৈর্ঘ্যের সাপেক্ষে Length Normalization ব্যবহার করে—যা সাধারণ TF-IDF সূত্রের চেয়ে আলাদা। যেকোনো ভালো Lexical Baseline-এর সবচেয়ে বড় শক্তি হলো, এটি হুবহু জিন (Gene)-এর নাম, সংক্ষিপ্ত রূপ (Abbreviation), ওষুধের কোড বা আইডি নিখুঁতভাবে ধরে রাখতে পারে। আমাদের এই অধ্যায়ের পরীক্ষায় আমরা TF-IDF চালিয়েছি, BM25 নয়—তাই রিপোর্ট করার সময় কখনোই TF-IDF-এর ফলাফলকে BM25 স্কোর বলে লেবেল করা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "কোডিং অডিট ও Vocabulary Order-এর সতর্কতা",
+          "body": "নিজের দক্ষতা ঝালিয়ে নিতে মূল Corpus থেকে নিজের কোডে Document Frequency পুনরায় গুনে দেখুন, এক্সপোর্ট করা Vocabulary-র IDF-এর সাথে মেলান এবং Query-র শব্দসংখ্যা থেকে Sparse Weight তৈরি করুন। সবসময় মনে রাখবেন, Vocabulary-র ক্রম (Order) একটি কঠোর Artifact Contract—দুটি ভেক্টরের Dimension যদি 4096-ই হয়, তবু শব্দের ক্রম এলোমেলো হলে কোনো এরর ছাড়াই নীরবে সম্পূর্ণ ভুল Dot Product বের হবে!"
+        }
+      ]
+    },
+    {
+      "id": "ch23_latent",
+      "title": "LSA: Sparse Corpus থেকে Dense Embedding",
+      "subtitle": "এটি শব্দের সহ-উপস্থিতি সংকুচিত করতে শেখে, সর্বজনীন অর্থ নয়",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Low-rank সংকোচনের মূল ধারণা",
+          "body": "TF-IDF-এর একটি বড় সীমাবদ্ধতা হলো—দুটি বাক্যে যদি ভিন্ন কিন্তু সম্পর্কিত শব্দ থাকে, তবে তাদের Sparse Vector-এ কোনো মিল পাওয়া যায় না। এই সমস্যা কমাতে Latent Semantic Analysis (LSA) পুরো Document-term Matrix X-এর সহ-উপস্থিতির (Co-occurrence) কাঠামোকে অল্প কয়েকটি মাত্রায় (Low-rank Subspace) সংকুচিত করে। এখানে আমরা TruncatedSVD ব্যবহার করি, যা PCA-র মতো Sparse Matrix-কে গড় বিয়োগ করে Center করে না (কারণ Center করলে Sparse ম্যাট্রিক্স বিশাল Dense ম্যাট্রিক্সে পরিণত হয়ে মেমোরি নষ্ট করে)। এর লব্ধ Components ম্যাট্রিক্সের আকার হয় [k, V], এবং যেকোনো ভেক্টর x-কে x @ components.T দিয়ে গুণ করে নতুন জগতে প্রক্ষেপণ (Project) করা হয়—ফলে ট্রেনিং ডকুমেন্ট হোক বা নতুন Query, সবাই একই শেখা Components দিয়ে রূপান্তরিত হয়।"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের নির্দিষ্ট LSA রেসিপি",
+          "body": "আমাদের পরীক্ষায় 4096 আকারের Vocabulary থেকে 32টি Component নেওয়া হয়েছে (Randomized অ্যালগরিদম, n_iter = 7, এবং random_state = 23)। সব সার্চযোগ্য লেবেলবিহীন Corpus-এর ওপর এটি Fit করার পর প্রক্ষেপিত ভেক্টরগুলোকে L2 Normalize করা হয়েছে। এখানে Explained Variance Ratio-র যোগফল আসে প্রায় 0.101163—মনে রাখবেন, এই সংখ্যাটি কেবল ম্যাট্রিক্স পুনর্গঠনের (Reconstruction) হিসাব দেয়, এটি কখনোই Retrieval Recall বা অর্থগত নির্ভুলতার পরিমাপ নয়। আর Dimension = 32 মানটিও আমাদের বেছে নেওয়া একটি হালকা বেসলাইন কনফিগারেশন, কোনো টিউন করা সর্বোত্তম (Tuned Optimum) মান নয়।"
+        },
+        {
+          "type": "math",
+          "title": "Truncated SVD ও Normalized Projection সমীকরণ",
+          "body": "X\\approx U_k\\Sigma_k V_k^T,\\quad \\mathbf z=\\mathbf x V_k,\\quad \\hat{\\mathbf z}=\\mathbf z/\\|\\mathbf z\\|_2"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Sparse থেকে 32D Dense রূপান্তর যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nroot = Path(\"assets/datasets/scifact\")\nlab = json.loads((root / \"retrieval_lab.json\").read_text())\nindex = json.loads((root / \"retrieval_index.json\").read_text())\n\nimport numpy as np\n\ns = lab[\"samples\"][0]\nc = np.asarray(index[\"components\"])\nx = np.zeros(4096)\nx[s[\"sparse\"][\"indices\"]] = s[\"sparse\"][\"values\"]\nraw = x @ c.T\nassert c.shape == (32, 4096)\nnp.testing.assert_allclose(raw, s[\"raw\"], atol=1e-12)\nnp.testing.assert_allclose(raw / np.linalg.norm(raw), s[\"unit\"], atol=1e-12)\nprint(np.linalg.norm(raw))\n"
+        },
+        {
+          "type": "text",
+          "title": "তথ্য হারানোর ঝুঁকি (Information Loss)",
+          "body": "উপরের কোডে আমরা একটি বাস্তব নমুনার 4096-মাত্রিক Sparse ভেক্টর থেকে হুবহু 32D Raw এবং Unit ভেক্টর তৈরি করে মিলিয়ে দেখলাম। কিন্তু ভেবে দেখুন, 4096টি মাত্রাকে মাত্র 32টি মাত্রায় নামিয়ে আনলে কী ঘটে? এই সংকোচন (Compression) বারবার একসাথে আসা সাধারণ বিষয়বস্তুগুলো ধরে রাখতে পারলেও বিরল কিন্তু অত্যন্ত গুরুত্বপূর্ণ বৈজ্ঞানিক পরিভাষা (Rare Discriminative Terms) হারিয়ে ফেলতে পারে! ফলে একই সাধারণ বিষয়ের অপ্রাসঙ্গিক Abstract-গুলোও ভেক্টর স্পেসে খুব কাছাকাছি চলে আসে। তাই এই ছোট লিনিয়ার LSA কেবল একটি ধারণাগত Dense Baseline; এটি আধুনিক Contextual Neural Embedding বা প্রতিশব্দ বোঝার পূর্ণাঙ্গ প্রমাণ নয়—এবং আমরা পরে দেখব যে আমাদের বাস্তব পরীক্ষায় Lexical Baseline এর চেয়ে অনেক ভালো ফলাফল দেয়।"
+        },
+        {
+          "type": "text",
+          "title": "Projection Audit: হাতে-কলমে মেলানো",
+          "body": "পাইপলাইনটি পুরোপুরি আত্মস্থ করতে একটি বাস্তব Query-র Sparse Indices ও Weights থেকে 4096-মাত্রিক ভেক্টর বানিয়ে সেটিকে 32D-তে রূপান্তর করে দেখুন এবং এক্সপোর্ট করা Raw ও Unit ভেক্টরের প্রতিটি স্থানাঙ্ক মিলিয়ে নিন। যদি কোনো ভেক্টরের Norm শূন্য হয়, তবে সেটিকে শূন্য ভেক্টর হিসেবেই রেখে দিন। সবচেয়ে জরুরি বিষয় হলো—ভেক্টরের চিহ্ন (Sign) এবং Component-গুলোর ক্রম Query ও Document উভয় দিকেই একদম অভিন্ন থাকতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "পুনরুৎপাদনযোগ্যতা ও ভার্সন সতর্কতা",
+          "body": "SVD-র একটি পরিচিত গাণিতিক বৈশিষ্ট্য হলো Sign Flip—অর্থাৎ কোনো Component ভেক্টর এবং তার ঋণাত্মক রূপ একই জ্যামিতিক তল নির্দেশ করলেও লাইব্রেরির ভার্সন বা হার্ডওয়্যার ব্যাকএন্ড বদলালে স্থানাঙ্কের চিহ্ন উল্টে যেতে পারে। তাই নির্দিষ্ট পরিবেশ ও Random Seed দিয়ে একবার Weights এক্সপোর্ট করে সেটিকে অপরিবর্তনীয় Artifact Contract হিসেবে ব্যবহার করাই মোবাইল বা প্রোডাকশন অ্যাপের সঠিক নিয়ম। দুটি ভিন্ন মডেল ভার্সনের ভেক্টর কখনোই একই Index-এ মেশানো যাবে না—তাদের Dimension সমান (32) হলেও ভেতরের গাণিতিক ভিত্তি (Basis) সম্পূর্ণ আলাদা হতে পারে!"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে ব্যাখ্যা করবেন",
+          "body": "ইন্টারভিউতে আলোচনা করতে পারেন কেন একই ম্যাট্রিক্সের ওপর সরাসরি fit_transform চালানো আর আগে fit করে পরে transform চালানোর মধ্যে সূক্ষ্ম সংখ্যাগত (Floating-point) পার্থক্য দেখা দিতে পারে। আমাদের ওয়ার্কফ্লোতে সামঞ্জস্য রক্ষার জন্য svd.fit করার পর একই svd.transform পাথ দিয়েই Corpus এবং Query উভয়কে রূপান্তর করা হয়েছে। পাশাপাশি স্পষ্ট করে বলবেন যে—ম্যাট্রিক্সের Reconstruction Quality, ভেক্টর স্পেসের Nearest-neighbor Quality এবং ব্যবহারকারীর প্রশ্নের সাপেক্ষে Task Relevance—এই তিনটি সম্পূর্ণ ভিন্ন ডায়াগনস্টিক মাপকাঠি।"
+        }
+      ]
+    },
+    {
+      "id": "ch23_pooling",
+      "title": "Neural Sentence Embeddings ও Masked Pooling",
+      "subtitle": "Token-পর্যায়ের Hidden State থেকে পুরো Document Vector তৈরি হয় কীভাবে?",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Token Vector বনাম পুরো বাক্যের Vector",
+          "body": "আগের অধ্যায়ে (Book 4 · Chapter 1: LLM Foundations) আমরা দেখেছি, সাধারণ Embedding Lookup কেবল একেকটি বিচ্ছিন্ন Token ID-র ভেক্টর দেয়, আর Transformer-এর মতো Contextual Encoder আশপাশের শব্দগুলোর সাপেক্ষে প্রতিটি টোকেনের জন্য একেকটি Hidden State তৈরি করে। কিন্তু সার্চ করার সময় আমাদের পুরো Query বা পুরো Document-এর জন্য একটিমাত্র নির্দিষ্ট আকারের ভেক্টর দরকার, যাতে লক্ষ লক্ষ ডকুমেন্টের সাথে দ্রুত তুলনা করা যায়। এর জন্য টোকেনগুলোর Hidden State একত্রিত করতে CLS Token, Masked Mean Pooling অথবা আলাদাভাবে প্রশিক্ষিত Pooling Head বেছে নিতে হয়। মনে রাখা জরুরি—যেকোনো সাধারণ Pretrained Language Model-এর প্রথম টোকেন বা সব টোকেনের গড় নিলেই সেটি আপনাআপনি ভালো Retrieval Representation হয়ে যায় না!"
+        },
+        {
+          "type": "text",
+          "title": "Masked Mean Pooling-এর সূক্ষ্ম হিসাব",
+          "body": "ব্যাচ প্রসেসিংয়ের সময় ছোট বাক্যগুলোকে সমান দৈর্ঘ্যে আনার জন্য শেষে PAD টোকেন বসানো হয়। তাই Mean Pooling করার সময় শুধুমাত্র আসল (Valid) টোকেনগুলোর Hidden State যোগ করে আসল টোকেনের সংখ্যা দিয়েই ভাগ করতে হবে। ভুলে যদি লবে (Numerator) PAD টোকেনের ভেক্টর ঢুকে পড়ে কিংবা হরে (Denominator) আসল দৈর্ঘ্যের বদলে পুরো টেনসরের স্টোরেজ দৈর্ঘ্য বসে যায়, তবে ছোট বাক্যের ভেক্টরগুলো মারাত্মকভাবে বিকৃত হয়ে যাবে! আর ইনপুটের সব টোকেনই যদি Padding হয়, তবে তা শুরুতেই প্রত্যাখ্যান করতে হবে অথবা সুনির্দিষ্ট শূন্য-ভেক্টর নীতি (Zero Policy) থাকতে হবে। এজন্য Attention Mask, Pooling Mask এবং Truncation নীতি একই চুক্তিতে বাঁধা থাকা আবশ্যক।"
+        },
+        {
+          "type": "math",
+          "title": "Masked Mean Pooling-এর সমীকরণ",
+          "body": "\\mathbf e=\\frac{\\sum_t m_t\\mathbf h_t}{\\sum_t m_t},\\quad m_t\\in\\{0,1\\}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Padding-নিরপেক্ষ Masked Pooling পরীক্ষা",
+          "body": "import torch\n\n# Declared pooling illustration; not SciFact neural-encoder results.\nh = torch.tensor([[[1.0, 2.0], [3.0, 4.0], [99.0, 99.0]]], dtype=torch.float64)\nmask = torch.tensor([[1.0, 1.0, 0.0]], dtype=torch.float64)\ne = (h * mask.unsqueeze(-1)).sum(1) / mask.sum(1, keepdim=True)\ntorch.testing.assert_close(e, torch.tensor([[2.0, 3.0]], dtype=torch.float64))\nprint(e)\n"
+        },
+        {
+          "type": "text",
+          "title": "কেন আলাদা Training Objective প্রয়োজন?",
+          "body": "উপরের কোডে দেখুন, তৃতীয় টোকেনে [99.0, 99.0]-এর মতো বিশাল PAD মান থাকা সত্ত্বেও mask = [1.0, 1.0, 0.0] ব্যবহারের কারণে গড় ভেক্টর নিখুঁতভাবে [[2.0, 3.0]] এসেছে। কিন্তু শুধু সঠিক Pooling থাকলেই কাজ শেষ হয় না। Sentence-BERT এবং আধুনিক Dual-encoder মডেলগুলো জোড়ায় জোড়ায় প্রাসঙ্গিক টেক্সটের Supervision ব্যবহার করে ভেক্টর স্পেসকে এমনভাবে সাজায় যেন অর্থগতভাবে প্রাসঙ্গিক বাক্যগুলো কাছাকাছি আসে। আসলে Training Objective, ট্রেনিং ডেটা, Pooling পদ্ধতি, Normalization এবং স্কোরিং Metric—সবকিছু মিলেই একটি Embedding-এর আচরণ তৈরি হয়; শুধু মডেলের আর্কিটেকচারের নাম বা Parameter সংখ্যা দেখে তার সার্চ সক্ষমতা বিচার করা যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "এই অধ্যায়ের পরীক্ষামূলক সীমানা",
+          "body": "একটি বিষয় এখানে স্পষ্ট রাখা দরকার: এই অধ্যায়ের মূল প্রামাণিক ডেটা পাইপলাইনটি TF-IDF ও LSA ভিত্তিক; উপরের PyTorch কোডটি কেবল Masked Pooling-এর গাণিতিক প্রক্রিয়া বোঝানোর জন্য দেওয়া হয়েছে। এখানে বাইরে থেকে কোনো Pretrained Neural Weights ডাউনলোড করা হয়নি বা SciFact কর্পাসের ওপর কোনো Neural Encoder চালিয়ে উন্নতির দাবিও করা হয়নি। বরং বিভিন্ন Representation পরিবারের ভেতরের কলকব্জা আলাদাভাবে বোঝার জন্যই আমরা ধাপে ধাপে এগোচ্ছি।"
+        },
+        {
+          "type": "text",
+          "title": "বড় ডকুমেন্ট ও Context Window-এর চ্যালেঞ্জ",
+          "body": "ডকুমেন্ট যখন অনেক বড় হয়, তখন দুটি নতুন বিপদ সামনে আসে। প্রথমত, মডেলের Context Window-এর বাইরে থাকা টোকেনগুলো কেটে বাদ (Truncate) দিলে আসল Evidence বাক্যটিই হারিয়ে যেতে পারে। দ্বিতীয়ত, পুরো বিশাল ডকুমেন্টের সব বাক্যের গড় (Whole-document Mean) নিলে একটিমাত্র জরুরি বাক্যের সংকেত বাকি শত শত সাধারণ বাক্যের ভিড়ে ফিকে (Diluted) হয়ে যেতে পারে। এর সমাধান হিসেবে ডকুমেন্টকে ছোট ছোট Chunk বা বাক্যে ভাগ করে ভেক্টর বানানো কিংবা Hierarchical Pooling ব্যবহার করা যায়—তবে কোনটি সেরা, তা অবশ্যই আপনার Relevance Unit এবং সিস্টেমের Latency ও Memory Budget-এর সাপেক্ষে যাচাই করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে কোড ও Edge Case ব্যাখ্যা করবেন",
+          "body": "ইন্টারভিউতে Masked Pooling লিখতে দিলে সাথে সাথে একটি Padding Invariance Test লিখে দেখাবেন: আসল টোকেনগুলো স্থির রেখে শেষে অতিরিক্ত PAD সারি যোগ করলেও আউটপুট ভেক্টর যেন দশমিকে একচুলও না বদলায়। পাশাপাশি ফাঁকা ইনপুট (Zero Valid Tokens—যেখানে শূন্য দিয়ে ভাগ হয়ে NaN আসতে পারে), ভুল Mask Shape (Broadcasting বাগ), পূর্ণসংখ্যার ভাগ (Integer Division) এবং Gradient Flow-এর প্রান্তিক পরিস্থিতিগুলো (Edge Cases) নিজে থেকে ব্যাখ্যা করলে আপনার ইঞ্জিনিয়ারিং পরিপক্বতা স্পষ্ট ফুটে উঠবে।"
+        }
+      ]
+    },
+    {
+      "id": "ch23_contrastive",
+      "title": "Dual Encoder ও Contrastive Objective",
+      "subtitle": "অন্য সব Candidate-এর তুলনায় Positive Pair-এর স্কোর বাড়ানোর কৌশল",
+      "duration": "60 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "জোড়ায় জোড়ায় শেখা: Contrastive Supervision",
+          "body": "আগের পাঠে আমরা দেখেছি যে ভালো Retrieval Embedding পেতে হলে ভেক্টর স্পেসকে আলাদাভাবে প্রশিক্ষণ দিতে হয়। কিন্তু মডেল কীভাবে শিখবে কোন Document-টি কোন Query-র কাছে থাকা উচিত? Dual Encoder (বা Bi-encoder) ট্রেনিংয়ে একটি ব্যাচের প্রতিটি Query q_i এবং তার প্রাসঙ্গিক ডকুমেন্ট d_i মিলে একেকটি Positive Pair গঠন করে। ব্যাচের সব ডকুমেন্ট ভেক্টরকে যদি পাশাপাশি কলাম হিসেবে সাজাই, তবে স্কোর ম্যাট্রিক্সের আকার হয় [B, B]। যদি প্রতিটি সারির i-তম কুয়েরির সঠিক উত্তর ঠিক i-তম কলামেই থাকে, তবে কর্ণ বরাবর (Diagonal) ইনডেক্সগুলোই অর্থাৎ arange(B) হবে আমাদের সঠিক Label। এরপর স্কোরগুলোকে একটি ধনাত্মক Temperature স্কেলার τ দিয়ে ভাগ করে স্ট্যাবল Cross-entropy Loss (InfoNCE) প্রয়োগ করা হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Gradient কীভাবে ভেক্টরগুলোকে সাজায়?",
+          "body": "এই লস ফাংশনটির Gradient-এর আচরণ খুব চমৎকার: লস কমাতে হলে সঠিক জোড়ার (Positive Pair) সম্ভাব্যতা বাড়াতে হয়, যার ফলে q_i ও d_i-র সাদৃশ্য (Similarity) ব্যাচের অন্য সব কলামের তুলনায় বৃদ্ধি পায়। এখানে যেসব ভুল ডকুমেন্ট (Negative) কুয়েরির খুব কাছাকাছি স্কোর পায়—অর্থাৎ যেগুলো Harder Negative—সেগুলো হরের (Denominator) যোগফলে বড় ভূমিকা রাখে এবং সেখান থেকেই সবচেয়ে শক্তিশালী Gradient পাওয়া যায়। খেয়াল রাখবেন, ভেক্টরের Norm যদি সীমাবদ্ধ (Bounded বা Normalized) না থাকে, তবে Dot Product কেবল দৈর্ঘ্য বাড়িয়েই লস কমানোর চেষ্টা করতে পারে; তাই ট্রেনিংয়ের Objective Metric এবং সার্ভিংয়ের Inference Metric সবসময় এক রাখা জরুরি।"
+        },
+        {
+          "type": "math",
+          "title": "InfoNCE Contrastive Loss সমীকরণ",
+          "body": "\\mathcal L=-\\frac1B\\sum_i\\ln\\frac{\\exp(s(q_i,d_i)/\\tau)}{\\sum_j\\exp(s(q_i,d_j)/\\tau)}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Dual-encoder Contrastive Loss ও Gradient পরীক্ষা",
+          "body": "import torch\nimport torch.nn.functional as F\n\n# Declared two-pair loss illustration; not trained SciFact neural embeddings.\nq = torch.eye(2, dtype=torch.float64, requires_grad=True)\nd = torch.eye(2, dtype=torch.float64)\nscores = F.normalize(q, dim=1) @ F.normalize(d, dim=1).T / 0.1\nloss = F.cross_entropy(scores, torch.arange(2))\nloss.backward()\nassert torch.isfinite(loss) and torch.isfinite(q.grad).all()\nprint(loss.item(), q.grad)\n"
+        },
+        {
+          "type": "text",
+          "title": "In-batch Negatives-এর সুবিধা ও লুকানো ফাঁদ",
+          "body": "ব্যাচের ভেতরে অন্য কুয়েরির Positive Document-কে বর্তমান কুয়েরির জন্য Negative হিসেবে ব্যবহার করাকে বলা হয় In-batch Negatives। এতে আলাদা করে নতুন ডকুমেন্ট এনকোড না করেই অনেক কম খরচে প্রচুর Supervision পাওয়া যায়। কিন্তু এখানে একটি বড় ফাঁদ আছে! বর্তমান কুয়েরির জন্য প্রাসঙ্গিক একাধিক Evidence ডকুমেন্ট একই ব্যাচে অন্য সারিতেও উপস্থিত থাকতে পারে, অথবা একই Document ID ব্যাচে দুবার চলে আসতে পারে। এগুলোকে অন্ধভাবে Negative ধরলে মডেল সঠিক উত্তরকেই দূরে ঠেলে দিতে শিখবে (False Negative)। তাই জানা প্রাসঙ্গিক আইডিগুলো ব্যাচে Mask করে দিতে হয় অথবা Multi-positive Objective ব্যবহার করতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "সংখ্যাগত স্থিতিশীলতা (Numerical Stability) ও Temperature",
+          "body": "কোড লেখার সময় কখনোই কাঁচা exp(logits) সরাসরি বের করে যোগ করতে যাবেন না—স্কোর বড় হলে বা τ ছোট হলে সাথে সাথে Floating-point Overflow ঘটবে! সবসময় logsumexp বা ফ্রেমওয়ার্কের স্ট্যাবল cross_entropy ফাংশন ব্যবহার করবেন। আর মনে রাখবেন, Temperature = 0 গাণিতিকভাবে অবৈধ (শূন্য দিয়ে ভাগ), এবং অতি ক্ষুদ্র τ ব্যবহার করলে Gradient অত্যন্ত তীক্ষ্ণ হয়ে অপটিমাইজেশনকে অস্থিতিশীল করে তুলতে পারে। আবার ব্যাচের লস খুব ছোট দেখালেই নিশ্চিন্ত হবেন না—ভুল লেবেল বা ডুপ্লিকেট Negative থাকলেও লস বিভ্রান্তিকরভাবে কম দেখাতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "কোডের পরিধি ও বাস্তব মূল্যায়নের পার্থক্য",
+          "body": "উপরের 2-জোড়ার ছোট PyTorch কোডটি আপনাকে Contrastive Loss ও Gradient-এর ভেতরের কলকব্জা হাতে-কলমে দেখানোর জন্য দেওয়া হয়েছে; এখানে পাবলিক কর্পাসের ওপর পূর্ণাঙ্গ নিউরাল মডেল ট্রেন করা হয়নি। বাস্তবে কোনো নিউরাল মডেল সার্চের মান বাড়িয়েছে—এমন দাবি করতে হলে অবশ্যই অদেখা (Held-out) কুয়েরি ও ডকুমেন্টের ওপর প্রকৃত Relevance Evaluation, শক্তিশালী Baseline-এর সাথে তুলনা এবং সুস্পষ্ট False-negative নীতি থাকতে হবে। শুধু ট্রেনিং ব্যাচের লস কমে যাওয়া মানেই ভালো সার্চ কোয়ালিটি নয়!"
+        },
+        {
+          "type": "text",
+          "title": "কোডিং অনুশীলন ও Distributed Training সতর্কতা",
+          "body": "অনুশীলনের সময় স্কোর ম্যাট্রিক্সের সারিগুলো ওলটপালট (Permute) করে দেখুন আপনি সঠিকভাবে ম্যাচিং Label আপডেট করতে পারছেন কি না। পাশাপাশি কলামের ক্রমের বাগ, ঋণাত্মক Temperature, শূন্য ভেক্টরের Normalization এবং Multi-positive Mask পরীক্ষা করে দেখুন। বড় প্রোডাকশন সিস্টেমে যখন একাধিক GPU জুড়ে Distributed Training-এ ভেক্টর জড়ো (Gather) করা হয়, তখন কোন GPU থেকে কোন Document ID এল, Gradient সঠিকভাবে প্রবাহিত হচ্ছে কি না এবং ডুপ্লিকেট ছাঁটাই হচ্ছে কি না—তা আলাদাভাবে রিভিউ করতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "একাধিক সঠিক উত্তর (Multi-positive) থাকলে লব কেমন হবে?",
+          "body": "ধরা যাক, একটি কুয়েরির জন্য তিনটি ডকুমেন্টের Logit হলো [2, 2, 0], যেখানে প্রথম দুটি ডকুমেন্টই আসলে প্রাসঙ্গিক (Relevant)। এখানে যদি সাধারণ Single-label Cross-entropy চালিয়ে কেবল প্রথমটিকে (Index 0) সঠিক ধরা হয়, তবে মডেল দ্বিতীয় সঠিক ডকুমেন্টটির সম্ভাব্যতা কমানোর জন্য উল্টো ক্ষতিকর Gradient পাঠাবে! এর বদলে পুরো সঠিক সেটের সম্মিলিত সম্ভাব্যতা (Positive-set Probability) বাড়াতে আমরা loss = logsumexp(all) - logsumexp(positives) ব্যবহার করতে পারি। নিচের কোডে দেখবেন, এখানে Single-label Loss আসে প্রায় 0.758624 (এবং দ্বিতীয় ডকুমেন্টে ক্ষতিকর ধনাত্মক লস-গ্রেডিয়েন্ট তৈরি হয়), অথচ Multi-positive Set Loss আসে মাত্র 0.065476। আপনি মডেলকে ঠিক কোন ধরনের Positive Coverage শেখাতে চান, আপনার Loss Objective তার সাথেই মিলতে হবে।"
+        },
+        {
+          "type": "math",
+          "title": "Positive-set Probability Loss সমীকরণ",
+          "body": "\\ell=\\log\\sum_j e^{s_j}-\\log\\sum_{j\\in P}e^{s_j},\\qquad P\\ne\\varnothing"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Single-label বনাম Multi-positive Gradient যাচাই",
+          "body": "import torch\nimport torch.nn.functional as F\n\nlogits = torch.tensor([2.0, 2.0, 0.0], dtype=torch.float64, requires_grad=True)\npositive = torch.tensor([True, True, False])\nsingle_loss = F.cross_entropy(logits[None], torch.tensor([0]))\nset_loss = torch.logsumexp(logits, 0) - torch.logsumexp(logits[positive], 0)\nsingle_gradient = torch.autograd.grad(single_loss, logits)[0]\nset_gradient = torch.autograd.grad(set_loss, logits)[0]\nprint(\n    round(single_loss.item(), 6),\n    round(set_loss.item(), 6),\n    int(single_gradient[1] > 0),\n    int(set_gradient[1] < 0),\n)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে ভেবে দেখুন",
+          "body": "উপরের এই Positive-set Mass Loss (logsumexp(all) - logsumexp(positives)) কি একটি কুয়েরির সব কয়টি প্রাসঙ্গিক ডকুমেন্টকে সমানভাবে উপরের র‍্যাঙ্কে তুলে আনার চাপ দেয়?",
+          "solution": "না, সবসময় সমান চাপ দেয় না। খেয়াল করে দেখুন, একাধিক Positive ডকুমেন্টের মধ্যে কেবল একটি ডকুমেন্টই যদি প্রায় পুরো Probability Mass একাই দখল করে নেয়, তবুও logsumexp(positives) অনেক বড় হয়ে যাবে এবং পুরো Set Loss খুব কমে যাবে—ফলে বাকি প্রাসঙ্গিক ডকুমেন্টগুলো নিচে পড়ে থাকতে পারে। আপনি যদি সব কয়টি প্রাসঙ্গিক ডকুমেন্টকেই সমান গুরুত্ব দিয়ে উপরে আনতে চান, তবে Uniform Positive-target Cross-entropy বা অন্য কোনো Coverage Objective ভিন্ন ধরনের অপটিমাইজেশন চাপ তৈরি করবে। তাই আপনার ডেটার Relevant-set-এর অর্থ এবং ডাউনস্ট্রিম Recall-এর লক্ষ্য বুঝেই সঠিক Loss নির্ধারণ করতে হবে।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch23_negatives",
+      "title": "Hard Negatives, False Negatives ও Data Leakage",
+      "subtitle": "দেখতে কঠিন হলেই কি সেটি সত্যিকারের Negative?",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Negative নমুনার উৎস ও ঝুঁকি",
+          "body": "পুরো Corpus থেকে এলোমেলোভাবে তুলে আনা ডকুমেন্টগুলো সাধারণত খুব সহজ Negative হয়, কারণ কুয়েরির বিষয়ের সাথে সেগুলোর কোনো মিলই থাকে না। অন্যদিকে কোনো Lexical বা Dense Retriever-এ উচ্চ স্কোর পাওয়া কিন্তু অপ্রাসঙ্গিক (Non-positive) ডকুমেন্টগুলো হলো Hard Negative। একই বিষয়ের সূক্ষ্ম পরিভাষাগুলোর পার্থক্য শেখাতে এই Hard Negative দারুণ কাজে আসে। কিন্তু বিপত্তি ঘটে যখন ডেটাসেটের লেবেল অসম্পূর্ণ (Incomplete) থাকে—তখন আসল প্রাসঙ্গিক একটি Evidence ডকুমেন্টও কেবল লেবেল না থাকার কারণে ভুলবশত Negative হিসেবে ট্রেনিংয়ে ঢুকে পড়তে পারে! সবসময় মনে রাখবেন, কোনো ডকুমেন্ট অমূল্যায়িত (Unjudged) হওয়া মানেই সেটি প্রমাণিতভাবে অপ্রাসঙ্গিক (Irrelevant) নয়।"
+        },
+        {
+          "type": "text",
+          "title": "নিরাপদ Negative Mining প্রোটোকল",
+          "body": "Hard Negative খোঁজার (Mining) সম্পূর্ণ রেসিপি শুধুমাত্র Training ভূমিকার কুয়েরি এবং ট্রেনিংয়ে অনুমোদিত লেবেল দিয়েই স্থির করতে হবে। ভুলে যদি Validation বা Test সেটের Relevance Judgment দেখে Negative বাছাই করা হয় কিংবা মডেল নির্বাচন করা হয়, তবে Held-out মূল্যায়নের সীমানা ভেঙে Data Leakage ঘটবে। এখানে একটি সূক্ষ্ম পার্থক্য পরিষ্কার রাখা দরকার: ইনডেক্স তৈরির সময় লেবেলবিহীন Corpus টেক্সট দেখা আর Held-out কুয়েরির গোপন Relevance Label থেকে শেখা—দুটো সম্পূর্ণ আলাদা বিষয়। ভবিষ্যতে অডিট করার সুবিধার্থে কোন ভার্সনের মডেল দিয়ে কত গভীরতা (Candidate Depth) পর্যন্ত Mining করা হয়েছে, তা অবশ্যই নথিবদ্ধ রাখুন।"
+        },
+        {
+          "type": "math",
+          "title": "Multi-positive Set Contrastive Loss",
+          "body": "\\mathcal L_i=-\\ln\\frac{\\sum_{j\\in P_i}\\exp(s_{ij})}{\\sum_{j\\in A_i}\\exp(s_{ij})}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Multi-positive LogSumExp হিসাব",
+          "body": "from pathlib import Path\nimport json\n\nroot = Path(\"assets/datasets/scifact\")\nlab = json.loads((root / \"retrieval_lab.json\").read_text())\n\nimport numpy as np\n\n# Declared multi-positive logsumexp illustration.\nscores = np.array([2.0, 1.0, 0.0])\npositive = np.array([True, True, False])\n\n\ndef lse(x):\n    return float(np.max(x) + np.log(np.exp(x - np.max(x)).sum()))\n\n\nloss = lse(scores) - lse(scores[positive])\nassert loss >= 0\nprint(loss, lab[\"samples\"][0][\"relevant\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "একাধিক প্রাসঙ্গিক উত্তরের দুটি কনভেনশন",
+          "body": "SciFact-এর একটি কুয়েরির জন্য একাধিক বৈধ Evidence Document থাকতে পারে (উপরের কোডে প্রথম কুয়েরির relevant তালিকায় যেমনটি দেখা যাচ্ছে)। এই পরিস্থিতিতে Multi-positive Objective লেখার দুটি প্রচলিত রীতি আছে: প্রথম রীতিতে লবের (Numerator) ভেতরে সব জানা Positive-এর এক্সপোনেনশিয়াল স্কোর একসাথে যোগ করা হয় (আমাদের উপরের কোডটি এই রীতিই দেখাচ্ছে); আর দ্বিতীয় রীতিতে প্রতিটি Positive-এর আলাদা লস বের করে তাদের গড় নেওয়া হয়। দুটি সমীকরণের গ্রেডিয়েন্ট আচরণ এক নয়—তাই আপনি কোন কনভেনশনটি ব্যবহার করছেন, তা কোডে ও ডকুমেন্টেশনে স্পষ্ট করে উল্লেখ করুন।"
+        },
+        {
+          "type": "text",
+          "title": "ডুপ্লিকেট টেক্সট ও Split-এর সীমাবদ্ধতা",
+          "body": "বাস্তব কর্পাসে একই Abstract-এর প্রায় হুবহু কপি (Near Duplicates) কিংবা একই মূল বৈজ্ঞানিক দাবির ভিন্ন ভাষায় লেখা রূপ (Paraphrases) Train ও Test উভয় ভাগেই ছড়িয়ে থাকতে পারে। তাই শুধু Query ID-গুলো পরস্পর আলাদা (Disjoint) হলেই যে অর্থগত স্বাধীনতা (Semantic Independence) নিশ্চিত হয়ে গেল, তা কিন্তু নয়। কাজের ধরন অনুযায়ী অনেক সময় নির্দিষ্ট Entity, Citation Family, উৎস কিংবা সময়ের ভিত্তিতে ডেটা ভাগ (Grouping) করার প্রয়োজন পড়ে। পাবলিক ডেটাসেটের তৈরি করা Split-কে চোখ বন্ধ করে নিখুঁত স্বাধীন পরীক্ষা ধরে নেবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে Error Analysis করার অভ্যাস",
+          "body": "মডেল যখন কোনো Hard Negative-এ ভুল করে, তখন সরাসরি মূল Abstract-টি খুলে পড়ুন: কোন শব্দগুলো মিলছে এবং আসল Relevant Label কী বলছে তা যাচাই করুন। হতে পারে ডকুমেন্টটিতে আসলেই দরকারি তথ্য ছিল কিন্তু অ্যানোটেশন অসম্পূর্ণ ছিল! আরেকটি গুরুত্বপূর্ণ বিষয় হলো—কোনো ডকুমেন্ট যদি কুয়েরির দাবিকে সরাসরি খণ্ডনও (Contradict) করে, তবুও সত্যাসত্য যাচাইয়ের কাজে সেটি একটি অত্যন্ত প্রাসঙ্গিক Evidence Document। তাই দাবি যাচাইয়ের লেবেল (Claim Verification Label) এবং বাইনারি Retrieval Qrel-কে কখনোই গুলিয়ে ফেলবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে উত্তর দেবেন",
+          "body": "ইন্টারভিউতে যদি প্রশ্ন করে: 'ট্রেনিং ব্যাচে একই Positive Document দুবার চলে এলে কী সমস্যা হবে এবং কীভাবে সামলাবেন?'—তখন ID-aware Mask, Multi-positive লস ডিজাইন এবং মেট্রিকের প্রভাব দিয়ে গুছিয়ে উত্তর দিন। পাশাপাশি এটিও পরিষ্কার করে বলুন যে ব্যাচে কেবল Negative-এর সংখ্যা বাড়ালেই স্বয়ংক্রিয়ভাবে মডেল ভালো হয় না; নমুনার মান, ডোমেইনের মিল, False Negative বা Leakage-এর ঝুঁকি এবং কম্পিউট খরচের ভারসাম্য (Tradeoff) বিচার করাই আসল ইঞ্জিনিয়ারিং।"
+        }
+      ]
+    },
+    {
+      "id": "ch23_query_document",
+      "title": "Asymmetric Retrieval ও Cross-encoder Reranking",
+      "subtitle": "ছোট Query আর বড় Evidence: একই ভেক্টর স্পেসে দুই ভিন্ন ভূমিকা",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Symmetric বনাম Asymmetric সার্চ",
+          "body": "দুটি সমান দৈর্ঘ্যের বাক্যের অর্থগত মিল খোঁজার কাজে (Similar Sentence Search) কুয়েরি এবং ডকুমেন্টের ভূমিকা প্রায় প্রতিসম বা Symmetric হয়। কিন্তু একটি ছোট্ট প্রশ্ন বা এক লাইনের Claim দিয়ে যখন বড় একটি বৈজ্ঞানিক Abstract খুঁজে বের করতে হয়, তখন কাজটি হয়ে পড়ে Asymmetric Retrieval। এ ধরনের কাজে কুয়েরি ও ডকুমেন্টের জন্য ভূমিকা-ভেদে আলাদা Prompt, আলাদা Encoder কিংবা ভিন্ন Token Limit বেশ কার্যকর হতে পারে—সেক্ষেত্রে মডেলের নিজস্ব নথিবদ্ধ encode_query ও encode_document চুক্তি মেনে চলতে হয়। তবে যেকোনো মডেলেই না বুঝে সব টেক্সটের শুরুতে মনগড়া কোনো Prefix বসিয়ে দেওয়া কোনো সর্বজনীন নিয়ম নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Bi-encoder আর্কিটেকচারের সুবিধা",
+          "body": "Bi-encoder (বা Dual Encoder) পদ্ধতিতে পুরো কর্পাসের ডকুমেন্ট ভেক্টরগুলো অফলাইনে আগে থেকেই হিসাব করে সংরক্ষণ করে রাখা যায়; ব্যবহারকারী কুয়েরি দিলে কেবল কুয়েরিটিকে ভেক্টরে রূপান্তর করে দ্রুত Vector Similarity Search চালানো হয়। এখানে কুয়েরি ও ডকুমেন্ট এনকোডারের Weights অভিন্ন (Shared) হতে পারে, আবার আলাদাও হতে পারে—শর্ত কেবল একটাই, দুজনকে যৌথভাবে এমন জ্যামিতিক স্পেস শিখতে হবে যা পরস্পরের সাথে সামঞ্জস্যপূর্ণ (Compatible)। আমাদের বর্তমান LSA পাইপলাইনে রূপান্তরের ম্যাট্রিক্সটি অভিন্ন হলেও কুয়েরি ও ডকুমেন্টের দৈর্ঘ্য এবং ভূমিকা স্পষ্টতই আলাদা।"
+        },
+        {
+          "type": "math",
+          "title": "Bi-encoder বনাম Cross-encoder স্কোরিং সমীকরণ",
+          "body": "s_{\\rm bi}(q,d)=f_q(q)^T f_d(d),\\quad s_{\\rm cross}(q,d)=g([q;d])"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Reranker-এর সর্বোচ্চ সীমা (Candidate Ceiling) হিসাব",
+          "body": "from pathlib import Path\nimport json\n\nroot = Path(\"assets/datasets/scifact\")\nlab = json.loads((root / \"retrieval_lab.json\").read_text())\n\ntrain = {s[\"id\"] for s in lab[\"samples\"] if s[\"role\"] == \"train\"}\ntest = {s[\"id\"] for s in lab[\"samples\"] if s[\"role\"] == \"test\"}\nassert train.isdisjoint(test)\n# A reranker cannot recover documents absent from its input candidate set.\ncandidate_ids = {d for d, _ in lab[\"samples\"][0][\"rankings\"][\"tfidf\"]}\nceiling = len(candidate_ids & set(lab[\"samples\"][0][\"relevant\"])) / len(\n    lab[\"samples\"][0][\"relevant\"]\n)\nprint(ceiling)\n"
+        },
+        {
+          "type": "text",
+          "title": "Cross-encoder কীভাবে গভীরভাবে তুলনা করে?",
+          "body": "উপরের সমীকরণে দেখুন, Cross-encoder-এ কুয়েরি এবং ডকুমেন্টকে [q; d] আকারে একসাথে জুড়ে দিয়ে মডেলের ভেতরে পাঠানো হয়, ফলে উভয় অংশের প্রতিটি টোকেনের পারস্পরিক সম্পর্ক (Token-level Interaction) সরাসরি বিশ্লেষণ করা সম্ভব হয়। কিন্তু এর বড় সীমাবদ্ধতা হলো—প্রতিটি কুয়েরি-ডকুমেন্ট জোড়ার জন্য নতুন করে পুরো নিউরাল নেটওয়ার্ক চালাতে হয়; ডকুমেন্টের জন্য আগে থেকে সংরক্ষণযোগ্য কোনো একক ভেক্টর এখানে পাওয়া যায় না। তাই বাস্তব সিস্টেমে প্রথমে দ্রুতগতির প্রথম ধাপ (First-stage Retriever) দিয়ে শীর্ষ Nটি Candidate তুলে এনে কেবল সেগুলোর ওপর Cross-encoder Reranking চালানো হয়। উল্লেখ্য, আমাদের এই হালকা অ্যাপে কোনো নিউরাল রির‍্যাঙ্কার চালানো হচ্ছে না।"
+        },
+        {
+          "type": "text",
+          "title": "Candidate Ceiling: রির‍্যাঙ্কারের অনিবার্য সীমা",
+          "body": "উপরের কোডটি একটি অত্যন্ত গুরুত্বপূর্ণ সত্য তুলে ধরেছে: কোনো প্রাসঙ্গিক ডকুমেন্ট যদি প্রথম ধাপের Candidate Pool-এই জায়গা না পায়, তবে পৃথিবীর সেরা Reranker-ও সেটিকে আর ফিরিয়ে আনতে পারবে না! বাইরে থেকে নতুন ডকুমেন্ট যোগ না করলে চূড়ান্ত Recall@k কখনোই প্রথম ধাপের Candidate Recall@N-কে ছাড়িয়ে যেতে পারে না। তাই সিস্টেম মূল্যায়নের সময় রির‍্যাঙ্কিংয়ের উন্নতি এবং Candidate Coverage—দুটোই আলাদাভাবে মাপুন; রির‍্যাঙ্কারের উচ্চ নির্ভুলতা কখনোই প্রথম ধাপের দুর্বল Retrieval Recall ঢাকতে পারে না।"
+        },
+        {
+          "type": "text",
+          "title": "যৌথ Context Budget ও Truncation ঝুঁকি",
+          "body": "Cross-encoder-এ কুয়েরি ও বড় Abstract একসাথে দেওয়ার সময় টোকেন সীমা পেরিয়ে গেলে শেষের অংশ কেটে বাদ (Truncate) পড়তে পারে—আর দুর্ভাগ্যক্রমে ঠিক সেখানেই হয়তো আসল Evidence বাক্যটি ছিল! তাই কুয়েরি ও ডকুমেন্টের যৌথ Token Budget, ছোট Chunk-গুলোর স্কোর একত্রিত করার নিয়ম (Aggregation) এবং বাক্যের অবস্থান (Sentence Offsets) স্পষ্টভাবে ভার্সনিং করে রাখুন। মনে রাখবেন, প্যাসেজ বেশি লম্বা হলেই যে সবসময় ভালো ফল পাওয়া যাবে তা নয়; এতে অপ্রাসঙ্গিক শব্দের বিভ্রান্তি (Distracting Terms) এবং কম্পিউট খরচ—দুটোই বাড়তে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে আর্কিটেকচার সাজাবেন",
+          "body": "ইন্টারভিউতে যদি জিজ্ঞেস করা হয়: '10 million ডকুমেন্টের ওপর সরাসরি Cross-encoder সার্চ চালানো ব্যয়বহুল কেন?'—তখন ধাপে ধাপে পুরো পাইপলাইনটি সাজিয়ে বলুন: অফলাইনে ডকুমেন্ট এনকোডিং, প্রথম ধাপে দ্রুত Exact বা ANN সার্চ, এরপর ছোট Candidate সেটে ঐচ্ছিক Cross-encoder Reranking, মেটাডেটা Filter এবং সবশেষে সার্ভিং Latency Budget। তবে কোনো তাত্ত্বিক প্রোডাকশন আর্কিটেকচার ব্যাখ্যা করার সময় সেটিকে আমাদের এই ছোট প্রোটোটাইপ অ্যাপের মাপা থ্রুপুট (Measured Throughput) হিসেবে উপস্থাপন করবেন না।"
+        }
+      ]
+    },
+    {
+      "id": "ch23_corpus",
+      "title": "Corpus, স্থায়ী Document ID ও Provenance",
+      "subtitle": "নির্ভরযোগ্য Data Contract ছাড়া কোনো Vector Index-ই বিশ্বাসযোগ্য নয়",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "স্থায়ী পরিচয় (Stable Document ID) কেন জরুরি?",
+          "body": "ভেক্টর ইনডেক্স তো কেবল সংখ্যার সারি চেনে; সেই সারিটি আসলে কোন বৈজ্ঞানিক পেপারের কোন টেক্সট থেকে এসেছে, তা মেলানোর একমাত্র সেতু হলো একটি স্থায়ী Document ID। আমাদের ডেটাসেটে আইডিগুলো সংখ্যাসূচক স্ট্রিং (Numeric Strings)। দুটি ডকুমেন্টের স্কোর সমান (Tie) হলে আমরা অভিধানের অক্ষরক্রম (Lexicographic Order, যেখানে '10' স্ট্রিংটি '2'-এর আগে চলে আসে!) ব্যবহার না করে সংখ্যার ঊর্ধ্বক্রম (Numeric Ascending ID) ব্যবহার করি। কখনোই অ্যারের সাধারণ Row Index-কে বাহ্যিক Document ID বলে ধরে নেবেন না—ডকুমেন্ট যোগ-বিয়োগ হলেই নীরবে এক পেপারের জায়গায় অন্য পেপারের ভুল Evidence দেখাতে শুরু করবে!"
+        },
+        {
+          "type": "text",
+          "title": "মূল উৎস ও ফাইলের অখণ্ডতা সংরক্ষণ",
+          "body": "আমাদের ডেটা পাইপলাইনে মূল BEIR ফাইলের (corpus.jsonl, queries.jsonl, train.tsv এবং test.tsv) একটি বাইটও পরিবর্তন করা হয়নি। SOURCE_LICENSE.md ফাইলে আপস্ট্রিম লাইসেন্সের তথ্য এবং ম্যানিফেস্টে প্রতিটি ফাইলের বাইট দৈর্ঘ্য ও SHA256 হ্যাশ সংরক্ষিত আছে। আমাদের তৈরি করা ডিরাইভড ইনডেক্স সম্পূর্ণ আলাদা ফাইলে থাকে; টোকেনাইজার বা TF-IDF Normalization কখনোই মূল টেক্সটকে মুছে (Overwrite করে) ফেলে না।"
+        },
+        {
+          "type": "math",
+          "title": "Document ID ও Provenance ম্যাপিং চুক্তি",
+          "body": "\\mathrm{document\\ ID}\\longleftrightarrow(\\mathrm{source},\\mathrm{text},\\mathrm{version},\\mathrm{vector})"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ SciFact Corpus ও Judgment সংখ্যা যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\np = Path(\"assets/datasets/scifact/retrieval_workflow.py\")\nspec = importlib.util.spec_from_file_location(\"chapter23_local\", p)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\n\ndocs, queries, roles = m.read_data()\nassert len({d[\"_id\"] for d in docs}) == 5183\nassert sum(map(len, roles[\"train\"].values())) == 919\nassert sum(map(len, roles[\"test\"].values())) == 339\nprint(docs[0][\"_id\"], len(queries))\n"
+        },
+        {
+          "type": "text",
+          "title": "লাইসেন্স ও Attribution-এর স্বচ্ছতা",
+          "body": "আপস্ট্রিম লাইসেন্স অনুযায়ী SciFact-এর দাবি (Claims) ও Evidence Annotation-গুলো CC BY 4.0 এবং অ্যাবস্ট্রাক্ট ডেটাবেসটি ODC-By 1.0 লাইসেন্সের আওতাধীন। এখানে Wadden et al. এবং BEIR বেঞ্চমার্কের যথাযথ স্বীকৃতি (Attribution) বজায় রাখা হয়েছে; আর ডেটাবেস লাইসেন্সের উল্লেখ মানে স্বতন্ত্র গবেষণাপত্রগুলোর সব কপিরাইট নিয়ে অতিরিক্ত কোনো দাবি করা নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Feature ও Label-এর কঠোর সীমানা",
+          "body": "কোড রিভিউয়ের সময় একটি সীমানা খুব কড়াভাবে পাহারা দিতে হয়: আমরা কর্পাসের কোনো বাড়তি মেটাডেটা Feature হিসেবে নিচ্ছি না, কেবল title ও text ব্যবহার করছি। এমনকি queries.jsonl ফাইলের মেটাডেটায় মূল লেবেল লুকানো থাকলেও আমাদের read_data ফাংশন শুধুমাত্র কুয়েরির টেক্সটটুকুই পড়ে। আর Relevance Judgment ফাইলগুলো কেবল স্কোরিং শেষ হওয়ার পর একদম শেষে মেট্রিক হিসাবের সময় ব্যবহৃত হয়।"
+        },
+        {
+          "type": "text",
+          "title": "ডেটার সতেজতা (Freshness) ও ভার্সন পিনিং",
+          "body": "জীবন্ত প্রোডাকশন সিস্টেমে নতুন ডকুমেন্ট যোগ হলে, পুরোনো ডকুমেন্ট আপডেট হলে বা মুছে গেলে সোর্স ম্যাপিং, শব্দের পরিসংখ্যান (IDF) এবং ভেক্টর ইনডেক্স—সবই বদলে যেতে পারে। আপনি যদি IDF নতুন করে Refit করেন বা Embedding Model মাইগ্রেট করেন, তবে পুরোনো নিয়মে এনকোড করা কুয়েরি ভেক্টরগুলো অচল (Stale) হয়ে পড়বে। তাই কোন Corpus Snapshot এবং কোন Index Version একসাথে চলছে, তা একটি একক Manifest-এ পিন করে রাখা বাধ্যতামূলক।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে ডিবাগিং শুরু করবেন",
+          "body": "ইন্টারভিউতে যদি প্রশ্ন করে: 'সার্চ সিস্টেম হঠাৎ ভুল Abstract দেখাচ্ছে, কীভাবে ডিবাগ করবেন?'—তখন শুরুতেই স্কোরিং বাগের ঘাড়ে দোষ না চাপিয়ে Data Lineage অডিট করার কথা বলুন: প্রথমে Document ID ম্যাপিং, ফাইলের বাইট ও হ্যাশ, পুরোনো স্ন্যাপশট (Stale Snapshot), টোকেনাইজার বা মডেলের ভার্সন এবং মেটাডেটা ফিল্টার পরীক্ষা করুন। পাশাপাশি ব্যবহারকারীর ব্যক্তিগত কন্টেন্ট বা গোপন ডকুমেন্ট যেন ট্রেনিং বা পাবলিক মূল্যায়নে ঢুকে না পড়ে, সেই সীমানার কথাও উল্লেখ করুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch23_chunking",
+      "title": "Chunking, Overlap ও Document-level Evaluation",
+      "subtitle": "Evidence-এর একক বদলে গেলে মূল্যায়নের প্রোটোকলও কেন বদলায়?",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "আস্ত Abstract দিয়ে শুরু করার কারণ",
+          "body": "আমাদের মূল বেঞ্চমার্ক ইনডেক্সে প্রতিটি গবেষণাপত্রের Title এবং পুরো Abstract মিলে একটি একক Document হিসেবে রাখা হয়েছে। কারণ SciFact-এর Qrels (অর্থাৎ প্রাসঙ্গিকতার লেবেলগুলো) সরাসরি Document ID-কে নির্দেশ করে; সেখানে আলাদা কোনো Chunk-ভিত্তিক অ্যানোটেশন নেই। এই সিদ্ধান্ত আমাদের মূল্যায়ন চুক্তিকে সরল ও স্বচ্ছ রাখে বটে, তবে বড় টেক্সটে আসল Evidence বাক্যটির সংকেত কিছুটা ফিকে (Diluted) হয়ে যাওয়ার ঝুঁকি থাকে। নিচের কোডে আমরা বাস্তব সোর্স টেক্সট কেটে Chunking-এর কৌশল দেখাব, তবে সেটি আমাদের মূল বেঞ্চমার্ক ইনডেক্স বা মেট্রিককে বদলাচ্ছে না।"
+        },
+        {
+          "type": "text",
+          "title": "কোথায় কাটব? Boundary বাছাইয়ের কৌশল",
+          "body": "বড় ডকুমেন্টকে নির্দিষ্ট শব্দসংখ্যা (Fixed Words), টোকেনাইজার-সচেতন উইন্ডো (Tokenizer-aware Windows), পূর্ণ বাক্য কিংবা অনুচ্ছেদ (Section) ধরে ছোট অংশে ভাগ করা যায়। এখানে মনে রাখা জরুরি যে অক্ষরের সংখ্যা (Character Count) আর মডেলের Token Budget এক জিনিস নয়! অনেক সময় প্রতিটি Chunk-এর শুরুতে মূল পেপারের Title বা হেডার জুড়ে দিলে দরকারি প্রেক্ষাপট বজায় থাকে, যদিও এতে শব্দের পরিসংখ্যান ও Lexical Score বদলে যায়। যেভাবেই কাটুন না কেন, ইউনিকোড অক্ষরের অখণ্ডতা, বাক্যের অবস্থান (Sentence Offsets) এবং মূল ডকুমেন্টের সাথে সংযোগ (Source Linkage) অবশ্যই সংরক্ষণ করতে হবে।"
+        },
+        {
+          "type": "math",
+          "title": "Parent Deduplication-সহ Document-level Recall সমীকরণ",
+          "body": "\\mathrm{Recall}_{doc}@k=\\frac{|\\operatorname{dedup}(\\mathrm{parents}(R_k))\\cap G|}{|G|}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Sliding Window ও Overlap দিয়ে Chunking",
+          "body": "from pathlib import Path\nimport importlib.util\n\np = Path(\"assets/datasets/scifact/retrieval_workflow.py\")\nspec = importlib.util.spec_from_file_location(\"chapter23_local\", p)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\n\ndocs, _, _ = m.read_data()\n# Actual document words; chunking illustration only, not the benchmark index.\nwords = docs[0][\"text\"].split()\nsize = 40\noverlap = 10\nchunks = [words[i : i + size] for i in range(0, len(words), size - overlap)]\nassert all(0 < len(c) <= size for c in chunks)\nassert chunks[0] == words[:40]\nprint(len(words), len(chunks))\n"
+        },
+        {
+          "type": "text",
+          "title": "Overlap রাখার লাভ ও ক্ষতি",
+          "body": "একটি জরুরি বাক্য বা তথ্য যেন ঠিক কাটার সীমানায় (Boundary) পড়ে দ্বিখণ্ডিত হয়ে হারিয়ে না যায়, সেজন্য পরপর দুটি Chunk-এর মধ্যে কিছু অংশ সাধারণ বা Overlap রাখা হয়। কিন্তু এর বিনিময়ে স্টোরেজ খরচ বাড়ে এবং সার্চের ফলাফলে একই তথ্যের পুনরাবৃত্তি (Duplicate Hits) ঘটে। উপরের কোডে size = 40 এবং overlap = 10 নেওয়ায় প্রতি ধাপে জানালাটি 30 ঘর করে এগোচ্ছে (Stride = 30); খেয়াল রাখবেন, ভুল করে overlap >= size হয়ে গেলে মারাত্মক লুপ বাগ তৈরি হবে! আর ভিন্ন ভিন্ন Chunk Size-এর ফলাফল তুলনা করতে হলে অবশ্যই একই Relevance Unit এবং একই মূল্যায়ন কর্পাস ধরে রাখতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "Parent Aggregation: একই পেপারের ভিড় সামলানো",
+          "body": "ভাবুন তো, একটি বড় পেপারের 5টি ভিন্ন Chunk-ই যদি আপনার Top-5 ফলাফলের সব কয়টি জায়গা দখল করে নেয়, তবে অনন্য Evidence-এর কভারেজ কমে যাবে! এই সমস্যা এড়াতে Parent ID Deduplication, Max-score Aggregation কিংবা বৈচিত্র্যময় বাছাই (Diversified Selection) ব্যবহার করা হয়। মনে রাখবেন, শীর্ষ Kটি Chunk নেওয়া আর শীর্ষ Kটি অনন্য (Unique) মূল ডকুমেন্ট নেওয়া এক কাটঅফ (Cutoff) নয়—আপনার মূল্যায়নের হরে (Denominator) যদি মূল মূল্যায়নকৃত ডকুমেন্টের সংখ্যা থাকে, তবে ফলাফলকে অবশ্যই আগে মূল ডকুমেন্টে ম্যাপ করে নিতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "Chunk মূল্যায়নের সূক্ষ্ম ফাঁদ",
+          "body": "পুরো ডকুমেন্ট প্রাসঙ্গিক হলেই তার ভেতরের প্রতিটি Chunk-কে অন্ধভাবে Positive ধরে নিলে ট্রেনিং ও মূল্যায়নে প্রচুর Label Noise ঢুকে পড়ে—কারণ আসল প্রমাণ্য বাক্যটি হয়তো শুধুমাত্র একটি Chunk-এই ছিল! তাই প্রকৃত Chunk-level বেঞ্চমার্ক করতে চাইলে উপযুক্ত সূক্ষ্ম অ্যানোটেশন থাকতে হবে, অথবা এটি যে একটি দুর্বল অনুমান (Weak-label Assumption), তা স্পষ্টভাবে ঘোষণা করতে হবে। আর কখনোই চূড়ান্ত Test লেবেল দেখে সেরা Window Size বেছে নেবেন না—এতে নিরপেক্ষ পরীক্ষার সততা নষ্ট হয়ে যায়।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে কোডিং অনুশীলন",
+          "body": "অনুশীলনের জন্য একটি বাস্তব Abstract নিয়ে সেটিকে Chunk করুন, প্রতিটি অংশে মূল টেক্সটের শুরু ও শেষ অবস্থান এবং Parent ID জুড়ে দিন, এবং পরীক্ষা করে দেখুন কোনো উইন্ডো ফাঁকা থাকছে কি না বা মূল টেক্সটের কোনো অংশ বাদ পড়ছে কি না। এরপর ডুপ্লিকেট Parent ID সংকুচিত (Collapse) করার ফাংশনটি নিজে লিখুন। বাস্তবে মেমোরি বাজেট বা টোকেন সীমার উন্নতি না মেপে কখনোই গতি বা মানের উন্নতির আনুমানিক দাবি করবেন না।"
+        }
+      ]
+    },
+    {
+      "id": "ch23_exact",
+      "title": "Exact Top-K Retrieval ও Deterministic Tie-breaking",
+      "subtitle": "জটিল ইনডেক্সে যাওয়ার আগে ছোট Corpus-এ নিখুঁত Reference Implementation",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Exact Scan: সোজাসাপ্টা কিন্তু নিখুঁত হিসাব",
+          "body": "আমাদের কাছে সংরক্ষিত Nটি একক দৈর্ঘ্যের (Unit) ডকুমেন্ট ভেক্টরের সাথে কুয়েরির Unit Vector-এর Dot Product নিলেই এক ঝটকায় সব কয়টির Cosine Score বেরিয়ে আসে। ম্যাট্রিক্স গুণনের এই খরচ হলো O(Nd)। এরপর সব স্কোর পুরোপুরি সাজাতে (Full Sort) লাগে O(N log N), যদিও কেবল শীর্ষ Kটি মান বের করার জন্য Heap বা Partial Selection ব্যবহার করলে ভিন্ন গতির সুবিধা পাওয়া যায়। আমাদের বর্তমান অ্যাপে 5183 × 32 আকারের Dense ম্যাট্রিক্সে সরাসরি Exact Scoring এবং পাশাপাশি Sparse Lexical Scoring চালানো হয়—এই আকারের ডেটার জন্য আলাদা কোনো ভারী Vector Database Server-এর প্রয়োজনই নেই!"
+        },
+        {
+          "type": "text",
+          "title": "Candidate বাছাইয়ের নীতি ও শূন্য-মিলের নিয়ম",
+          "body": "কুয়েরি এবং ডকুমেন্ট উভয়ের ভেক্টরই যদি অশূন্য (Nonzero) হয়, তবে Dense Ranking-এ ঋণাত্মক স্কোরও গাণিতিকভাবে বৈধ হতে পারে। কিন্তু Lexical শাখায় আমরা কেবল ধনাত্মক স্কোর (Strictly Positive Scores) পাওয়া ডকুমেন্টগুলোকেই রাখি। কুয়েরির কোনো শব্দই যদি ভোকাবুলারিতে না থাকে (OOV), তবে ফাঁকা তালিকা ফেরত দেওয়া হয়—জোর করে এলোমেলো আইডি বসিয়ে Kটি ঘর পূর্ণ করা হয় না। তাই মনে রাখবেন, Top-K আউটপুটে ফলাফলের সংখ্যা সর্বোচ্চ K হতে পারে, সবসময়ই যে ঠিক Kটি থাকবে তা নয়।"
+        },
+        {
+          "type": "math",
+          "title": "Matrix-Vector Exact Scoring ও জটিলতা",
+          "body": "\\mathbf s=D\\hat{\\mathbf q},\\quad \\operatorname{TopK}(\\mathbf s),\\quad \\mathrm{cost}=O(Nd)"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Exact LSA Top-10 ও Tie-breaking যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nroot = Path(\"assets/datasets/scifact\")\nlab = json.loads((root / \"retrieval_lab.json\").read_text())\nindex = json.loads((root / \"retrieval_index.json\").read_text())\n\nimport numpy as np\n\nq = np.asarray(lab[\"samples\"][0][\"unit\"])\nmatrix = np.asarray([d[\"dense\"] for d in index[\"documents\"]])\nscores = matrix @ q\norder = sorted(\n    range(len(scores)), key=lambda i: (-scores[i], int(index[\"documents\"][i][\"id\"]))\n)[:10]\nids = [index[\"documents\"][i][\"id\"] for i in order]\nassert ids == [d for d, _ in lab[\"samples\"][0][\"rankings\"][\"lsa\"]]\nprint(ids)\n"
+        },
+        {
+          "type": "text",
+          "title": "সমান স্কোর (Tie) সামলানোর সুনির্দিষ্ট নিয়ম",
+          "body": "উপরের কোডের সাজানোর নিয়মটি খেয়াল করুন: দুটি ডকুমেন্টের স্কোর সমান হলে সংখ্যাসূচক Document ID-র ঊর্ধ্বক্রম (Numeric Ascending) দেখে স্থিরভাবে (Deterministically) ক্রম নির্ধারণ করা হয়, আর ফলাফলে কোনো ডুপ্লিকেট আইডি গ্রহণ করা হয় না। বাস্তবে কাজ করার সময় কুয়েরি ও ডকুমেন্ট ম্যাট্রিক্সের সারি অমিল, স্কোরের উল্টো দিক (Descending বনাম Ascending) এবং ভেক্টর Normalization ভুলে যাওয়া খুবই সাধারণ বাগ। ভিন্ন প্ল্যাটফর্মে সূক্ষ্ম Floating-point পার্থক্য থাকলে ছোট Tolerance দিয়ে স্কোর তুলনা করুন এবং কাটঅফ সীমানায় থাকা Tie-গুলো অডিট করুন।"
+        },
+        {
+          "type": "semantic_search_lab",
+          "title": "হাতে-কলমে পরীক্ষা: Semantic Search Lab",
+          "body": "নিচের ল্যাবে বাস্তব কোনো Query বেছে নিয়ে TF-IDF, LSA এবং Hybrid মোড অদলবদল করে দেখুন এবং শীর্ষ 5টি Abstract খুলে পড়ুন। নিজে নতুন কুয়েরি লিখে সার্চ বাটনে চাপ দিয়েও পরীক্ষা করতে পারেন; প্রতিটি কি-স্ট্রোকের সাথে তাৎক্ষণিক লাইভ সার্চ হওয়া জরুরি নয়। খেয়াল করবেন, মূল সোর্স কুয়েরির টেক্সট বদলে ফেললে তার জন্য পূর্বনির্ধারিত Qrels না থাকায় লেবেল অনুপলব্ধ দেখাবে। আর পাশে দেখানো স্কোরগুলো একান্তই মডেল-নির্ভর মান, কোনো Probability নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Exact Search মানেই কি নির্ভুল প্রাসঙ্গিকতা?",
+          "body": "একটি ভ্রান্ত ধারণা দূর করা খুব জরুরি: Exact Search-এর ফলাফল কোনো Approximate ইনডেক্স অডিট করার জন্য নিখুঁত Reference Neighbor Set হতে পারে, কিন্তু এটি ব্যবহারকারীর প্রশ্নের সাপেক্ষে চূড়ান্ত সত্য (Relevance Ground Truth) নয়! আপনার Embedding যদি দুর্বল হয়, তবে Exact Cosine Top-K শতভাগ নিখুঁতভাবে হিসাব করেও ভুল Evidence তুলে আনতে পারে। তাই Representation-এর ব্যর্থতা আর Approximate Index-এর ব্যর্থতা সবসময় আলাদা করে শনাক্ত করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে স্কেলিং নিয়ে কথা বলবেন",
+          "body": "ইন্টারভিউতে O(Nd) মেমোরি হিসাব, একসাথে অনেক কুয়েরির Batch Scoring, সংখ্যার ডেটা টাইপ এবং Top-K বের করার ডেটা স্ট্রাকচার নিয়ে স্পষ্টভাবে কথা বলুন। তবে আমাদের এই ছোট কর্পাসের রানটাইম দেখে কখনোই মোবাইলে দশ লক্ষ ডকুমেন্টের পারফরম্যান্স অনুমান (Extrapolate) করার দাবি করবেন না; আমাদের এই প্রোটোটাইপে আলাদা কোনো ল্যাটেন্সি বা থ্রুপুট বেঞ্চমার্ক নেই।"
+        }
+      ]
+    },
+    {
+      "id": "ch23_ann",
+      "title": "ANN, Quantization ও দুই ধরনের Recall",
+      "subtitle": "Neighbor Recall আর Relevance Recall কেন এক জিনিস নয়",
+      "duration": "60 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Approximate Nearest Neighbor (ANN) কেন দরকার?",
+          "body": "ডকুমেন্টের সংখ্যা যখন লাখ বা কোটি ছাড়িয়ে যায়, তখন প্রতি কুয়েরিতে পুরো ম্যাট্রিক্স স্ক্যান করা সময়ের দিক থেকে ব্যয়বহুল হয়ে পড়ে। তখন সামান্য নিখুঁততা ছাড় দিয়ে বহুগুণ দ্রুত কাছাকাছি প্রতিবেশী খুঁজে আনার কৌশলই হলো ANN (Approximate Nearest Neighbor)। এখানে তিনটি প্রধান পরিবার বেশ পরিচিত: গ্রাফ বেয়ে পথ খোঁজা (HNSW), ভেক্টর স্পেসকে মোটা দাগে ভাগ করা (IVF Coarse Partitions) এবং সংকুচিত কোডবুক দিয়ে দূরত্ব মাপা (PQ Compressed Distances)। সার্চের পরিসর বা যাচাইকৃত পার্টিশনের সংখ্যা বাড়ালে Recall ও Latency-র ভারসাম্য বদলায়, তবে এর কোনো বাঁধাধরা সর্বজনীন গ্যারান্টি নেই।"
+        },
+        {
+          "type": "text",
+          "title": "দুই ভিন্ন Recall-এর সংজ্ঞা আলাদা রাখুন",
+          "body": "সার্চ ইঞ্জিনিয়ারিংয়ে দুটি ভিন্ন Recall কখনোই গুলিয়ে ফেলা যাবে না! প্রথমটি হলো ANN Recall, যা মাপে আপনার Approximate ইনডেক্সটি একই এমবেডিংয়ের Exact Nearest Neighbors-এর কত অংশ পুনরুদ্ধার করতে পারল। আর দ্বিতীয়টি হলো প্রকৃত Relevance Recall, যা মাপে মানুষের মূল্যায়ন করা আসল প্রাসঙ্গিক (Judged Evidence) ডকুমেন্টগুলোর কত অংশ পাওয়া গেল। ভেবে দেখুন, মূল Embedding র‍্যাঙ্কিংই যদি দুর্বল হয়, তবে নিখুঁত ANN Recall পেলেও আসল Relevance সমস্যার কোনো সমাধান হবে না! তাই রিপোর্ট করার সময় দুটি মেট্রিকই আলাদাভাবে দেখান, এবং সাথে উল্লেখ করুন কোন পরিবেশে ও কেমন কুয়েরি লোডে Latency ও Memory মাপা হয়েছে।"
+        },
+        {
+          "type": "math",
+          "title": "ANN Neighbor Recall@k সমীকরণ",
+          "body": "\\mathrm{ANNRecall}@k=\\frac{|R_k^{approx}\\cap R_k^{exact}|}{k}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ বাস্তব ভেক্টরের Symmetric Int8 Quantization",
+          "body": "from pathlib import Path\nimport json\n\nroot = Path(\"assets/datasets/scifact\")\nlab = json.loads((root / \"retrieval_lab.json\").read_text())\nindex = json.loads((root / \"retrieval_index.json\").read_text())\n\nimport numpy as np\n\n# Quantize an actual stored vector; no ANN library or speed benchmark.\nx = np.asarray(index[\"documents\"][0][\"dense\"])\nscale = np.max(np.abs(x)) / 127\nencoded = np.rint(x / scale).clip(-127, 127).astype(np.int8)\ndecoded = encoded.astype(np.float64) * scale\nassert encoded.dtype == np.int8 and np.isfinite(decoded).all()\nprint(float(np.linalg.norm(x - decoded)))\n"
+        },
+        {
+          "type": "text",
+          "title": "Quantization: মেমোরি সাশ্রয় বনাম দূরত্বের ত্রুটি",
+          "body": "দশমিকযুক্ত Float ভেক্টরগুলোকে int8 বা কোডবুক আকারে সংরক্ষণ করলে মেমোরি খরচ অনেক কমে আসে, কিন্তু এর বিনিময়ে সামান্য পুনর্গঠন ও দূরত্বের ত্রুটি (Reconstruction Error) মেনে নিতে হয়। উপরের কোডে আমরা আমাদের ইনডেক্সের একটি বাস্তব LSA ভেক্টরকে প্রতিসম (Symmetric) স্কেলে int8-এ রাউন্ড এবং পুনরায় ডিকোড করে সেই ত্রুটির মান মেপে দেখিয়েছি। মনে রাখবেন, এটি কেবল ভেক্টর সংকোচনের গাণিতিক উদাহরণ—কোনো পূর্ণাঙ্গ ANN ইনডেক্স, কোয়ান্টাইজড কর্পাস র‍্যাঙ্কিং পরীক্ষা বা গতির বেঞ্চমার্ক নয়।"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব Deployment-এ মেমোরির প্রকৃত হিসাব",
+          "body": "কাগজে-কলমে Nটি d-মাত্রিক float32 ভেক্টরের কাঁচা আকার N × d × 4 বাইট মনে হলেও বাস্তবে মেমোরি লাগে আরও বেশি! কারণ এর সাথে ইনডেক্সের গ্রাফ কাঠামো, Document ID, মেটাডেটা এবং মেমোরি অ্যালোকেটরের নিজস্ব বাড়তি খরচ (Overhead) যুক্ত হয়। এছাড়া ডিস্ক বা মেমোরি ম্যাপিং, ব্যাচের আকার এবং ফিল্টার কতটুকু ডেটা ছাঁকছে (Filter Selectivity), তার ওপরও সার্ভিং খরচ নির্ভর করে। তাই শুধু int8-এর বাইট গুনে পুরো অ্যাপের মেমোরি খরচের দাবি করবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "সঠিকতা যাচাইয়ের অডিট (Correctness Audit)",
+          "body": "যেকোনো ANN ইনডেক্স বসানোর আগে একই মডেল, একই Normalization এবং একই Corpus দিয়ে একটি Exact Reference তৈরি করে মিলিয়ে নিন। মুছে ফেলা আইডি (Deleted IDs), পুরোনো ইনডেক্স, ফিল্টারের নিয়ম এবং সমান স্কোরের Tie দুপাশে এক আছে কি না দেখুন। স্কোরের উল্টো ক্রম বা ভুল মেট্রিক (যেমন L2 বনাম Inner Product) ধরার জন্য কিছু নির্দিষ্ট Golden Queries এবং ইনক্রিমেন্টাল রিবিল্ড চেক রাখা দারুণ কার্যকর।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে ধাপে ধাপে বলবেন",
+          "body": "ইন্টারভিউতে মেমোরি কমানোর প্রশ্ন এলে তিনটি ভিন্ন লিভারের প্রভাব আলাদা করে দেখান: Dimension Reduction, Quantization এবং ANN ইনডেক্স পরিবর্তন। অগ্রাধিকারের ক্রমটি হবে স্পষ্ট: সবার আগে Representation Quality, তারপর Neighbor Approximation, এবং সবশেষে ডাউনস্ট্রিম Reranker। সাধারণ Exact Scan প্রোটোটাইপকে কখনোই ANN বলে চালাবেন না; বড় স্কেলের তাত্ত্বিক বিস্তারিত জানার জন্য Faiss ডকুমেন্টেশন একটি চমৎকার উৎস।"
+        },
+        {
+          "type": "text",
+          "title": "দুটি Recall-এর হর (Denominator) মিলিয়ে দেখি",
+          "body": "একটি ছোট সংখ্যাগত উদাহরণ দিলে পার্থক্যটি একদম পরিষ্কার হয়ে যাবে। ধরা যাক, একটি কুয়েরির জন্য এমবেডিংয়ের Exact Top-2 প্রতিবেশী হলো {1, 2}, আমাদের Approximate Top-2 এনেছে {1, 3}, আর প্রকৃত প্রাসঙ্গিক ডকুমেন্টের সেট হলো {3, 4, 5}। তাহলে হিসাব করুন: এখানে ANN Recall হলো 1/2 (0.5), অথচ Exact Relevance Recall হলো 0, আর Approximate Relevance Recall হলো 1/3 (প্রায় 0.333333)! অর্থাৎ এই উদাহরণে Approximate ফলাফলটি কাকতালীয়ভাবে একটি প্রাসঙ্গিক পেপার তুলে এনেছে, যদিও সে Exact প্রতিবেশীদের পুরোপুরি পুনরুদ্ধার করতে পারেনি। এর থেকেই বোঝা যায়, Representation-এর নিজস্ব প্রাসঙ্গিকতার মান এবং ইনডেক্সের প্রতিবেশী অনুমান সম্পূর্ণ ভিন্ন দুটি পরিমাপ।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Exact Neighbors বনাম Relevance Set-এর তুলনা",
+          "body": "exact, approximate, relevant = {1, 2}, {1, 3}, {3, 4, 5}\nann_recall = len(exact & approximate) / len(exact)\nexact_relevance = len(exact & relevant) / len(relevant)\napproximate_relevance = len(approximate & relevant) / len(relevant)\nprint(ann_recall, exact_relevance, round(approximate_relevance, 6))\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে ভেবে দেখুন",
+          "body": "উপরের উদাহরণে দেখা গেল Approximate সার্চ কাকতালীয়ভাবে Exact র‍্যাঙ্কিংয়ের বাইরে গিয়ে একটি ভালো প্রাসঙ্গিক ফলাফল এনেছে। এই যুক্তিতে কি আমরা ANN ইনডেক্সের নিজস্ব মান (ANN Recall) মাপা বাদ দিতে পারি?",
+          "solution": "একদমই না! কারণ ANN ইনডেক্সের নিজস্ব কাজ হলো নির্দিষ্ট Metric ও Corpus-এর সাপেক্ষে Exact প্রতিবেশীদের কতটা নিখুঁতভাবে খুঁজে আনা যাচ্ছে তা নিশ্চিত করা—তাই Approximation অডিট করার একমাত্র রেফারেন্স হলো Exact-neighbor Agreement। অন্যদিকে Task Relevance Labels সম্পূর্ণ ভিন্ন একটি প্রশ্নের রেফারেন্স। প্রকৌশলগত স্বচ্ছতার জন্য এই দুটি পরিমাপের পাশাপাশি Latency, Memory এবং Filter Coverage একসঙ্গে রিপোর্ট করতে হবে।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch23_hybrid",
+      "title": "Hybrid Retrieval ও Reciprocal Rank Fusion (RRF)",
+      "subtitle": "ভিন্ন স্কেলের স্কোর সরাসরি যোগ না করে র‍্যাঙ্ক একত্রিত করার কৌশল",
+      "duration": "60 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "পরিপূরক সংকেত, কিন্তু অন্ধভাবে সেরা নয়",
+          "body": "Lexical সার্চের হুবহু শব্দের মিল এবং Dense সার্চের অর্থগত জ্যামিতি একে অপরের দারুণ পরিপূরক হতে পারে। কিন্তু একটু তলিয়ে দেখুন: আপনার Dense শাখাটি যদি দুর্বল বা কোলাহলপূর্ণ (Noisy) হয়, তবে সেটিকে একটি শক্তিশালী Lexical র‍্যাঙ্কিংয়ের সাথে মেশালে সামগ্রিক ফলাফল উল্টো খারাপও হয়ে যেতে পারে! অর্থাৎ Hybrid Retrieval মানেই স্বয়ংক্রিয়ভাবে সেরা ফলাফল নয়। আমাদের এই নির্দিষ্ট পরীক্ষাতেও খাঁটি TF-IDF-এর তুলনায় Hybrid মেট্রিক কমেছে—এবং প্রকৌশলগত সততার স্বার্থে এই সীমাবদ্ধতাটি মোটেও আড়াল করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "ভিন্ন স্কেলের স্কোর মেশানোর সমস্যা",
+          "body": "কেন আমরা দুটি ভিন্ন মডেলের স্কোর সরাসরি যোগ করে দিই না? কারণ Cosine Score এবং অন্য মডেলের Logits কোনোটিই ক্যালিব্রেটেড Relevance Probability নয়; তাদের স্কেল ও বিস্তৃতি আলাদা। অর্থবহ কোনো ওজনযুক্ত যোগফল (Weighted Sum) বানাতে হলে আলাদা Validation প্রোটোকল লাগে। এর বিপরীতে Reciprocal Rank Fusion (RRF) কাঁচা স্কোরের বদলে কেবল ডকুমেন্টের অবস্থান বা Rank একত্রিত করে। এতে ভিন্ন স্কেলের জটিলতা এড়ানো গেলেও কোনো শাখার নিজস্ব মান বা Candidate Bias আপনাআপনি দূর হয়ে যায় না।"
+        },
+        {
+          "type": "math",
+          "title": "Reciprocal Rank Fusion (RRF, c = 60) সমীকরণ",
+          "body": "\\mathrm{RRF}(d)=\\sum_{b:\\,d\\in R_b}\\frac1{c+\\operatorname{rank}_b(d)},\\quad c=60"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Depth-5 RRF Hybrid র‍্যাঙ্কিং যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\np = Path(\"assets/datasets/scifact/retrieval_workflow.py\")\nspec = importlib.util.spec_from_file_location(\"chapter23_local\", p)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nroot = Path(\"assets/datasets/scifact\")\nlab = json.loads((root / \"retrieval_lab.json\").read_text())\n\ns = lab[\"samples\"][0]\ncombined = m.fuse([s[\"rankings\"][\"tfidf\"][:5], s[\"rankings\"][\"lsa\"][:5]])[:10]\nassert [d for d, _ in combined] == [d for d, _ in s[\"depth5_hybrid\"]]\nprint(combined[:3])\n"
+        },
+        {
+          "type": "text",
+          "title": "RRF-এর সুনির্দিষ্ট গাণিতিক চুক্তি",
+          "body": "আমাদের রেসিপিতে প্রতিটি শাখার 1-based র‍্যাঙ্ক r-এর অবদান হলো 1 / (60 + r)। মূল পরীক্ষায় আমরা শীর্ষ 100টি Lexical এবং শীর্ষ 100টি Dense ক্যান্ডিডেট নিই; কোনো ডকুমেন্ট একটি শাখায় অনুপস্থিত থাকলে সেই শাখা থেকে তার অবদান হয় 0। একই শাখার ভেতরে ডুপ্লিকেট ডকুমেন্ট থাকা নিষিদ্ধ, কিন্তু একাধিক শাখায় একই Document ID থাকলে তাদের অবদানগুলো যোগ হয়। আর যোগফল সমান (Tie) হলে যথারীতি সংখ্যাসূচক Document ID-র ঊর্ধ্বক্রম (Numeric Ascending) দিয়ে ক্রম নির্ধারণ করা হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Candidate Depth বনাম চূড়ান্ত Top-K",
+          "body": "প্রতিটি শাখা থেকে কত গভীরে (Depth 5, 20, নাকি 100) ডকুমেন্ট নেওয়া হচ্ছে, সেই তালিকা ছোট-বড় করলে সম্মিলিত সেট (Union) এবং র‍্যাঙ্কের অবদান বদলে যায়। কোনো প্রাসঙ্গিক Evidence যদি প্রাথমিক পুলের বাইরেই থেকে যায়, তবে Fusion সেটিকে ফিরিয়ে আনতে পারে না। খেয়াল রাখবেন, Candidate Depth এবং চূড়ান্ত Top-K সম্পূর্ণ আলাদা প্যারামিটার। আমাদের অগভীর পুলের (Shallow-pool) ল্যাবটি কেবল বর্তমান কুয়েরির হিসাব নতুন করে দেখায়; সংরক্ষিত সামগ্রিক (Macro) পরীক্ষার ফলাফল Depth = 100-এই স্থির থাকে।"
+        },
+        {
+          "type": "text",
+          "title": "ফলাফলের আচরণ ও ডাবল-ভোটিং সতর্কতা",
+          "body": "RRF-এর সমীকরণের কারণে দুটি শাখায় মাঝারি র‍্যাঙ্ক পাওয়া একটি ডকুমেন্ট কোনো একক শাখার শীর্ষ ডকুমেন্টকেও ছাড়িয়ে উপরে উঠে আসতে পারে। আবার প্রায় একই ধরনের দুটি র‍্যাঙ্কার (Redundant Rankers) একসাথে দিলে তারা একই ডকুমেন্টকে দুবার ভোট (Double-vote) দিতে পারে, এমনকি অপ্রাসঙ্গিক Dense ফলাফলও উপরে উঠে আসতে পারে। তাই প্রতি কুয়েরির জয়-পরাজয় (Per-query Win/Loss) এবং Evidence কভারেজ অডিট না করে কেবল গড় মেট্রিক দেখে কোনো ব্যাখ্যা দাঁড় করাবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "কোডিং অনুশীলনে সাধারণ বাগগুলো ধরুন",
+          "body": "নিজে RRF ইমপ্লিমেন্ট করার সময় এই কেসগুলো অবশ্যই পরীক্ষা করুন: কোনো ডকুমেন্ট এক শাখায় অনুপস্থিত, সমান যোগফল (Tied Totals), ফাঁকা তালিকা এবং ডুপ্লিকেট আইডি। বাস্তবে সবচেয়ে সাধারণ বাগগুলো হলো—ভুল করে Rank = 0 থেকে গণনা শুরু করা, অনুপস্থিত ডকুমেন্টকে জোর করে তালিকার শেষ র‍্যাঙ্ক দেওয়া, কিংবা পুরো কর্পাস ফিউশন করে সেটিকে Top-100 বলা।"
+        },
+        {
+          "type": "text",
+          "title": "দুটি Rank-2 কীভাবে একটি Rank-1-কে ছাড়িয়ে যায়?",
+          "body": "ধরা যাক, দুটি শাখার ফলাফল হলো [A, C] এবং [B, C], যেখানে RRF ধ্রুবক c = 60। এখানে A এবং B প্রত্যেকে কেবল একটি শাখার Rank 1 থেকে পায় 1/61। কিন্তু C দুটি শাখারই Rank 2 থেকে মোট পায় 2/62 = 1/31, তাই চূড়ান্ত তালিকায় C সবার আগে চলে আসে! খেয়াল করুন, মূল শাখায় কাঁচা স্কোর কত বড় ছিল তা এই সূত্রে মোটেও আসে না। পরস্পর-সম্পর্কিত (Correlated) দুটি শাখা একমত হলেও ঠিক একইভাবে দ্বিগুণ অবদান জমা হতে পারে।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ প্রতিটি শাখার RRF অবদান হিসাব",
+          "body": "from collections import defaultdict\n\nbranches = [[\"A\", \"C\"], [\"B\", \"C\"]]\nscores = defaultdict(float)\nfor branch in branches:\n    assert len(branch) == len(set(branch))\n    for rank, identity in enumerate(branch, start=1):\n        scores[identity] += 1 / (60 + rank)\nranking = sorted(scores, key=lambda identity: (-scores[identity], identity))\nassert ranking == [\"C\", \"A\", \"B\"]\nprint(round(scores[\"C\"], 6), round(scores[\"A\"], 6), len(ranking))\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে ভেবে দেখুন",
+          "body": "পাইপলাইনে ভুলে যদি একই শাখার (Branch) র‍্যাঙ্কিং তালিকা দুবার ইনপুট হিসেবে চলে যায়, তবে কী ঘটবে?",
+          "solution": "ঐ শাখার প্রতিটি ডকুমেন্টের র‍্যাঙ্ক অবদান হুবহু দ্বিগুণ হয়ে যাবে এবং ফিউশনের ভারসাম্য নষ্ট হবে। এজন্য প্রতিটি শাখার পরিচয় (Branch Identity), Depth এবং Deduplication নীতি স্পষ্টভাবে রেকর্ড করুন। আর একই শাখার ভেতরে একই ID বারবার এলে Rank Fusion শুরুর আগেই তা প্রত্যাখ্যান বা নির্ধারিত নিয়মে পরিষ্কার করা জরুরি।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch23_filter",
+      "title": "Metadata Filters, Deletion ও Access Boundaries",
+      "subtitle": "র‍্যাঙ্কিংয়ের আগে না পরে ফিল্টার করছেন, তার ওপর পুরো ফলাফল নির্ভর করে",
+      "duration": "60 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "অনুমোদিত ডকুমেন্ট সেট (Allowed Set)",
+          "body": "Metadata Filter নির্ধারণ করে দেয় বর্তমান কুয়েরির জন্য কোন ডকুমেন্টগুলো আদৌ বৈধ (Eligible)। আমাদের বর্তমান ল্যাবটি বাস্তব সোর্স মেটাডেটার একটি সহজ উদাহরণ হিসেবে ডকুমেন্টের Title-এ হুবহু ASCII টোকেন 'cell' থাকলে তবেই সেটিকে অনুমোদন দেয়। স্পষ্ট রাখা ভালো যে এটি কেবল একটি শিক্ষামূলক নিয়ম—এখানে গোপন ডেটার নিরাপত্তা (Private-data Authorization) বাস্তবায়ন করা হয়নি কিংবা মানুষের দাবির বিষয়বস্তু বা সত্যতা দিয়েও ফিল্টার করা হচ্ছে না।"
+        },
+        {
+          "type": "text",
+          "title": "আগে ফিল্টার (Pre-filter) বনাম পরে ফিল্টার (Post-filter)",
+          "body": "শুরুতেই কেবল অনুমোদিত কর্পাসের ভেতরে র‍্যাঙ্ক করে শীর্ষ Kটি নেওয়া, আর পুরো কর্পাস থেকে আগে গ্লোবাল শীর্ষ Kটি তুলে এনে তারপর ফিল্টার করা—এই দুটি কাজ এক নয়! Post-filter করলে আপনার হাতে K-এর চেয়ে কম ফলাফল আসতে পারে এবং একটু নিচের র‍্যাঙ্কে থাকা বৈধ ডকুমেন্টগুলো অকালেই বাদ পড়ে যায়। আমাদের বর্তমান ইঞ্জিন প্রতিটি শাখার Candidate তৈরি হওয়ার আগেই ফিল্টার প্রয়োগ করে।"
+        },
+        {
+          "type": "math",
+          "title": "Eligible Set-এর ভেতরে Constrained Top-K সমীকরণ",
+          "body": "R_k=\\operatorname{TopK}_{d\\in\\mathcal A(q)} s(q,d)"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Title-ভিত্তিক Metadata Filter যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nroot = Path(\"assets/datasets/scifact\")\nlab = json.loads((root / \"retrieval_lab.json\").read_text())\nindex = json.loads((root / \"retrieval_index.json\").read_text())\n\ndocs = [json.loads(s) for s in (root / \"corpus.jsonl\").read_text().splitlines()]\nimport re\n\nallowed = {\n    d[\"_id\"]\n    for d in docs\n    if \"cell\" in [t.lower() for t in re.findall(r\"[A-Za-z0-9]+\", d[\"title\"])]\n}\nassert allowed and len(allowed) < 5183\nprint(len(allowed))\n"
+        },
+        {
+          "type": "text",
+          "title": "Hybrid পাইপলাইনে ফিল্টারের সামঞ্জস্য",
+          "body": "Lexical এবং Dense—উভয় শাখাতেই অনুমোদিত আইডির সেট (Allowed IDs) একদম অভিন্ন হওয়া দরকার; এক শাখায় বাদ পড়া অননুমোদিত আইডি যেন কোনোভাবেই Fusion ধাপে ফিরে আসতে না পারে! একই সীমানা Reranker-এর ইনপুট, টেক্সট স্নিপেট এবং ক্যাশ করা ফলাফলের ক্ষেত্রেও মানতে হয়। ফিল্টারের শর্ত (Predicate) বদলালে অবশ্যই নতুন করে Candidate Recall মূল্যায়ন করুন।"
+        },
+        {
+          "type": "text",
+          "title": "ডকুমেন্ট মুছে ফেলার চুক্তি (Deletion Contract)",
+          "body": "মূল উৎস থেকে ডকুমেন্ট মুছে ফেলা (Delete) হলেও পুরোনো ভেক্টর, ক্যাশ করা স্নিপেট বা পুরোনো স্ন্যাপশট থেকে তা ফেরত আসতে পারে। এটি ঠেকাতে Tombstones, নিয়মিত Index Refresh এবং কর্পাস ভার্সন যাচাই দরকার। মুছে ফেলা সারির অবস্থান (Row Offset) নতুন ডকুমেন্টকে পুনর্ব্যবহার করতে দিলে ভুল টেক্সট দেখানোর মারাত্মক ঝুঁকি থাকে; তাই সবসময় স্থায়ী বাহ্যিক আইডি ম্যাপ বজায় রাখুন।"
+        },
+        {
+          "type": "text",
+          "title": "ফিল্টারযুক্ত অবস্থায় মূল্যায়ন করার নিয়ম",
+          "body": "মূল কুয়েরির Qrel-এ থাকা প্রাসঙ্গিক ডকুমেন্ট যদি ফিল্টারের কারণে বাদ পড়ে যায়, তবে মূল টাস্কের Recall কমে যাবে। স্কোর বাড়িয়ে দেখানোর জন্য নীরবে হর (Denominator) বদলে কেবল অনুমোদিত সেটে সীমাবদ্ধ করবেন না! আপনি যদি নির্দিষ্ট পরিধির মূল্যায়ন চান, তবে নতুন Relevance Task ও সুস্পষ্ট হর সংজ্ঞায়িত করতে হবে। আমাদের ল্যাব মূল Qrels ধরেই লাইভ Recall মাপে।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে ব্যাখ্যা করবেন",
+          "body": "ইন্টারভিউতে যদি জিজ্ঞেস করা হয়: '100টি গ্লোবাল হিট Post-filter করে মাত্র 2টি পেলেন, অথচ অনুমোদিত কর্পাসে 10টি কাজের ডকুমেন্ট আছে—কেন এমন হলো?' তখন বুঝিয়ে বলুন যে উচ্চ স্কোর পাওয়া অননুমোদিত ডকুমেন্টগুলো প্রথম 100টি জায়গা দখল করে নেওয়ায় বৈধ ডকুমেন্টগুলো কাটঅফের নিচে বাদ পড়ে গেছে। এখানে বেশি ডকুমেন্ট আনা (Overfetch) একটি আংশিক উপশম হতে পারে, কিন্তু এটি কোনো পারমিশন সীমানা বা পূর্ণতার গ্যারান্টি নয়; আর আমাদের এই সরল ফিল্টারটিও কোনো সিকিউরিটি অথরাইজেশনের দাবি করে না।"
+        },
+        {
+          "type": "text",
+          "title": "Top-K ও Filter কোন ক্রমে চালাবেন?",
+          "body": "একটি সহজ উদাহরণ দেখুন: র‍্যাঙ্কিংয়ে স্কোর হলো A = 0.9, B = 0.8, C = 0.7 এবং D = 0.6; কিন্তু বর্তমান রিকোয়েস্টে কেবল C ও D বৈধ (Eligible)। আপনি যদি আগে গ্লোবাল Top-2 নিয়ে তারপর ফিল্টার করেন, তবে ফলাফল আসবে সম্পূর্ণ ফাঁকা! অথচ বৈধ পুলের ভেতরে Exact Top-2 নিলে ঠিকই C ও D পাওয়া যায়। মনে রাখবেন, Approximate ইনডেক্সে Pre-filter সাপোর্ট এবং সার্চ বাজেট ফলাফল বদলাতে পারে; আর আউটপুট অনুমোদন ও র‍্যাঙ্কিং যাচাই সবসময় একই রিকোয়েস্ট কনটেক্সট থেকে করতে হবে।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Post-filtering বনাম Pre-filtering ফলাফলের সংখ্যা",
+          "body": "ranked = [(\"A\", 0.9), (\"B\", 0.8), (\"C\", 0.7), (\"D\", 0.6)]\neligible = {\"C\", \"D\"}\nk = 2\npost_filtered = [item for item in ranked[:k] if item[0] in eligible]\npre_filtered = [item for item in ranked if item[0] in eligible][:k]\nassert [item[0] for item in pre_filtered] == [\"C\", \"D\"]\nprint(len(post_filtered), len(pre_filtered))\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে ভেবে দেখুন",
+          "body": "Post-filtered ফলাফলের সংখ্যা কম দেখলেই কি সরাসরি বলা যায় যে আপনার Embedding Model খারাপ?",
+          "solution": "মোটেও না! Candidate Depth ছোট হলে এবং ফিল্টার খুব বাছাইপ্রবণ (Selective) হলে ভালো Embedding থাকা সত্ত্বেও বৈধ ডকুমেন্টগুলো প্রাথমিক কাটঅফে বাদ পড়তে পারে। তাই সমস্যা ধরতে হলে অনুমোদিত সেটে Exact Reference, এরপর ANN Search এবং সবশেষে চূড়ান্ত Relevance—এই ধাপগুলোর ক্ষতি আলাদা করে মাপুন। পাশাপাশি Cache Key ও Invalidation-এও রিকোয়েস্টের পারমিশন ও ফিল্টারের পরিচয় যুক্ত রাখতে হবে।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch23_metrics",
+      "title": "হাতে-কলমে Recall, MRR ও nDCG গণনা",
+      "subtitle": "কোন মেট্রিক কী দেখে এবং কোন তথ্য আড়ালে রেখে দেয়?",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Recall@k: প্রাসঙ্গিক তথ্যের কত অংশ উদ্ধার হলো?",
+          "body": "শীর্ষ Kটি অনন্য (Unique) ফলাফলের ভেতরে কয়টি মূল্যায়নকৃত প্রাসঙ্গিক আইডি পাওয়া গেল, সেটিকে মোট মূল্যায়নকৃত প্রাসঙ্গিক সংখ্যা দিয়ে ভাগ করলেই পাওয়া যায় Recall@k। খেয়াল করুন, 1টি প্রাসঙ্গিক উত্তর থাকা কুয়েরি আর 5টি প্রাসঙ্গিক উত্তর থাকা কুয়েরিতে 1টি করে হিট পেলে দুটির Recall এক নয়—কারণ ফিরে না আসা প্রাসঙ্গিক ডকুমেন্টগুলোও হরে (Denominator) থেকে যায়। কুয়েরি-ভিত্তিক Recall গড় করলে পাওয়া যায় Macro Recall; আর সব হিট ও সব প্রাসঙ্গিক ডকুমেন্টের অনুপাত নিলে হয় Micro Recall, যার গুরুত্ব দেওয়ার ধরন আলাদা।"
+        },
+        {
+          "type": "text",
+          "title": "MRR@k: প্রথম সঠিক উত্তরটি কত উপরে?",
+          "body": "প্রথম প্রাসঙ্গিক ফলাফলটি র‍্যাঙ্ক r-এ পাওয়া গেলে MRR@k দেয় 1/r, আর শীর্ষ K-এর ভেতরে একটিও না থাকলে দেয় 0। কিন্তু দ্বিতীয় বা তৃতীয় প্রাসঙ্গিক ডকুমেন্টটি কোন র‍্যাঙ্কে আছে, MRR তা একদমই দেখে না! তাই একক উত্তর খোঁজার কাজে এটি কার্যকর হলেও বহু-প্রমাণ (Multi-evidence) কভারেজ মাপার একমাত্র মেট্রিক হতে পারে না। রিপোর্টে কাটঅফ K বাদ দিলে অসীম কাটঅফের MRR-এর সাথে বিভ্রান্তি তৈরি হয়।"
+        },
+        {
+          "type": "math",
+          "title": "DCG@k ও Normalized DCG (nDCG) সমীকরণ",
+          "body": "\\mathrm{DCG}@k=\\sum_{r=1}^k\\frac{rel_r}{\\log_2(r+1)},\\quad \\mathrm{nDCG}=\\frac{\\mathrm{DCG}}{\\mathrm{IDCG}}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Recall, MRR ও nDCG যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\np = Path(\"assets/datasets/scifact/retrieval_workflow.py\")\nspec = importlib.util.spec_from_file_location(\"chapter23_local\", p)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\n\n# Declared metric illustration: relevant IDs2,4; results1,2,3,4.\nscores = m.metrics([\"1\", \"2\", \"3\", \"4\"], {\"2\", \"4\"}, 4)\nassert scores[\"recall\"] == 1.0 and scores[\"mrr\"] == 0.5\nassert 0 < scores[\"ndcg\"] < 1\nprint(scores)\n"
+        },
+        {
+          "type": "text",
+          "title": "nDCG@k: র‍্যাঙ্কের অবস্থান অনুযায়ী ছাড় ও আদর্শ ক্রম",
+          "body": "প্রতিটি র‍্যাঙ্কের বাইনারি প্রাসঙ্গিকতাকে log2(rank + 1) দিয়ে ভাগ করে যোগ করার পর সম্ভাব্য আদর্শ সাজানোর (Ideal Ordering) DCG দিয়ে ভাগ করলে পাওয়া যায় nDCG@k। বহুস্তরীয় (Graded) প্রাসঙ্গিকতা থাকলে গেইন সূত্র (যেমন 2^rel - 1) আলাদাভাবে উল্লেখ করতে হয়। আমাদের বর্তমান Qrels বাইনারি (মান 1), তাই এখানে গেইন সরাসরি 1; কোনো গ্রেডেড গেইনের দাবি এখানে নেই।"
+        },
+        {
+          "type": "retrieval_evaluation_lab",
+          "title": "হাতে-কলমে পরীক্ষা: Retrieval Evaluation Lab",
+          "body": "নিচের ল্যাবে 6টি বাস্তব সোর্স কুয়েরি থেকে বেছে নিয়ে লাইভ মেট্রিক ও ফিরে আসা আইডিগুলো মিলিয়ে দেখুন। কাটঅফ 5 ও 10 বদলান এবং অগভীর Hybrid পুল পরখ করুন। মনে রাখবেন, নিচের সামগ্রিক (Macro) রেফারেন্স মানগুলো 809টি Train বা 300টি Test মূল্যায়নকৃত কুয়েরির স্থির রেসিপির ফল; একটি একক কুয়েরির স্কোর পরিবর্তনে সংরক্ষিত মূল পরীক্ষাটি বদলে যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "প্রান্তিক কেস (Edge Cases) ও মেট্রিক সুরক্ষা",
+          "body": "ডুপ্লিকেট ফলাফল আইডি দিয়ে যেন কৃত্রিমভাবে স্কোর বাড়ানো (Metric Gaming) না যায়, সেজন্য আমরা ডুপ্লিকেট প্রত্যাখ্যান করি। মূল্যায়নের জন্য অশূন্য প্রাসঙ্গিক লেবেল থাকা চাই; শূন্য-পজিটিভ কুয়েরির জন্য আলাদা প্রোটোকল লাগে। জানা প্রাসঙ্গিক উত্তর থাকা সত্ত্বেও ফাঁকা তালিকা ফিরলে সব মেট্রিক 0 হবে। আর জানা প্রাসঙ্গিক সেটের বাইরে থাকা আইডি অমূল্যায়িত হলেও মাপা মেট্রিকে তার গেইন 0।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে মেট্রিকের সূক্ষ্মতা বোঝাবেন",
+          "body": "ইন্টারভিউতে উদাহরণ দিয়ে বলুন: র‍্যাঙ্কিং যদি হয় [irrelevant, relevant, ...] তবে MRR হবে 0.5; পরে আরও প্রাসঙ্গিক হিট যোগ হলে Recall ও nDCG বাড়তে পারে, কিন্তু MRR অপরিবর্তিত থাকবে। আরেকটি জরুরি নিয়ম: nDCG-র আদর্শ হর (IDCG) সবসময় min(k, total relevant) অনুযায়ী তৈরি করতে হয়—কেবল ফিরে আসা হিটের সংখ্যা দিয়ে IDCG বানালে দুর্বল র‍্যাঙ্কিংও বিভ্রান্তিকর নিখুঁত স্কোর পেয়ে যেতে পারে!"
+        },
+        {
+          "type": "text",
+          "title": "Macro ও Micro Recall এক করে ফেলবেন না",
+          "body": "ধরা যাক, দুটি কুয়েরিতে মোট প্রাসঙ্গিক সংখ্যা যথাক্রমে [1, 9] এবং আমাদের সিস্টেম দুটোতেই হিট পেয়েছে [1, 1]টি। তাহলে কুয়েরি দুটির নিজস্ব Recall হলো 1 এবং 1/9। এদের গড় নিলে Macro গড় দাঁড়ায় 5/9 ≈ 0.555556; অথচ মোট হিটকে মোট প্রাসঙ্গিক সংখ্যা দিয়ে ভাগ করলে Micro Recall হয় 2/10 = 0.2! শেখার ও ব্যবসার লক্ষ্য অনুযায়ী কোনটি রিপোর্ট করছেন তা স্পষ্ট করে লিখুন। আর লেবেল অসম্পূর্ণ হলে অমূল্যায়িত প্রাসঙ্গিক ডকুমেন্টের নীতিও ফলাফলের ব্যাখ্যা বদলে দেয়।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে ভেবে দেখুন",
+          "body": "মূল্যায়ন সেটে প্রথম কুয়েরির মতো সহজ ও একক প্রাসঙ্গিক উত্তরযুক্ত (Single-positive) কুয়েরি বেশি যোগ করলে কোন মেট্রিক কীভাবে বদলাবে?",
+          "solution": "Macro মেট্রিকে প্রতিটি নতুন কুয়েরি সমান ওজন পায়, আর Micro মেট্রিকে তার প্রাসঙ্গিক ডকুমেন্টের সংখ্যা সরাসরি হরে (Denominator) যোগ হয়। ফলে কুয়েরির মিশ্রণ (Query Mix) বদলালে দুটি স্কোরই বদলে যেতে পারে। সঠিক তুলনার জন্য সবসময় একই মূল্যায়ন পপুলেশন এবং একই অ্যানোটেশন প্রোটোকল বজায় রাখুন।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch23_book_retrieval_error",
+      "title": "Retrieval ব্যর্থতার ব্যবচ্ছেদ: Relevance, Coverage ও ANN Recall",
+      "subtitle": "ধারণা থেকে সমীকরণ ও হাতে-কলমে উদাহরণ হয়ে Python-এ যাচাই",
+      "duration": "18 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ধারণাটি কেন দরকার?",
+          "body": "সার্চ সিস্টেমে ANN Recall@K এবং Task Recall@K কখনোই এক জিনিস নয়। ANN Recall মাপে ভেক্টর স্পেসের Exact Nearest Neighbors-এর কয়টি উদ্ধার হলো; আর Task Recall মাপে মানুষের বিচারে প্রাসঙ্গিক (Judged Relevant) কয়টি ডকুমেন্ট পাওয়া গেল। মূল Embedding খারাপ হলে নিখুঁত ANN Recall দিয়েও চূড়ান্ত প্রাসঙ্গিকতা খারাপ হতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "ধাপে ধাপে ব্যবচ্ছেদ করার নিয়ম",
+          "body": "প্রথমে একই অনুমোদিত কর্পাস, একই ভেক্টর ভার্সন, একই মেট্রিক এবং স্থির Tie-breaking নীতি মেনে Exact Top-K রেফারেন্স তৈরি করুন। এরপর ANN-এর ফিরিয়ে দেওয়া সেটটিকে তার সাথে তুলনা করুন। সবশেষে স্বাধীন Relevance Labels দিয়ে Task Recall হিসাব করুন। মনে রাখবেন, ইনডেক্স টিউন করার সময় কখনোই চূড়ান্ত Task Test কুয়েরি ব্যবহার করবেন না—সেজন্য Development কুয়েরি ব্যবহার করুন।"
+        },
+        {
+          "type": "math",
+          "title": "ANN Recall@K বনাম Task Recall@K সূত্র",
+          "body": "\\mathrm{ANNRecall@K}=\\frac{|A_K\\cap E_K|}{K},\\qquad \\mathrm{TaskRecall@K}=\\frac{|A_K\\cap R|}{|R|}"
+        },
+        {
+          "type": "text",
+          "title": "খাতাকলমে একটি উদাহরণ",
+          "body": "ধরা যাক, একটি উদাহরণে Exact প্রতিবেশী সেট হলো {1, 2, 3}, আমাদের ANN ফিরিয়েছে {1, 2, 4}, এবং প্রাসঙ্গিক সেট হলো {4, 5}। এখানে ANN Recall হলো 2/3, আর Task Recall হলো 1/2। লক্ষ্য করুন, ANN আউটপুটটি Exact সার্চের তুলনায় অসম্পূর্ণ হওয়া সত্ত্বেও এই ছোট প্রাসঙ্গিক সেটে একটি কার্যকর ডকুমেন্ট ফিরিয়ে এনেছে! তবে কখনোই মাত্র একটি কুয়েরি দেখে পুরো ইনডেক্সের মান বিচার করবেন না।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ ANN Recall ও Task Recall গণনা",
+          "body": "exact, approximate, relevant = {1, 2, 3}, {1, 2, 4}, {4, 5}\nann_recall = len(exact & approximate) / len(exact)\ntask_recall = len(relevant & approximate) / len(relevant)\n# Denominators answer different questions; keep both in the report.\nprint(round(ann_recall, 6), task_recall)\n"
+        },
+        {
+          "type": "text",
+          "title": "Code চালালে কী দেখতে পাচ্ছি?",
+          "body": "কোডটি চালালে আউটপুট আসে 0.666667 এবং 0.5। বাস্তব কুয়েরি স্যুটে এই হিসাব চালানোর আগে ফাঁকা প্রাসঙ্গিক সেটের নীতি, অনুমোদিত ফিল্টারিং এবং Macro Averaging-এর নিয়ম স্পষ্টভাবে লিখে নিন। খেয়াল রাখবেন, ফিল্টারের আগে সার্চ চালালে ফিরে আসা বৈধ ফলাফলের সংখ্যা K-এর চেয়ে কমে যেতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "কখন এই হিসাবের সীমাবদ্ধতা মনে রাখতে হবে?",
+          "body": "অমূল্যায়িত (Unjudged) ডকুমেন্ট মানেই সবসময় অপ্রাসঙ্গিক নয়; প্রাসঙ্গিকতার লেবেল খুব অপ্রতুল (Sparse) হলে মাপা Recall অসম্পূর্ণ থাকে। কর্পাস বা ভেক্টর ভার্সন বদলালে অবশ্যই Exact Neighbor Reference নতুন করে তৈরি করুন; আর অন্য কোনো নিউরাল মডেলের সংরক্ষিত দাবিকে আমাদের স্থানীয় LSA পরীক্ষার প্রমাণ হিসেবে দেখাবেন না।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে চেষ্টা করুন",
+          "body": "Embedding Model পরিবর্তন না করে কীভাবে ANN Recall বাড়ানো যেতে পারে? আর ANN Recall = 1 হলেই কি Task Recall = 1 হওয়া নিশ্চিত?",
+          "solution": "ইন্ডেক্সের Search Effort বাড়ালে অনুমানজনিত ত্রুটি কমে ANN Recall বাড়তে পারে, যদিও এতে সার্চের Latency বাড়বে। আর দ্বিতীয় প্রশ্নের উত্তর হলো: মোটেও নিশ্চিত নয়! Exact Embedding প্রতিবেশীদের ভেতরেই যদি কোনো প্রাসঙ্গিক ডকুমেন্ট না থাকে, তবে ANN Recall = 1 হলেও Task Recall = 0 হতে পারে।",
+          "reference": "https://scikit-learn.org/stable/modules/neighbors.html"
+        }
+      ]
+    },
+    {
+      "id": "ch23_evaluation",
+      "title": "Evaluation Protocol: আসলে কোন তথ্যটি Held Out থাকছে?",
+      "subtitle": "ইনডেক্স করার জন্য Corpus দেখার অধিকার আর গোপন Label দেখার অধিকার এক নয়",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "সার্চযোগ্য Corpus আগে থেকে থাকার বৈধ অনুমান",
+          "body": "বাস্তব সার্চ সিস্টেম ডেপ্লয় করার সময় সার্চযোগ্য কর্পাস আগে থেকে হাতে থাকে ধরে নিয়ে তার ওপর Vectorizer, IDF বা SVD ফিট করা সম্পূর্ণ বৈধ হতে পারে—কারণ প্রাসঙ্গিক Test ডকুমেন্টগুলো ঐ কর্পাসে থাকাই তো Retrieval কাজের মূল শর্ত। কিন্তু Test কুয়েরির Relevance Labels দেখে ট্রেনিং বা প্যারামিটার সার্চ করা সম্পূর্ণ আলাদা ও নিষিদ্ধ বিষয়! তাই ডকুমেন্ট টেক্সট দেখার অধিকার এবং লেবেল দেখার সীমানা স্পষ্টভাবে লিখে রাখুন।"
+        },
+        {
+          "type": "text",
+          "title": "Train ও Test ভূমিকার সুনির্দিষ্ট হিসাব",
+          "body": "আমাদের পরীক্ষায় BEIR Train অংশের 809টি কুয়েরি ও 919টি প্রাসঙ্গিক জোড়া (Qrel Pairs) কেবল ডায়াগনস্টিক রিপোর্ট হিসেবে ব্যবহৃত হয়েছে; আর Test অংশের 300টি কুয়েরি ও 339টি জোড়া রাখা হয়েছে স্থির রেসিপির চূড়ান্ত রিপোর্টের জন্য। মোট 1,109টি কুয়েরি টেক্সটের সব আইডি স্বতন্ত্র এবং ভূমিকা-ভেদে সম্পূর্ণ বিচ্ছিন্ন (Role-disjoint)। মনে রাখবেন, এটি মূল SciFact পেপারের গোপন টেস্টের ফল নয়, বরং BEIR ডিস্ট্রিবিউশনের রিট্রিভাল স্প্লিট—তাই নাম বদলে মূল বেঞ্চমার্ক অর্জনের দাবি করা যাবে না।"
+        },
+        {
+          "type": "math",
+          "title": "Disjoint Query Split ও Macro গড় সমীকরণ",
+          "body": "\\overline M=\\frac1{|Q|}\\sum_{q\\in Q}M(q),\\quad Q_{train}\\cap Q_{test}=\\varnothing"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Train-Test Query বিচ্ছিন্নতা যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\np = Path(\"assets/datasets/scifact/retrieval_workflow.py\")\nspec = importlib.util.spec_from_file_location(\"chapter23_local\", p)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\n\n_, queries, roles = m.read_data()\nassert set(roles[\"train\"]).isdisjoint(roles[\"test\"])\nassert len(roles[\"train\"]) == 809 and len(roles[\"test\"]) == 300\nassert all(queries[q] for labels in roles.values() for q in labels)\nprint(\"Corpus fit uses documents; qrels only enter metrics.\")\n"
+        },
+        {
+          "type": "text",
+          "title": "কোনো লুকানো টিউনিং বা Selection নেই",
+          "body": "এখানে একটিমাত্র সুনির্দিষ্ট 4096 → 32 মাত্রার SVD রেসিপি চালানো হয়েছে; কোনো মাত্রা, গ্রিড, সিড বা পদ্ধতি বাছাই (Selection) করা হয়নি। Train ডায়াগনস্টিকস দেখে নতুন ক্যান্ডিডেট বাছাই করা হয়নি, এমনকি Test সেটে সাধারণ বেসলাইন ভালো ফল দেওয়ার পরও ফিরে গিয়ে মাত্রা বা ফিউশন ওজন নতুন করে টিউন করা হয়নি। ভবিষ্যতে টিউনিং করতে চাইলে সম্পূর্ণ নতুন Selection ও Confirmation স্প্লিট ডিজাইন করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "কুয়েরিগুলোর পারস্পরিক নির্ভরশীলতা (Dependence)",
+          "body": "একই Evidence ডকুমেন্ট এবং পরস্পর-সম্পর্কিত ইতিবাচক বা নেতিবাচক দাবি বিভিন্ন কুয়েরি স্প্লিটে ছড়িয়ে থাকতে পারে। তাই সাধারণ র‍্যান্ডম কুয়েরি-ভিত্তিক Confidence Interval হিসাব করলেই তা স্বাধীন পপুলেশনে সাধারণীকরণ প্রমাণ করে না। সোর্স-ফ্যামিলি গ্রুপিং কিংবা নতুন ডেটাসেট বা সময়ের Holdout আরও শক্তিশালী প্রশ্নের উত্তর দিতে পারে; আমাদের বর্তমান রিপোর্টে কোনো আনসার্টেইনটি ইন্টারভাল দাবি করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "Relevance Judgment-এর নিজস্ব সীমাবদ্ধতা",
+          "body": "বাইনারি Qrels মানে পুরো কর্পাসের শতভাগ নিখুঁত ও পূর্ণাঙ্গ যাচাই (Exhaustive Assessment) নয়। অমূল্যায়িত Evidence-কে মেট্রিকে অপ্রাসঙ্গিক ধরা নিছক একটি মূল্যায়ন রীতি, কোনো চূড়ান্ত তথ্যগত সিদ্ধান্ত নয়। মেটাডেটায় থাকা দাবি সমর্থন বা খণ্ডনের লেবেল আমাদের কোনো ফিচার নয়। সবসময় আলাদা রাখুন: দাবিটি সত্য হওয়া, ডকুমেন্টটি কাজের হওয়া, ভেক্টরটি সবচেয়ে কাছে থাকা এবং অ্যাসিস্ট্যান্টের উত্তর সঠিক হওয়া—এই চারটি সম্পূর্ণ আলাদা মূল্যায়ন টাস্ক।"
+        },
+        {
+          "type": "text",
+          "title": "চূড়ান্ত রিপোর্টের স্বচ্ছতা",
+          "body": "সামগ্রিক Macro মেট্রিক, মূল সোর্সের বাস্তব উদাহরণ এবং ব্যর্থতার কেসগুলো একসঙ্গে রিপোর্ট করুন। প্রকাশিত এই Test সেটটি যেহেতু এখন দেখা হয়ে গেছে (Observed), তাই একই টেস্টে পুনরায় কোড চালানো মূলত Regression Audit। আলাদা প্রামাণিক তথ্য ছাড়া এই ফলাফল দিয়ে প্রোডাকশন সার্চ কোয়ালিটি, ব্যবহারকারীর সন্তুষ্টি, বহুভাষিক রিট্রিভাল বা চিকিৎসা-সংক্রান্ত সিদ্ধান্তের দাবি করবেন না।"
+        }
+      ]
+    },
+    {
+      "id": "ch23_workflow",
+      "title": "End-to-End Offline Index Workflow",
+      "subtitle": "মূল সোর্স ডেটা থেকে বহনযোগ্য ও যাচাইযোগ্য Artifact তৈরির প্রক্রিয়া",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "স্থানীয়ভাবে স্ক্রিপ্ট চালানোর নিয়ম",
+          "body": "স্থানীয় QA পাইথন পরিবেশে আমাদের বান্ডেল করা retrieval_workflow.py স্ক্রিপ্টটি সরাসরি চালানো যায়; রানটাইমে অ্যাপটি কোনো বাহ্যিক নেটওয়ার্ক, API বা অথেনটিকেশন ব্যবহার করে না। খেয়াল রাখবেন, CLI-এর ডিফল্ট ডেটা পাথ স্ক্রিপ্টের নিজস্ব ডিরেক্টরিকে নির্দেশ করে, বর্তমান ওয়ার্কিং ডিরেক্টরিকে নয়। --output এবং --artifact-dir ফ্ল্যাগ দিয়ে রিপোর্ট ও আর্টিফ্যাক্ট লেখা যায়; সাধারণভাবে স্ক্রিপ্ট চালালে বান্ডেল করা মূল অ্যাসেটগুলো কখনোই আপনাআপনি ওভাররাইট হয় না।"
+        },
+        {
+          "type": "text",
+          "title": "ধাপে ধাপে Index Fit করার প্রক্রিয়া",
+          "body": "প্রথমে মূল ম্যানিফেস্ট ও ফাইল হ্যাশ যাচাই করে সংখ্যাসূচক আইডির ক্রমে (Numeric ID Order) ডকুমেন্টগুলো লোড করা হয়। এরপর Title, একটি স্পেস ও Abstract জুড়ে ভেক্টরাইজ করা হয়, যেখানে IDF এবং Vocabulary কেবল কর্পাস থেকেই শেখা হয়। পরবর্তী ধাপে seed = 23 ও n_iter = 7 দিয়ে SVD ফিট করা হয় এবং একই ট্রান্সফর্ম দিয়ে কর্পাস ও কুয়েরির 32D কাঁচা প্রক্ষেপণ ও L2 Normalization সম্পন্ন হয়। এখানে কোনো বাহ্যিক নিউরাল ওয়েট বা স্বয়ংক্রিয় মডেল ডাউনলোডের প্রয়োজন নেই।"
+        },
+        {
+          "type": "math",
+          "title": "Source থেকে Metrics পর্যন্ত পূর্ণাঙ্গ পাইপলাইন",
+          "body": "\\mathrm{source}\\to\\mathrm{TFIDF}\\to\\mathrm{SVD}\\to\\mathrm{unit\\ vectors}\\to\\mathrm{rank}\\to\\mathrm{metrics}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ End-to-End Index Fit ও Search যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\np = Path(\"assets/datasets/scifact/retrieval_workflow.py\")\nspec = importlib.util.spec_from_file_location(\"chapter23_local\", p)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\n\ndocs, queries, roles = m.read_data()\nindex = m.fit_index(docs)\nresults = index.search(queries[\"0\"], \"tfidf\")\nassert results and len(index.vectorizer.vocabulary_) == 4096\nprint(m.metrics(results, roles[\"train\"][\"0\"], 10))\n"
+        },
+        {
+          "type": "text",
+          "title": "র‍্যাঙ্কিং ও মেট্রিক হিসাবের ধাপসমূহ",
+          "body": "Exact TF-IDF Cosine এবং Dense Cosine থেকে ক্যান্ডিডেট তালিকা তৈরি হয়, এবং ঐচ্ছিকভাবে প্রতি শাখা থেকে শীর্ষ 100টি করে ফলাফল নিয়ে RRF চালানো হয়। এখানে শূন্য মিলের Lexical ফলাফল এবং শূন্য ভেক্টরের Dense কেসগুলো বাদ দেওয়া হয়, আর সমান স্কোরের Tie হলে সংখ্যাসূচক আইডির ক্রম মানা হয়। মেটাডেটা ফিল্টার সবসময় ক্যান্ডিডেট র‍্যাঙ্কিংয়ের আগেই বসে; আর সোর্স Qrels কেবল স্কোরিং শেষ হওয়ার পর মেট্রিক গণনায় ব্যবহৃত হয়।"
+        },
+        {
+          "type": "text",
+          "title": "বহনযোগ্য (Portable) ফাইলগুলোর কাঠামো",
+          "body": "retrieval_index.json ফাইলে Vocabulary, IDF, Components এবং ডকুমেন্ট আইডির সাথে সামঞ্জস্যপূর্ণ Sparse ও Unit-dense ভেক্টর থাকে, আর প্রদর্শনের মূল টেক্সট আসে সরাসরি corpus.jsonl থেকে। অন্যদিকে retrieval_lab.json ফাইলে 6টি পূর্ণাঙ্গ কুয়েরি ট্রেস, সব পদ্ধতির র‍্যাঙ্কিং এবং ডেটাসেটের সামগ্রিক মেট্রিক সংরক্ষিত থাকে। মোবাইল Dart অ্যাপ এই আর্টিফ্যাক্টগুলো ব্যবহার করেই নতুন কুয়েরি এনকোড ও সার্চ চালায়—কেবল আগে থেকে তৈরি করা মুখস্থ ফলাফল দেখায় না।"
+        },
+        {
+          "type": "text",
+          "title": "Artifact অখণ্ডতা যাচাইয়ের চেকলিস্ট",
+          "body": "স্থানীয় আর্টিফ্যাক্ট ডিরেক্টরিতে index.json, golden.json, model_card.json, weights.npz এবং checksums.json তৈরি হয়। ব্যবহারের আগে আইডি, মাত্রা (Dimensions), সসীম মান (Finite Values), Unit Norm, সোর্স বাইট এবং কুয়েরি প্রক্ষেপণ যাচাই করুন। ক্ষতিগ্রস্ত ফাইল বা অসমর্থিত স্কিমা কখনোই নীরবে গ্রহণ করা যাবে না। এখানে কোনো অনিরাপদ Pickle লোডিং বা এক্সিকিউটেবল মডেল ডাউনলোডের প্রয়োজন নেই।"
+        },
+        {
+          "type": "text",
+          "title": "স্থানীয় পরিবেশ বনাম মোবাইল রানটাইম",
+          "body": "CPU-তে মডেল ফিট করার কাজটি হয় স্থানীয় পরিবেশে, আর মোবাইল অ্যাপ সংরক্ষিত মডেলের প্রক্ষেপণ ও Exact Search চালায়। অ্যাপের কোডিং স্ক্র্যাচপ্যাড সংখ্যাসূচক উত্তর ও খসড়া সংরক্ষণ করে, কিন্তু ভেতরে পূর্ণাঙ্গ পাইথন কোড এক্সিকিউট করে না। iOS প্ল্যাটফর্মের ভ্যালিডেশনের জন্য আলাদাভাবে macOS বা বাস্তব ডিভাইসে পরীক্ষা দরকার, এবং README-তে হুবহু পুনরুৎপাদনের কমান্ড দেওয়া আছে।"
+        },
+        {
+          "type": "code",
+          "title": "বাইরের ডিরেক্টরি থেকে নিরাপদ CLI রান পরীক্ষা",
+          "body": "import subprocess, sys, tempfile\nfrom pathlib import Path\n\nscript = Path(\"assets/datasets/scifact/retrieval_workflow.py\").resolve()\nwith tempfile.TemporaryDirectory() as folder:\n    run = subprocess.run(\n        [sys.executable, str(script), \"--output\", str(Path(folder) / \"report.json\")],\n        cwd=folder,\n        capture_output=True,\n        text=True,\n        check=True,\n    )\n    assert (Path(folder) / \"report.json\").is_file()\nprint(\"Import-safe, no implicit asset rewrite\")\n"
+        }
+      ]
+    },
+    {
+      "id": "ch23_experiment",
+      "title": "পরীক্ষালব্ধ ফলাফল: ব্যর্থ Dense Baseline-কে কেন রেখে দিলাম?",
+      "subtitle": "ভালো সংকোচন (Compression) মানেই যে ভালো Retrieval নয়, তার বাস্তব প্রমাণ",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "চূড়ান্ত Test সেটে আমাদের বাস্তব ফলাফল",
+          "body": "300টি মূল্যায়নকৃত BEIR Test কুয়েরিতে সাধারণ TF-IDF পেয়েছে Recall@10 = 0.625278, MRR@10 = 0.437910 এবং nDCG@10 = 0.476623। এর বিপরীতে 32D LSA পেয়েছে Recall@10 = 0.237222, MRR@10 = 0.105263 এবং nDCG@10 = 0.130019! আর Depth = 100-এ Hybrid পদ্ধতির স্কোর এসেছে Recall@10 = 0.462778, MRR@10 = 0.237319 এবং nDCG@10 = 0.286546। তিনটি পদ্ধতির তুলনাই সম্পূর্ণ অভিন্ন Corpus, Qrels, কাটঅফ এবং Tie-breaking নীতির ওপর করা হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "কেন Dense ও Hybrid এখানে পিছিয়ে পড়ল?",
+          "body": "বৈজ্ঞানিক ডকুমেন্ট খোঁজার এই কাজে সুনির্দিষ্ট পরিভাষার হুবহু মিল অত্যন্ত গুরুত্বপূর্ণ—অল্প মাত্রার Dense Compression সেই সূক্ষ্ম বৈজ্ঞানিক পার্থক্যগুলো হারিয়ে ফেলতে পারে। আর RRF যখন এই দুর্বল শাখার ভোটগুলো যোগ করেছে, তখন শক্তিশালী Lexical ক্রমটিও নিচে নেমে গেছে। মনে রাখবেন, এগুলো তথ্যভিত্তিক যৌক্তিক রোগনির্ণয় (Plausible Diagnosis), কোনো নিয়ন্ত্রিত কার্যকারণ পরীক্ষা (Controlled Causal Ablation) নয়। এই পরীক্ষা কেবল দেখায় যে আমাদের এই সুনির্দিষ্ট রেসিপিটি এখানে দুর্বল; এর মানে মোটেও এই নয় যে সব Dense বা Neural Embedding খারাপ!"
+        },
+        {
+          "type": "math",
+          "title": "Baseline-এর সাপেক্ষে Recall@10 পার্থক্যের হিসাব",
+          "body": "\\Delta\\mathrm{Recall}@10=\\mathrm{Recall}_{candidate}@10-\\mathrm{Recall}_{TFIDF}@10"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Test মেট্রিকগুলোর ক্রম যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nroot = Path(\"assets/datasets/scifact\")\nlab = json.loads((root / \"retrieval_lab.json\").read_text())\n\nt = lab[\"report\"][\"evaluation\"][\"test\"][\"methods\"]\nfor name in [\"tfidf\", \"lsa\", \"hybrid\"]:\n    print(name, t[name][\"10\"])\nassert (\n    t[\"tfidf\"][\"10\"][\"recall\"] > t[\"hybrid\"][\"10\"][\"recall\"] > t[\"lsa\"][\"10\"][\"recall\"]\n)\nassert t[\"tfidf\"][\"10\"][\"ndcg\"] > t[\"hybrid\"][\"10\"][\"ndcg\"]\n"
+        },
+        {
+          "type": "text",
+          "title": "Train সেটের ডায়াগনস্টিক চিত্র",
+          "body": "809টি মূল্যায়নকৃত Train কুয়েরিতেও একই চিত্র দেখা গেছে: TF-IDF Recall@10 ≈ 0.632901, LSA ≈ 0.238731 এবং Hybrid ≈ 0.450165। যেহেতু Train কুয়েরির লেবেল ভেক্টর তৈরিতে ব্যবহার করা হয়নি, তাই এটিকে কখনোই সুপারভাইজড ট্রেনিং ফিট অ্যাকুরেসি বলা যাবে না; এখানে কোনো ট্রেনিং লস কার্ভ বা নিউরাল কনভার্জেন্সের দাবিও নেই।"
+        },
+        {
+          "type": "text",
+          "title": "সরাসরি মূল Abstract খুলে কারণ অনুসন্ধান",
+          "body": "প্রতি কুয়েরিতে কোথায় TF-IDF মিস করল, কোথায় Dense ব্যর্থ হলো এবং কোথায় Fusion সঠিক পেপারকে নিচে নামিয়ে দিল (Demotion), তা মূল Title ও Abstract পড়ে বোঝার চেষ্টা করুন। কুয়েরির শব্দগুলো ভোকাবুলারিতে কতটুকু ছিল, আসল Evidence ID কোনগুলো এবং ক্যান্ডিডেট পুল ও চূড়ান্ত র‍্যাঙ্কে তাদের অবস্থান কী—তা মিলিয়ে দেখুন। একই বিষয়ের হিট হলেই তা প্রাসঙ্গিক নাও হতে পারে, আবার অমূল্যায়িত কোনো পেপারেও কার্যকর তথ্য থাকতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "ভবিষ্যতে উন্নতির পথ ও প্রোটোকল সতর্কতা",
+          "body": "ভবিষ্যতে বড় ভেক্টর মাত্রা, আরও শক্তিশালী Lexical টোকেনাইজার, Neural Retrieval, ডোমেইন অ্যাডাপ্টেশন কিংবা ভ্যালিডেটেড ফিউশন ওজন—এসবই ভালো পরবর্তী পদক্ষেপ হতে পারে। কিন্তু একটি কড়া নিয়ম মনে রাখবেন: একবার দেখা হয়ে যাওয়া (Observed) এই টেস্ট সেটের ফলাফল দেখে পরিবর্তন এনে সেই একই টেস্ট সেটকে নতুন নিরপেক্ষ প্রমাণ (Fresh Confirmation) বলা যাবে না! এর জন্য আগে আলাদা Development Selection ও নতুন Confirmation প্রোটোকল স্থির করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "পোর্টফোলিও ও ইন্টারভিউতে ব্যর্থ ফলাফল ডিফেন্ড করা",
+          "body": "কেবল চোখে সুন্দর দেখায় এমন সংখ্যা বেছে রিপোর্ট করবেন না; স্থির রেসিপি, পূর্ণাঙ্গ Baseline তুলনা, উৎস ও লাইসেন্স, মোট কুয়েরির সংখ্যা এবং সীমাবদ্ধতা—সবই স্বচ্ছভাবে দিন। এই শিক্ষণীয় ব্যর্থতাটি মনে করিয়ে দেয় যে Retrieval Engineering সবসময়ই ডেটা ও মূল্যায়ন-নির্ভর—কম মাত্রার ভেক্টর বা আধুনিক আর্কিটেকচারের নাম কখনোই বাস্তব প্রমাণের বিকল্প নয়।"
+        },
+        {
+          "type": "code",
+          "title": "একটি বাস্তব Test Query-র র‍্যাঙ্কিং অডিট",
+          "body": "from pathlib import Path\nimport json\n\nroot = Path(\"assets/datasets/scifact\")\nlab = json.loads((root / \"retrieval_lab.json\").read_text())\n\ns = lab[\"samples\"][3]\nassert s[\"role\"] == \"test\" and s[\"id\"] == \"1\"\nfor method, hits in s[\"rankings\"].items():\n    relevant = set(s[\"relevant\"])\n    print(\n        method,\n        [(rank, doc) for rank, (doc, _) in enumerate(hits, 1) if doc in relevant],\n    )\n"
+        }
+      ]
+    },
+    {
+      "id": "ch23_versioning",
+      "title": "Embedding Migrations ও Train-Serving Consistency",
+      "subtitle": "ভেক্টরের Dimension সমান হলেও ভেতরের জ্যামিতিক স্পেস এক নাও হতে পারে",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "পুরো পাইপলাইনকে একত্রে ভার্সনিং (Version Bundle)",
+          "body": "কর্পাস স্ন্যাপশট, টোকেনাইজার ও ভোকাবুলারির ক্রম, IDF, প্রক্ষেপণ বা পুলিংয়ের ওয়েটস, Normalization, দূরত্ব মেট্রিক এবং ইনডেক্স প্যারামিটার—সবকিছু একসাথে পিন করে রাখুন। শুধু schema_version থাকলেই তা ভেতরের কন্টেন্ট হ্যাশের কাজ করে না। নির্দিষ্ট কিছু Golden Query-র প্রক্ষেপণ ও পূর্ণ র‍্যাঙ্কিং আইডি মাইগ্রেশন গার্ড হিসেবে দারুণ কাজে আসে, আর আমাদের মোবাইল প্যাকেজ ভেরিফিকেশনও বান্ডেল করা আসল বাইট মিলিয়ে দেখে।"
+        },
+        {
+          "type": "text",
+          "title": "দুই ভিন্ন স্পেস মেশানোর বিপদ (Mixed Spaces)",
+          "body": "পুরোনো ডকুমেন্ট ভেক্টর এবং নতুন কুয়েরি এনকোডার উভয়েরই 32টি Dimension থাকলেও তাদের স্থানাঙ্ক সম্পূর্ণ ভিন্ন গাণিতিক ভিত্তিতে (Different Basis) থাকতে পারে! অসামঞ্জস্যপূর্ণ জ্যামিতিকে কখনোই সাধারণ স্কেলার স্কোর মিশিয়ে সারানো যায় না—এর জন্য পুরো ইনডেক্স Rebuild অথবা Dual-index Migration প্রয়োজন হয়। নিরাপদ মাইগ্রেশনের জন্য Canary Queries, Shadow Comparison এবং Rollback আর্টিফ্যাক্ট প্রস্তুত রাখুন।"
+        },
+        {
+          "type": "math",
+          "title": "সম্মিলিত Index Version Hash চুক্তি",
+          "body": "\\mathrm{index\\ version}=\\mathrm{hash}(\\mathrm{corpus},\\mathrm{tokenizer},\\mathrm{weights},\\mathrm{metric},\\mathrm{filters})"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Source Manifest ও Index SHA256 যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nroot = Path(\"assets/datasets/scifact\")\nlab = json.loads((root / \"retrieval_lab.json\").read_text())\nindex = json.loads((root / \"retrieval_index.json\").read_text())\n\nimport hashlib\n\nmanifest = (root / \"source_manifest.json\").read_bytes()\nassert hashlib.sha256(manifest).hexdigest() == lab[\"source_manifest_sha256\"]\nassert index[\"schema_version\"] == 1 and index[\"recipe\"][\"seed\"] == 23\nprint(hashlib.sha256((root / \"retrieval_index.json\").read_bytes()).hexdigest())\n"
+        },
+        {
+          "type": "text",
+          "title": "ক্রমাগত আপডেট (Incremental Updates) বনাম পূর্ণ Refit",
+          "body": "নতুন আসা ডকুমেন্টকে পুরোনো ট্রান্সফর্ম দিয়ে এনকোড করলে জ্যামিতিক স্পেস এক থাকে বটে, কিন্তু সময়ের সাথে পুরোনো IDF ও SVD ফিট বাসি (Stale) হয়ে যেতে পারে। আবার পুরো কর্পাসে নতুন করে Refit করলে পুরোনো সব ডকুমেন্টের ভেক্টরও নতুন করে তৈরি (Regenerate) করতে হবে। তাই আপডেটের বিরতি, মুছে ফেলা ডকুমেন্ট এবং সার্ভিং স্ন্যাপশটের সামঞ্জস্য স্পষ্টভাবে নির্ধারণ করুন; আমাদের স্থির কর্পাসের পরীক্ষাটি এই লাইভ অপারেশনাল গ্যারান্টিগুলো যাচাই করেনি।"
+        },
+        {
+          "type": "text",
+          "title": "পুনরুৎপাদনযোগ্যতা (Determinism) ও সহনশীলতা",
+          "body": "নির্দিষ্ট Seed (23) রেসিপিকে পুনরাবৃত্তিযোগ্য করতে সাহায্য করে, তবে ব্যাকএন্ড, লাইব্রেরি ভার্সন ও থ্রেডিংয়ের প্রভাবও রেকর্ড করা উচিত। এক্সপোর্ট করা ওয়েটসই মোবাইল ইনফারেন্সের স্থির উৎস। সূক্ষ্ম Floating-point সহনশীলতা, সুনির্দিষ্ট Tie-breaking এবং ডকুমেন্টের ক্রম এক রেখে আমরা গোল্ডেন স্কোর ও আইডি অডিট করি—স্বতন্ত্র ইমপ্লিমেন্টেশনগুলোর মধ্যে প্রতিটি বিট হুবহু মেলার (Exact Bitwise Equality) দাবি করা হয় না।"
+        },
+        {
+          "type": "text",
+          "title": "অফলাইন প্যাকেজিং ও ইউজার ডেটার সুরক্ষা",
+          "body": "সোর্স ফাইল, মডেল/ইনডেক্স/ল্যাব এভিডেন্স এবং ফন্ট সরাসরি অ্যাপ অ্যাসেটে থাকে। ব্যবহারকারীর নিজস্ব নোট, বুকমার্ক ও অগ্রগতি SQLite-এ অধ্যায়-ভিত্তিক (Chapter-scoped) ভাবে সংরক্ষিত থাকে, ফলে নতুন কনটেন্ট আইডি এলেও পুরোনো অগ্রগতি মুছে যায় না। রানটাইমে কোনো বাহ্যিক API বা লগইন লাগে না, এবং অ্যাপের ভেতরে পাইথন ফিটিংও চলে না।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে প্রোডাকশন ধস ডিবাগ করবেন",
+          "body": "নতুন ডেপ্লয়মেন্টের পর সার্চের মান হঠাৎ কমে গেলে প্রথমেই কুয়েরি ও ডকুমেন্ট মডেলের হ্যাশ, Normalization, Vocabulary Order, ID Mapping, ফিল্টার ও ইনডেক্স স্ন্যাপশট এবং সোর্স ডেটার পরিবর্তন (Drift) পরীক্ষা করুন। নতুন করে ট্রেনিং শুরু করার আগে অবশ্যই Train-Serving Mismatch-এর আশঙ্কা দূর করে নিন।"
+        }
+      ]
+    },
+    {
+      "id": "ch23_readiness",
+      "title": "Interview প্রস্তুতি: তৈরি করুন, ডিবাগ করুন ও যুক্তি দিন",
+      "subtitle": "শুধু সংজ্ঞা মুখস্থ নয়—নিজ হাতে ইমপ্লিমেন্ট ও বিশ্লেষণ করে দেখান",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ধারণাগত স্বচ্ছতা ও পাল্টা উদাহরণ (Counterexamples)",
+          "body": "Token, Sentence ও Document Embedding-এর তফাত, Lexical বনাম Latent বা Neural Dense ভেক্টর, Cosine বনাম Dot Product, Exact বনাম ANN সার্চ এবং Retrieval বনাম Reranking—প্রতিটি বিষয় নিজের ভাষায় সহজ করে বুঝিয়ে বলার অভ্যাস করুন। প্রতিটির সাথে একটি করে ব্যতিক্রম বা পাল্টা উদাহরণ (Counterexample) দিন; শুধু পরিভাষা মুখস্থ রাখাই আসল দক্ষতা নয়।"
+        },
+        {
+          "type": "text",
+          "title": "শূন্য থেকে (From Scratch) কোড লেখার অনুশীলন",
+          "body": "নিজ হাতে ASCII টোকেনাইজার, সাব-লিনিয়ার TF-IDF কুয়েরি ট্রান্সফর্ম, 32D প্রক্ষেপণ ও Unit Normalization, Exact Top-K এবং RRF লিখে ফেলুন। ফাঁকা ইনপুট, OOV কুয়েরি, শূন্য ভেক্টর, অসীম মান (Non-finite), ডুপ্লিকেট এবং সমান স্কোরের Tie কেসগুলো টেস্ট করুন। এরপর হাতে-কলমে Recall, MRR ও nDCG হিসাব করে আমাদের 6টি বাস্তব কুয়েরির গোল্ডেন ফলাফলের সাথে মিলিয়ে নিন।"
+        },
+        {
+          "type": "math",
+          "title": "Similarity, Quality ও Truth-এর মৌলিক পার্থক্য",
+          "body": "\\mathrm{quality}\\ne\\mathrm{similarity}\\ne\\mathrm{truth},\\quad \\mathrm{evidence}\\to\\mathrm{claim}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ 6টি বাস্তব Query ও 3টি পদ্ধতির মেট্রিক যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\np = Path(\"assets/datasets/scifact/retrieval_workflow.py\")\nspec = importlib.util.spec_from_file_location(\"chapter23_local\", p)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nroot = Path(\"assets/datasets/scifact\")\nlab = json.loads((root / \"retrieval_lab.json\").read_text())\n\nfor s in lab[\"samples\"]:\n    for method, hits in s[\"rankings\"].items():\n        r = m.metrics([d for d, _ in hits], set(s[\"relevant\"]), 10)\n        assert all(0 <= v <= 1 for v in r.values())\nprint(\"Six source queries,three methods,explicit binary qrels\")\n"
+        },
+        {
+          "type": "text",
+          "title": "নিউরাল বিল্ডিং ব্লকগুলোর কোডিং প্রস্তুতি",
+          "body": "ছোট গাণিতিক অ্যারে ব্যবহার করে Masked Pooling, সঠিকভাবে সাজানো Dual-encoder স্কোর ম্যাট্রিক্স, স্ট্যাবল Contrastive Loss এবং Multi-positive মাস্কিং লেখার অনুশীলন করুন। কোন অংশটুকু আমাদের স্থানীয় প্রামাণিক পাইপলাইন আর কোনটি নিউরাল মেকানিক্সের উদাহরণ—তা স্পষ্টভাবে আলাদা রাখুন। পাবলিক কুয়েরি লেবেল দিয়ে ভবিষ্যতে মডেল ট্রেন করতে চাইলে শুরুতেই বৈধ স্প্লিট, Negative Mining ও মূল্যায়ন প্রোটোকল স্থির করে নিতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "সিস্টেম ডিজাইন ও স্কেলিং নিয়ে যুক্তি",
+          "body": "ডেটার উৎস ও লাইসেন্স, Candidate Depth, মেটাডেটা ফিল্টার, ID Mapping, ভার্সন মাইগ্রেশন এবং ইনডেক্স রিবিল্ড কীভাবে সামলাবেন তা গুছিয়ে ব্যাখ্যা করুন। দশ লক্ষ ডকুমেন্টের সার্চের জন্য Latency, Memory ও ANN-এর ভারসাম্য আপনি সুন্দরভাবে ডিজাইন করে দেখাতেই পারেন—তবে এই ছোট প্রোটোটাইপ থেকে বিশাল প্রোডাকশন সিস্টেমের পারফরম্যান্স দাবি করবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "প্রামাণিক সততা বজায় রাখা",
+          "body": "আমাদের পরীক্ষায় সাধারণ TF-IDF Baseline ভালো ফল দিয়েছে—এই বাস্তব পর্যবেক্ষণটি কখনোই আড়াল করবেন না। তবে এটিও স্পষ্ট রাখুন যে দুর্বল LSA মানেই সব Dense পদ্ধতির ব্যর্থতা নয়। সোর্স দাবি সত্য না মিথ্যা তা কেবল রিট্রিভালের বাইনারি প্রাসঙ্গিকতা দেখে অনুমান করবেন না, আর ইংরেজি রিট্রিভালের ফলাফল দিয়ে বাংলা অর্থগত সার্চের মানও প্রমাণ করার দাবি করবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "পরবর্তী অধ্যায়ে যাওয়ার আগে শেষ যাচাই",
+          "body": "এগিয়ে যাওয়ার আগে Retrieval-এর প্রাসঙ্গিক সেট (Positives), ফিল্টারিংয়ের ক্রম, ANN রেফারেন্স এবং Relevance Metrics-এর প্রতিটি খুঁটিনাটি আরেকবার যাচাই করে নিন। এরপর পরবর্তী অধ্যায়ে (Book 4 · Chapter 3: RAG Systems) আমরা দেখব কীভাবে খুঁজে পাওয়া Evidence সুন্দরভাবে প্যাক করে, সঠিক Citation যুক্ত করে এবং উত্তর দেওয়ার যোগ্যতা (Answerability) যাচাই করে একটি পূর্ণাঙ্গ RAG Pipeline তৈরি করতে হয়।"
+        }
+      ]
+    }
+  ],
+  "quizzes": [
+    {
+      "id": "ch23_q1",
+      "question": "এই অধ্যায়ের বাস্তব পরীক্ষামূলক পাইপলাইনে কোন Dense Representation-টি চালানো হয়েছে?",
+      "options": [
+        "একটি Pretrained Multilingual Neural Encoder",
+        "Corpus-এর ওপর ফিট করা 32D LSA Projection",
+        "একটি বিশাল Generative Language Model",
+        "অর্থগত Ground Truth হিসেবে দাবি করা এলোমেলো (Random) ভেক্টর"
+      ],
+      "answer": 1,
+      "explanation": "আমাদের মূল পাইপলাইনে LSA ব্যবহার করে TF-IDF কর্পাস ম্যাট্রিক্সকে 32 মাত্রায় সংকুচিত করা হয়েছে। নিউরাল পুলিং ও লসের কোডগুলো গাণিতিক উদাহরণ হিসেবে দেওয়া হয়েছে; অ্যাপটি কোনো Pretrained Neural Encoder চালায় না।"
+    },
+    {
+      "id": "ch23_q2",
+      "question": "দুটি অশূন্য (Nonzero) ভেক্টরের ক্ষেত্রে কখন তাদের Dot Product সরাসরি Cosine Similarity-র সমান হয়?",
+      "options": [
+        "কেবল যখন ভেক্টর দুটির Dimension সমান হয়",
+        "কেবল যখন Document ভেক্টরটি শূন্য (Zero Vector) হয়",
+        "যখন দুটি ভেক্টরই L2 Unit Normalized থাকে",
+        "যেকোনো কাঁচা (Raw) ভেক্টরের ক্ষেত্রেই সবসময় সমান হয়"
+      ],
+      "answer": 2,
+      "explanation": "Cosine Similarity হলো Dot Product-কে দুটি ভেক্টরের Norm-এর গুণফল দিয়ে ভাগ করার ফল। কেবল যখন দুটি ভেক্টরেরই L2 Norm সমান 1 হয়, তখনই এরা সমান হয়; শুধু মাত্রা সমান হওয়া যথেষ্ট নয়, আর শূন্য ভেক্টরের কোণ অসংজ্ঞায়িত।"
+    },
+    {
+      "id": "ch23_q3",
+      "question": "কোনো অশূন্য Query ভেক্টরকে ধনাত্মক সংখ্যা দিয়ে গুণ করে q → 2q করলে কী ঘটে?",
+      "options": [
+        "Cosine Similarity দ্বিগুণ হয়, কিন্তু Dot Product অপরিবর্তিত থাকে",
+        "দুটি মেট্রিকের র‍্যাঙ্কিংই অবশ্যই উল্টে যায়",
+        "ভেক্টরের Dimension দ্বিগুণ হয়ে যায়",
+        "Cosine Similarity অপরিবর্তিত থাকে, কিন্তু কাঁচা Dot Product দ্বিগুণ হয়"
+      ],
+      "answer": 3,
+      "explanation": "ধনাত্মক সংখ্যা দিয়ে গুণ করলে ভেক্টরের দিক (Direction) বদলায় না, কেবল Norm ও কাঁচা Dot Product দ্বিগুণ হয়। একটি স্থির কুয়েরির জন্য এমন স্কেলিং কাঁচা স্কোর বদলালেও র‍্যাঙ্কিংয়ের ক্রম বদলায় না।"
+    },
+    {
+      "id": "ch23_q4",
+      "question": "আমাদের ASCII-ভিত্তিক Vocabulary ইনডেক্সে শুধুমাত্র বাংলা শব্দে লেখা কোনো Query শূন্য ভেক্টর তৈরি করলে সিস্টেমের কী দেখানো উচিত?",
+      "options": [
+        "কোনো Candidate না দেখানো এবং Vocabulary-র এই সীমাবদ্ধতা স্পষ্টভাবে জানানো",
+        "তালিকার প্রথম ডকুমেন্টটিকে আত্মবিশ্বাসী অর্থগত ম্যাচ হিসেবে দেখানো",
+        "কুয়েরিটি স্বয়ংক্রিয়ভাবে অনুবাদ করা হয়েছে বলে দাবি করা",
+        "শূন্য ভেক্টরের গাণিতিক কোণ সুসংজ্ঞায়িত বলে দাবি করা"
+      ],
+      "answer": 0,
+      "explanation": "আমাদের বর্তমান টোকেনাইজার বাংলা হরফের শব্দ নেয় না। তাই শূন্য কুয়েরির ক্ষেত্রে ফাঁকা Candidate তালিকা দেওয়াই সঠিক নিয়ম; মনগড়া ডকুমেন্ট দেখানো বা অসমর্থিত Cross-lingual সক্ষমতার দাবি করা উচিত নয়।"
+    },
+    {
+      "id": "ch23_q5",
+      "question": "এই অধ্যায়ের পাইপলাইনে ব্যবহৃত Smooth IDF-এর সঠিক সূত্র কোনটি?",
+      "options": [
+        "কোনো Smoothing ছাড়াই ln(N / df)",
+        "1 + ln((N + 1) / (df + 1))",
+        "1 / (ডকুমেন্টের মোট দৈর্ঘ্য)",
+        "শব্দের উপস্থিতির সংখ্যাকে কুয়েরির দৈর্ঘ্য দিয়ে ভাগফল"
+      ],
+      "answer": 1,
+      "explanation": "scikit-learn-এর স্ট্যান্ডার্ড রেসিপিতে লব ও হরের ভেতরে + 1 Smoothing এবং বাইরেও একটি + 1 যুক্ত থাকে। হুবহু এই সূত্রটি না মানলে সংরক্ষিত গোল্ডেন স্কোরগুলোর সাথে আপনার হিসাব মিলবে না।"
+    },
+    {
+      "id": "ch23_q6",
+      "question": "আমাদের ইনডেক্সের Vocabulary, IDF এবং SVD কোন ডেটার ওপর ফিট করা হয়েছে?",
+      "options": [
+        "Held-out সেটের গোপন Relevance Labels-এর ওপর",
+        "সোর্স কুয়েরির ভেতরে থাকা Evidence মেটাডেটার ওপর",
+        "ইনডেক্সভুক্ত সব লেবেলবিহীন (Unlabeled) Title ও Abstract ডকুমেন্টের ওপর",
+        "শুধুমাত্র হাতে তৈরি কয়েকটি নমুনা ভেক্টরের ওপর"
+      ],
+      "answer": 2,
+      "explanation": "ডেপ্লয়মেন্টে সার্চযোগ্য কর্পাস আগে থেকেই উপলব্ধ থাকে—এই স্পষ্ট অনুমান থেকেই সব লেবেলবিহীন ডকুমেন্টে ইনডেক্স ফিট করা হয়েছে। কোনো কুয়েরি বা Qrel লেবেল এতে ঢোকেনি; তবে এটি অদেখা নতুন কর্পাসের প্রোটোকলের সমান নয়।"
+    },
+    {
+      "id": "ch23_q7",
+      "question": "SVD-র Components ম্যাট্রিক্সের আকার [32, 4096] হলে 4096 মাত্রার এক সারি Query ভেক্টর x-এর প্রক্ষেপণ (Projection) কোনটি হবে?",
+      "options": [
+        "x @ components",
+        "components @ components",
+        "x ভেক্টরের প্রথম 32টি ঘরের মান কেটে নেওয়া",
+        "x @ components.T"
+      ],
+      "answer": 3,
+      "explanation": "4096 মাত্রার সারি কুয়েরি ভেক্টরের সাথে [4096, 32] আকারের ট্রান্সপোজড ম্যাট্রিক্স (components.T) গুণ করলেই 32D প্রক্ষেপণ পাওয়া যায়। Low-rank প্রক্ষেপণ মানে ভোকাবুলারির প্রথম অংশ কেটে নেওয়া নয়।"
+    },
+    {
+      "id": "ch23_q8",
+      "question": "আমাদের LSA মডেলে Explained Variance Ratio-র যোগফল প্রায় 0.101163 হওয়া আসলে কী বোঝায়?",
+      "options": [
+        "এটি SVD সংকোচনের একটি অভ্যন্তরীণ ডায়াগনস্টিক মান; এটি Retrieval Recall নয়",
+        "সিস্টেমটির চিকিৎসাগত তথ্যগত সত্যতা 10.1%",
+        "কুয়েরি সার্চের Recall নিখুঁতভাবে 10.1%",
+        "কোনো বৈজ্ঞানিক দাবি সত্য হওয়ার সম্ভাব্যতা"
+      ],
+      "answer": 0,
+      "explanation": "ম্যাট্রিক্স পুনর্গঠনের Variance পরিসংখ্যান, ব্যবহারকারীর প্রশ্নের সাপেক্ষে Retrieval মেট্রিক এবং তথ্যের বাস্তব সত্যতা—এই তিনটি সম্পূর্ণ পৃথক রাশি।"
+    },
+    {
+      "id": "ch23_q9",
+      "question": "Masked Mean Pooling করার সময় ভাগের হরে (Denominator) কোন মানটি ব্যবহার করতে হয়?",
+      "options": [
+        "Padding-সহ সংরক্ষিত পুরো সিকোয়েন্সের দৈর্ঘ্য",
+        "শুধুমাত্র বৈধ (Valid) টোকেনের সংখ্যা",
+        "Embedding ভেক্টরের মোট Dimension",
+        "পুরো Vocabulary-র আকার"
+      ],
+      "answer": 1,
+      "explanation": "লব থেকে যেমন PAD টোকেনের স্টেট বাদ দিতে হয়, তেমনি হরে কেবল বৈধ মাস্ক টোকেনের সংখ্যাই বসাতে হয়। আর সব টোকেনই Padding হলে তার জন্য সুনির্দিষ্ট নীতি থাকতে হয়।"
+    },
+    {
+      "id": "ch23_q10",
+      "question": "সঠিকভাবে সাজানো (Aligned) Bটি Positive Pair-এর ক্ষেত্রে In-batch স্কোর ম্যাট্রিক্স [B, B]-এর সঠিক Label কোনটি?",
+      "options": [
+        "সবসময় সব শূন্য (All Zeros)",
+        "বাহ্যিক Document ID-গুলোকেই সরাসরি ক্লাস ইনডেক্স হিসেবে ধরা",
+        "কলামের ক্রম সারির সাথে হুবহু মিললে arange(B)",
+        "লেবেল আপডেট না করেই এলোমেলো শাফল করা ক্রম"
+      ],
+      "answer": 2,
+      "explanation": "স্কোর ম্যাট্রিক্স [B, B]-এ কেবল তখনই i-তম সারির পজিটিভ উত্তর i-তম কলামে থাকে যখন অ্যালাইনমেন্ট ঠিক থাকে। কলামের ক্রম অদলবদল হলে লেবেলও সেই অনুযায়ী বদলাতে হবে।"
+    },
+    {
+      "id": "ch23_q11",
+      "question": "একই ব্যাচে অন্য একটি কুয়েরির Positive ডকুমেন্ট যদি বর্তমান কুয়েরির জন্যেও প্রাসঙ্গিক (Relevant) হয়, তবে কী ঘটতে পারে?",
+      "options": [
+        "সেটি সবসময়ই একটি নিশ্চিত খাঁটি Negative হিসেবে কাজ করবে",
+        "Cosine সূত্র নিজে থেকেই সেটিকে সরিয়ে দেবে",
+        "Test লেবেল ট্রেনিংয়ে ঢোকালেই কোনো Data Leakage হবে না",
+        "সেটি একটি ক্ষতিকর In-batch False Negative হয়ে উঠতে পারে"
+      ],
+      "answer": 3,
+      "explanation": "একই কুয়েরির একাধিক প্রাসঙ্গিক উত্তর ব্যাচে থাকলে ID-aware Masking বা Multi-positive লস দরকার হতে পারে। তাছাড়া অমূল্যায়িত ডকুমেন্টকে প্রমাণিত Negative ধরাও ঝুঁকিপূর্ণ।"
+    },
+    {
+      "id": "ch23_q12",
+      "question": "Cross-encoder Reranker-এর ক্ষেত্রে 'Candidate Ceiling' বলতে কী বোঝায়?",
+      "options": [
+        "ইনপুট Candidate Pool-এর বাইরে থাকা কোনো প্রাসঙ্গিক ডকুমেন্টকে সে ফিরিয়ে আনতে পারে না",
+        "কর্পাসে অনুপস্থিত যেকোনো ডকুমেন্ট সে শূন্য থেকে তৈরি করতে পারে",
+        "প্রথম ধাপের Candidate Recall@N এখানে পুরোপুরি অপ্রাসঙ্গিক",
+        "আলাদা ভেক্টর লাগে না বলে পুরো কর্পাসে বিনামূল্যে সার্চ চালানো যায়"
+      ],
+      "answer": 0,
+      "explanation": "Reranker কেবল তার হাতে আসা পুলটিকে নতুন করে সাজায়। বাইরে থেকে নতুন ক্যান্ডিডেট যোগ না হলে চূড়ান্ত Recall প্রাথমিক পুলের কভারেজের চেয়ে বেশি হতে পারে না, এবং প্রতি জোড়ায় এর কম্পিউট ব্যয়ও বেশি।"
+    },
+    {
+      "id": "ch23_q13",
+      "question": "আমাদের বর্তমান অ্যাপের Exact Search পদ্ধতি Dense ক্যান্ডিডেট খোঁজার সময় কী করে?",
+      "options": [
+        "একটি ANN গ্রাফ সার্চ চালায়",
+        "অনুমোদিত সব অশূন্য (Nonzero) ডকুমেন্ট ভেক্টরের স্কোর হিসাব করে",
+        "কেবল কর্পাসের প্রথম 100টি সারি স্ক্যান করে থেমে যায়",
+        "Test Qrels দেখে স্কোরগুলো সাজায়"
+      ],
+      "answer": 1,
+      "explanation": "এটি 5,183টি ডকুমেন্টের ওপর পূর্ণাঙ্গ Exact রেফারেন্স স্ক্যান চালায়। Hybrid মোডে প্রতি শাখার শীর্ষ 100টি ফলাফল পরে কেটে নেওয়া হয়, কিন্তু মূল Dense স্কোর সব বৈধ ডকুমেন্টের ওপরই হিসাব হয়।"
+    },
+    {
+      "id": "ch23_q14",
+      "question": "ANN Recall@k এবং প্রকৃত Relevance Recall@k কি একই বিষয় নির্দেশ করে?",
+      "options": [
+        "হ্যাঁ, ভেক্টর স্পেসে সবচেয়ে কাছে থাকা মানেই ডকুমেন্টটি প্রাসঙ্গিক",
+        "কেবল ভেক্টরের মাত্রা 32 হলেই দুটি মেট্রিক একই হয়",
+        "না; একটি মাপে Exact প্রতিবেশীদের পুনরুদ্ধার, অন্যটি মাপে মূল্যায়নকৃত প্রাসঙ্গিক ডকুমেন্টের প্রাপ্তি",
+        "উভয় মেট্রিকই বৈজ্ঞানিক দাবির সত্যতা মাপে"
+      ],
+      "answer": 2,
+      "explanation": "মূল Embedding Representation যদি দুর্বল হয়, তবে নিখুঁত ANN Neighbor Recall পেলেও কার্যকর Evidence পাওয়ার কোনো নিশ্চয়তা থাকে না।"
+    },
+    {
+      "id": "ch23_q15",
+      "question": "Reciprocal Rank Fusion (RRF)-এ কোনো ডকুমেন্ট একটি শাখায় অনুপস্থিত থাকলে সেই শাখা থেকে তার অবদান কত হয়?",
+      "options": [
+        "1/60",
+        "পুরো কর্পাসের মোট সংখ্যার ব্যস্তানুপাত",
+        "ঐ ডকুমেন্টের কাঁচা Cosine স্কোর",
+        "0"
+      ],
+      "answer": 3,
+      "explanation": "শুধুমাত্র শাখায় উপস্থিত ক্যান্ডিডেট র‍্যাঙ্কগুলোই অবদান রাখে (আমাদের রেসিপিতে 1-based র‍্যাঙ্ক, ধ্রুবক 60 এবং প্রতি শাখায় শীর্ষ 100)। অনুপস্থিত শাখার অবদান শূন্য।"
+    },
+    {
+      "id": "ch23_q16",
+      "question": "স্থির Test পরীক্ষায় Hybrid পদ্ধতি সাধারণ TF-IDF-এর চেয়ে খারাপ ফলাফল দিলে সঠিক প্রকৌশলগত করণীয় কী?",
+      "options": [
+        "ফলাফলটি সততার সাথে রিপোর্ট করা এবং ভবিষ্যতের পরিবর্তনের জন্য নতুন মূল্যায়ন প্রোটোকল সাজানো",
+        "ঐ Test সেট দেখেই ফিউশন টিউন করে সেটিকে নতুন নিরপেক্ষ প্রমাণ বলা",
+        "নামে 'Dense' শব্দটি আছে বলে তবুও সেটিকে সেরা দাবি করা",
+        "সাধারণ TF-IDF Baseline-এর ফলাফল গোপন রাখা"
+      ],
+      "answer": 0,
+      "explanation": "স্থির পরীক্ষার ফলাফল সবসময় সততার সাথে প্রকাশ করতে হয়। একবার দেখা হয়ে যাওয়া Test সেট টিউনিংয়ে পুনর্ব্যবহার করলে তার আর নতুন চূড়ান্ত নিশ্চিতকরণের মর্যাদা থাকে না।"
+    },
+    {
+      "id": "ch23_q17",
+      "question": "অনুমোদিত (Allowed) কর্পাসের ভেতরে Top-K নেওয়া বনাম গ্লোবাল Top-K নিয়ে পরে ফিল্টার (Post-filter) করার মধ্যে পার্থক্য কী?",
+      "options": [
+        "দুটি পদ্ধতি সবসময় একই ফলাফল দেয়",
+        "দুটি এক নয়; Post-filter করলে নিচের র‍্যাঙ্কে থাকা বৈধ ও কার্যকর ডকুমেন্ট বাদ পড়তে পারে",
+        "ফিল্টার করলে স্কোর স্বয়ংক্রিয়ভাবে ক্যালিব্রেটেড Probability হয়ে যায়",
+        "কেবল নিউরাল পদ্ধতির ক্ষেত্রেই এদের মধ্যে পার্থক্য দেখা যায়"
+      ],
+      "answer": 1,
+      "explanation": "আমাদের ইঞ্জিনে উভয় শাখাতেই সামঞ্জস্যপূর্ণভাবে আগে ফিল্টার (Pre-filter) করা হয়। Post-filter করলে ফলাফলের সংখ্যা কমে যেতে পারে এবং বৈধ ডকুমেন্ট হারাতে পারে।"
+    },
+    {
+      "id": "ch23_q18",
+      "question": "Chunk-ভিত্তিক সার্চের Top-10 তালিকায় একই মূল ডকুমেন্টের (Same Parent) 6টি Chunk চলে এলে কী ঘটে?",
+      "options": [
+        "Document-level Recall স্বয়ংক্রিয়ভাবে 1 হয়ে যায়",
+        "প্রতিটি ডুপ্লিকেটকে নতুন প্রাসঙ্গিক ডকুমেন্ট হিসেবে ধরা হয়",
+        "অনন্য (Unique) মূল ডকুমেন্টের কভারেজ 10 নাও হতে পারে",
+        "Parent ID ফেলে দিলেই মেট্রিকের মান সত্যিকার অর্থে উন্নত হয়"
+      ],
+      "answer": 2,
+      "explanation": "সোর্স Qrels যখন মূল ডকুমেন্ট-ভিত্তিক হয়, তখন একই পেপারের একাধিক অংশ জায়গা দখল করলে কভারেজ কমে যায়; তাই সুস্পষ্ট Parent Mapping, Deduplication ও কাটঅফ প্রোটোকল অপরিহার্য।"
+    },
+    {
+      "id": "ch23_q19",
+      "question": "র‍্যাঙ্ক করা আইডি তালিকা [1, 2, 3, 4] এবং প্রাসঙ্গিক সেট {2, 4} হলে MRR@4 কত হবে?",
+      "options": [
+        "1.0",
+        "0.25",
+        "2.0",
+        "0.5"
+      ],
+      "answer": 3,
+      "explanation": "প্রথম প্রাসঙ্গিক হিটটি আছে র‍্যাঙ্ক 2-এ, তাই Reciprocal Rank হলো 1/2 = 0.5। র‍্যাঙ্ক 4-এ থাকা দ্বিতীয় হিটটি Recall ও nDCG-তে অবদান রাখলেও MRR বাড়ায় না।"
+    },
+    {
+      "id": "ch23_q20",
+      "question": "মোট 2টি প্রাসঙ্গিক ডকুমেন্ট আছে এমন একটি কুয়েরিতে Top-10 তালিকায় 1টি প্রাসঙ্গিক ডকুমেন্ট পাওয়া গেলে Recall@10 কত হবে?",
+      "options": [
+        "0.5",
+        "0.1",
+        "1.0",
+        "10.0"
+      ],
+      "answer": 0,
+      "explanation": "Recall হলো খুঁজে পাওয়া হিট ভাগ মোট প্রাসঙ্গিক ডকুমেন্ট = 1/2 = 0.5। ফিরে আসা মোট ডকুমেন্ট সংখ্যাকে হর ধরলে সেটি হয় Precision, Recall নয়।"
+    },
+    {
+      "id": "ch23_q21",
+      "question": "বাইনারি প্রাসঙ্গিকতার ক্ষেত্রে nDCG@k-এর আদর্শ হর (IDCG) কী দিয়ে তৈরি হয়?",
+      "options": [
+        "শুধুমাত্র ফিরে আসা প্রাসঙ্গিক হিটের সংখ্যা দিয়ে",
+        "min(k, total relevant) সংখ্যক হিট সেরা র‍্যাঙ্কগুলোতে আছে ধরে নিয়ে",
+        "কর্পাসের মোট ডকুমেন্ট সংখ্যা দিয়ে",
+        "কুয়েরির মোট টোকেন দৈর্ঘ্য দিয়ে"
+      ],
+      "answer": 1,
+      "explanation": "কম হিট ফিরে এলে আদর্শ হর ছোট করে কৃত্রিমভাবে নিখুঁত স্কোর বানানো যাবে না। বাইনারি গেইন 1 / log2(rank + 1) দিয়ে সেরা min(k, total relevant) র‍্যাঙ্কের যোগফলই হলো IDCG।"
+    },
+    {
+      "id": "ch23_q22",
+      "question": "Train ও Test স্প্লিটের Query ID-গুলো পরস্পর বিচ্ছিন্ন (Disjoint) হলেই কি পূর্ণ স্বাধীনতা নিশ্চিত হয়?",
+      "options": [
+        "হ্যাঁ, আইডি আলাদা হলে সোর্স নির্ভরশীলতা থাকা অসম্ভব",
+        "কেবল দশমিক সংখ্যার ক্ষেত্রেই নির্ভরশীলতা থাকে",
+        "না; ভিন্ন কুয়েরিতেও পরস্পর-সম্পর্কিত দাবি বা অভিন্ন Evidence ডকুমেন্ট থাকতে পারে",
+        "একই কর্পাস থাকলে সব মূল্যায়নই অবৈধ হয়ে যায়"
+      ],
+      "answer": 2,
+      "explanation": "স্বতন্ত্র আইডি থাকা একটি আবশ্যিক প্রাথমিক চেক, কিন্তু তা গভীর অর্থগত বা সোর্স স্বাধীনতা নিশ্চিত করে না। আর কর্পাস ইনডেক্সিং অনুমানটি নিজে একটি ঘোষিত ও বৈধ টাস্ক চয়েস।"
+    },
+    {
+      "id": "ch23_q23",
+      "question": "নতুন Encoder-ও আগের মতোই 32 মাত্রার ভেক্টর দিচ্ছে—পুরোনো Document Index রিবিল্ড না করেই সরাসরি ব্যবহার করা কি নিরাপদ?",
+      "options": [
+        "হ্যাঁ, ভেক্টরের Dimension সমান হওয়াই যথেষ্ট",
+        "আইডিগুলো সংখ্যাসূচক হলেই আপনাআপনি মিলে যাবে",
+        "স্কোর সর্টিং করলেই ভুল জ্যামিতি ঠিক হয়ে যাবে",
+        "না; গাণিতিক ভিত্তি (Basis), Normalization বা ভার্সনের অমিল হতে পারে"
+      ],
+      "answer": 3,
+      "explanation": "ওয়েটস, টোকেনাইজার, ভোকাবুলারির ক্রম এবং Normalization সব একসাথে ভার্সন-বদ্ধ থাকে; এনকোডার বদলালে ইনডেক্স রিবিল্ড বা নিয়ন্ত্রিত মাইগ্রেশন অপরিহার্য।"
+    },
+    {
+      "id": "ch23_q24",
+      "question": "SciFact-এ খুঁজে পাওয়া কোনো ডকুমেন্ট 'Relevant' হলেই কি প্রমাণিত হয় যে মূল দাবিটি (Claim) সত্য?",
+      "options": [
+        "এমন সিদ্ধান্ত নেওয়া যায় না; প্রাসঙ্গিক Evidence দাবিটিকে খণ্ডনও (Refute) করতে পারে",
+        "হ্যাঁ, Qrel মানেই চূড়ান্ত সত্যতা",
+        "Cosine স্কোর 0.5-এর বেশি হলেই দাবিটি সবসময় সত্য",
+        "অমূল্যায়িত যেকোনো Abstract অবশ্যই মিথ্যা"
+      ],
+      "answer": 0,
+      "explanation": "Retrieval Qrels কেবল ডকুমেন্টটির প্রাসঙ্গিকতা বোঝায়; মূল বৈজ্ঞানিক দাবিটি মিথ্যাও হতে পারে। সত্যতা যাচাই এবং চিকিৎসা পরামর্শ সম্পূর্ণ আলাদা কাজ।"
+    },
+    {
+      "id": "ch23_q_positive_revision",
+      "question": "একটি কুয়েরির একাধিক বৈধ Positive ডকুমেন্ট থাকলে সাধারণ Single-label (Diagonal) Cross-entropy লসে কী সমস্যা হতে পারে?",
+      "options": [
+        "এটি অন্য বৈধ Positive ডকুমেন্টকে দূরে ঠেলে দেওয়ার (Negative Pressure) গ্রেডিয়েন্ট দিতে পারে",
+        "সব কয়টি Positive স্বয়ংক্রিয়ভাবে সমান ওজন পেয়ে যায়",
+        "লসের মান সবসময় শূন্য হয়ে যায়",
+        "তখন আর কোনো Temperature দরকার হয় না"
+      ],
+      "answer": 0,
+      "explanation": "একক লেবেল ধরলে দ্বিতীয় বৈধ Positive ডকুমেন্টটি হরের ভেতরে প্রতিদ্বন্দ্বী হিসেবে থাকে। তাই কাজের অর্থ বুঝে উপযুক্ত মাস্কিং বা Multi-positive লস নির্ধারণ করতে হয়।"
+    },
+    {
+      "id": "ch23_q_ann_revision",
+      "question": "Exact Top-2 = {1, 2}, Approximate Top-2 = {1, 3} এবং প্রকৃত Relevant সেট = {3, 4, 5} হলে ANN Recall ও Approximate Relevance Recall কত?",
+      "options": [
+        "1 এবং 1",
+        "0.5 এবং 1/3",
+        "1/3 এবং 0.5",
+        "0 এবং 0"
+      ],
+      "answer": 1,
+      "explanation": "Exact প্রতিবেশীর সাথে মিল হলো 1/2 = 0.5, আর প্রাসঙ্গিক সেটের সাথে মিল হলো 1/3। দুটি মেট্রিকের হর এবং রেফারেন্স সম্পূর্ণ আলাদা।"
+    }
+  ],
+  "exercises": [
+    {
+      "id": "ch23_ex_cosine",
+      "title": "সুরক্ষিত Cosine Similarity ফাংশন ইমপ্লিমেন্টেশন",
+      "prompt": "দেওয়া আছে q = [3, 4] এবং d = [4, 3]। ভেক্টর দুটির অশূন্য সমান আকার (Shape) এবং সসীম মান (Finite Values) যাচাই করে একটি Cosine Similarity ফাংশন লিখুন। শূন্য ভেক্টরের (Zero Norm) নীতি নির্ধারণ করে সংখ্যাসূচক উত্তরটি সংরক্ষণ করুন।",
+      "starter": "# Implement locally; assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "import numpy as np\n\n\ndef cosine(a, b):\n    a = np.asarray(a, dtype=float)\n    b = np.asarray(b, dtype=float)\n    if (\n        a.ndim != 1\n        or a.shape != b.shape\n        or not a.size\n        or not np.isfinite(a).all()\n        or not np.isfinite(b).all()\n    ):\n        raise ValueError(\"Finite aligned vectors\")\n    norm = np.linalg.norm(a) * np.linalg.norm(b)\n    return float(a @ b / norm) if norm else 0.0\n\n\nassert cosine([0, 0], [4, 3]) == 0\nanswer = cosine([3, 4], [4, 3])\n",
+      "expected": 0.96,
+      "explanation": "এখানে Dot Product = 24 এবং দুটি ভেক্টরেরই L2 Norm = 5; তাই Cosine Similarity = 24 / 25 = 0.96। আমাদের বান্ডেল করা সমাধানে শূন্য ভেক্টরের জন্য স্কোর 0 ফেরত দেওয়ার সুস্পষ্ট কনভেনশন রাখা হয়েছে।"
+    },
+    {
+      "id": "ch23_ex_norm",
+      "title": "ভেক্টরের L2 Norm গণনা",
+      "prompt": "প্রদত্ত ভেক্টর [3, 4]-এর ইউক্লিডীয় দৈর্ঘ্য (Euclidean Norm) হিসাব করে উত্তরে রাখুন। এরপর Unit-normalized ভেক্টরটির বর্গকৃত Norm 1 হয় কি না তা যাচাই করুন।",
+      "starter": "# Implement locally; assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "import numpy as np\n\nx = np.array([3.0, 4.0])\nnorm = float(np.sqrt(np.sum(x * x)))\nunit = x / norm\nassert np.isclose(unit @ unit, 1.0)\nanswer = norm\n",
+      "expected": 5,
+      "explanation": "ভেক্টরটির L2 Norm হলো √(9 + 16) = 5, এবং একে 5 দিয়ে ভাগ করলে Unit Vector পাওয়া যায় [0.6, 0.8]।"
+    },
+    {
+      "id": "ch23_ex_idf",
+      "title": "বাস্তব Corpus থেকে Smooth IDF পুনর্গঠন",
+      "prompt": "এক্সপোর্ট করা Vocabulary-র প্রথম শব্দটির Document Frequency মূল Title + Abstract কর্পাস থেকে গণনা করুন এবং তার Smooth IDF মানটি উত্তরে রাখুন। মনে রাখবেন, ফিট করার সময় কোনো Query বা Qrels ব্যবহার করবেন না।",
+      "starter": "# Implement locally; assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "from pathlib import Path\nimport json\n\nroot = Path(\"assets/datasets/scifact\")\nlab = json.loads((root / \"retrieval_lab.json\").read_text())\nindex = json.loads((root / \"retrieval_index.json\").read_text())\n\nimport re, math\n\nterm = index[\"vocabulary\"][0]\ndocs = [json.loads(s) for s in (root / \"corpus.jsonl\").read_text().splitlines()]\ndf = sum(\n    term\n    in {t.lower() for t in re.findall(r\"[A-Za-z0-9]+\", d[\"title\"] + \" \" + d[\"text\"])}\n    for d in docs\n)\nanswer = 1 + math.log((len(docs) + 1) / (df + 1))\n",
+      "expected": 2.6947672032407453,
+      "explanation": "সূত্র অনুযায়ী IDF = 1 + ln((N + 1) / (df + 1)), যার মান আসে প্রায় 2.6947672। এখানে প্রতিটি ডকুমেন্টে শব্দটির উপস্থিতি সর্বোচ্চ একবারই গণনা করা হয়।"
+    },
+    {
+      "id": "ch23_ex_projection",
+      "title": "বাস্তব Source Query-র LSA প্রক্ষেপণ",
+      "prompt": "প্রথম সোর্স কুয়েরিটির Sparse ভেক্টর থেকে কাঁচা LSA Projection বের করুন। সংরক্ষিত গোল্ডেন স্থানাঙ্কগুলোর সাথে পুরোটা মিলিয়ে দেখে আউটপুট ভেক্টরের Dimension সংখ্যাটি উত্তরে রাখুন।",
+      "starter": "# Implement locally; assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "from pathlib import Path\nimport json\n\nroot = Path(\"assets/datasets/scifact\")\nlab = json.loads((root / \"retrieval_lab.json\").read_text())\nindex = json.loads((root / \"retrieval_index.json\").read_text())\n\nimport numpy as np\n\ns = lab[\"samples\"][0]\nx = np.zeros(len(index[\"vocabulary\"]))\nx[s[\"sparse\"][\"indices\"]] = s[\"sparse\"][\"values\"]\nraw = x @ np.asarray(index[\"components\"]).T\nnp.testing.assert_allclose(raw, s[\"raw\"], atol=1e-12)\nanswer = float(len(raw))\n",
+      "expected": 32,
+      "explanation": "Components ম্যাট্রিক্সের আকার 32 × 4096 হওয়ায় কুয়েরি ট্রান্সফর্মের আউটপুট মাত্রা হয় 32। প্রতিটি স্থানাঙ্ক মিলিয়ে দেখলে ম্যাট্রিক্সের দিক ও শব্দের ক্রমজনিত বাগ সহজেই ধরা পড়ে।"
+    },
+    {
+      "id": "ch23_ex_pool",
+      "title": "Padding-সহ Masked Mean Pooling",
+      "prompt": "প্রদত্ত টোকেন স্টেট [[1, 2], [3, 4], [99, 99]] এবং বৈধ মাস্ক [1, 1, 0]-এর জন্য Masked Mean Pooled ভেক্টরের প্রথম স্থানাঙ্কটি (First Coordinate) উত্তরে রাখুন।",
+      "starter": "# Implement locally; assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "import numpy as np\n\nh = np.array([[1.0, 2.0], [3.0, 4.0], [99.0, 99.0]])\nmask = np.array([1.0, 1.0, 0.0])\nif not mask.sum():\n    raise ValueError(\"No valid tokens\")\npooled = (h * mask[:, None]).sum(0) / mask.sum()\nanswer = float(pooled[0])\n",
+      "expected": 2,
+      "explanation": "বৈধ প্রথম দুটি ভেক্টরের গড় হলো [2, 3], তাই প্রথম স্থানাঙ্কটি হলো 2। প্যাডিং মান 99 এবং পুরো স্টোরেজ দৈর্ঘ্য 3 কোনোটিই এই ভাগের হরে আসে না।"
+    },
+    {
+      "id": "ch23_ex_contrastive",
+      "title": "সংখ্যাগতভাবে স্থিতিশীল In-batch Contrastive Loss",
+      "prompt": "ধরা যাক q = d = eye(2), যেখানে প্রতিটি সারি একটি Unit Vector এবং একই ইনডেক্সের ডকুমেন্টটি হলো তার Positive। Temperature = 0.1 ধরে scores = q @ d.T / 0.1 থেকে গড় Cross-entropy Loss বের করে উত্তরে রাখুন।",
+      "starter": "# Implement locally; assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "import torch\nimport torch.nn.functional as F\n\nq = torch.eye(2, dtype=torch.float64)\nd = q.clone()\nscores = (q @ d.T) / 0.1\nanswer = F.cross_entropy(scores, torch.arange(2)).item()\n",
+      "expected": 4.539889921686465e-05,
+      "explanation": "এখানে Logits সারি দুটি হয় [10, 0] ও [0, 10]। প্রতিটির লস ln(1 + exp(-10)), এবং গড় লসের মানও একই—প্রায় 0.0000453989। এটি লসের গাণিতিক হিসাব বোঝার একটি সুনির্দিষ্ট উদাহরণ।"
+    },
+    {
+      "id": "ch23_ex_rrf",
+      "title": "উভয় শাখায় Rank 1 পাওয়া ডকুমেন্টের RRF স্কোর",
+      "prompt": "দুটি শাখাতেই Document 7 যদি Rank 1 অবস্থানে থাকে এবং RRF ধ্রুবক 60 হয়, তবে Document 7-এর সম্মিলিত স্কোর কত হবে তা উত্তরে রাখুন।",
+      "starter": "# Implement locally; assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "from pathlib import Path\nimport importlib.util\n\np = Path(\"assets/datasets/scifact/retrieval_workflow.py\")\nspec = importlib.util.spec_from_file_location(\"chapter23_local\", p)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\n\nresult = m.fuse([[(\"7\", 0.9), (\"8\", 0.8)], [(\"7\", 0.2), (\"9\", 0.1)]])\nanswer = dict(result)[\"7\"]\n",
+      "expected": 0.03278688524590164,
+      "explanation": "দুটি শাখা থেকেই 1/61 করে অবদান আসায় মোট স্কোর হয় 2/61 ≈ 0.03278689। RRF এখানে কোনো কাঁচা স্কোর ব্যবহার করে না।"
+    },
+    {
+      "id": "ch23_ex_recall",
+      "title": "অনুপস্থিত Evidence-সহ Recall গণনা",
+      "prompt": "র‍্যাঙ্কিং তালিকা [1, 2, 3, 4], প্রাসঙ্গিক আইডির সেট {2, 4, 9} এবং কাটঅফ 4 হলে Recall কত হবে তা উত্তরে রাখুন।",
+      "starter": "# Implement locally; assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "from pathlib import Path\nimport importlib.util\n\np = Path(\"assets/datasets/scifact/retrieval_workflow.py\")\nspec = importlib.util.spec_from_file_location(\"chapter23_local\", p)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\n\nanswer = m.metrics([\"1\", \"2\", \"3\", \"4\"], {\"2\", \"4\", \"9\"}, 4)[\"recall\"]\n",
+      "expected": 0.6666666666666666,
+      "explanation": "এখানে হিট পাওয়া গেছে 2টি এবং মোট প্রাসঙ্গিক ডকুমেন্ট 3টি; তাই Recall = 2/3 ≈ 0.6666667। ফিরে না আসা প্রাসঙ্গিক আইডি 9-ও হরের ভেতরে থাকে।"
+    },
+    {
+      "id": "ch23_ex_mrr",
+      "title": "প্রথম হিটের Reciprocal Rank গণনা",
+      "prompt": "র‍্যাঙ্কিং তালিকা [1, 2, 3, 4], প্রাসঙ্গিক আইডির সেট {2, 4} এবং কাটঅফ 4 হলে এই কুয়েরিটির Reciprocal Rank উত্তরে রাখুন।",
+      "starter": "# Implement locally; assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "from pathlib import Path\nimport importlib.util\n\np = Path(\"assets/datasets/scifact/retrieval_workflow.py\")\nspec = importlib.util.spec_from_file_location(\"chapter23_local\", p)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\n\nanswer = m.metrics([\"1\", \"2\", \"3\", \"4\"], {\"2\", \"4\"}, 4)[\"mrr\"]\n",
+      "expected": 0.5,
+      "explanation": "প্রথম প্রাসঙ্গিক ফলাফলটি পাওয়া গেছে র‍্যাঙ্ক 2-এ, তাই Reciprocal Rank = 0.5। পরের প্রাসঙ্গিক ফলাফলের অবস্থান এই মানটি বদলায় না।"
+    },
+    {
+      "id": "ch23_ex_ndcg",
+      "title": "শূন্য থেকে Binary nDCG গণনা",
+      "prompt": "ধরা যাক বাইনারি প্রাসঙ্গিক হিটগুলো র‍্যাঙ্ক 2 ও 4-এ আছে, মোট প্রাসঙ্গিক ডকুমেন্ট 2টি এবং কাটঅফ 4। কোনো Helper ছাড়াই সরাসরি ডিসকাউন্ট সূত্র দিয়ে nDCG হিসাব করে উত্তরে রাখুন।",
+      "starter": "# Implement locally; assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "import math\n\ndcg = sum(1 / math.log2(rank + 1) for rank in [2, 4])\nideal = sum(1 / math.log2(rank + 1) for rank in [1, 2])\nanswer = dcg / ideal\n",
+      "expected": 0.6509209298071326,
+      "explanation": "ফিরে আসা তালিকার DCG = 1 / log2(3) + 1 / log2(5), আর আদর্শ অবস্থায় হিট দুটি থাকত র‍্যাঙ্ক 1 ও 2-এ। এদের অনুপাত নিলে nDCG আসে প্রায় 0.6509209।"
+    }
+  ],
+  "interviews": [
+    {
+      "title": "Exact Vector Search ইমপ্লিমেন্টেশন ও প্রান্তিক কেস",
+      "tag": "RETRIEVAL · CODING / DESIGN · 40 MIN",
+      "prompt": "আপনার কাছে [N, d] আকারের Unit Embedding ম্যাট্রিক্স এবং [d] আকারের একটি Query ভেক্টর দেওয়া আছে। স্থিরভাবে (Deterministically) Top-K বের করার ফাংশনটি কীভাবে লিখবেন এবং কোন কোন প্রান্তিক কেস পরীক্ষা করবেন?",
+      "answer": "শুরুতেই ইনপুট ভেক্টরগুলোর Shape, সসীম মান (Finite Values), শূন্য ভেক্টরের নীতি (Zero Policy) এবং মেট্রিক চুক্তি যাচাই করে নেব। এরপর ম্যাট্রিক্স-ভেক্টর Dot Product দিয়ে স্কোর বের করে বড় থেকে ছোট ক্রমে (Descending) সাজাব, এবং স্কোর সমান (Tie) হলে সংখ্যাসূচক Document ID-র ঊর্ধ্বক্রম ব্যবহার করব; ফলাফলে কোনো ডুপ্লিকেট আইডি গ্রহণ করব না। জটিলতার দিক থেকে O(Nd) স্কোরিং খরচের সাথে সর্টিং বা Heap সিলেকশনের খরচ ও মেমোরি বাজেট ব্যাখ্যা করব। কুয়েরি শূন্য ভেক্টর হলে মনগড়া আইডি না দেখিয়ে ফাঁকা তালিকা ফেরত দেব এবং স্পষ্ট রাখব যে Exact প্রতিবেশী মানেই Relevance Ground Truth নয়। সবশেষে অসম Norm, ফাঁকা বা OOV ইনপুট, সমান স্কোরের Tie, বৈধ ঋণাত্মক Dense স্কোর এবং ID Mapping টেস্ট করব।"
+    },
+    {
+      "title": "Contrastive Batch ডিবাগিং ও Multi-positive গ্রেডিয়েন্ট",
+      "tag": "RETRIEVAL · CODING / DESIGN · 40 MIN",
+      "prompt": "ট্রেনিংয়ে Contrastive Loss কমছে কিন্তু প্রকৃত Retrieval ফলাফল দুর্বল—Positive Pair Alignment-এর কোথায় সমস্যা খুঁজবেন?\n\nপাশাপাশি Logits = [2, 2, 0] (যেখানে প্রথম দুটি ডকুমেন্টই বৈধ Positive) ধরে Single-label এবং Positive-set লসের গ্রেডিয়েন্ট পার্থক্য দেখান।",
+      "answer": "প্রথমেই Scores[B, B] ম্যাট্রিক্সের আকার, পজিটিভ কলামের লেবেল, ডকুমেন্টের ক্রম শাফল হয়ে লেবেল অমিল হয়েছে কি না, Temperature এবং ভেক্টর Normalization অডিট করব। একই Document ID ব্যাচের একাধিক সারিতে থাকলে বা জানা Multi-positive মাস্ক না করলে তা ক্ষতিকর False Negative তৈরি করতে পারে। মনে রাখব যে ট্রেনিং ব্যাচের লস কোনো র‍্যাঙ্কিং মেট্রিক নয়, তাই Held-out Relevance সেটে মূল্যায়ন করব এবং PAD-সচেতন পুলিং, কুয়েরি/ডকুমেন্টের প্রম্পট ও Truncation মিলিয়ে দেখব (উল্লেখ্য, এই অধ্যায়ের নিউরাল কোড গাণিতিক উদাহরণ; LSA ফলাফল দিয়ে নিউরাল কনভার্জেন্স দাবি করা হচ্ছে না)।\n\nদ্বিতীয় অংশে Logits = [2, 2, 0]-এর ক্ষেত্রে সাধারণ Single-label Cross-entropy প্রথমটিকে একমাত্র পজিটিভ ধরায় দ্বিতীয় বৈধ পজিটিভটির স্কোর কমানোর উল্টো চাপ দেয়। এর বিপরীতে Positive-set লস logsumexp(all) - logsumexp(positives) দুটি পজিটিভের সম্মিলিত সম্ভাব্যতা বাড়ায়—এখানে লস দুটি আসে যথাক্রমে প্রায় 0.758624 এবং 0.065476। তবে খেয়াল রাখতে হবে যে Set-mass অবজেক্টিভে একটি পজিটিভ একাই বেশিরভাগ সম্ভাব্যতা দখল করার সুযোগ রাখে, তাই কাঙ্ক্ষিত কভারেজ বুঝেই লস ডিজাইন করতে হবে।",
+      "prerequisiteLessons": [
+        "ch23_contrastive",
+        "ch23_negatives"
+      ]
+    },
+    {
+      "title": "কেন আমাদের পরীক্ষায় Dense LSA সাধারণ TF-IDF-এর কাছে হেরে গেল?",
+      "tag": "RETRIEVAL · CODING / DESIGN · 40 MIN",
+      "prompt": "এই অধ্যায়ের স্থির পরীক্ষায় সাধারণ TF-IDF-এর চেয়ে Dense LSA এবং Hybrid খারাপ ফল করেছে—একজন ইন্টারভিউয়ারের সামনে এই ফলাফলটি কীভাবে ডিফেন্ড করবেন?",
+      "answer": "আমি সম্পূর্ণ স্বচ্ছতার সাথে অভিন্ন 5,183টি ডকুমেন্ট এবং 300টি মূল্যায়নকৃত BEIR Test কুয়েরির ফলাফল তুলে ধরব: TF-IDF Recall@10 = 0.625278, LSA = 0.237222 এবং Hybrid = 0.462778। এর সম্ভাব্য কারণ হিসেবে ব্যাখ্যা করব যে 32 মাত্রার Low-rank সংকোচন বিরল ও সুনির্দিষ্ট বৈজ্ঞানিক পরিভাষার পার্থক্য হারিয়ে ফেলতে পারে, এবং RRF সেই দুর্বল শাখার ভোট যোগ করায় শক্তিশালী Lexical ক্রমটিকে নিচে নামিয়ে দিতে পারে—তবে স্পষ্ট বলব যে এগুলো যৌক্তিক হাইপোথিসিস, কোনো নিয়ন্ত্রিত কার্যকারণ প্রমাণ (Causal Proof) নয়। সবচেয়ে গুরুত্বপূর্ণ হলো, দেখা হয়ে যাওয়া এই Test সেটের ওপর আমরা কোনো পুনঃটিউনিং (Retuning) করিনি; ভবিষ্যতে উন্নতির জন্য আলাদা Development Selection এবং নতুন নিরপেক্ষ Confirmation প্রোটোকল প্রস্তাব করব।"
+    },
+    {
+      "title": "Hybrid RRF ইমপ্লিমেন্টেশন ও বাগ প্রতিরোধ",
+      "tag": "RETRIEVAL · CODING / DESIGN · 40 MIN",
+      "prompt": "একাধিক শাখার Top Candidate তালিকা একত্রিত করতে Reciprocal Rank Fusion (RRF) কীভাবে লিখবেন? অনুপস্থিত আইডি, সমান স্কোর (Ties) এবং ডুপ্লিকেট কীভাবে সামলাবেন?",
+      "answer": "প্রথমে প্রতিটি শাখার ভেতরে অনন্য (Unique) আইডি আছে কি না তা যাচাই করব। এরপর 1-based র‍্যাঙ্ক r ধরে প্রতিটি উপস্থিত ডকুমেন্টের জন্য 1 / (60 + r) অবদান যোগ করব, আর যে শাখায় ডকুমেন্টটি নেই সেখান থেকে অবদান ধরব 0। একাধিক শাখায় একই আইডি থাকলে তাদের অবদান যোগ হবে এবং মোট স্কোর সমান হলে সংখ্যাসূচক Document ID-র ঊর্ধ্বক্রম দিয়ে Tie ভাঙব। এখানে প্রতি শাখার Candidate Depth (যেমন Top-100) এবং চূড়ান্ত Top-K আলাদা প্যারামিটার হিসেবে রাখব এবং আনক্যালিব্রেটেড কাঁচা Cosine স্কোর সরাসরি যোগ করব না। টেস্ট করার সময় ফাঁকা তালিকা, কেবল এক শাখায় উপস্থিত ডকুমেন্ট, Depth = 5 কাটঅফ এবং উভয় শাখায় Rank 1 পাওয়া আইডির স্কোর 2/61 হয় কি না তা যাচাই করব—এবং মনে রাখব যে দুর্বল শাখা যোগ করলে স্বয়ংক্রিয়ভাবে উন্নতির গ্যারান্টি নেই।",
+      "prerequisiteLessons": [
+        "ch23_hybrid"
+      ]
+    },
+    {
+      "title": "Exact Scan থেকে ANN ইনডেক্সে যাওয়ার মূল্যায়ন পরিকল্পনা",
+      "tag": "RETRIEVAL · CODING / DESIGN · 40 MIN",
+      "prompt": "দশ লক্ষ (Million-doc) ডকুমেন্টের কর্পাসে Exact Scan থেকে ANN সার্চে যাওয়ার জন্য আপনার পূর্ণাঙ্গ Evaluation Plan কী হবে?",
+      "answer": "প্রথমে একই Embedding, মডেল, মেট্রিক ও কর্পাস ধরে একটি Exact Neighbor Reference তৈরি করব। রিপোর্টে ANN Recall@k এবং মূল্যায়নকৃত প্রাসঙ্গিকতার Recall, MRR ও nDCG আলাদাভাবে দেখাব। এর পাশাপাশি বাস্তব পরিবেশে মাপা p50 ও p95 Latency, মোট Memory, Filter Selectivity এবং আপডেট লোড পরিমাপ করব। HNSW, IVF বা PQ-এর প্যারামিটারগুলো শুধুমাত্র Development ওয়ার্কলোডে তুলনা করব—কখনোই চূড়ান্ত Test সেট দেখে টিউন করব না। মুছে ফেলা আইডি, ভার্সন ও Normalization গার্ডের সাথে তাৎক্ষণিক Rollback পরিকল্পনা রাখব, এবং ছোট প্রোটোটাইপের গতি থেকে বড় স্কেলের পারফরম্যান্স অনুমান করার দাবি করব না।",
+      "prerequisiteLessons": [
+        "ch23_ann"
+      ]
+    },
+    {
+      "title": "Retrieval-এর আগে না পরে মেটাডেটা ও অ্যাক্সেস ফিল্টার?",
+      "tag": "RETRIEVAL · CODING / DESIGN · 40 MIN",
+      "prompt": "গ্লোবাল Top-100 ফলাফল এনে Access Filter করার পর মাত্র 2টি ফলাফল পাওয়া যাচ্ছে—এর কারণ ও সমাধান কীভাবে ব্যাখ্যা করবেন?",
+      "answer": "অনুমোদিত (Eligible) কর্পাসের ভেতরে সার্চ করা আর গ্লোবাল পুল এনে পরে Post-filter করা এক জিনিস নয়—কারণ অননুমোদিত ডকুমেন্টগুলো উপরের 100টি জায়গা দখল করে নিলে বৈধ ডকুমেন্টগুলো কাটঅফের নিচে বাদ পড়ে যায়। তাই Lexical ও Dense উভয় ক্যান্ডিডেট শাখা, Reranker, স্নিপেট এবং ক্যাশে একই সামঞ্জস্যপূর্ণ Allowed-ID সীমানা বজায় রাখতে হবে। বেশি ডকুমেন্ট আনা (Overfetch) আংশিক উপশম হলেও তা কোনো পারমিশন বা পূর্ণতার গ্যারান্টি নয়। আমরা কুয়েরির Selectivity ও Candidate Recall আলাদাভাবে মাপব এবং মূল Qrel-এর হর (Denominator) কখনোই নীরবে বদলে ফেলব না; তাছাড়া আমাদের ল্যাবের বর্তমান 'cell' টাইটেল ফিল্টারটি কেবল উদাহরণ, কোনো সিকিউরিটি অথরাইজেশন নয়।",
+      "prerequisiteLessons": [
+        "ch23_filter"
+      ]
+    },
+    {
+      "title": "Chunking এবং একই ডকুমেন্টের ডুপ্লিকেট হিট সামলানো",
+      "tag": "RETRIEVAL · CODING / DESIGN · 40 MIN",
+      "prompt": "একটি বড় ডকুমেন্টের 7টি Chunk আপনার Top-10 ফলাফলের জায়গা দখল করে নিয়েছে—র‍্যাঙ্কিং ও মূল্যায়ন মেট্রিক কীভাবে ঠিক করবেন?",
+      "answer": "সবার আগে নির্ধারণ করব আমাদের প্রাসঙ্গিকতার একক (Relevance Unit) পুরো Document নাকি স্বতন্ত্র Chunk। ইনডেক্সে স্থায়ী Parent ID, মূল টেক্সটের অবস্থান (Source Offsets) এবং Overlap মেটাডেটা সংরক্ষণ করব। এরপর চূড়ান্ত অনন্য ডকুমেন্টের কাটঅফের আগে সুস্পষ্ট Parent Deduplication বা স্কোর অ্যাগ্রিগেশন বসাব। পুরো ডকুমেন্টের Qrel দেখে অন্ধভাবে তার সব Chunk-কে পজিটিভ বানিয়ে ট্রেনিংয়ে Label Noise আনব না। পাশাপাশি Candidate Coverage, Token Budget এবং আসল প্রমাণ্য বাক্যটি টিকে আছে কি না তা অডিট করব—মনে রেখে যে আমাদের মূল বেঞ্চমার্ক আস্ত Abstract ব্যবহার করে, আর Chunk ডেমোটি মূল বেঞ্চমার্ক পরিবর্তন করেনি।"
+    },
+    {
+      "title": "ডাউনটাইম ছাড়াই নতুন Embedding Model-এ মাইগ্রেশন",
+      "tag": "RETRIEVAL · CODING / DESIGN · 40 MIN",
+      "prompt": "নতুন একটি Embedding Model আগের মতোই সমান Dimension দিচ্ছে—তাহলে কি পুরোনো ইনডেক্সটিই পুনর্ব্যবহার করা যাবে?",
+      "answer": "না, আকার (Shape) সমান হওয়া মানেই একই জ্যামিতিক স্পেস বা ভিত্তি নয়! তাই কর্পাস, টোকেনাইজার, ভোকাবুলারির ক্রম, IDF ও ওয়েটস, পুলিং, Normalization এবং মেট্রিক ভার্সন একত্রে পিন করব। ডাউনটাইম এড়াতে পাশাপাশি নতুন ভেক্টর ইনডেক্স তৈরি (Rebuild) করব, Shadow Queries ও মেট্রিক তুলনা চালিয়ে নিয়ন্ত্রিতভাবে ট্রাফিক সরাব (Cutover) এবং নিরাপদ Rollback প্রস্তুত রাখব। নতুন আসা ডকুমেন্টকে পুরোনো ট্রান্সফর্মে ইনক্রিমেন্টাল এনকোড করা এবং পুরো কর্পাস Refit করা যে আলাদা বিষয়, তা স্পষ্ট রাখব—যাতে পুরোনো ID Mapping বা মুছে ফেলা ডকুমেন্ট কখনোই লিক না করে।"
+    },
+    {
+      "title": "কোডিং রাউন্ড: Recall, MRR ও nDCG ইমপ্লিমেন্টেশন ও প্রান্তিক কেস",
+      "tag": "RETRIEVAL · CODING / DESIGN · 40 MIN",
+      "prompt": "Recall, MRR ও nDCG ইমপ্লিমেন্ট করার নিয়ম এবং এর সব প্রান্তিক কেস (Edge Cases) ব্যাখ্যা করুন।",
+      "answer": "প্রথমে অনন্য (Unique) র‍্যাঙ্ক করা আইডি, ধনাত্মক কাটঅফ k এবং অশূন্য প্রাসঙ্গিক সেট ভ্যালিডেট করব। এরপর হিসাব করব: Recall = খুঁজে পাওয়া হিট / মোট প্রাসঙ্গিক সংখ্যা; MRR = প্রথম প্রাসঙ্গিক হিটের র‍্যাঙ্কের ব্যস্তানুপাত (1/r); এবং বাইনারি DCG গেইন 1 / log2(rank + 1) যোগ করে min(k, total relevant) আকারের আদর্শ IDCG দিয়ে ভাগ করে nDCG। প্রান্তিক কেস হিসেবে ফাঁকা ফলাফলে 0 দেব, ডুপ্লিকেট আইডি প্রত্যাখ্যান করব এবং পজিটিভবিহীন কুয়েরির জন্য আলাদা প্রোটোকল রাখব। পাশাপাশি স্পষ্ট করব যে কুয়েরি-ভিত্তিক গড় (Macro) এবং মোট অনুপাত (Micro) এক নয়, আর অমূল্যায়িত ডকুমেন্টকে 0 ধরা নিছক একটি মূল্যায়ন রীতি—সত্যতার রায় নয়।"
+    },
+    {
+      "title": "বৈজ্ঞানিক Retrieval প্রজেক্টের পোর্টফোলিও রিভিউ",
+      "tag": "RETRIEVAL · CODING / DESIGN · 40 MIN",
+      "prompt": "আমাদের সোর্স কর্পাস ও ফলাফল দেখে পোর্টফোলিওতে ঠিক কী কী সক্ষমতা দাবি করা যাবে এবং কোন সীমাগুলো স্পষ্ট রাখতে হবে?",
+      "answer": "আমরা মূল SciFact ও BEIR প্রোভেন্যান্স, CC BY 4.0 দাবি ও অ্যানোটেশন লাইসেন্স এবং ODC-By 1.0 অ্যাবস্ট্রাক্ট ডেটাবেস নোটিশ, মূল ফাইলের SHA256 হ্যাশ এবং ডিরাইভড ইনডেক্স চুক্তি স্পষ্টভাবে উপস্থাপন করব। পরিষ্কার বলব যে এটি কর্পাস-ফিটেড TF-IDF ও LSA মডেল (কোনো নিউরাল মডেল নয়) এবং কুয়েরির মেটাডেটা লেবেল কোনো ফিচার হিসেবে ব্যবহৃত হয়নি। আরও জানাব যে BEIR টেস্ট সেটটি মূল গোপন SciFact লিডারবোর্ড নয়, এবং অভিন্ন Evidence ও অসম্পূর্ণ Qrels-এর সীমাবদ্ধতা উল্লেখ করব। সবশেষে মনে করিয়ে দেব যে প্রাসঙ্গিক Evidence মূল দাবিটিকে খণ্ডনও করতে পারে—তাই এটি কোনো চিকিৎসা পরামর্শ, তথ্যগত সত্যতার প্রমাণ বা বাংলা অর্থগত অ্যাসিস্ট্যান্টের দাবি নয়।"
+    }
+  ],
+  "book": {
+    "order": 25,
+    "part": "Book 4 · LLMs, RAG & Generative AI",
+    "prerequisites": [
+      "chapter_12",
+      "chapter_22"
+    ],
+    "purpose": "আগের অধ্যায়ে (Book 4 · Chapter 1: LLM Foundations) আমরা দেখেছি কীভাবে Language Model টেক্সটকে Token-এ ভেঙে Context বোঝার চেষ্টা করে। কিন্তু হাজারো বা লক্ষ লক্ষ Document-এর মধ্য থেকে ঠিক কোন অংশটুকু প্রশ্নের উত্তর দেওয়ার জন্য দরকারি, তা খুঁজে আনবে কে? এই অধ্যায়ে আমরা Linear Algebra ও Text Representation-এর ভিত্তি থেকে শুরু করে Lexical এবং Dense Retrieval তৈরি করা শিখব, এবং প্রতিটি ধাপে প্রকৃত Relevance মাপার End-to-end Evaluation পদ্ধতি আয়ত্ত করব।",
+    "outcomes": [
+      "Dot Product, Cosine Similarity ও Vector Normalization-এর জ্যামিতিক পার্থক্য বুঝে TF-IDF, LSA এবং Dual Encoder ভিত্তিক Retrieval Pipeline ব্যাখ্যা করতে পারা।",
+      "Exact Search ও Approximate Nearest Neighbor (ANN) Search-এর পার্থক্য নির্ণয় করা এবং হাতে-কলমে Recall@K, MRR ও nDCG হিসাব করতে পারা।",
+      "কোনো দরকারি Document কেন খুঁজে পাওয়া গেল না—সমস্যাটি কি Embedding Representation-এ, Corpus Coverage-এ, ANN Index-এ, নাকি Metadata Filter-এ—তা ধাপে ধাপে ব্যবচ্ছেদ (Failure Decomposition) করে সমাধান করতে পারা।"
+    ],
+    "recall": [
+      "Cosine Similarity দিয়ে Search করার আগে Query এবং Corpus—উভয় দিকের Vector Normalization ও Model Version হুবহু এক হওয়া জরুরি কেন?",
+      "Embedding Model একদম না বদলেও কীভাবে শুধু ANN Index-এর Recall বাড়ানো যায়? আর ANN Recall = 1.0 হলেই কি মূল কাজের Task Recall = 1.0 হওয়া নিশ্চিত?"
+    ],
+    "bridge": "পরবর্তী অধ্যায়ে (Book 4 · Chapter 3: RAG Systems) আমরা এই Retrieval ব্যবস্থাকে সরাসরি LLM Generation-এর সাথে যুক্ত করে পূর্ণাঙ্গ Grounded উত্তর তৈরি করা শিখব। সেখানে যাওয়ার আগে এই অধ্যায়ের Quiz, Coding Exercise এবং Interview প্রশ্নগুলো নিজে সমাধান করে নিজের প্রস্তুতি ঝালিয়ে নিন।",
+    "bookId": "llm",
+    "bookChapter": 2
+  }
+}

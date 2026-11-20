@@ -1,0 +1,484 @@
+{
+  "id": "chapter_43",
+  "number": 43,
+  "title": "Mechanistic Interpretability for Language Models",
+  "shortTitle": "Mechanistic Interpretability",
+  "displayTitle": "Mechanistic Interpretability\nReadouts, Interventions & Limits",
+  "subtitle": "Activation Patching, Jacobian Lens, J-Space এবং Valence Representation: ভেতরের সংকেত থেকে আমরা ঠিক কী মাপছি আর কতটুকুই বা দাবি করতে পারি।",
+  "description": "Bundled Alice decoder-এর frozen traces দিয়ে causal intervention ও local derivative মিলিয়ে দেখুন। Research result-এর scope আলাদা রাখুন।",
+  "lab": "llm",
+  "difficulty": "Advanced · interview track",
+  "lessons": [
+    {
+      "id": "ch43_readout_or_cause",
+      "title": "Mechanistic Evidence: Probe, Logit Lens ও Causal Intervention",
+      "subtitle": "ভেতরের Activation থেকে কোনো তথ্য Decode করা যাওয়া আর Model নিজে সেই তথ্য ব্যবহার করা—দুটি সম্পূর্ণ ভিন্ন প্রশ্ন।",
+      "duration": "24 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "চারটি ভিন্ন প্রশ্ন, চারটি ভিন্ন পদ্ধতি",
+          "body": "আগের অধ্যায়ে (Book 4 · Chapter 6: LLM Evaluation & Benchmark Design) আমরা দেখেছি কীভাবে বাইরে থেকে একটি Language Model-এর আউটপুট নিখুঁতভাবে মূল্যায়ন করতে হয়। কিন্তু ধরুন, Model সঠিক উত্তর দিল—এখন প্রশ্ন জাগল, ভেতরের কোন Layer বা কোন Representation আসলে এই সিদ্ধান্তটি তৈরি করছে? Mechanistic Interpretability-তে কাজ শুরু করার আগে আমাদের চারটি সম্পূর্ণ আলাদা প্রশ্নের পার্থক্য বুঝে নিতে হবে, কারণ প্রতিটি প্রশ্নের জন্য পদ্ধতি আলাদা:\n১. তথ্যটি কি ভেতরে উপস্থিত আছে? (Probe): কোনো নির্দিষ্ট Layer-এর Activation থেকে একটি বাইরের Classifier কি কাঙ্ক্ষিত Feature বা Label উদ্ধার করতে পারে?\n২. মাঝপথের অবস্থাকে শব্দের ভাষায় অনুবাদ করলে কী দেখা যায়? (Logit Lens): মাঝের কোনো Intermediate State-কে সরাসরি শেষের Output Vocabulary-র দিকে Project করলে কোন Token-গুলো এগিয়ে থাকে?\n৩. উপাদানটি সরিয়ে নিলে কি আচরণ ভেঙে পড়ে? (Ablation): নির্দিষ্ট কোনো Attention Head, MLP বা Direction নিষ্ক্রিয় করে দিলে আউটপুট কতটা বদলায়?\n৪. অন্য রান থেকে সংকেত এনে বসালে কি আচরণ ঘুরে যায়? (Activation Patching): একটি রানের নির্দিষ্ট Activation সরিয়ে সেখানে পরিকল্পিত আরেকটি Donor রানের Activation বসিয়ে দিলে আউটপুট কি Donor-এর আচরণের দিকে সরে আসে?\nলক্ষ্য করুন, প্রথম দুটি পদ্ধতি কেবল ভেতরের তথ্য পড়ার চেষ্টা করে (Readout), আর শেষের দুটি পদ্ধতি সরাসরি হস্তক্ষেপ (Causal Intervention) করে কার্যকারণ সম্পর্ক পরীক্ষা করে।"
+        },
+        {
+          "type": "text",
+          "title": "প্রথম কাজ: আচরণটিকে সুনির্দিষ্টভাবে বাঁধা",
+          "body": "এই চারটি পদ্ধতির যেকোনোটি প্রয়োগ করার আগে একটি বড় ফাঁদ এড়াতে হবে। ‘Model সত্য কথা বলে’ কিংবা ‘Model যুক্তি দিয়ে চিন্তা করে’—এমন ঢালাও দাবি সরাসরি পরীক্ষা করা যায় না। এর বদলে দাবিটিকে সুনির্দিষ্ট ও পরিমাপযোগ্য আচরণে নামিয়ে আনতে হয়; যেমন: ‘এই জোড়া Prompt-এ নির্দিষ্ট Position-এ পরের দুটি সম্ভাব্য Token-এর মধ্যে Logit Difference কতটুকু বাড়ে?’ তাই যেকোনো পরীক্ষার শুরুতেই স্পষ্টভাবে লিখে নিন: লক্ষ্য Token ID কোনগুলো, কোন Token Position ও কোন Layer-এ Intervention Hook বসবে, কীভাবে Corrupted বা তুলনামূলক ইনপুট তৈরি হবে, ডেটার স্বাধীন Sample Unit কী, এবং কোন Baseline-এর সাপেক্ষে Metric মাপা হবে। এছাড়া র‍্যান্ডম Sampling-এর পর জেনারেট হওয়া টেক্সট দেখার চেয়ে Sampling-এর ঠিক আগের কাঁচা Logit মাপা অনেক বেশি নির্ভরযোগ্য—এতে RNG বা র‍্যান্ডমনেসজনিত বাড়তি Confound পুরোপুরি দূর হয়ে যায়।"
+        },
+        {
+          "type": "math",
+          "title": "Token A ও Token B-এর Logit Gap সমীকরণ",
+          "body": "g(x)=z_A(x)-z_B(x)=\\log\\frac{p_A(x)}{p_B(x)}"
+        },
+        {
+          "type": "text",
+          "title": "Readout তুলনা করার সময় সতর্কতা",
+          "body": "ওপরের সমীকরণের Logit Gap g(x)-এর সবচেয়ে বড় সুবিধা হলো, এটি সরাসরি দুটি প্রার্থী Token (A এবং B)-এর Probability-র অনুপাতের লগারিদম (Log-Odds) প্রকাশ করে—তাই পুরো Softmax Denominator না গুনেই পরিষ্কার তুলনা করা যায়। কিন্তু মাঝের কোনো Layer-এর Intermediate Residual Stream-এ সরাসরি Unembedding চালিয়ে এই Gap মাপতে গেলে খুব সতর্ক থাকতে হবে। প্রথমত, ওই Layer-এর পরেও একাধিক Attention ও MLP ব্লকের Nonlinear রূপান্তর বাকি থাকে, যা সাধারণ Logit Lens সরাসরি ধরতে পারে না। দ্বিতীয়ত, বিভিন্ন আর্কিটেকচারে LayerNorm প্রয়োগের নিয়ম আলাদা হওয়ায় মাঝপথের Scaling বদলে যেতে পারে। একইভাবে, একটি Linear Probe উচ্চ নির্ভুলতায় কোনো Label শনাক্ত করলেই ধরে নেওয়া যায় না যে Model নিজে ওই সংকেত ব্যবহার করছে—হয়তো Probe-টি নিছক বাহ্যিক সহসম্পর্ক (Spurious Correlation) বা নির্দিষ্ট কোনো Token Identity-র শর্টকাট শিখে ফেলেছে। তাই সবসময় আলাদা ডেটা বিভাজন (Split), Control Probe এবং সতর্কভাবে মেলানো Matched Input ব্যবহার করা অপরিহার্য।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "বই বন্ধ করে চেষ্টা করুন",
+          "body": "ধরুন, আপনার এক সহকর্মী একটি মধ্যবর্তী Layer-এর ওপর 95% Accuracy-সম্পন্ন একটি Linear Probe দেখিয়ে দাবি করলেন—‘প্রমাণ হয়ে গেল যে Model তার সিদ্ধান্ত নিতে ঠিক এই Direction-টিই ব্যবহার করে!’ তাঁর দাবিটি যাচাই করতে আপনি কী ধরনের বাড়তি প্রমাণ চাইবেন?",
+          "solution": "উচ্চ Accuracy-র Linear Probe কেবল প্রমাণ করে যে তথ্যটি ওই Layer-এর Activation থেকে রৈখিকভাবে Decode করা সম্ভব (অর্থাৎ Representation-টি Decodable); কিন্তু Model নিজে আউটপুট তৈরিতে সেটি ব্যবহার করে কি না বা সেটি অপরিহার্য (Necessary) কি না, তা প্রমাণ করে না। এই দাবি প্রতিষ্ঠা করতে হলে Matched Prompt জোড়ার ওপর ওই নির্দিষ্ট Direction ও সমমানের Control Direction-এ সরাসরি হস্তক্ষেপ (যেমন Activation Patching বা Directional Ablation) চালিয়ে পূর্বনির্ধারিত Logit Gap বা আচরণের কার্যকারণগত পরিবর্তন (Causal Response) পরিমাপ করতে হবে।",
+          "reference": "https://arxiv.org/abs/2404.15255"
+        }
+      ]
+    },
+    {
+      "id": "ch43_patching_protocol",
+      "title": "Activation Patching: Matched Prompt, Control ও Recovery",
+      "subtitle": "যেকোনো Patch Effect তুলে ধরার পাশাপাশি Clean, Receiver এবং Self-Patch Control-এর ফলাফলও অবশ্যই উল্লেখ করুন।",
+      "duration": "32 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "পরীক্ষার প্রেক্ষাপট ও প্রম্পট জোড়া",
+          "body": "আগের পাঠে আমরা দেখেছি, ভেতরের কোনো উপাদান সত্যিই আউটপুট নিয়ন্ত্রণ করে কি না তা জানতে হলে Activation Patching দরকার। আসুন, Book 4 · Chapter 1 (LLM Foundations)-এ ব্যবহৃত আমাদের পরিচিত Alice byte decoder-এর সংরক্ষিত Trace দিয়ে প্রক্রিয়াটি হাতে-কলমে পরীক্ষা করি। ডেটাসেটের প্রথম দুটি স্বাভাবিক বাক্যাংশের (Natural Prefix) দৈর্ঘ্য হুবহু সমান; এদের প্রথমটিকে আমরা বলব Reference রান এবং দ্বিতীয়টিকে বলব Receiver রান, যেখানে আমরা বাইরে থেকে সংকেত প্রতিস্থাপন করব। তবে শুরুতেই একটি গুরুত্বপূর্ণ সীমাবদ্ধতা খেয়াল রাখুন: গল্পের দুটি আলাদা বাক্যাংশের মধ্যে শব্দ, গঠন ও অর্থগত বহু পার্থক্য একসাথে মিশে থাকে—তাই এমন জোড়া দিয়ে কখনোই একটি একক বিমূর্ত ধারণা (Single Concept) আলাদা করা যায় না। এখানে আমরা শুধু আমাদের Patching কোডের গাণিতিক প্রক্রিয়াটি যাচাই করছি; বাস্তব কার্যকারণ পরীক্ষায় অবশ্যই এমন Matched Minimal Pair ব্যবহার করতে হবে যেখানে কেবলমাত্র আপনার লক্ষ্য বৈশিষ্ট্যটিই বদলায়, বাকি সব অপরিবর্তিত থাকে।"
+        },
+        {
+          "type": "text",
+          "title": "Normalized Recovery কখন মাপবেন (আর কখন সতর্ক হবেন)",
+          "body": "ধরুন, Reference রানে আমাদের লক্ষ্য দুই Token-এর Logit Gap হলো g_ref, আর Receiver রানে সেই Gap সরে গিয়ে দাঁড়াল g_receiver-এ। এখন Reference রানের কোনো নির্দিষ্ট অংশ (যেমন FFN আউটপুট) এনে Receiver রানে বসালে নতুন Gap পাওয়া গেল g_patch। এই হস্তক্ষেপ মূল ব্যবধানের কত ভগ্নাংশ ফিরিয়ে আনতে পারল, তা আমরা নিচের Normalized Recovery অনুপাত R দিয়ে প্রকাশ করি। কিন্তু এখানে একটি সূক্ষ্ম গাণিতিক ফাঁদ আছে: যদি শুরুতেই g_ref এবং g_receiver-এর মান খুব কাছাকাছি হয়, তবে ভগ্নাংশের Denominator প্রায় শূন্যের কাছাকাছি চলে যাবে, ফলে সামান্য Noise-এই অনুপাতটি প্রচণ্ড অস্থির হয়ে উঠবে। আবার Patch করার পর পরিবর্তনটি উল্টো দিকে গেলে অনুপাতটির চিহ্নও উল্টে যেতে পারে। তাই কখনোই একা শুধু শতকরা Recovery উল্লেখ করবেন না—সবসময় কাঁচা Raw Gap-গুলোর মান পাশাপাশি তুলে ধরুন।"
+        },
+        {
+          "type": "math",
+          "title": "Normalized Recovery-র সমীকরণ",
+          "body": "R=\\frac{g_{\\mathrm{patch}}-g_{\\mathrm{receiver}}}{g_{\\mathrm{ref}}-g_{\\mathrm{receiver}}}"
+        },
+        {
+          "type": "code",
+          "title": "Frozen Trace-এ FFN Update অদলবদলের পরীক্ষা",
+          "body": "import json\nfrom math import isclose, sqrt\nfrom pathlib import Path\n\nasset = json.loads(Path(\"assets/datasets/alice/llm_lab.json\").read_text())\nparams = asset[\"weights\"]\nreference, receiver = asset[\"samples\"][:2]\nassert len(reference[\"ids\"]) == len(receiver[\"ids\"])\ntoken_a, token_b = reference[\"targets\"][-1], receiver[\"targets\"][-1]\n\ndef trace(sample):\n    return next(row[\"trace\"] for row in sample[\"references\"] if row[\"causal\"])\n\ndef gap(residual, update):\n    state = [old + change for old, change in zip(residual, update)]\n    mean = sum(state) / len(state)\n    scale = sqrt(sum((value - mean) ** 2 for value in state) / len(state) + 1e-5)\n    values = [((value - mean) / scale) * gain + bias for value, gain, bias in zip(\n        state, params[\"final_norm.weight\"], params[\"final_norm.bias\"]\n    )]\n    lex = params[\"head.weight\"]\n    return params[\"head.bias\"][token_a] - params[\"head.bias\"][token_b] + sum(\n        value * (left - right) for value, left, right in zip(values, lex[token_a], lex[token_b])\n    )\n\nref_trace, recv_trace = trace(reference), trace(receiver)\nreference_gap = gap(ref_trace[\"residual1\"][-1], ref_trace[\"ff_output\"][-1])\nreceiver_gap = gap(recv_trace[\"residual1\"][-1], recv_trace[\"ff_output\"][-1])\nfor row, value in ((ref_trace, reference_gap), (recv_trace, receiver_gap)):\n    saved = row[\"logits\"][-1]\n    assert isclose(value, saved[token_a] - saved[token_b], abs_tol=1e-10)\npatched = gap(recv_trace[\"residual1\"][-1], ref_trace[\"ff_output\"][-1])\nreverse = gap(ref_trace[\"residual1\"][-1], recv_trace[\"ff_output\"][-1])\nprint(reference_gap, receiver_gap, patched, reverse)"
+        },
+        {
+          "type": "text",
+          "title": "কোডের ফলাফল ও সতর্ক বিশ্লেষণ",
+          "body": "ওপরের কোডটি খেয়াল করলে দেখবেন, মূল হস্তক্ষেপ করার আগে আমরা একটি অত্যন্ত জরুরি Identity Control (বা Self-Patch যাচাই) চালিয়েছি: ref_trace ও recv_trace-এর নিজস্ব residual1 এবং নিজস্ব ff_output যোগ করে শেষ LayerNorm ও Unembedding Head চালালে সংরক্ষিত আসল Logit Gap (-2.4412 এবং -2.8033) দশমিকের পর 10 ঘর পর্যন্ত হুবহু মিলে যাচ্ছে। এটি নিশ্চিত করে যে আমাদের Hook এবং পরের Suffix গণনায় কোনো সূক্ষ্ম Bug নেই। এরপর Receiver-এর residual1-এর ওপর Reference-এর ff_output বসানোয় (patched) Gap-টি -2.8033 থেকে উঠে -2.5488-এ এসেছে—অর্থাৎ ব্যবধানটি কম ঋণাত্মক হয়ে Reference-এর দিকে প্রায় 70.3% এগিয়ে গেছে। আবার উল্টো দিকে Reference-এর ওপর Receiver-এর ff_output বসালে (reverse) মানটি নেমে হয়েছে -2.7813। লক্ষ্য করুন, দুই দিকের পরিবর্তনের পরিমাণ (+0.2545 বনাম -0.3401) কিন্তু সমান নয়, কারণ শেষের Nonlinear LayerNorm দুটি ভিন্ন Residual ভেক্টরের Mean ও বিস্তার অনুযায়ী আলাদাভাবে Scaling করছে। আরেকটি বিষয় মনে রাখবেন: এখানে আমরা পুরো FFN আউটপুট ভেক্টরটি একসাথে অদলবদল করেছি, কোনো একক Neuron বা আলাদা Feature নয়; তাই আমাদের কার্যকারণগত দাবিও কেবল এই নির্দিষ্ট প্রম্পট জোড়া এবং পুরো FFN সাইটটির মধ্যেই সীমাবদ্ধ থাকবে।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "বই বন্ধ করে চেষ্টা করুন",
+          "body": "ধরুন, একটি প্রম্পট জোড়ায় কোনো নির্দিষ্ট Attention Head বা FFN ব্লকে Patch করার পর আসল Logit Gap প্রায় পুরোটাই ফিরে এল (R ≈ 1)। এর থেকে কি দাবি করা যায় যে সব ধরনের প্রম্পটেই ওই উপাদানটি অপরিহার্য (Necessary)?",
+          "solution": "না, তা দাবি করা যায় না। প্রথমত, এক জোড়া উদাহরণে Patch সফল হওয়া মানে এই নয় যে অন্য প্রম্পটে বিকল্প বা সমান্তরাল কোনো পথ (Redundant Backup Circuit) নেই। দ্বিতীয়ত, Donor থেকে সংকেত বসানো কখনো কখনো পরের Layer-গুলোতে পরোক্ষ প্রভাব (Indirect Effect) তৈরি করে কিংবা স্বাভাবিকের চেয়ে বেশি শক্তিশালী সংকেত ঢুকিয়ে দেয়। সর্বজনীন Necessity দাবি করতে হলে বৈচিত্র্যময় Matched Control প্রম্পট, বিপরীতমুখী Reverse Patch, অন্যান্য সাইটের তুলনা এবং সরাসরি Ablation আলাদাভাবে পরীক্ষা করতে হবে।",
+          "reference": "https://arxiv.org/abs/2404.15255"
+        }
+      ]
+    },
+    {
+      "id": "ch43_jacobian_lens",
+      "title": "Jacobian Lens: স্থানীয় সংবেদনশীলতা থেকে Transported Readout",
+      "subtitle": "PyTorch Autograd-এর Vector-Jacobian Product (VJP) ধারণা কাজে লাগিয়ে মাঝপথের পরিবর্তনের প্রভাব আউটপুটে পরিমাপ করুন।",
+      "duration": "35 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন সাধারণ Logit Lens যথেষ্ট নয়: Jacobian Lens-এর মূল ধারণা",
+          "body": "প্রথম পাঠে আমরা দেখেছিলাম, সাধারণ Logit Lens মাঝের কোনো Layer-এর Residual অবস্থাকে সরাসরি শেষের Unembedding Matrix-এ পাঠিয়ে দেয়—যেন মাঝখানের বাকি Layer-গুলোর কোনো অস্তিত্বই নেই! কিন্তু বাস্তবে মাঝের একটি Layer থেকে আউটপুট পর্যন্ত পৌঁছাতে সংকেতটিকে আরও অনেকগুলো রূপান্তরের ভেতর দিয়ে যেতে হয়। Jacobian Lens (সংক্ষেপে J-lens) এই ঘাটতি মেটাতে একটি চমৎকার গাণিতিক কৌশল নেয়: গবেষণায় Model-এর পরবর্তী ধাপের গণনার গড় Jacobian ব্যবহার করে মাঝপথের Intermediate Residual Direction-কে শেষ Layer-এর Basis-এ পরিবহন (Transport) করে নেওয়া হয়, এবং তারপর Unembedding Vocabulary-র সাপেক্ষে তার Readout বের করা হয়। অবশ্য এই গড় Jacobian কোন রেফারেন্স ডেটার ওপর এবং কত দূরত্বের Horizon ধরে হিসাব করা হচ্ছে, সেটি এই পদ্ধতির সংজ্ঞারই অবিচ্ছেদ্য অংশ।"
+        },
+        {
+          "type": "math",
+          "title": "প্রথম ক্রমের রৈখিক আসন্নীকরণ (First-Order Map) ও VJP",
+          "body": "F(h+\\delta h)-F(h)\\approx J_F(h)\\,\\delta h,\\qquad \\nabla_h g=J_F(h)^{\\mathsf T}\\nabla_F g"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের হাতে-কলমে পরীক্ষা: LayerNorm Suffix-এর নিখুঁত Gradient",
+          "body": "ওপরের প্রথম সমীকরণটি বলছে, মাঝপথের অবস্থা h-এ ক্ষুদ্র পরিবর্তন δh আনলে পরবর্তী রূপান্তর F(h) কতটা বদলাবে তা স্থানীয়ভাবে Jacobian ম্যাট্রিক্স J_F(h) নির্ধারণ করে। আর দ্বিতীয় সমীকরণটি হলো আমাদের পরিচিত PyTorch Autograd-এর মূল ভিত্তি—আউটপুট মেট্রিক g-এর Gradient-কে পেছনের দিকে পাঠালে Vector-Jacobian Product (VJP)-এর মাধ্যমে সরাসরি ∇_h g পাওয়া যায়। আমাদের এই সংক্ষিপ্ত ল্যাবে আমরা মূল গবেষণাপত্রের পূর্ণাঙ্গ বহু-লেয়ার J-lens প্রাক্কলন করছি না; বরং ধারণাটির গাণিতিক শিকড় মজবুত করতে Alice decoder-এর 8-dimensional শেষ প্রাক-নরমালাইজড Residual অবস্থা থেকে Contrastive Logit Gap পর্যন্ত নিখুঁত স্থানীয় Gradient হাতে-কলমে বের করব। হিসাবটি পরিষ্কার রাখার জন্য ধরি, দুটি লক্ষ্য Token-এর Unembedding পার্থক্য ও LayerNorm Gain গুণ করে সম্মিলিত ওজন ভেক্টর হলো u, গড় বিয়োগ করার পর Centered Residual হলো r, গড় বর্গ বিচ্যুতি থেকে পাওয়া Population Variance Scale হলো s, এবং ধ্রুবক Bias পার্থক্য হলো m। তাহলে আমাদের স্কোর দাঁড়ায় g = m + (u · r) / s। এবার অন্তরীকরণ করার সময় তিনটি অংশ আলাদা করলেই নিচের সূত্রটি চলে আসে: ধ্রুবক m-এর Derivative শূন্য, লবের Centering অংশ থেকে আসে u_i - ū, আর Denominator-এর পরিবর্তনশীল স্কেল s থেকে আসে একটি অতিরিক্ত সংশোধনী পদ।"
+        },
+        {
+          "type": "math",
+          "title": "LayerNorm Suffix-এর আংশিক অন্তরজ (Gradient) সমীকরণ",
+          "body": "\\frac{\\partial g}{\\partial h_i}=\\frac{u_i-\\bar{u}-r_i\\,(u^{\\mathsf T}r)/(d s^2)}{s}"
+        },
+        {
+          "type": "code",
+          "title": "Analytic Gradient বনাম Central Finite Difference যাচাই",
+          "body": "import json\nfrom math import isclose, sqrt\nfrom pathlib import Path\n\nasset = json.loads(Path(\"assets/datasets/alice/llm_lab.json\").read_text())\nweights = asset[\"weights\"]\n# Before the output head, model computation ends with LayerNorm.\ntarget, contrast = (sample[\"targets\"][-1] for sample in asset[\"samples\"][:2])\nhead_gap = [left - right for left, right in zip(\n    weights[\"head.weight\"][target], weights[\"head.weight\"][contrast]\n)]\nscaled_weights = [coef * gain for coef, gain in zip(\n    head_gap, weights[\"final_norm.weight\"]\n)]\nbias_gap = weights[\"head.bias\"][target] - weights[\"head.bias\"][contrast]\nbias_gap += sum(coef * bias for coef, bias in zip(head_gap, weights[\"final_norm.bias\"]))\n\ndef centered(state):\n    mean = sum(state) / len(state)\n    residual = [value - mean for value in state]\n    scale = sqrt(sum(value ** 2 for value in residual) / len(state) + 1e-5)\n    return residual, scale\n\ndef score(state):\n    residual, scale = centered(state)\n    return bias_gap + sum(value * coef for value, coef in zip(residual, scaled_weights)) / scale\n\ndef gradient(state):\n    residual, scale = centered(state)\n    width = len(state)\n    mean_coef = sum(scaled_weights) / width\n    covariance = sum(value * coef for value, coef in zip(residual, scaled_weights)) / width\n    return [(coef - mean_coef - value * covariance / scale ** 2) / scale\n            for value, coef in zip(residual, scaled_weights)]\n\ngradients = []\nfor sample in asset[\"samples\"][:2]:\n    trace = next(item[\"trace\"] for item in sample[\"references\"] if item[\"causal\"])\n    state = trace[\"state\"][-1]\n    logits = trace[\"logits\"][-1]\n    assert isclose(score(state), logits[target] - logits[contrast], abs_tol=1e-10)\n    local_gradient = gradient(state)\n    epsilon = 1e-5\n    plus, minus = state.copy(), state.copy()\n    plus[0] += epsilon\n    minus[0] -= epsilon\n    finite_difference = (score(plus) - score(minus)) / (2 * epsilon)\n    assert isclose(local_gradient[0], finite_difference, abs_tol=1e-8)\n    gradients.append(local_gradient)\naverage = [sum(column) / len(gradients) for column in zip(*gradients)]\nprint(len(average), gradients[0][0], gradients[1][0], average[0])"
+        },
+        {
+          "type": "text",
+          "title": "আউটপুট বিশ্লেষণ ও বাস্তব সীমাবদ্ধতা",
+          "body": "কোডটি চালালে দেখা যায়, 8-dimensional ভেক্টরের প্রথম স্থানাঙ্কের (Coordinate 0) জন্য দুটি ভিন্ন Trace Sample-এ নিখুঁত Analytic Derivative এসেছে যথাক্রমে প্রায় 0.044655 এবং 0.018976, যা Central Finite Difference পরীক্ষার সঙ্গে 1e-8 সহনশীলতার ভেতর হুবহু মিলে গেছে; আর এই দুটি রানের Replay গড় দাঁড়িয়েছে প্রায় 0.031815। এখানে সবচেয়ে শিক্ষণীয় বিষয় হলো—Model-এর Weight স্থির থাকা সত্ত্বেও ইনপুট বদলানোর সাথে সাথে প্রথম Coordinate-এর সংবেদনশীলতা দ্বিগুণেরও বেশি বদলে গেছে! এর কারণ শেষের Nonlinear LayerNorm প্রতিটি ইনপুট ভেক্টরের নিজস্ব বিস্তারের ওপর নির্ভর করে স্থানীয় ঢাল বদলে দেয়। বাস্তব গবেষণার পূর্ণাঙ্গ J-lens তৈরি করতে বহু Prompt, ভিন্ন ভিন্ন Position এবং পরের সব Downstream রূপান্তর জুড়ে গড় নিতে হয়; আমাদের মাত্র দুটি Trace-এর এই গড় কেবল গাণিতিক প্রক্রিয়াটি বোঝার উদাহরণ, কোনো সাধারণীকৃত বৈজ্ঞানিক Readout বা পূর্ণ গবেষণার প্রতিরূপ নয়।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "বই বন্ধ করে চেষ্টা করুন",
+          "body": "ধরুন, আপনার Analytic Derivative কোডটি Finite Difference পরীক্ষার সঙ্গে দশমিকের পর 8 ঘর পর্যন্ত মিলে গেছে। এখন যদি Activation ভেক্টরে অনেক বড় মানের একটি Perturbation যোগ করা হয়, তবে কি এই রৈখিক সূত্রের (Linear Prediction) হিসাব অনুযায়ীই আউটপুট বদলাবে?",
+          "solution": "তা মোটেও নিশ্চিত নয়। Jacobian বা Gradient কেবল মূল বিন্দুর খুব কাছাকাছি ক্ষুদ্র পরিবর্তনের জন্য একটি স্থানীয় প্রথম ক্রমের আসন্নীকরণ (Local First-Order Approximation) দেয়। বড় Perturbation দিলে LayerNorm, Attention Softmax বা MLP Activation-এর অরৈখিকতার কারণে স্থানীয় Derivative নিজেই বদলে যায়। তাই কোডের Gradient নির্ভুল হওয়া আর বড় হস্তক্ষেপে রৈখিক ব্যাখ্যা কার্যকর থাকা—দুটি আলাদা বিষয়; এটি যাচাই করতে ভিন্ন ভিন্ন Perturbation Magnitude ও Held-Out Trace-এর ওপর আসল ত্রুটি পরিমাপ করতে হবে।",
+          "reference": "https://arxiv.org/abs/2607.15495"
+        }
+      ]
+    },
+    {
+      "id": "ch43_j_space_geometry",
+      "title": "J-Space: Sparse Nonnegative Readout ও Residual জ্যামিতি",
+      "subtitle": "সীমিত সংখ্যক Vocabulary Direction-এর অঋণাত্মক সমষ্টি দিয়ে একটি Activation ভেক্টরের কতটুকু ব্যাখ্যা করা যায়, তা পরিমাপ করুন।",
+      "duration": "30 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "J-Lens বনাম J-Space: দুটি ধারণার পার্থক্য",
+          "body": "আগের পাঠে দেখা J-lens আমাদের Vocabulary-র শব্দের বিপরীতে অর্থবহ Direction বা দিকনির্দেশক ভেক্টর এনে দেয়। কিন্তু একটি জটিল Activation ভেক্টর h-এর ভেতরে একসাথে কয়টি ধারণা লুকিয়ে আছে এবং তার কতটুকুই বা শব্দের দিক দিয়ে ব্যাখ্যা করা সম্ভব? গবেষণাপত্রে সংজ্ঞায়িত J-space ঠিক এই প্রশ্নটির জ্যামিতিক কাঠামো দেয়। J-space হলো এমন সব ভেক্টরের সেট, যেগুলোকে সীমিত k-সংখ্যক Vocabulary Direction (বা Atom)-এর Sparse Nonnegative Combination হিসেবে গঠন করা যায়। একটু কল্পনা করলেই বুঝবেন, যেহেতু এখানে গুণাঙ্কগুলো ঋণাত্মক হতে পারে না এবং একসাথে সর্বোচ্চ k-টি দিক বেছে নেওয়া যায়, তাই এটি জ্যামিতিকভাবে বিভিন্ন Atom উপসেট দিয়ে তৈরি অসংখ্য Cone-এর সংযোগ (Union of Cones)—কোনো সাধারণ উন্মুক্ত Linear Subspace নয়। আরেকটি বড় শিক্ষা হলো: কোনো একটি Activation থেকে স্পষ্ট একটি ধারণা Decode করা গেছে মানেই এই নয় যে ভেক্টরটির পুরোটাই ব্যাখ্যা হয়ে গেছে; অবশিষ্ট Residual অংশে তখনো বড় মাত্রার সংকেত রয়ে যেতে পারে।"
+        },
+        {
+          "type": "math",
+          "title": "Sparse Nonnegative আসন্নীকরণের গাণিতিক রূপ",
+          "body": "\\min_{a\\geq 0,\\;\\|a\\|_0\\leq k}\\|h-Da\\|_2^2"
+        },
+        {
+          "type": "text",
+          "title": "k = 1 ক্ষেত্রে নিখুঁত সমাধান বের করার নিয়ম",
+          "body": "ওপরের সমীকরণে D হলো আমাদের প্রার্থী Atom ভেক্টরগুলোর ম্যাট্রিক্স, আর a হলো অঋণাত্মক গুণাঙ্কের ভেক্টর যেখানে সর্বোচ্চ k-টি অশূন্য উপাদান থাকতে পারে। যখন k = 1, তখন নিখুঁত সমাধান বের করা অত্যন্ত সহজ ও স্বচ্ছ। প্রতিটি প্রার্থী Direction d-এর ওপর প্রথমে সাধারণ Unconstrained Projection গুণাঙ্ক (d · h) / (d · d) হিসাব করুন। যদি এই গুণাঙ্কটি ঋণাত্মক হয়—অর্থাৎ h ভেক্টরটি d-এর বিপরীতমুখী কোণে থাকে—তবে a >= 0 শর্তের কারণে বৈধ Coefficient হবে ঠিক 0। এভাবে প্রতিটি Atom-এর জন্য বৈধ অঋণাত্মক গুণাঙ্ক বসিয়ে অবশিষ্ট ভেক্টর h - a d-এর বর্গ ত্রুটি (Residual Squared Error) তুলনা করলেই k = 1-এর নিখুঁত Optimum পাওয়া যায়। তবে মনে রাখবেন, k > 1 হলে একেকটি Atom-এর ওপর আলাদা আলাদা স্বাধীন Projection নিলে সবসময় সঠিক উত্তর মেলে না—কারণ পরস্পর সম্পর্কযুক্ত (Correlated) একাধিক Atom একই সংকেতের অংশ ভাগাভাগি করে নিতে পারে।"
+        },
+        {
+          "type": "code",
+          "title": "ত্রিমাত্রিক জ্যামিতিক উদাহরণে k = 1 পরীক্ষা",
+          "body": "def dot(left, right):\n    return sum(a * b for a, b in zip(left, right))\n\nactivation = (2., -1., 1.)\natoms = [(1., 0., 0.), (0., 1., 0.), (1., 0., 1.)]\ncandidates = []\nfor index, atom in enumerate(atoms):\n    coefficient = max(0., dot(activation, atom) / dot(atom, atom))\n    residual = [value - coefficient * direction\n                for value, direction in zip(activation, atom)]\n    candidates.append((dot(residual, residual), index, coefficient))\nerror, index, coefficient = min(candidates)\nprint(index, coefficient, error)"
+        },
+        {
+          "type": "text",
+          "title": "ফলাফল বিশ্লেষণ ও বাস্তব সীমাবদ্ধতা",
+          "body": "কোডের ফলাফলটি হাতে মিলিয়ে দেখুন: আমাদের লক্ষ্য ভেক্টর activation = (2.0, -1.0, 1.0) এবং তিনটি প্রার্থী দিকের মধ্যে তৃতীয় Atom (অর্থাৎ index 2, ভেক্টর (1.0, 0.0, 1.0))-এর ওপর Projection Coefficient আসে (2 + 0 + 1) / (1 + 0 + 1) = 1.5। এই coefficient = 1.5 বসালে অবশিষ্ট Residual ভেক্টর দাঁড়ায় (0.5, -1.0, -0.5), যার বর্গ দৈর্ঘ্য বা Residual Squared Error হলো 0.25 + 1.0 + 0.25 = 1.5—যা অন্য দুটি Atom-এর ত্রুটির চেয়ে কম। এই ছোট ত্রিমাত্রিক উদাহরণটি কেবল জ্যামিতিক নিয়মটি স্পষ্ট করার জন্য দেওয়া হয়েছে, কোনো বাস্তব Transformer-এর পূর্ণাঙ্গ J-space পরিমাপ হিসেবে নয়। বাস্তব মডেলে কাজ করার সময় অবশ্যই Reconstruction Error, ব্যবহৃত Direction Vocabulary, Sparsity সীমা k এবং ভেক্টরের Scaling পাশাপাশি তুলনা করবেন। তাছাড়া Tokenization-এর সীমাবদ্ধতা, শব্দের মাধ্যমে প্রকাশ করা কঠিন এমন Nonverbalizable Feature এবং ঘনিষ্ঠভাবে জড়ানো Correlated Concept এই পদ্ধতির পরিধিকে সীমিত করে রাখে।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "বই বন্ধ করে চেষ্টা করুন",
+          "body": "যদি আমরা a >= 0 শর্তটি তুলে দিয়ে যেকোনো Negative Coefficient ব্যবহারের অনুমতি দিই, তবে কি সেটি একই J-space হিসেবে গণ্য হবে?",
+          "solution": "না, সেটি আর একই J-space থাকবে না। Nonnegative Constraint এবং সর্বোচ্চ k-টি সক্রিয় দিকের সীমা—এই দুটি মিলেই গবেষণাপত্রের কার্যকরী সংজ্ঞা (Operational Definition) তৈরি হয়েছে। গুণাঙ্কের চিহ্ন বা k-এর সীমা বদলে দিলে অনুমোদিত ভেক্টরের জ্যামিতিক সেট (Admissible Set) এবং Decode করা স্থানাঙ্ক—দুটোই আমূল বদলে যাবে।",
+          "reference": "https://arxiv.org/abs/2607.15495"
+        }
+      ]
+    },
+    {
+      "id": "ch43_valence_case",
+      "title": "Valence, Arousal ও Representation: গবেষণাপত্র পাঠের কেস স্টাডি",
+      "subtitle": "ইতিবাচক ও নেতিবাচক সংকেত (Valence) এবং তীব্রতা (Arousal) আলাদা রেখে খণ্ডনযোগ্য Hypothesis তৈরি করুন।",
+      "duration": "28 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "আসলে কোন দাবিটি পরীক্ষা করা হচ্ছে?",
+          "body": "সাম্প্রতিক অনেক Interpretability গবেষণাপত্রে দেখা যায়, Language Model-এর ভেতরে আবেগ বা অনুভূতি-সংক্রান্ত ভাষার জন্য সুনির্দিষ্ট রৈখিক দিক খুঁজে পাওয়া যায়। এমন পেপার পড়ার সময় প্রথম কাজ হলো দুটি স্বতন্ত্র মাত্রাকে আলাদা করা: একটি হলো Valence (দিকটি সুখকর বা ইতিবাচক নাকি অপ্রীতিকর বা নেতিবাচক), আর অন্যটি হলো Arousal (সংকেতটির সক্রিয়তা বা তীব্রতা কতটুকু)। যেমন, ‘quietly content’ এবং ‘excited’—দুটোরই Valence ইতিবাচক হতে পারে, কিন্তু তাদের Arousal বা তীব্রতা সম্পূর্ণ আলাদা! যদি দেখা যায় আবেগ-সংশ্লিষ্ট কোনো Activation Vector বদলে দিলে Model-এর আউটপুট আচরণও নিয়মমাফিক বদলে যাচ্ছে, তবে সেটি প্রমাণ করে যে Model তার গণনায় একটি কার্যকর অভ্যন্তরীণ Representation ব্যবহার করছে। কিন্তু খুব পরিষ্কারভাবে মনে রাখতে হবে—এটি কোনোভাবেই প্রমাণ করে না যে Model-এর ভেতরে মানুষের মতো ব্যক্তিগত অনুভূতি (Subjective Feeling) তৈরি হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "গবেষণাপত্রের পরীক্ষাপদ্ধতি ও ডেটা বিভাজন",
+          "body": "এ ধরনের গবেষণায় গবেষকরা নির্দিষ্ট Model ও বৈচিত্র্যময় Prompt-এর ওপর আবেগ-সংশ্লিষ্ট Activation Pattern আলাদা করেন এবং আউটপুট আচরণের সঙ্গে তার সহসম্পর্ক (Association) ও সরাসরি হস্তক্ষেপের (Intervention) প্রভাব পরীক্ষা করেন। আপনি নিজে এমন কোনো Readout পরীক্ষা সাজাতে গেলে Data Leakage এড়াতে কঠোর শৃঙ্খলা মানতে হবে: শুরুতেই মূল্যায়নের Label ও Rubric সুনির্দিষ্টভাবে লিখে নিন, এবং চূড়ান্ত পরীক্ষার জন্য সম্পূর্ণ আলাদা Prompt Template ও নতুন Topic আগে থেকেই Held-Out করে সরিয়ে রাখুন। যে Prompt-গুলো ব্যবহার করে আপনি ভেতরের Feature বা Direction খুঁজে বের করেছেন, কখনোই সেই একই প্রম্পটের ওপর চূড়ান্ত সাফল্যের পরীক্ষা চালাবেন না।"
+        },
+        {
+          "type": "math",
+          "title": "Mean-Difference Diagnostic Direction ও Projection Score",
+          "body": "d=\\mathbb{E}[h\\mid y=+]-\\mathbb{E}[h\\mid y=-],\\qquad s(h)=\\frac{h^{\\mathsf T}d}{\\|d\\|_2}"
+        },
+        {
+          "type": "text",
+          "title": "নিখুঁত Control ও Confound মোকাবিলার নকশা",
+          "body": "ওপরের সমীকরণে ইতিবাচক (y = +) এবং নেতিবাচক (y = -) উদাহরণের গড় Activation-এর পার্থক্য নিয়ে একটি সরল Diagnostic Direction d তৈরি করা হয়েছে, এবং যেকোনো অবস্থা h-এর ওপর একক ভেক্টর বরাবর তার Projection স্কোর s(h) মাপা হচ্ছে। কিন্তু ইতিবাচক ও নেতিবাচক উদাহরণের মধ্যে যদি অন্য কোনো লুকানো পার্থক্য থেকে যায়, তবে d ভেক্টরটি আসল Valence-এর বদলে সেই লুকানো শর্টকাটটিই শিখে ফেলবে! তাই ডেটা তৈরির সময় Positive ও Negative উভয় সেটেই তীব্রতা (Intensity/Arousal), আলোচনার Topic, ভাষার আনুষ্ঠানিকতা (Register), বাক্যের দৈর্ঘ্য এবং বাংলা ও ইংরেজির মতো ভাষার অনুপাত সমানভাবে ভারসাম্যপূর্ণ রাখুন। যে Sample দিয়ে Direction নির্ণয় করবেন এবং যে Held-Out সেটে স্কোর মাপবেন, তা যেন সম্পূর্ণ আলাদা হয়। পাশাপাশি হস্তক্ষেপ পরীক্ষার সময় সমতুল্য Topic-Control Direction এবং সমমানের (Norm-Matched) র‍্যান্ডম Direction-এর সঙ্গে তুলনা করুন; কোন Layer-এ কত শক্তির Perturbation দেওয়া হচ্ছে, নিরপেক্ষ Task-এ সাধারণ আচরণ অক্ষুণ্ণ থাকছে কি না এবং ফলাফলের Uncertainty কতটুকু—সবই স্বচ্ছভাবে লিপিবদ্ধ করুন।"
+        },
+        {
+          "type": "text",
+          "title": "Sparse Autoencoder (SAE) ও J-Lens-এর তুলনামূলক চিত্র",
+          "body": "এই বিশ্লেষণে Sparse Autoencoder (SAE) এবং J-lens-এর ভূমিকাও পরিষ্কারভাবে বোঝা দরকার। SAE মূলত Sparsity শর্তের সাহায্যে সরাসরি ভেতরের Activation পুনর্গঠন (Reconstruct) করতে শেখে; অন্যদিকে J-lens সরাসরি Model-এর নিজস্ব Token Vocabulary-র দিকগুলোর সঙ্গে যুক্ত থাকে। দুটি পদ্ধতিতেই মানুষের দেওয়া Feature Label আংশিক বা অসম্পূর্ণ হতে পারে। তাই মনে রাখবেন—একটি Feature-এর বোধগম্য নাম (Interpretable Label), ভালো Reconstruction Score এবং আচরণে সত্যিকারের Causal Contribution—এই তিনটি সম্পূর্ণ আলাদা প্রমাণ। কোনো Direction বদলে বড় বা ঝুঁকিপূর্ণ আচরণ পরিবর্তনের উচ্চাভিলাষী পরীক্ষা না করেও, সাধারণ ও নিরাপদ (Benign) Task-এর ওপর সূক্ষ্ম Selectivity পরীক্ষার মাধ্যমেই একটি Direction-এর কার্যকারিতা চমৎকারভাবে যাচাই করা যায়।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "বই বন্ধ করে চেষ্টা করুন",
+          "body": "ধরুন, আপনার তৈরি Valence Direction পরীক্ষা করতে গিয়ে দেখলেন—যেসব প্রম্পটে বিস্ময়সূচক চিহ্ন (‘!’) আছে, কেবল সেগুলোতেই High-Valence স্কোর সবচেয়ে বেশি আসছে! এই পরিস্থিতিতে আপনি কী করবেন?",
+          "solution": "এটি স্পষ্ট ইঙ্গিত দেয় যে আমাদের Direction-টি প্রকৃত Valence-এর বদলে বিরামচিহ্ন বা উচ্চ Arousal-এর শর্টকাট ধরে ফেলেছে। এটি যাচাই করতে বিরামচিহ্ন সমান রেখে (Punctuation-Matched) নিরপেক্ষ এবং কম ও বেশি Arousal-এর Control প্রম্পট নিন, এবং পুরো Prompt Family ধরে ডেটা Split করুন। বিরামচিহ্নের এই বিকল্প ব্যাখ্যা (Punctuation Shortcut) পরীক্ষায় খণ্ডন না হওয়া পর্যন্ত আবেগ-সংক্রান্ত কোনো সুনির্দিষ্ট দাবি স্থগিত রাখুন।",
+          "reference": "https://www.anthropic.com/research/emotion-concepts-function"
+        }
+      ]
+    },
+    {
+      "id": "ch43_interpretability_mock",
+      "title": "Interpretability Interview: Hypothesis থেকে খণ্ডনযোগ্য পরীক্ষা",
+      "subtitle": "চমকপ্রদ শিরোনাম নয়, বরং ডেটা ও Control দিয়ে পরীক্ষাযোগ্য একটি সংযত বৈজ্ঞানিক দাবি যুক্তিসহ প্রতিষ্ঠা করুন।",
+      "duration": "27 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ইন্টারভিউ পরিস্থিতি: প্রমাণ ও অনুমানকে আলাদা করা",
+          "body": "গবেষণা বা সিনিয়র ML Engineering ইন্টারভিউতে প্রায়ই এমন একটি বক্তব্য দেওয়া হয়: ‘দেখুন, একটি Intermediate Layer-এই চূড়ান্ত Answer Token খুব ভালোভাবে Decode হচ্ছে; তার মানে নিশ্চয়ই ওই Layer-এই Model-এর সব Reasoning শেষ হয়ে গেছে!’ একজন দক্ষ প্রকৌশলী হিসেবে আপনার প্রথম কাজ হলো ইন্টারভিউয়ারের এই কথা থেকে পর্যবেক্ষণলব্ধ প্রমাণ (Evidence) এবং বাড়তি অনুমান (Inference) দুটিকে স্পষ্টভাবে আলাদা করে দেখানো। উত্তরের প্রথম পাঁচ মিনিটের মধ্যেই সুনির্দিষ্টভাবে লিখে ফেলুন: আপনি ঠিক কোন Behavior Metric (যেমন Logit Gap) মাপবেন, মডেলের কোন নির্দিষ্ট Site-এ হাত দেবেন, এবং কোন Matched Prompt Pair দিয়ে পরীক্ষাটি শুরু করবেন।"
+        },
+        {
+          "type": "text",
+          "title": "ধাপে ধাপে পরীক্ষা সাজানোর সিঁড়ি",
+          "body": "এলোমেলোভাবে অনেক পরীক্ষার নাম না বলে একটি সুশৃঙ্খল সিঁড়ির মতো আপনার পরীক্ষাপদ্ধতি সাজান: প্রথমে সাধারণ Readout তুলনা করুন → এরপর Control Prompt-এর ওপর Probe চালিয়ে শর্টকাট যাচাই করুন → তারপর Matched জোড়ায় Ablation ও Activation Patching চালান → এরপর সমমানের (Norm-Matched) র‍্যান্ডম Control-সহ নির্দিষ্ট Direction Intervention পরীক্ষা করুন → সবশেষে অন্যান্য Task ও ভিন্ন Layer-এ Selectivity যাচাই করুন। প্রতিটি ধাপে একাধিক Seed ও ভিন্ন ভিন্ন Prompt Family ব্যবহার করে ফলাফলের স্থায়িত্ব দেখুন এবং যেখানে পরীক্ষা ব্যর্থ হয়েছে সেই উদাহরণগুলো কখনোই বাদ দেবেন না। এছাড়া মনে রাখবেন, Patch ডেটাসেটে পরিসংখ্যানগত বিশ্লেষণের সময় স্বাধীন একক (Independent Unit) একক বাক্য না হয়ে পুরো গল্প বা Prompt Family হতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "ইন্টারভিউয়ারের সম্ভাব্য পাল্টা প্রশ্ন ও উত্তর কৌশল",
+          "body": "ভালো ইন্টারভিউয়াররা আপনার নকশার গভীরতা মাপতে বেশ কিছু সূক্ষ্ম পাল্টা প্রশ্ন করতে পারেন। যেমন: অনুপাত মাপার সময় আপনি ঠিক কোন Denominator ব্যবহার করছেন? Patch Effect-এর চিহ্ন উল্টে গেলে (Sign Flip) তা কী নির্দেশ করে? যদি Clean এবং Receiver রানের প্রারম্ভিক ব্যবধান ঠিকমতো না মেলে বা খুব ছোট হয়, তখন Recovery Ratio-র বদলে কী দেখাবেন? কোনো Activation-এর ওপর জ্যামিতিক Fit ভালো হলেই কি পরের Layer-গুলোর Downstream Computation কীভাবে কাজ করে তা নিশ্চিত হওয়া যায়? আবার পরের কোনো Layer-এ একই বৈশিষ্ট্য আরও ভালো Decode হলে কি আগের Readout-এর কার্যকারণ প্রমাণ শক্তিশালী হলো, নাকি কেবল একই Input Token Identity-র সংকেত জোরালো হলো? প্রতিটি প্রশ্নে প্রমাণের সীমাটুকু স্বচ্ছভাবে ব্যাখ্যা করাই হলো সেরা কৌশল।"
+        },
+        {
+          "type": "text",
+          "title": "পরীক্ষার পূর্ণাঙ্গ ফলাফল লিপিবদ্ধ করার কাঠামো",
+          "body": "চূড়ান্ত ফলাফল উপস্থাপনের সময় একটি পরিষ্কার Result Card কাঠামো অনুসরণ করুন। সেখানে অবশ্যই উল্লেখ থাকবে: ব্যবহৃত Model ও তার Weight Hash, কোন Layer ও কোন Token Position-এ Hook বসানো হয়েছে, তুলনামূলক Contrast Target ID-গুলো কী কী, Clean, Receiver ও Self-Patch রানের কাঁচা Logit, কাঁচা ব্যবধান ও Normalized Effect উভয় মান, পরিমাপের Uncertainty এবং কোন কোন ক্ষেত্রে ফলাফলটি Generalize করেনি। এছাড়া এই সংকীর্ণ পরীক্ষালব্ধ ফলাফলের বাইরে গিয়ে যদি কেউ মডেলের Global Workspace, নিজস্ব Intent বা Consciousness দাবি করতে চায়, তবে তার আগে ঠিক কী ধরনের অতিরিক্ত ও কঠোরতর প্রমাণ প্রয়োজন হবে—সেটিও স্পষ্টভাবে লিখে দিন।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "বই বন্ধ করে চেষ্টা করুন",
+          "body": "ধরুন, কোনো মধ্যবর্তী Layer-এ একটি নির্দিষ্ট শব্দের J-lens Token Score অনেক বেশি পাওয়া গেল, কিন্তু Matched Intervention চালানোর পরও আউটপুটে কোনো প্রভাব দেখা গেল না। আপনার চূড়ান্ত প্রতিবেদনে বিষয়টি কীভাবে লিখবেন?",
+          "solution": "প্রতিবেদনে বস্তুনিষ্ঠভাবে লিখতে হবে যে, এই পরীক্ষাকাঠামোয় ভেতরের Representation থেকে শব্দটির স্পষ্ট Readout পাওয়া গেলেও Model Behavior-এ তার কোনো কার্যকারণগত ভূমিকা (Causal Role) প্রতিষ্ঠিত হয়নি। পাশাপাশি সঠিক Site বেছে নেওয়া হয়েছিল কি না, নমুনার সংখ্যা বা Statistical Power যথেষ্ট ছিল কি না এবং ব্যবহৃত Metric সংবেদনশীল কি না তা যাচাই করতে হবে—এবং এই Negative Result সম্পূর্ণ অক্ষত অবস্থায় প্রতিবেদনে রেখে দিতে হবে।",
+          "reference": "https://arxiv.org/abs/2607.15495"
+        }
+      ]
+    }
+  ],
+  "quizzes": [
+    {
+      "id": "ch43_q_1",
+      "question": "কোনো নির্দিষ্ট Layer-এর ওপর প্রশিক্ষিত একটি Linear Probe উচ্চ নির্ভুলতায় লক্ষ্য Label শনাক্ত করতে পারলে সবচেয়ে সংযত ও বৈজ্ঞানিকভাবে সঠিক দাবি কোনটি?",
+      "options": [
+        "ওই Layer-এর Representation থেকে তথ্যটি রৈখিকভাবে Decode করা সম্ভব (Decodable)",
+        "আউটপুট তৈরির এটিই একমাত্র সক্রিয় Computation Path",
+        "ওই Layer-এই Model-এর সব ধরনের Reasoning সম্পূর্ণ শেষ হয়ে গেছে",
+        "চিহ্নিত Feature-টি মডেলের সিদ্ধান্তের জন্য কার্যকারণগতভাবে অপরিহার্য (Causally Necessary)"
+      ],
+      "answer": 0,
+      "explanation": "একটি Probe কেবল ভেতরের Activation ও লক্ষ্য Label-এর মধ্যে পরিসংখ্যানগত সহসম্পর্ক বা Decodability দেখায়। Model নিজে আউটপুট তৈরিতে ওই সংকেত ব্যবহার করে কি না তা জানতে সরাসরি Causal Intervention (যেমন Activation Patching বা Ablation) প্রয়োজন।"
+    },
+    {
+      "id": "ch43_q_2",
+      "question": "Activation Patching পরীক্ষায় Receiver রানের নিজস্ব Activation আবার সেই Receiver-এই বসালে (Self-Patch) আসল Logit Gap হুবহু মিলে যাওয়া জরুরি কেন?",
+      "options": [
+        "এতে মডেলের কার্যকর Vocabulary আকার বড় হয়",
+        "এটি একাই উপাদানের কার্যকারণগত প্রমাণ (Causal Proof) নিশ্চিত করে",
+        "এটি আমাদের Intervention কোড ও Hook-এর নির্ভুলতা যাচাইয়ের Identity Control হিসেবে কাজ করে",
+        "এতে ইনপুটের Context Length ছোট হয়ে গণনা দ্রুত হয়"
+      ],
+      "answer": 2,
+      "explanation": "নিজের Activation নিজের জায়গায় বসানো একটি No-op হস্তক্ষেপ। এতেও যদি আউটপুট Logit Gap বদলে যায়, তবে বুঝতে হবে Hook বসানোর জায়গা, LayerNorm বা সংখ্যার হিসাবের ভেতরে কোনো Bug আছে—তাই মূল পরীক্ষার আগে এই Identity Control চালানো অপরিহার্য।"
+    },
+    {
+      "id": "ch43_q_3",
+      "question": "Clean (Reference) এবং Receiver রানের প্রারম্ভিক Logit Gap প্রায় সমান হয়ে গেলে Normalized Recovery অনুপাতটির আচরণ কেমন হয়?",
+      "options": [
+        "সম্পূর্ণ Bias-মুক্ত ও আদর্শ হয়ে ওঠে",
+        "প্রচণ্ড অস্থির ও সংবেদনশীল হয়ে পড়ে",
+        "সর্বদা নিখুঁত শূন্য মান দেয়",
+        "আসল Effect Size থেকে সম্পূর্ণ স্বাধীন হয়ে যায়"
+      ],
+      "answer": 1,
+      "explanation": "Normalized Recovery-র হরে থাকে (g_ref - g_receiver)। এই ব্যবধান শূন্যের কাছাকাছি চলে গেলে খুব সামান্য গাণিতিক Noise বা ক্ষুদ্র পরিবর্তনেই ভগ্নাংশটি বিশাল আকারে ওঠানামা করে। তাই এমন ক্ষেত্রে কাঁচা Raw Gap ও সরাসরি পার্থক্য (Raw Delta) উল্লেখ করা আবশ্যক।"
+    },
+    {
+      "id": "ch43_q_4",
+      "question": "একটি Activation ভেক্টরের সব Coordinate-এ যদি একই ধ্রুবক মান (Constant Offset) যোগ করা হয়, তবে LayerNorm-এর Centered Residual ভেক্টরের কী পরিবর্তন ঘটে?",
+      "options": [
+        "প্রতিটি উপাদানের মান দ্বিগুণ হয়ে যায়",
+        "প্রতিটি উপাদানের চিহ্ন উল্টে ঋণাত্মক হয়ে যায়",
+        "ভেক্টরটির Variance সর্বদা শূন্য হয়ে যায়",
+        "সম্পূর্ণ অপরিবর্তিত থাকে"
+      ],
+      "answer": 3,
+      "explanation": "সব Coordinate-এ একই ধ্রুবক c যোগ করলে ভেক্টরটির গড় (Mean)-ও ঠিক c পরিমাণেই বেড়ে যায়। ফলে প্রতিটি উপাদান থেকে নতুন গড় বিয়োগ করার পর সেই ধ্রুবকটি কাটাকাটি হয়ে Centered Residual ভেক্টরটি হুবহু আগের মতোই থেকে যায়।"
+    },
+    {
+      "id": "ch43_q_5",
+      "question": "কোনো বিন্দুতে নিখুঁত Analytic Derivative পাওয়া গেলে কি অনেক বড় Perturbation-এর ক্ষেত্রেও সেই রৈখিক হিসাব (Linear Approximation) মিলে যাওয়ার নিশ্চয়তা থাকে?",
+      "options": [
+        "না, কারণ এটি কেবল মূল বিন্দুর আশেপাশে কার্যকর একটি Local Linear Approximation",
+        "হ্যাঁ, যেকোনো মানের পরিবর্তনেই রৈখিক সূত্রটি নিখুঁত থাকে",
+        "কেবল MLP ব্লকে GELU Activation ব্যবহার করলেই তা নিশ্চিত থাকে",
+        "কেবল ইনপুট Context অনেক বড় হলে তা নিশ্চিত থাকে"
+      ],
+      "answer": 0,
+      "explanation": "মডেলের ভেতরে থাকা LayerNorm, Attention Softmax ও Nonlinear Activation-এর কারণে অবস্থান বদলালেই স্থানীয় ঢাল (Derivative) বদলে যায়। তাই ক্ষুদ্র পরিবর্তনের সূত্রটি বড় Perturbation-এ সরাসরি খাটে না।"
+    },
+    {
+      "id": "ch43_q_6",
+      "question": "Jacobian Lens (J-lens)-এর Transported Readout তৈরিতে মূলত কোন গাণিতিক উপাদানটি ব্যবহার করা হয়?",
+      "options": [
+        "ক্লাসিফিকেশনের Accuracy ও Confusion Matrix",
+        "জেনারেট হওয়া টেক্সটের ওপর Regular Expression ফিল্টার",
+        "পরবর্তী Layer-গুলোর গড় রূপান্তর ম্যাপ বা Downstream Average Jacobian",
+        "ভিজ্যুয়াল ফিচারের Spatial Image Pooling"
+      ],
+      "answer": 2,
+      "explanation": "সাধারণ Logit Lens-এর মতো মাঝপথের অবস্থাকে সরাসরি শেষ Layer-এ না পাঠিয়ে, J-lens পরবর্তী গণনার গড় Downstream Jacobian ব্যবহার করে মধ্যবর্তী Direction-কে শেষ Layer-এর Basis-এ পরিবহন (Transport) করে নেয়।"
+    },
+    {
+      "id": "ch43_q_7",
+      "question": "গবেষণাপত্রে সংজ্ঞায়িত J-space-এ কি যেকোনো অবাধ রৈখিক সমষ্টি (Unrestricted Linear Combination) অনুমোদিত?",
+      "options": [
+        "হ্যাঁ, ধনাত্মক ও ঋণাত্মক যেকোনো সংখ্যক গুণাঙ্ক নেওয়া যায়",
+        "না, এখানে কেবল সীমিত সংখ্যক দিকের অঋণাত্মক সমষ্টি (Sparse Nonnegative Combination) অনুমোদিত",
+        "না, এখানে কেবল ঋণাত্মক গুণাঙ্কযুক্ত ভেক্টর অনুমোদিত",
+        "না, এখানে কেবল পরস্পর লম্ব (Orthogonal) একক ভেক্টর অনুমোদিত"
+      ],
+      "answer": 1,
+      "explanation": "J-space-এর কার্যকরী সংজ্ঞায় দুটি স্পষ্ট জ্যামিতিক শর্ত রয়েছে: গুণাঙ্কগুলোকে অঋণাত্মক (Nonnegative) হতে হবে এবং সক্রিয় Atom-এর সংখ্যা (Support Size) সর্বোচ্চ k-এর মধ্যে সীমাবদ্ধ থাকতে হবে।"
+    },
+    {
+      "id": "ch43_q_8",
+      "question": "দুটি ভিন্ন Prompt-এর আবেগগত Valence (যেমন উভয়ই ইতিবাচক) একই হওয়া সত্ত্বেও তাদের মধ্যে কোন মাত্রাটি সম্পূর্ণ আলাদা হতে পারে?",
+      "options": [
+        "ভেতরের কোনো মাত্রাই আলাদা হতে পারে না",
+        "তীব্রতা বাড়লে দুটোই বাধ্যতামূলকভাবে Negative হয়ে যাবে",
+        "দুটি প্রম্পটের মোট Token সংখ্যা সবসময় সমান হতে বাধ্য",
+        "উত্তেজনা বা সক্রিয়তার তীব্রতা (Arousal)"
+      ],
+      "answer": 3,
+      "explanation": "সুখকর বা অপ্রীতিকর হওয়ার দিক (Valence) এবং অনুভূতির তীব্রতা বা সক্রিয়তা (Arousal)—দুটি স্বতন্ত্র মাত্রা; যেমন ‘quietly content’ ও ‘excited’ দুটোই ইতিবাচক হলেও তাদের Arousal ভিন্ন।"
+    },
+    {
+      "id": "ch43_q_9",
+      "question": "ধরুন, একটি ডেটাসেটে সব Positive উদাহরণ খাবারদাবার নিয়ে এবং সব Negative উদাহরণ আবহাওয়া নিয়ে লেখা। এখান থেকে Valence Direction বের করলে প্রধান Confound কোনটি হবে?",
+      "options": [
+        "আলোচনার বিষয়বস্তু (Topic)",
+        "ট্রেনিংয়ের Batch Size",
+        "মডেলের Output Embedding Dimension",
+        "কম্পিউটারের সাধারণ Floating-Point আসন্নীকরণ ত্রুটি"
+      ],
+      "answer": 0,
+      "explanation": "ইতিবাচক ও নেতিবাচক উদাহরণের গড় পার্থক্য নিলে সেই ভেক্টরটি আবেগের পাশাপাশি ‘খাবার বনাম আবহাওয়া’র Topic পার্থক্যও শিখে ফেলবে। তাই উভয় শ্রেণিতেই সমানভাবে মেলানো (Matched) Topic রেখে পরীক্ষা করা জরুরি।"
+    },
+    {
+      "id": "ch43_q_10",
+      "question": "ধরুন, একটি Sparse Autoencoder (SAE) থেকে পাওয়া কোনো Feature-এর মানব-পাঠ্য নাম (Human Label) খুবই স্পষ্ট ও বোধগম্য। শুধু এই তথ্য থেকে কোন বিষয়টি তখনো অজানা থেকে যায়?",
+      "options": [
+        "SAE প্রশিক্ষণে আদৌ কোনো Dataset ব্যবহৃত হয়েছিল কি না",
+        "নির্দিষ্ট কোনো আচরণে ওই Feature-টি কার্যকারণগতভাবে প্রাসঙ্গিক (Causally Relevant) কি না",
+        "SAE মডেলে কোনো Reconstruction Code থাকে কি না",
+        "মূল Language Model-টির কোনো Token Vocabulary আছে কি না"
+      ],
+      "answer": 1,
+      "explanation": "একটি Feature-এর নাম মানুষের কাছে অর্থবহ হওয়া, Activation ভালোভাবে Reconstruct করতে পারা এবং মডেলের সিদ্ধান্তে সেটির সত্যিকারের Causal ভূমিকা থাকা—এই তিনটি সম্পূর্ণ আলাদা প্রমাণ; কার্যকারণ জানতে আলাদা Intervention পরীক্ষা করতেই হবে।"
+    }
+  ],
+  "exercises": [
+    {
+      "id": "ch43_e_gap_recovery",
+      "title": "কাঁচা Logit Gap থেকে Normalized Recovery নির্ণয়",
+      "prompt": "ধরুন, Reference রানের Logit Gap হলো 4, Receiver রানের Logit Gap হলো 1, এবং হস্তক্ষেপের পর Patched রানের Logit Gap দাঁড়াল 3। এই মানগুলো থেকে Normalized Recovery অনুপাতটি বের করে print করুন।",
+      "starter": "reference, receiver, patched = 4, 1, 3\n# Print the fraction of the gap recovered.",
+      "solution": "reference, receiver, patched = 4, 1, 3\nprint((patched - receiver) / (reference - receiver))",
+      "expected": 0.6666666666666666,
+      "explanation": "Receiver মান 1 থেকে Patched মান 3-এ ওঠায় ব্যবধান ফিরে এসেছে (3 - 1) = 2 একক, আর Reference ও Receiver-এর মোট ব্যবধান ছিল (4 - 1) = 3 একক; ফলে Normalized Recovery হলো 2 / 3 ≈ 0.6666666666666666।"
+    },
+    {
+      "id": "ch43_e_derivative",
+      "title": "Frozen Suffix-এ Local Jacobian Coordinate নির্ণয়",
+      "prompt": "এই অধ্যায়ের (Book 4 · Chapter 7) Jacobian Lens পাঠের Frozen Suffix Replay কোডটি অনুসরণ করে assets/datasets/alice/llm_lab.json ফাইল থেকে প্রথম দুটি causal trace লোড করুন এবং আউটপুট Logit Gap-এর সাপেক্ষে প্রথম Gradient Coordinate (index 0)-এর গড় (Mean) মান বের করে print করুন।",
+      "starter": "import json\nfrom pathlib import Path\n# Load the Alice traces and compute the gradient of the output gap.",
+      "solution": "import json\nfrom math import isclose, sqrt\nfrom pathlib import Path\n\nasset = json.loads(Path(\"assets/datasets/alice/llm_lab.json\").read_text())\nweights = asset[\"weights\"]\n# Before the output head, model computation ends with LayerNorm.\ntarget, contrast = (sample[\"targets\"][-1] for sample in asset[\"samples\"][:2])\nhead_gap = [left - right for left, right in zip(\n    weights[\"head.weight\"][target], weights[\"head.weight\"][contrast]\n)]\nscaled_weights = [coef * gain for coef, gain in zip(\n    head_gap, weights[\"final_norm.weight\"]\n)]\nbias_gap = weights[\"head.bias\"][target] - weights[\"head.bias\"][contrast]\nbias_gap += sum(coef * bias for coef, bias in zip(head_gap, weights[\"final_norm.bias\"]))\n\ndef centered(state):\n    mean = sum(state) / len(state)\n    residual = [value - mean for value in state]\n    scale = sqrt(sum(value ** 2 for value in residual) / len(state) + 1e-5)\n    return residual, scale\n\ndef score(state):\n    residual, scale = centered(state)\n    return bias_gap + sum(value * coef for value, coef in zip(residual, scaled_weights)) / scale\n\ndef gradient(state):\n    residual, scale = centered(state)\n    width = len(state)\n    mean_coef = sum(scaled_weights) / width\n    covariance = sum(value * coef for value, coef in zip(residual, scaled_weights)) / width\n    return [(coef - mean_coef - value * covariance / scale ** 2) / scale\n            for value, coef in zip(residual, scaled_weights)]\n\ngradients = []\nfor sample in asset[\"samples\"][:2]:\n    trace = next(item[\"trace\"] for item in sample[\"references\"] if item[\"causal\"])\n    state = trace[\"state\"][-1]\n    logits = trace[\"logits\"][-1]\n    assert isclose(score(state), logits[target] - logits[contrast], abs_tol=1e-10)\n    local_gradient = gradient(state)\n    epsilon = 1e-5\n    plus, minus = state.copy(), state.copy()\n    plus[0] += epsilon\n    minus[0] -= epsilon\n    finite_difference = (score(plus) - score(minus)) / (2 * epsilon)\n    assert isclose(local_gradient[0], finite_difference, abs_tol=1e-8)\n    gradients.append(local_gradient)\naverage = [sum(column) / len(gradients) for column in zip(*gradients)]\nprint(average[0])",
+      "expected": 0.03181547290715471,
+      "explanation": "প্রথম দুটি সংরক্ষিত Trace-এ প্রথম স্থানাঙ্কের নিখুঁত স্থানীয় Derivative আসে যথাক্রমে প্রায় 0.0446552117 এবং 0.0189757341; এদের গাণিতিক গড় (Mean) হলো 0.03181547290715471।"
+    },
+    {
+      "id": "ch43_e_projection",
+      "title": "ধনাত্মক রশ্মিতে Nonnegative Projection নির্ণয়",
+      "prompt": "ধরুন, একটি Activation ভেক্টর h = (1, -2) এবং প্রার্থী দিক d = (0, 1)। এই ধনাত্মক রশ্মির (Positive Ray) ওপর Nonnegative Least-Squares গুণাঙ্ক (Scalar Coefficient) কত হবে তা হিসাব করে print করুন।",
+      "starter": "activation = (1, -2)\natom = (0, 1)\n# Project onto a positive ray.",
+      "solution": "activation = (1, -2)\natom = (0, 1)\ninner = sum(left * right for left, right in zip(activation, atom))\nprint(max(0, inner / sum(value * value for value in atom)))",
+      "expected": 0,
+      "explanation": "সাধারণ Unconstrained Projection গুণাঙ্ক আসে (1*0 + (-2)*1) / (0^2 + 1^2) = -2। কিন্তু J-space-এর অঋণাত্মক শর্ত (a >= 0) অনুযায়ী ধনাত্মক রশ্মির বিপরীত দিকের জন্য বৈধ গুণাঙ্ক হলো 0।"
+    },
+    {
+      "id": "ch43_e_residual",
+      "title": "J-Space উদাহরণে k = 1 এর সর্বনিম্ন Residual Error",
+      "prompt": "J-Space পাঠের জ্যামিতিক উদাহরণের activation = (2., -1., 1.) এবং তিনটি প্রার্থী দিক atoms = [(1., 0., 0.), (0., 1., 0.), (1., 0., 1.)] ব্যবহার করে k = 1 শর্তে সর্বনিম্ন Residual Squared Error বের করে print করুন।",
+      "starter": "activation = (2., -1., 1.)\natoms = [(1., 0., 0.), (0., 1., 0.), (1., 0., 1.)]\n# Compare projected residual errors.",
+      "solution": "def dot(left, right):\n    return sum(a * b for a, b in zip(left, right))\n\nactivation = (2., -1., 1.)\natoms = [(1., 0., 0.), (0., 1., 0.), (1., 0., 1.)]\ncandidates = []\nfor index, atom in enumerate(atoms):\n    coefficient = max(0., dot(activation, atom) / dot(atom, atom))\n    residual = [value - coefficient * direction\n                for value, direction in zip(activation, atom)]\n    candidates.append((dot(residual, residual), index, coefficient))\nerror, index, coefficient = min(candidates)\nprint(error)",
+      "expected": 1.5,
+      "explanation": "তৃতীয় Atom (1., 0., 1.)-এর ওপর অঋণাত্মক Projection গুণাঙ্ক আসে 1.5, যার ফলে অবশিষ্ট Residual ভেক্টর দাঁড়ায় (0.5, -1.0, -0.5) এবং সর্বনিম্ন বর্গ ত্রুটি (Minimum Squared Error) হয় 0.25 + 1.0 + 0.25 = 1.5।"
+    }
+  ],
+  "interviews": [
+    {
+      "title": "Probe-এর প্রমাণের সীমা",
+      "tag": "Mechanistic evidence",
+      "prompt": "ইন্টারভিউয়ার বললেন: ‘আমাদের Linear Probe দিয়ে Layer 8 থেকেই চূড়ান্ত Answer Token নির্ভুলভাবে Decode করা যাচ্ছে। তাহলে কি আমরা বলতে পারি যে Layer 8-এই মডেলের সব Reasoning সম্পন্ন হয়ে গেছে?’",
+      "answer": "না, তা বলা যায় না—এখানে আমরা কেবল Decodability দেখেছি, কার্যকারণ (Causality) নয়। হতে পারে Probe-টি ইনপুট প্রম্পটের কোনো Token Identity বা বাহ্যিক সহসম্পর্কের শর্টকাট ধরে ফেলেছে, কিংবা আসল সিদ্ধান্তের গণনা পরের Layer-গুলোতে ঘটছে। কোন Layer সত্যিই ওই আচরণের জন্য দায়ী তা জানতে শর্টকাট-মুক্ত Control Probe, বৈচিত্র্যময় Matched Prompt জোড়ায় Activation Patching এবং সরাসরি Ablation পরীক্ষা চালানো অপরিহার্য।",
+      "prerequisiteLessons": [
+        "ch43_readout_or_cause"
+      ]
+    },
+    {
+      "title": "Normalized Recovery অনুপাত অস্থির হয়ে গেলে করণীয়",
+      "tag": "Intervention",
+      "prompt": "Activation Patching করার সময় যদি দেখা যায় কিছু প্রম্পট জোড়ায় Receiver রানের Logit Gap আর Reference রানের Logit Gap প্রায় সমান, তবে আপনি ফলাফল কীভাবে উপস্থাপন করবেন?",
+      "answer": "এমন ক্ষেত্রে ভগ্নাংশের Denominator প্রায় শূন্য হয়ে যাওয়ায় Normalized Recovery অনুপাত প্রচণ্ড অস্থির ও বিভ্রান্তিকর হয়ে পড়ে। তাই অনুপাতের বদলে আমি সরাসরি কাঁচা Logit মান, Raw Delta (g_patch - g_receiver) এবং Self-Patch বা Identity Control-এর ফলাফল তুলে ধরব। পাশাপাশি ভবিষ্যতে পরীক্ষার আগেই এমন প্রম্পট জোড়া সংজ্ঞায়িত করব যেখানে সুস্পষ্ট প্রারম্ভিক আচরণগত পার্থক্য (Behavior Contrast) তৈরি হয়—তবে কখনোই নিজের সুবিধামতো অকার্যকর কেসগুলো বাদ দিয়ে Post Hoc দাবি করব না।",
+      "prerequisiteLessons": [
+        "ch43_patching_protocol"
+      ]
+    },
+    {
+      "title": "Jacobian Lens-এর গাণিতিক ভিত্তি ও সীমা",
+      "tag": "Jacobian",
+      "prompt": "মাঝপথের কোনো Intermediate Activation-এ ক্ষুদ্র পরিবর্তন আনলে তা চূড়ান্ত আউটপুট Readout-এ কীভাবে পৌঁছায়, এবং Jacobian Lens এটিকে কীভাবে কাজে লাগায়?",
+      "answer": "প্রথম ক্রমের আসন্নীকরণ অনুযায়ী, ক্ষুদ্র পরিবর্তন δh-এর প্রভাবে পরবর্তী রূপান্তরের পরিবর্তন হয় প্রায় J_F(h) δh। আউটপুট দিকের Cotangent ভেক্টরকে Autograd দিয়ে পেছনের দিকে পাঠালে Vector-Jacobian Product (VJP)-এর মাধ্যমে সরাসরি স্থানীয় সংবেদনশীলতা পাওয়া যায়। Jacobian Lens এই ধারণাটি ব্যবহার করে পরবর্তী Layer-গুলোর গড় Jacobian প্রাক্কলন করে এবং মাঝপথের Direction-কে চূড়ান্ত Layer-এর Vocabulary Basis-এ পরিবহন (Transport) করে। তবে মনে রাখতে হবে, কোন রেফারেন্স ইনপুট ও কত দূরত্বের Horizon নেওয়া হচ্ছে তার ওপর এই গড় লেন্স নির্ভর করে, এবং আমাদের অধ্যায়ের এক-ধাপের Frozen Suffix উদাহরণটি কেবল স্থানীয় Gradient বোঝার ভিত্তি—পূর্ণাঙ্গ বহু-লেয়ার J-lens Fit নয়।",
+      "prerequisiteLessons": [
+        "ch43_jacobian_lens"
+      ]
+    },
+    {
+      "title": "J-Space জ্যামিতিতে অঋণাত্মক শর্তের ভূমিকা",
+      "tag": "Linear algebra",
+      "prompt": "ধরুন, একটি Activation ভেক্টর আমাদের Sparse Dictionary-র কোনো একটি Atom-এর ঠিক বিপরীত দিকে মুখ করে আছে। J-space মডেলে আমরা কেন সেটিকে একটি ঋণাত্মক গুণাঙ্ক (Negative Coefficient) দিয়ে প্রকাশ করি না?",
+      "answer": "কারণ J-space-এর কার্যকরী সংজ্ঞাই (Operational Definition) হলো সর্বোচ্চ k-সংখ্যক Vocabulary দিকের অঋণাত্মক রৈখিক সমষ্টি (Sparse Nonnegative Combination), যাতে প্রতিটি সক্রিয় গুণাঙ্ক ওই ধারণার সরাসরি উপস্থিতির মাত্রা বোঝায়। ফলে k = 1 ক্ষেত্রে কোনো Atom-এর বিপরীতমুখী অভিক্ষেপ এলে তার বৈধ গুণাঙ্ক হয় 0। তালিকায় আরও Atom থাকলে অবশিষ্ট Residual অংশটি হয়তো অন্য কোনো ধনাত্মক দিক দিয়ে ব্যাখ্যা হবে, কিন্তু অবাধ ঋণাত্মক গুণাঙ্ক অনুমোদন করলে সেটি সাধারণ Linear Span-এর সম্পূর্ণ ভিন্ন একটি প্রশ্নে পরিণত হবে।",
+      "prerequisiteLessons": [
+        "ch43_j_space_geometry"
+      ]
+    },
+    {
+      "title": "Valence গবেষণায় বিরামচিহ্নের Confound মোকাবিলা",
+      "tag": "Research design",
+      "prompt": "আপনি একটি মডেল থেকে Positive Valence-এর একটি শক্তিশালী Readout পেলেন, কিন্তু পরে লক্ষ্য করলেন সব Positive প্রম্পটের শেষেই বিস্ময়সূচক চিহ্ন (‘!’) ছিল। আপনার দাবিটি যাচাই করতে কী কী পরীক্ষা চালাবেন?",
+      "answer": "প্রথমেই আমি বিরামচিহ্ন, আলোচনার Topic, ভাষা ও তীব্রতা (Arousal) সমানভাবে মেলানো নতুন Held-Out Prompt Family তৈরি করব—যেমন বিস্ময়চিহ্নসহ নিরপেক্ষ ও নেতিবাচক বাক্য এবং বিস্ময়চিহ্নহীন শান্ত ইতিবাচক বাক্য। Direction নির্ণয়ের ডেটা ও মূল্যায়নের ডেটা সম্পূর্ণ আলাদা রাখব, সমমানের (Norm-Matched) র‍্যান্ডম ও বিরামচিহ্ন-নিয়ন্ত্রক Control Direction-এর সঙ্গে তুলনা করব, এবং Patching-এর আগে ও পরে আচরণগত পার্থক্য মাপব। আর পুরো প্রক্রিয়ায় দাবিটি কেবল অভ্যন্তরীণ কার্যকর Representation-এর মধ্যেই সীমাবদ্ধ রাখব, কখনোই মডেলের নিজস্ব অনুভূতি বা Subjective State দাবি করব না।",
+      "prerequisiteLessons": [
+        "ch43_valence_case"
+      ]
+    }
+  ],
+  "book": {
+    "order": 30,
+    "part": "Book 4 · LLMs, RAG & Generative AI",
+    "prerequisites": [
+      "chapter_07",
+      "chapter_15",
+      "chapter_22",
+      "chapter_42"
+    ],
+    "purpose": "Language Model-এর ভেতরের Activation Trace বিশ্লেষণ করে সাধারণ Readout, স্থানীয় রৈখিক পরিবহন (Local Transport) এবং কার্যকারণগত হস্তক্ষেপ (Causal Intervention)—এই তিন ধরনের প্রমাণের পার্থক্য বোঝা ও নিখুঁতভাবে যাচাই করা।",
+    "outcomes": [
+      "Linear Probe, Logit Lens, Ablation এবং Activation Patching—কোন পদ্ধতি ঠিক কোন বৈজ্ঞানিক প্রশ্নের উত্তর দেয় এবং কোথায় তার সীমা, তা স্পষ্টভাবে ব্যাখ্যা করতে পারা।",
+      "Frozen Suffix Replay-এর ওপর LayerNorm-সহ নিখুঁত Analytic Gradient নির্ণয় করে Central Finite Difference-এর সঙ্গে মিলিয়ে দেখা।",
+      "J-Space-এর Sparse Nonnegative জ্যামিতি বিশ্লেষণ করা এবং Valence ও Arousal-সংক্রান্ত গবেষণায় সম্ভাব্য Confound শনাক্ত করে শক্তিশালী Control পরীক্ষা নকশা করা।"
+    ],
+    "recall": [
+      "Activation Patching-এ Normalized Recovery-র Denominator খুব ছোট হয়ে গেলে বা চিহ্ন উল্টে গেলে কোন কোন Metric অবশ্যই তুলে ধরতে হয়?",
+      "J-Space কেন সাধারণ Linear Subspace নয়, এবং এখানে Negative Coefficient কেন বাদ দেওয়া হয়?"
+    ],
+    "bridge": "পরের অধ্যায়ে (Book 4 · Chapter 8: Generative Models: VAE & GAN) আমরা Latent Space থেকে নতুন ডেটা তৈরির গাণিতিক ভিত্তি শিখব। Book 4 · Chapter 1 (LLM Foundations) এবং এই অধ্যায়ে শেখা ভেতরের Representation যাচাইয়ের নিয়মগুলো পরের Generative ও Multimodal অধ্যায়গুলোতেও (Book 4 · Chapter 9: Diffusion & Multimodal) সরাসরি কাজে লাগবে।",
+    "bookId": "llm",
+    "bookChapter": 7
+  }
+}

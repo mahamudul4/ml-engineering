@@ -1,0 +1,1654 @@
+{
+  "id": "chapter_28",
+  "number": 28,
+  "title": "Diffusion & Multimodal Systems",
+  "shortTitle": "Diffusion & Multimodal Systems",
+  "displayTitle": "Diffusion & Multimodal Systems\nDenoise. Align. Verify.",
+  "subtitle": "ধাপে ধাপে Denoising, দ্রুততর Sampling এবং Image-Text Alignment—গাণিতিক সমীকরণ, কোড ও বাস্তব পরীক্ষার আলোকে পূর্ণাঙ্গ ধারণা।",
+  "description": "Add noise. Trace the reverse process.\nSeparate alignment from understanding.",
+  "difficulty": "Generative AI · diffusion",
+  "lab": "diffusion",
+  "lessons": [
+    {
+      "id": "ch28_contract",
+      "title": "Diffusion ও Multimodal Learning: কাজের পরিধি ও Task Contract",
+      "subtitle": "নতুন ছবি তৈরি (Generation), দুটি মাধ্যমের মিল খোঁজা (Alignment) এবং ছবি দেখে যুক্তি দেওয়া (Grounded Reasoning)—তিনটি সম্পূর্ণ আলাদা সক্ষমতা",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন এই ধারণাটি দরকার?",
+          "body": "একটি পরিষ্কার ছবির ওপর যদি ধাপে ধাপে সামান্য করে Gaussian Noise মেশাতে থাকেন, তবে একসময় তার সমস্ত দৃশ্যমান গঠন হারিয়ে তা Pure Noise-এ পরিণত হবে। একটি Diffusion Model ঠিক এই প্রক্রিয়াটির উল্টো পথে হাঁটতে শেখে—Pure Noise থেকে যাত্রা শুরু করে ধাপে ধাপে Denoising করে অর্থবহ গঠন ফিরিয়ে আনে। এই পুরো ব্যবস্থাটি নির্ভুলভাবে কাজ করার জন্য তিনটি বিষয়ের হিসাব নিখুঁতভাবে মিলতে হয়: Network-টি ঠিক কোন রাশিটি Predict করছে, কোন Timestep-এ দাঁড়িয়ে করছে এবং আমাদের Sampler সেই Prediction ব্যবহার করে পরের ধাপে কীভাবে যাচ্ছে।\n\nঅধ্যায়ের দ্বিতীয় অংশে আমরা ইমেজ ও টেক্সটের যৌথ Representation শেখার Multimodal ধারণাগুলো দেখব। শুরুতেই মনে রাখা জরুরি যে দুটি ভিন্ন মাধ্যমের তথ্যের মধ্যে Similarity মাপা, নতুন ছবি Generate করা এবং ছবি দেখে প্রশ্নের যৌক্তিক উত্তর দেওয়া এক কাজ নয়—তাই প্রতিটি Task-এর জন্য আমাদের Model-এর গঠন ও Evaluation মাপকাঠি আলাদাভাবে নির্ধারণ করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "আগের অধ্যায়ের ভিত্তি থেকে যাত্রা",
+          "body": "আগের অধ্যায়ে (Book 4 · Chapter 8: Generative Models: VAE & GAN) আমরা VAE-এর এক ধাপের Latent Variable Inference এবং GAN-এর Adversarial প্রতিযোগিতার কৌশল দেখেছি। এবার আমরা এক লাফে ডেটা তৈরির বদলে বহু ধাপের Noisy Latent State পেরিয়ে ধীরে ধীরে Reverse Process চালাতে শিখব। আগের অধ্যায়গুলোতে শেখা Gaussian বীজগণিত, Likelihood, Reparameterization, Gradient প্রবাহ এবং কঠোর Evaluation শৃঙ্খলা এখানে সরাসরি কাজে লাগবে। তবে একটি মৌলিক প্রকৌশলগত পার্থক্য মাথায় রাখুন: Inference-এর সময় নতুন কোনো Sampler ব্যবহার করা মানেই কিন্তু নতুন কোনো Model Architecture তৈরি করা নয়।"
+        },
+        {
+          "type": "math",
+          "title": "Generation বনাম Alignment-এর গাণিতিক রূপ",
+          "body": "\\mathrm{generation}:p(x|c),\\qquad\\mathrm{alignment}:s(f(x),g(c))"
+        },
+        {
+          "type": "code",
+          "title": "Lab Artifact ও Parameter যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/digits/diffusion_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nassert lab[\"report\"][\"fit_count\"] == 1438 and lab[\"report\"][\"diagnostic_count\"] == 359\nassert lab[\"report\"][\"denoiser_parameters\"] == 13440\nassert lab[\"report\"][\"alignment_parameters\"] == 2424\nprint(lab[\"report\"][\"notes\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের বাস্তব Implementation কী করছে?",
+          "body": "উপরের কোডে আমরা যে `diffusion_lab.json` ফাইলটি লোড করেছি, সেখানে বাস্তব UCI Digits Dataset-এর ওপর Training দেওয়া একটি ছোট Class-conditioned Noise-prediction MLP (মোট 13,440টি Parameter) সংরক্ষিত আছে। Training-এর সময় Conditional এবং Null উভয় ধরনের Input একসাথে শেখানো হয়েছে, যেন Inference-এ Classifier-Free Guidance (CFG) চালানো যায় এবং সংরক্ষিত Weights ব্যবহার করে সরাসরি অফলাইনে DDIM Sampling করা যায়। পাশাপাশি 2,424টি Parameter-বিশিষ্ট আরেকটি ছোট Image Encoder ও Class-name Lookup শাখা কেবল পরিচিত দশটি Label-এর সাথে ছবির Alignment শেখে—মনে রাখবেন এটি কোনো মুক্ত ভাষার পূর্ণাঙ্গ Language Encoder বা Pretrained CLIP Model নয়।"
+        },
+        {
+          "type": "text",
+          "title": "এই অধ্যায়ের তিনটি হাতে-কলমে Lab",
+          "body": "এই অধ্যায়ে আমরা তিনটি আলাদা Lab-এ সরাসরি পরীক্ষা চালিয়ে দেখব: বাস্তব ইমেজে ধাপে ধাপে Forward Noise যোগ হওয়া, Prior Noise থেকে শুরু করে Reverse Sampling-এর মাধ্যমে নতুন সংখ্যা তৈরি হওয়া এবং বাস্তব ইমেজ ও Class-name-এর মধ্যকার Similarity যাচাই করা। এখানে প্রতিটি Output আসে আমাদের ঘোষিত গাণিতিক সমীকরণ অথবা ফাইলে সংরক্ষিত Frozen Weights থেকে—কোনো রিমোট ইমেজ API, ক্লাউড সার্ভিস বা লুকানো Pretrained Model-এর সাহায্য নেওয়া হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "ডেটা ও প্রমাণের সীমারেখা",
+          "body": "এখানে ব্যবহৃত 1438টি Fit এবং 359টি Diagnostic Row আমাদের আগের অধ্যায়গুলো থেকেই পর্যবেক্ষিত একটি Split। রিপোর্টে স্পষ্টভাবে নথিভুক্ত আছে যে একদম শেষ প্রান্তের (Terminal Step) Noise Prediction-এ আমাদের এই ছোট MLP Model-টি সাধারণ Identity Baseline-এর চেয়েও পিছিয়ে থাকে—বাস্তব ML প্রকৌশলে এমন সীমাবদ্ধতা লুকিয়ে না রেখে খোলাখুলি পরিমাপ করাই নিয়ম। একইভাবে Class-name মিলানোর Top-1 সাফল্য কেবল পরিচিত Class-গুলোর ওপর একটি Supervised Proxy মাত্র, অদেখা ভাষার ওপর Zero-shot দক্ষতা নয়। তাই পুরো অধ্যায় জুড়ে আমরা যা সরাসরি পরিমাপ করছি এবং যা ব্যাখ্যা করছি, এই দুটিকে সবসময় আলাদা রাখব।"
+        },
+        {
+          "type": "text",
+          "title": "Interview প্রস্তুতির লক্ষ্য",
+          "body": "এই অধ্যায়টি শেষ করার পর খাতা-কলমে `q(x_t | x_0)`, Gaussian Posterior, Epsilon Loss, DDIM Update এবং CFG-এর সমীকরণ নিজে প্রতিপাদন করার অভ্যাস করুন। পাশাপাশি Dual-encoder Model-এর Contrastive Loss, Batch-এর ভেতরের False Negative সমস্যা, Cross-Attention Fusion এবং প্রোডাকশনে Serving Cost-এর পেছনের শর্তগুলো স্পষ্টভাবে ব্যাখ্যা করতে শিখুন। এই ধারণাগুলোই পরের অধ্যায়ে—অর্থাৎ Book 4 · Chapter 10 (LLM/Generative AI Capstone)-এ—প্রমাণভিত্তিক ও নির্ভরযোগ্য সিস্টেম গড়তে সরাসরি কাজে লাগবে।"
+        }
+      ]
+    },
+    {
+      "id": "ch28_dataset",
+      "title": "বাস্তব ডেটা, Scaling ও Modality Provenance",
+      "subtitle": "Class-এর নাম বসিয়ে দেওয়া মানেই মানুষের লেখা বাস্তব Caption নয়",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ডেটার মূল উৎস ও প্রকৃতি",
+          "body": "যেকোনো Model Training শুরু করার আগে দেখে নেওয়া দরকার মূল ডেটার উৎস ও গঠন ঠিক কেমন। এখানে আমরা Alpaydin ও Kaynak-এর তৈরি UCI Optical Recognition of Handwritten Digits Dataset ব্যবহার করছি, যা `scikit-learn`-এ মূল বাইট, Hash এবং লাইসেন্স অপরিবর্তিত রেখে সংরক্ষিত আছে। প্রদর্শিত প্রতিটি ছবিকে তার মূল Source Row ID দিয়ে সরাসরি শনাক্ত করা সম্ভব। তবে খেয়াল রাখতে হবে, এগুলো 8 × 8 আকারের কম রেজোলিউশনের ব্লক-কাউন্ট ইমেজ—মূল উচ্চ-রেজোলিউশনের হাতের লেখার স্ক্যান নয়।"
+        },
+        {
+          "type": "text",
+          "title": "আগের Split-এর পুনর্ব্যবহার ও সীমাবদ্ধতা",
+          "body": "Book 3 · Chapter 4 (Vision CNNs)-এ `seed = 18` সহ 5-fold StratifiedGroupKFold ব্যবহার করে আমরা যে প্রথম Split তৈরি করেছিলাম, এখানেও সেই একই 1438টি Fit এবং 359টি Diagnostic Sample ব্যবহৃত হয়েছে। হুবহু একরকম Pixel Hash-এর ছবিগুলো আলাদা গ্রুপে রাখা হলেও মূল Dataset-এ লেখকের পরিচয় (Writer ID) নেই; তাই প্রায়-সদৃশ ছবি (Near Duplicates) না থাকা কিংবা লেখকভেদে পূর্ণ স্বাধীনতার প্রমাণ এখানে নেই। তাছাড়া এই Diagnostic Split যেহেতু আগের পরীক্ষাগুলোতে ইতিমধ্যেই দেখা হয়েছে, তাই এর ওপর আবার রান চালানোকে নতুন অন্ধ পরীক্ষা (Fresh Blind Evaluation) বলা যাবে না—চূড়ান্ত Generalization দাবি করতে হলে সম্পূর্ণ নতুন ডেটা প্রটোকল প্রয়োজন হবে।"
+        },
+        {
+          "type": "math",
+          "title": "Pixel মান থেকে [-1, 1] পরিসরে রূপান্তর",
+          "body": "x_0=2\\frac{\\mathrm{pixel}}{16}-1\\in[-1,1]^{64}"
+        },
+        {
+          "type": "code",
+          "title": "Dataset-এর Shape, Split ও পরিসর যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter28_local\", Path(\"assets/datasets/digits/diffusion_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\n\nraw, y, fit, diag = m.source()\nassert raw.shape == (1797, 8, 8) and len(set(fit) & set(diag)) == 0\nx = torch.tensor(raw.reshape(-1, 64), dtype=torch.float64) / 16\nassert x.min() == 0 and x.max() == 1\nprint(len(fit), len(diag), m.NAMES)\n"
+        },
+        {
+          "type": "text",
+          "title": "দুটি Model-এর দুটি ভিন্ন Input Scale",
+          "body": "উপরের সমীকরণ ও কোড মিলিয়ে দেখলে একটি অত্যন্ত গুরুত্বপূর্ণ প্রকৌশলগত সূক্ষ্মতা চোখে পড়বে: আমাদের দুটি Task-এ Input ছবির Scale কিন্তু এক নয়! Diffusion Model-এর পরিষ্কার Input `x₀` তৈরি করা হয় `2 * pixel / 16 - 1` সূত্র দিয়ে `[-1, 1]` পরিসরে, যাতে শূন্য Mean-বিশিষ্ট Gaussian Noise-এর সাথে এর প্রতিসাম্য বজায় থাকে। অন্যদিকে Alignment শাখার Image Encoder Input হিসেবে নেয় `pixel / 16`, যার পরিসর `[0, 1]`। এখানে ভাজক 16 হলো সেন্সরের জানা সর্বোচ্চ মান (Known Source Scale), ডেটা থেকে শেখা কোনো Fitted Normalizer নয়। আরেকটি বিষয় খেয়াল রাখবেন: Noise যোগ হওয়ার পর `x_t`-এর মান `[-1, 1]`-এর বাইরে চলে যেতে পারে (Unbounded)। পর্দায় ছবি দেখানোর জন্য Display Clipping করা আর Model-এর ভেতরে Training Input Clamp করা সম্পূর্ণ আলাদা কাজ—UI-তে দেখানোর জন্য মান সীমাবদ্ধ করলেও ভেতরের আসল Vector বদলে যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "Conditioning Label ও Supervision-এর হিসাব",
+          "body": "আমাদের Diffusion Model-টি Training-এর সময় মূল সংখ্যার Class ID (0 থেকে 9) দেখে ছবি তৈরি করতে শেখে এবং Conditioning Dropout-এর সময় বিশেষ Null ID (10) ব্যবহার করে। সুতরাং এটি একটি Supervised Class-conditioned Generative Model। আগের অধ্যায়ের (Book 4 · Chapter 8) Label-বিহীন Unconditional VAE বা GAN-এর তুলনায় এখানে বাড়তি Supervision তথ্য দেওয়া হয়েছে; তাই এই দুই ধরনের Model-এর ফলাফলকে কখনোই সমান শর্তের তুলনা বলে দাবি করা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "টেক্সট অংশের প্রকৃত উৎস (Text Provenance)",
+          "body": "কোডের Output-এ `zero` থেকে `nine` পর্যন্ত যে ইংরেজি শব্দগুলো দেখা যাচ্ছে, সেগুলো মানুষের লেখা কোনো স্বাভাবিক ছবির বর্ণনা (Natural Image Caption) নয়; বরং সংখ্যার Class Label থেকে আমরাই এই নামগুলো বসিয়ে দিয়েছি। এমনকি অ্যাপের বাংলা ব্যাখ্যামূলক লেখাগুলোও কোনো অনুবাদকৃত Caption Training Data নয়। ফলে আমাদের Alignment শাখাটি মূলত একটি শেখা Lookup Table হিসেবে কাজ করে—এটি শব্দের Tokenization, ভাষার গঠন (Language Composition) কিংবা অদেখা নতুন কোনো টেক্সট কুয়েরি বোঝার সক্ষমতা শেখেনি।"
+        },
+        {
+          "type": "text",
+          "title": "কোডিংয়ের ভালো অভ্যাস ও সতর্কতা",
+          "body": "যেকোনো Multimodal Data Pipeline লেখার সময় মূল ডেটার Hash, Row ID, Fit ও Diagnostic সেটের নিশ্ছিদ্র বিচ্ছিন্নতা (Disjointness), Input-এর Scale এবং Label Mapping শুরুতেই `assert` দিয়ে যাচাই করে নিন। নিয়ম করে বানানো কৃত্রিম টেক্সট বা Caption-কে কখনোই বাস্তবে পর্যবেক্ষিত Ground Truth হিসেবে চালিয়ে দেবেন না। সত্যিকারের ইমেজ-টেক্সট জোড়ার ওপর কাজ করতে হলে যথাযথ লাইসেন্স ও সম্মতিযুক্ত Caption Dataset নিয়ে ছবি ও Caption পরিবার অনুযায়ী নতুন Split ডিজাইন করতে হবে।"
+        }
+      ]
+    },
+    {
+      "id": "ch28_forward",
+      "title": "Forward Markov Chain ও Closed-form Corruption",
+      "subtitle": "মাঝের প্রতিটি Timestep ধাপে ধাপে না চালিয়েও সরাসরি যেকোনো ধাপের Noisy ছবি পাওয়া যায়",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Forward Process কীভাবে সংজ্ঞায়িত হয়?",
+          "body": "Diffusion Model-এর প্রথম ভিত্তি হলো Forward Markov Chain—যেখানে পরিষ্কার ছবি `x₀`-এর সাথে ধাপে ধাপে Noise মিশিয়ে সেটিকে ক্রমশ ঝাপসা করে ফেলা হয়। প্রতিটি ধাপে আগের সিগন্যালকে `√αₜ` গুণক দিয়ে সামান্য সংকুচিত করা হয় এবং এর সাথে `βₜ` Variance-বিশিষ্ট স্বাধীন Gaussian Noise যোগ করা হয়, যেখানে `αₜ = 1 - βₜ`। এই পুরো Forward Process-এ শেখার মতো কোনো Learned Parameter নেই; সবই পূর্বনির্ধারিত নিয়মে চলে। তবে একটি জায়গায় অনেকেই ভুল করেন: `βₜ` হলো যোগ করা Noise-এর Variance, আর এর Standard Deviation হলো `√βₜ`—সমীকরণ বা কোড লেখার সময় এই দুটিকে কখনোই গুলিয়ে ফেলবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "দুই ধাপ থেকে সাধারণ সূত্রের প্রতিপাদন",
+          "body": "এখন স্বাভাবিক প্রশ্ন জাগে: Training-এর সময় `t = 25` ধাপের একটি Noisy ছবি পেতে কি আমাদের 1 থেকে 25 পর্যন্ত প্রতিবার লুপ চালিয়ে আসতে হবে? সৌভাগ্যবশত তার কোনো প্রয়োজন নেই! প্রথম ধাপের সমীকরণ `x₁ = √α₁ x₀ + √β₁ ε₁` নিয়ে দ্বিতীয় ধাপের সমীকরণে বসিয়ে প্রসারিত করে দেখুন। যেহেতু দুটি স্বাধীন Gaussian রাশির যোগফলও একটি Gaussian রাশি এবং তাদের Variance সরাসরি যোগ হয়, তাই দুই ধাপ পর সম্মিলিত Variance দাঁড়ায় `α₂β₁ + β₂ = α₂(1 - α₁) + (1 - α₂) = 1 - α₁α₂`। একইভাবে গাণিতিক আরোহ পদ্ধতি (Induction) প্রয়োগ করলে যেকোনো `t` ধাপের জন্য আমরা সরাসরি Mean পাই `√ᾱₜ x₀` এবং Variance পাই `1 - ᾱₜ`, যেখানে `ᾱₜ` হলো প্রথম থেকে `t`-তম ধাপ পর্যন্ত সব `αₛ`-এর ধারাবাহিক গুণফল।"
+        },
+        {
+          "type": "math",
+          "title": "এক ধাপের Transition ও সরাসরি Marginal সমীকরণ",
+          "body": "\\begin{aligned}q(x_t|x_{t-1})&=\\mathcal N(\\sqrt{\\alpha_t}x_{t-1},\\beta_t I)\\\\q(x_t|x_0)&=\\mathcal N(\\sqrt{\\bar\\alpha_t}x_0,(1-\\bar\\alpha_t)I),\\quad\\bar\\alpha_t=\\prod_{s=1}^t\\alpha_s\\end{aligned}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Closed-form Corruption যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter28_local\", Path(\"assets/datasets/digits/diffusion_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\n\nbeta, bar = m.schedule()\nx = torch.ones(2, 64, dtype=torch.float64)\neps = torch.zeros_like(x)\nt = torch.tensor([0, 8])\nxt = m.corrupt(x, eps, t, bar)\nassert torch.equal(xt[0], x[0])\nassert torch.allclose(xt[1], bar[8].sqrt() * x[1])\nprint(bar[[0, 8, 24, 32]].tolist())\n"
+        },
+        {
+          "type": "text",
+          "title": "Training-এর সময় সরাসরি Sampling করার সুবিধা",
+          "body": "এই Closed-form সমীকরণটিই Diffusion Model-এর Training-কে বাস্তবে এত কার্যকর করে তোলে। Training-এর সময় আমরা র‍্যান্ডমভাবে একটি ধাপ `t` এবং একটি আদর্শ নরমাল Vector `ε ~ N(0, I)` বেছে নিই, আর এক হিসাব থেকেই `xₜ = √ᾱₜ x₀ + √(1 - ᾱₜ) ε` বের করে ফেলি—মাঝখানের `t - 1`টি অবস্থা তৈরি করার কোনো দরকারই পড়ে না। কোডে Batch আকারে হিসাব করার সময় স্কেলিং ফ্যাক্টরগুলোর Tensor Shape রাখা হয় `[B, 1]`, যাতে তা `[B, 64]` আকারের সব Pixel-এর ওপর নির্ভুলভাবে Broadcast হয়।"
+        },
+        {
+          "type": "diffusion_noise_lab",
+          "title": "ইন্টারঅ্যাকটিভ Forward Noise Lab ও এর শর্ত",
+          "body": "নিচের Slider-টি সরিয়ে বিভিন্ন Timestep-এ একটি বাস্তব সংখ্যার ছবি কীভাবে ক্রমশ Noise-এ ঢেকে যায় তা পরীক্ষা করে দেখুন। চাক্ষুষ তুলনা সহজ করার জন্য এখানে একটি নির্দিষ্ট Fixed `ε` ধরে বিভিন্ন `t`-এর অবস্থা দেখানো হয়েছে। এতে প্রতিটি একক `t`-এর Marginal Distribution নিখুঁতভাবে সঠিক থাকে, তবে মনে রাখবেন—সব ধাপে একই বাঁধা `ε` ব্যবহার করে Slider সরানো আর প্রতি ধাপে নতুন স্বাধীন Noise যোগ হওয়া প্রকৃত Markov Trajectory এক জিনিস নয়। এছাড়া এই Slider-টি কেবল সামনের দিকের Corruption দেখায়; Prior থেকে শুরু করে Model-এর আসল Reverse Sampling পরের Lab-এ দেখানো হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "শুরু ও শেষ প্রান্তের আচরণ (Boundary Behavior)",
+          "body": "সমীকরণের দুই প্রান্তের মান একবার মিলিয়ে নেওয়া যাক। একদম শুরুতে অর্থাৎ `t = 0`-তে `ᾱ₀ = 1`, ফলে `ε`-এর সহগ শূন্য হয়ে যায় এবং `xₜ = x₀` অক্ষত থাকে। আমাদের Denoiser Network-টি কেবল `t = 1` থেকে `32` ধাপের জন্য Training পাওয়া, তাই কোডে ভুল করে `t = 0` পাঠালে তা সাথে সাথে প্রত্যাখ্যান (Reject) করা হয়। অন্যদিকে শেষ ধাপ `t = T`-তে `ᾱ_T` খুব ছোট হয়ে আসায় `x_T` দেখতে প্রায় Pure Gaussian Prior-এর মতো হয়ে যায়—যদিও সসীম (Finite) `T`-এর জন্য তা গাণিতিকভাবে শতভাগ স্বাধীন হয় না, বরং খুব ভালো একটি Approximation হিসেবে কাজ করে।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে ব্যাখ্যা করবেন",
+          "body": "Interview-তে `q(xₜ | x₀)`-এর সমীকরণটি ধাপে ধাপে প্রতিপাদন করে দেখাতে প্রস্তুত থাকুন এবং স্পষ্টভাবে বলুন কেন Training-এর প্রতিটি Sample-এ নতুন স্বাধীন `ε` ড্র করা অপরিহার্য। পাশাপাশি তিনটি সাধারণ Implementation বাগ আলাদাভাবে চিহ্নিত করতে শিখুন: সব Timestep-এ একই বাঁধা `ε` দিয়ে Training চালানো, Batch-এ ভুল Broadcasting হওয়া এবং সমীকরণে Variance (`1 - ᾱₜ`) ও Standard Deviation (`√(1 - ᾱₜ)`) গুলিয়ে ফেলা। সবশেষে মনে করিয়ে দেবেন যে পর্দায় ছবি দেখানোর জন্য Pixel Clip করলেও ভেতরের গাণিতিক Sample Distribution যেন কখনোই মাঝপথে কেটে ফেলা না হয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch28_schedule",
+      "title": "Noise Schedule, Indexing ও Signal-to-Noise Ratio (SNR)",
+      "subtitle": "ভিন্ন Schedule-এ একই ভগ্নাংশের Timestep মানেই একই পরিমাণ ঝাপসা হওয়া নয়",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Noise Schedule কীভাবে নির্ধারণ করা হয়?",
+          "body": "প্রতি ধাপে সিগন্যাল কত দ্রুত ক্ষয় হবে তা নিয়ন্ত্রণ করে Noise Schedule—যেমন সরলরৈখিক Linear `β` অথবা মসৃণ Cosine `ᾱ` Schedule। আমাদের এই অধ্যায়ের Model-এ মোট ধাপ `T = 32`, Cosine Offset `s = 0.008` এবং সর্বোচ্চ `β` সীমা (Cap) `0.999` ব্যবহার করা হয়েছে। এখানে হিসাবের ক্রমটি অত্যন্ত গুরুত্বপূর্ণ: প্রথমে Cosine Function থেকে `f(t) / f(0)` নির্ণয় করা হয়, এরপর অনুপাত থেকে পাওয়া প্রতি ধাপের `βₜ`-কে `0.999`-এ সীমাবদ্ধ (Cap) করা হয়, এবং সবশেষে সেই সীমাবদ্ধ `βₜ` থেকে ক্রমিক গুণফল (Cumulative Product) নিয়ে প্রকৃত `ᾱₜ` পুনরায় হিসাব করা হয়। `βₜ` সীমাবদ্ধ করার পরও যদি কেউ কাঁচা Cosine মানটিকে চূড়ান্ত `ᾱₜ` হিসেবে ব্যবহার করে, তবে পুরো সমীকরণের সামঞ্জস্য নষ্ট হয়ে যাবে।"
+        },
+        {
+          "type": "text",
+          "title": "অ্যারের Index মেলানোর কঠোর চুক্তি (Index Contract)",
+          "body": "Diffusion কোড লেখার সময় সবচেয়ে বিপজ্জনক অথচ নীরব বাগগুলো ঘটে অ্যারের Index মেলানোয়! আমাদের Python ও Dart উভয় কোডেই `ᾱ` (`bar`) তালিকার দৈর্ঘ্য `33`—যার `index 0` হলো পরিষ্কার ছবির সীমানা (`bar[0] = 1`), আর `index 1` থেকে `32` হলো প্রতিটি ধাপের মান। অন্যদিকে `β` (`beta`) তালিকার দৈর্ঘ্য `32`, ফলে গাণিতিক সমীকরণের `βₜ` পেতে কোডে লিখতে হয় `beta[t - 1]`। আমাদের Denoiser Network কেবল `t = 1` থেকে `32` Input নেয়; Sampling-এর একদম শেষ গন্তব্যটি পরিষ্কার সীমানা `0` হলেও `t = 0` দিয়ে কখনোই Network কল করা হয় না। মাত্র এক ঘরের Off-by-one ভুল হলেই Reverse Variance এবং চূড়ান্ত ছবি—দুটোই পুরোপুরি বিগড়ে যেতে পারে।"
+        },
+        {
+          "type": "math",
+          "title": "Signal-to-Noise Ratio ও Cosine Schedule-এর সূত্র",
+          "body": "\\mathrm{SNR}(t)=\\frac{\\bar\\alpha_t}{1-\\bar\\alpha_t},\\qquad f(t)=\\cos^2\\!\\left(\\frac{t/T+s}{1+s}\\frac\\pi2\\right)"
+        },
+        {
+          "type": "code",
+          "title": "Schedule-এর একমুখিতা ও প্রান্তিক মান যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter28_local\", Path(\"assets/datasets/digits/diffusion_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\n\nbeta, bar = m.schedule()\nassert len(beta) == 32 and len(bar) == 33 and bar[0] == 1\nassert (beta > 0).all() and (beta < 1).all() and (bar[1:] < bar[:-1]).all()\nassert torch.allclose(bar[1:], (1 - beta).cumprod(0))\nprint(\"Terminal alpha bar:\", bar[-1].item())\n"
+        },
+        {
+          "type": "text",
+          "title": "Signal-to-Noise Ratio (SNR)-এর সহজ অন্তর্দৃষ্টি",
+          "body": "ভিন্ন ভিন্ন Schedule বা ভিন্ন দৈর্ঘ্যের `T`-এর মধ্যে কোন ধাপটি আসলে কতটা কঠিন, তা তুলনা করার প্রকৃত মাপকাঠি হলো Signal-to-Noise Ratio (SNR)। যেহেতু সিগন্যালের Variance পরিবর্তিত হয় `ᾱₜ` অনুপাতে এবং Noise-এর Variance হয় `1 - ᾱₜ` অনুপাতে, তাই তাদের অনুপাতই বলে দেয় ছবিতে আসল তথ্যের তুলনায় Noise কতটা প্রবল। শুরুর দিকের ছোট `t`-তে SNR অনেক বেশি থাকে, আর শেষের দিকের বড় `t`-তে SNR কমে শূন্যের কাছাকাছি নেমে আসে। পরিষ্কার সীমানা `t = 0`-তে হর শূন্য হওয়ায় SNR অসীম (Infinite)—তাই আমাদের UI-তে কোনো বানানো সসীম সংখ্যা না দেখিয়ে স্পষ্টভাবে Infinite দেখানো হয়। খেয়াল রাখবেন, যখন `ᾱₜ` অতি ক্ষুদ্র হয়ে যায়, তখন সামান্য একটু Noise Prediction Error উল্টো হিসাবের সময় বহুগুণ বিবর্ধিত (Amplify) হয়ে পরিষ্কার ছবির অনুমানকে অস্থিতিশীল করে তুলতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "শেষ ধাপের Prior এবং Training-Inference সামঞ্জস্য",
+          "body": "চূড়ান্ত ধাপে `ᾱ_T` যথেষ্ট ছোট হলেই কেবল `q(x_T | x₀)` আদর্শ নরমাল Distribution `N(0, I)`-এর খুব কাছাকাছি পৌঁছায়। কিন্তু এমন কোনো Schedule নেওয়া হলে যেখানে শেষ ধাপেও মূল সিগন্যালের বড় অংশ অবশিষ্ট থাকে, সেখানে Inference-এর শুরুতে Pure `N(0, I)` থেকে যাত্রা করলে মারাত্মক Prior Mismatch তৈরি হয়। মনে রাখবেন, মোট ধাপ `T` এবং Schedule-এর বক্ররেখা হলো Training ও Inference-এর মধ্যকার একটি সুনির্দিষ্ট চুক্তি—Training শেষে ইচ্ছেমতো অন্য কোনো Noise Level তালিকা বসিয়ে দিলে Model-টি আর সঠিক Scale চিনতে পারবে না।"
+        },
+        {
+          "type": "text",
+          "title": "Hyperparameter নির্বাচন ও স্বচ্ছ মূল্যায়ন",
+          "body": "কোনো প্রজেক্টে Noise Schedule পরিবর্তন করা আসলে একটি নতুন Hyperparameter নির্বাচন। আমাদের বর্তমান Diagnostic Split যেহেতু আগেই পর্যবেক্ষিত, তাই একই সেটের ওপর বারবার Schedule বদলে পরীক্ষা চালালে তা নতুন অন্ধ পরীক্ষার প্রমাণ হিসেবে গণ্য হবে না। আমাদের সংরক্ষিত রানটি সম্পূর্ণ Reproducible এবং এখানে বেছে বেছে সুন্দর দেখানো Sample বা সুবিধাজনক Seed প্রতিস্থাপন করা হয়নি; এমনকি উপযুক্ত শক্তিশালী Baseline ছাড়া কোনো নির্দিষ্ট Schedule-কে শ্রেষ্ঠ বলেও দাবি করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "কোডিং অনুশীলনের চেকলিস্ট",
+          "body": "নিজে যেকোনো Schedule লেখার সময় শুরুতেই কয়েকটি শর্ত `assert` দিয়ে পরীক্ষা করুন: `ᾱₜ` যেন কঠোরভাবে ক্রমহ্রাসমান (Strictly Monotonic Decreasing) হয়, শুরুর মান যেন ঠিক `1` হয়, `(1 - β)`-এর ক্রমিক গুণফলের সাথে যেন হুবহু মেলে এবং সব মান যেন সসীম থাকে। `βₜ = 1` হয়ে গেলে শূন্য দিয়ে ভাগের সমস্যা তৈরি হয়, তাই স্পষ্ট Cap Policy নথিবদ্ধ রাখুন। এছাড়া `t = 0`-তে SNR হিসাবের প্রান্তিক শর্ত আলাদাভাবে সামলান এবং Pixel Clipping আর Schedule Clipping-কে কখনোই এক Policy ভাববেন না।"
+        }
+      ]
+    },
+    {
+      "id": "ch28_posterior",
+      "title": "Gaussian Posterior q(xₜ₋₁ | xₜ, x₀) প্রতিপাদন",
+      "subtitle": "Training-এর এই Posterior সমীকরণটি কেন Sampling-এর সময় সরাসরি ব্যবহার করা যায় না?",
+      "duration": "60 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "x₀ জানা থাকা আর না থাকার মৌলিক পার্থক্য",
+          "body": "Diffusion Model-এর গণিতে সবচেয়ে কৌতূহলোদ্দীপক প্রশ্নটি হলো: সামনের প্রক্রিয়াটি যদি এত সহজ Gaussian হয়, তবে উল্টো দিকের `q(xₜ₋₁ | xₜ)` কেন সরাসরি লিখে ফেলা যায় না? কারণ শুধু ঝাপসা ছবি `xₜ` দেওয়া থাকলে তার আগের ধাপ বের করতে অজানা আসল ডেটা Distribution `q(x₀)`-এর ওপর সমাকলন করতে হয়, যা মোটেই কোনো সরল পরিচিত Gaussian নয়। কিন্তু চমৎকার বিষয়টি ঘটে ঠিক তখনই, যখন আমরা আসল পরিষ্কার ছবি `x₀`-এর ওপর শর্ত আরোপ (Conditioning) করি! `x₀` জানা থাকলে পুরো সামনের শৃঙ্খলটি একটি Linear-Gaussian Chain হওয়ায় `q(xₜ₋₁ | xₜ, x₀)` একদম নিখুঁত Closed-form Gaussian হয়ে যায়। তবে সাবধান: নতুন ছবি তৈরির (Sampling) সময় তো আমাদের হাতে আসল `x₀` থাকে না! তাই Inference-এর সময় আসল `x₀` বসিয়ে এই Training Posterior ব্যবহার করা মানে সরাসরি Data Leakage।"
+        },
+        {
+          "type": "text",
+          "title": "বর্গ পূর্ণ করে (Completing the Square) সমীকরণ নির্ণয়",
+          "body": "চলুন Bayes-এর সূত্র দিয়ে এই শর্তাধীন Distribution-টি বের করি: `x₀` দেওয়া থাকলে `q(xₜ₋₁ | xₜ, x₀)` সমানুপাতিক হয় `q(xₜ | xₜ₋₁) q(xₜ₋₁ | x₀)`-এর। ডানপাশের দুটি পদই আমাদের জানা Gaussian Density। তাদের লগারিদম নিয়ে `xₜ₋₁`-এর দ্বিঘাত (Quadratic) পদগুলোর সহগ যোগ করলেই নতুন Gaussian-টির Precision (অর্থাৎ Variance-এর ব্যস্তানুপাত) পাওয়া যায়: `αₜ / βₜ + 1 / (1 - ᾱₜ₋₁)`। একে উল্টে দিয়ে সরলীকরণ করলেই নিচের সমীকরণের সুশৃঙ্খল Posterior Variance `β̃ₜ` এবং ওজনযুক্ত Posterior Mean `μ̃ₜ` বেরিয়ে আসে।"
+        },
+        {
+          "type": "math",
+          "title": "Posterior Variance ও Mean-এর সমীকরণ",
+          "body": "\\begin{aligned}\\tilde\\beta_t&=\\beta_t\\frac{1-\\bar\\alpha_{t-1}}{1-\\bar\\alpha_t}\\\\\\tilde\\mu_t&=\\frac{\\sqrt{\\bar\\alpha_{t-1}}\\beta_t}{1-\\bar\\alpha_t}x_0+\\frac{\\sqrt{\\alpha_t}(1-\\bar\\alpha_{t-1})}{1-\\bar\\alpha_t}x_t\\end{aligned}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Posterior সহগ ও Variance যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter28_local\", Path(\"assets/datasets/digits/diffusion_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\n\nbeta, bar = m.schedule()\nt = 8\nb = beta[t - 1]\na = 1 - b\nvariance = b * (1 - bar[t - 1]) / (1 - bar[t])\nc0 = bar[t - 1].sqrt() * b / (1 - bar[t])\nct = a.sqrt() * (1 - bar[t - 1]) / (1 - bar[t])\nassert 0 < variance < b\nassert beta[0] * (1 - bar[0]) / (1 - bar[1]) == 0\nprint(c0.item(), ct.item(), variance.item())\n"
+        },
+        {
+          "type": "text",
+          "title": "Posterior Mean-এর সহগ দুটির অর্থ কী?",
+          "body": "`μ̃ₜ`-এর সমীকরণটি লক্ষ্য করলে দেখবেন, আগের ধাপের Mean অবস্থানটি আসলে পরিষ্কার ছবি `x₀` এবং বর্তমান ঝাপসা ছবি `xₜ`—এই দুটির একটি রৈখিক সমন্বয় (Linear Combination)। তবে খেয়াল রাখবেন, সাধারণ Convex Interpolation-এর মতো এই দুটি সহগের যোগফল ঠিক `1` হতে বাধ্য নয়, কারণ Forward Process-এ সিগন্যাল সংকুচিত হওয়ার `√α` স্কেলিং ফ্যাক্টরগুলো এর ভেতরে যুক্ত আছে। প্রতি ধাপের `βₜ` ছোট হলে উল্টো দিকের ধাপগুলো মসৃণভাবে এগোয়, যদিও বাস্তবে আসল `x₀`-এর জায়গায় Model-এর অনুমান বসালে সেখানে Model Error থেকেই যায়।"
+        },
+        {
+          "type": "text",
+          "title": "Model দিয়ে শেখা Reverse Transition",
+          "body": "Sampling-এর সময় অজানা `x₀`-এর জায়গা পূরণ করতে আমরা একটি Neural Network-এর Output দিয়ে `p_θ(xₜ₋₁ | xₜ, c)`-এর Mean-কে Parameterize করি, আর এর Variance হিসেবে পূর্বনির্ধারিত স্থির মান কিংবা শেখা মান ব্যবহার করা যায়। স্বচ্ছতার খাতিরে একটি বিষয় স্পষ্ট রাখা দরকার: এই পাঠে আমরা তাত্ত্বিক ভিত্তির জন্য DDPM-এর সম্পূর্ণ Posterior বীজগণিত শিখছি, কিন্তু আমাদের অ্যাপের ইন্টারঅ্যাকটিভ Lab-এ প্রকৃত Sampler হিসেবে চলে Deterministic DDIM (`η = 0`)—সেটিকে আমরা কখনোই দৈবচয়িত Ancestral DDPM হিসেবে দাবি করছি না।"
+        },
+        {
+          "type": "text",
+          "title": "একদম শেষ ধাপ (t = 1)-এর প্রান্তিক আচরণ",
+          "body": "উপরের কোডের শেষ `assert` লাইনটি খেয়াল করুন: `t = 1` ধাপে আগের `ᾱ₀ = 1` হওয়ায় লবে `1 - ᾱ₀ = 0` চলে আসে, ফলে Posterior Variance `β̃₁` শূন্য হয়ে যায়! গাণিতিকভাবে এর অর্থ খুবই পরিষ্কার: আসল পরিষ্কার ছবি `x₀` জানা থাকলে `t = 0`-তে পৌঁছানোর Distribution কোনো অনিশ্চয়তা ছাড়া সরাসরি `x₀` বিন্দুতেই স্থির (Degenerate) হবে। ঠিক এই কারণেই বাস্তব Ancestral Sampler-গুলোতে একদম শেষ ধাপে নতুন করে আর কোনো র‍্যান্ডম Noise যোগ করা হয় না। মনে রাখবেন, `t = 0`-তে Network কল না করা এবং শেষ ধাপে বাড়তি Noise যোগ না করা—কোডে দুটি আলাদা ও গুরুত্বপূর্ণ যাচাই।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে ব্যাখ্যা করবেন",
+          "body": "Interview-তে প্রায়ই জানতে চাওয়া হয় কেন Posterior Variance `β̃ₜ` সবসময় মূল Forward Variance `βₜ`-এর চেয়ে ছোট হয় (`0 < β̃ₜ < βₜ`)। তখন Precision যোগ হওয়ার যুক্তিটি দেখিয়ে বলবেন যে `xₜ`-এর পাশাপাশি `x₀`-এর তথ্য জানা থাকায় অনিশ্চয়তা কমে যায়। এছাড়া Sampler-এ স্থির `βₜ` নাকি `β̃ₜ` ব্যবহৃত হচ্ছে তা উল্লেখ করার গুরুত্ব বলুন। আর Debugging-এর সময় জানা পরিষ্কার ইমেজ `x₀` বসিয়ে Oracle Denoising Test চালানো যে কেবল গণিত ও কোড যাচাইয়ের পরীক্ষা—তা দিয়ে যে Model-এর প্রকৃত Generation Quality মাপা যায় না—সেটিও স্পষ্টভাবে তুলে ধরুন।"
+        },
+        {
+          "type": "text",
+          "title": "Gaussian Precision দিয়ে হাতে-কলমে একটি উদাহরণ",
+          "body": "চলুন ছোট একটি সংখ্যার উদাহরণ দিয়ে পুরো হিসাবটি খাতা-কলমে মিলিয়ে নিই। ধরা যাক, কোনো এক ধাপে আগের `ᾱₜ₋₁ = 0.8`, বর্তমান `αₜ = 0.5` এবং `βₜ = 0.5`; তাহলে বর্তমান `ᾱₜ = 0.8 × 0.5 = 0.4`। এখন Precision-এর সূত্রে মান বসালে পাই `αₜ / βₜ + 1 / (1 - ᾱₜ₋₁) = 0.5 / 0.5 + 1 / 0.2 = 1 + 5 = 6`। সুতরাং Posterior Variance হবে ঠিক `1 / 6` (প্রায় `0.166667`)। সহগ হিসাব করলে পরিষ্কার `x₀`-এর সহগ আসে প্রায় `0.745356` এবং ঝাপসা `xₜ`-এর সহগ আসে প্রায় `0.235702`। এখন যদি `x₀ = 1.0` এবং `xₜ = 0.2` হয়, তবে Posterior Mean দাঁড়াবে প্রায় `0.792496`। নিচের কোডে আমরা সরাসরি সহগের সূত্র এবং Precision-ওজনযুক্ত সূত্র—দুই দিক থেকেই একই ফলাফল মিলিয়ে দেখছি।"
+        },
+        {
+          "type": "code",
+          "title": "দুই সমতুল্য Gaussian সূত্রে একই ফলাফল যাচাই",
+          "body": "import math\n\nprevious_bar, alpha, beta = 0.8, 0.5, 0.5\ncurrent_bar = previous_bar * alpha\nvariance = beta * (1 - previous_bar) / (1 - current_bar)\nclean_coefficient = math.sqrt(previous_bar) * beta / (1 - current_bar)\nnoisy_coefficient = math.sqrt(alpha) * (1 - previous_bar) / (1 - current_bar)\nclean, noisy = 1.0, 0.2\nmean = clean_coefficient * clean + noisy_coefficient * noisy\nprecision = alpha / beta + 1 / (1 - previous_bar)\nmean_by_precision = (\n    math.sqrt(alpha) * noisy / beta\n    + math.sqrt(previous_bar) * clean / (1 - previous_bar)\n) / precision\nassert math.isclose(variance, 1 / precision)\nassert math.isclose(mean, mean_by_precision)\nprint(\n    round(clean_coefficient, 6),\n    round(noisy_coefficient, 6),\n    round(variance, 6),\n    round(mean, 6),\n)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে হিসাব করে দেখুন",
+          "body": "t = 1 ধাপে যখন আগের ধাপের alpha-bar (ᾱ₀) = 1 হয়, তখন Posterior Variance এবং Posterior Mean-এর দুটি সহগের মান কত পাওয়া যায়?",
+          "solution": "এক্ষেত্রে Posterior Variance হয় 0, পরিষ্কার ছবি x₀-এর সহগ হয় 1 এবং ঝাপসা ছবি x₁-এর সহগ হয় 0। অর্থাৎ আসল x₀ জানা থাকলে শর্তাধীন Distribution-টি কোনো অনিশ্চয়তা ছাড়া সরাসরি x₀ বিন্দুতেই স্থির (Degenerate) হয়ে যায়। তবে বাস্তব Learned Sampling-এ আসল x₀ জানা থাকে না বলে Model-এর আনুমানিক x̂₀ ব্যবহার করতে হয় এবং শেষ ধাপের Noise Policy আলাদাভাবে কোডে নির্ধারণ করতে হয়।",
+          "reference": "https://arxiv.org/abs/2006.11239"
+        }
+      ]
+    },
+    {
+      "id": "ch28_objective",
+      "title": "Epsilon Prediction, Simplified Loss ও Score Connection",
+      "subtitle": "সমান ওজনের সাধারণ MSE মানেই পূর্ণাঙ্গ Variational ELBO নয়",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Training-এর Input ও Target কীভাবে তৈরি হয়?",
+          "body": "Forward Process এবং Posterior-এর গণিত বোঝার পর এবার দেখা যাক আমাদের Neural Network-টি Training-এর সময় ঠিক কী শেখে। প্রতিটি Training ধাপে একটি পরিষ্কার ছবি `x₀`, `1` থেকে `32`-এর মধ্যে সমসম্ভাব্য (Uniform) একটি পূর্ণসংখ্যা `t` এবং একটি স্বাধীন Gaussian Vector `ε` বেছে নিয়ে ঝাপসা ছবি `xₜ` তৈরি করা হয়। Network-এর Input দেওয়া হয় `(xₜ, t, condition)` এবং Target হিসেবে দেওয়া হয় ওই যোগ করা আসল Noise `ε`! এখানে একটি বাস্তব সীমাবদ্ধতা মনে রাখবেন: একই পরিষ্কার ছবি `x₀`-কে বারবার ভিন্ন `t` ও `ε` দিয়ে ঝাপসা করলে অসংখ্য Corruption Task তৈরি হয় ঠিকই, কিন্তু তাতে Dataset-এ নতুন কোনো স্বাধীন বাস্তব ছবি যোগ হয়ে যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "পূর্ণাঙ্গ ELBO-এর সাথে Simplified Loss-এর সম্পর্ক",
+          "body": "তাত্ত্বিকভাবে পূর্ণাঙ্গ Variational Lower Bound (ELBO) ভাঙলে প্রতিটি ধাপের Gaussian Reverse KL Divergence পদগুলো Mean Prediction Error-এ রূপান্তরিত হয়, যার সামনে `t`-নির্ভর সুনির্দিষ্ট গাণিতিক সহগ থাকে এবং প্রান্তিক Reconstruction ও Prior পদও যুক্ত থাকে। কিন্তু DDPM-এর প্রস্তাবে দেখানো হয়েছে যে ওই জটিল ওজনগুলো বাদ দিয়ে সব `t`-কে সমান গুরুত্ব দিয়ে সরল Epsilon MSE মিনিমাইজ করলে বাস্তবে Sample-এর মান প্রায়ই আরও ভালো হয়। তবে খেয়াল রাখবেন, এই সমান ওজনের Simplified Epsilon MSE পূর্ণাঙ্গ Variational Bound-এর সব পদ ও ওজন ধরে রাখে না—তাই আমাদের রিপোর্টে দেখানো মানটি নিছক Noise MSE, ডেটার প্রকৃত Exact Log-Likelihood নয়।"
+        },
+        {
+          "type": "math",
+          "title": "Simplified Noise-Prediction Objective",
+          "body": "\\mathcal L_{simple}=\\mathbb E_{x_0,t,\\epsilon}\\|\\epsilon-\\epsilon_\\theta(\\sqrt{\\bar\\alpha_t}x_0+\\sqrt{1-\\bar\\alpha_t}\\epsilon,t,c)\\|^2"
+        },
+        {
+          "type": "code",
+          "title": "Denoiser Network-এর Forward ও Backward Pass যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter28_local\", Path(\"assets/datasets/digits/diffusion_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\n\nwith torch.random.fork_rng():\n    torch.manual_seed(28)\n    model = m.Denoiser()\n    x = torch.zeros(4, 64, dtype=torch.float64)\n    t = torch.tensor([1, 8, 24, 32])\n    c = torch.tensor([0, 1, 2, 10])\n    pred = model(x, t, c)\n    loss = (pred - torch.ones_like(pred)).square().mean()\n    # Backward accumulates into .grad; the seed or reduction sets the scale.\n    loss.backward()\n    assert pred.shape == (4, 64)\n    assert all(p.grad is not None for p in model.parameters())\n    print(loss.item())\n"
+        },
+        {
+          "type": "text",
+          "title": "Epsilon থেকে পরিষ্কার ছবি ও Score Function-এর যোগসূত্র",
+          "body": "Model একবার `ε̂ = ε_θ(xₜ, t, c)` অনুমান করলে সামনের সমীকরণটিকে উল্টে দিয়ে সাথে সাথে পরিষ্কার ছবির একটি আনুমানিক রূপ পাওয়া যায়: `x̂₀ = (xₜ - √(1 - ᾱₜ) ε̂) / √ᾱₜ`। পাশাপাশি সংখ্যাতত্ত্বের Score Matching-এর সাথেও এর সরাসরি সম্পর্ক রয়েছে: `s_θ(xₜ, t) ≈ -ε_θ(xₜ, t) / √(1 - ᾱₜ)`। অর্থাৎ Noise অনুমান করতে শেখা মানে আদতে ঝাপসা ডেটা Distribution-এর লগ-ঘনত্বের Gradient (বা Marginal Conditional Score) কোন দিকে বাড়ছে তা শিখে ফেলা! তবে এটি সামগ্রিক Distribution-এর প্রবণতা শেখে—একটি একক ঝাপসা ছবি দেখে তার ভেতরে যোগ হওয়া নির্দিষ্ট Noise Vector-টি শতভাগ নিখুঁতভাবে উদ্ধার করার নিশ্চয়তা দেয় না।"
+        },
+        {
+          "type": "text",
+          "title": "Loss Reduction ও Scale-এর পার্থক্য",
+          "body": "উপরের কোডে `.mean()` ব্যবহারের ফলে বর্তমান MSE প্রথমে Batch এবং `64`টি Pixel-এর Mean নেয়, আর পুরো Epoch-এর হিসাব করা হয় Row-weighted Average দিয়ে। Model মূল্যায়নের সময় বিভিন্ন Scale কখনোই গুলিয়ে ফেলবেন না: Posterior Noise Variance, প্রতি Pixel-এর Per-pixel MSE, পুরো ছবির যোগকৃত Summed Image NLL এবং আসল ছবির Reconstruction MSE—প্রতিটির একক ও সংখ্যার মাত্রা আলাদা। আবার বিভিন্ন Timestep-এ ভিন্ন ওজন (Time Weighting) দিলে Training-এর অগ্রাধিকার বদলে যায়; তাই রিপোর্টে কোন Reduction Policy ব্যবহার করছেন তা কখনোই অস্পষ্ট রাখবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "বিকল্প Target Parameterization",
+          "body": "Epsilon ছাড়াও সরাসরি পরিষ্কার ছবি `x₀` অনুমান করা কিংবা Velocity `v = √ᾱₜ ε - √(1 - ᾱₜ) x₀` অনুমান করা খুবই প্রচলিত বিকল্প Parameterization। এদের পারস্পরিক রূপান্তর এবং কার্যকরী Objective Weighting প্রতিটি ধাপের Noise Level-এর ওপর নির্ভর করে। সবচেয়ে বড় প্রকৌশলগত সতর্কতা হলো: একটি নির্দিষ্ট Target-এ Training পাওয়া Checkpoint-কে ভুল করে অন্য Target ধরে Sampling চালালে পুরোপুরি ভুল ও অর্থহীন Output তৈরি হবে। আমাদের এই অধ্যায়ের Model-টি কেবল একটি Epsilon Predictor।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে ব্যাখ্যা করবেন",
+          "body": "Interview-তে যদি প্রশ্ন করা হয়—Training-এর সময় `t` সমসম্ভাব্য (Uniform) না নিয়ে অসম Probability-তে Sample করলে কী ঘটবে? তখন বলবেন, আগের সমতুল্য Objective বজায় রাখতে চাইলে Importance Weighting দিয়ে সমন্বয় করতে হবে, নতুবা বুঝতে হবে আমরা উদ্দেশ্যপ্রণোদিতভাবেই Objective-এর অগ্রাধিকার বদলে দিচ্ছি। আর কেবল একটি কম Average MSE দেখেই দাবি করবেন না যে Model সব Noise Level-এ সমান ভালো কাজ করছে—বরং প্রতিটি `t`-এর আলাদা Baseline এবং তৈরি হওয়া প্রকৃত Trajectory পরীক্ষা করে সিদ্ধান্ত নিন।"
+        }
+      ]
+    },
+    {
+      "id": "ch28_book_diffusion_parameterization",
+      "title": "Diffusion Targets: Epsilon, x₀ ও Velocity (v) Parameterization",
+      "subtitle": "দুই স্থানাঙ্কের জ্যামিতিক ঘূর্ণন, পারস্পরিক রূপান্তর এবং Noise Level অনুযায়ী Error Amplification",
+      "duration": "33 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন এই ধারণাটি দরকার?",
+          "body": "আগের পাঠে আমরা দেখেছি আমাদের ছোট Model-টি যোগ হওয়া Noise `ε` অনুমান করে। কিন্তু বাস্তব বিশ্বের সব Diffusion Model-ই যে `ε` অনুমান করে তা নয়—কোনো Model সরাসরি পরিষ্কার ছবি `x₀` অনুমান করে, আবার কোনো আধুনিক Model অনুমান করে Velocity `v`। সবচেয়ে সংবেদনশীল প্রকৌশলগত বিষয় হলো, এই তিনটি রাশিরই Output Tensor Shape হুবহু এক! ফলে একটি নির্দিষ্ট Parameterization ধরে Training দেওয়া Checkpoint লোড করে আপনি যদি ভুল করে অন্য Parameterization-এর Sampler চালিয়ে দেন, তবে কোডে কোনো Runtime Error আসবে না, অথচ তৈরি হওয়া ছবির অর্থ নীরবে নষ্ট হয়ে যাবে। তাই যেকোনো Checkpoint-এর Metadata-তে অবশ্যই Target, Schedule এবং Input Normalization একসাথে সংরক্ষণ করতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "জ্যামিতিক ঘূর্ণন হিসেবে সমীকরণগুলো বুঝি",
+          "body": "হিসাব পরিষ্কার রাখার জন্য ধরি `a = √ᾱ` এবং `b = √(1 - ᾱ)`। তাহলে আমাদের চেনা Forward সমীকরণটি হলো `x_t = a x₀ + b ε`। এবার এর সাথে লম্বভাবে দ্বিতীয় একটি রাশি সংজ্ঞায়িত করা হয়, যার নাম Velocity: `v = a ε - b x₀`। একটু খেয়াল করলেই দেখবেন, `a² + b² = ᾱ + (1 - ᾱ) = 1`! অর্থাৎ `(x₀, ε)` স্থানাঙ্ক থেকে `(x_t, v)` স্থানাঙ্কে যাওয়া আসলে দ্বিমাত্রিক তলে একটি নিখুঁত লম্ব ঘূর্ণন (Orthogonal Rotation)। ফলে এর বিপরীত রূপান্তর বের করতে কোনো ভাগ করারও প্রয়োজন পড়ে না: সরাসরি `x₀ = a x_t - b v` এবং `ε = b x_t + a v`। পক্ষান্তরে কেবল `x_t` ও অনুমানকৃত `ε` থেকে `x₀` উদ্ধার করতে হলে `a` দিয়ে ভাগ করতে হয়, যা প্রচণ্ড ঝাপসা ধাপে (`a` যখন শূন্যের খুব কাছে) সংখ্যার দিক থেকে বেশ সংবেদনশীল (Numerically Sensitive) হতে পারে।"
+        },
+        {
+          "type": "math",
+          "title": "রৈখিক রূপান্তর ও বিপরীত সমীকরণ",
+          "body": "x_t=ax_0+b\\epsilon,\\quad v=a\\epsilon-bx_0,\\quad x_0=ax_t-bv,\\quad \\epsilon=bx_t+av"
+        },
+        {
+          "type": "text",
+          "title": "খাতা-কলমে একটি সহজ উদাহরণ",
+          "body": "চলুন ছোট একটি Scalar উদাহরণ দিয়ে এই ঘূর্ণনটি যাচাই করি। ধরি `a = 0.8` এবং `b = 0.6` (লক্ষ্য করুন `0.8² + 0.6² = 1.0`), আর আসল পরিষ্কার মান `x₀ = 2.0` এবং Noise `ε = 1.0`। তাহলে ঝাপসা মান হবে `x_t = 0.8 × 2.0 + 0.6 × 1.0 = 2.2`, এবং Velocity হবে `v = 0.8 × 1.0 - 0.6 × 2.0 = -0.4`। এবার বিপরীত সমীকরণে এই দুটি মান বসিয়ে দেখুন: `x₀ = 0.8 × 2.2 - 0.6 × (-0.4) = 2.0` এবং `ε = 0.6 × 2.2 + 0.8 × (-0.4) = 1.0`—হুবহু মূল মান দুটিই ফিরে এসেছে!"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ বিপরীত রূপান্তর যাচাই",
+          "body": "a, b, clean, noise = 0.8, 0.6, 2.0, 1.0\nnoisy = a * clean + b * noise\nvelocity = a * noise - b * clean\n# Invert the orthogonal two-coordinate transform; no model is trained here.\nreconstructed_clean = a * noisy - b * velocity\nreconstructed_noise = b * noisy + a * velocity\nprint(round(reconstructed_clean, 6), round(reconstructed_noise, 6))\n"
+        },
+        {
+          "type": "text",
+          "title": "কোডের ফলাফল ও Training-এর বাস্তব পার্থক্য",
+          "body": "কোডটি চালালে Output হিসেবে আমরা নিখুঁত `2.0` এবং `1.0` দেখতে পাই। তবে মনে রাখতে হবে, এখানে আমরা আসল নিখুঁত মান বসিয়ে কেবল বীজগণিতের অভেদ যাচাই করেছি; বাস্তবে Neural Network-এর Prediction কখনোই নিখুঁত হয় না। বীজগণিতের দিক থেকে রূপান্তরগুলো সমতুল্য হলেও Training-এর সময় `ε`, `x₀` বা `v`-এর ওপর সাধারণ MSE Loss বসালে বিভিন্ন Noise Level-এ সেগুলোর কার্যকরী গুরুত্ব (Loss Weighting) আলাদা হয়ে যায়। তাই সবসময় Sampler-এর প্রত্যাশা ও Model-এর Target একসাথে মিলিয়ে পরীক্ষা করতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "কখন এই সরাসরি রূপান্তর প্রযোজ্য নয়?",
+          "body": "এক Scheduler-এর Timestep রীতি বা Input Scaling কখনোই চোখ বন্ধ করে অন্য কোনো Checkpoint-এ বসিয়ে দেবেন না। আবার Inference-এ অতিরিক্ত বড় CFG Scale ব্যবহার করলে মানের অতি-সম্পৃক্ততা (Saturation) বা দৃশ্যমান বিকৃতি (Artifacts) বাড়তে পারে। খেয়াল রাখবেন, এই পাঠের হিসাবটি কেবল গাণিতিক রূপান্তর যাচাইয়ের জন্য—এটি নতুন কোনো Image-quality Benchmark নয়।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে ভেবে দেখুন",
+          "body": "যদি a = 1 এবং b = 0 হয়, তবে x_t ও Velocity v-এর মান কী দাঁড়ায়? আর Noise Prediction-এ Training দেওয়া একটি Checkpoint-কে ভুল করে Velocity হিসেবে পড়লে কেন কোনো Runtime Error ছাড়াই নীরবে ভুল Output আসে?",
+          "solution": "a = 1 এবং b = 0 বসালে পাওয়া যায় x_t = x₀ এবং v = ε। যেহেতু Noise Prediction এবং Velocity Prediction উভয়েরই Output Tensor-এর Shape হুবহু এক, তাই কোড চালানোর সময় কোনো Exception বা ক্র্যাশ ঘটবে না; কিন্তু বিপরীত সমীকরণে ভুল রাশি বসে যাওয়ায় পুরো ছবির গঠন নীরবে নষ্ট হয়ে যাবে। এই ধরনের নীরব ত্রুটি ঠেকাতে স্পষ্ট Metadata Schema এবং সংখ্যার Roundtrip Unit Test অপরিহার্য।",
+          "reference": "https://www.statlearning.com/"
+        },
+        {
+          "type": "text",
+          "title": "একই পরিমাণ Prediction Error বিভিন্ন Noise Level-এ কেমন প্রভাব ফেলে?",
+          "body": "এবার দেখা যাক কেন বিভিন্ন Parameterization-এ Training ও Inference আলাদা আচরণ করে। ধরা যাক, একটি Epsilon Predictor সামান্য `Δε̂ = 0.1` পরিমাণ ভুল করল। তখন পরিষ্কার `x₀` উদ্ধারের ত্রুটি হবে `-√((1 - ᾱ) / ᾱ) × 0.1`। যখন ছবি প্রচণ্ড ঝাপসা (`ᾱ = 0.01`), তখন এই ত্রুটির পরম মান দাঁড়ায় প্রায় `0.994987`—অর্থাৎ ত্রুটি প্রায় দশ গুণ বেড়ে গেল! অথচ কম ঝাপসা অবস্থায় (`ᾱ = 0.81`) সেই একই ত্রুটির মান হয় মাত্র `0.048432`। অন্যদিকে একটি Velocity Predictor যদি একই `0.1` পরিমাণ ভুল করে, তবে `x₀` উদ্ধারের ত্রুটির মান হয় `√(1 - ᾱ) × 0.1`—যা `ᾱ = 0.01`-এ প্রায় `0.099499` এবং `ᾱ = 0.81`-এ প্রায় `0.043589`। এই হিসাব থেকেই স্পষ্ট বোঝা যায় কেন সমতুল্য বিপরীত সমীকরণ থাকা সত্ত্বেও Loss Weighting-এ এত বড় পার্থক্য তৈরি হয়।"
+        },
+        {
+          "type": "math",
+          "title": "Target Error থেকে Clean Estimate Error-এর সূত্র",
+          "body": "\\Delta\\hat x_0^{(\\epsilon)}=-\\sqrt{\\frac{1-\\bar\\alpha}{\\bar\\alpha}}\\,\\Delta\\hat\\epsilon,\\qquad \\Delta\\hat x_0^{(v)}=-\\sqrt{1-\\bar\\alpha}\\,\\Delta\\hat v"
+        },
+        {
+          "type": "code",
+          "title": "Epsilon বনাম Velocity-এর Error Amplification পরীক্ষা",
+          "body": "import math\n\nclean, noise, error = 1.0, 0.5, 0.1\nfor alpha_bar in [0.01, 0.81]:\n    a, b = math.sqrt(alpha_bar), math.sqrt(1 - alpha_bar)\n    noisy = a * clean + b * noise\n    velocity = a * noise - b * clean\n    from_epsilon = (noisy - b * (noise + error)) / a\n    from_velocity = a * noisy - b * (velocity + error)\n    assert math.isclose(from_epsilon - clean, -b * error / a)\n    assert math.isclose(from_velocity - clean, -b * error)\n    print(round(abs(from_epsilon - clean), 6), round(abs(from_velocity - clean), 6))\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "একটু গভীরভাবে চিন্তা করুন",
+          "body": "উপরের এই গাণিতিক হিসাব দেখেই কি ঢালাওভাবে বলে দেওয়া যায় যে যেকোনো Task-এ Velocity Model-ই সবসময় সেরা ফল দেবে?",
+          "solution": "না, শুধুমাত্র এই বীজগণিত দেখে তা দাবি করা যায় না। বাস্তবে Network কোন রাশিতে কতটুকু প্রকৃত Prediction Error করছে, ডেটার Distribution কেমন, Timestep কীভাবে Sampling করা হচ্ছে এবং Training-এ কোন Loss Weighting নেওয়া হয়েছে—এসব কিছুর সম্মিলিত প্রভাবে চূড়ান্ত ফলাফল নির্ধারিত হয়। তাই সবসময় Parameterization Metadata, Scheduler ও Normalization মিলিয়ে আলাদা Held-out ডেটায় প্রকৃত মান যাচাই করতে হবে।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch28_training",
+      "title": "Time Conditioning, Null Dropout ও Reproducible Training",
+      "subtitle": "একটি সম্পূর্ণ ছোট Diffusion Model-এর ভেতরের হুবহু গণনা-প্রবাহ (Computation Trace)",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Model-এর ভেতরে Tensor কীভাবে প্রবাহিত হয়?",
+          "body": "বড় প্রোডাকশন Model-এর জটিলতায় যাওয়ার আগে একটি ছোট কিন্তু সম্পূর্ণ স্বয়ংসম্পূর্ণ Denoiser-এর প্রতিটি Tensor প্রবাহ স্বচ্ছভাবে বুঝে নেওয়া যাক। আমাদের Model-এ Input হিসেবে আসে `[B, 64]` আকারের ঝাপসা Pixel, তার সাথে যুক্ত হয় `4`টি Sine/Cosine Time Feature এবং `11`টি Class-এর (`0–9` সংখ্যা ও `1`টি Null Class) One-hot Vector—সব মিলিয়ে তৈরি হয় `[B, 79]` আকারের Input। এরপর এটি তিনটি Linear স্তরের (`79 → 64 → 64 → 64`) মধ্য দিয়ে যায়, যেখানে মাঝের স্তরগুলোতে থাকে SiLU Activation এবং শেষে বেরিয়ে আসে `[B, 64]` আকারের অনুমানকৃত Epsilon। সব Bias-সহ এতে মোট Parameter আছে ঠিক `13,440`টি। এখানে কোনো U-Net, টেক্সট Cross-Attention, BatchNorm, সাধারণ লেয়ার Dropout কিংবা বাহ্যিক Pretrained Weights নেই।"
+        },
+        {
+          "type": "text",
+          "title": "সময়ের সংকেত (Time Representation) কেন অপরিহার্য?",
+          "body": "আমরা সময়ের ধাপ `t`-কে প্রকাশ করছি চারটি ত্রিকোণমিতিক Feature দিয়ে: `γ(t) = [sin(πt/T), cos(πt/T), sin(2πt/T), cos(2πt/T)]`। বাস্তব প্রোডাকশন সিস্টেমে আরও সমৃদ্ধ Sinusoidal Embedding ব্যবহার করে U-Net বা Diffusion Transformer (DiT)-এর প্রতিটি স্তরকে নিয়ন্ত্রণ করা হয়। তবে মূল কারণটি সবখানেই এক: Network যদি না জানে বর্তমান Input-টি শুরুর দিকের কম ঝাপসা ধাপের নাকি শেষ দিকের প্রচণ্ড ঝাপসা ধাপের, তবে একই Input Vector থেকে কতটা জোরালোভাবে Denoising করতে হবে তা নিয়ে দ্ব্যর্থতা (Ambiguity) থেকে যাবে। আর মনে রাখবেন, সময়ের সংকেত এবং Class-এর Conditioning—দুটি আলাদা তথ্যের উৎস।"
+        },
+        {
+          "type": "math",
+          "title": "Input Feature-গুলোর সংযোজন (Concatenation)",
+          "body": "[x_t\\in\\mathbb R^{64};\\ \\gamma(t)\\in\\mathbb R^4;\\ \\mathrm{onehot}(c)\\in\\mathbb R^{11}]\\in\\mathbb R^{79}"
+        },
+        {
+          "type": "code",
+          "title": "সংরক্ষিত Weights লোড করে নিখুঁত Forward Pass যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter28_local\", Path(\"assets/datasets/digits/diffusion_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/digits/diffusion_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nmodel = m.Denoiser()\nmodel.load_state_dict(\n    {\n        k: torch.tensor(v, dtype=torch.float64)\n        for k, v in lab[\"weights\"][\"denoiser\"].items()\n    }\n)\nassert sum(p.numel() for p in model.parameters()) == 13440\nx = torch.tensor([lab[\"samples\"][0][\"references\"][0][\"xt\"]], dtype=torch.float64)\nwith torch.no_grad():\n    out = model(x, torch.tensor([8]), torch.tensor([0]))\nassert torch.allclose(\n    out[0],\n    torch.tensor(\n        lab[\"samples\"][0][\"references\"][0][\"conditional\"], dtype=torch.float64\n    ),\n    atol=1e-12,\n)\nprint(m.time_features(torch.tensor([8])).tolist())\n"
+        },
+        {
+          "type": "text",
+          "title": "Training রানের প্রকৃত সেটিংস",
+          "body": "সংরক্ষিত এই Model-টি Training দেওয়া হয়েছে CPU-তে `float64` নিখুঁততায়, যেখানে Model-এর প্রাথমিক Seed ছিল `28` এবং ডেটা Sampling-এর RNG Seed ছিল `280`। Optimizer হিসেবে ব্যবহৃত হয়েছে Adam (`learning rate = 0.002`, ডিফল্ট `betas`, কোনো Weight Decay ছাড়া)। Batch Size `128` রেখে মোট `120`টি Epoch-এ সর্বমোট `1,440`টি Gradient Update চালানো হয়েছে।\n\nপ্রতিটি আপডেটে Timestep নেওয়া হয়েছে সমসম্ভাব্য (Uniform) ভাবে এবং Noise নেওয়া হয়েছে আদর্শ Gaussian থেকে। Inference-এ Classifier-Free Guidance চালানোর প্রস্তুতির জন্য Training-এর সময় `15%` আসল Class Label-কে বিশেষ Null ID `10` দিয়ে প্রতিস্থাপন করা হয়েছে। এই Condition Masking ছাড়া অন্য কোনো Data Augmentation বা লেয়ার Dropout নেই, এবং সেরা Epoch বেছে না নিয়ে সরাসরি একদম শেষ Checkpoint-টিই সংরক্ষণ করা হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "Null Conditioning কীভাবে শেখে?",
+          "body": "অনেকের ধারণা হতে পারে যে Inference-এ Unconditional Output পাওয়ার জন্য বুঝি যেকোনো র‍্যান্ডম বা অপ্রশিক্ষিত Vector পাঠিয়ে দিলেই চলে! মোটেও তা নয়—আমাদের এই Null Index `10` কোনো অপ্রশিক্ষিত ঘর নয়; বরং একই MLP Training-এর `15%` ধাপে এই Null Condition দেখেই সব Class-এর শর্তহীন আচরণ শিখেছে। ফলে Inference-এর সময় একই Network থেকে Conditional এবং Null—উভয় Prediction-ই পাওয়া যায়। এখানে আলাদা কোনো বাহ্যিক Classifier-এর Gradient ব্যবহার করা (Classifier Guidance) আমাদের Model-এর পদ্ধতি নয়।"
+        },
+        {
+          "type": "text",
+          "title": "সংরক্ষিত Artifact ও অফলাইন Reproducibility",
+          "body": "ডেটার Row পরিচয়, Hash, Model-এর Weights, Hyperparameters, লাইব্রেরির সংস্করণ, Training ইতিহাস এবং Reference Output—সবই অ্যাপের ভেতরে বান্ডেল করা আছে। সাধারণভাবে স্ক্রিপ্টটি ইমপোর্ট বা রান করলে এটি সম্পূর্ণ অফলাইনে থাকে এবং মূল ফাইলে হাত দেয় না; কেবল `--write-labs` ফ্ল্যাগ দিলেই নতুন করে ফাইল তৈরি করে। আর `--artifact-dir` ব্যবহার করলে নির্দিষ্ট লোকাল ফোল্ডারে Checksum-সহ রিপোর্ট লিখে কলারের PyTorch RNG ও থ্রেড সেটিংস আগের অবস্থায় ফিরিয়ে দেয়।"
+        },
+        {
+          "type": "text",
+          "title": "কোডিং অনুশীলনের চেকলিস্ট",
+          "body": "নিজে Training Pipeline লেখার সময় Input-এর Shape, Condition ID-এর বৈধ পরিসর (`0` থেকে `10`), বৈধ Timestep (`1` থেকে `32`), সসীম Loss এবং প্রতিটি Parameter-এর Gradient উপস্থিত আছে কি না তা `assert` দিয়ে যাচাই করুন। Weights এক্সপোর্ট করার পর পুনরায় লোড করে সংরক্ষিত Reference Output-এর সাথে মিলিয়ে নিন। একই পরিবেশে আমাদের রানটি সম্পূর্ণ Deterministic হলেও ভিন্ন হার্ডওয়্যার বা লাইব্রেরি সংস্করণে বিট-পর্যায়ের অভিন্নতা কিংবা প্রোডাকশন Latency-র নিশ্চয়তা ধরে নেওয়া উচিত নয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch28_baselines",
+      "title": "Noise-Loss Baseline ও Error Amplification",
+      "subtitle": "শেষ প্রান্তের ধাপে সাধারণ Identity Predictor কেন এত শক্তিশালী একটি মাপকাঠি?",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "প্রথম ধাপের পরীক্ষা: শূন্য অনুমানের Baseline (Zero Baseline)",
+          "body": "Training শুরু করার পর Noise MSE কমতে দেখলেই কি আমরা ধরে নেব Model দারুণ কাজ করছে? দাঁড়ান—যেকোনো মেট্রিকের অর্থ বোঝার আগে তার বিপরীতে সহজ কিছু Baseline দাঁড় করানো জরুরি! ধরা যাক, একটি সরল নিয়ম সবসময় অনুমান করে `ε̂ = 0`। যেহেতু আসল Noise `ε` এসেছে আদর্শ নরমাল Distribution থেকে (যার Variance = 1), তাই এই শূন্য অনুমানকারীর গড় Noise MSE হবে প্রায় `1.0`। Model-এর Loss `1.0`-এর নিচে নামা একটি প্রাথমিক ভালো লক্ষণ বটে, কিন্তু প্রচণ্ড ঝাপসা ধাপগুলোর জন্য এর চেয়েও অনেক শক্তিশালী একটি তুচ্ছ Baseline আমাদের হাতের কাছেই রয়েছে!"
+        },
+        {
+          "type": "text",
+          "title": "চূড়ান্ত ধাপে ভয়ংকর শক্তিশালী Identity Baseline",
+          "body": "এবার ভাবুন এমন একটি তুচ্ছ নিয়মের কথা, যা কোনো কিছু না শিখেই স্রেফ Input-টাকেই Output হিসেবে ফিরিয়ে দেয়: `ε̂ = xₜ` (Identity Baseline)! একদম শেষ ধাপে (`t = 32`), যেখানে মূল সিগন্যালের গুণক `ᾱ_T` প্রায় শূন্যের কাছাকাছি, সেখানে `xₜ` তো প্রায় পুরোটাই আসল Noise `ε`! ফলে সেই ধাপে `ε̂ = xₜ` বসালে এর Noise MSE হয় অভাবনীয় রকম ক্ষুদ্র—মাত্র `0.0000017054`! অথচ আমাদের ছোট MLP Model-এর `t = 32` ধাপে Noise MSE এসেছে প্রায় `0.148682`—অর্থাৎ চূড়ান্ত ধাপে আমাদের Training দেওয়া Model-টি তুচ্ছ Identity নিয়মের চেয়েও খারাপ করেছে! এমনকি `t = 24` ধাপেও Model-এর `0.110187` মানটি Identity Baseline-এর `0.109085` থেকে সামান্য পিছিয়ে। স্বচ্ছ প্রকৌশল চর্চার অংশ হিসেবে এই ব্যর্থতাটি রিপোর্ট থেকে মোটেও বাদ দেওয়া হয়নি।"
+        },
+        {
+          "type": "math",
+          "title": "Noise Error থেকে Clean Image Error-এ বিবর্ধন",
+          "body": "\\hat x_0-x_0=-\\sqrt{\\frac{1-\\bar\\alpha_t}{\\bar\\alpha_t}}(\\hat\\epsilon-\\epsilon)"
+        },
+        {
+          "type": "code",
+          "title": "Diagnostic রিপোর্টে প্রতিটি Timestep-এর Baseline তুলনা",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/digits/diffusion_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nrows = lab[\"report\"][\"diagnostic\"]\nfor r in rows:\n    print(r)\nterminal = next(r for r in rows if r[\"t\"] == 32)\nassert terminal[\"identity_noise_baseline\"] < terminal[\"noise_mse\"]\nassert rows[0][\"clipped_x0_unit_mse\"] < terminal[\"clipped_x0_unit_mse\"]\n"
+        },
+        {
+          "type": "text",
+          "title": "শুরুর দিকের ধাপে Model-এর প্রকৃত সাফল্য",
+          "body": "তাহলে কি Model-টি কিছুই শেখেনি? এবার শুরুর দিকের `t = 8` ধাপের ফলাফল দেখুন! সেখানে ছবিতে আসল সংখ্যার গঠন স্পষ্টভাবে মিশে থাকায় Identity Baseline-এর Noise MSE গিয়ে ঠেকেছে `0.969056`-এ এবং Zero Baseline-এর মান `0.994459`—অথচ আমাদের Model সেখানে Noise MSE নামিয়ে এনেছে `0.433006`-এ! এর অর্থ হলো প্রতিটি Timestep-এ কাজের কাঠিন্য সম্পূর্ণ আলাদা। তাই সব ধাপ মিলিয়ে কেবল একটি সামগ্রিক সংখ্যা দিয়ে কখনোই ভিন্ন Schedule বা Model-এর মানের তুলনা করা যাবে না; তুলনা করার সময় অবশ্যই একই Corruption Seed এবং অভিন্ন হর নথিবদ্ধ করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "উল্টো হিসাবে ত্রুটির বিবর্ধন (Recovery Amplification)",
+          "body": "উপরের সমীকরণটি স্পষ্ট করে দেয় কেন শেষ প্রান্তের ধাপগুলো এত সংবেদনশীল: ক্লিপ না করা `x̂₀`-এর ত্রুটি মূল Epsilon ত্রুটির সাথে `√((1 - ᾱₜ) / ᾱₜ)` গুণক দিয়ে বৃদ্ধি পায়। যখন `ᾱₜ` অতি ক্ষুদ্র হয়, তখন সামান্য একটু Noise Prediction Error বহুগুণ বিবর্ধিত হয়ে বিশাল Clean Reconstruction Error তৈরি করে। আমরা Pixel-এর মান `[-1, 1]`-এ Clip করে সংখ্যার বিস্ফোরণ ঠেকাতে পারি ঠিকই, কিন্তু মনে রাখবেন—Clipping কেবল সীমার বাইরের মান আটকায়; এটি হারিয়ে যাওয়া তথ্য ফিরিয়ে আনে না বরং একটি অরৈখিক Bias যোগ করে।"
+        },
+        {
+          "type": "text",
+          "title": "এক ধাপের Reconstruction Diagnostic ও তার সীমা",
+          "body": "আমাদের `359`টি Diagnostic ছবির ওপর জানা Class Condition দিয়ে এক ধাপে উদ্ধার করা ক্লিপকৃত ছবির (Unit-scale) MSE এসেছে যথাক্রমে: `t = 8`-এ প্রায় `0.016286`, `t = 24`-এ প্রায় `0.100986` এবং `t = 32`-এ প্রায় `0.327654`। খেয়াল রাখবেন, এটি কেবল এক ধাপের Denoising Diagnostic—এটি দিয়ে Pure Noise থেকে শুরু করা পূর্ণাঙ্গ Sampling Quality কিংবা মুক্ত টেক্সট বোঝার সক্ষমতা প্রমাণিত হয় না। আর এই Diagnostic সেটটি যেহেতু আগেই পর্যবেক্ষিত, তাই এটি নতুন অন্ধ পরীক্ষাও নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে Debugging কৌশল বলবেন",
+          "body": "Interview-তে খুব প্রিয় একটি বাস্তব প্রশ্ন করা হয়: 'Training-এ গড় Noise MSE কমছে, অথচ তৈরি হওয়া ছবিগুলো ভেঙে যাচ্ছে—কীভাবে Debugging করবেন?' উত্তরে ধাপে ধাপে বলুন: প্রথমেই সামগ্রিক Loss ভেঙে আলাদা আলাদা Timestep Slice-এ Loss দেখব এবং Identity Baseline-এর সাথে মেলাব; এরপর Conditioning সঠিকভাবে যাচ্ছে কি না, Model-এর Parameterization ও Sampler-এর চুক্তি মিলছে কি না এবং প্রতিটি ধাপে মানের পরিসর ঠিক আছে কি না তা পূর্ণ Trajectory জুড়ে পরীক্ষা করব। আর আমাদের এই ছোট MLP-এর প্রান্তিক সীমাবদ্ধতা দেখে যেন কেউ সিদ্ধান্ত না নেয় যে উন্নত Diffusion পরিবারই ব্যর্থ—বড় ক্ষমতার Architecture ও দীর্ঘ Training নিয়ে পরীক্ষা সম্পূর্ণ আলাদা কাজ।"
+        }
+      ]
+    },
+    {
+      "id": "ch28_ddpm",
+      "title": "Ancestral DDPM Reverse Update",
+      "subtitle": "Model-এর অনুমানকৃত Mean Prediction এবং বাইরে থেকে যোগ করা Noise দুটিকে আলাদা রাখুন",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Epsilon অনুমান থেকে সরাসরি Reverse Mean নির্ণয়",
+          "body": "আগে আমরা `q(xₜ₋₁ | xₜ, x₀)`-এর Posterior Mean `μ̃ₜ`-এর সমীকরণ প্রতিপাদন করেছিলাম। এবার সেই সূত্রে অজানা `x₀`-এর জায়গায় আমাদের Model-এর অনুমানকৃত `x̂₀ = (xₜ - √(1 - ᾱₜ) ε_θ) / √ᾱₜ` বসিয়ে বীজগণিতীয় সরলীকরণ করলেই নিচের সুপরিচিত DDPM Reverse Mean `μ_θ`-এর রূপটি পাওয়া যায়! এখানে প্রতিটি ধাপে `t`, `αₜ` এবং `ᾱₜ`-এর Index শতভাগ সামঞ্জস্যপূর্ণ থাকতে হবে। আর একটি মৌলিক বিষয় কখনোই ভুলবেন না: Network-এর Output `ε_θ` হলো একটি অনুমানকৃত Gaussian Noise Vector—একে কখনোই Pixel Probability বা Posterior Variance ধরে নেবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "প্রতি ধাপে নতুন র‍্যান্ডম Noise যোগ করার নিয়ম",
+          "body": "শুধু Mean `μ_θ`-তে সরে গেলেই কিন্তু Ancestral DDPM সম্পূর্ণ হয় না; Distribution-এর বিস্তার ধরে রাখতে প্রতি ধাপে একটি নতুন স্বাধীন আদর্শ নরমাল Vector `z ~ N(0, I)` ড্র করে তার সাথে `σₜ z` যোগ করতে হয়। এখানে `σₜ²` হিসেবে `β̃ₜ`, `βₜ` কিংবা শেখা Variance Policy বেছে নেওয়া যায়। তবে কোড লেখার সময় সাবধান: সমীকরণে গুণ হয় Standard Deviation `σₜ`—ভুল করে সরাসরি Variance বসিয়ে দিলে Scale পুরোপুরি বিগড়ে যাবে! আর একদম শেষ ধাপে (`t = 1` থেকে `0`-তে আসার সময়) নতুন Noise শূন্য রাখা হয়, নতুবা তৈরি হওয়া চূড়ান্ত পরিষ্কার ছবিতেই অবাঞ্ছিত Noise যোগ হয়ে যাবে।"
+        },
+        {
+          "type": "math",
+          "title": "DDPM-এর এক ধাপের Reverse Update সমীকরণ",
+          "body": "\\mu_\\theta=\\frac1{\\sqrt{\\alpha_t}}\\left(x_t-\\frac{\\beta_t}{\\sqrt{1-\\bar\\alpha_t}}\\epsilon_\\theta(x_t,t,c)\\right),\\quad x_{t-1}=\\mu_\\theta+\\sigma_t z"
+        },
+        {
+          "type": "code",
+          "title": "এক ধাপের DDPM Mean ও Posterior Variance হিসাব",
+          "body": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter28_local\", Path(\"assets/datasets/digits/diffusion_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\n\nbeta, bar = m.schedule()\nt = 8\nb = beta[t - 1]\na = 1 - b\nx = torch.zeros(64, dtype=torch.float64)\neps = torch.ones_like(x)\nmean = (x - b / (1 - bar[t]).sqrt() * eps) / a.sqrt()\nposterior_variance = b * (1 - bar[t - 1]) / (1 - bar[t])\nassert torch.isfinite(mean).all() and posterior_variance > 0\nprint(\n    mean[0].item(), posterior_variance.item()\n)  # Formula illustration, not UI sampler.\n"
+        },
+        {
+          "type": "text",
+          "title": "দ্বৈত র‍্যান্ডমনেস ও Reproducibility-এর শর্ত",
+          "body": "লক্ষ্য করুন, Ancestral DDPM-এ র‍্যান্ডমনেস আসে দুটি আলাদা উৎস থেকে: প্রথমবার একদম শুরুর `x_T` তৈরির সময়, এবং তারপর মাঝখানের প্রতিটি ধাপে নতুন `z` যোগ করার সময়! ফলে শুরুর `x_T` স্থির রাখলেও মাঝখানের Sampler RNG বদলে গেলে চূড়ান্ত Sample বদলে যাবে। তাই পূর্ণ Reproducibility নিশ্চিত করতে হলে প্রাথমিক Seed, Sampler-এর RNG ধারা, Schedule, Weights, Condition এবং Guidance—সবকিছুই নথিভুক্ত রাখতে হয়। তাছাড়া ভিন্ন দুটি সফটওয়্যার Pipeline-এ কেবল একই সংখ্যার Seed দিলেই যে হুবহু একই ছবি পাওয়া যাবে, এমন কোনো সর্বজনীন নিশ্চয়তা নেই।"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের অ্যাপে Implementation-এর পরিধি",
+          "body": "স্বচ্ছতার জন্য স্পষ্ট রাখা ভালো: এই পাঠে আমরা তাত্ত্বিক ও গাণিতিক ভিত্তির জন্য Ancestral DDPM-এর পূর্ণ সমীকরণ ও স্বতন্ত্র কোড উদাহরণ শিখছি, কিন্তু আমাদের অ্যাপের ইন্টারঅ্যাকটিভ Sampling Lab-এ প্রকৃত Sampler হিসেবে চলে Deterministic DDIM (`η = 0`)। তাই অ্যাপের UI-তে Sampler-এর নাম স্পষ্টভাবেই DDIM রাখা হয়েছে এবং অপ্রস্তুত কোনো Sampler-এর নামে বানানো রানটাইম বা ছবির মানের দাবি করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "ধাপে ধাপে ত্রুটি জমে ওঠা (Error Accumulation)",
+          "body": "Training-এর সময় Model সবসময় আসল পরিষ্কার ছবি থেকে তৈরি নিখুঁত Forward `xₜ` দেখে শেখে। কিন্তু Sampling-এর সময় এক ধাপে সামান্য ভুল হলে পরের ধাপে Model নিজের তৈরি কিছুটা বিচ্যুত অবস্থা Input হিসেবে পায়, এবং বহু ধাপ ধরে এই ত্রুটি ক্রমশ জমে উঠতে (Compound হতে) পারে। তাই এক ধাপের Clean Reconstruction Diagnostic ভালো হওয়া মানেই পুরো Reverse Chain শেষে নিখুঁত ছবি তৈরি হওয়ার নিশ্চয়তা নয়। Sampling খারাপ হলে মধ্যবর্তী Trajectory দেখে কোথায় Clipping, সীমা লঙ্ঘন বা Conditioning ব্যর্থ হচ্ছে তা নির্ণয় করুন।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে ব্যাখ্যা করবেন",
+          "body": "Interview-তে প্রায়ই জিজ্ঞেস করা হয়: 'Network তো Noise `ε_θ`-ই অনুমান করছে, তবে প্রতি ধাপে স্রেফ `xₜ - ε_θ` বিয়োগ করে দিলেই তো হয়—কেন তা করা যায় না?' উত্তরে স্পষ্টভাবে বলবেন: সরাসরি বিয়োগ করলে Forward Schedule-এর সিগন্যাল স্কেলিং (`1 / √αₜ`), সময়ের সহগ (`βₜ / √(1 - ᾱₜ)`) এবং মধ্যবর্তী ধাপের Variance পদ (`σₜ z`)—সবকিছুই বাদ পড়ে যাবে। তাই সঠিক Reverse Update সমীকরণটি প্রতিপাদন করে দেখান এবং কোনো সরলীকরণ করলে মূল প্রক্রিয়াটি ঠিক কোথায় বদলে যাচ্ছে তা পরিষ্কারভাবে ব্যাখ্যা করুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch28_ddim",
+      "title": "DDIM: Deterministic (η = 0) আপডেট ও Strided Timesteps",
+      "subtitle": "কম ধাপে Sampling করা মানে স্রেফ মাঝখানের ধাপগুলো অন্ধভাবে বাদ দেওয়া নয়",
+      "duration": "60 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "নতুন করে Training না দিয়েই ভিন্ন Reverse Process",
+          "body": "DDPM-এর একটি বড় ব্যবহারিক সীমাবদ্ধতা হলো Training-এ যতগুলো ধাপ থাকে, Sampling-এও প্রতিটি ধাপ এক এক করে পেরিয়ে আসতে হয়। DDIM (Denoising Diffusion Implicit Models) দেখাল যে আমাদের আগের সেই একই Noise-prediction Training এবং হুবহু একই Frozen Denoiser Network রেখেই ভিন্ন একটি Non-Markovian বিপরীত প্রক্রিয়া তৈরি করা সম্ভব! বিশেষ করে যখন এর স্টোকাস্টিক Parameter `η = 0` ধরা হয়, তখন উল্টো পথে নতুন কোনো র‍্যান্ডম Noise যোগ করা হয় না—ফলে শুরুর `x_T` এবং Condition স্থির থাকলে পুরো যাত্রাপথটি হয়ে যায় সম্পূর্ণ Deterministic। তবে মনে রাখবেন, Deterministic হওয়া মানেই Output নির্ভুল হওয়া নয়, আর শুরুর Prior Noise `x_T` ড্র করার প্রয়োজনও এতে শেষ হয়ে যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "লাফ দিয়ে ধাপ পার হওয়া (Strided Transitions)",
+          "body": "কীভাবে আমরা `32` ধাপে Training দেওয়া Model-কে মাত্র `8` ধাপে চালাই? আমাদের কোডে নির্বাচিত ধাপগুলোর তালিকা হলো `32, 28, 23, 19, 14, 10, 5, 1` এবং একদম শেষ গন্তব্য পরিষ্কার সীমানা `0`। এখানে সবচেয়ে জরুরি গাণিতিক নিয়মটি হলো: `t = 32` থেকে সরাসরি `s = 28`-এ যাওয়ার সময় কখনোই `s = t - 1` ধরে সহগ বসানো যাবে না; বরং গন্তব্য ধাপ `s`-এর আসল `ᾱₛ` ব্যবহার করতে হবে! অর্থাৎ `8` ধাপের Sampling মানে `8`টি সুনির্দিষ্ট নিউরাল ট্রানজিশন যার প্রতিটিই গন্তব্যের Signal-to-Noise অনুপাত মেনে চলে। আবার পূর্ণ `32` ধাপে চালালে তা ভিন্ন একটি সংখ্যাত্মক পথ অনুসরণ করে—তাই দুই ক্ষেত্রে ছবির মান হুবহু সমান হবে এমন নিশ্চয়তা নেই।"
+        },
+        {
+          "type": "math",
+          "title": "Deterministic DDIM (η = 0) আপডেট সমীকরণ",
+          "body": "x_s=\\sqrt{\\bar\\alpha_s}\\hat x_0+\\sqrt{1-\\bar\\alpha_s}\\hat\\epsilon,\\quad s<t,\\quad\\eta=0"
+        },
+        {
+          "type": "code",
+          "title": "8 ধাপের Strided DDIM Trajectory যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter28_local\", Path(\"assets/datasets/digits/diffusion_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/digits/diffusion_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nd = m.Denoiser()\nd.load_state_dict(\n    {\n        k: torch.tensor(v, dtype=torch.float64)\n        for k, v in lab[\"weights\"][\"denoiser\"].items()\n    }\n)\n_, bar = m.schedule()\ninitial = torch.tensor([lab[\"initial\"]], dtype=torch.float64)\ntrace = m.sample(d, initial, 3, 1.0, 8, bar)\nassert [f[\"t\"] for f in trace] == [32, 28, 23, 19, 14, 10, 5, 1, 0]\nassert len(trace) == 9\nprint(trace[-1][\"pixels\"][:4])\n"
+        },
+        {
+          "type": "text",
+          "title": "মধ্যবর্তী x̂₀ Clipping Policy ও সূক্ষ্ম পার্থক্য",
+          "body": "Implementation-এর একটি সূক্ষ্ম নীতি পুরো Sampling গতিপথ বদলে দিতে পারে: আমাদের বর্তমান কোডে প্রতি ধাপে আনুমানিক পরিষ্কার ছবি `x̂₀`-কে `[-1, 1]` পরিসরে Clip করা হয়, কিন্তু দিকনির্দেশক পদে (Direction Term) মূল অপরিবর্তিত `ε̂` রাখা হয়। আবার কোনো কোনো লাইব্রেরিতে ক্লিপ করা `x̂₀` থেকে উল্টো হিসাব করে `ε̂`-কেও নতুন করে আপডেট করা হয়—যার ফলে তৈরি হওয়া Trajectory বদলে যায়! তাই কেবল প্যাকেজ বা মেথডের নাম DDIM দেখেই দুটি কোড অভিন্ন ধরে নেবেন না; সবসময় Clipping Policy স্পষ্ট করুন এবং সংরক্ষিত Golden Forward আউটপুটের সাথে মিলিয়ে নিন।"
+        },
+        {
+          "type": "diffusion_sampling_lab",
+          "title": "ইন্টারঅ্যাকটিভ Reverse Sampling Lab",
+          "body": "নিচের Lab-এ একই স্থির প্রাথমিক Noise (`seed = 281` থেকে তৈরি `x₃₂`) থেকে শুরু করে `8` অথবা `32` ধাপ, কাঙ্ক্ষিত সংখ্যা (Requested Digit) এবং CFG Strength বদলে পরীক্ষা করে দেখুন। টাইমলাইন Slider-টি সরিয়ে প্রকৃত হিসাব করা মধ্যবর্তী ফ্রেমগুলো প্লেব্যাক করা যায়; এতে Model নতুন করে Training পায় না। চূড়ান্ত Output হিসেবে আপনি আমাদের ছোট Model-এর আসল ফলাফলই দেখছেন—দেখতে সুন্দর করার জন্য বাইরে থেকে কোনো বাছাইকৃত সংখ্যা বসিয়ে দেওয়া হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "Network কলের সংখ্যা ও গতির বাস্তব সীমারেখা",
+          "body": "আমাদের বর্তমান কোডে প্রতিটি Sampling ধাপে Conditional এবং Null—দুটি Forward Pass-ই চালানো হয় (`scale = 0` বা `1`-এর জন্য আলাদা Shortcut রাখা হয়নি)। ফলে `8` ধাপের Sampling-এ মোট `16` বার এবং `32` ধাপে মোট `64` বার Network কল (Network Evaluations) হয়। খেয়াল রাখবেন, এটি কেবল গাণিতিক অপারেশনের গণনা—কোনো নির্দিষ্ট Android ডিভাইস বা GPU-তে মাপা প্রকৃত Latency নয়। আমাদের এই ছোট শিক্ষামূলক Model-এর জন্য Dart-এর সিরিয়াল CPU হিসাবই যথেষ্ট দ্রুত চলে।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে ব্যাখ্যা করবেন",
+          "body": "Interview-তে যদি জিজ্ঞেস করা হয়—সাধারণ DDPM সমীকরণ অপরিবর্তিত রেখে স্রেফ লুপের মাঝখানের Index-গুলো বাদ দিয়ে দিলে কোন ট্রানজিশন ভুল হবে? উত্তরে বলুন, DDPM-এর সহগগুলো কেবল `t` থেকে `t - 1`-এর ক্ষুদ্র ধাপের জন্য বৈধ; মাঝখানের ধাপ লাফ দিলে সিগন্যাল ও Noise-এর অনুপাত ভেঙে পড়ে। সঠিক উপায় হলো DDIM আপডেট সমীকরণ প্রতিপাদন করে সরাসরি গন্তব্য ধাপের `ᾱₛ` ব্যবহার করা। আর বাস্তব সিস্টেমে প্রকৃত Wall-clock সময় কমাতে হলে কেবল ধাপের সংখ্যা কমানোই যথেষ্ট নয়—Model-এর আকার, হার্ডওয়্যার, Batching এবং মেমোরি ব্যবহারও পরিমাপ করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "গন্তব্য ধাপের ᾱₛ ব্যবহারের হাতে-কলমে হিসাব",
+          "body": "সংখ্যার সাহায্যে দেখা যাক ভুল গন্তব্যের `ᾱ` বসালে কতটা তফাত ঘটে। ধরা যাক, আসল পরিষ্কার মান `x₀ = 0.5`, Noise `ε = -1.0` এবং বর্তমান ধাপের `ᾱₜ = 0.25`; তাহলে বর্তমান ঝাপসা মান `xₜ ≈ -0.616025`। এখন `η = 0` রেখে DDIM সূত্রে এমন এক গন্তব্য ধাপে যেতে চাই যেখানে `ᾱₛ = 0.81`; সঠিক সূত্রে হিসাব করলে পাই `xₛ ≈ 0.014110`। কিন্তু Indexing ভুলের কারণে যদি অন্য কোনো ধাপের মান `0.49` বসে যায়, তবে ফলাফল চলে আসে প্রায় `-0.364143`! আর একদম শেষ পরিষ্কার সীমানা `ᾱ₀ = 1.0` বসালে নিখুঁতভাবে মূল মান `0.5` ফিরে আসে। জানা Noise দিয়ে এমন ছোট Oracle পরীক্ষা Sampler-এর Index ও বীজগণিত যাচাই করার চমৎকার উপায়।"
+        },
+        {
+          "type": "code",
+          "title": "Source থেকে Strided গন্তব্যে DDIM ট্রানজিশন যাচাই",
+          "body": "import math\n\nclean, epsilon, source_bar = 0.5, -1.0, 0.25\nnoisy = math.sqrt(source_bar) * clean + math.sqrt(1 - source_bar) * epsilon\nestimated_clean = (noisy - math.sqrt(1 - source_bar) * epsilon) / math.sqrt(source_bar)\n\n\ndef transition(destination_bar):\n    return (\n        math.sqrt(destination_bar) * estimated_clean\n        + math.sqrt(1 - destination_bar) * epsilon\n    )\n\n\ncorrect = transition(0.81)\nwrong_destination = transition(0.49)\nfinal = transition(1.0)\nassert math.isclose(final, clean)\nprint(round(noisy, 6), round(correct, 6), round(wrong_destination, 6), final)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে ভেবে বলুন",
+          "body": "DDIM-এ যখন η = 0 ধরা হয়, তখন পুরো Reverse প্রক্রিয়াটি তো Deterministic—তাহলে কি আমাদের আর শুরুর Initial Noise Seed-এর কোনো প্রয়োজন নেই?",
+          "solution": "অবশ্যই প্রয়োজন আছে! η = 0 কেবল মাঝখানের Reverse Transition ধাপগুলোতে নতুন করে র‍্যান্ডম Noise যোগ করা বন্ধ করে; কিন্তু যাত্রা শুরুর বিন্দু অর্থাৎ প্রাথমিক Latent Vector x_T তৈরি করার জন্য একটি সুনির্দিষ্ট Seed বা প্রদত্ত Tensor অপরিহার্য। মূলত শুরুর x_T, Model Weights, Condition, Scheduler এবং Clipping Policy—এই সবকিছু একসাথে মিলে চূড়ান্ত ছবির Trajectory নির্ধারণ করে।",
+          "reference": "https://arxiv.org/abs/2010.02502"
+        }
+      ]
+    },
+    {
+      "id": "ch28_guidance",
+      "title": "Classifier-Free Guidance (CFG) ও Conditional Dropout",
+      "subtitle": "বিভিন্ন লাইব্রেরির Scale তুলনা করার আগে Guidance সমীকরণের প্রচলিত রীতিটি মিলিয়ে নিন",
+      "duration": "60 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "একই Network-এ যৌথ Training (Joint Training)",
+          "body": "Sampling-এর সময় Generator-কে কাঙ্ক্ষিত শর্তের (Condition) দিকে আরও দৃঢ়ভাবে পরিচালিত করার সবচেয়ে জনপ্রিয় কৌশল হলো Classifier-Free Guidance (CFG)। এর বড় সুবিধা হলো, এজন্য আলাদা কোনো দ্বিতীয় Network Training দিতে হয় না! Training-এর সময় একই Denoiser Network কখনো আসল Class ID দেখে শেখে, আবার র‍্যান্ডমভাবে বাদ পড়া বিশেষ Null ID দেখেও শেখে (আমাদের Model-এ এই Label Dropout হার `15%`)। ফলে Inference-এর সময় একই ঝাপসা ছবি `xₜ` ও ধাপ `t` পাঠিয়ে আমরা এক Network থেকেই শর্তযুক্ত অনুমান `ε_c` এবং শর্তহীন অনুমান `ε_u`—দুটোই পেয়ে যাই। তবে মনে রাখবেন, Training-এ যদি Null শাখাটি শেখানোই না হয়ে থাকে, তবে Inference-এ ইচ্ছেমতো কোনো ফাঁকা Vector বসিয়ে অর্থবহ Guidance পাওয়ার কোনো নিশ্চয়তা থাকে না।"
+        },
+        {
+          "type": "text",
+          "title": "Guidance Scale লেখার দুটি ভিন্ন প্রচলিত রীতি",
+          "body": "গবেষণাপত্র বা ওপেন-সোর্স কোড মেলানোর সময় সবচেয়ে বেশি বিভ্রান্তি ঘটে Guidance Scale-এর সংজ্ঞা নিয়ে! আমাদের এই অধ্যায়ে ব্যবহৃত রীতিটি হলো `ε_u + w(ε_c - ε_u)`: এখানে `w = 0` মানে Pure Unconditional অনুমান, `w = 1` মানে সাধারণ Conditional অনুমান, আর `w = 2` (বা `w > 1`) মানে শর্তহীন বিন্দু থেকে শর্তযুক্ত দিক বরাবর বাইরের দিকে বাড়িয়ে নেওয়া (Extrapolation)। কিন্তু অনেক পেপার ও লাইব্রেরিতে সমীকরণটি লেখা হয় `ε_c + s(ε_c - ε_u)` আকারে—যেখানে আমাদের `w` আসলে `s + 1`-এর সমান! তাই দুটি ভিন্ন সিস্টেমের সেটিং তুলনা করার আগে সবসময় মূল সমীকরণ ও ডিফল্ট মান উল্লেখ করুন; একই সংখ্যার Scale সব রীতিতে এক অর্থ বহন করে না।"
+        },
+        {
+          "type": "math",
+          "title": "Classifier-Free Guidance-এর রৈখিক সমীকরণ",
+          "body": "\\hat\\epsilon_{cfg}=\\epsilon_u+w(\\epsilon_c-\\epsilon_u)"
+        },
+        {
+          "type": "code",
+          "title": "w = 0, 1 ও 2 বিন্দুতে CFG সমীকরণ যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/digits/diffusion_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nimport numpy as np\n\nr = lab[\"samples\"][0][\"references\"][0]\nu = np.array(r[\"null\"])\nc = np.array(r[\"conditional\"])\nassert np.allclose(u + 0 * (c - u), u)\nassert np.allclose(u + 1 * (c - u), c)\nprint((u + 2 * (c - u))[:4])\n"
+        },
+        {
+          "type": "text",
+          "title": "শর্তের আনুগত্য বনাম বৈচিত্র্যের Tradeoff",
+          "body": "শক্তিশালী Guidance ব্যবহার করলে প্রদত্ত শর্তের প্রতি Model-এর আনুগত্য (Condition Adherence) বাড়তে পারে, কিন্তু এর বিনিময়ে Sample-এর Diversity কমে যায় এবং অতিরিক্ত বড় Scale-এ মানের অতি-সম্পৃক্ততা (Saturation) বা দৃশ্যমান বিকৃতি (Artifacts) দেখা দিতে পারে। আমাদের এই ছোট Class-conditioned Model-এ কোনো একটি নির্দিষ্ট Scale সবসময় সেরা ফল দেবে এমন কোনো বাঁধাধরা নিশ্চয়তা নেই। একই প্রাথমিক Noise ধরে বিভিন্ন `w` চালিয়ে দেখা একটি ভালো চাক্ষুষ পরীক্ষা বটে, তবে কেবল একটি Sample-এর ছবি দেখে পুরো Distribution-এর সামগ্রিক গুণমান নির্ধারণ করা যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "বাহ্যিক Classifier Guidance থেকে এর পার্থক্য",
+          "body": "CFG আসার আগে প্রচলিত আরেকটি পদ্ধতি ছিল Classifier Guidance—যেখানে ঝাপসা ছবির ওপর আলাদাভাবে Training দেওয়া একটি Classifier Network-এর লগ-সম্ভাব্যতার Gradient `∇_{xₜ} log p(c | xₜ)` দিয়ে Sampling-এর গতিপথ ঘোরানো হতো। কিন্তু শুধু পরিষ্কার ছবিতে Training পাওয়া সাধারণ Classifier প্রচণ্ড ঝাপসা অবস্থায় নির্ভরযোগ্য থাকে না। আমাদের CFG এখানে এমন কোনো বাহ্যিক Classifier Gradient ব্যবহার করে না; এমনকি অধ্যায়ের পরের অংশের Lookup Alignment Model-টিও Sampler-কে গাইড করার কাজে ব্যবহৃত হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের Conditioning-এর প্রকৃত পরিধি",
+          "body": "অ্যাপের UI-তে বোঝার সুবিধার্থে সংখ্যার নাম ইংরেজিতে লেখা থাকলেও মনে রাখতে হবে যে Neural Network-এর ভেতরে তা কেবল One-hot Class ID হিসেবেই প্রবেশ করে—কোনো প্রাকৃতিক ভাষার Caption হিসেবে নয়। তাই এখানে মুক্ত বাংলা বা ইংরেজি প্রম্পট বোঝা কিংবা জটিল ভাষিক সমন্বয়ে ছবি তৈরির (Compositional Text-to-Image) কোনো দাবি করা হয়নি। পূর্ণাঙ্গ সিস্টেম গড়তে হলে প্রকৃত Text Encoder এবং বিপুল ইমেজ-Caption জোড়ার Training Data প্রয়োজন হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে Debugging কৌশল বলবেন",
+          "body": "Interview-তে CFG যাচাইয়ের কথা উঠলে বলুন: প্রথমেই `w = 1`-এ সাধারণ Conditional এবং `w = 0`-এ Null আউটপুট হুবহু মেলে কি না তার টেস্ট লিখব। এরপর সচরাচর ঘটে এমন বাগগুলো—যেমন ভুল করে দুইবার গাইডেন্স প্রয়োগ করা (Double Guidance), ভুল Null ID পাঠানো, Training ও Inference-এর Condition Dropout অসামঞ্জস্য এবং বড় Scale-এর ওভারফ্লো—খতিয়ে দেখব। আর মনে করিয়ে দিন যে মূল Denoiser Network-টি দুর্বল হলে কেবল বড় Guidance Scale দিয়ে তার অনুপস্থিত সক্ষমতা নিশ্চিতভাবে উদ্ধার করা যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "Guidance এবং Clipping-এর ক্রম বদলালে কী ঘটে?",
+          "body": "একটি চমৎকার সংখ্যাত্মক উদাহরণ দেখা যাক! ধরি `a = 0.8`, `b = 0.6`, বর্তমান ঝাপসা মান `xₜ = 1.0`, শর্তহীন Noise `ε_u = -1.0`, শর্তযুক্ত Noise `ε_c = 1.0` এবং ওজন `w = 2.0`। প্রথমে Noise-এর ওপর CFG চালালে Guided Noise হয় `3.0`, যা থেকে পরিষ্কার মানের অনুমান আসে `-1.0`। আপনি যদি আগে দুই শাখার পরিষ্কার মান আলাদাভাবে বের করেন (`2.0` এবং `0.5`) এবং তারপর রৈখিকভাবে মেশান, তাহলেও হুবহু `-1.0`-ই পাবেন! কিন্তু মেশানোর আগেই যদি দুই শাখার পরিষ্কার মানকে `[-1, 1]` পরিসরে Clip করে ফেলেন, তবে মান দুটি হয়ে যায় `1.0` ও `0.5`, এবং তখন গাইডেড ফলাফল দাঁড়ায় `0.0`! অর্থাৎ অরৈখিক Clipping ঠিক কোন ধাপে বসছে, তা সরাসরি Sampler Contract-এরই অংশ।"
+        },
+        {
+          "type": "code",
+          "title": "রৈখিক রূপান্তর বনাম মধ্যবর্তী Nonlinear Clipping পরীক্ষা",
+          "body": "import numpy as np\n\na, b, noisy, weight = 0.8, 0.6, 1.0, 2.0\nnull_noise, conditional_noise = -1.0, 1.0\nguided_noise = null_noise + weight * (conditional_noise - null_noise)\nfrom_guided = (noisy - b * guided_noise) / a\nnull_clean = (noisy - b * null_noise) / a\nconditional_clean = (noisy - b * conditional_noise) / a\nlinear_mix = null_clean + weight * (conditional_clean - null_clean)\nclipped_null, clipped_conditional = np.clip([null_clean, conditional_clean], -1, 1)\nclipped_before = clipped_null + weight * (clipped_conditional - clipped_null)\nnp.testing.assert_allclose(from_guided, linear_mix)\nprint(\n    guided_noise,\n    round(from_guided, 6),\n    round(linear_mix, 6),\n    round(float(np.clip(from_guided, -1, 1)), 6),\n    clipped_before,\n)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে ভেবে বলুন",
+          "body": "অন্য কোনো ওপেন-সোর্স লাইব্রেরি বা পেপার থেকে একটি Guidance Scale সংখ্যা কপি করে নিজের কোডে বসানোর আগে কোন সমীকরণ ও নিয়মগুলো অবশ্যই মিলিয়ে নেবেন?",
+          "solution": "প্রথমেই মিলিয়ে দেখতে হবে Model-টি ঠিক কোন রাশি অনুমান করছে (Epsilon, Velocity নাকি Clean x₀), তারপর Guidance Scale-এর সমীকরণ কোন রীতিতে লেখা (w নাকি s = w - 1), কোন বিশেষ Token বা Vector দিয়ে Null Condition শেখানো হয়েছে, Input-এর Normalization কী এবং Clipping ও Epsilon পুনর্গণনার Policy কীভাবে সাজানো। সবশেষে w = 0 ও w = 1 প্রান্তিক মানের Output মিলিয়ে শাখাগুলোর রাউটিং যাচাই করতে হবে।",
+          "reference": "https://arxiv.org/abs/2207.12598"
+        }
+      ]
+    },
+    {
+      "id": "ch28_latent_diffusion",
+      "title": "Latent Diffusion, Autoencoder Scale ও আধুনিক Architecture",
+      "subtitle": "Pixel-space ছোট Model থেকে বাস্তব প্রোডাকশন Diffusion পরিবারের গঠন বোঝা",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Pixel-এর বদলে সংকুচিত Latent Space-এ Diffusion কেন?",
+          "body": "উচ্চ-রেজোলিউশনের ছবিতে সরাসরি প্রতি Pixel-এ বহু ধাপ Diffusion চালানো প্রচণ্ড ব্যয়বহুল। Latent Diffusion এই সমস্যার এক চমৎকার প্রকৌশলগত সমাধান দেয়: প্রথমে একটি Autoencoder ব্যবহার করে বড় ছবিকে কম রেজোলিউশনের সংকুচিত Latent Representation-এ নামিয়ে আনা হয়, আর Diffusion Model-টি কেবল ওই হালকা Latent Space-এর Distribution শেখে! এতে গণনার খরচ অনেক কমে আসে, তবে মনে রাখতে হবে—Autoencoder-এ হারিয়ে যাওয়া সূক্ষ্ম তথ্য এবং Decoder-এর নিজস্ব বিকৃতি (Artifacts) তখন পুরো সিস্টেমের মানের ওপর একটি সীমা (Bottleneck) তৈরি করে। তাই বাস্তবে VAE Reconstruction Quality এবং Latent Diffusion Sampling Quality—দুটোকে আলাদাভাবে মূল্যায়ন করতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Latent Scaling ধ্রুবকের কঠোর চুক্তি",
+          "body": "Forward Diffusion যাতে সঠিক Signal-to-Noise অনুপাতে কাজ করে, সেজন্য Encoder থেকে পাওয়া Latent Vector-কে একটি নির্দিষ্ট স্কেলিং ধ্রুবক `s` দিয়ে গুণ করে `z₀ = s E(x)` নেওয়া হয় এবং ডিকোড করার আগে আবার `s` দিয়ে ভাগ করে `D(ẑ₀ / s)` হিসাব করা হয়। Training ও Inference-এ এই স্কেলিং ধ্রুবক, Latent-এর স্থানিক আকার (Spatial Shape), চ্যানেল সংখ্যা এবং Encoder-এর Mean নাকি Sample করা Posterior নেওয়া হচ্ছে—সবকিছু শতভাগ সামঞ্জস্যপূর্ণ রাখতে হয়। নির্দিষ্ট Pretrained Model-এর নিজস্ব ধ্রুবক না জেনে ইচ্ছেমতো সংখ্যা কপি করবেন না; নিচের কোডে কেবল ধারণাটি বোঝানোর জন্য একটি সাধারণ উদাহরণ দেখানো হয়েছে।"
+        },
+        {
+          "type": "math",
+          "title": "Encode, Latent Corruption ও Rescaled Decode সমীকরণ",
+          "body": "z_0=s\\,E(x),\\quad z_t=\\sqrt{\\bar\\alpha_t}z_0+\\sqrt{1-\\bar\\alpha_t}\\epsilon,\\quad \\hat x=D(\\hat z_0/s)"
+        },
+        {
+          "type": "code",
+          "title": "Latent Scaling ও বিপরীত ভাগের সহজ উদাহরণ",
+          "body": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter28_local\", Path(\"assets/datasets/digits/diffusion_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\n\n# Explicit shape/scale illustration; no latent-diffusion checkpoint is trained here.\nz = torch.tensor([[0.2, -0.4]], dtype=torch.float64)\nscale = 2.0\nscaled = scale * z\nassert torch.allclose(scaled / scale, z)\nprint(scaled.tolist())\n"
+        },
+        {
+          "type": "text",
+          "title": "মূল Architecture: U-Net এবং Diffusion Transformer (DiT)",
+          "body": "বাস্তব ইমেজ বা Latent Diffusion Model-এ আমাদের ছোট্ট ফ্ল্যাট MLP-র বদলে স্থানিক গঠন বোঝে এমন শক্তিশালী Architecture ব্যবহৃত হয়। ক্ল্যাসিক Model-গুলোতে বহুমাত্রিক স্থানিক প্রসেসিং ও Skip Connection-সমৃদ্ধ U-Net ব্যবহৃত হয়, আর আধুনিক বড় Model-গুলোতে Latent গ্রিডকে প্যাচ বা Token-এ ভেঙে Diffusion Transformer (DiT) ব্যবহার করা হয়—যেখানে সময় ও শর্তের Embedding প্রতিটি ব্লকে যুক্ত থাকে। মনে রাখবেন, আমাদের এই অধ্যায়ের Model-টি কেবল একটি সরল ফ্ল্যাট MLP; এখানে উন্নত U-Net বা DiT-এর সক্ষমতা নকল করার কোনো দাবি করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "প্রকৃত Text Conditioning কীভাবে যুক্ত হয়?",
+          "body": "পূর্ণাঙ্গ Text-to-Image সিস্টেমে একটি প্রকৃত Text Encoder প্রম্পটকে একগুচ্ছ Token Vector-এ রূপান্তর করে। এরপর Denoiser-এর ভেতরের Cross-Attention স্তরে ঝাপসা ইমেজ বা Latent Token-গুলো কাজ করে Query হিসেবে, আর টেক্সট Token-গুলো জোগান দেয় Key ও Value! এখানে Text Encoder, Denoiser এবং Autoencoder—তিনটিরই সংস্করণ ও সর্বোচ্চ Token সীমা মিলে পুরো সিস্টেমের চুক্তি গঠিত হয়। খেয়াল রাখবেন, CLIP দিয়ে ছবি খোঁজা (Retrieval) আর Generator-এ টেক্সট শর্ত দেওয়া হুবহু একই Pipeline নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Training-এর খরচ ও রিসোর্স বাজেট",
+          "body": "বড় সিস্টেমে Pretrained অংশগুলো Freeze রাখা হবে নাকি Fine-tune করা হবে, সংখ্যার Precision, Gradient Checkpointing এবং ডেটার মিশ্রণ—সবই চূড়ান্ত ফলাফল ও মেমোরি বাজেট বদলে দেয়। আমাদের CPU-তে চলা ছোট শিক্ষামূলক Model-এর Parameter সংখ্যা থেকে কখনোই প্রোডাকশন GPU-র VRAM বা Throughput অনুমান করবেন না; বাস্তব সিস্টেমের জন্য লাইসেন্সকৃত ডেটা ও Weights এবং সরাসরি মাপা রিসোর্স বাজেট দরকার।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে বিশ্লেষণ করবেন",
+          "body": "Interview-তে যদি প্রশ্ন করা হয়: 'Autoencoder চমৎকার Reconstruction দিলেও Generator কেন অদ্ভুত ভুল বা Hallucinate করতে পারে?' উত্তরে বলুন, Autoencoder ভালো হওয়া কেবল দেখায় যে সঠিক Latent পেলে Decoder ছবি ফুটিয়ে তুলতে পারে; কিন্তু Generator যদি অচেনা Latent অঞ্চলে চলে যায়, তবে সমস্যা লুকিয়ে থাকতে পারে Training Distribution, Sampler বা স্কেলিং ধ্রুবকের অমিল, দুর্বল Conditioning কিংবা অতিরিক্ত Guidance-এর ভেতরে—তাই প্রতিটি ধাপের জন্য আলাদা অনুমান ধরে পরীক্ষা করতে হবে। আর স্পষ্ট মনে রাখবেন, আমাদের এই অধ্যায়ে প্রকৃতপক্ষে Pixel-space DDIM চলে; Latent Pipeline-টি তাত্ত্বিকভাবে বোঝানো হয়েছে, কোনো লুকানো Pretrained Weights নেই।"
+        }
+      ]
+    },
+    {
+      "id": "ch28_multimodal",
+      "title": "Multimodal Task Map: Retrieval, Fusion ও Generation",
+      "subtitle": "দুটি মাধ্যমের Similarity মাপার Model মানেই গভীর Visual Reasoning ইঞ্জিন নয়",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "চারটি আলাদা কাজ, চারটি আলাদা সক্ষমতা",
+          "body": "এবার আমরা ইমেজ ও টেক্সটের সমন্বিত জগৎ—অর্থাৎ Multimodal সিস্টেমে প্রবেশ করছি। শুরুতেই বিভিন্ন কাজের সীমানা স্পষ্ট করে নেওয়া জরুরি: Image-to-Text Retrieval প্রদত্ত সম্ভাব্য বর্ণনাগুলোর মধ্য থেকে ছবির সাথে মানানসই বর্ণনাটিকে র‍্যাঙ্ক করে উপরে আনে; Image Captioning ছবি দেখে নতুন বাক্য তৈরি করে; Visual Question Answering (VQA) ছবির তথ্যের আলোকে প্রশ্নের উত্তর দেয়; আর Image Generation শর্ত মেনে নতুন Pixel তৈরি করে। প্রকৌশলগত মূল নীতি হলো—কোনো একটি Model-এর ভালো Similarity Score দেখেই সে বাকি সব কাজও পারে বলে দাবি করা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "Dual Encoder Architecture: কেন এত দ্রুত, কোথায় সীমাবদ্ধ?",
+          "body": "বিশাল সংগ্রহশালা থেকে দ্রুত ছবি বা টেক্সট খুঁজে বের করার জন্য ব্যবহৃত হয় Dual Encoder গঠন—যেখানে ছবি ও লেখাকে সম্পূর্ণ আলাদাভাবে এনকোড করে একই যৌথ জগতে (Shared Embedding Space) তুলনা করা হয়। এর সবচেয়ে বড় সুবিধা হলো, লক্ষ লক্ষ প্রার্থীর Embedding আগে থেকেই হিসাব করে Cache করে রাখা যায়; কুয়েরি আসার সময় ভারী যুগ্ম Network না চালিয়ে স্রেফ Dot Product নিলেই দ্রুত Retrieval হয়ে যায়। তবে ছবি ও লেখা আলাদাভাবে এনকোড হওয়ায় সূক্ষ্ম স্থানিক সম্পর্ক বা জটিল যুক্তির কাজে এটি সীমিত হতে পারে—কেবল Vector-এর নৈকট্য (Embedding Proximity) মানেই নিখুঁত চাক্ষুষ প্রমাণ নয়।"
+        },
+        {
+          "type": "math",
+          "title": "Dual Encoder বনাম Joint Fusion-এর গাণিতিক রূপ",
+          "body": "\\mathrm{dual\\ encoder}:s(x,c)=\\langle f(x),g(c)\\rangle,\\qquad\\mathrm{fusion}:h(x,c)"
+        },
+        {
+          "type": "code",
+          "title": "সংরক্ষিত দশটি Class-name Embedding যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/digits/diffusion_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nassert lab[\"names\"] == [\n    \"zero\",\n    \"one\",\n    \"two\",\n    \"three\",\n    \"four\",\n    \"five\",\n    \"six\",\n    \"seven\",\n    \"eight\",\n    \"nine\",\n]\nassert len(lab[\"text_embeddings\"]) == 10\nassert all(len(v) == 8 for v in lab[\"text_embeddings\"])\nprint(\"Known-class lookup embeddings; no caption text encoder.\")\n"
+        },
+        {
+          "type": "text",
+          "title": "গভীর মিথস্ক্রিয়ার জন্য Fusion Model",
+          "body": "যখন প্রতিটি জোড়ার সূক্ষ্ম অংশগুলোর পারস্পরিক সম্পর্ক বোঝা জরুরি হয়, তখন ব্যবহৃত হয় Fusion Model `h(x, c)`—যেখানে যৌথ Cross-Attention বা Token প্রসেসিংয়ের মাধ্যমে ছবি ও লেখার Token-গুলো সরাসরি তথ্য বিনিময় করে। এতে প্রতিটি প্রার্থীর জন্য আলাদাভাবে গণনা চালাতে হয় বলে খরচ বাড়ে এবং Attention Mask, অবস্থান সংকেত ও Token Budget অত্যন্ত গুরুত্বপূর্ণ হয়ে ওঠে। বাস্তব সিস্টেমে প্রায়ই দ্রুতগতির Retrieval দিয়ে প্রাথমিক তালিকা এনে তার ওপর ভারী Fusion Reranking বসানো হয়—তবে মনে রাখবেন এই দুটি ধাপের মূল্যায়ন আলাদাভাবে করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের বাস্তব Baseline Model-টি কী করছে?",
+          "body": "আমাদের এই অধ্যায়ের Alignment Model-এ Image Encoder ছবির Pixel থেকে একটি একক-দৈর্ঘ্যের (Normalized) `8`-মাত্রিক Vector তৈরি করে। আর টেক্সট পাশে রয়েছে `10 × 8` আকারের একটি শেখা Lookup Table, যা মূল সংখ্যার Class ID দিয়ে শনাক্ত করা হয়। কোডে দেখানো `zero` থেকে `nine` নামগুলো কেবল প্রদর্শনের উপনাম; এখানে কোনো ভাষাগত Token Encoding নেই। সুতরাং এটি পরিচিত Class-এর ওপর একটি Supervised Retrieval Proxy হিসেবে কাজ করে।"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব Image-Caption ডেটার প্রকৌশলগত শর্ত",
+          "body": "বাস্তব ইমেজ ও Caption ডেটা নিয়ে কাজ করার সময় অগোছালো Alt-text Noise, ডুপ্লিকেট ছবি, উৎসের ওভারল্যাপ এবং ব্যবহারের আইনি অধিকার নিরীক্ষা করতে হয়। একই ছবির একাধিক Caption যদি ভুল করে Train ও Test উভয় সেটে ছড়িয়ে যায়, তবে সরাসরি Data Leakage ঘটবে। আর সংখ্যার Label থেকে নিয়ম করে বসানো টেমপ্লেট নাম কখনোই স্বাধীনভাবে পর্যবেক্ষিত বাস্তব Caption নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে সিস্টেম বেছে নেবেন",
+          "body": "Interview-তে সার্চ, Captioning, VQA এবং Image Generation—এই চারটি কাজের Architecture ও মূল্যায়ন মেট্রিক আলাদা করে উপস্থাপন করুন। ছবিতে বস্তুর সংখ্যা গণনা বা স্থানিক অবস্থান জানতে চাওয়া হলে কখনোই স্রেফ Cosine Similarity স্কোর থেকে উত্তর বানানোর প্রস্তাব দেবেন না; বরং প্রামাণিক উত্তরের (Grounded Answer) জন্য সুনির্দিষ্ট চাক্ষুষ প্রমাণের শর্ত নির্ধারণ করুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch28_contrastive",
+      "title": "CLIP-ধাঁচের Contrastive Objective ও Temperature",
+      "subtitle": "সঠিক জোড়াকে কাছে টেনে এবং ভুল জোড়াকে দূরে ঠেলে যৌথ Representation শেখা",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Batch-এর ভেতরেই Positive ও Negative জোড়া তৈরি",
+          "body": "দুটি আলাদা Encoder-কে কীভাবে একই অর্থের যৌথ জগতে মেলাবেন? একটি Batch-এর প্রতিটি ছবি ও Caption জোড়া যদি স্বতন্ত্র হয়, তবে Diagonal বরাবর থাকা `(i, i)` জোড়াগুলোকে সঠিক মিল (Positive) এবং Batch-এর বাকি সব জোড়াকে অমিল (In-batch Negatives) ধরে Diagonal Cross-Entropy প্রয়োগ করা যায়। Row বরাবর Image-to-Text Softmax এবং Column বরাবর Text-to-Image Softmax একসাথে উভয় দিকের সামঞ্জস্য শেখায়। মনে রাখবেন, আসল CLIP-এর Text Encoder কাঁচা প্রাকৃতিক ভাষা প্রসেস করে, আর আমাদের ছোট Lookup Baseline-টি তা করে না।"
+        },
+        {
+          "type": "text",
+          "title": "L2 Normalization কেন অপরিহার্য?",
+          "body": "Dot Product নেওয়ার আগে ছবি ও টেক্সট উভয় Vector-কেই L2 Normalization করে একক দৈর্ঘ্যে নিয়ে আসা হয়—ফলে তাদের Dot Product সরাসরি `[-1, 1]` পরিসরের Cosine Similarity হয়ে যায়। এতে Vector-এর দৈর্ঘ্য (Norm) ইচ্ছেমতো বাড়িয়ে Loss কমানোর Shortcut বন্ধ হয়ে যায়, যদিও কেবল Normalization করলেই শেখা দিকগুলো অর্থবহ হবে এমন স্বয়ংক্রিয় নিশ্চয়তা নেই। কোড লেখার সময় শূন্যের কাছাকাছি দৈর্ঘ্যের Vector সামলাতে হরে ক্ষুদ্র Numerical Epsilon রাখার Policy ভুলবেন না।"
+        },
+        {
+          "type": "math",
+          "title": "প্রতিসম Contrastive Logits ও InfoNCE Loss",
+          "body": "S_{ij}=\\frac{\\langle \\bar f(x_i),\\bar g(c_j)\\rangle}{\\tau},\\quad\\mathcal L=\\tfrac12(CE(S,i)+CE(S^T,i))"
+        },
+        {
+          "type": "code",
+          "title": "Diagonal বরাবর স্বতন্ত্র জোড়ার প্রতিসম Cross-Entropy হিসাব",
+          "body": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter28_local\", Path(\"assets/datasets/digits/diffusion_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\n\n# Declared mathematical illustration of unique-pair diagonal targets.\nlogits = torch.eye(3, dtype=torch.float64) * 4\ntarget = torch.arange(3)\nloss = 0.5 * (\n    torch.nn.functional.cross_entropy(logits, target)\n    + torch.nn.functional.cross_entropy(logits.T, target)\n)\nassert loss.item() > 0\nassert torch.allclose(logits.softmax(-1).sum(-1), torch.ones(3, dtype=torch.float64))\nprint(loss.item())\n"
+        },
+        {
+          "type": "text",
+          "title": "Temperature (τ) Parameter-এর ভূমিকা",
+          "body": "সমীকরণের হরে থাকা ধনাত্মক সংখ্যা `τ` (Temperature) নির্ধারণ করে Probability Distribution কতটা তীক্ষ্ণ হবে: ছোট `τ` Logit-এর পার্থক্যকে তীক্ষ্ণ করে তোলে, আর বড় `τ` দেয় তুলনামূলক কোমল Probability। তবে একটি গুরুত্বপূর্ণ গাণিতিক সত্য খেয়াল রাখুন—যেকোনো ধনাত্মক স্থির বৈশ্বিক Temperature আউটপুট Probability-র মান বদলালেও প্রার্থীদের ক্রম বা Ranking হুবহু অপরিবর্তিত রাখে! এছাড়া Training-এ শেখা Logit Scale এবং অ্যাপের UI-তে থাকা স্থির Slider এক জিনিস নয়; আর এই Softmax স্কোরগুলোকে কখনোই প্রকৃত সত্যতার Calibrated Confidence ধরে নেবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "অন্ধভাবে সব অন্য জোড়াকে Negative ধরার ঝুঁকি",
+          "body": "একই Class-এর একাধিক ছবি, হুবহু এক Caption কিংবা সমার্থক বর্ণনা একই Batch-এ পড়লে সাধারণ Diagonal Loss-এ সেগুলো ভুল করে False Negative হয়ে যায়। তাই কাজের প্রকৃতি অনুযায়ী কোন সম্পর্কটি আসলে Positive তা সুস্পষ্টভাবে সংজ্ঞায়িত করতে হয়। কঠিন নেগেটিভ খোঁজা (Hard-negative Mining) উপকারী হতে পারে, কিন্তু বৈধ পজিটিভ জোড়াকে পরস্পর থেকে দূরে ঠেলে দিলে শেখা Representation ক্ষতিগ্রস্ত হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Zero-shot দাবির প্রকৃত সীমারেখা",
+          "body": "প্রাকৃতিক ভাষায় Pretrained কোনো Encoder যখন Training-এ কখনো না দেখা নতুন Class-এর বর্ণনা র‍্যাঙ্ক করে, তখন সঠিক প্রটোকল মেনে তার Zero-shot Transfer মূল্যায়ন করা যায়। কিন্তু পরিচিত Class-এর ওপর Training পাওয়া Lookup Table-কে Zero-shot বলা মানে আসল Supervision লুকিয়ে ফেলা। আমাদের এই দশটি নামের কাজটিতে Training ও মূল্যায়নে একই পরিচিত Class সেট ব্যবহৃত হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে ব্যাখ্যা করবেন",
+          "body": "Interview-তে প্রতিসম Objective-টি লিখে দেখান এবং ব্যাখ্যা করুন কেন ধনাত্মক Temperature কেবল Probability বদলায় কিন্তু Ranking বদলায় না। পাশাপাশি Batch Size, নেগেটিভের বৈচিত্র্য, ডেটার ডুপ্লিকেশন এবং Sampling Bias কীভাবে ফলাফলের অর্থ বদলে দেয় তা তুলে ধরুন। সবশেষে মনে করিয়ে দিন যে গড় স্কোর বাড়া মানেই সঠিক Alignment প্রমাণিত হওয়া নয়—সঠিক ও ভুল প্রার্থীর আপেক্ষিক ব্যবধান যাচাই করাই আসল কাজ।"
+        }
+      ]
+    },
+    {
+      "id": "ch28_multipositive",
+      "title": "পুনরাবৃত্ত Label, False Negatives ও Multi-positive Loss",
+      "subtitle": "একই Batch-এ থাকা সমশ্রেণির ছবিগুলোকে কখনোই ভুল করে Negative বানাবেন না",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "সাধারণ Diagonal Cross-Entropy এখানে কেন ব্যর্থ হয়?",
+          "body": "একটু হিসাব করে দেখুন: আমাদের Dataset-এ Class আছে মাত্র `10`টি, অথচ Training Batch-এর আকার `128`! অর্থাৎ একই Batch-এ অবধারিতভাবে একই সংখ্যার (যেমন সংখ্যা `0`-এর) একাধিক ছবি থাকবে এবং তারা সবাই একই `zero` নামের Vector পাবে। এখানে সাধারণ Diagonal Cross-Entropy চালালে Model ওই Batch-এর অন্য সব `0` ছবিকে ভুল করে Negative ধরে দূরে ঠেলতে চাইবে! যেহেতু আমাদের এই কাজে আসল Class-এর সমতাই বৈধ মিলের সম্পর্ক, তাই আমরা Diagonal-এর বদলে সরাসরি `yᵢ = yⱼ` সমতার Mask ব্যবহার করি।"
+        },
+        {
+          "type": "text",
+          "title": "সব বৈধ মিলকে একত্র করা Set-positive Objective",
+          "body": "একাধিক পজিটিভ থাকলে Loss সমীকরণটি কীভাবে গঠন করা হয়? প্রতিটি Row-এর জন্য Batch-এর সব প্রার্থীর `LogSumExp` থেকে কেবল পজিটিভ সেটের (`j : yⱼ = yᵢ`) `LogSumExp` বিয়োগ করা হয়। Transpose দিকেও একই Mask বসিয়ে শেষে দুই দিকের Loss-এর Mean নেওয়া হয়। খেয়াল রাখবেন, এই সমীকরণটি পজিটিভ সেটের মোট Probability ভর (Positive Mass) বাড়াতে শেখে—এটি প্রতিটি পজিটিভের আলাদা লগ-সম্ভাব্যতার গড় নেওয়ার সমীকরণের হুবহু সমান নয়।"
+        },
+        {
+          "type": "math",
+          "title": "Multi-positive Set-based Contrastive Loss",
+          "body": "\\mathcal L_i^{I\\to C}=\\log\\sum_j e^{S_{ij}}-\\log\\sum_{j:y_j=y_i}e^{S_{ij}}"
+        },
+        {
+          "type": "code",
+          "title": "সুষম Logits ও একক Class-এর Batch-এ Multi-positive Loss যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter28_local\", Path(\"assets/datasets/digits/diffusion_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\n\nlabels = torch.tensor([0, 0, 1, 1])\nlogits = torch.zeros(4, 4, dtype=torch.float64, requires_grad=True)\nloss = m.multipositive_loss(logits, labels)\nassert abs(loss.item() - __import__(\"math\").log(2)) < 1e-12\nall_same = m.multipositive_loss(logits, torch.zeros(4, dtype=torch.long))\nassert abs(all_same.item()) < 1e-12\n# Backward accumulates into .grad; the seed or reduction sets the scale.\nloss.backward()\nassert torch.isfinite(logits.grad).all()\nprint(loss.item())\n"
+        },
+        {
+          "type": "text",
+          "title": "কোডের প্রান্তিক পরীক্ষা (Sanity Fixtures) কী বলছে?",
+          "body": "উপরের কোডের দুটি ছোট পরীক্ষা সমীকরণের আচরণ স্পষ্ট করে দেয়: চারটি সমান Logit এবং প্রতি Row-তে দুটি করে পজিটিভ থাকলে (`[0, 0, 1, 1]`) পজিটিভ ভর হয় অর্ধেক, তাই Loss আসে ঠিক `log(2)`। আর Batch-এর সব আইটেমের Label একই হলে সবাই পজিটিভ হওয়ায় Loss হয়ে যায় `0`! তবে Loss `0` হওয়া কিন্তু ভালো Representation শেখার প্রমাণ নয়—বরং এর অর্থ হলো Batch-এ Class-এর বৈচিত্র্য না থাকলে এই Objective থেকে শেখার মতো আর কোনো তথ্যই পাওয়া যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "সংখ্যার স্থিতিশীলতা (Numerical Stability) ও শূন্য সেটের ঝুঁকি",
+          "body": "কোডে সংখ্যার স্থিতিশীলতা বজায় রাখতে নন-পজিটিভ ঘরগুলোতে `-∞` বসিয়ে নিরাপদ `logsumexp` হিসাব করা হয়। আমাদের কাজে প্রতিটি Row ও Column-এ অন্তত নিজের পজিটিভ জোড়াটি উপস্থিত থাকে। তবে সাধারণ কোনো অসম্পূর্ণ Dataset-এ যদি কোনো Row-র পজিটিভ সেট সম্পূর্ণ ফাঁকা হয়, তবে নীরবে `NaN` তৈরি হওয়া ঠেকাতে সুস্পষ্ট Exception ছোড়া বা ওই Row বাদ দেওয়ার Policy কোডে লিখে রাখতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের প্রকৃত Alignment Training সেটিংস",
+          "body": "আমাদের সংরক্ষিত Alignment রানে ইমেজ শাখাটি হলো `64 → 32 (ReLU) → 8` এবং শেষে L2 Normalization; আর নামের শাখাটি হলো `10 × 8` আকারের Embedding ও Normalization। মোট `2,424`টি Parameter নিয়ে Adam (`learning rate = 0.003`), `Batch Size = 128` এবং `τ = 0.1` রেখে `50`টি Epoch-এ মোট `600`টি আপডেট চালানো হয়েছে। যেহেতু Objective-এ সরাসরি আসল Label ব্যবহৃত হয়েছে, তাই এটি একটি সুস্পষ্ট Supervised Baseline।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে সাধারণীকরণ করবেন",
+          "body": "Interview-তে বলুন যে একই ছবির একাধিক Caption, সমার্থক বর্ণনা কিংবা একই Class-এর ভিন্ন ভিন্ন উদাহরণ—কাজের লক্ষ্য ভেদে পজিটিভ জোড়ার সংজ্ঞা আলাদা হতে পারে। আমাদের এই Class-label Mask-টি মুক্ত প্রাকৃতিক Caption-এ সরাসরি বসিয়ে দেওয়া যাবে না। তাই বাস্তব সিস্টেমে ডুপ্লিকেট গ্রুপিং, Batch Sampling এবং পজিটিভ নির্ধারণ—তিনটিকে একসাথে নিরীক্ষা করতে হয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch28_alignment",
+      "title": "বাস্তব ইমেজ ও Class-name Alignment Lab",
+      "subtitle": "Ranking, Probability এবং Source-label Shortcut আলাদাভাবে চিনতে শেখা",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Representation প্রবাহ কীভাবে কাজ করে?",
+          "body": "চলুন আমাদের তৃতীয় ইন্টারঅ্যাকটিভ Lab-এর ভেতরের হিসাবটি পরিষ্কারভাবে দেখে নিই। এখানে বাস্তব হাতের লেখার Pixel-গুলোকে `16` দিয়ে ভাগ করে আমাদের Frozen Image MLP-তে পাঠানো হয়, যা একটি একক-দৈর্ঘ্যের (`L2-normalized`) `8`-মাত্রিক Vector দেয়। অন্যদিকে পরিচিত নামের প্রতিটি ID থেকে আমাদের Training পাওয়া Lookup Table দেয় একটি করে একক-দৈর্ঘ্যের `8`-মাত্রিক Vector। এরপর Dart সরাসরি দশটি Cosine Similarity স্কোর পুনরায় হিসাব করে আসল Source Label এবং Model-এর অনুমানকৃত নাম পাশাপাশি দেখায়—এখানে নতুন কোনো Caption তৈরি করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "Temperature Slider ও Probability-র পরিবর্তন",
+          "body": "Lab-এ `τ` (Temperature) Slider-টি বদলে দেখুন কীভাবে Softmax Probability-গুলো পরিবর্তিত হয়। যেকোনো ধনাত্মক `τ`-তে প্রার্থীদের ক্রম বা Ranking হুবহু এক থাকে, কেবল স্কোরের বণ্টন বেশি তীক্ষ্ণ বা কোমল হয়। খেয়াল রাখবেন, এই Slider-টি সংরক্ষিত Weights বদলায় না এবং কোনো আলাদা Calibration ফিট করে না। এছাড়া দশটি নামের বদলে প্রার্থীর তালিকা (Candidate Set) বদলে দিলেও হরের যোগফল পরিবর্তিত হওয়ায় Probability বদলে যাবে।"
+        },
+        {
+          "type": "math",
+          "title": "Candidate সেটের ওপর Temperature-scaled Softmax",
+          "body": "p(c_j|x;\\tau)=\\frac{e^{\\cos(f(x),g(c_j))/\\tau}}{\\sum_k e^{\\cos(f(x),g(c_k))/\\tau}}"
+        },
+        {
+          "type": "code",
+          "title": "সংরক্ষিত Alignment Model-এ Cosine ও Rank Invariance যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter28_local\", Path(\"assets/datasets/digits/diffusion_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/digits/diffusion_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nmodel = m.Alignment()\nmodel.load_state_dict(\n    {\n        k: torch.tensor(v, dtype=torch.float64)\n        for k, v in lab[\"weights\"][\"alignment\"].items()\n    }\n)\nx = torch.tensor([lab[\"samples\"][0][\"unit_pixels\"]], dtype=torch.float64)\nwith torch.no_grad():\n    scores = model.images(x) @ model.texts(torch.arange(10)).T\nassert scores.argmax(-1).item() == (scores / 0.5).argmax(-1).item()\nassert torch.allclose(\n    scores[0],\n    torch.tensor(lab[\"samples\"][0][\"cosines\"], dtype=torch.float64),\n    atol=1e-12,\n)\nprint(scores.softmax(-1).tolist())\n"
+        },
+        {
+          "type": "text",
+          "title": "Diagnostic সেটের প্রকৃত ফলাফল ও সতর্কতা",
+          "body": "আমাদের `359`টি পর্যবেক্ষিত Diagnostic Sample-এর ওপর এই Model-এর Top-1 Accuracy এসেছে প্রায় `0.958217`—অর্থাৎ `344`টি ছবি সঠিক নামের সাথে মিলেছে। তবে ভুলে যাবেন না যে এটি পরিচিত Class-এর ওপর একটি Supervised Retrieval ফলাফল, অদেখা ভাষার ওপর Zero-shot Transfer নয়। ফাইলে সংখ্যাগরিষ্ঠ Class-এর Majority Baseline এবং প্রতি Class-এর পূর্ণ Confusion Matrix সংরক্ষিত আছে—কারণ কেবল সামগ্রিক Accuracy দেখলে নির্দিষ্ট কোনো Class-এর ধারাবাহিক ব্যর্থতা আড়াল হয়ে যেতে পারে।"
+        },
+        {
+          "type": "diffusion_alignment_lab",
+          "title": "Sample নির্বাচনের স্বচ্ছতা ও ইন্টারঅ্যাকটিভ Lab",
+          "body": "নিচের Lab-এ প্রতিটি সংখ্যার (`0` থেকে `9`) একদম প্রথম Diagnostic Row-টি দেখানো হয়েছে; ফলাফল আকর্ষণীয় দেখানোর জন্য বেছে বেছে সুন্দর উদাহরণ নেওয়া হয়নি। মনে রাখবেন, প্রদর্শিত এই দশটি ছবি কেবল চাক্ষুষ পরীক্ষার জন্য—পুরো Dataset-এর পরিসংখ্যানগত অনুমান নয়, এবং Label থেকে বসানো নামগুলোও বাস্তবে সংগৃহীত Caption-এর বিকল্প নয়।"
+        },
+        {
+          "type": "text",
+          "title": "সক্ষমতার সীমারেখা নিরীক্ষা (Scope Audit)",
+          "body": "প্রসারণযোগ্য প্যানেলে আমাদের Lookup Baseline, পর্যবেক্ষিত ডেটার ভূমিকা, পরিচিত Class সেট এবং Temperature স্কোরের পরিধি স্পষ্টভাবে দেখানো হয়েছে। এই Model দিয়ে ইচ্ছেমতো নতুন কোনো বাংলা বা ইংরেজি প্রম্পট এনকোড করা সম্ভব নয়। তাছাড়া উচ্চ Cosine স্কোর দেখেই ছবির ভেতরের কোনো জটিল চাক্ষুষ প্রশ্নের সত্যতা ধরে নেবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "কোডিং অনুশীলনের চেকলিস্ট",
+          "body": "নিজে কোড যাচাই করার সময় দশটি ইমেজ Vector, দশটি নাম Vector, একশটি Cosine মান এবং স্থিতিশীল Probability-গুলো Reference-এর সাথে মিলিয়ে দেখুন। ভুল Input Scale, Normalization বাদ পড়া, Transpose উল্টে যাওয়া এবং ID অসামঞ্জস্যের বিরুদ্ধে টেস্ট লিখুন। আর ধনাত্মক Temperature-এ র‍্যাঙ্ক অপরিবর্তিত থাকার শর্তে দুটি স্কোর সমান (Tie) হলে কোন Policy প্রযোজ্য হবে তাও স্পষ্টভাবে উল্লেখ করুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch28_fusion",
+      "title": "Cross-Attention, Visual Tokens ও VLM Fusion",
+      "subtitle": "ইমেজের তথ্য কীভাবে ভাষা Model-এর Text Generation প্রক্রিয়ায় প্রবেশ করে?",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ইমেজ থেকে ভাষার সেতুবন্ধন (Token Bridge)",
+          "body": "আধুনিক Vision-Language Model (VLM)-এ একটি Vision Encoder প্রথমে ছবির প্যাচ Feature বের করে আনে, এবং এরপর একটি Projection স্তর বা Resampler সেই Feature-গুলোকে ভাষা Model-এর উপযোগী Visual Tokens অথবা Cross-Attention Input-এ রূপান্তর করে। সংযোগকারী অংশের Training Policy, অবস্থান সংকেত এবং ছবির জন্য বরাদ্দ Token Budget পুরো Model-এর আচরণ বদলে দেয়। শুধু মেমোরিতে ছবি লোড করে Token পাঠালেই যে তৈরি হওয়া উত্তর ছবির তথ্যের সাথে প্রামাণিক (Grounded) হবে, তার কোনো স্বয়ংক্রিয় নিশ্চয়তা নেই।"
+        },
+        {
+          "type": "text",
+          "title": "Cross-Attention-এ Query, Key ও Value-এর ভূমিকা",
+          "body": "Cross-Attention প্রক্রিয়ায় একটি মাধ্যম জোগান দেয় Query, আর অন্য মাধ্যমটি দেয় Key ও Value। কাজের ধরন ভেদে এই ভূমিকা উল্টে যেতে পারে: Text-to-Image Diffusion Model-এ সাধারণত ঝাপসা Latent Token-গুলো হয় Query এবং টেক্সট Token-গুলো দেয় Key/Value; আবার VLM-এ টেক্সট Token-গুলো Query হয়ে ভিজ্যুয়াল Key/Value থেকে তথ্য টেনে আনে! এখানে Query-র দৈর্ঘ্য এবং Key-র দৈর্ঘ্য সমান হওয়ার কোনো প্রয়োজন নেই।"
+        },
+        {
+          "type": "math",
+          "title": "ভিন্ন মাধ্যমের মধ্যে Cross-Attention সমীকরণ",
+          "body": "Q=H_qW_Q,\\ K=H_vW_K,\\ V=H_vW_V,\\quad A=\\mathrm{softmax}(QK^T/\\sqrt{d_k})V"
+        },
+        {
+          "type": "code",
+          "title": "অসম দৈর্ঘ্যের Query ও Key-তে Cross-Attention-এর Shape যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter28_local\", Path(\"assets/datasets/digits/diffusion_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\n\n# Explicit attention-shape illustration, not a trained VLM.\nq = torch.tensor([[1.0, 0.0]], dtype=torch.float64)\nk = torch.tensor([[1.0, 0.0], [0.0, 1.0]], dtype=torch.float64)\nv = torch.tensor([[2.0, 0.0], [0.0, 4.0]], dtype=torch.float64)\na = (q @ k.T / (2**0.5)).softmax(-1)\nout = a @ v\nassert out.shape == (1, 2) and abs(a.sum().item() - 1) < 1e-12\nprint(a.tolist(), out.tolist())\n"
+        },
+        {
+          "type": "text",
+          "title": "Mask, রেজোলিউশন ও স্থানিক গঠন রক্ষা",
+          "body": "বাস্তব VLM Pipeline-এ Padding ও Causal Mask, ভিজ্যুয়াল প্যাচের অবস্থান, ছবি কাটার নিয়ম (Crop / Resolution) এবং দীর্ঘ লেখার কাটছাঁট একসাথে নিরীক্ষা করতে হয়। Causal Decoder-এ ভবিষ্যতের উত্তর যেন বর্তমান ধাপে ফাঁস না হয় তা নিশ্চিত করতে হবে, এবং ছবির স্থানিক কাঠামো হারিয়ে গেলে বস্তুর পারস্পরিক অবস্থানের যুক্তি ক্ষতিগ্রস্ত হতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "VLM Training-এর ধাপসমূহ ও আমাদের কোডের পরিধি",
+          "body": "পূর্ণাঙ্গ VLM গঠনে Contrastive Pretraining, Caption Loss, Instruction Tuning এবং Preference Optimization—প্রতিটি ধাপেরই আলাদা লক্ষ্য থাকে এবং প্রতি ধাপেই ডেটার মান ও মূল্যায়ন জরুরি। স্পষ্টতার জন্য মনে রাখবেন, আমাদের বর্তমান Baseline-এ এসব VLM ধাপ Training দেওয়া হয়নি; উপরের Attention কোডটি কেবল Tensor-এর Shape ও হিসাব বোঝানোর একটি স্বচ্ছ উদাহরণ।"
+        },
+        {
+          "type": "text",
+          "title": "Attention Weight বনাম প্রকৃত প্রমাণ ও নিরাপত্তা",
+          "body": "কোনো অংশের ওপর Attention Weight বড় হওয়া মানেই কার্যকারণ ব্যাখ্যা, প্রকৃত প্রমাণ কিংবা নির্ভুল OCR প্রমাণিত হওয়া নয়—Model-এর প্রতিটি দাবি মূল ছবি ও লেখার সাথে মিলিয়ে যাচাই করতে হয়। পাশাপাশি নিরাপত্তার দিক থেকেও সতর্ক থাকুন: ছবির ভেতরে লেখা কোনো নির্দেশনা কেবলই Input ডেটা; ছবির ভেতর লুকানো সব নির্দেশকে কখনোই বিশ্বস্ত সিস্টেম কমান্ড হিসেবে গণ্য করা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে Tradeoff ব্যাখ্যা করবেন",
+          "body": "Interview-তে Visual Token সংখ্যা, মেমোরি খরচ, উচ্চ-রেজোলিউশন OCR এবং স্থানিক যুক্তির মধ্যকার Tradeoff স্পষ্টভাবে তুলে ধরুন। আর Cache করা Dual-encoder Retrieval-এর পরে ঠিক কখন ভারী Fusion Reranking দরকার? উত্তরে বলুন, জোড়া-ভিত্তিক মিথস্ক্রিয়ার অতিরিক্ত খরচ এবং শীর্ষ প্রার্থীদের প্রকৃত ব্যর্থতার ধরন বিচার করেই এই সিদ্ধান্ত নিতে হবে।"
+        }
+      ]
+    },
+    {
+      "id": "ch28_evaluation",
+      "title": "Diffusion ও Multimodal সিস্টেমের Evaluation ডিজাইন",
+      "subtitle": "ছবির মান, শর্ত পালন, বৈচিত্র্য এবং তথ্যের প্রামাণিকতা—প্রতিটি দিক আলাদাভাবে নিরীক্ষা করুন",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Generative Model মূল্যায়নের বহুমাত্রিক দিক",
+          "body": "Generative Model মূল্যায়নে ছবির স্পষ্টতা (Fidelity), বৈচিত্র্যের বিস্তার (Mode Coverage), শর্ত পালন (Condition Adherence), ডেটা মুখস্থ করা (Memorization) এবং মানুষের পছন্দ—প্রতিটিই আলাদা মাপকাঠি। দেখতে বাস্তবসম্মত একটি ছবিও কিন্তু প্রদত্ত Class বা শর্ত ভুল করতে পারে! আবার স্থির Noise ধরে দুটি Output-এর তুলনা বর্ণনামূলক হিসেবে ভালো হলেও তা কোনো স্বাধীন গুণমান অনুমান বা অনিশ্চয়তার পূর্ণাঙ্গ পরিসংখ্যান নয়।"
+        },
+        {
+          "type": "text",
+          "title": "এক ধাপের Denoising বনাম পূর্ণ শৃঙ্খলের Generation",
+          "body": "জানা পরিষ্কার Input ও Class শর্ত থেকে এক ধাপে `x₀` অনুমান করা, আর Pure Prior থেকে শুরু করে সম্পূর্ণ শৃঙ্খল পেরিয়ে নতুন ছবি তৈরি করা দুটি আলাদা কাজ। সেজন্যই আমরা প্রতি ধাপের Noise MSE, Identity Baseline, ক্লিপ করা `x₀` MSE এবং পূর্ণ Sampling Trace আলাদাভাবে রিপোর্ট করেছি, এবং শেষ প্রান্তের দুর্বল অনুমানের ফলাফলটিও অক্ষুণ্ণ রেখেছি।"
+        },
+        {
+          "type": "math",
+          "title": "একটি সম্পূর্ণ ও সৎ Evaluation Report-এর উপাদান",
+          "body": "\\mathrm{report}=\\{\\mathrm{task},\\mathrm{roles},\\mathrm{baselines},\\mathrm{slices},\\mathrm{uncertainty},\\mathrm{limits}\\}"
+        },
+        {
+          "type": "code",
+          "title": "Alignment Confusion Matrix থেকে সঠিক ও মোট গণনা যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/digits/diffusion_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nconf = lab[\"report\"][\"alignment_confusion\"]\ncorrect = sum(conf[i][i] for i in range(10))\nn = sum(map(sum, conf))\nassert n == 359 and correct == 344\nassert abs(correct / n - lab[\"report\"][\"alignment_top1\"]) < 1e-12\nprint(correct, n)\n"
+        },
+        {
+          "type": "text",
+          "title": "Retrieval মূল্যায়নের সঠিক প্রটোকল",
+          "body": "Retrieval রিপোর্টে পরিচিত Class-এর Top-1 Accuracy, পূর্ণ Confusion Matrix, প্রার্থীর সেট এবং Training-এর Supervision স্পষ্টভাবে উল্লেখ করুন। বাস্তব Caption Retrieval-এ প্রয়োজন হবে `Recall@K`, একাধিক বৈধ উত্তরের Multi-positive Annotation এবং ইমেজ ও Caption পরিবার অনুযায়ী আলাদা Split। মনে রাখবেন, Caption Likelihood, OCR এবং প্রামাণিক VQA আমাদের এই ছোট Proxy স্কোরের সমান নয়।"
+        },
+        {
+          "type": "text",
+          "title": "FID ও CLIPScore ব্যবহারের সূক্ষ্ম সতর্কতা",
+          "body": "ছবির মান মাপার FID মেট্রিকে Feature Network-এর ডোমেইন, কোভ্যারিয়েন্স অনুমান এবং কম Sample-এর Sample-size Bias গুরুত্বের সাথে বিবেচনা করতে হয়। আবার ইমেজ-টেক্সট Similarity স্কোর কেবল প্রম্পট মিলানোর একটি Proxy, যেখানে মূল্যায়নকারী Model-এর নিজস্ব অন্ধবিন্দু থাকতে পারে। আমাদের বর্তমান অ্যাপে কোনো কৃত্রিম FID বা CLIPScore তৈরি করা হয়নি এবং কোনো Caption Benchmark-ও নকল করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "Grounding ব্যর্থতা ও মানবিক মূল্যায়ন (Human Evaluation)",
+          "body": "বস্তুর সংখ্যা গণনা, স্থানিক সম্পর্ক, সূক্ষ্ম লেখা, বিরল ধারণা এবং ঝাপসা ছবি বাস্তব সিস্টেমের সংবেদনশীল Slice (Critical Slices) হতে পারে। মানুষের মাধ্যমে মূল্যায়নের ক্ষেত্রে স্পষ্ট Rubric, Model পরিচয় গোপন রাখা (Blinding) এবং মূল্যায়নকারীদের মতপার্থক্য নথিভুক্ত করুন। পাশাপাশি ডেটার লাইসেন্স, সম্মতি ও গোপনীয়তা যাচাই একটি স্বতন্ত্র আবশ্যিক কাজ।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে Evaluation পুনর্গঠন করবেন",
+          "body": "Interview-তে যদি বলা হয়—সাধারণ Benchmark-এ Model ভালো করছে কিন্তু প্রোডাক্টের OCR খারাপ হচ্ছে, তখন সংবেদনশীল Slice, প্রতিনিধিত্বমূলক ডেটা এবং Training ওভারল্যাপ নিরীক্ষা দিয়ে নতুন মূল্যায়ন সাজানোর প্রস্তাব দিন। উৎস-পরিবার ও সময়-ভিত্তিক Split, শক্তিশালী Baseline, Latency বাজেট এবং অনিশ্চয়তার হিসাব স্পষ্টভাবে লিখুন। আর মনে করিয়ে দিন যে বারবার দেখা ডেভেলপমেন্ট সেট কখনোই নতুন অন্ধ Test নয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch28_serving",
+      "title": "অফলাইন Serving, Reproducibility ও সিস্টেম সীমাবদ্ধতা",
+      "subtitle": "Sampling ধাপের সংখ্যা মানেই সরাসরি হার্ডওয়্যারের Latency পরিমাপ নয়",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Serving Artifact-এর পূর্ণাঙ্গ চুক্তি (Artifact Contract)",
+          "body": "নির্ভরযোগ্য Serving-এর জন্য Model-এর Weights, Input Scale, Time Schedule, Epsilon Parameterization, Condition ID, Null Policy, CFG সমীকরণ, Sampler ও Clipping Policy এবং প্রাথমিক Noise—সবকিছু একসাথে পিন করে রাখতে হয়। এর যেকোনো একটি অংশের সংস্করণ অমিল হলে একই Seed দেওয়া সত্ত্বেও ভিন্ন Output তৈরি হবে। আমাদের অ্যাপের সব ফাইল ভেতরে বান্ডেল করা, তাই রানটাইমে কোনো রিমোট API বা অথেনটিকেশন নেই।"
+        },
+        {
+          "type": "text",
+          "title": "গাণিতিক কলের হিসাব (NFE) বনাম ঘড়ির সময়",
+          "body": "আমাদের বর্তমান CFG কোডে প্রতি ধাপে দুটি পূর্ণ Forward Pass চলে (`0` বা `1` Scale-এর Shortcut ছাড়া): ফলে `8` ধাপে `16`টি NFE এবং `32` ধাপে `64`টি NFE লাগে। তবে অপারেশনের সংখ্যা কম-বেশি হওয়া মানেই সরাসরি ঘড়ির সময় নয়—প্রকৃত Wall-clock Latency হার্ডওয়্যার, Precision এবং Implementation-এর ওপর নির্ভর করে; তাই এখানে কোনো মাপা হার্ডওয়্যার Latency-র দাবি করা হয়নি।"
+        },
+        {
+          "type": "math",
+          "title": "মোট Network Evaluation (NFE)-এর হিসাব",
+          "body": "\\mathrm{NFE}=\\mathrm{steps}\\times\\mathrm{passes\\ per\\ step}"
+        },
+        {
+          "type": "code",
+          "title": "Training আপডেট ও Inference NFE হিসাব যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/digits/diffusion_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nassert lab[\"report\"][\"denoiser_updates\"] == 1440\nassert lab[\"report\"][\"alignment_updates\"] == 600\nprint(\"Current 8-step CFG NFE:\", 8 * 2)\nprint(\"Current 32-step CFG NFE:\", 32 * 2)\nprint(\"No hardware latency benchmark was measured.\")\n"
+        },
+        {
+          "type": "text",
+          "title": "মেমোরি, Batching ও হার্ডওয়্যার বাস্তবতা",
+          "body": "বড় Model-এ বিশাল Activations, Attention State, উচ্চ ইমেজ রেজোলিউশন এবং Batching দ্রুত মেমোরি খরচ বাড়িয়ে দেয়। তখন লেয়ার Offloading, Quantization এবং কম্পাইলড কার্নেলের আলাদা Tradeoff বিচার করতে হয়। আমাদের ছোট্ট Dart MLP থেকে কখনোই প্রোডাকশন VRAM বা Throughput অনুমান করবেন না; তার জন্য লক্ষ্য হার্ডওয়্যারে প্রতিনিধিত্বমূলক পরিমাপ অপরিহার্য।"
+        },
+        {
+          "type": "text",
+          "title": "গোপনীয়তা, নিরাপত্তা ও Caching Policy",
+          "body": "অফলাইন অ্যাপটি ব্যবহারকারীর Input কোনো সার্ভারে পাঠায় না, তবে ডিভাইসের স্থানীয় ফাইল নিরাপত্তা আলাদা নীতির বিষয়। ফলাফল Cache করতে হলে Cache Key-এর ভেতরে অবশ্যই Model, Condition, Schedule, Sampler, Guidance এবং Seed অন্তর্ভুক্ত করতে হবে। আর মনে রাখবেন, Cache-এ Vector-এর মিল পাওয়া কোনো ব্যবহারিক অনুমোদন বা মৌলিকত্বের সনদ নয়।"
+        },
+        {
+          "type": "text",
+          "title": "প্ল্যাটফর্ম যাচাইয়ের প্রকৃত পরিধি",
+          "body": "লোকাল Python Training ও CLI এবং Dart-এর সম্পূর্ণ Forward হিসাবগুলো সংখ্যাত্মক Reference দিয়ে যাচাই করা হয়েছে। Android রিলিজ বিল্ড, পারমিশন এবং অফলাইন (Airplane Mode) লঞ্চ আলাদাভাবে পরীক্ষা করা হয়; আর Windows পরিবেশে কাজের কারণে iOS ডিভাইস বিল্ড এখানে যাচাই করা হয়নি, যার জন্য macOS ও Xcode প্রয়োজন।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে On-device বনাম Server তুলনা করবেন",
+          "body": "Interview-তে On-device বনাম Server জেনারেশন তুলনায় ছবির মান, Model-এর আকার, Latency, RAM, ব্যাটারি খরচ, গোপনীয়তা এবং আপডেটের সুবিধা বিচার করুন। স্পষ্ট বলুন যে ছোট প্রোটোটাইপ পূর্ণাঙ্গ প্রোডাকশন Text-to-Image সিস্টেমের বিকল্প নয়, এবং NFE সংখ্যাকে কখনোই মাপা হার্ডওয়্যার Benchmark বলে দাবি করা যাবে না।"
+        }
+      ]
+    },
+    {
+      "id": "ch28_visual_error_round",
+      "title": "Document ও Chart QA: চাক্ষুষ পঠন (Perception) আর যুক্তির (Reasoning) ব্যর্থতা আলাদা করি",
+      "subtitle": "একই প্রশ্নে শুধু ছবি, স্বয়ংক্রিয় OCR Transcript এবং মানুষের যাচাইকৃত Transcript দিয়ে তুলনা করুন",
+      "duration": "24 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "তিন Input-এর পরীক্ষামূলক ছক (Evaluation Matrix)",
+          "body": "ডকুমেন্ট বা চার্ট প্রশ্নোত্তরের সিস্টেমে ভুলের উৎস ধরতে একই ডকুমেন্ট ID ও প্রশ্নে তিনটি আলাদা Input দিয়ে পরীক্ষা চালান: শুধুমাত্র ছবি (Image-only), স্বয়ংক্রিয় OCR Transcript এবং মানুষের যাচাইকৃত নিখুঁত Transcript (Human-verified Transcript)। যাচাইকৃত Transcript-এ কেবল দৃশ্যমান লেখা ও টেবিলের ঘরগুলো থাকবে, প্রশ্নের তৈরি উত্তর নয়! রিপোর্টে OCR Character Error Rate, নির্দিষ্ট ফিল্ড মিলানো, উত্তরের সঠিকতা এবং প্রমাণের Citation Box আলাদাভাবে দেখান। চার্টের ক্ষেত্রে Axis-এর একক, Scale, লেজেন্ড এবং টিক-মার্কগুলোও দৃশ্যমান প্রমাণের অংশ।"
+        },
+        {
+          "type": "text",
+          "title": "কারণ নির্ণয়ের সীমা ও সূক্ষ্ম সতর্কতা",
+          "body": "স্বয়ংক্রিয় OCR রানে উত্তর ভুল হলে অথচ যাচাইকৃত Transcript-এ উত্তর ঠিক এলে তা চাক্ষুষ পঠন বা Perception বাধার পক্ষে জোরালো প্রমাণ দেয়। আর দুটোতেই ভুল হলে প্রশ্নের গঠন, গাণিতিক যুক্তি, একক রূপান্তর এবং প্রত্যাশিত উত্তর নিরীক্ষা করতে হবে। তবে মনে রাখবেন, ছবি ও নিছক টেক্সট হুবহু একই তথ্য বহন করে না—পৃষ্ঠার লেআউট বাদ পড়লে পরীক্ষায় একসাথে একাধিক উপাদান বদলে যায়। এছাড়া উত্তরহীন প্রশ্নগুলোকে (Unanswerable Items) আলাদা Slice-এ রাখুন।"
+        },
+        {
+          "type": "code",
+          "title": "বান্ডেলকৃত Digits Lab-এর Confusion Matrix থেকে ভুলের সংখ্যা গণনা",
+          "body": "import json\nfrom pathlib import Path\n\nasset = json.loads(Path(\"assets/datasets/digits/diffusion_lab.json\").read_text())\nconfusion = asset[\"report\"][\"alignment_confusion\"]\ntotal = sum(sum(row) for row in confusion)\ncorrect = sum(row[index] for index, row in enumerate(confusion))\nassert len(confusion) == 10 and total == asset[\"report\"][\"diagnostic_count\"]\nprint(total, total - correct)"
+        },
+        {
+          "type": "text",
+          "title": "উপরের কোডটি আসলে ঠিক কী মাপছে?",
+          "body": "এই কোডটি আমাদের বান্ডেল করা হাতের লেখার সংখ্যার Alignment Confusion Matrix থেকে মোট কয়টি ভুল হয়েছে (`359`-এর মধ্যে `15`টি) তা গণনা করে—এটি কোনো ডকুমেন্ট OCR বা MMMU Benchmark স্কোর নয়। বাস্তব ডকুমেন্ট Lab তৈরি করার সময় Page-level Split, সুনির্দিষ্ট সেকশন উদ্ধৃতি, রসিদের যোগফল এবং প্রশ্নের ভাষার Slice আলাদা রাখুন।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "বই বন্ধ করে নিজে উত্তর দিন",
+          "body": "ধরা যাক, একটি রসিদে লেখা আছে `$1.50`, কিন্তু স্বয়ংক্রিয় OCR ভুল পড়ে সেটিকে `$150` বানিয়েছে—ফলে উত্তর ভুল এসেছে। অথচ মানুষের যাচাইকৃত সঠিক Transcript দিলে Model ঠিক উত্তর দিচ্ছে। End-to-end স্কোরিংয়ে এই ভুলের দায় কার এবং স্কোর কীভাবে ধরবেন?",
+          "solution": "এখানে ত্রুটিটি প্রথম ধাপের তথ্য নিষ্কাশন বা Perception (OCR) পর্যায়ে ধরা পড়েছে। তবে প্রোডাকশনের End-to-end স্কোরিংয়ে এটি অবশ্যই একটি ব্যর্থতা (Failure) হিসেবেই গণ্য থাকবে। মানুষের যাচাইকৃত Transcript-এর রানটি কেবল ত্রুটির উৎস আলাদা করার একটি Diagnostic Control, প্রোডাকশন পারফরম্যান্সের অনুমান নয়।",
+          "reference": "https://arxiv.org/abs/2311.16502"
+        }
+      ]
+    },
+    {
+      "id": "ch28_interview",
+      "title": "Interview Synthesis ও কোডিং প্রস্তুতি",
+      "subtitle": "Probability তত্ত্ব থেকে শুরু করে বাস্তব Debugging ও সিস্টেম ডিজাইনের পূর্ণাঙ্গ সমন্বয়",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Whiteboard প্রতিপাদনের পূর্ণ পরিকল্পনা",
+          "body": "Whiteboard-এ প্রথমেই এক ধাপের ট্রানজিশন থেকে সরাসরি Forward Marginal প্রতিপাদন করুন; এরপর Gaussian Posterior Precision, `ε → x̂₀` রূপান্তর এবং DDPM Reverse Mean লিখুন। তারপর দেখান কীভাবে DDIM গন্তব্য ধাপের `ᾱₛ` ব্যবহার করে, `η = 0` কেন মধ্যবর্তী র‍্যান্ডমনেস বন্ধ রাখে এবং CFG-এর প্রান্তিক মান দুটি কী বোঝায়। সবশেষে মনে করিয়ে দিন যে সমান ওজনের সরল Epsilon MSE পূর্ণাঙ্গ Variational ELBO-এর হুবহু সমান নয়।"
+        },
+        {
+          "type": "text",
+          "title": "নির্ভুল কোডিংয়ের চেকলিস্ট",
+          "body": "কোডিং রাউন্ডের জন্য Shape-নিরাপদ Corruption, নির্ভুল Schedule পুনরাবৃত্তি, স্থিতিশীল CFG/DDIM ধাপ এবং বিশ্বস্ত Weights রিলোড লেখার অভ্যাস করুন। `t = 0` Network কল প্রত্যাখ্যান, শেষ গন্তব্য `0`, কাঁচা Noise-এর পরিসর এবং Clipping Policy আলাদাভাবে টেস্ট করুন, এবং স্থির Noise-এর সম্পূর্ণ গতিপথ সংরক্ষিত Golden Reference-এর সাথে মেলান।"
+        },
+        {
+          "type": "math",
+          "title": "একটি পরিপূর্ণ প্রকৌশলগত উত্তরের কাঠামো",
+          "body": "\\mathrm{answer}=\\mathrm{assumptions}+\\mathrm{derivation}+\\mathrm{implementation}+\\mathrm{controls}"
+        },
+        {
+          "type": "code",
+          "title": "অধ্যায়ের সম্পূর্ণ Artifact ও Training ইতিহাস যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter28_local\", Path(\"assets/datasets/digits/diffusion_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/digits/diffusion_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nassert len(lab[\"diffusion_history\"]) == 120 and len(lab[\"alignment_history\"]) == 50\nassert len(lab[\"samples\"]) == 10 and len(lab[\"traces\"]) == 5\nbeta, bar = m.schedule()\nassert torch.isfinite(bar).all()\nprint(\n    \"Run: python assets/datasets/digits/diffusion_workflow.py --artifact-dir output28\"\n)\n"
+        },
+        {
+          "type": "text",
+          "title": "Multimodal ও Alignment অংশের সারসংক্ষেপ",
+          "body": "Alignment অংশে L2 Normalization, Cosine ও Temperature, স্বতন্ত্র জোড়ার Diagonal Cross-Entropy এবং পুনরাবৃত্ত Label-এর Multi-positive Objective পরিষ্কারভাবে আলাদা করুন। ব্যাখ্যা করুন কেন একই Class-এর ডুপ্লিকেট ছবি Batch-এ থাকলে সাধারণ Diagonal Loss-এ False Negative তৈরি হয়। আর স্পষ্ট রাখুন যে Label Lookup কোনো মুক্ত ভাষার Text Encoder নয় এবং পরিচিত Class-এর Accuracy কখনোই Zero-shot ফলাফল নয়।"
+        },
+        {
+          "type": "text",
+          "title": "অনুশীলনের পরিবেশ ও মূল্যায়নের নিয়ম",
+          "body": "অ্যাপের এডিটর কেবল Python কোডের লেখা এবং সংখ্যাত্মক উত্তর স্থানীয় SQLite-এ সংরক্ষণ করে; সেখানে সরাসরি ইচ্ছেমতো Python কোড চালানো হয় না। পূর্ণ সমাধানগুলো আপনার পিন করা লোকাল পরিবেশে রান করে যাচাই করুন। কেবল সংখ্যার উত্তর মেলাই কোডের শুদ্ধতার পূর্ণ প্রমাণ নয়; স্বতন্ত্র যাচাই প্রক্রিয়ায় Input চুক্তি ও Gradient প্রবাহও পরীক্ষা করা হয়।"
+        },
+        {
+          "type": "text",
+          "title": "প্রমাণভিত্তিক ও সৎ উপস্থাপনা",
+          "body": "আমাদের চূড়ান্ত ধাপের Denoiser যে সাধারণ Identity Baseline-এর চেয়ে পিছিয়ে ছিল—এই বাস্তব ফলাফলটি কারণসহ স্বচ্ছভাবে ব্যাখ্যা করুন এবং মনে রাখুন যে পরিচিত নামের Alignment একটি ভিন্ন কাজ। স্বাভাবিক Caption, বড় VLM বা U-Net, মাপা GPU Latency কিংবা FID পরীক্ষা বর্তমান রানের অংশ নয়; এগুলোর জন্য কীভাবে নিয়ন্ত্রিত পরবর্তী পরীক্ষা (Controlled Follow-up Experiment) সাজাবেন তা গুছিয়ে বলুন।"
+        },
+        {
+          "type": "text",
+          "title": "পরের অধ্যায়ে যাওয়ার আগে চূড়ান্ত প্রস্তুতি",
+          "body": "Forward ও Posterior সমীকরণ, Scheduler-এর Index-গুলো, CFG-র রীতি এবং Contrastive Positive Masking আরেকবার ঝালিয়ে নিন। এরপর আমরা এগিয়ে যাব এই বইয়ের সমাপনী অধ্যায়ে—Book 4 · Chapter 10 (LLM/Generative AI Capstone)—যেখানে প্রমাণ উদ্ধার, Decoder এবং পূর্ণাঙ্গ Evaluation একসাথে জুড়ে একটি বাস্তব সিস্টেম তৈরি করা হবে।"
+        }
+      ]
+    }
+  ],
+  "quizzes": [
+    {
+      "id": "ch28_q1",
+      "question": "Forward Markov Chain-এ βₜ আসলে কী নির্দেশ করে?",
+      "options": [
+        "প্রতি ধাপে যোগ করা Gaussian Noise-এর Variance",
+        "যোগ করা Noise-এর Standard Deviation",
+        "মূল পরিষ্কার সিগন্যালের Mean",
+        "বাহ্যিক Classifier-এর Probability"
+      ],
+      "answer": 0,
+      "explanation": "Forward ধাপে যোগ করা Noise-এর Variance হলো βₜ এবং এর Standard Deviation হলো √βₜ (যেখানে αₜ = 1 - βₜ)। কোড লেখার সময় Variance ও Standard Deviation আলাদা রাখা অপরিহার্য।"
+    },
+    {
+      "id": "ch28_q2",
+      "question": "সরাসরি প্রান্তিক সমীকরণ q(xₜ | x₀)-এ পরিষ্কার সিগন্যাল x₀-এর সহগ কোনটি?",
+      "options": [
+        "ᾱₜ",
+        "√ᾱₜ",
+        "1 - ᾱₜ",
+        "βₜ"
+      ],
+      "answer": 1,
+      "explanation": "q(xₜ | x₀)-এর Mean হলো √ᾱₜ x₀ এবং Variance হলো 1 - ᾱₜ, যেখানে ᾱₜ প্রথম থেকে t-তম ধাপ পর্যন্ত সব αₛ-এর ক্রমিক গুণফল।"
+    },
+    {
+      "id": "ch28_q3",
+      "question": "ভিজ্যুয়াল Lab-এর Slider-এ সব Timestep জুড়ে একই স্থির ε ব্যবহার করা হলে তা আসলে কী দেখায়?",
+      "options": [
+        "স্বাধীন বৃদ্ধির প্রকৃত Markov গতিপথ (Independent-increment Path)",
+        "Model-এর শেখা Reverse Sampling প্রক্রিয়া",
+        "তুলনার সুবিধার্থে নিয়ন্ত্রিত প্রান্তিক সংযোজন (Controlled Marginal Coupling)",
+        "Dataset-এ নতুন স্বাধীন বাস্তব ছবি তৈরি হওয়া"
+      ],
+      "answer": 2,
+      "explanation": "প্রতিটি একক t-তে Marginal Distribution-এর সূত্র ঠিক থাকে, কিন্তু সব ধাপে একই বাঁধা ε ব্যবহার করা প্রতি ধাপে নতুন স্বাধীন Noise যোগ হওয়া প্রকৃত Markov গতিপথ নয়।"
+    },
+    {
+      "id": "ch28_q4",
+      "question": "আমাদের Noise Schedule-এ একদম পরিষ্কার ছবির সীমানা (Clean Boundary) কোন Index-এ থাকে?",
+      "options": [
+        "t = 32, যেখানে ᾱ₀ = 0",
+        "t = 1, যা সবসময় Pure Noise",
+        "সব t-তেই অভিন্ন মান থাকে",
+        "t = 0, যেখানে ᾱ₀ = 1"
+      ],
+      "answer": 3,
+      "explanation": "আমাদের Denoiser Network কেবল t = 1 থেকে 32 ধাপে Training পেয়েছে; Sampler-এর চূড়ান্ত গন্তব্য t = 0 পরিষ্কার সীমানা বোঝায় এবং সেখানে কখনোই Network কল করা হয় না।"
+    },
+    {
+      "id": "ch28_q5",
+      "question": "Training-এর Posterior q(xₜ₋₁ | xₜ, x₀)-কে নতুন ছবি তৈরির (Sampling) সময় সরাসরি Oracle হিসেবে ব্যবহার করা যায় না কেন?",
+      "options": [
+        "জেনারেশনের সময় আসল পরিষ্কার ছবি x₀ অজানা থাকে",
+        "আসল x₀ জানা থাকলেও এটি কখনোই Gaussian হয় না",
+        "এর কোনো Variance পদ থাকে না",
+        "এটি চালানোর জন্য সংখ্যার প্রাকৃতিক Caption লাগে"
+      ],
+      "answer": 0,
+      "explanation": "আসল x₀ জানা থাকলেই কেবল শর্তাধীন Posterior সহজ Gaussian রূপ নেয়; নতুন ছবি তৈরির সময় x₀ অজানা থাকায় Model-কে আনুমানিক মান ব্যবহার করতে হয়।"
+    },
+    {
+      "id": "ch28_q6",
+      "question": "আমাদের বর্তমান সরলীকৃত (Simplified) Diffusion Model-এ Network-এর Training Target কোনটি?",
+      "options": [
+        "সংখ্যার লিখিত Caption Token",
+        "Sample করা আদর্শ Gaussian Noise (ε)",
+        "সরাসরি x₀-এর Class Probability",
+        "প্রতি ধাপের Posterior Variance"
+      ],
+      "answer": 1,
+      "explanation": "ঝাপসা ছবি xₜ, সময় t এবং Class শর্ত থেকে Network যোগ হওয়া Noise ε অনুমান করতে শেখে; আর এই সমান ওজনের MSE পূর্ণাঙ্গ Variational ELBO-এর হুবহু সমান নয়।"
+    },
+    {
+      "id": "ch28_q7",
+      "question": "প্রচণ্ড ঝাপসা ধাপে (যখন t অনেক বড়) সাধারণ ε̂ = xₜ (Identity Baseline) কেন এত কার্যকর একটি মাপকাঠি?",
+      "options": [
+        "কারণ এতে বাধ্যতামূলকভাবে Label Leakage ঘটে",
+        "কারণ এটি আসলে একটি Pretrained CLIP Model",
+        "কারণ সিগন্যাল ক্ষয় হয়ে যাওয়ায় xₜ তখন প্রায় আসল Noise ε-এর সমান হয়ে যায়",
+        "কারণ এতে সব তৈরি করা ছবি নিখুঁত হয়ে যায়"
+      ],
+      "answer": 2,
+      "explanation": "শেষ ধাপে ᾱₜ অতি ক্ষুদ্র হওয়ায় xₜ প্রায় পুরোটাই ε হয়ে দাঁড়ায়—ফলে Identity অনুমানের ত্রুটি খুবই নগণ্য হয় এবং কেবল Zero Baseline দিয়ে তুলনা করা যথেষ্ট থাকে না।"
+    },
+    {
+      "id": "ch28_q8",
+      "question": "চূড়ান্ত ধাপে (t = 32) আমাদের বর্তমান ছোট MLP Model বনাম Identity Baseline-এর প্রকৃত ফলাফল কী?",
+      "options": [
+        "Training পাওয়া Model সবসময় বড় ব্যবধানে জয়ী হয়েছে",
+        "দুটিরই ত্রুটির মান হুবহু সমান",
+        "এই তুলনাটি রিপোর্টে পরিমাপ করা হয়নি",
+        "Training পাওয়া Model-এর Noise MSE সাধারণ Identity Baseline-এর চেয়ে বেশি"
+      ],
+      "answer": 3,
+      "explanation": "পরিমাপকৃত ফলাফলে দেখা গেছে t = 32 ধাপে Model-এর Noise MSE প্রায় 0.148682, যেখানে Identity Baseline-এর মান মাত্র 0.0000017054—স্বচ্ছতার খাতিরে এই সীমাবদ্ধতা রিপোর্টে অক্ষুণ্ণ রাখা হয়েছে।"
+    },
+    {
+      "id": "ch28_q9",
+      "question": "ক্লিপ না করা অবস্থায় অনুমানকৃত ε̂-এর ত্রুটি পরিষ্কার ছবি x̂₀ উদ্ধারের সময় কোন গুণক দিয়ে বিবর্ধিত (Amplify) হয়?",
+      "options": [
+        "√((1 - ᾱ) / ᾱ)",
+        "√ᾱ",
+        "সবসময় 0",
+        "কেবল 1 / β"
+      ],
+      "answer": 0,
+      "explanation": "শেষ দিকের ঝাপসা ধাপে ᾱ খুব ছোট হওয়ায় ভাগের কারণে সামান্য Noise Prediction Error-ও বহুগুণ বড় হয়ে যায়; আর Pixel Clipping হারানো তথ্য ফিরিয়ে আনতে পারে না।"
+    },
+    {
+      "id": "ch28_q10",
+      "question": "Ancestral DDPM Sampling-এর একদম শেষ ধাপে (t = 1 → 0) নতুন র‍্যান্ডম Noise যোগ করার নিয়ম কী?",
+      "options": [
+        "সবসময় একক Variance-এর নতুন Noise যোগ করতে হয়",
+        "t = 1 → 0 ধাপে নতুন কোনো র‍্যান্ডম Noise যোগ করা হয় না",
+        "আসল Class Label দিয়ে সরাসরি x₀ বদলে দেওয়া হয়",
+        "বাধ্যতামূলকভাবে t = 0 দিয়ে Network কল করা হয়"
+      ],
+      "answer": 1,
+      "explanation": "পরিষ্কার সীমানায় জানা Posterior Variance শূন্য হয়, তাই শেষ ধাপে নতুন Noise যোগ করলে চূড়ান্ত ছবিতেই অযথা বিকৃতি বসে যাবে।"
+    },
+    {
+      "id": "ch28_q11",
+      "question": "DDIM (η = 0) Sampling ঠিক কোন শর্তে সম্পূর্ণ Deterministic ফলাফল দেয়?",
+      "options": [
+        "কোনো প্রাথমিক Noise (Initial Noise) ছাড়াই চালালে",
+        "মাঝপথে ভিন্ন Noise Schedule ব্যবহার করলেও একই ফল দেয়",
+        "একই Model Weights, প্রাথমিক Noise, Condition এবং Sampler Policy বজায় থাকলে",
+        "যেকোনো ভিন্ন হার্ডওয়্যার ও লাইব্রেরি সংস্করণে বিট-পর্যায়ে অভিন্ন থাকে"
+      ],
+      "answer": 2,
+      "explanation": "η = 0 মাঝখানের Reverse ধাপগুলোতে নতুন Noise যোগ করা বন্ধ রাখে, তবে শুরুর Latent ড্র এবং পুরো Sampler চুক্তির ওপরই চূড়ান্ত ছবি নির্ভর করে।"
+    },
+    {
+      "id": "ch28_q12",
+      "question": "লাফ দিয়ে ধাপ পার হওয়া (Strided) DDIM আপডেটে গন্তব্য ধাপের হিসাবের জন্য কোন alpha-bar মানটি প্রয়োজন?",
+      "options": [
+        "সবসময় ঠিক আগের ধাপের ᾱₜ₋₁",
+        "শুধুমাত্র প্রথম ধাপের β₁",
+        "Alignment Model-এর Temperature মান",
+        "প্রকৃত গন্তব্য ধাপ s-এর নিজস্ব ᾱₛ"
+      ],
+      "answer": 3,
+      "explanation": "যখন s < t ধাপে লাফ দেওয়া হয়, তখন গন্তব্য ধাপ s-এর প্রকৃত Schedule মান ᾱₛ বসাতে হয়; সাধারণ DDPM-এর Index অন্ধভাবে বাদ দেওয়া এর সমতুল্য নয়।"
+    },
+    {
+      "id": "ch28_q13",
+      "question": "আমাদের ব্যবহৃত CFG রীতি ε_u + w(ε_c - ε_u)-এ w = 1 বসালে কোন Output পাওয়া যায়?",
+      "options": [
+        "সাধারণ শর্তযুক্ত অনুমান (Conditional Prediction)",
+        "শর্তহীন অনুমান (Null Prediction)",
+        "সম্পূর্ণ শূন্য Vector (Zero Vector)",
+        "দ্বিগুণ শর্তযুক্ত ও শর্তহীন অনুমানের যোগফল"
+      ],
+      "answer": 0,
+      "explanation": "ε_u + w(ε_c - ε_u) সূত্রে w = 0 দিলে শর্তহীন (Null) এবং w = 1 দিলে সাধারণ শর্তযুক্ত (Conditional) Output পাওয়া যায়; অন্য রীতিতে Scale-এর মান ১ ঘর সরে যেতে পারে।"
+    },
+    {
+      "id": "ch28_q14",
+      "question": "Inference-এর সময় আমাদের Model-এ Null Condition পাঠানো কেন অর্থবহ ফল দেয়?",
+      "options": [
+        "যেকোনো অব্যবহৃত র‍্যান্ডম Vector দিলেই কাজ হয়ে যায় বলে",
+        "Training-এর সময় 15% আসল Label-কে বিশেষ Null ID দিয়ে যৌথভাবে শেখানো হয়েছে বলে",
+        "ভেতরে স্বয়ংক্রিয়ভাবে একটি প্রাকৃতিক Caption Encoder যুক্ত আছে বলে",
+        "প্রোগ্রামিং ভাষার null কীওয়ার্ড নিজে থেকেই Probability তৈরি করে বলে"
+      ],
+      "answer": 1,
+      "explanation": "অর্থবহ Classifier-Free Guidance পেতে Training-এর সময়ই Conditional ও Null উভয় কাজ যৌথভাবে শেখাতে হয় (আমাদের Model-এ Null ID হলো 10)।"
+    },
+    {
+      "id": "ch28_q15",
+      "question": "আমাদের বর্তমান 8-ধাপের CFG Sampler-এ মোট কয়টি Network কল (NFE) হয়?",
+      "options": [
+        "8",
+        "32",
+        "16",
+        "0"
+      ],
+      "answer": 2,
+      "explanation": "প্রতিটি ধাপে Conditional এবং Null—দুটি পূর্ণ Forward Pass চালানো হয় (কোনো Shortcut ছাড়া), তাই 8 × 2 = 16টি NFE লাগে; তবে এই গণনা সরাসরি হার্ডওয়্যার Latency নয়।"
+    },
+    {
+      "id": "ch28_q16",
+      "question": "আমাদের এই অধ্যায়ের বান্ডেলকৃত Generative Model-টি কি একটি মুক্ত ভাষার Text-to-Image Model?",
+      "options": [
+        "হ্যাঁ, কারণ অ্যাপের পর্দায় ইংরেজিতে সংখ্যার নাম দেখানো হয়",
+        "হ্যাঁ, এটি আসলে একটি Pretrained CLIP Generator",
+        "হ্যাঁ, এটি পূর্ণাঙ্গ Caption-ভিত্তিক U-Net Model",
+        "না, এটি সংখ্যার One-hot Class ID দিয়ে নিয়ন্ত্রিত একটি ছোট MLP"
+      ],
+      "answer": 3,
+      "explanation": "Model-টি কেবল 0–9 সংখ্যার One-hot শর্ত গ্রহণ করে; UI-তে দেখানো ইংরেজি নামগুলো মুক্ত ভাষার টেক্সট এনকোডিং নয়।"
+    },
+    {
+      "id": "ch28_q17",
+      "question": "Latent Diffusion Pipeline-এ Training ও Inference-এর Latent Scaling ধ্রুবকে অমিল (Scale Mismatch) হলে কী ঘটে?",
+      "options": [
+        "Latent ডেটা ও Noise-এর মধ্যকার Distribution চুক্তি ভেঙে পড়ে",
+        "Sampling সবসময় আরও দ্রুত ও নির্ভুল হয়ে যায়",
+        "Output ছবিতে কোনো পরিবর্তনই হয় না",
+        "Dataset থেকে সব Class Label স্বয়ংক্রিয়ভাবে মুছে যায়"
+      ],
+      "answer": 0,
+      "explanation": "Encoder-এর স্কেলিং, Denoiser-এর Noise Schedule এবং Decoder-এর বিপরীত ভাগ—এই তিনটি ধাপ পরস্পর সামঞ্জস্যপূর্ণ না হলে Output বিকৃত হয়ে যায়।"
+    },
+    {
+      "id": "ch28_q18",
+      "question": "বৃহৎ পরিসরের সার্চ সিস্টেমে Dual Encoder Architecture-এর প্রধান প্রকৌশলগত সুবিধা কোনটি?",
+      "options": [
+        "ছবির যেকোনো জটিল স্থানিক ও গাণিতিক যুক্তি শতভাগ নিশ্চিত থাকে",
+        "প্রার্থীদের Embedding আগে থেকেই হিসাব করে Cache ও দ্রুত Retrieval করা যায়",
+        "Training-এর জন্য কোনো জোড়াবদ্ধ ডেটার প্রয়োজনই পড়ে না",
+        "এর Cosine স্কোর সবসময় সত্যতার Calibrated Probability দেয়"
+      ],
+      "answer": 1,
+      "explanation": "দুটি মাধ্যম স্বাধীনভাবে এনকোড হওয়ায় ডেটাবেসের Vector আগে থেকেই Cache করে দ্রুত Retrieval করা যায়; তবে সূক্ষ্ম স্থানিক সম্পর্কের জন্য আলাদা Fusion প্রয়োজন হতে পারে।"
+    },
+    {
+      "id": "ch28_q19",
+      "question": "স্থির Cosine Similarity স্কোরের ওপর ধনাত্মক Temperature (τ > 0) পরিবর্তন করলে প্রার্থীদের ক্রম বা Ranking-এ কী প্রভাব পড়ে?",
+      "options": [
+        "ক্রমটি সবসময় সম্পূর্ণ উল্টে যায়",
+        "ক্রমটি পুরোপুরি এলোমেলো (Random) হয়ে যায়",
+        "প্রার্থীদের ক্রম বা Ranking অপরিবর্তিত থাকে",
+        "মূল ডেটার আসল Label-গুলো বদলে যায়"
+      ],
+      "answer": 2,
+      "explanation": "ধনাত্মক বৈশ্বিক স্কেলিং Softmax Probability-কে বেশি তীক্ষ্ণ বা কোমল করলেও argmax এবং প্রার্থীদের ক্রম হুবহু অক্ষুণ্ণ রাখে।"
+    },
+    {
+      "id": "ch28_q20",
+      "question": "একই Batch-এ একই Class-এর একাধিক ছবি থাকলে সাধারণ Diagonal Cross-Entropy ব্যবহারে কী সমস্যা হয়?",
+      "options": [
+        "এটি সবসময় নিখুঁত ডেটা Likelihood ফিরিয়ে দেয়",
+        "Parameter-এ কোনো Gradient প্রবাহিত হয় না",
+        "এতে মূল ছবির Pixel-গুলো বদলে যায়",
+        "বৈধ সমশ্রেণির জোড়াগুলো ভুল করে False Negative হিসেবে গণ্য হয়"
+      ],
+      "answer": 3,
+      "explanation": "Batch-এর অন্য সমশ্রেণির আইটেমগুলোও আসলে বৈধ পজিটিভ; তাই সেগুলোকে দূরে না ঠেলে আমরা Label-সমতার Mask দিয়ে Set-positive Objective ব্যবহার করি।"
+    },
+    {
+      "id": "ch28_q21",
+      "question": "সুষম 4 × 4 Logits Matrix-এ প্রতি Row-তে 2টি করে পজিটিভ থাকলে আমাদের Set-positive Loss-এর মান কত হবে?",
+      "options": [
+        "log 2",
+        "log 4",
+        "0",
+        "2"
+      ],
+      "answer": 0,
+      "explanation": "সব প্রার্থীর মোট ভর 4 এবং পজিটিভ সেটের ভর 2 হওয়ায় Loss হয় log(4) - log(2) = log(2)। আর সব প্রার্থী পজিটিভ হলে Loss 0 হয়, যা অর্থবহ Feature শেখার প্রমাণ নয়।"
+    },
+    {
+      "id": "ch28_q22",
+      "question": "আমাদের পর্যবেক্ষিত Diagnostic সেটে পরিচিত নামের 0.958217 Top-1 স্কোরটি আসলে কী বোঝায়?",
+      "options": [
+        "অদেখা প্রাকৃতিক ভাষার ওপর Zero-shot Transfer দক্ষতা",
+        "পরিচিত দশটি Class-এর ওপর একটি Supervised Retrieval Diagnostic ফলাফল",
+        "মানুষের লেখা মুক্ত Caption জেনারেশনের নির্ভুলতা",
+        "অদেখা Multimodal যুক্তির চূড়ান্ত প্রমাণ"
+      ],
+      "answer": 1,
+      "explanation": "পুনর্ব্যবহৃত 359টি Row-এর মধ্যে 344টি পরিচিত দশটি Training পাওয়া নামের সাথে মিলেছে; এখানে কোনো মুক্ত প্রাকৃতিক ভাষার Caption Encoder নেই।"
+    },
+    {
+      "id": "ch28_q23",
+      "question": "Cross-Attention স্তরে Query সিকোয়েন্সের দৈর্ঘ্য এবং Key সিকোয়েন্সের দৈর্ঘ্য কেমন হতে পারে?",
+      "options": [
+        "সবসময় বাধ্যতামূলকভাবে সমান হতে হবে",
+        "সবসময় ঠিক 64 হতে হবে",
+        "দুটি ভিন্ন দৈর্ঘ্যের হতে পারে",
+        "কখনোই Visual Token-এর ওপর প্রয়োগ করা যায় না"
+      ],
+      "answer": 2,
+      "explanation": "Attention Matrix-এর আকার হয় query_length × key_length, তাই দুটি ভিন্ন দৈর্ঘ্যের হতে কোনো বাধা নেই—কেবল Mask ও অবস্থান সংকেত সামঞ্জস্যপূর্ণ থাকতে হবে।"
+    },
+    {
+      "id": "ch28_q24",
+      "question": "একটি ছবি ও টেক্সটের মধ্যে উচ্চ Cosine Similarity স্কোর পাওয়া গেলে তা কীসের নিশ্চয়তা দেয়?",
+      "options": [
+        "ছবিতে থাকা বস্তুর নিখুঁত সংখ্যা গণনা",
+        "ব্যক্তিগত তথ্যের শতভাগ গোপনীয়তা নিরাপত্তা",
+        "Caption-এ থাকা প্রতিটি তথ্যের প্রামাণিক সত্যতা",
+        "এককভাবে এটি কোনো প্রামাণিক (Grounded) উত্তরের নিশ্চয়তা দেয় না"
+      ],
+      "answer": 3,
+      "explanation": "Vector-এর নৈকট্য কেবল সামগ্রিক মিলের একটি Proxy; নিখুঁত গণনা, OCR বা স্থানিক সম্পর্কের জন্য আলাদা চাক্ষুষ প্রমাণ ও Evaluation প্রয়োজন।"
+    },
+    {
+      "id": "ch28_q_noise_error_revision",
+      "question": "অনুমানকৃত Noise-এ delta পরিমাণ ত্রুটি থাকলে ক্লিপ না করা পরিষ্কার ছবি x̂₀ উদ্ধারের ত্রুটি কোনটি হবে?",
+      "options": [
+        "-sqrt((1 - alpha-bar) / alpha-bar) × delta",
+        "alpha-bar × delta",
+        "সবসময় 0",
+        "delta / 2"
+      ],
+      "answer": 0,
+      "explanation": "যেহেতু x̂₀ = (xₜ - √(1 - ᾱ) ε̂) / √ᾱ, তাই প্রচণ্ড ঝাপসা ধাপে ছোট √ᾱ দিয়ে ভাগের ফলে ত্রুটি বহুগুণ বিবর্ধিত হতে পারে।"
+    },
+    {
+      "id": "ch28_q_clip_revision",
+      "question": "CFG মিশ্রণ এবং শাখাভিত্তিক Clipping-এর ক্রম (Order) কেন গুরুত্বপূর্ণ?",
+      "options": [
+        "কারণ Clipping একটি অরৈখিক (Nonlinear) অপারেশন",
+        "কারণ দুটি শাখার Output সবসময় অভিন্ন হয়",
+        "কারণ Guidance সমীকরণে কোনো Timestep থাকে না",
+        "কারণ Clipping কেবল ফাইলের Metadata পরিবর্তন করে"
+      ],
+      "answer": 0,
+      "explanation": "রৈখিক রূপান্তরে ক্রম বদলালেও ফল এক থাকে, কিন্তু অরৈখিক Clipping আগে করে মেশানো আর মেশানোর পরে Clipping করা সাধারণত আলাদা Trajectory তৈরি করে।"
+    }
+  ],
+  "exercises": [
+    {
+      "id": "ch28_ex_forward",
+      "title": "Closed-form Corruption হিসাব করুন",
+      "prompt": "ধরা যাক একটি Scalar উদাহরণে পরিষ্কার মান x₀ = 1, Noise epsilon = 0 এবং alpha-bar = 0.25। সরাসরি Forward সমীকরণ অনুযায়ী ঝাপসা মান xₜ বের করে `answer` Variable-এ রাখুন।",
+      "starter": "import math\n\n# TODO: corruption\n",
+      "solution": "import math\n\nclean = 1.0\nepsilon = 0.0\nalpha_bar = 0.25\nresult = math.sqrt(alpha_bar) * clean + math.sqrt(1 - alpha_bar) * epsilon\nprint(result)\n",
+      "expected": 0.5,
+      "explanation": "সিগন্যালের সহগ হলো sqrt(0.25) = 0.5 এবং Noise পদটি শূন্য (0), তাই ঝাপসা মান xₜ হবে ঠিক 0.5।"
+    },
+    {
+      "id": "ch28_ex_snr",
+      "title": "Signal-to-Noise Ratio (SNR) নির্ণয়",
+      "prompt": "কোনো একটি Timestep-এ alpha-bar = 0.8 হলে ওই ধাপের Signal-to-Noise Ratio (SNR) হিসাব করে `answer` Variable-এ রাখুন।",
+      "starter": "alpha_bar = 0.8\n# TODO: result\n",
+      "solution": "alpha_bar = 0.8\nresult = alpha_bar / (1 - alpha_bar)\nassert abs(result - 4) < 1e-12\nprint(result)\n",
+      "expected": 4,
+      "explanation": "সূত্র অনুযায়ী SNR = 0.8 / (1 - 0.8) = 0.8 / 0.2 = 4। উল্লেখ্য যে পরিষ্কার সীমানা alpha-bar = 1 বিন্দুতে হর শূন্য হওয়ায় সসীম মান পাওয়া যায় না।"
+    },
+    {
+      "id": "ch28_ex_posterior",
+      "title": "DDPM Posterior Variance নির্ণয়",
+      "prompt": "ধরা যাক আগের ধাপের alpha-bar = 0.8, বর্তমান ধাপের beta = 0.1 এবং alpha = 0.9। এক্ষেত্রে Forward Posterior Variance (beta-tilde) হিসাব করে `answer` Variable-এ রাখুন।",
+      "starter": "previous = 0.8\nbeta = 0.1\n# TODO\n",
+      "solution": "previous = 0.8\nbeta = 0.1\ncurrent = previous * (1 - beta)\nresult = beta * (1 - previous) / (1 - current)\nprint(result)\n",
+      "expected": 0.07142857142857142,
+      "explanation": "বর্তমান ধাপের alpha-bar = 0.8 × 0.9 = 0.72। সুতরাং Posterior Variance = 0.1 × (1 - 0.8) / (1 - 0.72) = 0.02 / 0.28 ≈ 0.07142857। Sampling-এর Standard Deviation হবে এই Variance-এর বর্গমূল।"
+    },
+    {
+      "id": "ch28_ex_guidance",
+      "title": "CFG Extrapolation হিসাব করুন",
+      "prompt": "ধরা যাক শর্তহীন অনুমান null epsilon = 2, শর্তযুক্ত অনুমান conditional epsilon = 5 এবং ওজন w = 2। আমাদের ব্যবহৃত `epsilon_u + w * (epsilon_c - epsilon_u)` রীতিতে গাইডেড অনুমানটি বের করে `answer` Variable-এ রাখুন।",
+      "starter": "unconditional = 2.0\nconditional = 5.0\n# TODO\n",
+      "solution": "unconditional = 2.0\nconditional = 5.0\nscale = 2.0\nresult = unconditional + scale * (conditional - unconditional)\nassert unconditional + 0 * (conditional - unconditional) == 2\nassert unconditional + 1 * (conditional - unconditional) == 5\nprint(result)\n",
+      "expected": 8,
+      "explanation": "সূত্রে মান বসালে পাই 2 + 2 × (5 - 2) = 8। লক্ষ্য করুন, w > 1 হওয়ায় Extrapolation-এর ফলে গাইডেড মানটি দুই শাখার নিজস্ব মানের বাইরেও যেতে পারে।"
+    },
+    {
+      "id": "ch28_ex_ddim",
+      "title": "শেষ ধাপের Deterministic (η = 0) DDIM আপডেট",
+      "prompt": "ধরা যাক আনুমানিক পরিষ্কার মান clean estimate = 0.25, অনুমানকৃত Noise predicted epsilon = 2 এবং গন্তব্য ধাপের destination alpha-bar = 1। η = 0 (eta = 0) DDIM আপডেটের চূড়ান্ত Output হিসাব করে `answer` Variable-এ রাখুন।",
+      "starter": "import math\n\n# TODO: final step\n",
+      "solution": "import math\n\nestimate = 0.25\nepsilon = 2.0\nprevious = 1.0\nresult = math.sqrt(previous) * estimate + math.sqrt(1 - previous) * epsilon\nprint(result)\n",
+      "expected": 0.25,
+      "explanation": "গন্তব্য alpha-bar = 1 হওয়ায় Noise-এর সহগ sqrt(1 - 1) = 0 এবং পরিষ্কার মানের সহগ sqrt(1) = 1 হয়, ফলে Output আসে ঠিক 0.25। এই পরীক্ষাটি Sampler-এর প্রান্তিক আচরণ যাচাই করে।"
+    },
+    {
+      "id": "ch28_ex_loss",
+      "title": "Multi-positive Contrastive Loss হিসাব করুন",
+      "prompt": "সুষম (সব মান সমান, যেমন শূন্য) 4 × 4 আকারের Logits এবং `labels = [0, 0, 1, 1]` দেওয়া আছে। প্রতিসম (Symmetric) Set-positive Contrastive Loss হিসাব করে `answer` Variable-এ রাখুন।",
+      "starter": "import torch\n\n# TODO: multi-positive loss\n",
+      "solution": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter28_local\", Path(\"assets/datasets/digits/diffusion_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\n\nlabels = torch.tensor([0, 0, 1, 1])\nlogits = torch.zeros(4, 4, dtype=torch.float64)\nresult = m.multipositive_loss(logits, labels).item()\nassert abs(result - __import__(\"math\").log(2)) < 1e-12\nprint(result)\n",
+      "expected": 0.6931471805599453,
+      "explanation": "প্রতিটি Row ও Column-এ 4টি সমান প্রার্থীর মধ্যে 2টি করে বৈধ পজিটিভ রয়েছে। তাই Loss হবে log(4) - log(2) = log(2) ≈ 0.6931472।"
+    },
+    {
+      "id": "ch28_ex_temperature",
+      "title": "স্থিতিশীল Softmax ও Rank Invariance যাচাই",
+      "prompt": "তিনটি প্রার্থীর স্কোর দেওয়া আছে `[0.1, 0.8, 0.3]`। ধনাত্মক Temperature `0.1` এবং `0.5` দিয়ে ভাগ করে শীর্ষ Index তুলনা করুন এবং 0-ভিত্তিক শীর্ষ Index-টি (Zero-based top index) `answer` Variable-এ রাখুন।",
+      "starter": "import numpy as np\n\n# TODO: stable probabilities\n",
+      "solution": "import numpy as np\n\nscores = np.array([0.1, 0.8, 0.3])\n\n\ndef probability(tau):\n    e = np.exp((scores - scores.max()) / tau)\n    return e / e.sum()\n\n\nassert probability(0.1).argmax() == probability(0.5).argmax()\nassert np.isclose(probability(0.5).sum(), 1)\nresult = int(probability(0.5).argmax())\nprint(result)\n",
+      "expected": 1,
+      "explanation": "উভয় ক্ষেত্রেই শীর্ষ Index হলো 1 (মান 0.8)। ধনাত্মক বৈশ্বিক স্কেলিং Probability-র তীক্ষ্ণতা বদলালেও প্রার্থীদের ক্রম অপরিবর্তিত রাখে।"
+    },
+    {
+      "id": "ch28_ex_roles",
+      "title": "ডেটা Split ও বিচ্ছিন্নতা নিরীক্ষা",
+      "prompt": "মূল Dataset-এর Split লোড করে `fit` এবং `diagnostic` Row-গুলোর মধ্যকার সাধারণ উপাদানের সংখ্যা (Intersection count) বের করে `answer` Variable-এ রাখুন।",
+      "starter": "from pathlib import Path\n\n# TODO: source audit\n",
+      "solution": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter28_local\", Path(\"assets/datasets/digits/diffusion_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\n\nraw, labels, fit, diag = m.source()\nresult = len(set(fit) & set(diag))\nassert len(fit) == 1438 and len(diag) == 359\nprint(result)\n",
+      "expected": 0,
+      "explanation": "দুই সেটের সাধারণ উপাদান সংখ্যা 0, যা Hash-group বিচ্ছিন্নতা নিশ্চিত করে। সবসময় মূল ডেটার Metadata মিলিয়ে Evaluation-এর পরিধি নির্ধারণ করতে হয়।"
+    },
+    {
+      "id": "ch28_ex_parameters",
+      "title": "Time-conditioned MLP-এর Parameter গণনা",
+      "prompt": "আমাদের বাস্তব Denoiser Network-টির মোট প্রশিক্ষণযোগ্য Scalar Parameter-এর সংখ্যা হিসাব করে `answer` Variable-এ রাখুন।",
+      "starter": "import torch\n\n# TODO: model count\n",
+      "solution": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter28_local\", Path(\"assets/datasets/digits/diffusion_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\n\nd = m.Denoiser()\nresult = sum(p.numel() for p in d.parameters())\nassert result == (79 * 64 + 64) + 2 * (64 * 64 + 64)\nprint(result)\n",
+      "expected": 13440,
+      "explanation": "64টি ঝাপসা Pixel, 4টি Time Feature এবং 11টি Class-এর One-hot Vector মিলে Input হয় 79। Bias-সহ তিনটি Linear স্তরে (`79→64`, `64→64`, `64→64`) মোট Parameter সংখ্যা দাঁড়ায় (79×64 + 64) + 2×(64×64 + 64) = 13440।"
+    },
+    {
+      "id": "ch28_ex_reload",
+      "title": "পূর্ণ DDIM Trajectory রিলোড ও প্রান্তিক যাচাই",
+      "prompt": "সংরক্ষিত Denoiser রিলোড করে স্থির Seed-এর 8-ধাপের গতিপথের Reference ফ্রেমগুলো মিলিয়ে দেখুন এবং একদম শেষ পরিষ্কার গন্তব্য ধাপের Index-টি `answer` Variable-এ রাখুন।",
+      "starter": "import torch\n\n# TODO: reload/sample comparison\n",
+      "solution": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter28_local\", Path(\"assets/datasets/digits/diffusion_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/digits/diffusion_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nd = m.Denoiser()\nd.load_state_dict(\n    {\n        k: torch.tensor(v, dtype=torch.float64)\n        for k, v in lab[\"weights\"][\"denoiser\"].items()\n    }\n)\n_, bar = m.schedule()\ninitial = torch.tensor([lab[\"initial\"]], dtype=torch.float64)\nactual = m.sample(d, initial, 3, 1.0, 8, bar)\nref = next(\n    r[\"trace\"]\n    for r in lab[\"traces\"]\n    if r[\"label\"] == 3 and r[\"guidance\"] == 1 and r[\"steps\"] == 8\n)\nassert actual == ref\nresult = actual[-1][\"t\"]\nprint(result)\n",
+      "expected": 0,
+      "explanation": "Sampler-এর শেষ পরিষ্কার গন্তব্যের Index হলো 0। পুরো গতিপথ হুবহু মেলানোর জন্য Timestep তালিকা, Clipping এবং Sampler-এর সমীকরণ অভিন্ন থাকতে হয়।"
+    }
+  ],
+  "interviews": [
+    {
+      "title": "Whiteboard-এ Forward Marginal প্রতিপাদন",
+      "tag": "Probability · derivation",
+      "prompt": "এক ধাপের Markov Gaussian শৃঙ্খল থেকে সরাসরি q(xₜ | x₀) সমীকরণটি প্রতিপাদন করুন। আর ব্যাখ্যা করুন কেন ভিজ্যুয়াল Slider-এ সব ধাপে একই স্থির ε ব্যবহার করা প্রকৃত Markov গতিপথ নয়?",
+      "answer": "প্রথম ধাপের সমীকরণ x₁ = √α₁ x₀ + √β₁ ε₁ দ্বিতীয় ধাপের সমীকরণে বসিয়ে স্বাধীন Gaussian Noise-গুলোর Variance যোগ করলে পাই α₂β₁ + β₂ = 1 - α₁α₂। গাণিতিক আরোহ পদ্ধতি (Induction) প্রয়োগ করলে যেকোনো t ধাপের Mean পাওয়া যায় √ᾱₜ x₀ এবং Variance পাওয়া যায় 1 - ᾱₜ—যা Training-এ মাঝখানের ধাপগুলো না চালিয়েই সরাসরি Sampling সম্ভব করে। Slider-এ সব t-তে একই বাঁধা ε রাখলে প্রতিটি একক ধাপের Marginal Distribution ঠিক থাকে বটে, কিন্তু প্রতি ধাপে নতুন স্বাধীন Noise যোগ হওয়া যৌথ Markov গতিপথ তৈরি হয় না। পাশাপাশি কোডে সবসময় মনে রাখতে হবে যে β হলো Variance এবং √β হলো Standard Deviation।"
+    },
+    {
+      "title": "Gaussian Posterior ও Reverse Mean-এর সীমা",
+      "tag": "Math · DDPM",
+      "prompt": "q(xₜ₋₁ | xₜ, x₀)-এর সমীকরণ কীভাবে প্রতিপাদন করতে হয় এবং নতুন ছবি তৈরির সময় এর মৌলিক সীমাবদ্ধতা কী?",
+      "answer": "Bayes-এর সূত্রে দুটি Gaussian ঘনত্বের গুণফলের লগারিদম নিয়ে দ্বিঘাত পদের সহগ যোগ করলে Precision পাওয়া যায় αₜ / βₜ + 1 / (1 - ᾱₜ₋₁); এরপর বর্গ পূর্ণ করলে (Completing the Square) সুনির্দিষ্ট Posterior Variance β̃ₜ এবং x₀ ও xₜ-এর ওজনযুক্ত Posterior Mean μ̃ₜ বেরিয়ে আসে। কিন্তু নতুন ছবি তৈরির সময় আসল পরিষ্কার x₀ আমাদের জানা থাকে না, তাই Network-এর অনুমানকৃত ε_θ থেকে আনুমানিক x̂₀ বসিয়ে Mean হিসাব করতে হয়। কোডে কোন Reverse Variance Policy নেওয়া হয়েছে এবং শেষ ধাপে (t = 1 → 0) কেন নতুন Noise যোগ করা হয় না তা স্পষ্ট করতে হবে; জানা x₀ দিয়ে পরীক্ষা চালানো কেবল গাণিতিক যাচাই, প্রকৃত Generation নয়।",
+      "prerequisiteLessons": [
+        "ch28_posterior"
+      ]
+    },
+    {
+      "title": "Noise MSE কমছে কিন্তু ছবি খারাপ—Debugging কৌশল",
+      "tag": "Diagnosis · controls",
+      "prompt": "Training-এর গড় Noise Loss কমছে, অথচ তৈরি হওয়া ছবিগুলো ভেঙে যাচ্ছে। আপনি কোন কোন দিক পরীক্ষা করবেন?",
+      "answer": "প্রথমেই সামগ্রিক Loss-কে আলাদা আলাদা Timestep Slice-এ ভেঙে Zero এবং Identity Baseline-এর সাথে তুলনা করব, এবং Input Scale, Parameterization, Schedule Index, Clipping ও Conditioning ঠিক আছে কি না দেখব। মনে রাখতে হবে যে x̂₀ উদ্ধারে ত্রুটি √((1 - ᾱ) / ᾱ) গুণক দিয়ে বিবর্ধিত হয়—যেমন আমাদের ছোট Model-টি চূড়ান্ত ধাপে সাধারণ Identity Baseline-এর চেয়েও পিছিয়ে ছিল, যা রিপোর্টে স্পষ্টভাবে রাখা হয়েছে। এছাড়া জানা পরিষ্কার ছবি থেকে এক ধাপের Reconstruction ভালো হওয়া মানেই পূর্ণ শৃঙ্খলের Generation ভালো হওয়া নয়; তাই নিয়ন্ত্রিত পরীক্ষা ও নতুন অন্ধ যাচাই সেট সাজাতে হবে।",
+      "prerequisiteLessons": [
+        "ch28_book_diffusion_parameterization"
+      ]
+    },
+    {
+      "title": "8-ধাপের DDIM Sampler কোড রিভিউ",
+      "tag": "Coding · numerical methods",
+      "prompt": "একটি নির্ভুল 8-ধাপের η = 0 (eta = 0) DDIM Sampler লেখার সময় কোন শর্ত ও ইনভ্যারিয়েন্টগুলো অবশ্যই নিশ্চিত করতে হবে?",
+      "answer": "প্রকৃত উৎস ও গন্তব্য Timestep তালিকা, গন্তব্য ধাপের সঠিক ᾱₛ মান, ε → x̂₀ রূপান্তর, Clipping ও পুনর্গণনার ক্রম এবং চূড়ান্ত পরিষ্কার গন্তব্য 0 সুনির্দিষ্টভাবে স্থির করতে হবে। η = 0 রাখলে মাঝখানের Reverse ধাপগুলোতে নতুন র‍্যান্ডম Noise যোগ হয় না, তবে যাত্রার শুরুতে প্রাথমিক Noise x_T ড্র করতেই হয়। 8 ধাপ এবং 32 ধাপের Sampling ভিন্ন সংখ্যাত্মক পথ অনুসরণ করে বলে দুটির মান হুবহু সমান হওয়ার নিশ্চয়তা নেই। সবশেষে সম্পূর্ণ PyTorch ও Dart গতিপথ, অবৈধ Input প্রত্যাখ্যান (যেমন t = 0 Network কল) এবং প্রান্তিক মান Unit Test দিয়ে মেলাতে হবে।",
+      "prerequisiteLessons": [
+        "ch28_ddim"
+      ]
+    },
+    {
+      "title": "Classifier-Free Guidance ও Clipping-এর ক্রম",
+      "tag": "Conditioning · tradeoff",
+      "prompt": "CFG সমীকরণটি লিখে w = 0 ও w = 1 বিন্দু এবং Null Training-এর প্রয়োজনীয়তা বোঝান। বাহ্যিক Classifier Guidance কেন আলাদা?\n\nধরা যাক a = 0.8, b = 0.6, xₜ = 1, epsilon_u = -1, epsilon_c = 1 এবং w = 2। Guidance মেশানোর আগে শাখাগুলো [-1, 1]-এ Clip করলে ফলাফল কীভাবে বদলে যায়?",
+      "answer": "আমাদের রীতি ε_u + w(ε_c - ε_u)-এ w = 0 দিলে শর্তহীন (Null) এবং w = 1 দিলে সাধারণ শর্তযুক্ত (Conditional) Output পাওয়া যায়; অন্য কোনো লাইব্রেরির Scale মেলানোর আগে এই Offset স্পষ্ট করতে হয়। এটি কাজ করার জন্য Training-এ যৌথ Null Dropout শেখানো অপরিহার্য (আমাদের ক্ষেত্রে 15%, ID 10)। অন্যদিকে বাহ্যিক Classifier Guidance ঝাপসা ছবির ওপর আলাদা Classifier-এর Gradient নেয়। অতিরিক্ত CFG স্কেলে Diversity কমতে ও বিকৃতি বাড়তে পারে, এবং সংখ্যার One-hot শর্ত মানে মুক্ত ভাষার Text Conditioning নয়।\n\nসংখ্যার হিসাবে: প্রথমে Guided Noise বের করলে হয় -1 + 2×(1 - (-1)) = 3, যা থেকে পরিষ্কার অনুমান আসে (1 - 0.6×3)/0.8 = -1। দুই শাখার পরিষ্কার অনুমান আলাদাভাবে বের করলে হয় 2 এবং 0.5, যাদের রৈখিক মিশ্রণেও সেই -1 পাওয়া যায়। কিন্তু মেশানোর আগেই শাখা দুটিকে [-1, 1]-এ Clip করলে মান দুটি হয়ে যায় 1 ও 0.5, এবং তখন গাইডেড ফল দাঁড়ায় 1 + 2×(0.5 - 1) = 0! যেহেতু Clipping অরৈখিক অপারেশন, তাই এর ক্রম Sampler চুক্তিরই অংশ।",
+      "prerequisiteLessons": [
+        "ch28_guidance"
+      ]
+    },
+    {
+      "title": "Pixel থেকে Latent Diffusion সিস্টেমে রূপান্তর",
+      "tag": "Architecture · modeling",
+      "prompt": "Pixel-ভিত্তিক Diffusion Model-কে প্রোডাকশন Latent Diffusion সিস্টেমে রূপান্তর করলে Architecture ও চুক্তিতে কী কী পরিবর্তন আসবে?",
+      "answer": "প্রথমেই যুক্ত হবে একটি Autoencoder—যেখানে Encoder থেকে Mean নাকি Sample নেওয়া হচ্ছে, Latent Scaling ধ্রুবক s, স্থানিক আকার এবং Decoder-এ বিপরীত ভাগের চুক্তি সুনির্দিষ্ট করতে হবে। তখন Autoencoder-এর নিজস্ব তথ্যক্ষয় থেকে Latent Sampling-এর মানকে আলাদাভাবে মূল্যায়ন করতে হবে। পাশাপাশি Denoiser Architecture (যেমন U-Net বা DiT), কোন অংশ Frozen থাকবে তার Policy, লাইসেন্সকৃত ডেটা ও Weights এবং প্রকৃত হার্ডওয়্যার মেমোরি বাজেট নথিবদ্ধ করতে হবে। আমাদের বর্তমান Pixel MLP কোনো Latent Model নয়, তাই না মেপে প্রোডাকশন পারফরম্যান্স দাবি করা যাবে না।"
+    },
+    {
+      "title": "Contrastive Batch-এ পুনরাবৃত্ত Label সামলানো",
+      "tag": "Loss design · coding",
+      "prompt": "ইমেজ ও Class-name Batch-এ একই Label বারবার আসলে সাধারণ Diagonal Cross-Entropy কেন সমস্যা করে এবং এর বদলে কী ব্যবহার করবেন?",
+      "answer": "কাজের লক্ষ্য অনুযায়ী প্রথমে বৈধ পজিটিভ সম্পর্ক সংজ্ঞায়িত করতে হবে। একই Class-এর একাধিক আইটেম Batch-এ থাকলে সাধারণ Diagonal Loss সেগুলোকে ভুল করে False Negative বানিয়ে দূরে ঠেলে দেয়। তাই আমরা উভয় দিকেই Label-সমতার Mask (yᵢ = yⱼ) ব্যবহার করে logsumexp(all) - logsumexp(positives) সূত্রের প্রতিসম গড় মিনিমাইজ করি—যা প্রতিটি পজিটিভের আলাদা লগ-সম্ভাব্যতার গড় নেওয়ার সমান নয়। সুষম 4টি প্রার্থীর মধ্যে 2টি পজিটিভ থাকলে এর মান হয় log 2, আর পুরো Batch একক Class-এর হলে Loss 0 হলেও তা তথ্যহীন হয়ে পড়ে। বাস্তব Caption ডেটায় উৎস ও অর্থগত ডুপ্লিকেট সামলানোর আলাদা Policy প্রয়োজন হবে।"
+    },
+    {
+      "title": "Zero-shot দাবির প্রামাণিক নিরীক্ষা",
+      "tag": "Evaluation · provenance",
+      "prompt": "পরিচিত নামের Lookup Model-এ Top-1 Accuracy 0.958217 দেখে কি একে CLIP-ধাঁচের Zero-shot সক্ষমতা বলা যাবে?",
+      "answer": "একেবারেই না। কারণ Model-টি Training-এর সময়ই ওই দশটি পরিচিত Class Label এবং দশটি শেখা Lookup Vector-এর ওপর সরাসরি অপ্টিমাইজ হয়েছে। অ্যাপের UI-তে দেখানো ইংরেজি নামগুলো বাস্তবে সংগৃহীত প্রাকৃতিক Caption নয় এবং টেক্সট শাখাটি অদেখা কোনো নতুন ভাষা এনকোড করতে পারে না। এছাড়া 344 / 359 ফলাফলটি আগে দেখা Diagnostic সেটের একটি Classification Proxy—নতুন অন্ধ পরীক্ষা বা লেখক-স্বাধীন প্রমাণ নয়। প্রকৃত Zero-shot মূল্যায়নের জন্য ভাষাভিত্তিক Pretraining এবং সম্পূর্ণ অদেখা Class-এর প্রটোকল আবশ্যক।"
+    },
+    {
+      "title": "VQA বনাম ইমেজ সার্চ: Fusion নাকি Retrieval?",
+      "tag": "Multimodal system design",
+      "prompt": "Visual Question Answering (VQA) এবং বৃহৎ ইমেজ সার্চ কি একই Architecture ও একই মেট্রিক দিয়ে সমাধান করবেন?",
+      "answer": "না। কোটি ছবির সার্চে Dual Encoder আগে থেকেই Vector Cache করে দ্রুত Retrieval নিশ্চিত করে; কিন্তু সূক্ষ্ম প্রশ্নোত্তর বা VQA-র জন্য ছবি ও লেখার Token-এর গভীর মিথস্ক্রিয়া দরকার হয়, যেখানে Cross-Attention বা যৌথ Fusion অপরিহার্য। Fusion-এ Query ও Key/Value দৈর্ঘ্য, Mask, ভিজ্যুয়াল অবস্থান এবং Token Budget নিরীক্ষা করতে হয়। মূল্যায়নের ক্ষেত্রেও Recall@K, Caption নির্ভুলতা, OCR, গণনা এবং প্রামাণিক VQA—প্রতিটির মেট্রিক আলাদা। কেবল উচ্চ Similarity বা Attention Weight মানেই সত্যতার প্রমাণ নয়, আর ছবির ভেতরের নির্দেশনা ও ডেটার অধিকারের জন্য আলাদা নিয়ন্ত্রণ প্রয়োজন।"
+    },
+    {
+      "title": "অফলাইন ডিপ্লয়মেন্ট ও Serving খরচের পরিকল্পনা",
+      "tag": "System design · reproducibility",
+      "prompt": "মোবাইলের একটি ছোট অফলাইন প্রোটোটাইপকে প্রোডাকশন Diffusion Serving-এ নিয়ে যাওয়ার প্রকৌশলগত পরিকল্পনা কী হবে?",
+      "answer": "শুরুতেই ছবির কাঙ্ক্ষিত মান ও বৈচিত্র্য, Model-এর আকার, RAM, ব্যাটারি ও Latency বাজেট, কম Precision সহনশীলতা এবং সম্পূর্ণ Artifact Contract নির্ধারণ করতে হবে। Seed, Schedule, Sampler এবং CFG রীতি শতভাগ Reproducible রাখতে হবে। মনে রাখতে হবে যে আমাদের বর্তমান 16 বা 64 NFE কেবল অপারেশনের গণনা, মাপা হার্ডওয়্যার Latency নয়। পাশাপাশি পূর্ণাঙ্গ Cache Key পরিধি, গোপনীয়তা নীতি এবং প্রতিটি টার্গেট প্ল্যাটফর্মে (Android ও macOS/Xcode-এ iOS) আলাদা যাচাই সম্পন্ন করতে হবে।"
+    }
+  ],
+  "book": {
+    "order": 32,
+    "part": "Book 4 · LLMs, RAG & Generative AI",
+    "prerequisites": [
+      "chapter_27",
+      "chapter_20",
+      "chapter_23"
+    ],
+    "purpose": "আগের অধ্যায়ের (Book 4 · Chapter 8: Generative Models: VAE & GAN) ভিত্তির ওপর দাঁড়িয়ে এই অধ্যায়ে আমরা শিখব কীভাবে একটি Diffusion Model ধাপে ধাপে Noise সরিয়ে নতুন ডেটা তৈরি করে, কীভাবে DDPM, DDIM ও Classifier-Free Guidance (CFG) কাজ করে এবং কীভাবে ইমেজ ও টেক্সটের যৌথ Representation ও Multimodal Fusion গড়ে ওঠে।",
+    "outcomes": [
+      "Forward Markov Chain, Gaussian Posterior, DDPM ও DDIM-এর সমীকরণ প্রতিপাদন করা এবং Noise (ε), Clean Data (x₀) ও Velocity (v) Parameterization-এর পারস্পরিক রূপান্তর নির্ণয় করা।",
+      "Classifier-Free Guidance (CFG), Contrastive Alignment (InfoNCE), Multi-positive Loss এবং Cross-Attention ভিত্তিক Multimodal সিস্টেমের গাণিতিক হিসাব, কোড ও সীমাবদ্ধতা ব্যাখ্যা করতে পারা।"
+    ],
+    "recall": [
+      "Classifier-Free Guidance (CFG)-এর Scale বাড়ালে Sample Quality, Conditioning Adherence এবং Diversity-এর মধ্যে কী ধরনের Tradeoff তৈরি হয়?",
+      "যদি a = 1 এবং b = 0 হয়, তবে x_t ও Velocity v-এর মান কী দাঁড়ায়? আর Noise Prediction-এ Training দেওয়া একটি Checkpoint-কে ভুল করে Velocity হিসেবে পড়লে কেন কোনো Runtime Error ছাড়াই নীরবে ভুল Output তৈরি হয়?"
+    ],
+    "bridge": "এর পরের অধ্যায়ে (Book 4 · Chapter 10: LLM/Generative AI Capstone) যাওয়ার আগে এই অধ্যায়ের Quiz, কোডিং অনুশীলনী এবং না দেখে সমীকরণ ব্যাখ্যার (Closed-book) প্রশ্নগুলো নিজে সমাধান করে নিজের প্রস্তুতি যাচাই করে নিন।",
+    "bookId": "llm",
+    "bookChapter": 9
+  }
+}

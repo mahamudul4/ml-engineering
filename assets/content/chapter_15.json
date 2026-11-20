@@ -1,0 +1,1638 @@
+{
+  "id": "chapter_15",
+  "number": 15,
+  "title": "PyTorch Tensors & Autograd",
+  "shortTitle": "PyTorch & Autograd",
+  "displayTitle": "PyTorch Tensors\n& Autograd",
+  "subtitle": "Tensor-এর Shape ও Storage বুঝে Computational Graph অনুসরণ করা এবং নিখুঁতভাবে Gradient যাচাই করার হাতে-কলমে প্রস্তুতি।",
+  "description": "From tensor storage to reliable gradients.\nTrace the shape. Follow the graph. Check the derivative.",
+  "difficulty": "Deep learning foundations",
+  "lab": "tensors",
+  "lessons": [
+    {
+      "id": "ch15_contract",
+      "title": "PyTorch-এর শুরু: Tensor Contract সবার আগে",
+      "subtitle": "Shape, Dtype, Device এবং Gradient মালিকানা বোঝার ভিত্তি",
+      "duration": "30 min",
+      "icon": "grid_view",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Classical ML থেকে Deep Learning-এর পথে",
+          "body": "Book 2 · Chapter 9 (Classical ML Capstone) শেষ করে আমরা এখন প্রবেশ করছি Deep Learning-এর জগতে। কিন্তু PyTorch শেখার শুরুতেই বিশাল কোনো Neural Network বানিয়ে ফেলার তাড়াহুড়ো করার দরকার নেই। তার চেয়ে অনেক বেশি জরুরি হলো শুরুতে এটা বোঝা যে একটি Tensor মেমোরিতে কীভাবে ডেটা ধরে রাখে, বিভিন্ন Operation চালালে তার Shape কীভাবে বদলায় এবং Autograd কীভাবে স্বয়ংক্রিয়ভাবে Derivative বের করে আনে। এই মূল জায়গায় ঘাটতি থাকলে আপনার Training কোড হয়তো কোনো Exception ছাড়াই দিব্যি চলবে, কিন্তু আড়ালে সম্পূর্ণ ভুল একটি Objective শিখতে থাকবে।\n\nতাই এই অধ্যায়ে আমরা একেবারে হাতে-কলমে Tensor-এর Dtype, Storage, Broadcasting এবং Gradient-এর ভেতরের মেকানিক্স নিয়ে কাজ করব। এই ভিত্তিটি মজবুত হয়ে গেলে ঠিক পরের অধ্যায়েই—অর্থাৎ Book 3 · Chapter 2 (Neural Networks & Backpropagation)-এ—আমরা পূর্ণাঙ্গ Neural Network Architecture ও Training Loop তৈরি করব।"
+        },
+        {
+          "type": "text",
+          "title": "প্রতিটি Tensor-এর চারটি মৌলিক শর্ত",
+          "body": "যেকোনো PyTorch কোড লেখার সময় প্রতিটি Tensor-এর চারটি মৌলিক Attribute নিজের কাছে পরিষ্কার রাখা চাই: এর `shape`, `dtype`, `device` এবং `requires_grad`। একই সংখ্যার Array যদি ভুল Axis-এ বা ভুল Dtype-এ বসে যায়, তবে কোড না ভেঙেও ভুল Objective তৈরি করতে পারে। বিশেষ করে `requires_grad=True` কেবল সাধারণ একটি Flag নয়; এটি PyTorch-কে স্পষ্টভাবে জানিয়ে দেয় কোন Operation-গুলো Computational Graph-এ রেকর্ড করতে হবে এবং দিনশেষে কোন Leaf Tensor-গুলোর সাপেক্ষে আমাদের Gradient হিসাব করতে হবে। নিচের সমীকরণ ও কোডে একটি আদর্শ Batch-first সাজানোর নিয়ম দেখুন।"
+        },
+        {
+          "type": "math",
+          "title": "Batch-first রেফারেন্স সমীকরণ",
+          "body": "X\\in\\mathbb{R}^{B\\times D},\\quad w\\in\\mathbb{R}^{D},\\quad b\\in\\mathbb{R},\\quad z=Xw+b\\in\\mathbb{R}^{B}"
+        },
+        {
+          "type": "code",
+          "title": "CPU Float64-এ Tensor Contract-এর স্পষ্ট গাণিতিক উদাহরণ",
+          "body": "import torch\n\nX = torch.tensor([[1.0, 2.0], [3.0, 4.0]], dtype=torch.float64, device=\"cpu\")\nw = torch.tensor([0.5, -0.2], dtype=X.dtype, device=X.device, requires_grad=True)\nb = torch.zeros((), dtype=X.dtype, device=X.device, requires_grad=True)\nprint(X.shape, X.dtype, X.device, (X @ w + b).shape)\n"
+        },
+        {
+          "type": "text",
+          "title": "এই অধ্যায়ের পরীক্ষিত পরিবেশ ও কাঠামো",
+          "body": "সূক্ষ্ম গাণিতিক তুলনায় দশমিকের ত্রুটি এড়াতে এই অধ্যায়ের সব রেফারেন্স ফলাফল `Python 3.12.10` এবং `PyTorch 2.15.0+cpu` পরিবেশে সুনির্দিষ্টভাবে `CPU` ও `float64` ব্যবহার করে যাচাই করা হয়েছে; এখানে `CUDA`, `MPS` বা `AMP`-এর গতি কিংবা সংখ্যাসূচক আচরণের তুলনা করা হয়নি। নিজের কম্পিউটারে ডেভেলপমেন্ট প্যাকেজ ইনস্টল করতে ইন্টারনেট লাগলেও ইনস্টল করা অ্যাপের সব পাঠ ও ল্যাব সম্পূর্ণ অফলাইনে কাজ করে, এবং অ্যাপটি সরাসরি ডিভাইসে কোনো Python বা PyTorch Runtime চালায় না।"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব Dataset-এ গাণিতিক নিরীক্ষা",
+          "body": "বাস্তব ডেটার স্বাদ পেতে আমরা এখানে UCI Wine Quality Dataset এবং Book 2 · Chapter 9 (Classical ML Capstone)-এ ব্যবহৃত 966 টি Training (fit-role) Row পুনর্ব্যবহার করব। তবে এখানে আমাদের লক্ষ্য নতুন কোনো Classifier বাছাই করা বা Test Dataset-এ Generalization স্কোর মাপা নয়; বরং আমরা দেখব একটি বাস্তব Dataset-এর ওপর Autograd-এর দেওয়া Gradient, খাতা-কলমে কষা Analytical সূত্র এবং Finite Difference পদ্ধতি—এই তিনের ফলাফল একে অপরের সাথে হুবহু মেলে কি না।"
+        },
+        {
+          "type": "text",
+          "title": "Interactive Lab কীভাবে কাজ করে",
+          "body": "এই অধ্যায়ের Interactive Lab-গুলোতে Dart কোডের মাধ্যমে Tensor Indexing এবং Analytical হিসাবগুলো এমনভাবে সাজানো হয়েছে, যা লোকাল মেশিনে চালানো আসল PyTorch রেফারেন্সের ফলাফল হুবহু তুলে ধরে। এখানে Wine Quality ডেটার প্রকৃত মান, মূল Row ID এবং শুধুমাত্র Training অংশে শেখা রূপান্তরগুলো যুক্ত করা আছে; আর ধারণা পরিষ্কার করার জন্য যেসব ছোট Scalar গাণিতিক উদাহরণ ব্যবহার করা হয়েছে, সেগুলো আলাদাভাবে চিহ্নিত করে দেওয়া হয়েছে।"
+        },
+        {
+          "type": "callout",
+          "title": "শেখার মূল লক্ষ্য",
+          "body": "যেকোনো Operation চালানোর আগেই খাতায় বা মনে মনে অনুমান করার অভ্যাস গড়ুন: আউটপুটের Shape কী হবে, Computational Graph কোন পথে এগোবে এবং শেষ পর্যন্ত কোন Gradient Buffer-এ গিয়ে মান জমা হবে। কেবল স্ক্রিনে Loss কমতে দেখলেই আপনার কোড নির্ভুল কাজ করছে—এমনটা কখনোই ধরে নেবেন না।"
+        }
+      ]
+    },
+    {
+      "id": "ch15_creation",
+      "title": "Tensor তৈরি, Dtype এবং NumPy Storage মালিকানা",
+      "subtitle": "নতুন Copy তৈরি বনাম Shared Storage ব্যবহারের সূক্ষ্ম পার্থক্য",
+      "duration": "34 min",
+      "icon": "grid_view",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Tensor তৈরির বিভিন্ন পথ ও মেমোরি আচরণ",
+          "body": "Python বা NumPy থেকে ডেটা এনে PyTorch-এ ঢোকানোর সময় প্রথম প্রশ্নই হলো—নতুন Tensor কি মেমোরিতে আলাদা জায়গা নিচ্ছে, নাকি আগের ডেটার জায়গাটাই ভাগাভাগি করছে? `torch.tensor(data)` সাধারণত সব সময় ডেটা Copy করে সম্পূর্ণ নতুন মেমোরিতে একটি Tensor বানায়। বিপরীতে, `torch.from_numpy(array)` উপযুক্ত CPU NumPy Array-এর সাথে সরাসরি একই Storage ভাগাভাগি করে; আর `torch.as_tensor(...)` ইনপুটের Dtype ও Device মিলে গেলে অপ্রয়োজনীয় Copy এড়িয়ে Storage শেয়ার করার চেষ্টা করে। আরেকটি জরুরি সতর্কতা: আগে থেকেই তৈরি কোনো Tensor-এর ওপর আবার `torch.tensor(existing_tensor)` কল করবেন না—এতে অজান্তেই Computational Graph ছিঁড়ে যায় এবং বাড়তি Copy তৈরি হয়। এর বদলে নিজের উদ্দেশ্য স্পষ্ট করতে `.clone()` বা `.detach()` ব্যবহার করুন।"
+        },
+        {
+          "type": "code",
+          "title": "NumPy-এর সাথে Shared Storage বনাম Copy-এর উদাহরণ",
+          "body": "import numpy as np\nimport torch\n\narray = np.array([1.0, 2.0, 3.0], dtype=np.float64)\nshared = torch.from_numpy(array)\ncopied = torch.tensor(array)\narray[0] = 9.0\nassert shared[0].item() == 9 and copied[0].item() == 1\nprint(shared, copied)\n"
+        },
+        {
+          "type": "text",
+          "title": "Default Dtype-এর ফাঁদ চিনে রাখুন",
+          "body": "ওপরের কোডে আমরা দেখলাম মূল NumPy Array বদলালে Shared Tensor-ও কীভাবে সাথে সাথে বদলে যায়। এবার নজর দেওয়া যাক Dtype-এর দিকে। Python-এর দশমিক সংখ্যা দিয়ে `torch.tensor` বানালে PyTorch সাধারণত বর্তমান ডিফল্ট Floating Dtype—সচরাচর `float32`—বেছে নেয়, আর পূর্ণসংখ্যা দিলে নেয় `int64` (বা `long`)। Multi-class Classification-এ Class Index রাখার জন্য `long` দরকার হলেও Binary Cross-Entropy (BCE)-এর ক্ষেত্রে Target-কে অবশ্যই Logit-এর সমগোত্রীয় Floating-point Tensor হতে হয়। পাশাপাশি মনে রাখবেন, কোনো Integer Tensor-এ কখনোই `requires_grad=True` দেওয়া যায় না, কারণ অবিচ্ছিন্ন পরিবর্তনের হিসাব বা Derivative কেবল দশমিক বা জটিল সংখ্যার ক্ষেত্রেই সংজ্ঞায়িত।"
+        },
+        {
+          "type": "math",
+          "title": "মেমোরিতে সংখ্যার মোট আকার (Payload Bytes)",
+          "body": "\\operatorname{payloadBytes}=\\operatorname{numel}\\times\\operatorname{elementSize}"
+        },
+        {
+          "type": "text",
+          "title": "নির্দিষ্ট Shape-এর Tensor তৈরির সহায়ক Function",
+          "body": "ওপরের সূত্র অনুযায়ী মেমোরির হিসাব মাথায় রেখে আমরা `zeros`, `ones`, `empty` কিংবা `arange` দিয়ে সুনির্দিষ্ট `shape`, `dtype` ও `device`-এর Tensor তৈরি করতে পারি। তবে `torch.empty` ব্যবহারের সময় বাড়তি সতর্কতা জরুরি: এটি কেবল কাঁচা মেমোরি বরাদ্দ করে, ভেতরের ঘরগুলো শূন্য দিয়ে পরিষ্কার করে না—তাই সেখানে আগে থেকে পড়ে থাকা অনিশ্চিত মান (Uninitialized Values) পড়ে কোনো গাণিতিক ফলাফল তৈরি করবেন না। অন্য একটি Tensor-এর হুবহু একই Attribute বজায় রাখতে `zeros_like` বা `ones_like` দারুণ কাজে আসে। এ ছাড়া Random Tensor তৈরির সময় Random Seed নির্দিষ্ট করে দেওয়া Reproducibility-র একটি ভালো ধাপ, যদিও ভিন্ন হার্ডওয়্যার বা ভিন্ন PyTorch সংস্করণে এটি শতভাগ অভিন্ন সংখ্যার নিশ্চয়তা দেয় না।"
+        },
+        {
+          "type": "text",
+          "title": "Tensor থেকে আবার NumPy-তে রূপান্তর",
+          "body": "অনেক সময় হিসাব শেষে ফলাফল প্লট করা বা বিশ্লেষণ করার জন্য Tensor-কে আবার NumPy Array-তে ফিরিয়ে নিতে হয়। কোনো Tensor-এ `requires_grad=True` চালু থাকলে সরাসরি `.numpy()` কল করা যায় না; Autograd যেন আপনার অজান্তে হারিয়ে না যায়, সে জন্য PyTorch আগে সুস্পষ্টভাবে `.detach()` করতে বাধ্য করে। তাই CPU-তে রূপান্তরের আদর্শ নিয়ম হলো `tensor.detach().cpu().numpy()`। খেয়াল রাখবেন, এই রূপান্তরিত NumPy Array তখনো CPU Tensor-এর Storage শেয়ার করতে পারে—তাই পুরোপুরি স্বাধীন পরিবর্তনযোগ্য Array চাইলে শেষে `.copy()` যোগ করুন। সংক্ষেপে বললে, NumPy সেতু কেবল সংখ্যার মানটুকু পারাপার করে, Autograd-এর Computational Graph কখনোই নয়।"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব Dataset-এ Dtype সুরক্ষিত রাখা",
+          "body": "এই অধ্যায়ের মূল Workflow-তে আমরা উৎস NumPy Array থেকে ডেটা Copy করে সুস্পষ্টভাবে CPU `torch.float64` Tensor তৈরি করেছি এবং শুরুতেই Training অংশের রেফারেন্স Mean ও Scale মিলিয়ে নিয়েছি। আপনি যখন নিজে কোড লিখবেন, তখন Integer Label-গুলোকে প্রয়োজনমতো উপযুক্ত Floating Dtype-এ রূপান্তর করে নিতে ভুলবেন না এবং কোথাও অসাবধানতাবশত Integer Division বা অপ্রত্যাশিত Gradient প্রত্যাশা তৈরি হচ্ছে কি না তা পরীক্ষা করে দেখবেন।"
+        },
+        {
+          "type": "callout",
+          "title": "Interview-এ যেভাবে ব্যাখ্যা করবেন",
+          "body": "Interview-তে এই প্রসঙ্গ উঠলে `torch.from_numpy` এবং `torch.tensor`-এর Storage মালিকানার পার্থক্য বলুন এবং এক লাইনের একটি Mutation Test লিখে তা প্রমাণ করে দেখান। সাথে এটিও স্পষ্ট করুন যে একটি স্বাধীন Gradient Leaf তৈরি করতে গেলে ডেটা আলাদা মেমোরিতে Copy করা (`.clone()`) এবং পুরোনো Graph থেকে বিচ্ছিন্ন করা (`.detach()`)—এই দুটি কেন সম্পূর্ণ আলাদা সিদ্ধান্ত।"
+        }
+      ]
+    },
+    {
+      "id": "ch15_shapes",
+      "title": "Rank, Batch Axis এবং Singleton Dimension-এর ফাঁদ",
+      "subtitle": "কেন একটি Scalar [] আর এক উপাদানের Vector [1] কখনোই এক নয়",
+      "duration": "32 min",
+      "icon": "grid_view",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "উপাদানের সংখ্যা সমান হলেও Rank কেন আলাদা?",
+          "body": "তিনটি ভিন্ন Tensor কল্পনা করুন: একটি Scalar যার Shape `[]`, এক উপাদানের একটি Vector যার Shape `[1]`, এবং একটিমাত্র Row থাকা একটি Matrix যার Shape `[1, D]` (বা `D = 1` হলে `[1, 1]`)। উপাদানের সংখ্যা বা `numel()` সমান হলেও Matrix Multiplication (`matmul`), Reduction এবং Loss Function-এর Shape Contract এদের প্রত্যেকের জন্য আলাদা! বিশেষ করে কোনো Batch-এ যদি মাত্র একটি Sample থাকে (`B = 1`) এবং আপনি অসাবধানতাবশত ঢালাওভাবে `squeeze()` চালিয়ে সেই Singleton Dimension-টি মুছে ফেলেন, তবে পুরো Training বা Inference পাইপলাইনের আচরণ বদলে গিয়ে সাথে সাথে ভেঙে পড়তে পারে।"
+        },
+        {
+          "type": "math",
+          "title": "অসতর্ক squeeze() যেভাবে Batch Axis মুছে দেয়",
+          "body": "[B,1]\\xrightarrow{\\operatorname{squeeze}(-1)}[B],\\qquad [1,1]\\xrightarrow{\\operatorname{squeeze}()}[]"
+        },
+        {
+          "type": "code",
+          "title": "Singleton নিরাপদ রাখতে নির্দিষ্ট Axis ধরে squeeze(-1)",
+          "body": "import torch\n\nlogits = torch.ones((1, 1), dtype=torch.float64)\nassert logits.squeeze().shape == torch.Size([])\nassert logits.squeeze(-1).shape == torch.Size([1])\nprint(logits.shape, logits.squeeze(-1).shape)\n"
+        },
+        {
+          "type": "text",
+          "title": "unsqueeze এবং flatten ব্যবহারের নিরাপদ নিয়ম",
+          "body": "ওপরের কোডে দেখলেন, খালি `squeeze()` না লিখে `squeeze(-1)` লিখলে শেষের অতিরিক্ত Axis-টি ঠিকই সরে যায় কিন্তু সামনের Batch Axis অক্ষত থাকে। ঠিক এর উল্টো কাজটি করে `unsqueeze(dim)`—এটি ভেতরের কোনো মান না বাড়িয়েই নির্দিষ্ট অবস্থানে আকার `1`-এর একটি নতুন Axis যোগ করে। একইভাবে বহুমাত্রিক ইনপুট চ্যাপ্টা করার সময় `reshape(-1)` দিয়ে সব কিছু একাকার করে দিলে Sample ও Feature-এর সীমানা হারিয়ে যায়; তাই Batch Axis অটুট রাখতে `flatten(start_dim=1)` ব্যবহার করাই নিরাপদ রীতি। ভালো অভ্যাস হলো কোডের পাশে ছোট কমেন্টে প্রতিটি Axis-এর অর্থ লিখে রাখা, যেমন `# [batch, channel, time, feature]`।"
+        },
+        {
+          "type": "text",
+          "title": "কোডের শুরুতেই কঠোর Shape যাচাই",
+          "body": "নিরাপত্তার স্বার্থে এই অধ্যায়ের BCE সহায়ক Function শুরুতেই প্রতিটি ইনপুটের হুবহু Shape যাচাই করে নেয়: `X` হবে `[B, D]`, `y` হবে `[B]`, `w` হবে `[D]` এবং `b` হবে একটি খাঁটি Scalar `[]`। মনে রাখবেন, PyTorch-এ Broadcasting গাণিতিকভাবে বৈধ হলেও ভুল আকারের Tensor মিলে আপনার আসল Task Semantics বা গাণিতিক উদ্দেশ্য পণ্ড করে দিতে পারে। এ ছাড়া আমরা এখানে `B > 0` শর্তটিও কঠোরভাবে পরীক্ষা করি; কারণ PyTorch সাধারণভাবে Empty Tensor সমর্থন করলেও খালি Batch দিয়ে গড় Loss বের করতে গেলে শূন্য দিয়ে ভাগের ফলে সরাসরি `NaN` তৈরি হয়।"
+        },
+        {
+          "type": "text",
+          "title": "সব সময় Batch Size 1 দিয়ে Test করবেন কেন?",
+          "body": "অনেক সময় কোনো Operation `B = 4` বা `B = 64`-এ চমৎকার কাজ করলেও `B = 1` হওয়ামাত্রই `squeeze`, `drop_last` বা Broadcasting-এর মারপ্যাঁচে অদ্ভুত আচরণ শুরু করে। অথচ বাস্তব সিস্টেমে Dataset-এর একেবারে শেষের অসম্পূর্ণ Batch কিংবা প্রোডাকশনে একটিমাত্র কুয়েরির ওপর Inference চালানোর সময় `B = 1` হওয়া খুবই নিয়মিত ঘটনা। তাই যেকোনো Tensor কোড লেখার পর কেবল নিয়মিত `Batch = 64` নয়, `B = 1` দিয়েও আলাদাভাবে Shape Test করা অপরিহার্য।"
+        },
+        {
+          "type": "text",
+          "title": "Logical Axis বনাম মেমোরির Storage",
+          "body": "একটি Matrix-কে `transpose` করলে তার Shape পাল্টে যায় এবং প্রতিটি Logical Index মেমোরির Storage-এ নতুন নিয়মে ম্যাপ হয়; কিন্তু এতে নতুন কোনো Sample বা নতুন কোনো ভৌত Feature তৈরি হয় না। যেহেতু সাধারণ PyTorch Tensor নিজে থেকে জানে না কোন Axis-টি Sample আর কোনটি Feature, তাই উৎস Matrix-এর প্রতিটি Axis-এর অর্থ কোডের কমেন্টে স্পষ্ট করে লিখে রাখলে বড় প্রজেক্টে ভুলের আশঙ্কা অনেক কমে যায়।"
+        },
+        {
+          "type": "callout",
+          "title": "হাতে-কলমে অনুশীলন",
+          "body": "নিজে যাচাই করার জন্য `Batch = 3` এবং `Feature = 2` আকারের একটি `[3, 2]` Matrix নিন। কোড চালানোর আগেই খাতায় লিখে ফেলুন একটি নির্দিষ্ট Row নিলে, একটি নির্দিষ্ট Column নিলে, `unsqueeze` করলে এবং `mean(dim=1, keepdim=True)` চালালে প্রতিটির আউটপুট Shape ঠিক কী হবে—তারপর Python চালিয়ে নিজের উত্তরের সাথে মিলিয়ে দেখুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch15_indexing",
+      "title": "Indexing, Slicing এবং ডেটার প্রকৃত পরিচয়",
+      "subtitle": "কখন মেমোরির View তৈরি হয় আর কখন নতুন Copy তৈরি হয়",
+      "duration": "34 min",
+      "icon": "grid_view",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Basic Slicing বনাম Advanced Indexing",
+          "body": "একটি Tensor থেকে অংশবিশেষ কেটে নেওয়ার সময় সেটি কি মূল মেমোরির দিকেই তাকিয়ে থাকে, নাকি আলাদা মেমোরিতে নতুন ঘর বানায়? সাধারণত `x[:, 1:3]`-এর মতো Basic Slicing মূল Tensor-এর একটি View ফিরিয়ে দেয়, অর্থাৎ দুজনে একই Storage ভাগাভাগি করে। কিন্তু আপনি যখন পূর্ণসংখ্যার তালিকা, অন্য কোনো Index Tensor বা শর্ত দিয়ে Advanced Indexing করেন, তখন ফলাফল হিসেবে সাধারণত একটি নতুন Copy তৈরি হয়। তবে খেয়াল রাখবেন, বাম পাশে Index বসিয়ে মান বসানো বা Indexed Assignment (`x[idx] = ...`) করলে কিন্তু সরাসরি মূল Tensor-টিই আপডেট হয়ে যেতে পারে! তাই কেবল দুটি Tensor-এর ভেতরের সংখ্যার মান সমান দেখেই তাদের Storage মালিকানা সম্পর্কে নিশ্চিত হওয়া যায় না।"
+        },
+        {
+          "type": "code",
+          "title": "View বনাম Advanced Indexing Copy-এর আচরণ",
+          "body": "import torch\n\nbase = torch.arange(6.0, dtype=torch.float64).reshape(2, 3)\nview = base[:, 1:]\nadvanced = base[:, torch.tensor([1, 2])]\nview[0, 0] = 99.0\nassert base[0, 1].item() == 99 and advanced[0, 0].item() == 1\nprint(base, advanced)\n"
+        },
+        {
+          "type": "text",
+          "title": "Memory Aliasing এবং Autograd-এর ঝুঁকি",
+          "body": "ওপরের কোডে স্পষ্ট দেখা গেল, একটি View-এর ভেতর মান বদলালে মূল `base` Tensor-এর একই Storage অবস্থানের মানও বদলে যায়—যাকে বলে Memory Aliasing। সাধারণ হিসাবের বাইরে Autograd-এর ক্ষেত্রে এটি ভীষণ সংবেদনশীল: `requires_grad` যুক্ত কোনো Computational Graph যদি Forward Pass চলাকালে কোনো Tensor-এর মান ভবিষ্যতের জন্য সংরক্ষণ করে রাখে, আর আপনি পরে কোনো View-এর মাধ্যমে সেই মান In-place বদলে দেন, তবে `backward()` চালানোর সময় PyTorch-এর Version Check ব্যর্থ হবে। অর্থাৎ PyTorch কোনো Operation চালাতে দিচ্ছে মানেই যে মেমোরি মালিকানা আপনার কাঙ্ক্ষিত নকশার সাথে মিলেছে, তা কিন্তু নয়।"
+        },
+        {
+          "type": "math",
+          "title": "Slicing কীভাবে Storage Offset ও ঠিকানা হিসাব করে",
+          "body": "\\operatorname{address}(i,j)=\\operatorname{storageOffset}+i\\,s_0+j\\,s_1"
+        },
+        {
+          "type": "text",
+          "title": "Shuffle করার সময় Sample ও Label-এর সম্পর্ক অক্ষত রাখা",
+          "body": "Training-এর সময় DataLoader যখন ডেটা এলোমেলো বা Shuffle করে, তখন প্রতিটি Sample-এর পরিচয় ঠিক রাখতে আমরা `X`, `y` এবং মূল Dataset-এর Row Index একসাথে একটি `TensorDataset`-এ বেঁধে রাখি। কখনোই ভুল করে Feature-গুলোকে আলাদাভাবে Shuffle করে Label-গুলোকে আগের জায়গায় রেখে দেবেন না—তাতে কোন Sample-এর সাথে কোন Label-এর সম্পর্ক ছিল, তা পুরোপুরি নষ্ট হয়ে যাবে। প্রসঙ্গত বলে রাখা ভালো, আমাদের অ্যাপে দেখানো মূল Row অবস্থানগুলো কেবল ডেটা টেবিলের সাথে মিলিয়ে দেখার অডিট সূত্র, বাস্তব জগতে নির্দিষ্ট কোনো বোতলের পরিচয় নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Boolean Masking এবং Loss-এর Denominator",
+          "body": "শর্ত সাপেক্ষে ডেটা ছেঁকে নেওয়ার জন্য Boolean Mask খুবই কাজের জিনিস, তবে Mask-টির Shape মূল Tensor-এর সাথে সামঞ্জস্যপূর্ণ এবং Dtype অবশ্যই `bool` হতে হবে। Boolean Indexing করলে বাছাইকৃত Row-গুলো নিয়ে একটি নতুন Tensor তৈরি হতে পারে। যেহেতু ডেটা-নির্ভর Mask ঠিক করে দেয় কোন কোন Sample চূড়ান্ত Loss-এ অংশ নেবে এবং কোন পথে Gradient প্রবাহিত হবে, তাই বাদ পড়া Sample-গুলো হিসাব থেকে সরে যাওয়ার পর গড় বের করার Denominator ঠিক কী হবে—মোট Batch আকার নাকি কেবল বৈধ Sample-এর সংখ্যা—তা কোডে দ্ব্যর্থহীনভাবে লিখে দিতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের বাস্তব Dataset-এর Matrix উদাহরণ",
+          "body": "পরের পাঠের Layout Lab-এ আমরা Wine Quality Dataset-এর প্রথম 4 টি প্রকৃত Training Row থেকে `alcohol`, `volatile acidity` এবং `sulphates`—এই তিনটি Feature নিয়ে তৈরি একটি আসল Matrix ব্যবহার করেছি। সেখানে `[:, ::2]` ধাঁচের Column-step Slice নিলে `Column 0` এবং `Column 2` মিলে একটি Non-contiguous View তৈরি হয়, যেখানে কোনো কাল্পনিক সংখ্যা বা In-place পরিবর্তন ছাড়াই মেমোরির আসল আচরণ পরিষ্কার দেখা যায়।"
+        },
+        {
+          "type": "callout",
+          "title": "Interview-এর প্রস্তুতি",
+          "body": "Interview-তে আপনাকে জিজ্ঞেস করা হতে পারে: View বনাম Clone-এ মান বদলালে কী ঘটে, ডেটা Shuffle করার সময় উৎস Row ও Label-এর সামঞ্জস্য কীভাবে রক্ষা করবেন এবং Masked Loss-এ Denominator কেন গুরুত্বপূর্ণ। বাড়তি গভীরতা দেখাতে বলুন যে কেবল দুটি Tensor-এর Pointer সমান হওয়া মানেই তাদের উপাদানগুলো একে অপরকে স্পর্শ করছে তা নয়—প্রকৃত Overlap বুঝতে হলে `storage_offset()` এবং `stride()` দুটোই মিলিয়ে দেখতে হয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch15_layout",
+      "title": "Strides, Transpose, View এবং Contiguous মেমোরি",
+      "subtitle": "মেমোরির ভেতর ডেটা না সরিয়েও কীভাবে কেবল Metadata বদলে Tensor সাজানো হয়",
+      "duration": "38 min",
+      "icon": "grid_view",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Stride মানে Byte নয়, Element-এর দূরত্ব",
+          "body": "কম্পিউটারের RAM আসলে এক লাইনের লম্বা ফিতার মতো; অথচ আমরা সেখানে দ্বিমাত্রিক বা ত্রিমাত্রিক Tensor রাখি কীভাবে? এর রহস্য লুকিয়ে আছে `stride`-এর ভেতরে। একটি Contiguous `4 × 3` Row-major Tensor-এ এক Row নিচে নামতে ফিতার ওপর `3` টি ঘর লাফাতে হয়, আর এক Column ডানে যেতে লাফাতে হয় `1` টি ঘর—তাই এর Stride হলো `[3, 1]`। একে Transpose করে `3 × 4` বানালে PyTorch মেমোরির একটি সংখ্যাও জায়গা থেকে নড়ায় না; কেবল Metadata বদলে Stride করে দেয় `[1, 3]`, যার ফলে এটি Non-contiguous হয়ে যায়! মনে রাখবেন, `storage_offset` জানায় প্রথম Logical Element-টি Storage-এর কত নম্বর ঘরে আছে, আর `stride` সব সময় মাপা হয় Element-এর এককে, Byte-এ নয়। যেমন `float64`-এ প্রতিটি সংখ্যার আকার `8` Byte হলে, Byte দূরত্ব পেতে Element Offset-কে আলাদাভাবে `8` দিয়ে গুণ করতে হবে।"
+        },
+        {
+          "type": "tensor_layout_lab",
+          "title": "Interactive Storage ও Stride ল্যাব",
+          "body": "নিচের ল্যাবে Original, Transpose, Step-slice এবং Expanded—এই চার রকম Layout নিজে পরখ করে দেখুন। যেকোনো ঘরের Coordinate বেছে নিলেই দেখতে পাবেন সমতল Buffer-এ তার Element Offset এবং Byte Offset কীভাবে হিসাব হচ্ছে। পাশাপাশি `contiguous()` চেকবক্সটি চালু করে দেখুন কীভাবে একটি Non-contiguous View নতুন করে Row-major আকারে মেমোরিতে সাজানো হয়, আর আগে থেকেই Contiguous ইনপুটে কেন বাড়তি Copy করার প্রয়োজন পড়ে না।"
+        },
+        {
+          "type": "math",
+          "title": "Contiguous Row-major Tensor-এ Offset হিসাবের উদাহরণ",
+          "body": "\\operatorname{shape}=[4,3],\\quad \\operatorname{stride}=[3,1],\\quad \\operatorname{offset}(2,1)=2\\cdot3+1=7"
+        },
+        {
+          "type": "code",
+          "title": "Transpose-এর পর কেন view(-1) ব্যর্থ হয় এবং reshape কাজ করে",
+          "body": "import torch\n\nx = torch.arange(6.0, dtype=torch.float64).reshape(2, 3)\nt = x.T\nprint(t.shape, t.stride(), t.is_contiguous())\ntry:\n    t.view(-1)\nexcept RuntimeError:\n    print(\"view cannot flatten this stride pattern\")\nassert torch.equal(t.reshape(-1), t.contiguous().view(-1))\n"
+        },
+        {
+          "type": "text",
+          "title": "view বনাম reshape: কখন কোনটি ব্যবহার করবেন?",
+          "body": "ওপরের কোডে দেখলেন, `x.T` করার পর সরাসরি `t.view(-1)` চালালে `RuntimeError` আসে। কারণ `view()` কেবল তখনই কাজ করে যখন বিদ্যমান Stride কাঠামোর সাথে সামঞ্জস্য রেখেই ডেটা Copy না করে কাঙ্ক্ষিত Shape দেওয়া সম্ভব হয়। অন্যদিকে `reshape()` অনেক নমনীয়: সম্ভব হলে এটি View দেয়, আর Stride না মিললে আড়ালে নতুন একটি Copy বানিয়ে কাজ চালিয়ে নেয়। তবে সতর্ক থাকবেন—`reshape()` কখনো Copy করবে না, এমন ধারণার ওপর ভিত্তি করে কোনো কোড লজিক সাজাবেন না! আর `.contiguous()` কল করলে Tensor-টি ইতিমধ্যে Contiguous হলে সেই একই Tensor ফেরত আসতে পারে, নতুবা নতুন Row-major মেমোরিতে মানগুলো সাজিয়ে দেয়।"
+        },
+        {
+          "type": "text",
+          "title": "expand() এবং Zero Stride-এর কৌশল",
+          "body": "কোনো Axis-এর আকার `1` হলে তাকে `.expand(...)` দিয়ে বড় আকারে প্রসারিত করা যায়, এবং মজার ব্যাপার হলো এতে নতুন কোনো মেমোরি বরাদ্দ করতে হয় না! PyTorch কেবল ওই Axis-টির `stride` শূন্য (`0`) করে দেয়, ফলে বহু ভিন্ন Coordinate আসলে ঘুরেফিরে Storage-এর ওই একই Element-কে নির্দেশ করে। শুধু মান পড়ার (Read) জন্য এটি দারুণ মেমোরি-সাশ্রয়ী হলেও, এমন Expanded View-এর ওপর একসাথে বহু ঘরে In-place মান লিখতে (Write) যাওয়া অনিরাপদ ও দ্ব্যর্থক। আপনি যদি সত্যিই প্রতিটি ঘরের জন্য আলাদা মেমোরিতে মানগুলো সাজাতে চান, তবে `.expand()`-এর বদলে `.repeat()` ব্যবহার করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "Logical Payload Bytes বনাম প্রকৃত মেমোরি বরাদ্দ",
+          "body": "`numel() * element_size()` গুণফলটি কেবল জানায় একটি Expanded বা সাধারণ Tensor-এর সব Logical Element আলাদাভাবে ধরলে কত Byte হতো—প্রকৃতপক্ষে মেমোরিতে কতটুকু অনন্য Storage বরাদ্দ হয়ে আছে তা নয়! মেমোরিতে Alias বা Offset থাকলে মূল বরাদ্দকৃত Storage যৌক্তিক আকারের চেয়ে ছোট বা বড় হতে পারে। উল্লেখ্য, আমাদের ল্যাবে দেখানো Buffer Index-গুলো ধারণা পরিষ্কার করার জন্য আপেক্ষিক অবস্থান মাত্র, ডিভাইসের সরাসরি মেমোরি Pointer নয়।"
+        },
+        {
+          "type": "callout",
+          "title": "নিজের দক্ষতা যাচাই করুন",
+          "body": "খাতা-কলমে একটি ছোট পরীক্ষা করে দেখুন: Transpose করা একটি Matrix-এর যেকোনো একটি Element-এর মূল Storage Offset হাতে হিসাব করে বের করুন। এরপর নিজেকে জিজ্ঞেস করুন, এর ওপর `.contiguous()` চালালে ভেতরের যৌক্তিক মানগুলো হুবহু এক থাকা সত্ত্বেও Storage Index-গুলো কেন বদলে যেতে পারে? সময় পেলে আকার `1`-এর Singleton Axis-গুলোর ক্ষেত্রে PyTorch কীভাবে Contiguity বিচার করে, সেই বিশেষ নিয়মটিও আলাদাভাবে দেখে রাখবেন।"
+        }
+      ]
+    },
+    {
+      "id": "ch15_broadcast",
+      "title": "Broadcasting: কোড চললেও যখন ভুল Objective শেখা হয়",
+      "subtitle": "[B] এবং [B, 1]-এর মিলনে অজান্তেই তৈরি হওয়া Pairwise Loss-এর ফাঁদ",
+      "duration": "38 min",
+      "icon": "grid_view",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ডান দিক থেকে মেলানোর নিয়ম (Right-aligned Rules)",
+          "body": "PyTorch-এ দুটি ভিন্ন আকারের Tensor-এর মধ্যে যোগ, বিয়োগ বা গুণ করার সময় ডান দিকের শেষ Dimension থেকে বাঁ দিকে একে একে আকার মেলানো হয়। নিয়মটি খুব সরল: মুখোমুখি থাকা প্রতিটি Axis-এর আকার হয় সমান হতে হবে, নয়তো যেকোনো একটিকে `1` হতে হবে; আর কোনো Tensor-এর সামনের দিকে কম Axis থাকলে সেখানে মনে মনে আকার `1` ধরে নেওয়া হয়। এই শর্ত মিলে গেলেই PyTorch মানগুলো নতুন করে Copy না করেই প্রসারিত আকারে হিসাবটি সেরে ফেলে—যাকে আমরা বলি Broadcasting। কিন্তু বিপদ হলো, গাণিতিকভাবে একটি Broadcast বৈধ হওয়া মানেই যে প্রতিটি Sample তার নিজস্ব সঠিক Target-এর সাথেই যুক্ত হচ্ছে, তার কোনো নিশ্চয়তা নেই!"
+        },
+        {
+          "type": "math",
+          "title": "অসাবধানতাবশত তৈরি হওয়া Pairwise Residual",
+          "body": "[B]-[B,1]\\longrightarrow[B,B],\\qquad E_{j,i}=p_i-y_j"
+        },
+        {
+          "type": "tensor_broadcast_lab",
+          "title": "Interactive Shape ও Residual ল্যাব",
+          "body": "নিচের ল্যাবে `Batch = 1`, `2` এবং `4` বেছে নিন এবং ভুল আকারের `[B, 1]` Target Column সুইচটি চালু ও বন্ধ করে দেখুন। Wine Quality Dataset-এর প্রকৃত Training Row থেকে পাওয়া Probability-গুলোর ওপর সঠিক Vector MSE এবং ভুলক্রমে তৈরি হওয়া `[B, B]` আকারের Pairwise MSE ও তার Residual Matrix কীভাবে বদলে যায় তা সরাসরি তুলনা করুন। খেয়াল করবেন, আমাদের কঠোর BCE সহায়ক Function শুরুতেই এই Shape অসামঞ্জস্য আটকে দেয়।"
+        },
+        {
+          "type": "code",
+          "title": "Broadcasting-এর কারণে নীরবে ঘটে যাওয়া Loss Bug",
+          "body": "import torch\n\np = torch.tensor([0.2, 0.8], dtype=torch.float64)\ny = torch.tensor([0.0, 1.0], dtype=torch.float64)\ncorrect = (p - y).square().mean()\nwrong = (p - y[:, None]).square().mean()\nprint((p - y).shape, (p - y[:, None]).shape, correct.item(), wrong.item())\n"
+        },
+        {
+          "type": "text",
+          "title": "Backward Pass-এ প্রসারিত Axis কীভাবে যোগ হয়",
+          "body": "Forward Pass-এ কোনো Tensor-এর একটি Axis যতবার প্রসারিত হয়ে ব্যবহৃত হয়, Backward Pass-এ Autograd ঠিক ততগুলো শাখার অবদান যোগ করে মূল Parameter-এর আসল Shape-এ ফিরিয়ে আনে। যেমন একটি Scalar Bias `b` যখন `B` সংখ্যক Logit-এর সাথে Broadcast হয়ে যুক্ত হয়, তখন তার Gradient হয় সব কটি অবস্থানের অবদানের যোগফল (এবং Mean Loss হলে তার Denominator হয় `B`)। ঠিক একই নিয়মে `[B]` এবং `[B, 1]` মিলে যখন ভুলক্রমে `[B, B]` আকারের Pairwise Loss তৈরি হয়, তখন প্রতিটি Sample কেবল নিজের Target নয়, পুরো Batch-এর সব কটি অন্য Sample-এর Target থেকেও ভুল Gradient পেতে থাকে!"
+        },
+        {
+          "type": "text",
+          "title": "Batch Size 1 কীভাবে এই মারাত্মক ভুল লুকিয়ে ফেলে",
+          "body": "সবচেয়ে সূক্ষ্ম ফাঁদটি ঘটে যখন `B = 1` হয়। তখন সঠিক `[1]` আকারের Vector এবং ভুল `[1, 1]` আকারের Matrix—উভয় ক্ষেত্রেই চূড়ান্ত সংখ্যাসূচক MSE হুবহু একই দেখাতে পারে! ফলে কেবল একটি একক Scalar Loss মিলে যাওয়া দেখেই পুরো প্রোগ্রাম নির্ভুল ধরে নেওয়া মারাত্মক ভুল। এ কারণেই আমাদের বাস্তব ডেটা অডিটে কঠোর Shape Test-এর পাশাপাশি `B = 1`, `B = 2` এবং `B = 4`—তিনটি আকারেই আলাদাভাবে রেফারেন্স মান যাচাই করা হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "Library Function বনাম সাধারণ বিয়োগফল",
+          "body": "PyTorch-এর `binary_cross_entropy_with_logits` Function-টি Input এবং Target-এর হুবহু সমান Shape দাবি করে, তাই `[B]` আর `[B, 1]` দিলে এটি সাথে সাথে Exception ছোড়ে। কিন্তু আপনি যখন নিজে `(p - y).square().mean()` ধরনের সাধারণ গাণিতিক বিয়োগ লেখেন, তখন Python নিজ থেকে এই কঠোর ML Contract জানে না! তাই কোনো Library API যদি কখনো Shape না মেলার ত্রুটি দেখায়, তবে আন্দাজে `.reshape()` বসিয়ে এরর চাপা দেওয়ার বদলে ঠান্ডা মাথায় বুঝে নিন কোন Axis-টি আসলে কী বোঝাচ্ছে।"
+        },
+        {
+          "type": "callout",
+          "title": "ডিবাগিংয়ের সোনালি নিয়ম",
+          "body": "প্রতিটি Loss হিসাবের ঠিক আগের লাইনে `assert logits.shape == targets.shape` লেখার অভ্যাস করুন। আপনি `mean` নাকি `sum` Reduction নিচ্ছেন এবং কোনটি আপনার Batch Axis, তা কোডে স্পষ্ট রাখুন। আর Unit Test লেখার সময় Empty Batch, Singleton Batch (`B = 1`) এবং Dataset-এর শেষের অসম্পূর্ণ Batch—এই তিনটি প্রান্তিক পরিস্থিতি অবশ্যই পরীক্ষা করুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch15_matmul",
+      "title": "Elementwise গুণফল বনাম Matrix Multiplication",
+      "subtitle": "প্রতিটি Axis-এর প্রকৃত অর্থ বুঝে সঠিক Operation বেছে নেওয়া",
+      "duration": "49 min",
+      "icon": "grid_view",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "দুটি সম্পূর্ণ ভিন্ন গুণের ধারণা",
+          "body": "PyTorch-এ `*` চিহ্ন এবং `@` (বা `torch.matmul`) সম্পূর্ণ ভিন্ন দুটি গাণিতিক Operation। `*` Operator-টি প্রয়োজনমতো Broadcasting সেরে প্রতিটি ঘরের সংখ্যার সাথে মুখোমুখি ঘরের সংখ্যার Elementwise গুণ করে; যেমন `X[B, D] * w[D]` দিলে আউটপুট হয় `[B, D]`। অন্যদিকে `@` বা `matmul` সরাসরি Linear Algebra-র নিয়মে ভেতরের অভিন্ন Axis বরাবর গুণফলগুলোর যোগফল বা Contraction বের করে; তাই `X[B, D] @ w[D]` সরাসরি দেয় `[B]` আকারের Linear Score। অবশ্য `(X * w).sum(dim=1)` করলেও একই Linear Score মেলে, কিন্তু সেখানে ভুল করে `dim=0` দিয়ে ফেললেই Batch আর Feature তালগোল পাকিয়ে যাবে!"
+        },
+        {
+          "type": "math",
+          "title": "Linear Contraction-এর সমীকরণ",
+          "body": "z_i=\\sum_{j=1}^{D}X_{ij}w_j+b"
+        },
+        {
+          "type": "code",
+          "title": "কোন Axis বরাবর যোগফল নিচ্ছি তা যাচাই করা",
+          "body": "import torch\n\nX = torch.tensor([[1.0, 2.0], [3.0, 4.0]], dtype=torch.float64)\nw = torch.tensor([0.5, -0.2], dtype=X.dtype)\nassert torch.allclose(X @ w, (X * w).sum(dim=1))\nprint((X * w).shape, (X @ w).shape)\n"
+        },
+        {
+          "type": "text",
+          "title": "বহুমাত্রিক ডেটায় Batch Matrix Multiplication",
+          "body": "ত্রিমাত্রিক বা তার চেয়ে বড় Tensor-এর ক্ষেত্রে `matmul` শেষের দুটি Axis-কে আসল Matrix হিসেবে ধরে এবং সামনের অতিরিক্ত Batch Axis-গুলোকে প্রয়োজনমতো Broadcast করে নেয়। বিপরীতে `torch.bmm` কেবলমাত্র ত্রিমাত্রিক `[B, N, M]` ও `[B, M, P]` আকারের সমান সংখ্যক Batch-এর মধ্যেই কাজ করে, কোনো Broadcasting করে না। আবার একমাত্রিক `1D` Vector-এর ক্ষেত্রে `matmul`-এর বিশেষ নিয়ম আছে: দুটি Vector গুণ করলে একটি Scalar Dot Product পাওয়া যায়, আর Matrix ও Vector গুণ করলে সাময়িকভাবে একটি Axis যোগ হয়ে শেষে আবার বাদ পড়ে। তাই অনুমানের ওপর নির্ভর না করে প্রত্যাশিত Shape Contract আগে থেকেই লিখে নেওয়া বুদ্ধিমানের কাজ।"
+        },
+        {
+          "type": "text",
+          "title": "উচ্চতর Rank-এ Transpose করার সঠিক অভ্যাস",
+          "body": "দ্বিমাত্রিক Matrix-এর বেলায় `x.T` লেখা পুরোপুরি নিরাপদ হলেও উচ্চতর Rank-এর Tensor-এ `x.T` ব্যবহার করা বিপজ্জনক—কারণ ঐতিহাসিকভাবে এটি কেবল শেষের দুটি নয়, বরং সব কটি Axis-কে উল্টে দেওয়ার আচরণ দেখাত! তাই Batched Matrix-এর কেবল শেষ দুটি Axis অদলবদল করতে চাইলে সব সময় `x.transpose(-2, -1)` অথবা `x.mT` ব্যবহার করুন; এতে আপনার কোডের উদ্দেশ্য পাঠকের কাছে একনজরে পরিষ্কার থাকবে।"
+        },
+        {
+          "type": "text",
+          "title": "পারফরম্যান্স ও গতির বাস্তবতা",
+          "body": "মেমোরিতে Tensor-টি Contiguous কি না বা তার Layout কেমন, তার ওপর ভিত্তি করে ভেতরের Kernel-এর গতি বদলাতে পারে; আবার সরাসরি `matmul` না করে Broadcast ও `*` ব্যবহার করলে মাঝপথে বিশাল আকারের মধ্যবর্তী Tensor তৈরি হয়ে মেমোরি ভরে যেতে পারে। পাশাপাশি মনে রাখবেন, শুধু `matmul` থাকলেই যে কোড সব সময় GPU-তে দ্রুত চলবে এমন কোনো কথা নেই—আসল গতি নির্ভর করে Batch-এর আকার, Device ট্রান্সফারের খরচ এবং কাজের ধরনের ওপর। এই অধ্যায়ে আমাদের মূল মনোযোগ CPU-তে গাণিতিক নির্ভুলতা নিরীক্ষা করা, গতির Benchmark করা নয়।"
+        },
+        {
+          "type": "text",
+          "title": "ল্যাবগুলোর ভেতরে Feature ও Parameter-এর পার্থক্য",
+          "body": "এই অধ্যায়ের উদাহরণগুলো পড়ার সময় একটি ছোট্ট বিষয় খেয়াল রাখবেন: আগের পাঠের Broadcast Lab-এ আমরা Wine Quality Dataset-এর পুরো 11 টি Feature-এর ওপর শেখা রেফারেন্স Logit ব্যবহার করেছি; অথচ সামনের Gradient Microscope ল্যাবে দ্বিমাত্রিক তলের আচরণ পরিষ্কারভাবে দেখানোর জন্য ইচ্ছা করেই মাত্র 2 টি Standardized Feature নিয়ে আলাদা একটি Objective সাজানো হয়েছে। তাই এই দুই ল্যাবের Parameter Vector দুটিকে কখনোই একই Model-এর অংশ ভেবে গুলিয়ে ফেলবেন না।"
+        },
+        {
+          "type": "callout",
+          "title": "Interview-এ যেভাবে উত্তর দেবেন",
+          "body": "Interview-তে প্রায়ই প্রশ্ন আসে: `X`-এর Shape `[B, T, D]` এবং `W`-এর Shape `[D, H]` হলে `X @ W`-এর আউটপুট Shape কী হবে এবং সাধারণ Elementwise গুণের সাথে এর তফাত কোথায়? উত্তর দেওয়ার সময় স্পষ্টভাবে বলে দিন কোন Axis-টি Batch (`B`), কোনটি Sequence বা Time (`T`), আর কোনটি Feature (`D` থেকে `H` রূপান্তর)—এবং বোর্ডে কোডের পাশে কমেন্ট আকারে সেই Shape-গুলো লিখে দেখান।"
+        },
+        {
+          "type": "text",
+          "title": "খাতা-কলমে একটি পূর্ণাঙ্গ Forward ও Backward হিসাব",
+          "body": "চলুন ছোট একটি উদাহরণে শুরু থেকে শেষ পর্যন্ত পুরো হিসাবটি নিজের হাতে কষে দেখি। ধরুন `X = [[1, 2], [3, 4]]`, `target = [1, 2]`, `w = [0.5, -0.5]` এবং Scalar `bias = 0`। তাহলে `Xw + b` থেকে আমরা পাই `prediction = [-0.5, -0.5]`, আর বিয়োগফল `residual = [-1.5, -2.5]`। ফলে Mean Squared Loss দাঁড়ায় `(2.25 + 6.25) / 2 = 4.25`।\n\nএবার উল্টো পথে আসা যাক: এখানে `B = 2` হওয়ায় `dL / d(prediction) = 2 * residual / B = [-1.5, -2.5]`। একে `Xᵀ` দিয়ে গুণ করলে আমরা পাই Weight Gradient `[-9.0, -13.0]`, আর সরাসরি যোগ করলে পাই Bias Gradient `-4.0`। কোডে নামার আগে ঠিক এভাবে প্রতিটি মধ্যবর্তী ধাপের Shape ও মান মিলিয়ে দেখার অভ্যাস দারুণ আত্মবিশ্বাস দেয়।"
+        },
+        {
+          "type": "code",
+          "title": "খাতা-কলমের Analytical Gradient ও Autograd একসাথে মেলানো",
+          "body": "import torch\n\nfeatures = torch.tensor([[1., 2.], [3., 4.]], dtype=torch.float64)\ntarget = torch.tensor([1., 2.], dtype=features.dtype)\nweight = torch.tensor([0.5, -0.5], dtype=features.dtype, requires_grad=True)\nbias = torch.zeros((), dtype=features.dtype, requires_grad=True)\nprediction = features @ weight + bias\nassert prediction.shape == target.shape\nresidual = prediction - target\nloss = residual.square().mean()\nweight_gradient, bias_gradient = torch.autograd.grad(loss, (weight, bias))\nupstream = 2 * residual.detach() / len(target)\ntorch.testing.assert_close(weight_gradient, features.T @ upstream)\ntorch.testing.assert_close(bias_gradient, upstream.sum())\nprint(loss.item(), *weight_gradient.tolist(), bias_gradient.item())\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে ভেবে উত্তর দিন",
+          "body": "ওপরের কোডে যদি `target`-এর Shape `[2]` না হয়ে `[2, 1]` হতো, তবে `prediction - target` বিয়োগফলের Shape কী দাঁড়াত এবং কোডের ঠিক কোন লাইনটি এই ভুল ধরে ফেলত?",
+          "solution": "`prediction`-এর Shape `[2]` এবং `target`-এর Shape `[2, 1]` হলে Broadcasting-এর কারণে বিয়োগফলের Shape হয়ে যেত `[2, 2]`, অর্থাৎ অজান্তেই একটি Pairwise Residual Matrix তৈরি হতো। তবে বিয়োগ করার ঠিক আগেই আমাদের লেখা `assert prediction.shape == target.shape` শর্তটি এই ভুল ধরে ফেলবে এবং ভুল Objective তৈরি হওয়ার আগেই প্রোগ্রাম থামিয়ে দেবে।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch15_reductions",
+      "title": "Reduction, keepdim এবং Gradient-এর স্কেল",
+      "subtitle": "Mean, Sum এবং পরিবর্তনশীল Batch-এ Denominator নিখুঁত রাখা",
+      "duration": "49 min",
+      "icon": "grid_view",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "যেভাবে Reduction আপনার আসল Objective নির্ধারণ করে",
+          "body": "প্রতিটি Sample-এর আলাদা আলাদা Loss নিয়ে তৈরি `[B]` আকারের Vector থেকে একটি একক Scalar পাওয়ার জন্য আমরা শেষে `sum()` অথবা `mean()` চালাই। কিন্তু এই ছোট্ট সিদ্ধান্তটিই আপনার Gradient-এর স্কেল সরাসরি বদলে দেয়! স্থির আকারের Batch `B`-তে `sum` নিলে যে Gradient পাওয়া যায়, তা `mean` নেওয়ার চেয়ে ঠিক `B` গুণ বড়। বিশেষ করে Dataset-এর শেষের ছোট Batch কিংবা একাধিক ধাপে Gradient Accumulation করার সময় এই পার্থক্য খেয়াল না রাখলে প্রতিটি ধাপে Optimizer-এর কার্যকর Step Size উল্টাপাল্টা হয়ে যায়।"
+        },
+        {
+          "type": "math",
+          "title": "Sum বনাম Mean Reduction-এ Gradient-এর অনুপাত",
+          "body": "L_{sum}=\\sum_i\\ell_i,\\quad L_{mean}=\\frac1B\\sum_i\\ell_i,\\quad \\nabla L_{sum}=B\\nabla L_{mean}"
+        },
+        {
+          "type": "code",
+          "title": "Sum এবং Mean-এর Gradient অনুপাতের কোড উদাহরণ",
+          "body": "import torch\n\nx = torch.tensor(2.0, dtype=torch.float64, requires_grad=True)\ncoeff = torch.tensor([1.0, 2.0, 3.0], dtype=x.dtype)\ngsum = torch.autograd.grad((x * coeff).sum(), x)[0]\ngmean = torch.autograd.grad((x * coeff).mean(), x)[0]\nprint(gsum.item(), gmean.item(), (gsum / gmean).item())\n"
+        },
+        {
+          "type": "text",
+          "title": "keepdim=True কেন জীবন বাঁচায়?",
+          "body": "প্রতিটি Feature-এর Mean বিয়োগ করার সময় `X.mean(dim=0, keepdim=True)` লিখলে আউটপুটের Shape `[1, D]` বজায় থাকে, ফলে `X[B, D]` থেকে বিয়োগ করার Broadcast উদ্দেশ্য একদম স্পষ্ট থাকে। কিন্তু ধরুন আপনি প্রতিটি Row-এর Mean বের করতে `X.mean(dim=1)` লিখলেন এবং `keepdim=True` দিতে ভুলে গেলেন—তখন আউটপুট হবে `[B]`। দুর্ভাগ্যক্রমে কোনো Batch-এ যদি ঘটনাক্রমে `D == B` হয়, তবে `X[B, B] - mean[B]` কোনো Exception না দিয়েই প্রতিটি Row-এর গড়কে Column বরাবর বিয়োগ করে বসবে! তাই Reduction করার সময় `Axis` (`dim`) এবং `keepdim` দুটোই স্পষ্ট করে লেখা অত্যন্ত জরুরি।"
+        },
+        {
+          "type": "text",
+          "title": "Variance ও Standard Deviation-এর নিয়মরীতি (correction)",
+          "body": "NumPy বা scikit-learn থেকে PyTorch-এ আসার সময় অনেকেই একটি সূক্ষ্ম অমিলের মুখে পড়েন: `torch.std` ডিফল্ট হিসেবে Sample Estimate (`correction=1`, অর্থাৎ `N - 1` দিয়ে ভাগ) ব্যবহার করে, অথচ `StandardScaler` এবং `numpy.std` ডিফল্ট হিসেবে নেয় Population Scale (`ddof=0` বা `correction=0`, অর্থাৎ `N` দিয়ে ভাগ)। আমাদের রেফারেন্স পাইপলাইনে আমরা সুস্পষ্টভাবে `numpy.std(ddof=0)`-এর সাথে মান যাচাই করি। পাশাপাশি মনে রাখবেন, মাত্র একটি Sample বা Observation (`N = 1`) থাকলে `correction=1` নিয়মে Sample Variance অসংজ্ঞায়িত (`NaN`) হয়ে যায়।"
+        },
+        {
+          "type": "text",
+          "title": "Weighted Loss-এ আসল Denominator কোনটি?",
+          "body": "যখন প্রতিটি Sample বা Token-এর সাথে আলাদা গুরুত্ব বা Weight যুক্ত থাকে, তখন গড় বের করার Denominator কী হবে—মোট উপাদানের সংখ্যা `B`, নাকি সক্রিয় Weight-গুলোর যোগফল—তা কাজ ও ফ্রেমওয়ার্কভেদে আলাদা হতে পারে। বিশেষ করে অজানা বা Masked Label বাদ দেওয়ার পর প্রকৃত সক্রিয় ওজনের সমষ্টি (Effective Weight Mass) দিয়ে ভাগ না করলে Padding কম-বেশি হওয়ার সাথে সাথে Loss-এর স্কেলও ওঠানামা করতে থাকবে। তাই ডকুমেন্টেশন পড়ে ও কোডে স্পষ্ট সূত্র লিখে এই চুক্তিটি নিশ্চিত করুন।"
+        },
+        {
+          "type": "text",
+          "title": "ভিন্ন আকারের Microbatch-এ Gradient Accumulation",
+          "body": "মেমোরি বাঁচাতে বড় একটি Batch-কে ছোট ছোট Microbatch-এ ভেঙে আলাদাভাবে `backward()` চালানোর সময় যদি Microbatch-গুলোর আকার অসমান হয়, তবে নিছক প্রতিটির `.mean()` যোগ করলে সব Sample সমান গুরুত্ব পাবে না! পুরো Batch-এর প্রকৃত গড় Objective অক্ষত রাখতে চাইলে প্রতিটি Microbatch-এর Mean Loss-কে `microbatch_size / total_batch_size` অনুপাতে স্কেল করে নিতে হবে। মনে রাখবেন, `.grad` Buffer-এ মানগুলো সরাসরি যোগ হতে থাকে—তাই স্কেলিং ভুল হওয়া মানেই আড়ালে আপনার Learning Rate বদলে যাওয়া।"
+        },
+        {
+          "type": "callout",
+          "title": "নিজে যাচাই করার অনুশীলন",
+          "body": "`4` টি Row থাকা একটি Batch-কে যদি `3` টি Row এবং `1` টি Row-এর দুটি Microbatch-এ ভাগ করা হয়, তবে প্রতিটির Mean Loss-কে ঠিক কত Weight দিলে পূর্ণ `4`-Row গড় Loss-এর সমান Gradient পাওয়া যাবে? নিচের উদাহরণটি পড়ার আগে মনে মনে হিসাবটি মিলিয়ে নিন।"
+        },
+        {
+          "type": "text",
+          "title": "অসমান Microbatch-এর Gradient হাতে-কলমে মেলানো",
+          "body": "ধরুন আমাদের চারটি Coefficient হলো `[1, 2, 3, 4]`, Scalar Parameter `w = 2`, এবং প্রতিটি Row-এর Loss হলো `(w * coeff)²`। একসাথে পুরো Batch নিলে Mean Loss-এর Gradient হয় `2 * w * mean([1, 4, 9, 16]) = 4 * 7.5 = 30`।\n\nএখন প্রথম `3` টি Row এবং শেষের `1` টি Row-কে দুটি আলাদা Microbatch হিসেবে চালিয়ে যদি প্রথমটির Mean Loss-কে `3/4` এবং দ্বিতীয়টির Mean Loss-কে `1/4` Weight দিয়ে গুণ করে `backward()` করি, তবে যোগফল হুবহু `30` আসে! অথচ স্কেল না করে দুটি Mean সরাসরি যোগ করলে Gradient হয়ে যায় প্রায় `82.666667`—যা আসল মানের প্রায় তিন গুণ!"
+        },
+        {
+          "type": "code",
+          "title": "পূর্ণ Batch বনাম সঠিকভাবে স্কেল করা Microbatch Gradient",
+          "body": "import torch\n\ncoefficients = torch.tensor([1., 2., 3., 4.], dtype=torch.float64)\nfull = torch.tensor(2., dtype=coefficients.dtype, requires_grad=True)\nfull_gradient = torch.autograd.grad((full * coefficients).square().mean(), full)[0]\naccumulated = torch.tensor(2., dtype=coefficients.dtype, requires_grad=True)\nnaive = torch.tensor(2., dtype=coefficients.dtype, requires_grad=True)\nfor batch in (coefficients[:3], coefficients[3:]):\n    ((accumulated * batch).square().mean() * len(batch) / len(coefficients)).backward()\n    (naive * batch).square().mean().backward()\ntorch.testing.assert_close(accumulated.grad, full_gradient)\nprint(full_gradient.item(), accumulated.grad.item(), round(naive.grad.item(), 6))\n"
+        },
+        {
+          "type": "text",
+          "title": "কখন এই গাণিতিক সমতা হুবহু বজায় থাকে?",
+          "body": "ওপরের কোডে পূর্ণ Batch আর স্কেল করা Microbatch হুবহু মিলে যাওয়ার পেছনে তিনটি শর্ত কাজ করেছে: প্রতিটি Row-এর Loss অন্য Row থেকে সম্পূর্ণ স্বাধীন, সব কটি Microbatch একই Parameter মান ব্যবহার করেছে এবং মাঝখানে কোনো `optimizer.step()` চালানো হয়নি। কিন্তু Model-এ যদি `BatchNorm` (যা প্রতিটি Microbatch-এর নিজস্ব Mean ও Variance মাপে), `Dropout`-এর মতো র‍্যান্ডম Layer কিংবা পুরো Batch-নির্ভর কোনো Objective থাকে, তবে ফলাফল ভিন্ন হতে পারে। আর Sequence Model-এ Padding বা Mask থাকলে Row সংখ্যার বদলে অবশ্যই বৈধ (Valid) Token-এর সংখ্যা দিয়ে Denominator হিসাব করবেন।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে হিসাব করুন",
+          "body": "ধরুন একটি Sequence Model-এ প্রথম Microbatch-এ বৈধ (Valid) Token আছে `6` টি এবং দ্বিতীয় Microbatch-এ বৈধ Token আছে `2` টি। পুরো Batch-এর প্রকৃত গড় Token Loss পেতে প্রতিটি Microbatch-এর Mean Token Loss-কে কত Weight দিয়ে গুণ করতে হবে?",
+          "solution": "মোট বৈধ Token সংখ্যা `6 + 2 = 8` হওয়ায় প্রথম Microbatch-এর Mean Loss-কে `6/8` এবং দ্বিতীয়টিকে `2/8` দিয়ে গুণ করতে হবে। সব সময় সামগ্রিক Global Numerator ও Global Denominator জেনে এভাবে স্কেল করবেন। আর কোনো Microbatch-এ বৈধ Token সংখ্যা যদি `0` হয়ে যায়, তবে শূন্য দিয়ে ভাগের ত্রুটি ঘটার আগেই পূর্বনির্ধারিত নীতি অনুযায়ী সেই ধাপটি Skip করা বা Error জানানোর ব্যবস্থা রাখতে হবে।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch15_devices",
+      "title": "Dtype, Device এবং সংখ্যাসূচক হিসাবের বাস্তব সীমানা",
+      "subtitle": "CPU-ভিত্তিক গাণিতিক নিরীক্ষা এবং Accelerator ব্যবহারের পার্থক্য",
+      "duration": "34 min",
+      "icon": "grid_view",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কাজ বুঝে সঠিক Dtype নির্বাচন",
+          "body": "সংখ্যাগত নিরীক্ষা বা Finite Difference যাচাইয়ের মতো সূক্ষ্ম কাজে `float64` অপরিহার্য, কারণ এতে দশমিকের আসন্নীকরণ ত্রুটি (Rounding Error) অত্যন্ত কম থাকে। অন্যদিকে দৈনন্দিন Deep Learning Training-এ সবচেয়ে বেশি ব্যবহৃত হয় `float32`। আবার মেমোরি বাঁচাতে ও গতি বাড়াতে আধুনিক হার্ডওয়্যারে `float16` বা `bfloat16` ব্যবহৃত হলেও এদের সংখ্যার পরিসর (Range), সূক্ষ্মতা (Precision) এবং সমর্থিত Kernel-এর নিয়মকানুন আলাদা। একটি কথা সব সময় মনে রাখবেন: কম Precision-এ গিয়ে একবার সংখ্যা Overflow বা নষ্ট হয়ে গেলে পরে Dtype Cast করে `float64`-এ নিলেও হারানো তথ্য ফেরত পাওয়া যায় না!"
+        },
+        {
+          "type": "math",
+          "title": "ভিন্ন ভিন্ন Dtype-এ মেমোরির বাজেট",
+          "body": "\\text{float64 payload}=8\\,\\text{bytes/element},\\qquad \\text{float32}=4\\,\\text{bytes/element}"
+        },
+        {
+          "type": "code",
+          "title": "স্পষ্ট Dtype ও Device Attribute এবং মেমোরি আকারের উদাহরণ",
+          "body": "import torch\n\nx = torch.ones((2, 3), dtype=torch.float64, device=\"cpu\")\ny = x.to(dtype=torch.float32)\nprint(x.numel() * x.element_size(), y.numel() * y.element_size())\nassert x.device.type == \"cpu\" and y.dtype == torch.float32\n"
+        },
+        {
+          "type": "text",
+          "title": "এক Device থেকে অন্য Device-এ স্থানান্তর",
+          "body": "`nn.Module`-এর বিপরীতে সাধারণ Tensor-এর ওপর `x.to(device, dtype)` কল করলে মূল Tensor-টি কিন্তু নিজের জায়গায় বদলে যায় না; পরিবর্তন প্রয়োজন হলে এটি নতুন একটি Tensor ফিরিয়ে দেয়। তাই `x = x.to(...)` লিখে মূল Variable-এ নতুন করে অ্যাসাইন না করলে পুরোনো Tensor আগের Device-এই থেকে যাবে! যেকোনো হিসাব চালানোর সময় Model-এর Parameter, Input এবং Target—সবাইকে সামঞ্জস্যপূর্ণ Device ও Dtype-এ থাকতে হয়, এবং ঘন ঘন CPU থেকে CUDA-তে ডেটা আনা-নেওয়া করলে ট্রান্সফার খরচের কারণে পারফরম্যান্স বড়সড় ধাক্কা খায়।"
+        },
+        {
+          "type": "text",
+          "title": "হার্ডওয়্যার উপলব্ধতা ও প্ল্যাটফর্মের বাস্তবতা",
+          "body": "`torch.cuda.is_available()` কেবল বর্তমান মেশিনে উপযুক্ত NVIDIA GPU ও Runtime সচল আছে কি না তা জানায়—যেকোনো কম্পিউটারে কোডটি GPU পাবে এমন কোনো সর্বজনীন নিশ্চয়তা দেয় না। যেমন Mac-এ ব্যবহৃত হয় `MPS`, আবার অনেক প্রোডাকশন বা Windows পরিবেশে চলে CPU সংস্করণ। আমাদের এই অধ্যায়ের সমস্ত রেফারেন্স হিসাব সুনির্দিষ্টভাবে CPU-তে যাচাই করা হয়েছে; এখানে CUDA, MPS বা Mixed Precision (AMP)-এর আচরণ নিয়ে কোনো অনুমাননির্ভর দাবি করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "Asynchronous Execution এবং সময় মাপার সতর্কতা",
+          "body": "ভবিষ্যতে যখন আপনি GPU-তে কোডের গতি মাপবেন, তখন একটি গুরুত্বপূর্ণ কারিগরি সত্য মাথায় রাখবেন: Accelerator-এর Operation-গুলো সাধারণত Asynchronous হয়ে থাকে—অর্থাৎ GPU-তে কাজের নির্দেশ পাঠিয়েই Python পরের লাইনে চলে যায়, কাজ শেষ হওয়ার জন্য বসে থাকে না! তাই যথাযথ Warmup এবং `torch.cuda.synchronize()` ছাড়া শুধু সাধারণ ঘড়ি ধরে সময় মাপলে আসল Kernel-এর সময় পাওয়া যায় না। উল্টো দিকে, Training Loop-এর ভেতরে বারবার `.item()` বা CPU Copy চালালে অপ্রয়োজনীয় Synchronization ঘটে গতি কমে যেতে পারে। সংগত কারণেই এই অধ্যায়ে আমরা কোনো কৃত্রিম GPU Benchmark সংখ্যা তৈরি করিনি।"
+        },
+        {
+          "type": "text",
+          "title": "ফলাফল পুনরুৎপাদনের (Reproducibility) বাস্তব শর্ত",
+          "body": "রেফারেন্স ফলাফল নির্ভরযোগ্য রাখতে আমরা এখানে লাইব্রেরির নির্দিষ্ট সংস্করণ, `CPU`, `float64`, উৎস ডেটা ফাইলের Hash এবং Single-thread গাণিতিক রান নথিভুক্ত করেছি। তবু মনে রাখতে হবে, একই Random Seed দিলেও ভিন্ন অপারেটিং সিস্টেম, ভিন্ন প্রসেসর বা ভিন্ন সংস্করণে দশমিক যোগের ক্রম বদলে যাওয়ায় বিটে-বিটে হুবহু মিল (Bitwise Identity) নাও থাকতে পারে। তাই সব সময় উপযুক্ত Floating-point Tolerance ও গাণিতিক চুক্তির নিরিখেই ফলাফল তুলনা করা উচিত।"
+        },
+        {
+          "type": "callout",
+          "title": "দ্রুত ডিবাগিং চেকলিস্ট",
+          "body": "কোডে কোনো গোলমাল দেখলেই সবার আগে ছয়টি Attribute প্রিন্ট বা `assert` করে দেখুন: `shape`, `dtype`, `device`, `requires_grad`, `is_leaf` এবং সব মান সসীম (`isfinite`) কি না। কখনোই কেবল Device বা Graph-সংক্রান্ত এরর চাপা দেওয়ার তাড়ায় হুট করে `.cpu()` বা `.detach()` বসিয়ে দেবেন না—এতে আপনার অজান্তেই Autograd Graph ছিঁড়ে যেতে পারে কিংবা সিস্টেমের কাঙ্ক্ষিত গতি নষ্ট হয়ে যেতে পারে।"
+        }
+      ]
+    },
+    {
+      "id": "ch15_graph",
+      "title": "Autograd Graph: Leaf, Operation এবং সংরক্ষিত মান",
+      "subtitle": "কীভাবে Forward Pass-এর পথ ধরে Backward Pass-এ Derivative হিসাব হয়",
+      "duration": "38 min",
+      "icon": "grid_view",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "PyTorch-এর Dynamic Computational Graph",
+          "body": "Grad Mode চালু থাকা অবস্থায় `requires_grad=True` যুক্ত যেকোনো Input থেকে যতগুলো Differentiable Operation চালানো হয়, PyTorch সেগুলোকে তাৎক্ষণিকভাবে একটি Computational Graph-এ গেঁথে রাখে। এই Graph সম্পূর্ণ Dynamic—অর্থাৎ Python-এর বর্তমান `if` শর্ত বা `for` Loop-এর প্রবাহ অনুযায়ী প্রতিটি Forward Pass-এ নতুন নতুন গঠনের Graph তৈরি হতে পারে! একই সাথে `backward()` চালানোর সুবিধার্থে প্রয়োজনীয় মধ্যবর্তী মানগুলোও ভেতরে সংরক্ষিত থাকে। তবে খেয়াল রাখবেন, একটি Tensor-এর সংখ্যাসূচক মান মেমোরিতে টিকে থাকা আর তার পেছনের Autograd Graph বেঁচে থাকা এক কথা নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Leaf Parameter বনাম মাঝপথের Non-leaf Tensor",
+          "body": "ব্যবহারকারী নিজে সরাসরি যে `requires_grad=True` Tensor তৈরি করেন (যেমন Model-এর Weight বা Bias), সেটি হলো একটি Leaf Tensor (`is_leaf == True`)। `backward()` চললে চূড়ান্ত Derivative এসে জমা হয় এই Leaf Tensor-গুলোর `.grad` Buffer-এ। বিপরীতে, কোনো গাণিতিক Operation-এর আউটপুট হিসেবে পাওয়া Tensor হলো Non-leaf; এর সাথে একটি `grad_fn` যুক্ত থাকে ঠিকই, কিন্তু মেমোরি বাঁচাতে সাধারণত এর নিজস্ব `.grad` সংরক্ষণ করা হয় না। ডিবাগিংয়ের স্বার্থে কোনো মাঝপথের Tensor-এর Gradient দেখতে চাইলে `backward()`-এর আগে তার ওপর `retain_grad()` কল করতে হয়। অর্থাৎ Graph-এ অংশ নেওয়া (`requires_grad`) আর `.grad` ধরে রাখা—দুটি আলাদা চুক্তি।"
+        },
+        {
+          "type": "math",
+          "title": "Computational Graph-এ Chain Rule-এর প্রবাহ",
+          "body": "\\frac{dL}{dw}=\\frac{dL}{dz}\\frac{dz}{dw}"
+        },
+        {
+          "type": "code",
+          "title": "Leaf ও Non-leaf Tensor এবং retain_grad() পর্যবেক্ষণ",
+          "body": "import torch\n\nx = torch.tensor(3.0, dtype=torch.float64, requires_grad=True)\ny = x.square()\ny.retain_grad()\nloss = y + 2 * x\n# Backward accumulates into .grad; the seed or reduction sets the scale.\nloss.backward()\nassert x.is_leaf and not y.is_leaf\nprint(x.grad.item(), y.grad.item())  # 8,1\n"
+        },
+        {
+          "type": "text",
+          "title": "Integer Tensor এবং রূপান্তরিত Parameter-এর সূক্ষ্ম ফাঁদ",
+          "body": "Autograd কেবল Floating-point এবং Complex সংখ্যার জন্যই Derivative হিসাব করতে পারে; পূর্ণসংখ্যার Index বা Class Label কখনোই Differentiable Variable নয়। আরেকটি সূক্ষ্ম বিষয়ে ভীষণ সতর্ক থাকবেন: কোনো Tensor তৈরির পর তার ওপর Device বা Dtype রূপান্তর (যেমন `.to(device)`) চালালে সেই রূপান্তরটি নিজেই একটি Differentiable Operation হতে পারে! ফলে রূপান্তরিত নতুন Tensor-টি আর Leaf থাকে না (`is_leaf == False`)। তাই Parameter সব সময় সরাসরি কাঙ্ক্ষিত Device ও Dtype-এ তৈরি করুন এবং সন্দেহ হলেই `is_leaf` ও `grad_fn` চেক করে নিন।"
+        },
+        {
+          "type": "text",
+          "title": "সংরক্ষিত Tensor এবং In-place পরিবর্তনের বিপদ",
+          "body": "Backward Pass-এ Derivative বের করার জন্য Graph যেসব Tensor সংরক্ষণ করে রেখেছে, সেগুলোকে যদি আপনি পরে In-place বদলে ফেলেন (যেমন `add_`-এর মতো Operation দিয়ে), তবে PyTorch-এর Version Counter তা ধরে ফেলবে এবং ভুল Gradient দেওয়ার বদলে সরাসরি Error ছুড়বে। একইভাবে Grad Mode চালু থাকা অবস্থায় কোনো Leaf Parameter-কে সরাসরি In-place আপডেট করার চেষ্টাও PyTorch আটকে দেয়। মনে রাখবেন, In-place লিখলেই সব সময় মেমোরি সাশ্রয় নিশ্চিত হয় না; তাই পরীক্ষিত প্রয়োজন ছাড়া অহেতুক In-place পরিবর্তন ঢুকিয়ে Training কোডকে জটিল ও ঝুঁকিপূর্ণ করবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "grad_fn যখন None দেখায়, তখন কোথায় খুঁজবেন?",
+          "body": "হিসাব শেষে যদি দেখেন আপনার `loss.requires_grad` হয়ে গেছে `False` কিংবা `loss.grad_fn` দেখাচ্ছে `None`, তবে বুঝবেন কোথাও না কোথাও Graph-এর পথ কেটে গেছে! সাধারণত অসতর্কভাবে `.detach()` কল করা, `torch.no_grad()` Context-এর ভেতরে ঢুকে পড়া, `.item()` দিয়ে সাধারণ Python সংখ্যা বের করে নেওয়া, মাঝপথে NumPy-তে রূপান্তর করা কিংবা বিদ্যমান মান দিয়ে নতুন `torch.tensor(...)` বানানোর সময়েই এই সংযোগ বিচ্ছিন্ন হয়। কেবল সাধারণ Python সংখ্যা দিয়ে করা যোগ-বিয়োগ কখনোই আগের PyTorch Graph-এর অংশ হতে পারে না।"
+        },
+        {
+          "type": "callout",
+          "title": "Interview-এর প্রস্তুতি",
+          "body": "ওপরের কোডের উদাহরণটি খাতায় ছবি এঁকে ব্যাখ্যা করার অনুশীলন করুন: এখানে `x` একটি Leaf, `y = x²` একটি Non-leaf এবং `loss = y + 2x`। `x = 3` বিন্দুতে দুটি ভিন্ন পথ বেয়ে আসা Derivative (`2x = 6` এবং `2`) যোগ হয়ে `x.grad` হয় `8`। পাশাপাশি ব্যাখ্যা করুন কেন `y.retain_grad()` লিখলে মাঝপথের `y`-এর Derivative (`1`) দেখা গেলেও তাতে `x`-এর চূড়ান্ত Derivative বা Loss-এর মূল গাণিতিক সংজ্ঞায় বিন্দুমাত্র পরিবর্তন ঘটে না।"
+        }
+      ]
+    },
+    {
+      "id": "ch15_vjp",
+      "title": "Vector-Jacobian Product (VJP) এবং Backward Seed",
+      "subtitle": "আউটপুট যখন একক Scalar নয়, তখন Autograd আসলে ঠিক কী হিসাব করে?",
+      "duration": "38 min",
+      "icon": "grid_view",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Scalar Loss-এর আড়ালে লুকিয়ে থাকা Seed 1",
+          "body": "আমরা যখন কোনো একক Scalar `loss.backward()` কল করি, তখন ভেতরে ভেতরে একটি নীরব কাজ ঘটে: PyTorch আউটপুটের প্রারম্ভিক Weight বা Seed হিসেবে স্বয়ংক্রিয়ভাবে `1.0` ধরে নিয়ে Reverse-mode Autograd শুরু করে। কিন্তু আউটপুটটি যদি Scalar না হয়ে একাধিক উপাদানের একটি Vector বা Matrix হয়, তবে তার কোন উপাদানটিকে কতটুকু গুরুত্ব দেওয়া হবে তা PyTorch নিজে থেকে অনুমান করতে পারে না—তখন আমাদের স্পষ্টভাবে `grad_outputs` (বা Seed) বলে দিতে হয়। খেয়াল রাখবেন, এতে কিন্তু বিশাল আকারের পুরো Jacobian Matrix ফেরত আসে না; বরং দেওয়া Output Cotangent বা Seed-এর সাথে সরাসরি Vector-Jacobian Product (VJP) হিসাব হয়, এবং Seed-টির Shape অবশ্যই আউটপুটের Shape-এর সমান হতে হয়।"
+        },
+        {
+          "type": "math",
+          "title": "Vector-Jacobian Product (VJP)-এর গাণিতিক সংজ্ঞা",
+          "body": "y=f(x),\\quad v^{\\top}J_f(x)=\\nabla_x(v^{\\top}f(x))"
+        },
+        {
+          "type": "code",
+          "title": "নির্দিষ্ট Seed দিয়ে VJP বের করার কোড উদাহরণ",
+          "body": "import torch\n\nx = torch.tensor([1.0, 2.0], dtype=torch.float64, requires_grad=True)\ny = x.square()\nseed = torch.tensor([3.0, 4.0], dtype=x.dtype)\ngrad = torch.autograd.grad(y, x, grad_outputs=seed)[0]\nassert torch.equal(grad, torch.tensor([6.0, 16.0], dtype=x.dtype))\nprint(grad, x.grad)  # returned gradients; leaf buffer still None\n"
+        },
+        {
+          "type": "text",
+          "title": "backward() বনাম torch.autograd.grad()-এর আচরণগত পার্থক্য",
+          "body": "ওপরের কোডের শেষ লাইনে একটি গুরুত্বপূর্ণ পার্থক্য লুকিয়ে আছে: `backward()` চালালে প্রাসঙ্গিক সব Leaf Tensor-এর `.grad` Buffer-এ গিয়ে Derivative জমা হয়, যেখান থেকে পরে Optimizer মান পড়ে নেয়। বিপরীতে, `torch.autograd.grad(...)` সরাসরি আপনার চাওয়া Input-গুলোর সাপেক্ষে Derivative হিসাব করে Function-এর আউটপুট হিসেবে ফিরিয়ে দেয়—কিন্তু সাধারণ অবস্থায় কোনো Leaf Tensor-এর `.grad` Buffer পূরণ করে না! তাই ডিবাগিং বা কাস্টম Loss লেখার সময় ‘Function থেকে Derivative ফেরত পাওয়া’ আর ‘`.grad` Buffer-এ মান জমা হওয়া’—এই দুটি আচরণ আলাদাভাবে পরীক্ষা করুন।"
+        },
+        {
+          "type": "text",
+          "title": "Reverse-mode VJP বনাম Forward-mode JVP",
+          "body": "Automatic Differentiation-এর দুটি প্রধান ধারা আছে: Forward-mode একটি নির্দিষ্ট Input দিকের জন্য Jacobian-Vector Product (`Jv`) বের করে, আর Reverse-mode আউটপুটের Weight থেকে উল্টো পথে এসে Vector-Jacobian Product (`Jᵀv` বা `vᵀJ`) বের করে। কোটি কোটি Parameter থেকে যখন একটিমাত্র Scalar Loss হিসাব করা হয়, তখন পুরো Jacobian না বানিয়ে সরাসরি VJP বের করা মেমোরি ও হিসাবের দিক থেকে দারুণ সাশ্রয়ী। অবশ্য কোন পদ্ধতি কখন ভালো হবে তা Input ও Output-এর আকার এবং কাজের ধরনের ওপর নির্ভর করে; এখানে আমরা কেবল VJP-এর গাণিতিক নির্ভুলতা যাচাই করেছি, গতির Benchmark করিনি।"
+        },
+        {
+          "type": "text",
+          "title": "একাধিক পথের অবদান কীভাবে যোগ হয়",
+          "body": "কোনো একটি Parameter থেকে চূড়ান্ত Loss পর্যন্ত যদি Computational Graph-এ একাধিক পথ চলে যায়, তবে Chain Rule অনুযায়ী সব কটি পথের Derivative একে অপরের সাথে যোগ হয়। যেমন একটি Scalar Bias যখন Broadcast হয়ে অনেকগুলো Logit-এ ছড়িয়ে পড়ে, তখন প্রতিটি অবস্থানের অবদান যোগ হয়েই তৈরি হয় সেই একক Scalar Bias-এর Gradient (এবং Mean Loss হলে তার Denominator `B`-ও এর ভেতরে অন্তর্ভুক্ত থাকে)। তাই খাতায় Derivative লেখার সময় Graph-এর তীরচিহ্নগুলোর পাশাপাশি প্রকৃত Axis ও Reduction-এর হিসাবও মিলিয়ে দেখতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "অব্যবহৃত Input ও None Gradient-এর অর্থ",
+          "body": "`torch.autograd.grad`-এ আপনি এমন কোনো Input Tensor চাইলেন যা আসলে ওই আউটপুট তৈরির Graph-এ ব্যবহৃতই হয়নি—তখন PyTorch-এর অব্যবহৃত Input নীতি কার্যকর হয় (ডিফল্টভাবে Error দেয়, অথবা `allow_unused=True` থাকলে `None` ফেরত দেয়)। মনে রাখবেন, ফলাফল হিসেবে `None` পাওয়া আর সংখ্যাসূচক শূন্য (`0.0`) পাওয়া এক কথা নয়! `None` দেখলে আগে যাচাই করুন Parameter-টি সত্যিই আপনার Model নকশায় অব্যবহৃত থাকার কথা ছিল, নাকি মাঝপথে আপনার অজান্তে Graph ছিঁড়ে গেছে।"
+        },
+        {
+          "type": "callout",
+          "title": "হাতে-কলমে অনুশীলন",
+          "body": "খাতায় নিজে একবার কষে দেখুন: `y = [x₀², x₁²]`, `x = [1, 2]` এবং `seed = [3, 4]` হলে কেন `VJP = [6, 16]` আসে। একটু খেয়াল করলেই দেখবেন, এটি আসলে একক Scalar Function `3x₀² + 4x₁²`-এরই Gradient! আর যদি `seed = [1, 1]` দেন, তবে পাবেন আউটপুটগুলোর সাধারণ যোগফলের (`x₀² + x₁²`) Gradient। কোড চালিয়ে রিটার্ন পাওয়া মান এবং `x.grad` Buffer দুটোই আলাদাভাবে প্রিন্ট করে পরখ করুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch15_accumulation",
+      "title": "Gradient Accumulation এবং Graph-এর জীবনচক্র",
+      "subtitle": "পরপর দুবার backward() চালানো আর নতুন Forward Pass কি একই কথা?",
+      "duration": "38 min",
+      "icon": "grid_view",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন .grad Buffer-এ মান জমে থাকে?",
+          "body": "PyTorch-এ `backward()` চালানোর একটি মৌলিক নিয়ম হলো—এটি Leaf Tensor-এর পুরোনো `.grad` মুছে ফেলে না, বরং বিদ্যমান মানের সাথে নতুন হিসাব করা Derivative যোগ (`+`) করে দেয়! ফলে একই Parameter ও একই ডেটার ওপর আপনি যদি পরপর দুবার নতুন Forward Graph বানিয়ে প্রতিবার `backward()` কল করেন, তবে প্রতিবার Loss হুবহু `L` দেখালেও ভেতরে ভেতরে আপনার `.grad` কিন্তু দ্বিগুণ হয়ে `2g` হয়ে যাবে! তাই পরিকল্পিতভাবে Buffer পরিষ্কার (Zeroing) ও স্কেলিং না করলে অজান্তেই আপনার Parameter আপডেটের ধাপ বড় হয়ে যেতে পারে।"
+        },
+        {
+          "type": "code",
+          "title": "নতুন Graph-এ বারবার backward() চালালে যেভাবে Gradient জমে",
+          "body": "import torch\n\nx = torch.tensor(3.0, dtype=torch.float64, requires_grad=True)\nfor _ in range(2):\n    # Backward accumulates into .grad; the seed or reduction sets the scale.\n    (x.square() + 2 * x).backward()\nassert x.grad.item() == 16\nx.grad = None\n# Backward accumulates into .grad; the seed or reduction sets the scale.\n(x.square() + 2 * x).backward()\nprint(x.grad.item())  # 8 after a fresh accumulation cycle\n"
+        },
+        {
+          "type": "math",
+          "title": "দুটি অভিন্ন পাস থেকে Buffer-এ Gradient যোগ হওয়ার হিসাব",
+          "body": "g_{buffer}=g_{old}+g_{new},\\qquad 0+g+g=2g"
+        },
+        {
+          "type": "text",
+          "title": "একই Graph-এ দ্বিতীয়বার backward() কেন ব্যর্থ হয়?",
+          "body": "ওপরের কোডে আমরা Loop-এর ভেতরে প্রতিবার নতুন করে Forward সমীকরণ চালিয়েছি। কিন্তু তা না করে একই `loss` Variable-এর ওপর পরপর দুবার `loss.backward()` চালালে কী হতো? সাথে সাথে `RuntimeError` আসত! কারণ মেমোরি বাঁচাতে প্রথমবার `backward()` শেষ হওয়ামাত্রই PyTorch ওই Graph-এর সংরক্ষিত মধ্যবর্তী Buffer-গুলো মুক্ত করে দেয়। বিশেষ পুনর্ব্যবহার ছাড়া সাধারণ Training Loop-এ কখনোই `retain_graph=True` দিয়ে এই সমস্যার সমাধান করবেন না। মনে রাখবেন, নতুন Forward Graph তৈরি করা এবং পুরোনো `.grad` Buffer পরিষ্কার করা দুটি সম্পূর্ণ আলাদা কাজ—একটি কখনোই অন্যটির বিকল্প নয়।"
+        },
+        {
+          "type": "text",
+          "title": "set_to_none=True বনাম শূন্য দিয়ে পূরণ করা",
+          "body": "আধুনিক PyTorch-এ `optimizer.zero_grad(set_to_none=True)` চালালে `.grad` Buffer-এ শূন্য লেখার বদলে সরাসরি রেফারেন্সটি `None` করে দেওয়া হয়, আর বিদ্যমান Buffer শূন্য দিয়ে ভরলে তার আগের মেমোরি বরাদ্দ বজায় থাকে। এখানে একটি সূক্ষ্ম আচরণগত পার্থক্য জানা জরুরি: কোনো Parameter-এর Gradient যদি `None` থাকে, তবে অনেক Optimizer সেটিকে পুরোপুরি Skip করে; কিন্তু সেখানে যদি `0.0` মানের একটি Tensor থাকে, তবে অভ্যন্তরীণ State (যেমন Momentum বা Weight Decay) অনুযায়ী Parameter-টি তবুও আপডেট হতে পারে! আমাদের ম্যানুয়াল উদাহরণে আমরা সুস্পষ্টভাবে `x.grad = None` ব্যবহার করেছি।"
+        },
+        {
+          "type": "text",
+          "title": "একাধিক Microbatch-এ সঠিক স্কেলিং নীতি",
+          "body": "`K` টি সমান আকারের Microbatch-এর Mean Loss থেকে যদি আপনি পূর্ণ Batch-এর Mean Gradient পেতে চান, তবে প্রতি ধাপে `loss / K` এর ওপর `backward()` চালাতে হবে; আর আকার অসমান হলে Weight দিতে হবে `microbatch_size / total_size` অনুপাতে। আপনি যদি নিছক প্রতিটি ধাপের গড় Gradient যোগ করতে থাকেন, তবে PyTorch নিজ থেকে আপনার কাঙ্ক্ষিত Denominator বুঝে নেবে না। তাই প্রতিটি Sample-এর Weight এবং কত ধাপ পরপর `optimizer.step()` চলবে—দুটি বিষয় আলাদাভাবে নির্ধারণ করুন।"
+        },
+        {
+          "type": "text",
+          "title": "Interactive Lab-এ Accumulate বাটনের আচরণ",
+          "body": "সামনের ল্যাবের `Accumulate twice` বাটনটি আসলে একই Parameter-এ দুটি নতুন Forward-Backward পাসের সমতুল্য `2g` Gradient তৈরি করে দেখায়; এতে মূল Loss-এর মান কিন্তু দ্বিগুণ হয় না। এরপর আপনি যখন একটি ম্যানুয়াল Gradient Step নেন, তখন ওই প্রদর্শিত `2g` ব্যবহার করেই Parameter আপডেট হয় এবং পরের Forward হিসাবের জন্য গণনা আবার `1`-এ ফিরে আসে। আগের মতোই এটি Dart-এ লেখা সংখ্যাসূচক প্রতিরূপ; মোবাইলে সরাসরি কোনো PyTorch Graph বা ডিভাইসের Gradient Buffer চলে না।"
+        },
+        {
+          "type": "callout",
+          "title": "ডিবাগিং অনুশীলন",
+          "body": "কখনো যদি দেখেন আপনার Model-এর Loss প্রায় অপরিবর্তিত দেখাচ্ছে অথচ প্রতি ধাপে Parameter আপডেট অস্বাভাবিক বড় হচ্ছে, তবে কেবল Learning Rate-কে সন্দেহ না করে পুরোনো জমে থাকা `.grad`, ভুল `sum` বনাম `mean` Reduction এবং Optimizer State পরীক্ষা করুন। একটি ছোট Scalar উদাহরণ লিখে নতুন Graph তৈরি, Buffer-এ মান জমা হওয়া এবং Buffer পরিষ্কার করার ফলাফল আলাদাভাবে চালিয়ে দেখুন; মূল কারণ না ধরে কখনোই `retain_graph=True` দিয়ে লক্ষণ চাপা দেবেন না।"
+        }
+      ]
+    },
+    {
+      "id": "ch15_detach",
+      "title": "detach(), clone(), NumPy এবং অজান্তে Graph ছিঁড়ে যাওয়া",
+      "subtitle": "ভেতরের সংখ্যার মান সমান হওয়া মানেই Computational Graph এক থাকা নয়",
+      "duration": "51 min",
+      "icon": "grid_view",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Storage মালিকানা বনাম Graph মালিকানা",
+          "body": "PyTorch-এ `detach()` এবং `clone()`—এই দুটি Method সম্পূর্ণ ভিন্ন দুটি দিক নিয়ন্ত্রণ করে। `detach()` কেবল Computational Graph-এর সংযোগটি কেটে দেয়, কিন্তু ফলাফল হিসেবে যে Tensor দেয় তা মূল Tensor-এর সাথে একই Storage ভাগাভাগি করতে পারে! ঠিক উল্টো দিকে, `clone()` মেমোরিতে ডেটার সম্পূর্ণ নতুন একটি Copy তৈরি করে, কিন্তু Grad Mode চালু থাকলে এটি নিজেই একটি Differentiable Operation হিসেবে পুরোনো Graph-এর সংযোগ বজায় রাখতে পারে। তাই আপনার যদি স্বাধীন Storage এবং পুরোনো Graph থেকে মুক্তি—দুটোই একসাথে চাই, তবে `x.detach().clone()` লিখে নিজের দুটি উদ্দেশ্যই স্পষ্ট করে দিন।"
+        },
+        {
+          "type": "code",
+          "title": "Graph মালিকানা এবং Storage মালিকানা আলাদা করার উদাহরণ",
+          "body": "import torch\n\nx = torch.tensor([1.0, 2.0], dtype=torch.float64, requires_grad=True)\ncloned = x.clone()\nfresh = x.detach().clone().requires_grad_()\nassert not cloned.is_leaf and fresh.is_leaf\nassert cloned.grad_fn is not None and fresh.grad_fn is None\ng = torch.autograd.grad(cloned.sum(), x)[0]\nprint(g, fresh.requires_grad)\n"
+        },
+        {
+          "type": "math",
+          "title": "detach() যেভাবে পেছনের Gradient পথ বন্ধ করে দেয়",
+          "body": "\\operatorname{detach}(x)\\text{ keeps values but removes the recorded gradient path to }x"
+        },
+        {
+          "type": "text",
+          "title": "Logging করার সময় .item() ব্যবহারের সীমারেখা",
+          "body": "Training চলাকালে অগ্রগতি দেখার জন্য `loss.item()` দারুণ কাজের, কারণ এটি Computational Graph-এর বোঝা ঝেড়ে ফেলে সাধারণ একটি Python সংখ্যা ফিরিয়ে দেয় (ফলে Running Metric রাখার সময় পুরোনো Graph মেমোরিতে আটকে থাকে না)। কিন্তু ভুলেও যদি মূল Training Objective হিসাব করার মাঝখানে অসতর্ক `.item()` বা `detach()` ঢুকে পড়ে এবং সেই সংখ্যা দিয়ে আবার নতুন Tensor বানানো হয়, তবে আগের সব Parameter-এর সাথে সংযোগ চিরতরে কেটে যাবে! তাই Logging এবং মূল Objective তৈরির কোড সব সময় আলাদা রাখুন।"
+        },
+        {
+          "type": "text",
+          "title": "NumPy রূপান্তরের লুকানো ঝুঁকি",
+          "body": "আগেই আমরা দেখেছি যে CPU-তে NumPy সেতু মূল Tensor-এর সাথে Shared Storage দিতে পারে। সেই NumPy Array ধরে যদি আপনি সংরক্ষিত কোনো Tensor-এর মান বদলে দেন, তবে Autograd-এর প্রত্যাশা ভেঙে যেতে পারে! তাই ডেটা বাইরে পাঠালে হয় শুধু পড়ার জন্য (Read-only) রাখুন, নয়তো স্বাধীন পরিবর্তনযোগ্য `.copy()` নিয়ে নিন। আর মনে রাখবেন, Training Graph-এর মাঝপথে ডেটা NumPy-তে নিয়ে আবার PyTorch-এ ফেরালে সংখ্যার মান ঠিক থাকলেও পেছনের পুরো Derivative মালিকানা হারিয়ে যায়।"
+        },
+        {
+          "type": "text",
+          "title": "কখন detach() ইচ্ছাকৃত এবং দরকারি?",
+          "body": "তার মানে এই নয় যে প্রতিটি `detach()`-ই কোডের বাগ! যেমন Frozen Feature Extractor থেকে Feature নেওয়ার সময় কিংবা কোনো সহায়ক Auxiliary Target স্থির রাখার সময় নির্দিষ্ট শাখায় Gradient প্রবাহ থামাতে আমরা সচেতনভাবেই `detach()` ব্যবহার করি। মূল কথা হলো, কোন Parameter-এ Gradient যাবে আর কোন পথটি বন্ধ থাকবে তা যেন আগে থেকেই সুস্পষ্ট থাকে। পাশাপাশি মনে রাখবেন, Parameter ফ্রিজ করা আর `eval()` দিয়ে Module-এর আচরণ বদলানো দুটি আলাদা বিষয়।"
+        },
+        {
+          "type": "text",
+          "title": "নতুন স্বাধীন Leaf Parameter তৈরি করা",
+          "body": "বিদ্যমান কোনো Tensor-এর মান দিয়ে যদি সম্পূর্ণ নতুন ও স্বাধীন একটি প্রশিক্ষণযোগ্য Leaf Parameter শুরু করতে চান, তবে আদর্শ পদ্ধতি হলো `x.detach().clone().requires_grad_()`। এতে নতুন Parameter-টির Gradient কখনোই মূল `x`-এ ফিরে যাবে না। উল্লেখ্য, আমাদের মোবাইল ল্যাবগুলোতে উৎস ও রেফারেন্স Array-গুলো অপরিবর্তনীয় (Immutable) রাখা হয়েছে এবং প্রদর্শিত Gradient সরাসরি Dart-এর Analytical হিসাব থেকে আসে; এটি নতুন PyTorch Parameter Object তৈরির সমতুল্য Runtime নয়।"
+        },
+        {
+          "type": "callout",
+          "title": "Interview প্রশ্ন",
+          "body": "Interview-এর জন্য একটি চমৎকার অনুশীলন হলো `clone()`, `detach()` এবং `detach().clone()`-কে দুটি মাপকাঠিতে পাশাপাশি সাজিয়ে তুলনা করা: (1) কে Storage শেয়ার করে বনাম নতুন Copy বানায়, এবং (2) কার সাথে পুরোনো Graph-এর সংযোগ থাকে বনাম বিচ্ছিন্ন হয়। ভেতরের সংখ্যা হুবহু এক হওয়া সত্ত্বেও কেন এই তিন ধরনের Tensor-এর `is_leaf`, `grad_fn` এবং Mutation আচরণ আলাদা হয়, তা ছোট কোড লিখে পরীক্ষা করুন।"
+        },
+        {
+          "type": "text",
+          "title": "Shared Storage বদলালে কেন backward() মাঝপথে থেমে যায়?",
+          "body": "চলুন একটি ছোট উদাহরণে মেমোরি ভাগাভাগির বিপদটি হাতে-কলমে দেখি। ধরুন `value = [2.0]` থেকে আমরা `loss = value.square().sum()` বের করলাম। এখানে `backward()` চালানোর সময় আসল `2.0` মানটি PyTorch-এর দরকার পড়বে। কিন্তু তার আগেই যদি আমরা `alias = value.detach()` নিয়ে তার ভেতরে `alias.add_(1)` চালাই, তবে Storage এক হওয়ায় মূল `value`-ও বদলে `3.0` হয়ে যায়! ফলে `loss.backward()` চালালেই PyTorch সংরক্ষিত Tensor-এর Version বদল ধরে ফেলে এবং `RuntimeError` দেয়। অথচ স্বাধীন পরিবর্তনযোগ্য কপির জন্য `detach().clone()` নিলে মেমোরি আলাদা থাকে বলে মূল `backward()` নির্বিঘ্নে কাজ করে।"
+        },
+        {
+          "type": "code",
+          "title": "Detached Alias-এ In-place পরিবর্তন এবং Version Check ত্রুটি",
+          "body": "import torch\n\nvalue = torch.tensor([2.], dtype=torch.float64, requires_grad=True)\nloss = value.square().sum()\nalias = value.detach()\nalias.add_(1)\ncaught = 0\ntry:\n    loss.backward()\nexcept RuntimeError:\n    caught = 1\nassert caught == 1 and value.item() == 3\nfresh = torch.tensor([2.], dtype=torch.float64, requires_grad=True)\nindependent = fresh.detach().clone()\nindependent.add_(1)\nfresh.square().sum().backward()\nprint(caught, value.item(), fresh.item(), fresh.grad.item())\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে ভেবে উত্তর দিন",
+          "body": "যেকোনো ধরনের In-place পরিবর্তন করলেই কি PyTorch সব সময় একইভাবে `RuntimeError` দিয়ে আপনাকে সতর্ক করতে পারবে?",
+          "solution": "না, সব সময় পারবে না! ত্রুটি ধরা পড়বে কি না তা নির্ভর করে ঠিক কোন মানগুলো `backward()`-এর জন্য সংরক্ষিত আছে এবং PyTorch-এর Version Tracking কী কী নজরদারি করছে তার ওপর। বিশেষ করে Shared NumPy মেমোরির ভেতর দিয়ে বাইরে থেকে মান বদলে দিলে তা একইভাবে ট্র্যাক নাও হতে পারে। তাই Error না হওয়াকে কখনোই Mutation সঠিক হওয়ার প্রমাণ ধরবেন না; বরং Graph-এর প্রয়োজনীয় Tensor-গুলোকে অপরিবর্তিত রেখে সংখ্যাসূচকভাবে Gradient মিলিয়ে দেখুন।",
+          "reference": "https://docs.pytorch.org/docs/2.15/notes/autograd.html"
+        }
+      ]
+    },
+    {
+      "id": "ch15_modes",
+      "title": "torch.no_grad(), inference_mode() এবং model.eval()",
+      "subtitle": "কেন Gradient রেকর্ড বন্ধ করা আর Module-এর আচরণ বদলানো এক জিনিস নয়",
+      "duration": "36 min",
+      "icon": "grid_view",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "torch.no_grad() ঠিক কী করে?",
+          "body": "`with torch.no_grad():` Context-এর ভেতরে সাধারণ গাণিতিক Operation চালালে PyTorch কোনো Computational Graph রেকর্ড করে না এবং Backward-এর জন্য অতিরিক্ত মেমোরিও আটকে রাখে না। ম্যানুয়ালি Parameter আপডেট করা, Inference চালানো বা রেফারেন্স হিসাব করার সময় এটি দারুণ কার্যকর, এবং Context শেষ হলেই আগের Grad Mode আপনা-আপনি ফিরে আসে। তবে মনে রাখবেন, `no_grad()` কখনোই নিজ থেকে `model.eval()` কল করে না; আবার Context-এর ভেতরে সরাসরি `requires_grad=True` সহ Factory Function চালানোর মতো সুনির্দিষ্ট ব্যতিক্রমও ডকুমেন্টেশনে উল্লেখ আছে।"
+        },
+        {
+          "type": "code",
+          "title": "no_grad()-এ তৈরি মান পরবর্তী Graph-এ ব্যবহার",
+          "body": "import torch\n\nx = torch.tensor(2.0, dtype=torch.float64, requires_grad=True)\nwith torch.no_grad():\n    cached = x * 3\nassert not cached.requires_grad\nnew_parameter = torch.tensor(4.0, dtype=x.dtype, requires_grad=True)\n# Backward accumulates into .grad; the seed or reduction sets the scale.\n(new_parameter * cached).backward()\nprint(new_parameter.grad.item(), x.grad)  # 6, None\n"
+        },
+        {
+          "type": "text",
+          "title": "inference_mode() কেন আরও কঠোর?",
+          "body": "`torch.inference_mode()` সাধারণ `no_grad()`-এর চেয়ে আরও এক ধাপ এগিয়ে ভেতরের অতিরিক্ত কিছু Autograd হিসাব-নিকাশ (যেমন Version ও View ট্র্যাকিং) বন্ধ করে দেয়। ফলে খাঁটি Inference-এ এটি বাড়তি সুবিধা দিলেও এর ভেতরে তৈরি হওয়া Tensor-গুলোকে পরে আবার কোনো সক্রিয় Training Graph-এ সংরক্ষণ করে `backward()` চালাতে গেলে কঠোর বিধিনিষেধের মুখে পড়তে হয়। তাই কোন মানটি কেবল Inference-এর জন্য আর কোনটি পরবর্তী Training ধাপে ব্যবহৃত হবে, তা আগে থেকেই স্পষ্টভাবে আলাদা করে নিন।"
+        },
+        {
+          "type": "text",
+          "title": "তাহলে model.eval() আসলে কী বদলায়?",
+          "body": "`model.eval()` কেবল একটি Module এবং তার ভেতরের Layer-গুলোর `training` Flag-টি `False` করে দেয়। এর ফলে `Dropout` বা `BatchNorm`-এর মতো Layer-গুলো Training মোডের বদলে Evaluation মোডের নিয়মে কাজ শুরু করে; কিন্তু এটি মোটেও Autograd-এর Gradient রেকর্ড করা বন্ধ করে না! অর্থাৎ `eval()` এবং `no_grad()` বা `inference_mode()` সম্পূর্ণ আলাদা নিয়ন্ত্রণ সুইচ। পূর্ণাঙ্গ Neural Network Architecture ও Training Loop-এর বিস্তারিত আমরা ঠিক পরের অধ্যায়ে—Book 3 · Chapter 2 (Neural Networks & Backpropagation)-এ শিখব।"
+        },
+        {
+          "type": "math",
+          "title": "Graph-এর বাইরে থেকে ম্যানুয়াল Parameter আপডেটের উদ্দেশ্য",
+          "body": "w\\leftarrow w-\\eta\\nabla_wL\\quad\\text{without recording the update as a new training graph}"
+        },
+        {
+          "type": "text",
+          "title": "আপডেটের পর নতুন Forward Pass কেন অপরিহার্য?",
+          "body": "একবার Parameter আপডেট হয়ে যাওয়ার পর পরবর্তী ধাপের জন্য অবশ্যই নতুন করে Forward Pass চালিয়ে নতুন Loss তৈরি করতে হবে। পুরোনো Graph-এর সংরক্ষিত মান আর বদলে যাওয়া Parameter একসাথে পুনর্ব্যবহার করলে সঠিক Derivative পাওয়া সম্ভব নয়। Gradient Zeroing, Optimizer State, Learning Rate Scheduling এবং Mixed Precision-এর মতো বিষয়গুলো আমরা Book 3 · Chapter 3 (Reliable Training)-এ বিস্তারিত দেখব; আপাতত Forward → Backward → Update-এর এই পরিচ্ছন্ন জীবনচক্রটি নিজের নখদর্পণে রাখুন।"
+        },
+        {
+          "type": "text",
+          "title": "এই অধ্যায়ের যাচাইয়ের পরিধি",
+          "body": "আমাদের লোকাল Workflow-তে CPU-তে `no_grad()` ব্যবহার করে একটি ম্যানুয়াল Step-এর পর নতুন Loss নিখুঁতভাবে যাচাই করা হয়েছে। এখানে GPU-এর সময় বা প্রোডাকশন Inference-এর গতি নিয়ে কোনো দাবি করা হয়নি—কারণ বাস্তব সিস্টেমের গতি বিচার করতে সব সময় নির্দিষ্ট কাজের ধরন ও হার্ডওয়্যার অনুযায়ী আলাদা Benchmark চালাতে হয়।"
+        },
+        {
+          "type": "callout",
+          "title": "হাতে-কলমে অনুশীলন",
+          "body": "নিজে ছোট একটি কোড লিখে ব্যাখ্যা করুন: কেন `model.eval()` করার পরেও (যদি `no_grad()` না দেন) আপনার `loss.requires_grad` মানটি `True` থাকতে পারে? আবার ঠিক উল্টোভাবে, `with torch.no_grad():` Context-এর ভেতরে থাকা সত্ত্বেও কেন `module.training` মানটি `True` থেকে যেতে পারে? দুটি Attribute প্রিন্ট করলেই পরিষ্কার হয়ে যাবে কোনটি Module-এর আচরণ নিয়ন্ত্রণ করে আর কোনটি Graph রেকর্ডিং থামায়।"
+        }
+      ]
+    },
+    {
+      "id": "ch15_microscope",
+      "title": "বাস্তব ডেটায় BCE Gradient Microscope",
+      "subtitle": "খাতা-কলমের Analytical Derivative দিয়ে PyTorch Autograd যাচাই",
+      "duration": "42 min",
+      "icon": "grid_view",
+      "blocks": [
+        {
+          "type": "math",
+          "title": "সংখ্যাসূচকভাবে স্থিতিশীল Mean BCEWithLogits সমীকরণ",
+          "body": "L=\\frac1B\\sum_i\\left[\\max(z_i,0)-y_i z_i+\\log(1+e^{-|z_i|})\\right],\\quad z_i=x_i^{\\top}w+b"
+        },
+        {
+          "type": "math",
+          "title": "Weight এবং Bias-এর সাপেক্ষে Analytical Gradient",
+          "body": "\\nabla_wL=\\frac1B X^{\\top}(\\sigma(z)-y),\\qquad \\frac{\\partial L}{\\partial b}=\\frac1B\\sum_i(\\sigma(z_i)-y_i)"
+        },
+        {
+          "type": "text",
+          "title": "সমীকরণ থেকে কোডে Derivative-এর ব্যবচ্ছেদ",
+          "body": "আলাদাভাবে Sigmoid বের করে তারপর Binary Cross-Entropy নিলে বড় ধনাত্মক বা ঋণাত্মক সংখ্যায় সহজেই সংখ্যাসূচক অস্থিরতা (Overflow বা Underflow) দেখা দেয়; তাই `BCEWithLogits` দুটোকে একীভূত করে ওপরের প্রথম সমীকরণের মতো স্থিতিশীল Objective হিসেবে হিসাব করে। অথচ ক্যালকুলাসের চমৎকার সৌন্দর্য দেখুন—একটি একক Logit `zᵢ`-এর সাপেক্ষে Derivative নিলে এই রাশিটি ভেঙে স্রেফ `σ(zᵢ) - yᵢ` হয়ে যায়! এরপর Linear Score-এর Chain Rule প্রয়োগ করলে Weight Gradient পাওয়া যায় `Xᵀ(σ(z) - y)`, এবং Mean Reduction নিলে পুরোটা ভাগ হয় `B` দিয়ে। তবে মনে রাখবেন, খাতার সূত্র শতভাগ সঠিক হলেও কোডে Denominator (`B`) বা Axis একটু এদিক-ওদিক হলেই পুরো Gradient ভুল হয়ে যাবে।"
+        },
+        {
+          "type": "autograd_lab",
+          "title": "Interactive Two-Feature Gradient ল্যাব",
+          "body": "নিচের ল্যাবে Wine Quality Dataset-এর প্রথম 16 টি প্রকৃত Training Row থেকে Standardized `alcohol` এবং `volatile acidity`—এই দুটি Feature নিয়ে Mean BCE হিসাব করা হয়েছে। নিয়ন্ত্রক ঘুরিয়ে দুটি Weight, Bias এবং Learning Rate বদলে দেখুন কীভাবে সাথে সাথে Loss, Gradient এবং ম্যানুয়াল Step পরিবর্তিত হয়। উল্লেখ্য, এখানে Parameter-গুলো শেখার সুবিধার্থে বেছে নেওয়া হয়েছে—এটি চূড়ান্ত বাছাইকৃত কোনো Classifier বা Generalization Benchmark নয়।"
+        },
+        {
+          "type": "code",
+          "title": "Autograd বনাম খাতা-কলমের Analytical BCE Gradient তুলনা",
+          "body": "import torch\nimport torch.nn.functional as F\n\nX = torch.tensor([[1.0, 2.0], [3.0, 1.0]], dtype=torch.float64)\ny = torch.tensor([0.0, 1.0], dtype=X.dtype)\nw = torch.zeros(2, dtype=X.dtype, requires_grad=True)\nb = torch.zeros((), dtype=X.dtype, requires_grad=True)\nloss = F.binary_cross_entropy_with_logits(X @ w + b, y)\ngw, gb = torch.autograd.grad(loss, (w, b))\nresidual = torch.sigmoid(X @ w + b).detach() - y\nassert torch.allclose(gw, X.T @ residual / len(y))\nprint(loss.item(), gw, gb)\n"
+        },
+        {
+          "type": "text",
+          "title": "ল্যাবের Heatmap ও Arrow কীভাবে পড়বেন",
+          "body": "ল্যাব ইন্টারফেসে Dart কোডের মাধ্যমে সরাসরি Analytical Gradient হিসাব করা হয়, যা আমাদের লোকাল Python Workflow-তে তিনটি ভিন্ন Parameter বিন্দুতে আসল PyTorch Autograd-এর ফলাফলের সাথে মিলিয়ে যাচাই করা হয়েছে। পাশের দ্বিমাত্রিক Heatmap-টি বর্তমান Bias স্থির রেখে কেবল দুটি Weight-এর সাপেক্ষে Loss তলের একটি Slice দেখায়। সেখানে দেখানো Arrow-টি ঋণাত্মক Gradient-এর দিক নির্দেশ করে—বোঝার সুবিধার্থে এর দৈর্ঘ্য Normalized রাখা হয়েছে, তাই Arrow-এর দৈর্ঘ্য সরাসরি Learning Rate Step-এর সমান নয়। আর আপনি যখন প্রকৃত Step নেন, তখন দুটি Weight-এর পাশাপাশি Bias-ও একসাথে আপডেট হয়।"
+        },
+        {
+          "type": "text",
+          "title": "বড় Learning Rate দিলে কেন Loss উল্টো বেড়ে যেতে পারে?",
+          "body": "ক্যালকুলাস আমাদের নিশ্চয়তা দেয় যে ঋণাত্মক Gradient কেবল অতি ক্ষুদ্র পদক্ষেপের জন্যই স্থানীয়ভাবে নিচের দিকে (Local Descent Direction) নামে। আপনি যদি অনেক বড় একটি সসীম Step নেন, তবে উপত্যকা পেরিয়ে উল্টো পাশের উঁচু ঢালে গিয়ে Loss আগের চেয়েও বেড়ে যেতে পারে! এ ছাড়া প্রস্তাবিত ধাপটি যদি ল্যাব ইন্টারফেসের `[-4, 4]` সীমার বাইরে চলে যায়, তবে দিক বিকৃত না করার স্বার্থে নীরবে মান কেটে (Silent Clipping) ফেলা হয় না—বরং ছোট Learning Rate নিতে বা Reset করতে বলা হয়। সবশেষে মনে রাখবেন, 16 টি Row-তে Training Loss কমা কেবল আপনার কোডের বাস্তবায়নের পক্ষে প্রমাণ দেয়, অদেখা ডেটায় Model-এর সাফল্য প্রমাণ করে না।"
+        },
+        {
+          "type": "callout",
+          "title": "নিজে মিলিয়ে দেখার চ্যালেঞ্জ",
+          "body": "সব Parameter শূন্য (`w = [0, 0]`, `b = 0`) ধরলে প্রতিটি Logit হয় `0` এবং প্রতিটি Probability `σ(0)` হয় `0.5`। ফলে ওপরের সূত্র অনুযায়ী Bias Gradient দাঁড়ায় স্রেফ `0.5 - positive_fraction`! এবার ল্যাবের 16 টি Row-এর প্রকৃত Label গুনে ধনাত্মক Row-এর অনুপাত বের করুন এবং শূন্য অবস্থায় ল্যাবের দেখানো Bias Gradient-এর সাথে মিলিয়ে দেখুন। পাশাপাশি ব্যাখ্যা করুন কেন `Accumulate twice` চাপলে Derivative দ্বিগুণ হলেও মূল Objective বা Loss অপরিবর্তিত থাকে।"
+        }
+      ]
+    },
+    {
+      "id": "ch15_gradcheck",
+      "title": "Finite Difference, gradcheck এবং উচ্চতর ক্রমের Derivative",
+      "subtitle": "সংখ্যাগতভাবে Gradient মিলে যাওয়ার শর্ত ও সীমাবদ্ধতা",
+      "duration": "55 min",
+      "icon": "grid_view",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "তিন দিক থেকে স্বাধীনভাবে Gradient যাচাই",
+          "body": "আমাদের কোড কি সত্যিই সঠিক Derivative বের করছে? শতভাগ নিশ্চিত হতে আমরা `966 × 11` আকারের পূর্ণ Training Matrix-এর ওপর তিনটি সম্পূর্ণ স্বাধীন পদ্ধতি পাশাপাশি মিলিয়ে দেখব: PyTorch-এর নিজস্ব Autograd, খাতা-কলমে কষা Analytical BCE সূত্র এবং Central Finite Difference। পাশাপাশি `32` টি Row-এর একটি Batch-এ `float64` Parameter দিয়ে চালানো হবে `torch.autograd.gradcheck`। মনে রাখবেন, তিনটি ভিন্ন পথের ফলাফল মিলে যাওয়া প্রমাণ করে আপনার গাণিতিক বাস্তবায়ন নিখুঁত হয়েছে; তবে উৎস ডেটার Label কতটা নির্ভুল, বাস্তব কাজে এর উপযোগিতা বা Model Selection সঠিক কি না, তা এই পরীক্ষা থেকে প্রমাণিত হয় না।"
+        },
+        {
+          "type": "math",
+          "title": "Central Finite Difference-এর সমীকরণ",
+          "body": "\\frac{\\partial L}{\\partial\\theta_j}\\approx\\frac{L(\\theta+\\epsilon e_j)-L(\\theta-\\epsilon e_j)}{2\\epsilon}"
+        },
+        {
+          "type": "code",
+          "title": "create_graph=True ব্যবহার করে দ্বিতীয় ক্রমের Derivative",
+          "body": "import torch\n\nx = torch.tensor(3.0, dtype=torch.float64, requires_grad=True)\nfirst = torch.autograd.grad(x**3, x, create_graph=True)[0]\nsecond = torch.autograd.grad(first, x)[0]\nprint(first.item(), second.item())  # 27,18\n"
+        },
+        {
+          "type": "text",
+          "title": "Epsilon (ε) নির্বাচনের সূক্ষ্ম ভারসাম্য",
+          "body": "Finite Difference পদ্ধতিতে ক্ষুদ্র পরিবর্তন `ε`-এর মান বেছে নেওয়ার মধ্যে একটি চমৎকার গাণিতিক টানাপোড়েন আছে: `ε` বেশি বড় হলে বক্ররেখাকে সরলরেখা ধরার কারণে Truncation Error বাড়ে, আবার `ε` অতিরিক্ত ছোট হলে প্রায় সমান দুটি দশমিক সংখ্যার বিয়োগে Rounding Error প্রকট হয়ে ওঠে! `float32`-এর সীমিত Precision-এ সংখ্যাসূচক যাচাই প্রায়ই কঠিন হয়ে পড়ে, তাই এখানে `float64`, উপযুক্ত `atol`/`rtol` এবং মসৃণ (Smooth) বিন্দু ব্যবহার করা জরুরি। আর `ReLU`-এর শূন্য বিন্দুর মতো ভাঁজ পড়া (Non-differentiable kink) জায়গায় সাধারণ Derivative ও Finite Difference এক হবে—এমন দাবি কখনোই করা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "create_graph=True বনাম retain_graph=True",
+          "body": "অনেকেই এই দুটি Flag গুলিয়ে ফেলেন, অথচ এদের উদ্দেশ্য সম্পূর্ণ আলাদা। `create_graph=True` দিলে প্রথম Derivative বের করার হিসাবটিও নিজে একটি নতুন Computational Graph হিসেবে রেকর্ড হয়—ফলে তার ওপর আবার Derivative চালিয়ে দ্বিতীয় বা উচ্চতর ক্রমের Derivative বের করা সম্ভব হয় (যেমন ওপরের Cubic Function-এর উদাহরণে `27` থেকে `18` পাওয়া গেছে)। অন্যদিকে `retain_graph=True` কেবল পুরোনো Graph-এর সংরক্ষিত Buffer-গুলো পুনর্ব্যবহারের জন্য ধরে রাখে। অপ্রয়োজনে এগুলো চালু রাখলে মেমোরি দ্রুত ভরে উঠতে পারে, তাই উদ্দেশ্য বুঝে ব্যবহার করুন।"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের বাস্তব অডিটে পাওয়া সংখ্যাসূচক ফলাফল",
+          "body": "Zero Parameter অবস্থায় আমাদের পূর্ণ Training সেটে প্রারম্ভিক Mean BCE আসে প্রায় `0.693147`। সেখানে Autograd বনাম Analytical সূত্রের সর্বোচ্চ পরম পার্থক্য (Max Error) মাত্র `1.11e-16`-এর কাছাকাছি, আর Central Finite Difference-এর সাথে পার্থক্য প্রায় `9.85e-11`! এরপর `0.1` Learning Rate দিয়ে একটি Full-gradient Step নিলে Training BCE কমে দাঁড়ায় প্রায় `0.681829`। খেয়াল রাখবেন, এই সংখ্যাগুলো নিরেট CPU সংখ্যাসূচক নিরীক্ষার প্রমাণ, অদেখা ডেটায় কোনো Prediction স্কোর নয়।"
+        },
+        {
+          "type": "text",
+          "title": "ফলাফল স্থির রাখার (Determinism) নিয়মাবলি",
+          "body": "আমাদের নিরীক্ষায় উৎস ফাইলের Hash, শুধুমাত্র Training অংশে শেখা রূপান্তর, সুনির্দিষ্ট `CPU` ও `float64`, নির্দিষ্ট Seed দেওয়া DataLoader এবং Single-thread সীমা নথিভুক্ত রাখা হয়। ভিন্ন প্ল্যাটফর্মের অতি ক্ষুদ্র সংখ্যাসূচক তারতম্য সামলাতে ব্যবহৃত হয় উপযুক্ত Floating-point Tolerance; কারণ একই Seed দিলেও সব লাইব্রেরি সংস্করণে বা CUDA ও MPS হার্ডওয়্যারে বিটে-বিটে অভিন্ন ফলের (Bitwise Identity) নিশ্চয়তা দেওয়া যায় না।"
+        },
+        {
+          "type": "callout",
+          "title": "কোডিং অনুশীলন",
+          "body": "ত্রুটিপূর্ণ Gradient কোডে চিহ্নের ভুল, ভুল Reduction Denominator বা উল্টে যাওয়া Axis ধরতে কেবল শূন্য বিন্দু নয়, একাধিক মসৃণ Input ও Parameter মানে Test লিখুন এবং ব্যবহৃত Seed সংরক্ষণ করুন। ভুলেও মূল বাস্তবায়নের সূত্রটিই কপি-পেস্ট করে Test বানাবেন না—তাতে একই বাগ দুই জায়গায় লুকিয়ে থাকতে পারে! তার বদলে স্বাধীন Finite Difference বা ফ্রেমওয়ার্কের রেফারেন্স Function যোগ করুন।"
+        },
+        {
+          "type": "text",
+          "title": "পুরো Hessian না বানিয়েও সরাসরি Hessian-Vector Product",
+          "body": "ধরুন আমাদের Scalar Function-টি হলো `f(x) = x₀² + 3x₀x₁ + 2x₁²`। হাতে হিসাব করলে এর Gradient আসে `[2x₀ + 3x₁, 3x₀ + 4x₁]` এবং Hessian Matrix হয় `[[2, 3], [3, 4]]`। ফলে `x = [1, 2]` বিন্দুতে এবং দিক `v = [1, -1]` বরাবর গুণফল `Hv` দাঁড়ায় `[-1, -1]`।\n\nবড় Model-এ বিশাল Hessian Matrix মেমোরিতে না বানিয়েও আমরা একটি দারুণ কৌশলে সরাসরি `Hv` পেতে পারি: প্রথমবার `create_graph=True` দিয়ে Gradient `g` বের করে তার সাথে `v`-এর Dot Product (`gᵀv`) নিন, তারপর সেই একক সংখ্যাটিকে আবার `x`-এর সাপেক্ষে Differentiate করুন! মসৃণ Function-এর Hessian সব সময় Symmetric হওয়ায় এই দ্বিতীয় Gradient সরাসরি `Hv` ফিরিয়ে দেয়।"
+        },
+        {
+          "type": "code",
+          "title": "দুবার autograd.grad চালিয়ে সরাসরি Hessian-Vector Product",
+          "body": "import torch\n\npoint = torch.tensor([1., 2.], dtype=torch.float64, requires_grad=True)\ndirection = torch.tensor([1., -1.], dtype=point.dtype)\nobjective = point[0]**2 + 3 * point[0] * point[1] + 2 * point[1]**2\ngradient = torch.autograd.grad(objective, point, create_graph=True)[0]\nhessian_vector = torch.autograd.grad(gradient @ direction, point)[0]\nhessian = torch.tensor([[2., 3.], [3., 4.]], dtype=point.dtype)\ntorch.testing.assert_close(hessian_vector, hessian @ direction)\nprint(*gradient.detach().tolist(), *hessian_vector.tolist())\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে ভেবে উত্তর দিন",
+          "body": "প্রথমবার `autograd.grad` চালানোর সময় `create_graph=True` না দিয়ে যদি কেবল `retain_graph=True` দিতাম, তবে কি প্রথম Gradient-এর ওপর নতুন Derivative Graph তৈরি হতো?",
+          "solution": "না, হতো না! `retain_graph=True` কেবল আগের সংরক্ষিত Graph পুনর্ব্যবহারের সুযোগ রাখে। কিন্তু প্রথম Derivative বের করার Operation-গুলোকে নতুন একটি Differentiable Graph হিসেবে রেকর্ড করতে হলে অবশ্যই `create_graph=True` প্রয়োজন। কোন Graph-টি তৈরি করা দরকার আর কোনটি কাজ শেষে মেমোরি থেকে মুক্ত করা যায়, তা সব সময় আলাদাভাবে নির্ধারণ করুন।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch15_workflow",
+      "title": "লোকাল মেশিনে বাস্তব ডেটার Tensor Workflow",
+      "subtitle": "উৎস ডেটার চুক্তি বজায় রেখে নিখুঁত Shape-এর Objective তৈরি",
+      "duration": "42 min",
+      "icon": "grid_view",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "নিজের কম্পিউটারে সেটআপ ও চালানোর নিয়ম",
+          "body": "আমাদের পরীক্ষিত Windows CPU পরিবেশে পুরো নিরীক্ষাটি নিজের হাতে চালাতে প্রথমে টার্মিনালে `python -m pip install -r tool/requirements-pytorch-qa.txt` কমান্ড দিয়ে প্রয়োজনীয় প্যাকেজ ইনস্টল করে নিন। এরপর চালান `python assets/datasets/wine_quality/torch_workflow.py --output build/chapter-15-workflow-report.json`। প্যাকেজ ইনস্টল করতে ইন্টারনেট লাগলেও ইনস্টল করা অ্যাপটি সম্পূর্ণ অফলাইনে চলে; আর আপনি macOS ব্যবহার করলে PyTorch-এর অফিশিয়াল প্ল্যাটফর্ম নির্বাচক থেকে সামঞ্জস্যপূর্ণ বিল্ড বেছে নিতে পারেন।"
+        },
+        {
+          "type": "text",
+          "title": "আগের ডেটা স্প্লিট ও স্কেলিং পুনর্ব্যবহার",
+          "body": "এখানে মূল লাল Wine Quality CSV ফাইলটির Hash সম্পূর্ণ অপরিবর্তিত রাখা হয়েছে। আমরা Book 2 · Chapter 9 (Classical ML Capstone)-এর Import-safe উৎস সহায়ক Module ব্যবহার করে কেবল আগের 966 টি Training (fit-role) Row পুনরুৎপাদন করে নিই—সেখানকার Model Selection বা চূড়ান্ত Test পরীক্ষা এখানে পুনরায় চালানো হয় না। পাশাপাশি সংরক্ষিত রেফারেন্স `mean` ও `scale` মান দুটিকে ওই 966 টি Row-এর NumPy Mean এবং Population Standard Deviation (`ddof=0`)-এর সাথে সূক্ষ্মভাবে মিলিয়ে দেখা হয়।"
+        },
+        {
+          "type": "code",
+          "title": "পর্ব 1 / 4: ডেটার উৎস যাচাই এবং Standardization",
+          "body": "from pathlib import Path\nimport argparse\nimport importlib.util\nimport json\nimport platform\nimport sys\nimport numpy as np\nimport torch\nimport torch.nn.functional as F\nfrom torch.utils.data import TensorDataset, DataLoader\n\nDATA = Path(\"assets/datasets/wine_quality\").resolve()\n\n\ndef load_fit(path):\n    spec = importlib.util.spec_from_file_location(\n        \"ch15_source_contract\", path.with_name(\"capstone_workflow.py\")\n    )\n    contract = importlib.util.module_from_spec(spec)\n    sys.modules[spec.name] = contract\n    spec.loader.exec_module(contract)\n    frame, X, y, groups = contract.load_source(path)\n    fit, _, _ = contract.split_roles(X, y, groups)\n    reference = json.loads(\n        path.with_name(\"capstone_lab.json\").read_text(encoding=\"utf-8\")\n    )[\"logistic_reference\"]\n    if reference[\"feature_names\"] != contract.FEATURES:\n        raise ValueError(\"Ordered feature schema mismatch\")\n    mean = np.asarray(reference[\"mean\"])\n    scale = np.asarray(reference[\"scale\"])\n    np.testing.assert_allclose(mean, X[fit].mean(axis=0), atol=1e-12)\n    np.testing.assert_allclose(scale, X[fit].std(axis=0, ddof=0), atol=1e-12)\n    Z = (X[fit] - mean) / scale\n    return frame, X, y, groups, fit, reference, Z\n"
+        },
+        {
+          "type": "text",
+          "title": "পরিষ্কার মেমোরি মালিকানা ও কঠোর Shape চুক্তি",
+          "body": "Standardized NumPy Array `Z` থেকে ডেটা Copy করে আমরা সুস্পষ্টভাবে `CPU` ও `float64`-এ নতুন PyTorch Tensor তৈরি করি। এরপর নিচের `tensors(...)` Function-এর মাধ্যমে `X[B, D]`, `y[B]`, `w[D]` এবং খাঁটি Scalar Bias `b`-এর নিখুঁত চুক্তি যাচাই করা হয়। আমাদের অ্যাপের ল্যাবগুলো এই একই সেটের প্রথম 16 টি প্রকৃত Training Row থেকে তথ্য নেয়: Layout Lab দেখায় প্রথম 4 টি কাঁচা Row-এর মান, আর Gradient Microscope কাজ করে 2 টি Standardized Feature-এর ওপর।"
+        },
+        {
+          "type": "code",
+          "title": "পর্ব 2 / 4: কঠোর Objective, Analytical এবং Finite Difference Function",
+          "body": "def tensors(X, y, w, b):\n    if (\n        X.ndim != 2\n        or y.shape != (X.shape[0],)\n        or w.shape != (X.shape[1],)\n        or b.ndim != 0\n        or X.shape[0] < 1\n    ):\n        raise ValueError(\"X[B,D],y[B],w[D],scalar b required\")\n    if any(\n        t.device.type != \"cpu\"\n        or t.dtype != torch.float64\n        or not torch.isfinite(t).all().item()\n        for t in [X, y, w, b]\n    ):\n        raise ValueError(\"Finite CPU float64 contract\")\n    if not torch.all((y == 0) | (y == 1)).item():\n        raise ValueError(\"Binary targets\")\n    return X, y, w, b\n\n\ndef objective(X, y, w, b):\n    X, y, w, b = tensors(X, y, w, b)\n    return F.binary_cross_entropy_with_logits(X @ w + b, y, reduction=\"mean\")\n\n\ndef analytic_gradient(X, y, w, b):\n    X, y, w, b = tensors(X, y, w, b)\n    with torch.no_grad():\n        residual = torch.sigmoid(X @ w + b) - y\n        return X.T @ residual / len(y), residual.mean()\n\n\ndef finite_gradient(X, y, w, b, eps=1e-6):\n    if not np.isfinite(eps) or eps <= 0:\n        raise ValueError(\"Positive finite difference epsilon\")\n    result = torch.empty_like(w)\n    with torch.no_grad():\n        for j in range(len(w)):\n            direction = torch.zeros_like(w)\n            direction[j] = eps\n            result[j] = (\n                objective(X, y, w + direction, b) - objective(X, y, w - direction, b)\n            ) / (2 * eps)\n        gb = (objective(X, y, w, b + eps) - objective(X, y, w, b - eps)) / (2 * eps)\n    return result, gb\n\n\ndef mse_shape_audit(probability, target):\n    if probability.ndim != 1 or probability.shape != target.shape or len(target) < 1:\n        raise ValueError(\"Aligned batch vectors\")\n    correct = probability - target\n    wrong = probability - target[:, None]  # Deliberately wrong pairwise broadcast.\n    return {\n        \"batch\": len(target),\n        \"correct_shape\": list(correct.shape),\n        \"wrong_shape\": list(wrong.shape),\n        \"correct_residual\": correct.tolist(),\n        \"wrong_residual\": wrong.tolist(),\n        \"correct_mse\": float(correct.square().mean()),\n        \"wrong_mse\": float(wrong.square().mean()),\n    }\n"
+        },
+        {
+          "type": "text",
+          "title": "কেন BCE Function ভুল Shape সাথে সাথে আটকে দেয়?",
+          "body": "খেয়াল করুন, `target`-এর আকার `[B, 1]` হলেই আমাদের BCE সহায়ক Function এবং PyTorch API সাথে সাথে তা প্রত্যাখ্যান করে। এমন এরর দেখলে না বুঝে অন্ধভাবে `.reshape()` করার বদলে আগে নিশ্চিত হোন কোন Axis-টি কী বোঝাচ্ছে। বিপরীতে `mse_shape_audit`-এ ইচ্ছা করেই `probability - target[:, None]` লিখে দেখানো হয়েছে কীভাবে নীরবে ভুল Pairwise Broadcast ঘটে যায়। এ ছাড়া মূল Objective Function-টি Binary `{0, 1}` Label, সসীম সংখ্যা, অশূন্য Batch এবং সঠিক Dtype ও Device কঠোরভাবে পরীক্ষা করে।"
+        },
+        {
+          "type": "text",
+          "title": "নিরীক্ষার সুস্পষ্ট গণ্ডি",
+          "body": "এই Workflow-তে নতুন কোনো Decision বা Test Prediction, পারফরম্যান্স Metric কিংবা অ্যালগরিদম বাছাই করা হয়নি; Book 2 · Chapter 9 (Classical ML Capstone)-এ প্রকাশিত Test ফলাফল অপরিবর্তিত রয়েছে। একই উৎস ডেটার এই পুনর্ব্যবহার নিছক Training অংশের ওপর চালানো একটি শিক্ষামূলক সংখ্যাসূচক নিরীক্ষা, নতুন কোনো চূড়ান্ত মূল্যায়ন বা Accelerator Benchmark নয়।"
+        },
+        {
+          "type": "callout",
+          "title": "পরবর্তী ধাপ",
+          "body": "এই পাঠের কোড ব্লক দুটি একই Python Scope-এ পরপর চালিয়ে দেখুন। ঠিক পরের পাঠেই আমরা সব সংজ্ঞা একত্র করে সম্পূর্ণ স্বয়ংসম্পূর্ণ Workflow-টি দেখব। তবে কেবল আউটপুট মিলে গেলেই থেমে যাবেন না—প্রতিটি Tensor-এর Shape ও Graph উদ্দেশ্য খাতায় লিখে ব্যাখ্যা করুন কেন তিনটি স্বাধীন পদ্ধতির Gradient একে অপরের সাথে হুবহু মিলে যাচ্ছে।"
+        }
+      ]
+    },
+    {
+      "id": "ch15_experiment",
+      "title": "পূর্ণাঙ্গ Autograd Audit এবং অফলাইন রেফারেন্স Asset",
+      "subtitle": "মেমোরি Layout, Loss, VJP এবং Gradient-এর সব প্রমাণ এক জায়গায় পুনরুৎপাদন",
+      "duration": "44 min",
+      "icon": "grid_view",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "এক নজরে সম্পূর্ণ অডিট Workflow",
+          "body": "নিচের পূর্ণাঙ্গ কোড ব্লকে আমাদের পুরো উৎস নিরীক্ষার সব কটি সংজ্ঞা একসাথে দেওয়া হলো। পূর্ণ `966 × 11` Matrix-এ Gradient যাচাই, একটি ম্যানুয়াল আপডেট Step, নির্দিষ্ট Seed দেওয়া DataLoader, প্রকৃত View ও Stride Metadata, ভুল Broadcast তুলনা এবং দুই-Feature Gradient Microscope—সবই এখান থেকে একই রিপোর্টে তৈরি হয়। আর ছোট Scalar Accumulation এবং VJP-এর উদাহরণ দুটিকে গাণিতিক দৃষ্টান্ত হিসেবে স্পষ্টভাবে আলাদা রাখা হয়েছে।"
+        },
+        {
+          "type": "code",
+          "title": "সম্পূর্ণ স্বয়ংসম্পূর্ণ লোকাল PyTorch Audit Script",
+          "body": "from pathlib import Path\nimport argparse\nimport importlib.util\nimport json\nimport platform\nimport sys\nimport numpy as np\nimport torch\nimport torch.nn.functional as F\nfrom torch.utils.data import TensorDataset, DataLoader\n\nDATA = Path(\"assets/datasets/wine_quality\").resolve()\n\n\ndef load_fit(path):\n    spec = importlib.util.spec_from_file_location(\n        \"ch15_source_contract\", path.with_name(\"capstone_workflow.py\")\n    )\n    contract = importlib.util.module_from_spec(spec)\n    sys.modules[spec.name] = contract\n    spec.loader.exec_module(contract)\n    frame, X, y, groups = contract.load_source(path)\n    fit, _, _ = contract.split_roles(X, y, groups)\n    reference = json.loads(\n        path.with_name(\"capstone_lab.json\").read_text(encoding=\"utf-8\")\n    )[\"logistic_reference\"]\n    if reference[\"feature_names\"] != contract.FEATURES:\n        raise ValueError(\"Ordered feature schema mismatch\")\n    mean = np.asarray(reference[\"mean\"])\n    scale = np.asarray(reference[\"scale\"])\n    np.testing.assert_allclose(mean, X[fit].mean(axis=0), atol=1e-12)\n    np.testing.assert_allclose(scale, X[fit].std(axis=0, ddof=0), atol=1e-12)\n    Z = (X[fit] - mean) / scale\n    return frame, X, y, groups, fit, reference, Z\n\n\ndef tensors(X, y, w, b):\n    if (\n        X.ndim != 2\n        or y.shape != (X.shape[0],)\n        or w.shape != (X.shape[1],)\n        or b.ndim != 0\n        or X.shape[0] < 1\n    ):\n        raise ValueError(\"X[B,D],y[B],w[D],scalar b required\")\n    if any(\n        t.device.type != \"cpu\"\n        or t.dtype != torch.float64\n        or not torch.isfinite(t).all().item()\n        for t in [X, y, w, b]\n    ):\n        raise ValueError(\"Finite CPU float64 contract\")\n    if not torch.all((y == 0) | (y == 1)).item():\n        raise ValueError(\"Binary targets\")\n    return X, y, w, b\n\n\ndef objective(X, y, w, b):\n    X, y, w, b = tensors(X, y, w, b)\n    return F.binary_cross_entropy_with_logits(X @ w + b, y, reduction=\"mean\")\n\n\ndef analytic_gradient(X, y, w, b):\n    X, y, w, b = tensors(X, y, w, b)\n    with torch.no_grad():\n        residual = torch.sigmoid(X @ w + b) - y\n        return X.T @ residual / len(y), residual.mean()\n\n\ndef finite_gradient(X, y, w, b, eps=1e-6):\n    if not np.isfinite(eps) or eps <= 0:\n        raise ValueError(\"Positive finite difference epsilon\")\n    result = torch.empty_like(w)\n    with torch.no_grad():\n        for j in range(len(w)):\n            direction = torch.zeros_like(w)\n            direction[j] = eps\n            result[j] = (\n                objective(X, y, w + direction, b) - objective(X, y, w - direction, b)\n            ) / (2 * eps)\n        gb = (objective(X, y, w, b + eps) - objective(X, y, w, b - eps)) / (2 * eps)\n    return result, gb\n\n\ndef mse_shape_audit(probability, target):\n    if probability.ndim != 1 or probability.shape != target.shape or len(target) < 1:\n        raise ValueError(\"Aligned batch vectors\")\n    correct = probability - target\n    wrong = probability - target[:, None]  # Deliberately wrong pairwise broadcast.\n    return {\n        \"batch\": len(target),\n        \"correct_shape\": list(correct.shape),\n        \"wrong_shape\": list(wrong.shape),\n        \"correct_residual\": correct.tolist(),\n        \"wrong_residual\": wrong.tolist(),\n        \"correct_mse\": float(correct.square().mean()),\n        \"wrong_mse\": float(wrong.square().mean()),\n    }\n\n\ndef analyse_source(path):\n    frame, raw, y, groups, fit, reference, Z = load_fit(path)\n    X = torch.tensor(Z, dtype=torch.float64, device=\"cpu\")\n    target = torch.tensor(y[fit], dtype=torch.float64)\n    w = torch.zeros(X.shape[1], dtype=torch.float64, requires_grad=True)\n    bias = torch.zeros((), dtype=torch.float64, requires_grad=True)\n    loss = objective(X, target, w, bias)\n    gw, gb = torch.autograd.grad(loss, (w, bias))\n    aw, ab = analytic_gradient(X, target, w, bias)\n    fw, fb = finite_gradient(X, target, w, bias)\n    torch.testing.assert_close(gw, aw, atol=1e-12, rtol=1e-12)\n    torch.testing.assert_close(gb, ab, atol=1e-12, rtol=1e-12)\n    torch.testing.assert_close(gw, fw, atol=1e-8, rtol=1e-8)\n    torch.testing.assert_close(gb, fb, atol=1e-8, rtol=1e-8)\n    checked = torch.autograd.gradcheck(\n        lambda p, q: objective(X[:32], target[:32], p, q),\n        (w, bias),\n        eps=1e-6,\n        atol=1e-5,\n        rtol=1e-3,\n    )\n    with torch.no_grad():\n        after = float(objective(X, target, w - 0.1 * gw, bias - 0.1 * gb))\n    loader = DataLoader(\n        TensorDataset(X, target, torch.tensor(fit)),\n        batch_size=16,\n        shuffle=True,\n        generator=torch.Generator().manual_seed(42),\n        num_workers=0,\n    )\n    first_X, first_y, first_rows = next(iter(loader))\n    # A 4x3 raw source matrix for storage/stride inspection, not a training model.\n    columns = [10, 1, 9]\n    base = torch.tensor(raw[fit[:4]][:, columns], dtype=torch.float64).contiguous()\n    layouts = []\n    for name, view in [\n        (\"original\", base),\n        (\"transpose\", base.T),\n        (\"slice\", base[:, ::2]),\n        (\"expand\", base[:, :1].expand(4, 3)),\n    ]:\n        indices = [\n            [\n                view.storage_offset() + i * view.stride(0) + j * view.stride(1)\n                for j in range(view.shape[1])\n            ]\n            for i in range(view.shape[0])\n        ]\n        copy = view.contiguous()\n        layouts.append(\n            {\n                \"name\": name,\n                \"shape\": list(view.shape),\n                \"stride\": list(view.stride()),\n                \"storage_offset\": view.storage_offset(),\n                \"contiguous\": view.is_contiguous(),\n                \"values\": view.tolist(),\n                \"storage_indices\": indices,\n                \"after_contiguous_stride\": list(copy.stride()),\n                \"contiguous_shares_storage\": copy.untyped_storage().data_ptr()\n                == view.untyped_storage().data_ptr(),\n            }\n        )\n    fit_w = torch.tensor(reference[\"weights\"], dtype=torch.float64)\n    fit_bias = torch.tensor(reference[\"bias\"], dtype=torch.float64)\n    probability = torch.sigmoid(X[:4] @ fit_w + fit_bias)\n    broadcast = []\n    for batch in [1, 2, 4]:\n        record = mse_shape_audit(probability[:batch], target[:batch])\n        try:\n            F.binary_cross_entropy_with_logits(\n                X[:batch] @ fit_w + fit_bias, target[:batch, None]\n            )\n        except (ValueError, RuntimeError) as error:\n            record[\"bce_shape_error\"] = type(error).__name__\n        else:\n            raise AssertionError(\"Expected strict BCE shape rejection\")\n        broadcast.append(record)\n    # Separate two-feature BCE microscope, zero/reference parameters are declared\n    # illustrative choices on real training observations, not a fitted classifier.\n    micro_X = X[:16][:, [10, 1]].contiguous()\n    micro_y = target[:16]\n    gradient_refs = []\n    for theta in [[0.0, 0.0, 0.0], [0.5, -0.25, 0.1], [1.0, 0.5, -0.2]]:\n        mw = torch.tensor(theta[:2], dtype=torch.float64, requires_grad=True)\n        mb = torch.tensor(theta[2], dtype=torch.float64, requires_grad=True)\n        ml = objective(micro_X, micro_y, mw, mb)\n        dw, db = torch.autograd.grad(ml, (mw, mb))\n        analytic_w, analytic_b = analytic_gradient(micro_X, micro_y, mw, mb)\n        torch.testing.assert_close(dw, analytic_w)\n        torch.testing.assert_close(db, analytic_b)\n        gradient_refs.append(\n            {\n                \"parameters\": theta,\n                \"loss\": float(ml.detach()),\n                \"gradient\": dw.tolist() + [float(db)],\n            }\n        )\n    # Explicit graph lifecycle / accumulation evidence on a scalar illustration.\n    scalar = torch.tensor(3.0, dtype=torch.float64, requires_grad=True)\n    for _ in range(2):\n        (scalar.square() + 2 * scalar).backward()  # Fresh graph each time.\n    accumulated = float(scalar.grad)\n    scalar.grad = None\n    (scalar.square() + 2 * scalar).backward()\n    cleared = float(scalar.grad)\n    u = torch.tensor([1.0, 2.0], dtype=torch.float64, requires_grad=True)\n    v = u.square()\n    seed = torch.tensor([3.0, 4.0], dtype=torch.float64)\n    vjp = torch.autograd.grad(v, u, grad_outputs=seed)[0]\n    provenance = {\n        \"source\": \"UCI Wine Quality, Cortez et al. (2009), CC BY 4.0\",\n        \"sha256\": \"4a402cf041b025d4566d954c3b9ba8635a3a8a01e039005d97d6a710278cf05e\",\n    }\n    samples = [\n        {\n            \"source_row_1based\": int(i + 1),\n            \"quality\": int(frame.quality.iloc[i]),\n            \"positive\": int(y[i]),\n            \"raw\": raw[i].tolist(),\n            \"standardized\": Z[j].tolist(),\n        }\n        for j, i in enumerate(fit[:16])\n    ]\n    asset = {\n        **provenance,\n        \"scope\": \"Existing Chapter14 fit role only; first16 actual training rows, no decision/test rows or new predictive evaluation\",\n        \"feature_names\": reference[\"feature_names\"],\n        \"mean\": reference[\"mean\"],\n        \"scale\": reference[\"scale\"],\n        \"reference_weights\": reference[\"weights\"],\n        \"reference_bias\": reference[\"bias\"],\n        \"samples\": samples,\n        \"layout_columns\": columns,\n        \"layout_storage\": base.flatten().tolist(),\n        \"layouts\": layouts,\n        \"broadcast_references\": broadcast,\n        \"gradient_columns\": [10, 1],\n        \"gradient_references\": gradient_refs,\n        \"dtype\": \"float64\",\n        \"itemsize\": 8,\n        \"torch_version\": torch.__version__,\n    }\n    report = {\n        **provenance,\n        \"versions\": {\n            \"python\": platform.python_version(),\n            \"torch\": torch.__version__,\n            \"numpy\": np.__version__,\n        },\n        \"device\": \"cpu\",\n        \"dtype\": \"float64\",\n        \"fit_rows\": len(fit),\n        \"features\": 11,\n        \"gradcheck_passed\": bool(checked),\n        \"zero_parameter_mean_bce\": float(loss.detach()),\n        \"autograd_gradient\": gw.tolist() + [float(gb)],\n        \"analytic_max_abs_error\": float(torch.max(torch.abs(gw - aw))),\n        \"finite_difference_max_abs_error\": max(\n            float(torch.max(torch.abs(gw - fw))), float(torch.abs(gb - fb))\n        ),\n        \"one_manual_step_lr\": 0.1,\n        \"one_manual_step_mean_bce\": after,\n        \"first_shuffled_loader_source_rows_1based\": (first_rows + 1).tolist(),\n        \"loader_batch_shape\": list(first_X.shape),\n        \"loader_target_shape\": list(first_y.shape),\n        \"grad_accumulated_two_graphs\": accumulated,\n        \"grad_after_none_then_backward\": cleared,\n        \"vjp_seed\": seed.tolist(),\n        \"vjp_result\": vjp.tolist(),\n        \"layout_summary\": [\n            {\n                k: r[k]\n                for k in [\n                    \"name\",\n                    \"shape\",\n                    \"stride\",\n                    \"contiguous\",\n                    \"contiguous_shares_storage\",\n                ]\n            }\n            for r in layouts\n        ],\n        \"broadcast_summary\": [\n            {\n                k: r[k]\n                for k in [\n                    \"batch\",\n                    \"correct_shape\",\n                    \"wrong_shape\",\n                    \"correct_mse\",\n                    \"wrong_mse\",\n                    \"bce_shape_error\",\n                ]\n            }\n            for r in broadcast\n        ],\n        \"assumptions\": [\n            \"Existing source/target/group split reused; preprocessing reference checked against966 fit-only rows.\",\n            \"CPU float64 numerical audit; CUDA/MPS/AMP performance and reproducibility not tested.\",\n            \"Layout/storage indices are element offsets, not byte addresses; expanded views can overlap.\",\n            \"Broadcast MSE is a deliberately broken loss example; production BCE helper enforces exact batch shapes.\",\n            \"The16-row two-feature microscope uses declared illustrative parameter values on real observations, not a selected fitted model.\",\n            \"Gradient accumulation scalar examples are explicitly mathematical illustrations, not empirical data.\",\n            \"No decision/test metrics or new model-selection claims; published Chapter14 test remains observed.\",\n        ],\n    }\n    return report, asset\n\n\ndef run_analysis(path):\n    previous = torch.get_num_threads()\n    try:\n        torch.set_num_threads(1)\n        return analyse_source(path)\n    finally:\n        torch.set_num_threads(previous)\n\n\nreport, asset = run_analysis(DATA / \"winequality-red.csv\")\nprint(json.dumps(report, indent=2, allow_nan=False))\n"
+        },
+        {
+          "type": "text",
+          "title": "মেমোরি Layout ও Stride-এর প্রত্যক্ষ প্রমাণ",
+          "body": "এই Script-টি আসল PyTorch চালিয়ে চারটি অবস্থার Stride হিসাব করে: মূল `original` Matrix-এ `[3, 1]`, `transpose` করলে `[1, 3]`, এক Column বাদ দিয়ে `slice` নিলে `[3, 2]` এবং এক Column-কে `expand` করলে `[3, 0]`। পাশাপাশি প্রতিটির ওপর `.contiguous()` চালানোর পর নতুন মান ও Stride রেকর্ড করা হয়। আমাদের অ্যাপ ধারণাগত Element ও Byte Offset হিসাব করে দেখায়; ডিভাইসের সরাসরি মেমোরি Pointer ফাইলে সংরক্ষণ বা প্রকাশ করা হয় না।"
+        },
+        {
+          "type": "text",
+          "title": "Broadcasting ত্রুটির প্রত্যক্ষ প্রমাণ",
+          "body": "এখানে ব্যবহৃত Probability-গুলো এসেছে Book 2 · Chapter 9 (Classical ML Capstone)-এর শেখানো রেফারেন্স Logistic Model থেকে। ফলাফলে স্পষ্ট দেখা যায়, `B = 1` হলে সঠিক ও ভুল MSE সংখ্যাগতভাবে এক হয়ে গেলেও `B = 2` এবং `B = 4`-এ তারা সম্পূর্ণ আলাদা মান দেয়, এবং প্রতি ক্ষেত্রেই Residual-এর Shape Contract (`[B]` বনাম `[B, B]`) ভিন্ন থাকে। স্বতন্ত্র QA পরীক্ষায় সংরক্ষিত এই Matrix ও Mean-গুলোর সাথে অ্যাপের Dart Runtime হিসাব হুবহু মিলিয়ে দেখা হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Gradient, Accumulation ও VJP-এর প্রত্যক্ষ প্রমাণ",
+          "body": "রিপোর্টে পূর্ণ `966 × 11` সেটের Mean BCE Gradient, `32`-Row `gradcheck` এবং `16`-Row Microscope-এর তিনটি রেফারেন্স বিন্দু সংরক্ষিত থাকে। এর বাইরে গাণিতিক উদাহরণ হিসেবে দেখানো হয়েছে যে `x = 3` বিন্দুতে `f(x) = x² + 2x`-এর দুটি নতুন পাসে `backward()` চালালে জমা হয় `16`, আবার `grad = None` করে নতুন `backward()` চালালে পাওয়া যায় `8`; এবং `u = [1, 2]` থেকে বর্গ আউটপুটে `seed = [3, 4]` দিলে পাওয়া যায় `VJP = [6, 16]`। এগুলো নিছক গাণিতিক উদাহরণ, পর্যবেক্ষণকৃত Dataset মান নয়।"
+        },
+        {
+          "type": "code",
+          "title": "উৎস Asset পরিবর্তন না করে সংরক্ষিত রিপোর্ট পরীক্ষা করা",
+          "body": "import json\nfrom pathlib import Path\n\npath = Path(\"build/chapter-15-workflow-report.json\")\nif path.exists():\n    saved = json.loads(path.read_text())\n    print(saved[\"device\"], saved[\"dtype\"], saved[\"gradcheck_passed\"])\nelse:\n    print(\"Run the documented local CLI to save a report first\")\n"
+        },
+        {
+          "type": "text",
+          "title": "নিরাপদ ফাইল লেখার প্রকৌশলগত নিয়ম",
+          "body": "সুস্থির সফটওয়্যার প্রকৌশলের নিয়ম মেনে সাধারণ CLI মোডে Script-টি কেবল রিপোর্ট প্রিন্ট করে এবং চাইলে নির্দিষ্ট ফাইলে লেখে; সুস্পষ্টভাবে `--write-labs` Flag না দিলে বান্ডেল করা `tensor_lab.json` ফাইলে হাত দেয় না। Module-টি অন্য কোথাও `import` করলে আপনা-আপনি অডিট চালু হয়ে যায় না এবং অন্য Working Directory থেকেও এটি নিজের পাশের উৎস ফাইল খুঁজে নিতে পারে। এ ছাড়া অসীম বা `NaN` মান থাকলে JSON এক্সপোর্ট বাতিল হয় এবং সাময়িক ফাইল লিখে নিরাপদ Atomic replacement পদ্ধতিতে রিপোর্ট সংরক্ষণ করা হয়।"
+        },
+        {
+          "type": "callout",
+          "title": "রিপোর্ট পড়ার দৃষ্টিভঙ্গি",
+          "body": "সংরক্ষিত রিপোর্টটি পড়ার সময় সবার আগে `torch_version`, `device`, `dtype`, উৎস ফাইলের `sha256` Hash, `fit_rows`, `gradcheck_passed` এবং Error Tolerance-গুলো মিলিয়ে দেখুন। মনে রাখবেন, সুনির্দিষ্ট Asset পুনরুৎপাদন আর বাস্তব Machine Learning সমস্যার সমাধান দুটি ভিন্ন স্তরের প্রমাণ—স্বয়ংক্রিয় যাচাই ছাড়া কেবল ‘দেখতে যুক্তিসঙ্গত’ সংখ্যার ওপর ভরসা করে কখনোই Reproducibility দাবি করবেন না।"
+        }
+      ]
+    },
+    {
+      "id": "ch15_book_differentiation_contract",
+      "title": "Autograd-এর মূল চুক্তি: VJP, Scalar Loss এবং Weighted Reduction",
+      "subtitle": "ধারণা থেকে সমীকরণ ও উদাহরণ হয়ে হাতে-কলমে Python যাচাই",
+      "duration": "18 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন এই ধারণাটি এত গুরুত্বপূর্ণ?",
+          "body": "আমরা ইতিমধ্যেই জেনেছি যে Vector আউটপুটের ওপর `backward()` চালাতে একটি প্রারম্ভিক Upstream Vector বা Seed লাগে, আর একক Scalar Loss হলে PyTorch ডিফল্টভাবে সেই Seed ধরে নেয় `1`। এর সরাসরি অর্থ হলো—আপনার Reduction ধাপটি যে গাণিতিক Objective তৈরি করবে, নির্ভুল Autograd নিষ্ঠার সাথে ঠিক সেটিরই Gradient বের করবে! তাই পরিবর্তনশীল আকারের Batch কিংবা অসমান Sample Weight-এর ক্ষেত্রে আপনি যদি ভুল করে ‘গড়ের গড়’ (Mean of Means) বের করেন, তবে কোড নির্বিঘ্নে চললেও সামগ্রিক Global Weighted Mean-এর বদলে ভুল একটি লক্ষ্য অপ্টিমাইজ হতে থাকবে।"
+        },
+        {
+          "type": "text",
+          "title": "ধাপে ধাপে গাণিতিক যুক্তিটি সাজাই",
+          "body": "ধরুন প্রতিটি উপাদানের Loss হলো `ℓᵢ` এবং তার অঋণাত্মক স্থির Weight হলো `aᵢ`। তাহলে মোট Numerator `N = Σ aᵢℓᵢ` এবং মোট ধনাত্মক Denominator `A = Σ aᵢ` নিলে সামগ্রিক গড় দাঁড়ায় `L = N / A`, আর তার প্রকৃত Gradient হয় `(Σ aᵢ∇ℓᵢ) / A`।\n\nএবার একটি সহজ সংখ্যা দিয়ে পার্থক্যটি দেখুন: প্রথম Batch-এর মোট Weight `1` ও Mean Loss `2`, আর দ্বিতীয় Batch-এর মোট Weight `3` ও Mean Loss `6`। তাহলে প্রকৃত Global Mean হলো `(1 × 2 + 3 × 6) / (1 + 3) = 5`; অথচ Weight-এর তোয়াক্কা না করে দুই গড়ের সাধারণ গড় নিলে আসে `(2 + 6) / 2 = 4`—যা স্পষ্টতই একটি ভুল Target!"
+        },
+        {
+          "type": "math",
+          "title": "স্থির Weight-এর ক্ষেত্রে Weighted Loss ও তার Gradient",
+          "body": "L=\\frac{\\sum_i a_i\\ell_i}{\\sum_i a_i},\\quad \\nabla L=\\frac{\\sum_i a_i\\nabla\\ell_i}{\\sum_i a_i},\\quad \\sum_i a_i>0"
+        },
+        {
+          "type": "text",
+          "title": "খাতা-কলমে পূর্ণাঙ্গ সামঞ্জস্য বজায় রাখা",
+          "body": "ওপরের উদাহরণে দুটি Batch-এর Mean `2` ও `6` এবং Weight `1` ও `3` থেকে আমরা সঠিক Global Loss পেয়েছি `5`। একটি নিখুঁত সিস্টেমে Training Gradient, Logging এবং ডিস্ট্রিবিউটেড একত্রীকরণ—সব জায়গায় এই একই Denominator ধারাবাহিকভাবে বজায় রাখতে হয়। আর Loss Mask প্রয়োগের পর কোনো Batch-এ বৈধ উপাদানের সংখ্যা যদি `0` হয়ে যায়, তবে শূন্য দিয়ে ভাগ এড়াতে শুরুতেই সুস্পষ্ট Skip বা Error নীতি লিখে রাখতে হবে।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Sufficient Statistics দিয়ে হিসাব",
+          "body": "batch_means, batch_weights = [2.0, 6.0], [1.0, 3.0]\nnumerator = sum(mean * weight for mean, weight in zip(batch_means, batch_weights))\ndenominator = sum(batch_weights)\nif denominator <= 0:\n    raise ValueError(\"Positive total weight required\")\n# Reconstruct additive sufficient statistics before averaging.\nglobal_mean = numerator / denominator\nnaive_mean = sum(batch_means) / len(batch_means)\nprint(global_mean, naive_mean)\n"
+        },
+        {
+          "type": "text",
+          "title": "কোডের আউটপুট ও PyTorch-এ প্রয়োগের সতর্কতা",
+          "body": "ওপরের কোডটি চালালে আউটপুট আসে `5.0` এবং `4.0`—যা সঠিক ও ভুল গড়ের তফাত চোখে আঙুল দিয়ে দেখিয়ে দেয়। আসল PyTorch Training-এ আপনি অবশ্যই Tensor অবস্থায় থাকা Numerator ও Denominator থেকেই চূড়ান্ত Loss বানিয়ে `backward()` চালাবেন; মনে রাখবেন `.item()` কেবল হিসাব শেষে সংখ্যা Logging করার জন্য, কখনোই Training Loss তৈরির জন্য নয়—কারণ সাধারণ Python Scalar কোনো Computational Graph ধরে রাখে না।"
+        },
+        {
+          "type": "text",
+          "title": "এই স্থির-Weight সূত্রটি কখন প্রযোজ্য নয়?",
+          "body": "ওপরের স্থির-Weight সূত্রটি ব্যবহারের আগে দুটি সীমাবদ্ধতা খেয়াল রাখতে হবে। প্রথমত, Weight `aᵢ` নিজেই যদি Model-এর প্রশিক্ষণযোগ্য Parameter-এর Function হয়, তবে Denominator `A`-এরও নিজস্ব Derivative থাকবে—তখন এই সরল সূত্রটি অসম্পূর্ণ হয়ে পড়বে। দ্বিতীয়ত, DistributedDataParallel (DDP) যখন ভিন্ন ভিন্ন Rank-এর Gradient সরাসরি গড় করে, তখন একেক Rank-এ বৈধ Token-এর সংখ্যা অসমান হলে আলাদাভাবে সঠিক স্কেলিং হিসাব করতে হয়।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে চেষ্টা করুন",
+          "body": "দুটি Batch-এর মোট Weight যদি সমান হয়, তবে সাধারণ গড় (Naive Mean) নিলে কি সঠিক ফলাফল পাওয়া যাবে? আর কোনো Batch-এ বৈধ Token সংখ্যা `0` হলে শূন্য দিয়ে ভাগ এড়ানোর নিরাপদ নীতি কী হওয়া উচিত?",
+          "solution": "হ্যাঁ, প্রতিটি Batch-এর মোট Weight বা Denominator সমান হলে গড়ের গড় (Mean of Means) নিলে প্রকৃত Global Mean-এর সমান ফলই পাওয়া যায়। আর কোনো Batch-এ বৈধ Token সংখ্যা `0` হলে শূন্য দিয়ে ভাগ হওয়ার আগেই সেই ধাপটি Skip করা সম্ভব—তবে সে ক্ষেত্রে Optimizer, Scheduler এবং Global Step কীভাবে আচরণ করবে তা স্পষ্ট করতে হবে, এবং Global Mean বানানোর সময় কেবল অশূন্য Batch-এর সংখ্যা দিয়ে ভাগ করা যাবে না।",
+          "reference": "https://pytorch.org/docs/stable/notes/autograd.html"
+        },
+        {
+          "type": "text",
+          "title": "যখন Weight নিজেই প্রশিক্ষণযোগ্য: Quotient Rule-এর প্রয়োগ",
+          "body": "যখন Weight `aᵢ` নিজেই Parameter `θ`-এর ওপর নির্ভর করে (যেমন Learned Gate বা Attention-জাতীয় স্বাভাবিকীকরণে), তখন Numerator `N = Σ aᵢℓᵢ` এবং Denominator `A = Σ aᵢ` উভয়েই `θ`-এর সাপেক্ষে পরিবর্তিত হয়। ক্যালকুলাসের Quotient Rule অনুসারে তখন `∇(N / A) = (A∇N - N∇A) / A²` হয়, এবং `∇N`-এর ভেতরেও Product Rule-এর কারণে `aᵢ∇ℓᵢ` ও `ℓᵢ∇aᵢ`—দুটি অংশই উপস্থিত থাকে! নিচের সমীকরণে সাজিয়ে লিখলে দেখা যায় সেখানে `(ℓᵢ - L)∇aᵢ` নামের একটি গুরুত্বপূর্ণ অতিরিক্ত পদ যুক্ত হয়েছে। তাই এ ধরনের ক্ষেত্রে অসতর্কভাবে Denominator-কে `.detach()` করে দিলে ভিন্ন একটি Objective অপ্টিমাইজ হতে পারে!"
+        },
+        {
+          "type": "math",
+          "title": "প্রশিক্ষণযোগ্য Weight-এর ক্ষেত্রে পূর্ণাঙ্গ Derivative",
+          "body": "\\nabla_\\theta L=\\frac{1}{A}\\sum_i a_i\\nabla_\\theta\\ell_i+\\frac{1}{A}\\sum_i(\\ell_i-L)\\nabla_\\theta a_i,\\qquad A=\\sum_i a_i>0"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে হিসাব করুন",
+          "body": "ধরুন কেবল প্রথম Weight-টি Parameter-এর ওপর নির্ভরশীল: `a₁ = θ > 0`, দ্বিতীয় Weight-টি স্থির `a₂ = 1`, এবং দুটি স্থির Loss যথাক্রমে `ℓ₁ = 2` ও `ℓ₂ = 6`। তাহলে `θ = 1` বিন্দুতে `dL / dθ`-এর মান কত হবে?",
+          "solution": "এখানে `L(θ) = (2θ + 6) / (θ + 1)`। Quotient Rule প্রয়োগ করে Derivative নিলে পাওয়া যায় `-4 / (θ + 1)²`; সুতরাং `θ = 1` বসালে মান দাঁড়ায় `-4 / 4 = -1`। লক্ষ্য করুন, এখানে `ℓ₁` ও `ℓ₂` স্থির হওয়ায় তাদের নিজস্ব Derivative শূন্য—ফলে ভুল করে স্থির-Weight সূত্র প্রয়োগ করলে উত্তর আসত `0`, যা সম্পূর্ণ ভুল!",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch15_loader",
+      "title": "Dataset, DataLoader এবং নির্ভুল Batch পর্যবেক্ষণ",
+      "subtitle": "Windows-নিরাপদ Sampling এবং প্রতি ধাপে Row ও Label-এর নিখুঁত সামঞ্জস্য",
+      "duration": "38 min",
+      "icon": "grid_view",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "TensorDataset দিয়ে ডেটার সামঞ্জস্য রক্ষা",
+          "body": "`TensorDataset`-এর ভেতরে Feature Matrix `X`, Target `y` এবং উৎস Row Index একসাথে বেঁধে রাখলে প্রতিবার অভিন্ন Indexing বজায় থাকে। কখনোই Feature Array এবং Label আলাদা আলাদাভাবে Shuffle করবেন না! কোডে সব সময় Dataset-এর মোট দৈর্ঘ্য, আউটপুট Shape এবং শেষের Batch-এর নীতি পরীক্ষা করুন। আর ফাইলের এই উৎস Row নম্বরগুলো কেবল ডেটা অডিটের অবস্থান নির্দেশ করে, যাচাইকৃত কোনো বোতল বা উৎপাদনের পরিচয় নয়।"
+        },
+        {
+          "type": "code",
+          "title": "নির্দিষ্ট Seed-যুক্ত DataLoader থেকে পুনরুৎপাদনযোগ্য Batch",
+          "body": "import torch\nfrom torch.utils.data import TensorDataset, DataLoader\n\nX = torch.arange(12.0, dtype=torch.float64).reshape(6, 2)\ny = torch.tensor([0, 1, 0, 1, 0, 1])\nids = torch.arange(6)\n\n\ndef first_batch():\n    loader = DataLoader(\n        TensorDataset(X, y, ids),\n        batch_size=4,\n        shuffle=True,\n        generator=torch.Generator().manual_seed(42),\n        num_workers=0,\n    )\n    return next(iter(loader))[2]\n\n\nassert torch.equal(first_batch(), first_batch())\nprint(first_batch())\n"
+        },
+        {
+          "type": "text",
+          "title": "Generator-এর অভ্যন্তরীণ State কীভাবে সামনে এগোয়",
+          "body": "খেয়াল করুন, ওপরের কোডে প্রতিবার প্রথম Batch মেলানোর জন্য আমরা একই Seed (`42`) দিয়ে নতুন একটি `torch.Generator()` তৈরি করেছি। কারণ একই Generator দিয়ে পরের Iteration চালালে তার অভ্যন্তরীণ Random State সামনে এগিয়ে যায় এবং পরের বার ভিন্ন ক্রম দেয়! এ ছাড়া গ্লোবাল `manual_seed` দিলেই যে সব বাহ্যিক লাইব্রেরি বা Worker-এর র‍্যান্ডমনেস সম্পূর্ণ নির্ধারিত হয়ে যাবে, তা নয়—তাই ঠিক কোন State রিসেট করা হচ্ছে তা স্পষ্ট করে Test লিখুন।"
+        },
+        {
+          "type": "text",
+          "title": "কেন এখানে সচেতনভাবে num_workers=0 রাখা হয়েছে?",
+          "body": "আমাদের পরীক্ষিত Windows Workflow-তে সচেতনভাবেই `num_workers=0` ব্যবহার করা হয়েছে। Windows-এ Multiprocessing `spawn` পদ্ধতিতে কাজ করে—তাই একাধিক Worker চালাতে গেলে Import-safe `if __name__ == \"__main__\":` গার্ড এবং প্রতিটি Worker-এর ইনিশিয়ালাইজেশন সঠিকভাবে বুঝতে ও সামলাতে হয়। একইভাবে কেবল `pin_memory=True` বা `non_blocking=True` লিখে দিলেই গতি বৃদ্ধির নিশ্চয়তা নেই; প্রকৃত ডেটা ট্রান্সফার ও হিসাবের চাপ মেপেই সিদ্ধান্ত নিতে হয়।"
+        },
+        {
+          "type": "math",
+          "title": "Dataset-এর শেষে অসম্পূর্ণ (Partial) Batch-এর হিসাব",
+          "body": "N=qB+r,\\quad 0\\le r<B;\\qquad \\operatorname{drop\\_last=False}\\text{ keeps the final }r\\text{ rows}"
+        },
+        {
+          "type": "text",
+          "title": "শেষের ছোট Batch-এও Shape Contract অটুট রাখা",
+          "body": "মোট `N` সংখ্যক Row-কে Batch আকার `B` দিয়ে ভাগ করার পর শেষে যদি ছোট একটি অবশিষ্ট অংশ (`r` সংখ্যক Row) থেকেও যায়, তবুও সেখানে `X[r, D]` এবং `y[r]`-এর Shape Contract অটুট থাকা চাই। বিশেষ করে `r = 1` হলে অনির্দিষ্ট `squeeze()` যেন কখনোই Batch Axis মুছে না দেয়! আর যদি `drop_last=True` ব্যবহার করেন, তবে কোন Sample-গুলো বাদ পড়ছে তা নথিভুক্ত রাখুন; অন্যদিকে অসমান Microbatch Mean থেকে পূর্ণ Mean পেতে চাইলে অবশ্যই সঠিক Sample-count Weight ব্যবহার করুন।"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের অডিট রিপোর্ট বনাম ল্যাবের 16 টি Row",
+          "body": "একটি সূক্ষ্ম পার্থক্য পরিষ্কার করে রাখি: আমাদের JSON অডিট রিপোর্টে 966 টি Training Row থেকে Shuffle করার পর পাওয়া প্রথম 16-Row Batch-টির উৎস Row ID সংরক্ষণ করা হয়েছে। অন্যদিকে অ্যাপের Interactive Lab-গুলোতে প্রদর্শনের জন্য নেওয়া হয়েছে ক্রমানুসারে থাকা প্রথম 16 টি Training Row (`fit[:16]`)—অর্থাৎ দুটি তালিকা অভিন্ন হওয়ার দাবি নেই। তবে উভয় ক্ষেত্রেই এগুলো নিরেট Training Observation, কোনো Validation বা Test পারফরম্যান্স প্রমাণ নয়।"
+        },
+        {
+          "type": "callout",
+          "title": "Interview-এ যেভাবে ব্যাখ্যা করবেন",
+          "body": "Interview-তে DataLoader নিয়ে প্রশ্ন এলে Reproducibility, উৎস Row-এর পরিচয় রক্ষা, শেষের Partial Batch, Device Copy এবং Worker নীতি—সব কটি বিষয় একসূত্রে গেঁথে ব্যাখ্যা করুন। সাথে একটি গুরুত্বপূর্ণ পরিসংখ্যানগত সত্য মনে করিয়ে দিন: `shuffle=True` কেবল ডেটা পড়ার ক্রম এলোমেলো করে, কখনোই Statistical Independence নিশ্চিত করে না! ছোট একটি উদাহরণে `X`, `y` ও `ID`-র সামঞ্জস্য এবং Seed রিসেটের পর প্রথম Batch অভিন্ন থাকা যাচাই করুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch15_readiness",
+      "title": "ডিবাগিং চেকলিস্ট, অনুশীলন এবং মূল ডকুমেন্টেশন",
+      "subtitle": "Gradient বিশ্লেষণ থেকে শুরু করে পরবর্তী অধ্যায় ও Interview-এর পূর্ণ প্রস্তুতি",
+      "duration": "30 min",
+      "icon": "grid_view",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "প্রথম ধাপ: Shape ও মেমোরি পাস",
+          "body": "নিজের প্রস্তুতি চূড়ান্ত করতে প্রথমে প্রতিটি Operation-এর Input ও Output Axis না দেখে লেখার অভ্যাস করুন। `*` বনাম `@`, `mean` বনাম `sum`, `keepdim`, `squeeze`, `transpose`, `view` বনাম `reshape` এবং Broadcasting—প্রতিটি ধারণা নিজের ভাষায় পরিষ্কারভাবে বুঝিয়ে বলুন। এরপর Layout Lab থেকে যেকোনো একটি ঘরের Element Offset এবং Dtype অনুযায়ী তার Byte Offset খাতায় হাতে হিসাব করে মেলান।"
+        },
+        {
+          "type": "text",
+          "title": "দ্বিতীয় ধাপ: Computational Graph পাস",
+          "body": "দ্বিতীয় ধাপে যাচাই করুন Leaf ও Non-leaf পার্থক্য, `requires_grad`, `grad_fn`, `.grad` Buffer, `detach()` বনাম `clone()` এবং Backward Seed বা VJP-এর আচরণ। কখনো `loss.requires_grad` যদি `False` দেখায় বা `.grad` যদি `None` থাকে, তবে কীভাবে ধাপে ধাপে Storage মালিকানা ও Graph পথ নিরীক্ষা করবেন তা ঝালিয়ে নিন। পাশাপাশি ছোট কোড লিখে দেখান কেন `no_grad()`, `inference_mode()` এবং `eval()` তিনটি সম্পূর্ণ আলাদা নিয়ন্ত্রণ সুইচ।"
+        },
+        {
+          "type": "text",
+          "title": "তৃতীয় ধাপ: সংখ্যাসূচক স্থিতিশীলতা পাস",
+          "body": "তৃতীয় ধাপে পরীক্ষা করুন সব মান সসীম (`isfinite`) কি না, Dtype ও Device সামঞ্জস্যপূর্ণ কি না, স্থিতিশীল Loss (`BCEWithLogits`) ব্যবহৃত হয়েছে কি না, Reduction Denominator সঠিক কি না এবং Finite Difference-এর সাথে Gradient মিলছে কি না। বড় Learning Rate-এর কারণে Loss বেড়ে গেলে সেটিকে সরাসরি Autograd-এর বাগ ভেবে বসবেন না; আবার আমাদের এই CPU অডিট থেকে কখনোই অপ্রমাণিত CUDA/MPS গতি বা AMP আচরণের দাবি করবেন না।"
+        },
+        {
+          "type": "code",
+          "title": "যেকোনো Tensor একনজরে পরীক্ষার সহায়ক Tuple",
+          "body": "import torch\n\nx = torch.ones((2, 3), dtype=torch.float64, requires_grad=True)\ninfo = (\n    tuple(x.shape),\n    str(x.dtype),\n    str(x.device),\n    x.requires_grad,\n    x.is_leaf,\n    x.is_contiguous(),\n)\nprint(info)\n"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে অনুশীলন ও Interview প্রস্তুতি",
+          "body": "সমাধান না দেখে এই অধ্যায়ের 10 টি কোডিং Exercise নিজের কম্পিউটারের Python পরিবেশে লিখে সমাধান করুন। প্রতিটি Function-কে `Batch = 1`, ভুল Shape, চরম মানের Logit এবং ব্যবহৃত পুরোনো Graph দিয়ে কড়াভাবে পরীক্ষা করুন। মনে রাখবেন, অ্যাপটি কেবল আপনার সংখ্যাসূচক উত্তর যাচাই করে ও খসড়া নোট সংরক্ষণ করে—ইচ্ছামতো Python প্রোগ্রাম সরাসরি চালায় না। আর এখানকার Interview প্রশ্নগুলো শীর্ষ প্রযুক্তি প্রতিষ্ঠানের আদলে মৌলিকভাবে তৈরি অনুশীলনী, কোনো প্রতিষ্ঠানের ফাঁস হওয়া বা প্রাতিষ্ঠানিকভাবে যুক্ত প্রশ্ন নয়।"
+        },
+        {
+          "type": "text",
+          "title": "PyTorch-এর মৌলিক ডকুমেন্টেশন (অতিরিক্ত পাঠ)",
+          "body": "আরও গভীরে পড়ার জন্য PyTorch-এর অফিশিয়াল গাইডগুলো দেখতে পারেন—Tensor পরিচিতি: https://docs.pytorch.org/tutorials/beginner/basics/tensorqs_tutorial.html । Autograd-এর অভ্যন্তরীণ মেকানিক্স: https://docs.pytorch.org/docs/2.15/notes/autograd.html । Broadcasting-এর নিয়মাবলি: https://docs.pytorch.org/docs/2.15/notes/broadcasting.html । Tensor View ও মেমোরি আচরণ: https://docs.pytorch.org/docs/2.15/tensor_view.html ।"
+        },
+        {
+          "type": "text",
+          "title": "প্রাসঙ্গিক API ও Dataset-এর মূল উৎস",
+          "body": "`torch.autograd.grad` রেফারেন্স: https://docs.pytorch.org/docs/2.15/generated/torch.autograd.grad.html । প্ল্যাটফর্ম অনুযায়ী PyTorch ইনস্টলেশন: https://pytorch.org/get-started/locally/ । মূল UCI Wine Quality Dataset ও লাইসেন্স: https://archive.ics.uci.edu/dataset/186/wine+quality । এই অধ্যায়ের জন্য প্রয়োজনীয় সমস্ত কনটেন্ট ও ডেটা অ্যাপের ভেতরেই অফলাইনে যুক্ত করা আছে; বাইরের লিংকগুলো কেবল বাড়তি অধ্যয়নের জন্য।"
+        },
+        {
+          "type": "callout",
+          "title": "পরের অধ্যায়ে যাওয়ার আগে শেষ যাচাই",
+          "body": "Tensor-এর Shape, Storage, Reduction এবং Gradient প্রবাহের প্রতিটি ধাপ কোড চালিয়ে নিজের হাতে যাচাই করে নিন। এই কলকব্জাগুলো পুরোপুরি আয়ত্তে এলেই আমরা পরের অধ্যায়ে—অর্থাৎ Book 3 · Chapter 2 (Neural Networks & Backpropagation)-এ—এগুলো দিয়েই পূর্ণাঙ্গ প্রশিক্ষণযোগ্য Neural Network গড়ে তুলব।"
+        }
+      ]
+    }
+  ],
+  "quizzes": [
+    {
+      "id": "ch15_q1",
+      "question": "একটি PyTorch Tensor-এর আচরণ ও উদ্দেশ্য সঠিকভাবে বোঝার জন্য কোন Attribute সেটটি (Tensor Contract) সবচেয়ে কার্যকর?",
+      "options": [
+        "কেবল ভেতরের সংখ্যাগুলো (Values)",
+        "shape, dtype, device এবং requires_grad",
+        "কেবল ব্যবহৃত Model-এর নাম",
+        "কেবল প্রোগ্রামের Random Seed"
+      ],
+      "answer": 1,
+      "explanation": "নিছক সংখ্যার মান যথেষ্ট নয়; প্রতিটি Tensor কোন Axis বোঝাচ্ছে, সংখ্যার Dtype কী, সেটি কোন Device-এ আছে এবং Computational Graph-এ তার ভূমিকা কী—এই চারটি তথ্য একসাথে জানা অপরিহার্য।"
+    },
+    {
+      "id": "ch15_q2",
+      "question": "উপযুক্ত একটি CPU NumPy Array থেকে `torch.from_numpy` দিয়ে Tensor তৈরি করলে মেমোরির আচরণ কেমন হতে পারে?",
+      "options": [
+        "সব সময় সম্পূর্ণ স্বাধীন একটি নতুন Copy তৈরি করে",
+        "Autograd-এর Computational Graph সরাসরি NumPy-এর ভেতরে সংরক্ষণ করে",
+        "মূল NumPy Array-এর সাথে একই Storage ভাগাভাগি করতে পারে",
+        "স্বয়ংক্রিয়ভাবে ডেটা CUDA GPU-তে স্থানান্তর করে দেয়"
+      ],
+      "answer": 2,
+      "explanation": "`torch.from_numpy` মূল CPU NumPy Array-এর Storage শেয়ার করে; ফলে পরে ওই Array-এর মান বদলালে Tensor-এর ভেতরের মানও বদলে যায়। তাই সব সময় Storage মালিকানা যাচাই করা জরুরি।"
+    },
+    {
+      "id": "ch15_q3",
+      "question": "PyTorch-এ একটি খাঁটি Scalar Tensor-এর `shape` কোনটি?",
+      "options": [
+        "[1]",
+        "[1, 1]",
+        "[0]",
+        "[]"
+      ],
+      "answer": 3,
+      "explanation": "শূন্য মাত্রার (`Rank 0`) একটি Scalar Tensor-এর Shape হলো `[]`, আর এক উপাদানের একমাত্রিক Vector-এর Shape হলো `[1]`—দুটির গাণিতিক আচরণ ও Shape Contract আলাদা।"
+    },
+    {
+      "id": "ch15_q4",
+      "question": "`B = 1` হওয়ার সম্ভাবনা মাথায় রেখে `[B, 1]` আকারের Logit থেকে নিরাপদে `[B]` আকার পেতে কোনটি ব্যবহার করা উচিত?",
+      "options": [
+        "squeeze(-1)",
+        "সব ক্ষেত্রে Argument ছাড়া খালি squeeze()",
+        "reshape() ছাড়া এটি করা অসম্ভব",
+        "mean()"
+      ],
+      "answer": 0,
+      "explanation": "নির্দিষ্ট Axis না বলে খালি `squeeze()` চালালে `B = 1` অবস্থায় সামনের Batch Axis-টিও মুছে গিয়ে পুরো আউটপুট একটি Scalar `[]` হয়ে যেতে পারে; কিন্তু `squeeze(-1)` কেবল শেষের Axis-টিই সরায়।"
+    },
+    {
+      "id": "ch15_q5",
+      "question": "মেমোরি ব্যবহারের দিক থেকে Basic Slicing এবং Advanced Indexing-এর সাধারণ আচরণ কেমন?",
+      "options": [
+        "দুটি পদ্ধতিই সব সময় মূল মেমোরির View ফিরিয়ে দেয়",
+        "Basic Slicing সাধারণত View দেয়, আর Advanced Indexing নতুন Copy তৈরি করতে পারে",
+        "দুটি পদ্ধতিই সব সময় নতুন মেমোরিতে ডেটা Clone করে",
+        "কোনোটিই মূল Tensor থেকে সংখ্যার মান পড়ে না"
+      ],
+      "answer": 1,
+      "explanation": "সাধারণ Slice মূল Storage-এর ওপর View তৈরি করলেও তালিকা বা Index Tensor দিয়ে Advanced Indexing করলে সাধারণত নতুন মেমোরি বরাদ্দ হয় (তবে বাম পাশে Index বসিয়ে মান অ্যাসাইন করার নিয়ম আলাদা)। কেবল মান সমান দেখেই Storage মালিকানা বোঝা যায় না।"
+    },
+    {
+      "id": "ch15_q6",
+      "question": "একটি Contiguous `[4, 3]` আকারের Row-major Matrix-কে Transpose (`x.T`) করলে তার নতুন `stride` কত হবে?",
+      "options": [
+        "আগের মতোই [3, 1] অপরিবর্তিত থাকবে",
+        "সব ক্ষেত্রে [4, 1] হবে",
+        "[1, 3]",
+        "[0, 0]"
+      ],
+      "answer": 2,
+      "explanation": "Transpose করার সময় মেমোরির ভৌত মানগুলো জায়গা বদল না করেই কেবল Axis এবং Stride অদলবদল করে (`[3, 1]` থেকে `[1, 3]`) একটি Non-contiguous View তৈরি করে।"
+    },
+    {
+      "id": "ch15_q7",
+      "question": "`reshape()` কল করলে কখনোই নতুন মেমোরি Copy তৈরি হবে না—এমন কোনো নিশ্চয়তা কি আছে?",
+      "options": [
+        "হ্যাঁ, এটি সব সময় কেবল View ফিরিয়ে দেয়",
+        "না, এটি সব সময় বাধ্যতামূলকভাবে নতুন Copy তৈরি করে",
+        "কেবল CPU Tensor-এর ক্ষেত্রে এই নিশ্চয়তা আছে",
+        "না; মেমোরির Layout অনুযায়ী এটি View অথবা Copy যেকোনোটি দিতে পারে"
+      ],
+      "answer": 3,
+      "explanation": "বিদ্যমান Stride কাঠামোর সাথে নতুন আকার মিলে গেলে `reshape()` একটি View দেয়, কিন্তু না মিললে আড়ালে নতুন মেমোরিতে ডেটা Copy করে নেয়। তাই মেমোরি বরাদ্দের অনুমান সব সময় API চুক্তি দেখে যাচাই করতে হয়।"
+    },
+    {
+      "id": "ch15_q8",
+      "question": "আকার `1`-এর কোনো Singleton Axis-কে `.expand()` দিয়ে বড় আকারে প্রসারিত করলে ওই Axis-টির `stride` কত হতে পারে?",
+      "options": [
+        "0",
+        "অবশ্যই কোনো ঋণাত্মক সংখ্যা",
+        "সব সময় 8 Byte",
+        "সব সময় numel()-এর সমান"
+      ],
+      "answer": 0,
+      "explanation": "`0` Stride ব্যবহারের ফলে Storage-এর একই Element একাধিক Logical Coordinate থেকে পড়া যায়; তবে একই ঘরে বহু Coordinate যুক্ত থাকায় এর ওপর In-place মান লেখা ঝুঁকিপূর্ণ।"
+    },
+    {
+      "id": "ch15_q9",
+      "question": "`[B]` আকারের একটি Tensor থেকে `[B, 1]` আকারের আরেকটি Tensor বিয়োগ করলে আউটপুটের Shape কী দাঁড়ায়?",
+      "options": [
+        "সব সময় [B]",
+        "[B, B]",
+        "[1]",
+        "PyTorch সব সময় এই Operation প্রত্যাখ্যান করে"
+      ],
+      "answer": 1,
+      "explanation": "ডান দিক থেকে Axis মেলানোর (Right-aligned Broadcasting) নিয়মে `[B]` এবং `[B, 1]` মিলে `[B, B]` আকারের অপ্রত্যাশিত Pairwise Residual Matrix তৈরি করে।"
+    },
+    {
+      "id": "ch15_q10",
+      "question": "`B = 1` অবস্থায় ভুল Broadcasting থাকা সত্ত্বেও যদি সংখ্যাসূচক Loss সঠিক মানের সমান আসে, তবে তার অর্থ কী?",
+      "options": [
+        "কোডটি সব আকারের Batch-এর জন্যই শতভাগ নির্ভুল প্রমাণিত হলো",
+        "ভেতরে Autograd স্বয়ংক্রিয়ভাবে বন্ধ হয়ে গেছে",
+        "সংখ্যার মান মিললেও কোডের ভেতরে মারাত্মক Shape Bug তখনো লুকিয়ে থাকতে পারে",
+        "Tensor-টির Dtype বদলে পূর্ণসংখ্যা হয়ে গেছে"
+      ],
+      "answer": 2,
+      "explanation": "`B = 1` হলে `[1]` এবং `[1, 1]`-এর গড় একই Scalar সংখ্যা দেখাতে পারে; তাই নিছক একক সংখ্যার মিল কখনোই সঠিক Axis বা Sample-Target সম্পর্কের প্রমাণ নয়।"
+    },
+    {
+      "id": "ch15_q11",
+      "question": "`X`-এর আকার `[B, D]` এবং `w`-এর আকার `[D]` হলে `X @ w` Operation-এর আউটপুট Shape কী হবে?",
+      "options": [
+        "[B, D]",
+        "[D]",
+        "[]",
+        "[B]"
+      ],
+      "answer": 3,
+      "explanation": "Matrix-Vector গুণফলে শেষের Feature Axis (`D`) সংকুচিত (Contract) হয়ে প্রতিটি Row-এর জন্য একটি করে মান দেয়, ফলে আউটপুট হয় `[B]`; এটি সাধারণ Elementwise `*` গুণ থেকে সম্পূর্ণ আলাদা।"
+    },
+    {
+      "id": "ch15_q12",
+      "question": "একই Batch আকার `B`-এর জন্য `sum` Reduction নিলে প্রাপ্ত Gradient, `mean` Reduction-এর Gradient-এর তুলনায় কত গুণ হয়?",
+      "options": [
+        "B গুণ",
+        "1 / B গুণ",
+        "সব সময় হুবহু সমান থাকে",
+        "সব সময় শূন্য হয়ে যায়"
+      ],
+      "answer": 0,
+      "explanation": "`mean` Reduction-এ যোগফলকে Denominator `B` দিয়ে ভাগ করা হয় বলে `sum` নিলে Gradient ঠিক `B` গুণ বড় আসে; Microbatch স্কেলিংয়ের সময় এই হিসাবটি অবশ্যই মেলাতে হয়।"
+    },
+    {
+      "id": "ch15_q13",
+      "question": "PyTorch-এর ডিফল্ট `torch.std` (`correction=1`) এবং scikit-learn-এর `StandardScaler`-এর স্কেলের মধ্যে মূল পার্থক্য কী?",
+      "options": [
+        "দুটি সব পরিস্থিতিতেই হুবহু একই সংখ্যা দেয়",
+        "একটি Sample (N - 1 Denominator) এবং অন্যটি Population (N Denominator) প্রথা অনুসরণ করে",
+        "স্কেলের মান সব সময় 0 আসে",
+        "কেবল Dtype ছাড়া এদের আর কোনো গাণিতিক পার্থক্য নেই"
+      ],
+      "answer": 1,
+      "explanation": "আমাদের Workflow-তে `StandardScaler`-এর সাথে মেলাতে `numpy.std(ddof=0)` (অর্থাৎ `N` Denominator) যাচাই করা হয়; কিন্তু ডিফল্ট `correction=1` নিলে `N - 1` দিয়ে ভাগ হওয়ায় ফলাফল ভিন্ন আসে।"
+    },
+    {
+      "id": "ch15_q14",
+      "question": "পূর্ণসংখ্যার (Integer) কোনো Tensor-এ `requires_grad=True` দেওয়ার বিষয়ে PyTorch-এর নিয়ম কী?",
+      "options": [
+        "যেকোনো পূর্ণসংখ্যার ক্ষেত্রেই এটি সর্বদা বৈধ",
+        "কেবল ঋণাত্মক পূর্ণসংখ্যার ক্ষেত্রে এটি কাজ করে",
+        "Autograd দিয়ে Derivative হিসাবের জন্য Floating-point অথবা Complex Dtype প্রয়োজন",
+        "PyTorch স্বয়ংক্রিয়ভাবে সেটিকে float64-এ বদলে নেয়"
+      ],
+      "answer": 2,
+      "explanation": "বিচ্ছিন্ন Class Index বা পূর্ণসংখ্যার ওপর অবিচ্ছিন্ন Derivative সংজ্ঞায়িত নয়; তাই Autograd Variable-এর জন্য অবশ্যই Floating-point বা Complex Tensor ব্যবহার করতে হয়।"
+    },
+    {
+      "id": "ch15_q15",
+      "question": "মাঝপথের কোনো Operation থেকে তৈরি হওয়া Non-leaf Tensor-এর `.grad` Buffer-এর সাধারণ আচরণ কেমন?",
+      "options": [
+        "প্রতিবার backward() চললে এটি স্বয়ংক্রিয়ভাবে সংরক্ষিত হয়",
+        "সব সময় শূন্যে ভরা একটি Tensor ধরে রাখে",
+        "কেবল নিজের Shape সংরক্ষণ করে রাখে",
+        "আগে থেকে retain_grad() কল না করলে এতে মান জমা হয় না"
+      ],
+      "answer": 3,
+      "explanation": "মেমোরি বাঁচাতে PyTorch কেবল Leaf Parameter-এর `.grad` ধরে রাখে; কোনো Non-leaf Tensor-এ `requires_grad=True` থাকলেও ডিবাগিংয়ের জন্য আলাদাভাবে `retain_grad()` না দিলে তার `.grad` Buffer ফাঁকা (`None`) থাকে।"
+    },
+    {
+      "id": "ch15_q16",
+      "question": "একক Scalar নয় এমন আউটপুটের ওপর `backward` বা `autograd.grad` চালানোর সময় দেওয়া Seed (`grad_outputs`)-এর গাণিতিক অর্থ কী?",
+      "options": [
+        "আউটপুট উপাদানগুলোর Weight বা Cotangent, যা দিয়ে Vector-Jacobian Product (VJP) হিসাব হয়",
+        "পুরো Jacobian Matrix-এর সব কটি উপাদান সরাসরি ফেরত আনা",
+        "ব্যবহৃত Optimizer State নির্ধারণ করা",
+        "Input Tensor-এর Dtype পরিবর্তন করা"
+      ],
+      "answer": 0,
+      "explanation": "প্রদত্ত `grad_outputs` Vector `v` ব্যবহার করে PyTorch মূলত Scalar রাশি `vᵀf(x)`-এর সাপেক্ষে ইনপুটের Gradient বা VJP হিসাব করে।"
+    },
+    {
+      "id": "ch15_q17",
+      "question": "`torch.autograd.grad(...)` Function-টি সাধারণ ব্যবহারে ঠিক কী কাজ করে?",
+      "options": [
+        "সব Leaf Tensor-এর পুরোনো .grad Buffer মুছে দেয়",
+        "চাওয়া Input-গুলোর Gradient সরাসরি রিটার্ন করে, কিন্তু .grad Buffer-এ মান জমা করে না",
+        "সরাসরি সব Parameter-কে In-place আপডেট করে দেয়",
+        "স্থায়ীভাবে পুরো Computational Graph ভেঙে দেয়"
+      ],
+      "answer": 1,
+      "explanation": "`.backward()` যেখানে Leaf Tensor-এর `.grad` Buffer-এ মান যোগ করে, সেখানে `torch.autograd.grad()` কেবল হিসাব করা Derivative-গুলো সরাসরি রিটার্ন করে।"
+    },
+    {
+      "id": "ch15_q18",
+      "question": "পুরোনো `.grad` পরিষ্কার না করে একই Parameter ও ডেটার ওপর দুটি নতুন অভিন্ন Forward Graph বানিয়ে প্রতিবার `backward()` চালালে Buffer-এ জমাকৃত Gradient কত হবে?",
+      "options": [
+        "0",
+        "g",
+        "2g",
+        "মূল Loss বাধ্যতামূলকভাবে দ্বিগুণ হয়ে 2L হয়ে যাবে"
+      ],
+      "answer": 2,
+      "explanation": "প্রতিটি নতুন পাসে Mean Loss নিজে থেকে দ্বিগুণ না হয়ে `L`-ই থাকে, কিন্তু `.grad` Buffer পরিষ্কার না করায় দুই পাসের Derivative `g + g` যোগ হয়ে `2g` হয়ে যায়।"
+    },
+    {
+      "id": "ch15_q19",
+      "question": "`retain_graph=True` এবং `create_graph=True`-এর মধ্যে প্রকৃত পার্থক্য কী?",
+      "options": [
+        "একই কাজের জন্য ব্যবহৃত দুটি ভিন্ন Flag নাম মাত্র",
+        "দুটি Flag-ই Model-কে স্বয়ংক্রিয়ভাবে eval() মোডে নিয়ে যায়",
+        "দুটিই কেবল Tensor-এর মেমোরি Storage নতুন করে Clone করে",
+        "প্রথমটি বিদ্যমান সংরক্ষিত Graph পুনর্ব্যবহারযোগ্য রাখে, আর দ্বিতীয়টি Derivative হিসাবকেও নতুন Graph হিসেবে রেকর্ড করে"
+      ],
+      "answer": 3,
+      "explanation": "একই সংরক্ষিত Graph পুনর্ব্যবহার করা আর উচ্চতর ক্রমের Derivative (যেমন Hessian) বের করার প্রয়োজনীয়তা সম্পূর্ণ আলাদা, এবং দুটোতেই বাড়তি মেমোরি খরচ হয়।"
+    },
+    {
+      "id": "ch15_q20",
+      "question": "`clone()` বনাম `detach()`-এর আচরণের তুলনায় কোন বক্তব্যটি সঠিক?",
+      "options": [
+        "clone() ডেটা Copy করলেও Graph সংযোগ রাখতে পারে; আর detach() Graph সংযোগ কাটলেও মূল Storage শেয়ার করতে পারে",
+        "দুটি Method ভেতরে ভেতরে হুবহু একই কাজ করে",
+        "detach() সব সময় সম্পূর্ণ নতুন মেমোরিতে Deep Copy তৈরি করে",
+        "clone() সব সময় Graph থেকে বিচ্ছিন্ন একটি নতুন Leaf Tensor তৈরি করে"
+      ],
+      "answer": 0,
+      "explanation": "Computational Graph মালিকানা এবং মেমোরির Storage মালিকানা দুটি স্বতন্ত্র দিক; দুটোই একসাথে চাইলে `detach().clone()` ব্যবহার করতে হয়।"
+    },
+    {
+      "id": "ch15_q21",
+      "question": "`model.eval()` কল করলে কি PyTorch-এ Autograd-এর Gradient রেকর্ড করা বন্ধ হয়ে যায়?",
+      "options": [
+        "হ্যাঁ, সব সময় স্বয়ংক্রিয়ভাবে বন্ধ হয়ে যায়",
+        "না; এটি কেবল Module-এর আচরণ বদলায়, Graph রেকর্ডিং নিয়ন্ত্রণ করে না",
+        "কেবল float64 ব্যবহারের সময় বন্ধ করে",
+        "কেবল CPU-তে চালানোর সময় বন্ধ করে"
+      ],
+      "answer": 1,
+      "explanation": "`model.eval()` মূলত `Dropout` ও `BatchNorm`-এর মতো Layer-এর মোড পরিবর্তন করে; আর Graph রেকর্ডিং বন্ধ করার কাজটি করে `torch.no_grad()` বা `torch.inference_mode()`।"
+    },
+    {
+      "id": "ch15_q22",
+      "question": "`B` আকারের একটি Batch-এ Mean Reduction সহ `BCEWithLogits` Loss-এর ক্ষেত্রে Logit Vector `z`-এর সাপেক্ষে Gradient কত?",
+      "options": [
+        "X @ w",
+        "স্কেলিং ছাড়া y - sigmoid(z)",
+        "(sigmoid(z) - y) / B",
+        "সব সময় ধ্রুবক 1"
+      ],
+      "answer": 2,
+      "explanation": "Mean Reduction থাকায় Denominator-এ `B` আসে এবং প্রতিটি Logit-এর সাপেক্ষে Derivative হয় `(sigmoid(z) - y) / B`; এরপর Chain Rule প্রয়োগে Weight Gradient পাওয়া যায় `Xᵀ(sigmoid(z) - y) / B`।"
+    },
+    {
+      "id": "ch15_q23",
+      "question": "`float64`-এ `torch.autograd.gradcheck` সফলভাবে পাস করা আসলে কী প্রমাণ করে?",
+      "options": [
+        "অদেখা Test সেটে Model-টি দারুণ Accuracy দেবে",
+        "প্রোডাকশন GPU-তে কোডটি সর্বোচ্চ গতিতে চলবে",
+        "উৎস Dataset-এর সমস্ত Label শতভাগ নির্ভুল আছে",
+        "পরীক্ষিত মসৃণ বিন্দুগুলোতে Analytical/Autograd ও সংখ্যাসূচক Derivative পরস্পরের সাথে মিলছে"
+      ],
+      "answer": 3,
+      "explanation": "`gradcheck` কেবল নির্দিষ্ট মসৃণ শর্তে আপনার লেখা সমীকরণের Gradient সঠিক হওয়ার প্রমাণ দেয়; এটি Generalization, কার্যকারণ বা Accelerator গতির কোনো সার্টিফিকেট নয়।"
+    },
+    {
+      "id": "ch15_q24",
+      "question": "এই অধ্যায়ের (Book 3 · Chapter 1) বাস্তব ডেটা নিরীক্ষার সুনির্দিষ্ট পরিধি কোনটি?",
+      "options": [
+        "পূর্ববর্তী 966 টি Training (fit-role) Row পুনর্ব্যবহার করে সংখ্যাসূচক নিরীক্ষা; কোনো নতুন Test মূল্যায়ন নয়",
+        "চূড়ান্ত Test সেটের ওপর নতুন করে Hyperparameter টিউন করা",
+        "বিশাল নতুন একটি Deep Network-এর Benchmark তৈরি করা",
+        "প্রোডাকশন পর্যায়ে CUDA ক্লাস্টারে Model ট্রেন করা"
+      ],
+      "answer": 0,
+      "explanation": "এখানে কেবল মূল ডেটা ও Book 2 · Chapter 9 (Classical ML Capstone)-এর Training রূপান্তর পুনর্ব্যবহার করে Tensor ও Autograd যাচাই করা হয়েছে; প্রকাশিত Test ফলাফল অপরিবর্তিত রয়েছে।"
+    },
+    {
+      "id": "ch15_q_microbatch_revision",
+      "question": "পূর্ণ `4`-Row গড় Loss-এর সমান Gradient পেতে চাইলে `3` টি Row এবং `1` টি Row-এর দুটি Microbatch-এর Mean Loss-কে যথাক্রমে কত Weight দিয়ে গুণ করতে হবে?",
+      "options": [
+        "1 এবং 1",
+        "1/2 এবং 1/2",
+        "3/4 এবং 1/4",
+        "1/4 এবং 3/4"
+      ],
+      "answer": 2,
+      "explanation": "সামগ্রিক Global Mean-এ প্রতিটি Row-এর সমান গুরুত্ব নিশ্চিত করতে `microbatch_size / total_size` অনুপাতে স্কেল করতে হয়—এখানে যা `3/4` ও `1/4`। তবে Batch-নির্ভর Layer বা Token Mask থাকলে Objective ও Denominator আলাদাভাবে যাচাই করতে হবে।"
+    },
+    {
+      "id": "ch15_q_hvp_revision",
+      "question": "`f(x) = x₀² + 3x₀x₁ + 2x₁²` এবং দিক Vector `v = [1, -1]` হলে Hessian-Vector Product `Hv` কত হবে?",
+      "options": [
+        "[-1, -1]",
+        "[8, 11]",
+        "[2, 4]",
+        "[1, 1]"
+      ],
+      "answer": 0,
+      "explanation": "Function-টির Hessian হলো `[[2, 3], [3, 4]]`; একে `v = [1, -1]` দিয়ে গুণ করলে পাওয়া যায় `[2 - 3, 3 - 4] = [-1, -1]`। কোডে `create_graph=True` দিয়ে প্রথম Gradient বের করে তার সাথে `v`-এর Dot Product-কে আবার Differentiate করলেই সরাসরি এটি পাওয়া যায়।"
+    }
+  ],
+  "exercises": [
+    {
+      "id": "ch15_ex_chain",
+      "title": "Scalar Chain-Rule অনুযায়ী Gradient নির্ণয়",
+      "prompt": "CPU-তে `float64` ধরনের Scalar `x = 3.0` নিন এবং Function `f = x² + 2x` গঠন করুন। PyTorch-এর `backward()` চালিয়ে `x.grad`-এর Scalar মানটি `answer`-এ রাখুন।",
+      "starter": "import torch\n\nx = torch.tensor(3.0, dtype=torch.float64, requires_grad=True)\nanswer = 0.0\n",
+      "solution": "import torch\n\nx = torch.tensor(3.0, dtype=torch.float64, requires_grad=True)\nloss = x.square() + 2 * x\nloss.backward()\nanswer = x.grad.item()\nprint(answer)\n",
+      "expected": 8,
+      "explanation": "`f(x) = x² + 2x`-এর Derivative হলো `2x + 2`; তাই `x = 3.0` বসালে পাওয়া যায় `2(3) + 2 = 8`। আউটপুট একক Scalar হওয়ায় `backward()` ডিফল্ট প্রারম্ভিক Seed হিসেবে `1` ব্যবহার করে।"
+    },
+    {
+      "id": "ch15_ex_vjp",
+      "title": "Vector-Jacobian Product (VJP) হিসাব",
+      "prompt": "`x = [1.0, 2.0]`, আউটপুট `x²` এবং প্রারম্ভিক `seed = [3.0, 4.0]` দেওয়া আছে। `torch.autograd.grad` ব্যবহার করে VJP বের করুন এবং প্রাপ্ত Gradient Vector-এর উপাদানগুলোর যোগফল (`sum`) `answer`-এ রাখুন।",
+      "starter": "import torch\n\nx = torch.tensor([1.0, 2.0], dtype=torch.float64, requires_grad=True)\nseed = torch.tensor([3.0, 4.0], dtype=x.dtype)\nanswer = 0.0\n",
+      "solution": "import torch\n\nx = torch.tensor([1.0, 2.0], dtype=torch.float64, requires_grad=True)\nseed = torch.tensor([3.0, 4.0], dtype=x.dtype)\ngrad = torch.autograd.grad(x.square(), x, grad_outputs=seed)[0]\nanswer = grad.sum().item()\nprint(answer)\n",
+      "expected": 22,
+      "explanation": "এখানে প্রতিটি পদের VJP হলো `[2 × 1 × 3, 2 × 2 × 4] = [6, 16]`, এবং এদের যোগফল `6 + 16 = 22`।"
+    },
+    {
+      "id": "ch15_ex_broadcast",
+      "title": "Pairwise Broadcast-এ মোট উপাদানের সংখ্যা",
+      "prompt": "`[4]` আকারের শূন্য Vector `p` এবং `[4, 1]` আকারের একক Matrix `y` দেওয়া আছে। `p - y` বিয়োগফলের মোট উপাদান সংখ্যা (`numel()`) বের করে `answer`-এ রাখুন।",
+      "starter": "import torch\n\np = torch.zeros(4)\ny = torch.ones(4, 1)\nanswer = 0.0\n",
+      "solution": "import torch\n\np = torch.zeros(4)\ny = torch.ones(4, 1)\nanswer = (p - y).numel()\nprint(answer)\n",
+      "expected": 16,
+      "explanation": "Broadcasting-এর ফলে `[4]` এবং `[4, 1]` বিয়োগ হয়ে `[4, 4]` আকারের Matrix তৈরি করে, তাই মোট উপাদান সংখ্যা হয় `16`। প্রতিটি Row-এর সাথে নিজস্ব Target-এর সম্পর্ক নিশ্চিত করতে সমান Shape-এর `assert` দিন।"
+    },
+    {
+      "id": "ch15_ex_stride",
+      "title": "Transpose-এর পর Storage Offset নির্ণয়",
+      "prompt": "Contiguous `arange(6.0)`-কে `[2, 3]` আকারে সাজিয়ে Transpose (`.T`) করা হয়েছে। রূপান্তরিত Tensor-টির Logical Coordinate `[2, 1]`-এর উপাদানটি মূল Storage-এর কত নম্বর ঘরে (Element Offset) আছে তা বের করে `answer`-এ রাখুন।",
+      "starter": "import torch\n\nx = torch.arange(6.0, dtype=torch.float64).reshape(2, 3).T\nanswer = 0.0\n",
+      "solution": "import torch\n\nx = torch.arange(6.0, dtype=torch.float64).reshape(2, 3).T\nanswer = x.storage_offset() + 2 * x.stride(0) + 1 * x.stride(1)\nprint(answer)\n",
+      "expected": 5,
+      "explanation": "Transpose করার পর Stride হয় `[1, 3]` এবং প্রারম্ভিক Offset থাকে `0`; ফলে `[2, 1]` ঘরের Element Offset দাঁড়ায় `2 × 1 + 1 × 3 = 5` (আর `float64` হওয়ায় মূল Storage থেকে Byte Offset হতো `5 × 8 = 40`)।"
+    },
+    {
+      "id": "ch15_ex_bias",
+      "title": "Broadcast হওয়া Scalar Bias-এর Gradient",
+      "prompt": "Vector `x = [1.0, 2.0, 3.0]` এবং `requires_grad=True` সহ Scalar Bias `b = 1.0` দেওয়া আছে। `(x + b).sum()`-এর সাপেক্ষে `b`-এর Gradient বের করে `answer`-এ রাখুন।",
+      "starter": "import torch\n\nx = torch.tensor([1.0, 2.0, 3.0], dtype=torch.float64)\nb = torch.tensor(1.0, dtype=x.dtype, requires_grad=True)\nanswer = 0.0\n",
+      "solution": "import torch\n\nx = torch.tensor([1.0, 2.0, 3.0], dtype=torch.float64)\nb = torch.tensor(1.0, dtype=x.dtype, requires_grad=True)\n(x + b).sum().backward()\nanswer = b.grad.item()\nprint(answer)\n",
+      "expected": 3,
+      "explanation": "Scalar Bias `b` প্রসারিত হয়ে তিনটি অবস্থানেই যুক্ত হয়েছে, তাই Backward Pass-এ তিনটি অবস্থানের Derivative (`1 + 1 + 1`) যোগ হয়ে চূড়ান্ত Bias Gradient দাঁড়ায় `3`।"
+    },
+    {
+      "id": "ch15_ex_reduction",
+      "title": "Sum এবং Mean Reduction-এ Gradient-এর অনুপাত",
+      "prompt": "Scalar `x = 2.0` এবং Coefficient Vector `coeff = [1.0, 2.0, 3.0]` দেওয়া আছে। `(x * coeff).sum()`-এর সাপেক্ষে `x`-এর Gradient-কে `(x * coeff).mean()`-এর সাপেক্ষে `x`-এর Gradient দিয়ে ভাগ করে অনুপাতটি `answer`-এ রাখুন।",
+      "starter": "import torch\n\nx = torch.tensor(2.0, dtype=torch.float64, requires_grad=True)\ncoeff = torch.tensor([1.0, 2.0, 3.0], dtype=x.dtype)\nanswer = 0.0\n",
+      "solution": "import torch\n\nx = torch.tensor(2.0, dtype=torch.float64, requires_grad=True)\ncoeff = torch.tensor([1.0, 2.0, 3.0], dtype=x.dtype)\na = torch.autograd.grad((x * coeff).sum(), x)[0]\nb = torch.autograd.grad((x * coeff).mean(), x)[0]\nanswer = (a / b).item()\nprint(answer)\n",
+      "expected": 3,
+      "explanation": "`sum` নিলে Gradient আসে `6`, আর `3` টি উপাদানের `mean` নিলে আসে `2`—তাই অনুপাত `6 / 2 = 3`। খেয়াল রাখবেন, Buffer-এ মান জমে যাওয়ার সাথে Reduction যেন মিশে না যায়, সে জন্য দুটি আলাদা নতুন Forward Graph বা `autograd.grad` ব্যবহার করা উচিত।"
+    },
+    {
+      "id": "ch15_ex_bce",
+      "title": "BCEWithLogits-এ একক Logit-এর Derivative",
+      "prompt": "একক Scalar Logit `z = 0.0` এবং Binary Target `1.0`-এর জন্য `binary_cross_entropy_with_logits` (Mean Reduction)-এর সাপেক্ষে `z`-এর Gradient বের করে `answer`-এ রাখুন।",
+      "starter": "import torch\nimport torch.nn.functional as F\n\nz = torch.tensor(0.0, dtype=torch.float64, requires_grad=True)\nanswer = 0.0\n",
+      "solution": "import torch\nimport torch.nn.functional as F\n\nz = torch.tensor(0.0, dtype=torch.float64, requires_grad=True)\nloss = F.binary_cross_entropy_with_logits(z, torch.ones_like(z))\nanswer = torch.autograd.grad(loss, z)[0].item()\nprint(answer)\n",
+      "expected": -0.5,
+      "explanation": "সূত্র অনুযায়ী `sigmoid(0) - target = 0.5 - 1.0 = -0.5`। এখানে মাত্র একটি উপাদান থাকায় Mean Reduction-এর Denominator `1`।"
+    },
+    {
+      "id": "ch15_ex_returned",
+      "title": "রিটার্ন পাওয়া Gradient বনাম Leaf .grad Buffer",
+      "prompt": "Scalar `x = 2.0` নিয়ে `torch.autograd.grad(x.square(), x)` চালান। এখান থেকে Derivative ফেরত পাওয়ার পরেও যদি `x.grad` মানটি `None` থেকে যায়, তবে `answer`-এ `1` (অন্যথায় `0`) রাখুন।",
+      "starter": "import torch\n\nx = torch.tensor(2.0, dtype=torch.float64, requires_grad=True)\nanswer = 0.0\n",
+      "solution": "import torch\n\nx = torch.tensor(2.0, dtype=torch.float64, requires_grad=True)\ngrad = torch.autograd.grad(x.square(), x)[0]\nanswer = float(x.grad is None)\nprint(answer)\n",
+      "expected": 1,
+      "explanation": "`autograd.grad` সরাসরি Derivative (`4.0`) রিটার্ন করে, কিন্তু `.backward()`-এর মতো Leaf Tensor-এর `.grad` Buffer পূরণ করে না। তাই `x.grad is None` সত্য হওয়ায় উত্তর `1`।"
+    },
+    {
+      "id": "ch15_ex_accumulate",
+      "title": "দুটি নতুন Graph-এ ক্রমাগত Gradient জমা হওয়া",
+      "prompt": "Scalar `x = 3.0` দেওয়া আছে। মাঝখানে `.grad` Buffer পরিষ্কার না করে পরপর দুবার নতুন `x.square()` Forward Graph তৈরি করে প্রতিবার `backward()` চালান এবং শেষে জমাকৃত `x.grad`-এর মান `answer`-এ রাখুন।",
+      "starter": "import torch\n\nx = torch.tensor(3.0, dtype=torch.float64, requires_grad=True)\nanswer = 0.0\n",
+      "solution": "import torch\n\nx = torch.tensor(3.0, dtype=torch.float64, requires_grad=True)\nfor _ in range(2):\n    x.square().backward()\nanswer = x.grad.item()\nprint(answer)\n",
+      "expected": 12,
+      "explanation": "প্রতিবার নতুন Graph তৈরি হয়ে `2x = 6` মানের Derivative দেয়, এবং Buffer পরিষ্কার না করায় `6 + 6` যোগ হয়ে চূড়ান্ত `x.grad` দাঁড়ায় `12`।"
+    },
+    {
+      "id": "ch15_ex_step",
+      "title": "no_grad() Context-এ ম্যানুয়াল Parameter আপডেট",
+      "prompt": "Scalar `x = 2.0`, `loss = x.square()` এবং Learning Rate `0.1` নিন। `backward()` চালানোর পর `torch.no_grad()` Context-এর ভেতরে `x`-কে একবার আপডেট করুন এবং আপডেট হওয়া `x`-এর মান `answer`-এ রাখুন।",
+      "starter": "import torch\n\nx = torch.tensor(2.0, dtype=torch.float64, requires_grad=True)\nanswer = 0.0\n",
+      "solution": "import torch\n\nx = torch.tensor(2.0, dtype=torch.float64, requires_grad=True)\nx.square().backward()\nwith torch.no_grad():\n    x -= 0.1 * x.grad\nanswer = x.item()\nprint(answer)\n",
+      "expected": 1.6,
+      "explanation": "`x = 2.0` বিন্দুতে `x²`-এর Gradient হলো `4.0`; তাই আপডেটের পর `x = 2.0 - 0.1 × 4.0 = 1.6` হয়। বাস্তব Training Loop-এ পরের ধাপে যাওয়ার আগে `.grad` Buffer পরিষ্কার করার দায়িত্ব কিন্তু আপনাকেই নিতে হবে।"
+    }
+  ],
+  "interviews": [
+    {
+      "title": "নীরব Batch Loss ত্রুটি শনাক্তকরণ",
+      "tag": "DEBUGGING · 30 MIN",
+      "prompt": "ধরুন `predictions`-এর আকার `[B]` এবং `targets`-এর আকার `[B, 1]` নিয়ে MSE Loss হিসাব করা হচ্ছে—মান সসীম আসছে এবং Training চলাকালে ধীরে ধীরে কমছেও। কোডটি আসলেই সঠিক কি না তা আপনি কীভাবে যাচাই করবেন?",
+      "answer": "সবার আগে আমি `predictions [B]` এবং `targets [B, 1]`-এর প্রতিটি Axis আসলে কী বোঝাচ্ছে সেই চুক্তিটি লিখে ফেলব। ডান দিক থেকে মেলানোর (Right-aligned Broadcasting) নিয়মে `[B] - [B, 1]` বিয়োগফলটি `[B, B]` আকারের একটি Pairwise Residual Matrix বানিয়ে ফেলে—যার ফলে `j` নম্বর Row-এর Target কেবল নিজের অবস্থান নয়, প্রতিটি `i` নম্বর Column-এর Prediction-এর সাথেই তুলনা হতে থাকে! অথচ আমাদের প্রকৃত লক্ষ্য ছিল `p[i] - y[i]`, যার আকার `[B]`।\n\nএখানে `B = 1` হলে ভুল ও সঠিক উভয় ক্ষেত্রেই সংখ্যাসূচক Loss হুবহু এক হতে পারে, তাই আমি `B = 1` এবং একাধিক Row-এর Batch (`B >= 2`)—উভয় অবস্থাতেই Test চালাব। সমাধান হিসেবে Loss হিসাবের ঠিক আগে হুবহু সমান Shape, উৎস Row-এর সামঞ্জস্য এবং সঠিক Reduction Denominator `assert` করব। প্রসঙ্গত, `BCEWithLogits` নিজে থেকেই এই Shape অমিল আটকে দেয়, কিন্তু সাধারণ বিয়োগফল আমাদের টাস্কের উদ্দেশ্য বোঝে না। তাই কেবল স্ক্রিনে Loss কমতে দেখাই কোড সঠিক হওয়া বা ভালো Generalization-এর প্রমাণ নয়।",
+      "prerequisiteLessons": [
+        "ch15_broadcast",
+        "ch15_matmul"
+      ]
+    },
+    {
+      "title": "View, Stride এবং Contiguous মেমোরি আচরণের ব্যাখ্যা",
+      "tag": "TENSOR GEOMETRY · 25 MIN",
+      "prompt": "একটি `4 × 3` আকারের Contiguous Tensor-কে Transpose করা হয়েছে। এর Shape, Stride, `view`/`reshape`, `contiguous()` এবং `expand()`-এর মেমোরি আচরণ গুছিয়ে ব্যাখ্যা করুন।",
+      "answer": "একটি Contiguous `4 × 3` Row-major Matrix-এর প্রারম্ভিক Stride থাকে `[3, 1]`। একে Transpose করলে নতুন Shape হয় `[3, 4]` এবং Stride পাল্টে দাঁড়ায় `[1, 3]`, কিন্তু এটি মূল Tensor-এর সাথে একই Storage ভাগাভাগি করতে পারে। যেকোনো ঘরের Element Offset বের করার সূত্র হলো `storage_offset + i * s₀ + j * s₁`, এবং একে `element_size()` (যেমন `float64`-এ `8`) দিয়ে গুণ করলে পাওয়া যায় Byte Offset।\n\nএমন Non-contiguous বিন্যাসে সরাসরি সমতল `view(-1)` কাজ করে না কারণ এর জন্য Stride সামঞ্জস্য প্রয়োজন; তবে `reshape(-1)` প্রয়োজনমতো View অথবা নতুন Copy বানিয়ে কাজ সেরে নেয়। `.contiguous()` কল করলে Tensor-টি আগে থেকেই Contiguous থাকলে সেই একই Tensor ফেরত আসতে পারে, নতুবা নতুন Row-major মেমোরিতে মানগুলো সাজিয়ে নেয়। অন্যদিকে `.expand()` আকার `1`-এর Axis-এ `0` Stride বসিয়ে মেমোরি না বাড়িয়েই একই ঘরকে বহু জায়গায় দেখায় (যেখানে In-place লেখা ঝুঁকিপূর্ণ), আর `.repeat()` সত্যিকারের নতুন মেমোরি বরাদ্দ করে মানগুলো সাজায়। তাই সব সময় যৌক্তিক Axis, মেমোরি বরাদ্দ এবং Autograd Graph মালিকানা আলাদাভাবে বিচার করতে হবে।",
+      "prerequisiteLessons": [
+        "ch15_layout",
+        "ch15_detach"
+      ]
+    },
+    {
+      "title": "Vector-Jacobian Product (VJP) প্রতিপাদন ও API পার্থক্য",
+      "tag": "AUTOGRAD · 25 MIN",
+      "prompt": "`x = [1, 2]`, `y = x²` এবং আউটপুট `seed = [3, 4]` দেওয়া থাকলে হাতে-কলমে VJP বের করুন এবং `backward()` ও `torch.autograd.grad()`-এর আচরণগত পার্থক্য ব্যাখ্যা করুন।",
+      "answer": "`y = [x₀², x₁²]` সম্পর্কটির Jacobian Matrix কর্ণ বরাবর `[2x₀, 2x₁]`—যা `x = [1, 2]` বিন্দুতে দাঁড়ায় `diag([2, 4])`। এর সাথে আউটপুট Cotangent বা `seed = [3, 4]` গুণ করলে আমরা পাই `VJP = [3 × 2, 4 × 4] = [6, 16]`, যা আসলে Scalar Function `3x₀² + 4x₁²`-এরই Gradient।\n\nএকক Scalar আউটপুটে `backward()` ডিফল্টভাবে প্রারম্ভিক Seed `1` ধরে নেয়, কিন্তু অ-Scalar আউটপুটে আমাদের সুস্পষ্টভাবে সমান আকারের Seed দিতে হয়—এতে পুরো Jacobian না বানিয়ে সরাসরি VJP হিসাব হয়। আর API পার্থক্যের জায়গায় `backward()` সরাসরি প্রাসঙ্গিক Leaf Tensor-এর `.grad` Buffer-এ মান যোগ (Accumulate) করে, কিন্তু `torch.autograd.grad()` কেবল চাওয়া Input-গুলোর Derivative সরাসরি রিটার্ন করে—সাধারণ অবস্থায় `.grad` Buffer পূরণ করে না। ব্যবহারের সময় Seed-এর Shape এবং অব্যবহৃত Input নীতি (`allow_unused`) যাচাই করে নেওয়া জরুরি।"
+    },
+    {
+      "title": "Loss অপরিবর্তিত অথচ Gradient দ্বিগুণ হওয়ার রহস্য",
+      "tag": "TRAINING BUG · 25 MIN",
+      "prompt": "Training-এ প্রতি ধাপে Loss একই থাকছে, কিন্তু Gradient দ্বিগুণ হয়ে যাচ্ছে—Graph জীবনচক্র ও Gradient Buffer ধরে কারণ নির্ণয় করুন।\n\nপাশাপাশি Coefficient `[1, 2, 3, 4]`, `w = 2` এবং `mean((w × coeff)²)` Loss-এর ক্ষেত্রে `3` ও `1` আকারের দুটি Microbatch নিলে সঠিক জমাকৃত Gradient কত হবে?",
+      "answer": "এমন লক্ষণ দেখলে সবার আগে আমি অপরিষ্কার পুরোনো Leaf `.grad` Buffer, `sum` বনাম `mean` Reduction, Learning Rate এবং Optimizer State পরীক্ষা করব। একই Parameter ও ডেটায় Buffer পরিষ্কার না করে দুটি নতুন Forward Graph বানিয়ে `backward()` চালালে প্রতিবার Loss `L` থাকলেও Buffer-এ `g + g = 2g` জমা হয়! মনে রাখতে হবে, পুরোনো সংরক্ষিত Graph পুনর্ব্যবহার করা আর `.grad` Buffer পরিষ্কার করা সম্পূর্ণ আলাদা কাজ; সাধারণ Training Loop-এ `retain_graph=True` কোনো সমাধান নয় বরং মেমোরি বাড়ানোর কারণ। এ ছাড়া Gradient `None` করা আর `0` দিয়ে পূরণ করা Optimizer-এর আচরণ বদলে দিতে পারে।\n\nদ্বিতীয় অংশের হিসাবে পূর্ণ `4` টি Row-এর গড় Gradient হলো `2 × 2 × mean([1, 4, 9, 16]) = 4 × 7.5 = 30`। `3` ও `1` আকারের অসমান Microbatch থেকে এই একই `30` মান পেতে হলে তাদের নিজ নিজ Mean Loss-কে যথাক্রমে `3/4` এবং `1/4` Weight দিয়ে গুণ করে `backward()` চালাতে হবে (সরাসরি দুই গড় যোগ করলে ভুল মান প্রায় `82.666667` আসত)। অবশ্য Model-এ `BatchNorm`-এর মতো Batch-নির্ভর Layer থাকলে পূর্ণ Batch সমতা আলাদাভাবে পরীক্ষা করতে হবে।",
+      "prerequisiteLessons": [
+        "ch15_reductions",
+        "ch15_accumulation"
+      ]
+    },
+    {
+      "title": "অজান্তে ছিঁড়ে যাওয়া Computational Graph খুঁজে বের করা",
+      "tag": "ML CODING · 25 MIN",
+      "prompt": "আপনার Model-এর `loss.requires_grad` দেখাচ্ছে `False` অথবা কোনো `parameter.grad` রয়ে গেছে `None`। কোন কোন সম্ভাব্য কারণ আপনি ধারাবাহিকভাবে পরীক্ষা করবেন?",
+      "answer": "প্রথমেই আমি সংশ্লিষ্ট Tensor-গুলোর `shape`, `dtype`, `device`, `requires_grad`, `is_leaf` ও `grad_fn` প্রিন্ট করব এবং যাচাই করব ওই Parameter-টি আদৌ Forward হিসাবে ব্যবহৃত হচ্ছে কি না। সাধারণত মাঝপথে অসতর্ক `.detach()`, `.item()` দিয়ে Python সংখ্যা বের করা, NumPy ঘুরে আসা, `torch.no_grad()` Context-এর ভেতরে হিসাব হওয়া কিংবা বিদ্যমান মানের ওপর নতুন করে `torch.tensor(...)` কল করার ফলে Graph-এর সংযোগ কেটে যায়।\n\nআবার যেটির `.grad` আমরা দেখছি সেটি যদি কোনো Operation-এর আউটপুট বা Non-leaf Tensor হয়, তবে ডিবাগিংয়ের জন্য `retain_grad()` না দিলে তার `.grad` সাধারণত সংরক্ষিত থাকে না। পাশাপাশি মনে রাখতে হবে যে `clone()` ডেটা Copy করেও Graph ধরে রাখতে পারে, আর `detach()` Storage শেয়ার করেও Graph কাটে। তাই `None` পাওয়াকে গায়ের জোরে শূন্য ধরে চাপা না দিয়ে, Parameter-টি সত্যিই অব্যবহৃত নাকি পথ ছিঁড়ে গেছে তা আলাদাভাবে শনাক্ত করতে হবে।"
+    },
+    {
+      "title": "BCE Gradient প্রতিপাদন ও সংখ্যাসূচক যাচাইয়ের নকশা",
+      "tag": "MATH & CODING · 35 MIN",
+      "prompt": "Mean `BCEWithLogits`-এর সাপেক্ষে Weight ও Bias-এর Gradient প্রতিপাদন করুন এবং তা কোডে সংখ্যাসূচকভাবে যাচাই করার একটি নিশ্ছিদ্র পদ্ধতি সাজান।",
+      "answer": "প্রথমে আমি ইনপুটের কঠোর চুক্তি নির্ধারণ করব: `X[B, D]`, `y[B]`, `w[D]`, Scalar `b []`, এবং সব মান সসীম ও সামঞ্জস্যপূর্ণ Floating Dtype ও Device-এ। Linear Score `z = Xw + b` হলে সংখ্যাসূচকভাবে স্থিতিশীল Mean `BCEWithLogits`-এ Logit-এর সাপেক্ষে Derivative দাঁড়ায় `(sigmoid(z) - y) / B`। এরপর Chain Rule প্রয়োগ করলে Weight Gradient আসে `Xᵀ(sigmoid(z) - y) / B` এবং Bias Gradient আসে `(sigmoid(z) - y).mean()`।\n\nযাচাইয়ের জন্য আমি `float64` সূক্ষ্মতায় Central Finite Difference (`eps = 1e-6`) এবং উপযুক্ত Tolerance (`atol`/`rtol`) নিয়ে একাধিক মসৃণ বিন্দুতে Autograd ও Analytical সূত্রের তুলনা করব এবং `torch.autograd.gradcheck` চালাব। খেয়াল রাখব যেন ভাঁজ পড়া (Non-differentiable kink) বিন্দু বা অতিরিক্ত ক্ষুদ্র Epsilon-এর কারণে Rounding Error না ঘটে—এবং মনে রাখব যে সংখ্যাসূচক Gradient সঠিক হওয়া অদেখা ডেটার উপযোগিতা প্রমাণ করে না।",
+      "prerequisiteLessons": [
+        "ch15_microscope",
+        "ch15_gradcheck"
+      ]
+    },
+    {
+      "title": "Batch Size 1-এ Model ভেঙে পড়ার সমাধান",
+      "tag": "SHAPES · 20 MIN",
+      "prompt": "`Batch = 64` থাকলে আপনার কোড দিব্যি চলে, কিন্তু `Batch = 1` বা Dataset-এর শেষের অসম্পূর্ণ Batch এলেই ভেঙে পড়ে। Shape এবং ডেটার সামঞ্জস্য কীভাবে নিশ্ছিদ্র করবেন?",
+      "answer": "এর সবচেয়ে সাধারণ কারণ হলো Argument ছাড়া অনির্দিষ্ট `squeeze()` ব্যবহার করা—যা `B = 64`-এ কেবল শেষের অতিরিক্ত Axis সরালেও `B = 1` হওয়ামাত্র সামনের Singleton Batch Axis-টিও মুছে পুরো Tensor-কে Scalar বানিয়ে ফেলে! তাই `[B, 1]` থেকে `[B]` পেতে আমি সুনির্দিষ্টভাবে `squeeze(-1)` ব্যবহার করব এবং চ্যাপ্টা করার সময় `flatten(start_dim=1)` লিখব।\n\nপাশাপাশি `X`, `y` এবং উৎস ID একসাথে একটি সামঞ্জস্যপূর্ণ `TensorDataset`-এ বেঁধে রাখব যাতে Shuffle বা ছোট Batch-এও সম্পর্ক না হারায়। Unit Test-এ `B = 1`, `B = 2`, নিয়মিত Batch আকার এবং শেষের Partial Batch—সব কটির জন্য কঠোর Shape Contract যাচাই যোগ করব (এবং `drop_last=True` দিলে কত ডেটা বাদ পড়ছে তা নথিভুক্ত রাখব)। মনে রাখতে হবে, `B = 1`-এ নিছক সংখ্যার মিল থাকা মানেই Shape সঠিক থাকা নয়, এবং যেকোনো Device বা Dtype রূপান্তরেও এই একই চুক্তি বজায় থাকতে হবে।"
+    },
+    {
+      "title": "no_grad(), inference_mode() এবং model.eval()-এর তুলনা",
+      "tag": "PYTORCH API · 25 MIN",
+      "prompt": "`torch.no_grad()`, `torch.inference_mode()` এবং `model.eval()`—এই তিনটির প্রকৃত উদ্দেশ্য ও সীমাবদ্ধতা তুলনা করুন।",
+      "answer": "`torch.no_grad()` Context-এর ভেতরে সাধারণ Operation-গুলোর জন্য Autograd কোনো Computational Graph রেকর্ড করে না এবং Context শেষ হলেই আগের মোডে ফিরে যায়—ম্যানুয়াল Parameter আপডেট বা Validation-এ এটি খুবই কাজের। `torch.inference_mode()` আরও কঠোরভাবে ভেতরের অতিরিক্ত হিসাব-নিকাশ কমিয়ে দেয়; তবে এর ভেতরে তৈরি Tensor পরে সরাসরি কোনো সক্রিয় Autograd Graph-এ সংরক্ষণ করে `backward()` চালানোর ক্ষেত্রে বিধিনিষেধ থাকে।\n\nঅন্যদিকে `model.eval()` মোটেও Gradient রেকর্ডিং বন্ধ করে না! এটি কেবল Module-এর `training` Flag-টি `False` করে দেয়, যার ফলে `Dropout` ও `BatchNorm`-এর মতো Layer-গুলো Evaluation মোডের নিয়মে কাজ করে। তাই পরবর্তী Training হিসাবে কোনো মান পুনর্ব্যবহার করতে হলে উপযুক্ত Tensor নীতি বেছে নিতে হবে, এবং এই CPU যাচাই থেকে কোনো Accelerator গতির দাবি করার আগে অবশ্যই আলাদা Benchmark চালাতে হবে।"
+    },
+    {
+      "title": "পুনরুৎপাদনযোগ্য বাস্তব ডেটার Tensor Audit তৈরি",
+      "tag": "ENGINEERING · 30 MIN",
+      "prompt": "একটি বাস্তব Dataset-এর ওপর হুবহু পুনরুৎপাদনযোগ্য (Reproducible) Tensor ও Autograd নিরীক্ষা সাজাতে উৎস ডেটা, স্প্লিট, Dtype, DataLoader এবং যাচাইয়ের ধাপগুলো কীভাবে নকশা করবেন?",
+      "answer": "প্রথমে আমি উৎস ফাইলের SHA-256 Hash ও ক্রমানুযায়ী Feature Schema যাচাই করে পূর্বনির্ধারিত Training (fit-role) স্প্লিটটি পুনর্ব্যবহার করব। Data Leakage এড়াতে কেবল ওই Training Row-গুলোর Mean ও Population Standard Deviation (`ddof=0`) মিলিয়ে সুস্পষ্টভাবে `CPU` ও `float64` Tensor তৈরি করব। এরপর উৎস Row Index সহ সামঞ্জস্যপূর্ণ `TensorDataset` বানিয়ে নির্দিষ্ট Seed দেওয়া `torch.Generator` এবং Windows-নিরাপদ `num_workers=0` সহ `DataLoader` সাজাব—মনে রেখে যে প্রথম Batch পুনরুৎপাদন করতে প্রতিবার Generator নতুন করে একই Seed-এ শুরু করতে হয়, কারণ একই Loader-এর State সামনে এগিয়ে যায়।\n\nনিরীক্ষা পর্বে Autograd, Analytical সূত্র এবং Central Finite Difference-এর তুলনা, মেমোরি Layout Metadata এবং ভুল Broadcast রেফারেন্সগুলো একটি JSON রিপোর্টে সংরক্ষণ করব। CLI Script-টি অবশ্যই Import-safe হতে হবে যেন অন্য Directory থেকেও নির্বিঘ্নে চলে, এবং স্পষ্ট উল্লেখ থাকবে যে এটি নিছক Training-ভিত্তিক নিরীক্ষা—নতুন কোনো Test Metric নয়।"
+    },
+    {
+      "title": "ম্যানুয়াল Gradient Step-এর কোড রিভিউ",
+      "tag": "ML CODING · 25 MIN",
+      "prompt": "কোনো প্রজেক্টে ম্যানুয়াল Gradient Step রিভিউ করার সময় Buffer ব্যবস্থাপনা, Graph রেকর্ডিং, Parameter আপডেট এবং পরবর্তী ধাপের চুক্তি হিসেবে আপনি কী কী দেখবেন?",
+      "answer": "সবার আগে দেখব পুরোনো `.grad` Buffer পরিকল্পিতভাবে পরিষ্কার (`None` বা শূন্য) করা হয়েছে কি না এবং Loss স্কেলিং (`mean` বনাম `sum` বা Microbatch Weight) সঠিক আছে কি না। এরপর Forward ও `backward()` (বা `autograd.grad`) দিয়ে Derivative নেওয়ার পর মূল Leaf Parameter আপডেটটি অবশ্যই `torch.no_grad()` Context-এর ভেতরে হতে হবে, যাতে আপডেটটি নিজে আবার নতুন Training Graph-এ রেকর্ড না হয়।\n\nপরের Iteration অবশ্যই নতুন Forward Graph তৈরি করবে—পুরোনো সংরক্ষিত Graph পুনর্ব্যবহার বা অপ্রয়োজনীয় `retain_graph=True` এড়িয়ে চলতে হবে। পাশাপাশি সব Parameter ও Gradient সসীম (`isfinite`) কি না, সুনির্দিষ্ট Step Size কত এবং বড় ধাপে Overshoot হচ্ছে কি না তার নজরদারি রাখব (যেমন আমাদের ল্যাব নির্ধারিত সীমা ছাড়ালে নীরবে Clip না করে সতর্কবার্তা দেখায়)। মনে রাখতে হবে, বড় Learning Rate-এ Loss বেড়ে যাওয়া এককভাবে Autograd বাগের প্রমাণ নয়।"
+    }
+  ],
+  "book": {
+    "order": 15,
+    "part": "Book 3 · Deep Learning & RL",
+    "prerequisites": [
+      "chapter_06",
+      "chapter_07"
+    ],
+    "purpose": "Book 1 · Chapter 2 (Python Engineering for ML) এবং Book 1 · Chapter 3 (Linear Algebra, Calculus & Optimization)-এ গড়ে তোলা ভিত্তিকে PyTorch-এর Tensor Storage মালিকানা, Computational Graph এবং Autograd-ভিত্তিক Gradient হিসাবের বাস্তব কৌশলের সাথে যুক্ত করা।",
+    "outcomes": [
+      "Tensor-এর Shape, Dtype, Stride এবং Computational Graph-এর জীবনচক্র অক্ষত রেখে যথাযথ Weighted Loss ও তার Gradient হাতে-কলমে প্রতিপাদন ও ডিবাগ করতে পারা।",
+      "বাস্তব উদাহরণ, Python কোড এবং স্ব-যাচাইয়ের মাধ্যমে Autograd-এর মূল চুক্তি—অর্থাৎ Vector-Jacobian Product (VJP), Scalar Loss এবং Weighted Reduction—স্পষ্টভাবে ব্যাখ্যা করতে পারা।"
+    ],
+    "recall": [
+      "detach(), torch.no_grad() এবং model.eval()—এই তিনটি আলাদা Method বা Context ঠিক কী কী ভিন্ন কাজ করে এবং কখন কোনটি ব্যবহার করা উচিত?",
+      "দুটি Batch-এর মোট Weight সমান হলে সাধারণ গড় (Naive Mean) নিলে কি সঠিক ফলাফল পাওয়া যায়? আর কোনো Batch-এ বৈধ Token সংখ্যা 0 হলে শূন্য দিয়ে ভাগ এড়ানোর নিরাপদ নীতি কী হওয়া উচিত?"
+    ],
+    "bridge": "এই অধ্যায়ে Tensor ও Autograd-এর কলকব্জা আয়ত্ত করার পর আমাদের পরবর্তী গন্তব্য Book 3 · Chapter 2 (Neural Networks & Backpropagation)। তবে পরের অধ্যায়ে যাওয়ার আগে এখানকার Quiz, কোডিং অনুশীলনী এবং না দেখে উত্তর দেওয়ার প্রশ্নগুলো সমাধান করে নিজের প্রস্তুতি যাচাই করে নিন।",
+    "bookId": "deep_learning",
+    "bookChapter": 1
+  }
+}

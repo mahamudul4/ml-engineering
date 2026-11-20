@@ -1,0 +1,725 @@
+{
+  "id": "chapter_44",
+  "number": 44,
+  "title": "GPU Systems, 3D Parallelism & LLM Serving",
+  "shortTitle": "GPU & LLM Serving",
+  "displayTitle": "GPU Systems, 3D Parallelism\n& LLM Serving",
+  "subtitle": "Roofline Model, FlashAttention, GQA KV Cache, ZeRO/FSDP, 3D Parallelism এবং vLLM ও Speculative Decoding দিয়ে প্রোডাকশন-স্কেল LLM অবকাঠামোর পূর্ণাঙ্গ গাইড।",
+  "description": "একক GPU-এর SRAM-HBM সীমা থেকে হাজার GPU-এর 3D Parallelism ও কম Latency-র LLM Serving পর্যন্ত প্রতিটি গাণিতিক হিসাব হাতে-কলমে যাচাই করুন।",
+  "difficulty": "FAANG Systems · GPU & Serving",
+  "lab": "reliable",
+  "lessons": [
+    {
+      "id": "ch44_roofline",
+      "title": "Roofline Model ও Arithmetic Intensity: Prefill বনাম Decode-এর হার্ডওয়্যার বাস্তবতা",
+      "subtitle": "কেন একই LLM ইনপুট প্রসেস করার সময় Compute-Bound থাকে, কিন্তু উত্তর লেখার সময় হঠাৎ Memory-Bandwidth-Bound হয়ে পড়ে।",
+      "duration": "28 min",
+      "icon": "chart",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "GPU কেন সবসময় তার বিজ্ঞাপিত গতিতে চলে না?",
+          "body": "আগের অধ্যায়গুলোতে আমরা Transformer আর্কিটেকচার এবং নির্ভরযোগ্য Deep Learning Training-এর কৌশল শিখেছি। কিন্তু বাস্তব FAANG প্রোডাকশনে যখনই আপনি ৭০ বিলিয়ন প্যারামিটারের একটি LLM সার্ভ করতে যাবেন, তখন একটি অদ্ভুত ঘটনা চোখে পড়বে: ব্যবহারকারীর লম্বা Prompt পড়ার সময় আপনার দামি GPU প্রায় শতভাগ শক্তিতে গর্জন করছে, অথচ একটার পর একটা আউটপুট Token লেখার সময় সেই একই GPU-এর Tensor Core-গুলোর ৯৯ শতাংশেরও বেশি সময় অলস বসে থাকছে! কেন এমন হয়? কারণ আধুনিক GPU-তে গাণিতিক হিসাব করার গতি (Compute FLOP/s) যত দ্রুত বেড়েছে, মেমোরি থেকে ডেটা এনে যোগান দেওয়ার গতি (Memory Bandwidth) তার ধারেকাছেও বাড়েনি। মূল তথ্যভাণ্ডার থাকে বিশাল কিন্তু তুলনামূলক ধীরগতির Off-Chip HBM (High Bandwidth Memory)-এ, আর প্রকৃত গুণ-যোগ ঘটে অতি দ্রুতগতির On-Chip SRAM ও Register-এর ভেতর থাকা Tensor Core-এ। তাই কোনো অপারেশন আসলে কত দ্রুত শেষ হবে, তা কেবল মোট FLOPs গুনে বলা অসম্ভব—আমাদের জানতে হবে প্রতি বাইট ডেটা HBM থেকে তুলে আনার বিপরীতে আমরা ঠিক কতগুলো গাণিতিক হিসাব করতে পারছি।"
+        },
+        {
+          "type": "text",
+          "title": "H100 GPU-এর বাস্তব সংখ্যা ও Ridge Point",
+          "body": "এই হার্ডওয়্যার সীমাবদ্ধতাকে এক নজরে বোঝার সবচেয়ে শক্তিশালী হাতিয়ার হলো Roofline Model। একটি NVIDIA H100 SXM GPU-এর বাস্তব স্পেসিফিকেশন দেখুন: BF16 প্রিসিশনে এর Dense Tensor Core Peak Compute হলো প্রায় 989 TFLOP/s (প্রতি সেকেন্ডে 989 × 10^12-টি ফ্লোটিং-পয়েন্ট অপারেশন), আর এর HBM3 মেমোরি ব্যান্ডউইথ হলো 3.35 TB/s (প্রতি সেকেন্ডে 3.35 × 10^12 বাইট ডেটা আদান-প্রদান)। এবার প্রথম সংখ্যাটিকে দ্বিতীয়টি দিয়ে ভাগ করুন: 989 / 3.35 ≈ 295.22 FLOPs/Byte। এই জাদুকরী সন্ধিক্ষণটিকেই বলা হয় হার্ডওয়্যারের Ridge Point। এর সরল অর্থ হলো—HBM থেকে প্রতি ১ বাইট ডেটা পড়ে এনে আপনি যদি তার ওপর অন্তত ২৯৫টি ফ্লোটিং-পয়েন্ট হিসাব না চালান, তবে আপনার Tensor Core কাজ শেষ করে পরের ডেটার জন্য অপেক্ষায় বসে থাকবে! যে অপারেশনের Arithmetic Intensity এই Ridge Point-এর নিচে থাকে তাকে বলে Memory-Bandwidth-Bound (ঢালু ছাদের নিচে), আর যা Ridge Point ছাড়িয়ে যায় তাকে বলে Compute-Bound (সমতল ছাদের নিচে)।"
+        },
+        {
+          "type": "math",
+          "title": "Arithmetic Intensity এবং Roofline Performance সমীকরণ",
+          "body": "\\mathrm{AI}=\\frac{\\mathrm{FLOPs}}{\\mathrm{Bytes}},\\qquad P_{\\mathrm{attained}}=\\min\\!\\left(P_{\\mathrm{peak}},\\,\\mathrm{AI}\\times B_{\\mathrm{HBM}}\\right)"
+        },
+        {
+          "type": "text",
+          "title": "Prefill বনাম Autoregressive Decode-এর গাণিতিক ব্যবধান",
+          "body": "ওপরের সমীকরণটি এবার একটি Transformer-এর যেকোনো Linear Layer (Y = XW)-এ বসানো যাক, যেখানে ইনপুট আকার M × K এবং ওয়েট ম্যাট্রিক্সের আকার K × N (এখানে M হলো একসাথে প্রসেস হওয়া মোট Token সংখ্যা)। প্রতিটি আউটপুট উপাদানের জন্য K-টি গুণ ও K-টি যোগ মিলে মোট হিসাব দাঁড়ায় 2MKN FLOPs। অন্যদিকে BF16 ফরম্যাটে (প্রতি উপাদান ২ বাইট) HBM থেকে X ও W পড়া এবং Y লেখার মোট মেমোরি ট্রাফিক হলো 2(MK + KN + MN) বাইট।\n\nএবার LLM Inference-এর দুটি ধাপের পার্থক্য দেখুন:\n১. Prefill ধাপ: ব্যবহারকারী যখন ২০৪৮ Token-এর একটি Prompt পাঠান, তখন সব Token একসাথে উপস্থিত থাকে (M = 2048)। ফলে বিশাল ওয়েট ম্যাট্রিক্স W মাত্র একবার HBM থেকে পড়েই ২০৪৮টি Token-এর ওপর পুনর্ব্যবহার (Data Reuse) করা যায় এবং AI সহজেই Ridge Point পেরিয়ে Compute-Bound অঞ্চলে পৌঁছে যায়।\n২. Autoregressive Decode ধাপ: উত্তর তৈরির সময় আগের Token না জেনে পরেরটি তৈরি করা যায় না। ফলে একক ব্যবহারকারীর ক্ষেত্রে প্রতি ধাপে M = 1! তখন ওয়েটের আকার KN-এর তুলনায় MK ও MN নগণ্য হওয়ায় AI দাঁড়ায় প্রায় 2(1)KN / (2KN) = 1 FLOP/Byte—যা ২৯৫.২২ থেকে প্রায় ৩০০ গুণ নিচে! অর্থাৎ পুরো মডেল ওয়েট HBM থেকে টেনে এনে মাত্র ১টি ভেক্টরের সাথে গুণ করা হচ্ছে।"
+        },
+        {
+          "type": "code",
+          "title": "H100 GPU-তে Prefill বনাম Decode-এর Roofline বিশ্লেষণ",
+          "body": "peak_flops = 989e12   # H100 SXM BF16 peak FLOP/s\nhbm_bw = 3.35e12      # H100 SXM HBM3 bandwidth Bytes/s\nridge_point = peak_flops / hbm_bw\n\ndef analyze_linear(tokens_m, k=8192, n=8192, elem_bytes=2):\n    flops = 2 * tokens_m * k * n\n    bytes_io = elem_bytes * (tokens_m * k + k * n + tokens_m * n)\n    ai = flops / bytes_io\n    attained_tflops = min(peak_flops, ai * hbm_bw) / 1e12\n    regime = \"Compute-Bound\" if ai >= ridge_point else \"Memory-Bound\"\n    return round(ai, 2), round(attained_tflops, 2), regime\n\nprefill = analyze_linear(2048)\ndecode_b1 = analyze_linear(1)\ndecode_b256 = analyze_linear(256)\nassert prefill[2] == \"Compute-Bound\" and decode_b1[2] == \"Memory-Bound\"\nprint(round(ridge_point, 2), prefill, decode_b1, decode_b256)"
+        },
+        {
+          "type": "text",
+          "title": "কোডের ফলাফল ও প্রোডাকশনের সূক্ষ্ম সীমাবদ্ধতা",
+          "body": "কোডের আউটপুটটি লক্ষ্য করুন: H100-এর Ridge Point হলো 295.22 FLOPs/Byte। Prefill ধাপে (M = 2048) Arithmetic Intensity দাঁড়িয়েছে 1365.33 FLOPs/Byte—ফলে এটি পুরোপুরি Compute-Bound এবং তাত্ত্বিক 989.0 TFLOP/s গতির নাগাল পায়। অথচ একক রিকোয়েস্টের Decode ধাপে (M = 1) Arithmetic Intensity নেমে এসেছে মাত্র 1.0 FLOP/Byte-এ, যেখানে অর্জিত গতি মাত্র 3.35 TFLOP/s (মোট সক্ষমতার মাত্র ০.৩৪ শতাংশ)! আবার যখন আমরা ২৫৬টি সমান্তরাল রিকোয়েস্ট একত্রে Batch করি (M = 256), তখন ওয়েট পুনর্ব্যবহারের কারণে AI বেড়ে 240.94-এ ওঠে এবং অর্জিত কম্পিউট ৮০৭.১৫ TFLOP/s-এ লাফ দেয়।\n\nতবে বাস্তব প্রোডাকশনে দুটি অতিরিক্ত প্রান্তিক শর্ত সবসময় মাথায় রাখবেন। প্রথমত, কার্নেল লঞ্চ ওভারহেড, অসম্পূর্ণ Tensor Core Tile (Wave Quantization) এবং Power Throttling-এর কারণে বাস্তবে তাত্ত্বিক ছাদের ৭০%–৮৫% পাওয়া যায়। দ্বিতীয়ত, Batch বাড়ালে Linear Layer-গুলো Compute-Bound হওয়ার দিকে এগোলেও Self-Attention অংশে প্রতিটি রিকোয়েস্টের নিজস্ব আলাদা KV Cache পড়তে হয়—সেখানে রিকোয়েস্টগুলোর মাঝে ডেটা শেয়ার না হওয়ায় লম্বা Context-এর Attention অংশটি বড় Batch-এও Memory-Bandwidth-Bound থেকে যায়!"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে যাচাই করুন: Batch দ্বিগুণ করলে Latency কেন প্রায় একই থাকে?",
+          "body": "ধরুন একটি 70B LLM সার্ভারে Decode ধাপে Batch Size ১ থেকে বাড়িয়ে ২ করা হলো (অর্থাৎ প্রতি ধাপে দ্বিগুণ FLOPs হিসাব করতে হচ্ছে)। তবুও কেন দেখা যায় যে প্রতি ধাপের Latency প্রায় বাড়েই না, অথচ সামগ্রিক Throughput প্রায় দ্বিগুণ হয়ে যায়?",
+          "solution": "কারণ Batch Size ১ ও ২—উভয় ক্ষেত্রেই সিস্টেমটি গভীরভাবে Memory-Bandwidth-Bound অবস্থায় থাকে (AI ≈ 1 এবং AI ≈ 2, যা H100-এর Ridge Point 295.22-এর চেয়ে অনেক নিচে)। এই অঞ্চলে ধাপের সময় নির্ধারিত হয় মূলত ১৪০ GB মডেল ওয়েট HBM থেকে একবার পড়ে আনার সময় দিয়ে। যেহেতু Batch ১ হোক বা ২, ওয়েট ম্যাট্রিক্সগুলো মাত্র একবারই পড়তে হচ্ছে এবং অলস পড়ে থাকা Tensor Core সেই বাড়তি গুণটুকু প্রায় বিনা মূল্যে সেরে ফেলছে, তাই এক ধাপের সময় প্রায় অপরিবর্তিত থাকে এবং প্রতি সেকেন্ডে উৎপাদিত মোট Token সংখ্যা দ্বিগুণ হয়ে যায়।",
+          "reference": "https://dl.acm.org/doi/10.1145/1498765.1498785"
+        }
+      ]
+    },
+    {
+      "id": "ch44_flash_attention",
+      "title": "FlashAttention ও Tiled Online Softmax: O(T²) HBM বটলনেক জয়",
+      "subtitle": "পুরো Attention Matrix কখনোই HBM-এ না লিখে কেবল On-Chip SRAM-এর এক পাসে কীভাবে নিখুঁত Softmax গণনা করা হয়।",
+      "duration": "32 min",
+      "icon": "spark",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "স্ট্যান্ডার্ড Attention কেন লম্বা Context-এ মুখ থুবড়ে পড়ে?",
+          "body": "আগের পাঠে আমরা দেখেছি, HBM থেকে ডেটা পড়া ও লেখাই আধুনিক GPU-এর আসল বটলনেক। এবার আমাদের পরিচিত Scaled Dot-Product Attention সমীকরণটির দিকে তাকান: প্রথমে S = QK^T / sqrt(d) হিসাব করা হয়, তারপর P = softmax(S), এবং সবশেষে O = PV। কাগজে-কলমে সমীকরণটি খুবই নিরীহ দেখায়, কিন্তু সাধারণ PyTorch কার্নেলে প্রতিটি ধাপ আলাদাভাবে চলে! এর মানে হলো, সিকোয়েন্স দৈর্ঘ্য T হলে T × T আকারের বিশাল মধ্যবর্তী ম্যাট্রিক্স S প্রথমে ধীরগতির HBM-এ লেখা হয়, এরপর Softmax কার্নেল সেটি আবার HBM থেকে পড়ে P তৈরি করে পুনরায় HBM-এ লেখে, এবং পরের কার্নেল আবার P পড়ে V-এর সাথে গুণ করে! যখন T = 32,768 হয়, তখন একটিমাত্র Head-এর T × T ম্যাট্রিক্সেই প্রায় ১ বিলিয়ন উপাদান (BF16-এ ২ GiB) তৈরি হয়। অথচ H100 GPU-তে প্রতিটি Streaming Multiprocessor (SM)-এর ভেতর থাকা On-Chip SRAM (Shared Memory) চলে প্রায় ১৯ থেকে ৩৩ TB/s গতিতে—যা HBM-এর চেয়ে প্রায় ৬ থেকে ১০ গুণ দ্রুত, কিন্তু আকারে খুব ছোট (প্রতি SM-এ মাত্র ২২৮ KB)!"
+        },
+        {
+          "type": "text",
+          "title": "Tiling-এর পথে Softmax-এর বাধা ও Online Softmax-এর উদ্ভাবন",
+          "body": "প্রশ্ন হলো, সাধারণ Matrix Multiplication-এর মতো আমরা কেন Q, K, V-কে ছোট ছোট ব্লকে (Tiles) কেটে SRAM-এর ভেতরেই পুরো হিসাব শেষ করে সরাসরি চূড়ান্ত আউটপুট O লিখে ফেলতে পারছিলাম না? বাধা হয়ে দাঁড়িয়েছিল Row-wise Softmax! সংখ্যার Overflow এড়াতে Safe Softmax বের করতে গেলে পুরো Row-এর সর্বোচ্চ মান m = max_k(S_k) আগে জানতে হয়, তারপর সব পদের যোগফল l = sum_k exp(S_k - m) বের করে শেষে ভাগ করতে হয়। কিন্তু K এবং V-কে ছোট ছোট টুকরো করে একের পর এক SRAM-এ আনলে শুরুতে তো পুরো Row-এর আসল সর্বোচ্চ মান m আমাদের জানাই থাকে না!\n\nFlashAttention (এবং এর উন্নত সংস্করণ FlashAttention-2) এই ধাঁধার সমাধান করে Tiled Online Softmax দিয়ে। ধারণাটি অসাধারণ: আমরা প্রতিটি ব্লক j আসার সাথে সাথে চলমান সর্বোচ্চ মান m_new আপডেট করি। যখনই নতুন ব্লকে আগের চেয়ে বড় কোনো সংখ্যা পাওয়া যায়, তখন আমরা পুরোনো যোগফল l_old এবং পুরোনো আংশিক আউটপুট O_tilde_old-কে স্রেফ exp(m_old - m_new) দিয়ে গুণ (Rescale) করে নিই! সূচকের নিয়ম অনুযায়ী exp(x - m_old) * exp(m_old - m_new) = exp(x - m_new)—ফলে পেছনে ফিরে না তাকিয়েও এক পাসে ১০০% নিখুঁত (Zero Approximation) ফলাফল পাওয়া যায়!"
+        },
+        {
+          "type": "math",
+          "title": "Tiled Online Softmax ও এক-পাস Output Rescaling সমীকরণ",
+          "body": "m_{\\mathrm{new}}=\\max\\!\\left(m_{\\mathrm{old}},\\,\\tilde{m}_j\\right),\\quad \\ell_{\\mathrm{new}}=e^{m_{\\mathrm{old}}-m_{\\mathrm{new}}}\\ell_{\\mathrm{old}}+\\sum e^{S^{(j)}-m_{\\mathrm{new}}},\\quad \\tilde{O}_{\\mathrm{new}}=e^{m_{\\mathrm{old}}-m_{\\mathrm{new}}}\\tilde{O}_{\\mathrm{old}}+e^{S^{(j)}-m_{\\mathrm{new}}}V_j"
+        },
+        {
+          "type": "text",
+          "title": "FlashAttention-2-এর সূক্ষ্ম উন্নতি: শেষে মাত্র একবার ভাগ করা",
+          "body": "ওপরের সমীকরণ তিনটি মনোযোগ দিয়ে দেখুন। এখানে S^(j) হলো বর্তমান Query ব্লক Q_i এবং বর্তমান Key ব্লক K_j-এর ছোট টাইলটির Dot-Product স্কোর, আর m_tilde_j হলো ওই টাইলের Row-wise সর্বোচ্চ মান। প্রথম সংস্করণে (FlashAttention-1) প্রতিটি ভেতরের লুপেই আংশিক আউটপুটকে চলমান যোগফল দিয়ে বারবার ভাগ করা হতো। FlashAttention-2 দেখায় যে ভেতরের লুপে অ-নরমালাইজড আউটপুট O_tilde ধরে রেখে একদম সব K_j, V_j ব্লক শেষ হওয়ার পর মাত্র একবার চূড়ান্ত O_i = O_tilde_final / l_final ভাগ করলেই চলে! এতে অপ্রয়োজনীয় Non-Matmul FLOPs অনেক কমে যায়। পাশাপাশি Causal Masking থাকলে যেসব ব্লকে j_start > i_end (অর্থাৎ পুরো ব্লকটিই ভবিষ্যতের Token), সেগুলো আমরা স্পর্শই করি না—ফলে প্রায় অর্ধেক কম্পিউটও সাশ্রয় হয়। চলুন নিচের Python কোডে একটি T × T ম্যাট্রিক্স তৈরি না করেই ১৬ আকারের ছোট ছোট টাইলে এই পুরো অ্যালগরিদমটি চালিয়ে স্ট্যান্ডার্ড Attention-এর সাথে মিলিয়ে দেখি।"
+        },
+        {
+          "type": "code",
+          "title": "Python ও NumPy-এ নিখুঁত Causal Tiled FlashAttention যাচাই",
+          "body": "import numpy as np\n\nrng = np.random.default_rng(42)\nT, d, blk = 64, 32, 16\nQ, K, V = rng.normal(size=(T, d)), rng.normal(size=(T, d)), rng.normal(size=(T, d))\nscale = 1.0 / np.sqrt(d)\n\n# Reference standard causal attention (materializes T x T matrix)\nS_full = (Q @ K.T) * scale\nmask = np.triu(np.ones((T, T), dtype=bool), k=1)\nS_full = np.where(mask, -np.inf, S_full)\nS_shift = S_full - np.max(S_full, axis=-1, keepdims=True)\nP_full = np.exp(S_shift) / np.sum(np.exp(S_shift), axis=-1, keepdims=True)\nO_ref = P_full @ V\n\n# Tiled FlashAttention-2 style online softmax (never materializes T x T)\nO_flash = np.zeros_like(Q)\nskipped_tiles = 0\nfor i0 in range(0, T, blk):\n    Qi = Q[i0:i0 + blk]\n    m_i = np.full(blk, -np.inf)\n    l_i = np.zeros(blk)\n    O_tilde = np.zeros((blk, d))\n    for j0 in range(0, T, blk):\n        if j0 > i0 + blk - 1:\n            skipped_tiles += 1\n            continue\n        Kj, Vj = K[j0:j0 + blk], V[j0:j0 + blk]\n        Sj = (Qi @ Kj.T) * scale\n        q_idx = np.arange(i0, i0 + blk)[:, None]\n        k_idx = np.arange(j0, j0 + blk)[None, :]\n        Sj = np.where(k_idx > q_idx, -np.inf, Sj)\n        m_ij = np.max(Sj, axis=-1)\n        m_new = np.maximum(m_i, m_ij)\n        alpha = np.exp(m_i - m_new)\n        P_tilde = np.exp(Sj - m_new[:, None])\n        l_i = alpha * l_i + np.sum(P_tilde, axis=-1)\n        O_tilde = alpha[:, None] * O_tilde + (P_tilde @ Vj)\n        m_i = m_new\n    O_flash[i0:i0 + blk] = O_tilde / l_i[:, None]\n\nmax_err = float(np.max(np.abs(O_flash - O_ref)))\nassert max_err < 1e-12 and skipped_tiles == 6\nprint(f\"max_err={max_err:.3e}, skipped_tiles={skipped_tiles}\")"
+        },
+        {
+          "type": "text",
+          "title": "Backward Recomputation এবং সার্ভিংয়ে FlashDecoding",
+          "body": "কোডে দেখুন, ৬৪ দৈর্ঘ্যের সিকোয়েন্সকে ১৬ আকারের টাইলে ভেঙে (মোট ১৬টি টাইলের মধ্যে ভবিষ্যতের ৬টি টাইল সম্পূর্ণ এড়িয়ে) আমরা যে আউটপুট পেয়েছি, তার সাথে স্ট্যান্ডার্ড Attention-এর সর্বোচ্চ পার্থক্য ১০^-১৫-এরও নিচে—অর্থাৎ ফ্লোটিং-পয়েন্ট রাউন্ডিংয়ের সীমানায় এটি শতভাগ অভিন্ন! স্ট্যান্ডার্ড Attention যেখানে O(T^2) বাইট HBM রিড/রাইট করছিল, FlashAttention সেখানে মেমোরি জটিলতাকে নামিয়ে আনে রৈখিক O(Td)-তে, এবং HBM ট্রাফিক কমে দাঁড়ায় O(T^2 d^2 / M_SRAM)-এ।\n\nএখানে দুটি গুরুত্বপূর্ণ প্রোডাকশন কৌশল মনে রাখুন:\n১. Backward Pass Recomputation: ট্রেনিংয়ের সময় Backward পাসে গ্র্যাডিয়েন্ট বের করতে P দরকার হয়। FlashAttention বিশাল P ম্যাট্রিক্স HBM-এ না রেখে কেবল ছোট ভেক্টর L_i = m_i + log(l_i) সেভ করে রাখে, এবং Backward পাসে Q, K ব্লক SRAM-এ এনে মুহূর্তের মধ্যে P পুনর্গণনা করে নেয়। এতে সামান্য বাড়তি FLOPs লাগলেও HBM ট্রাফিক কমে যাওয়ায় পুরো ট্রেনিং উল্টো কয়েক গুণ দ্রুত হয়!\n২. FlashDecoding: Autoregressive Decode ধাপে Query দৈর্ঘ্য থাকে মাত্র ১ (T_q = 1)। তখন Query ব্লকের ওপর সমান্তরাল করলে ছোট Batch-এ GPU-এর অধিকাংশ SM খালি বসে থাকে! তাই FlashDecoding লম্বা KV Cache সিকোয়েন্সটিকে একাধিক SM-এর মধ্যে ভাগ করে দেয়, প্রতিটি SM নিজ নিজ অংশের (O_tilde, m, l) বের করে, এবং শেষে একই Online Softmax সূত্র দিয়ে তাদের একত্র (Reduce) করে।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে যাচাই করুন: FLOPs বাড়লেও কেন সময় কমে?",
+          "body": "FlashAttention-এর Backward পাসে মধ্যবর্তী Attention স্কোরগুলো HBM থেকে না পড়ে আবার নতুন করে গুণ করে বের করা হয় (Recomputation), যার ফলে মোট গাণিতিক হিসাব (FLOPs) স্ট্যান্ডার্ড পদ্ধতির চেয়ে কিছুটা বেড়ে যায়। তবুও কেন বাস্তব GPU-তে এর Backward পাস অনেক বেশি দ্রুত শেষ হয়?",
+          "solution": "কারণ স্ট্যান্ডার্ড Attention-এর Backward পাস মারাত্মকভাবে Memory-Bandwidth-Bound—সেখানে O(T^2) আকারের S ও P ম্যাট্রিক্সগুলো ধীরগতির HBM থেকে পড়তে ও লিখতে সিংহভাগ সময় নষ্ট হয়। FlashAttention কেবল O(T) আকারের logsumexp পরিসংখ্যান (L = m + log l) পড়ে অতি দ্রুতগতির On-Chip SRAM-এর ভেতরেই Tensor Core দিয়ে টাইলগুলো পুনর্গণনা করে ফেলে। যেহেতু Tensor Core-এর কম্পিউট গতি HBM ব্যান্ডউইথের তুলনায় শতগুণ বেশি, তাই সামান্য বাড়তি FLOPs করার চেয়ে বিশাল HBM I/O এড়ানোয় সামগ্রিক Wall-Clock Latency নাটকীয়ভাবে কমে যায়।",
+          "reference": "https://arxiv.org/abs/2307.08691"
+        }
+      ]
+    },
+    {
+      "id": "ch44_kv_gqa",
+      "title": "KV Cache গণিত: MHA, MQA এবং Grouped-Query Attention (GQA)",
+      "subtitle": "প্রতিটি নতুন Token তৈরির সময় বারবার পুরোনো Key-Value হিসাব বাঁচাতে গিয়ে কেন মেমোরি ও ব্যান্ডউইথ নতুন বটলনেক হয়ে দাঁড়ায়।",
+      "duration": "28 min",
+      "icon": "data",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন আমাদের KV Cache রাখতে হয়?",
+          "body": "FlashAttention আমাদের শেখাল কীভাবে T × T আকারের অস্থায়ী Attention ম্যাট্রিক্সের মেমোরি খরচ এড়াতে হয়। কিন্তু এবার Autoregressive জেনারেশনের কথা ভাবুন: যখন মডেল ১০০০তম Token-টি লিখতে যাচ্ছে, তখন Causal Self-Attention-এর নিয়ম অনুযায়ী বর্তমান ১০০০তম Query ভেক্টর q_1000-কে আগের ১ থেকে ১০০০ নম্বর সব অবস্থানগুলোর Key (k_1..k_1000) এবং Value (v_1..v_1000)-এর সাথে তুলনা করতে হবে। খেয়াল করুন, Causal মডেলে আগের Token-গুলোর হিডেন রিপ্রেজেন্টেশন এবং তাদের Key-Value ভেক্টরগুলো কিন্তু ভবিষ্যতের কোনো Token আসার কারণে কখনোই বদলায় না! তাই প্রতি ধাপে ১ নম্বর Token থেকে পুরো ইতিহাস বারবার নতুন করে হিসাব করার (যাতে মোট জেনারেশন খরচ O(S^2) FLOPs হয়ে যেত) বদলে আমরা প্রতিটি লেয়ারে আগের সব Token-এর Key ও Value ভেক্টরগুলো HBM-এ সংরক্ষণ করে রাখি। এই সংরক্ষিত টেবিলটিই হলো বিখ্যাত KV Cache।"
+        },
+        {
+          "type": "text",
+          "title": "KV Cache যখন নিজেই মেমোরি দানবে পরিণত হয়",
+          "body": "সমস্যা হলো, কম্পিউট বাঁচাতে গিয়ে আমরা এবার মেমোরিতে এক বিশাল বোঝা তুলে নিলাম! চলুন একটি স্ট্যান্ডার্ড ৭০ বিলিয়ন প্যারামিটারের আর্কিটেকচারের (যেমন Llama-3 70B ঘরানার মাত্রা: মোট লেয়ার L = 80, হিডেন মাত্রা d_model = 8192, মোট Query Head সংখ্যা H_q = 64, প্রতিটি হেডের মাত্রা d_h = 128) হিসাব করি। যদি প্রথাগত Multi-Head Attention (MHA) ব্যবহার করা হয়—যেখানে প্রতিটি Query Head-এর জন্য আলাদা একটি করে Key Head ও Value Head থাকে (H_kv = 64)—তবে BF16 ফরম্যাটে (প্রতি সংখ্যা ২ বাইট) শুধুমাত্র ১টি মাত্র Token-এর KV Cache রাখতে খরচ হয়: 2 (K ও V) × 80 × 64 × 128 × 2 = 2,621,440 বাইট বা ঠিক 2.5 MiB! এবার ভাবুন, আপনার সার্ভারে মাত্র ৮ জন ব্যবহারকারী (B = 8) ৩২,৭৬৮ দৈর্ঘ্যের Context (S = 32,768) নিয়ে কাজ করছেন। তাহলে শুধুমাত্র KV Cache-এই মেমোরি লাগবে 2.5 MiB × 32,768 × 8 = 640 GiB—যা ১৪০ GB মডেল ওয়েটের চেয়েও চার গুণের বেশি!"
+        },
+        {
+          "type": "math",
+          "title": "নিখুঁত KV Cache মেমোরি বাইট সমীকরণ",
+          "body": "\\mathrm{Bytes}_{\\mathrm{KV}}=2\\times L\\times H_{kv}\\times d_h\\times b_{\\mathrm{elem}}\\times S\\times B"
+        },
+        {
+          "type": "text",
+          "title": "MHA থেকে MQA এবং সোনালী মধ্যপন্থা GQA",
+          "body": "ওপরের সমীকরণটির প্রতিটি চলকের দিকে তাকালে দেখবেন: L (লেয়ার), d_h (হেড মাত্রা), S (সিকোয়েন্স দৈর্ঘ্য) এবং B (ব্যাচ) কমানোর সুযোগ আমাদের নেই। কিন্তু H_kv (Key-Value হেডের সংখ্যা) কি কমানো যায়? এখান থেকেই দুটি যুগান্তকারী আর্কিটেকচারের জন্ম:\n১. Multi-Query Attention (MQA): Noam Shazeer দেখান যে সবগুলো Query Head (যেমন ৬৪টি) আলাদা আলাদা দিকে তাকালেও তারা সবাই মিলে মাত্র ১টি শেয়ারড Key Head এবং ১টি Value Head (H_kv = 1) ব্যবহার করতে পারে! এতে আমাদের আগের উদাহরণে KV Cache ৬৪০ GiB থেকে এক লাফে ৬৪ গুণ কমে মাত্র ১০ GiB হয়ে যায়। কিন্তু বিশাল মডেলে মাত্র ১টি KV Head রাখলে জটিল রিজনিং ও মানে সামান্য অবনতি দেখা দিতে পারে।\n২. Grouped-Query Attention (GQA): এটি MHA এবং MQA-এর মাঝখানের নিখুঁত ভারসাম্য। এখানে ৬৪টি Query Head-কে g = 8 আকারের ছোট ছোট দলে ভাগ করা হয়, যেখানে প্রতি ৮টি Query Head মিলে ১টি করে KV Head শেয়ার করে (অর্থাৎ H_kv = 8)। এর ফলে মডেলের গুণমান MHA-এর প্রায় হুবহু সমান থাকে, অথচ KV Cache মেমোরি এবং প্রতি Decode ধাপে HBM থেকে KV পড়ার সময়—দুটোই ঠিক ৮ গুণ কমে যায়!"
+        },
+        {
+          "type": "code",
+          "title": "70B মডেলে MHA, GQA-8 ও MQA-এর মেমোরি এবং HBM ব্যান্ডউইথ তুলনা",
+          "body": "def kv_cache_stats(kv_heads, layers=80, head_dim=128, elem_bytes=2, seq_len=32768, batch=8, hbm_bw=3.35e12):\n    total_bytes = 2 * layers * kv_heads * head_dim * elem_bytes * seq_len * batch\n    gib = total_bytes / (2 ** 30)\n    read_ms = (total_bytes / hbm_bw) * 1e3\n    return gib, round(read_ms, 2)\n\nmha_gib, mha_ms = kv_cache_stats(kv_heads=64)\ngqa_gib, gqa_ms = kv_cache_stats(kv_heads=8)\nmqa_gib, mqa_ms = kv_cache_stats(kv_heads=1)\n\nassert mha_gib == 640.0 and gqa_gib == 80.0 and mqa_gib == 10.0\nassert mha_gib / gqa_gib == 8.0\nprint(f\"MHA: {mha_gib} GiB ({mha_ms} ms) | GQA-8: {gqa_gib} GiB ({gqa_ms} ms) | MQA: {mqa_gib} GiB ({mqa_ms} ms)\")"
+        },
+        {
+          "type": "text",
+          "title": "প্রোডাকশনের প্রান্তিক শর্ত: Tensor Parallelism ও RoPE",
+          "body": "কোডের আউটপুটটি দেখুন: একক H100 ব্যান্ডউইথের (3.35 TB/s) সাপেক্ষে ৩২K দৈর্ঘ্যের ৮টি রিকোয়েস্টের শুধু KV Cache পড়তেই MHA-তে লাগত ২০৫.১৩ মিলিসেকেন্ড (মডেল ওয়েট পড়ার হিসাব বাদেই!), যেখানে GQA-8-এ তা নেমে এসেছে মাত্র ২৫.৬৪ মিলিসেকেন্ডে এবং মেমোরি ৬৪০ GiB থেকে কমে হয়েছে ৮০ GiB!\n\nFAANG ইন্টারভিউয়ে GQA নিয়ে দুটি সূক্ষ্ম সিস্টেম প্রশ্ন প্রায়ই করা হয়:\nপ্রথমত, Tensor Parallelism (TP)-এর সাথে KV Head-এর সম্পর্ক: যখন আমরা মডেলকে TP সংখ্যক GPU-তে হেড বরাবর ভাগ করি, তখন আদর্শ অবস্থায় H_kv-কে TP দিয়ে নিঃশেষে বিভাজ্য হতে হয় (যেমন H_kv = 8 হলে TP = 8 পর্যন্ত প্রতি GPU-তে ১টি করে অনন্য KV Head থাকে)। কিন্তু আপনি যদি MQA (H_kv = 1) ব্যবহার করেন বা H_kv = 8 মডেলকে TP = 16 GPU-তে চালান, তখন কিন্তু ১টি KV Head-কে অর্ধেক করা যায় না—বাধ্য হয়ে একাধিক GPU-তে একই KV Head ডুপ্লিকেট (Replicate) করে রাখতে হয়!\nদ্বিতীয়ত, মনে রাখবেন Rotary Positional Embedding (RoPE) প্রয়োগ করার পরেই Key ভেক্টরকে KV Cache-এ সেভ করতে হয়, যাতে পরের ধাপে অবস্থানগত কোণ ঠিক থাকে (অথচ Value ভেক্টরে RoPE লাগে না)। এছাড়া আধুনিক সিস্টেমে KV Cache-কে FP8 ফরম্যাটে কোয়ান্টাইজ করে কিংবা DeepSeek-এর Multi-Head Latent Attention (MLA) দিয়ে লো-র‍্যাঙ্ক কম্প্রেসড ভেক্টর রেখে মেমোরি আরও কমানো হয়।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে যাচাই করুন: TP > H_kv হলে KV মেমোরির কী ঘটে?",
+          "body": "ধরুন একটি 70B মডেলে H_q = 64 এবং H_kv = 8। আপনি কম Latency পাওয়ার আশায় মডেলটিকে ২টি নোডের মোট ১৬টি GPU-তে Tensor Parallelism (TP = 16) দিয়ে ভাগ করলেন। প্রতি GPU-তে মডেল ওয়েট ১৬ ভাগের ১ ভাগ হলেও মোট সিস্টেম জুড়ে KV Cache মেমোরির কী ঘটবে?",
+          "solution": "যেহেতু মোট অনন্য KV Head আছে মাত্র ৮টি (H_kv = 8) কিন্তু Tensor Parallel র‍্যাঙ্ক ১৬টি (TP = 16), তাই প্রতি ২টি GPU-এর Query Head গ্রুপ (প্রতি GPU-তে 64 / 16 = 4-টি করে Query Head) একই KV Head-এর ওপর নির্ভরশীল। All-to-All কমিউনিকেশন এড়াতে প্রতিটি KV Head-কে ২টি করে GPU-তে হুবহু কপি (Replicate) করে রাখতে হবে। ফলে TP = 8 থেকে TP = 16-এ গেলে প্রতি GPU-তে KV Cache-এর আকার আর অর্ধেক হবে না—অপরিবর্তিতই থেকে যাবে, এবং পুরো ১৬-GPU ক্লাস্টার জুড়ে মোট সংরক্ষিত KV মেমোরি দ্বিগুণ হয়ে যাবে!",
+          "reference": "https://arxiv.org/abs/2305.13245"
+        }
+      ]
+    },
+    {
+      "id": "ch44_zero_fsdp",
+      "title": "Mixed-Precision মেমোরি ব্রেকডাউন এবং DDP বনাম ZeRO / PyTorch FSDP",
+      "subtitle": "১৬ বাইট প্রতি প্যারামিটারের রহস্য ভেদ করুন এবং ডেটা প্যারালাল GPU-গুলোর মাঝে মেমোরি শার্ডিং ও কমিউনিকেশনের নিখুঁত হিসাব শিখুন।",
+      "duration": "32 min",
+      "icon": "hub",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "৭ বিলিয়ন প্যারামিটারের মডেল কেন ৮০ GB GPU-তেও জায়গা পায় না?",
+          "body": "সার্ভিংয়ের সময় তো শুধু মডেল ওয়েট আর KV Cache থাকলেই চলে; কিন্তু এবার চলুন দেখি সেই মডেলটিকে প্রথমবার ট্রেন (Pretrain বা Full Fine-tune) করতে গেলে মেমোরির হিসাব কীভাবে আমূল পাল্টে যায়। নতুন ইঞ্জিনিয়াররা প্রায়ই হিসাব করেন: ‘একটি 7B মডেলের প্যারামিটার সংখ্যা Ψ = 7 × 10^9; BF16 ফরম্যাটে প্রতি প্যারামিটার ২ বাইট হলে মোট ওয়েট তো মাত্র ১৪ GB! তাহলে একটি ৮০ GB H100 GPU-তে নিশ্চয়ই হাসতে হাসতে ট্রেন হয়ে যাবে?’ বাস্তবে ট্রেনিং শুরু করতেই সাথে সাথে Out-Of-Memory (OOM) এরর আসে! কেন? কারণ আধুনিক Mixed-Precision Adam/AdamW ট্রেনিংয়ে শুধুমাত্র BF16 ওয়েট রাখলে চলে না—প্যারামিটার প্রতি মোট ১৬ বাইট স্ট্যাটিক মডেল স্টেট রাখতে হয়, এবং তার ওপরে যোগ হয় বিশাল Activation মেমোরি।"
+        },
+        {
+          "type": "text",
+          "title": "১৬ বাইট প্রতি প্যারামিটারের নিখুঁত ব্যবচ্ছেদ",
+          "body": "কেন প্রতি প্যারামিটারে ঠিক ১৬ বাইট লাগে, তা ধাপে ধাপে বুঝে নেওয়া যাক:\n১. Forward ও Backward পাসের দ্রুত Tensor Core গুণের জন্য ওয়েটের BF16 কপি: ২ বাইট।\n২. Backward পাসে তৈরি হওয়া গ্র্যাডিয়েন্টের BF16 কপি: ২ বাইট (উল্লেখ্য, কোনো কোনো ফ্রেমওয়ার্কে গ্র্যাডিয়েন্ট সরাসরি FP32-তে জমা করলে এখানে ৪ বাইট লাগে, তখন মোট হয় ১৮ বাইট; তবে ক্ল্যাসিক ZeRO পেপারের প্রমিত হিসাবে এটি ২ বাইট)।\n৩. Adam অপটিমাইজারের ভেতরের তিনটি FP32 স্টেট: কেন এগুলো ৪ বাইটের পূর্ণ FP32 হতে হয়? কারণ Learning Rate সাধারণত 10^-4 বা 10^-5 মানের খুব ক্ষুদ্র সংখ্যা। BF16-এ মাত্র ৭টি Mantissa বিট থাকায় ১.০ মানের একটি ওয়েটের সাথে ০.০০০১ যোগ করতে গেলে ক্ষুদ্র আপডেটটি পুরোপুরি মুছে শূন্য হয়ে যায় (যাকে বলে Weight Update Swamping)! তাই নিখুঁত আপডেটের জন্য রাখতে হয় FP32 Master Weights (৪ বাইট), প্রথম মোমেন্ট বা চলমান গড় m (৪ বাইট) এবং দ্বিতীয় মোমেন্ট বা চলমান বর্গের গড় v (৪ বাইট)—এই তিনে মিলে ১২ বাইট।\nসুতরাং মোট স্ট্যাটিক মেমোরি = ২ + ২ + (৪ + ৪ + ৪) = ১৬ বাইট/প্যারামিটার! ফলে একটি 7B মডেলের শুধু স্ট্যাটিক স্টেটই দাঁড়ায় 16 × 7 = 112 GB, যা প্রথাগত DDP (Distributed Data Parallel)-তে প্রতিটি GPU-তেই হুবহু ডুপ্লিকেট থাকে!"
+        },
+        {
+          "type": "math",
+          "title": "Mixed-Precision Adam মেমোরি ও ZeRO শার্ডিং সমীকরণ",
+          "body": "M_{\\mathrm{DDP}}=16\\Psi,\\quad M_{\\text{ZeRO-1}}=4\\Psi+\\frac{12\\Psi}{N_d},\\quad M_{\\text{ZeRO-2}}=2\\Psi+\\frac{14\\Psi}{N_d},\\quad M_{\\text{ZeRO-3}}=\\frac{16\\Psi}{N_d}"
+        },
+        {
+          "type": "text",
+          "title": "ZeRO-1, ZeRO-2 ও ZeRO-3 / FSDP এবং তাদের কমিউনিকেশন খরচ",
+          "body": "DeepSpeed-এর ZeRO (Zero Redundancy Optimizer) এবং PyTorch-এর FSDP (Fully Sharded Data Parallel) একটি সরল প্রশ্ন তোলে: যদি আমাদের N_d-টি ডেটা-প্যারালাল GPU থাকে, তবে একই স্টেট সবাই কপি করে রাখছে কেন?\n• ZeRO-1 (Optimizer State Sharding): কেবল ১২Ψ অপটিমাইজার স্টেট N_d ভাগে ভাগ হয়। আশ্চর্যের বিষয় হলো, এর কমিউনিকেশন খরচ DDP-এর হুবহু সমান! কারণ DDP-তে গ্র্যাডিয়েন্টের একটি পূর্ণ AllReduce আসলে ভেতরে ভেতরে ১টি ReduceScatter (Ψ উপাদান) + ১টি AllGather (Ψ উপাদান) = মোট ২Ψ BF16 উপাদান পাঠায়। ZeRO-1-ও প্রথমে গ্র্যাডিয়েন্ট ReduceScatter করে নিজ নিজ অংশের Adam আপডেট সেরে নেয়, আর শেষে আপডেট হওয়া BF16 ওয়েটগুলো AllGather করে—মোট সেই একই ২Ψ উপাদান!\n• ZeRO-2 (+ Gradient Sharding, FSDP SHARD_GRAD_OP): ১২Ψ অপটিমাইজার ও ২Ψ গ্র্যাডিয়েন্ট উভয়ই ভাগ হয়; কমিউনিকেশন এখনও সেই একই ২Ψ উপাদানই থাকে!\n• ZeRO-3 / পূর্ণ FSDP (FULL_SHARD): ২Ψ ওয়েটসহ পুরো ১৬Ψ স্টেটই N_d ভাগে ভাগ হয়ে যায়! তবে যেহেতু কোনো GPU-তেই পূর্ণ লেয়ার নেই, তাই Forward পাসে প্রতি লেয়ারের আগে ওয়েট AllGather (Ψ), Backward পাসে আবার ওয়েট AllGather (Ψ) এবং শেষে গ্র্যাডিয়েন্ট ReduceScatter (Ψ) করতে হয়—মোট ৩Ψ BF16 উপাদান, যা DDP বা ZeRO-2-এর তুলনায় ঠিক ১.৫ গুণ!"
+        },
+        {
+          "type": "code",
+          "title": "7B মডেলে (N_d = 8) DDP বনাম ZeRO ধাপগুলোর মেমোরি ও কমিউনিকেশন হিসাব",
+          "body": "psi = 7e9    # 7B parameters\nn_d = 8      # 8 Data-Parallel GPUs\nbf16_b = 2   # bytes per BF16 element in collective comms\n\nmem_gb = {\n    \"DDP\": 16 * psi / 1e9,\n    \"ZeRO-1\": (4 + 12 / n_d) * psi / 1e9,\n    \"ZeRO-2\": (2 + 14 / n_d) * psi / 1e9,\n    \"ZeRO-3_FSDP\": (16 / n_d) * psi / 1e9,\n}\ncomm_gb = {\n    \"DDP\": 2 * psi * bf16_b / 1e9,\n    \"ZeRO-1\": 2 * psi * bf16_b / 1e9,\n    \"ZeRO-2\": 2 * psi * bf16_b / 1e9,\n    \"ZeRO-3_FSDP\": 3 * psi * bf16_b / 1e9,\n}\nassert mem_gb[\"DDP\"] == 112.0 and mem_gb[\"ZeRO-1\"] == 38.5\nassert mem_gb[\"ZeRO-2\"] == 26.25 and mem_gb[\"ZeRO-3_FSDP\"] == 14.0\nassert comm_gb[\"ZeRO-3_FSDP\"] / comm_gb[\"DDP\"] == 1.5\nprint(\"Memory (GB):\", mem_gb)\nprint(\"Comm/step (GB):\", comm_gb)"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব ক্লাস্টারে HSDP, Prefetching ও Activation Checkpointing",
+          "body": "কোডের ফলাফলটি পরিষ্কার দেখাচ্ছে: যেখানে DDP-তে ১১২ GB লেগে ৮০ GB GPU ক্র্যাশ করছিল, সেখানে ৮টি GPU-তে ZeRO-1 দিলেই স্ট্যাটিক মেমোরি নেমে আসে ৩৮.৫ GB-তে, ZeRO-2-তে ২৬.২৫ GB-তে (বিনা বাড়তি নেটওয়ার্ক খরচে!), এবং ZeRO-3 / FSDP-তে মাত্র ১৪.০ GB-তে (৪২ GB নেটওয়ার্ক ট্রাফিকের বিনিময়ে)।\n\nশত শত GPU-এর মাল্টি-নোড ক্লাস্টারে কিন্তু অন্ধভাবে সব নোড জুড়ে পূর্ণ FSDP চালানো বিপজ্জনক! কারণ একটি নোডের ভেতরের ৮টি GPU যুক্ত থাকে দ্রুতগতির NVLink দিয়ে (৯০০ GB/s), অথচ এক নোড থেকে আরেক নোডে যাওয়া InfiniBand নেটওয়ার্ক তার তুলনায় প্রায় ১০–১৮ গুণ ধীর। তাই প্রোডাকশনে ব্যবহার করা হয় Hybrid Sharded Data Parallel (HSDP / ZeRO++): প্রতিটি নোডের ভেতরে ৮টি GPU-তে চলে পূর্ণ ZeRO-3 শার্ডিং, আর নোডগুলোর মাঝে চলে সাধারণ DDP AllReduce! এছাড়া কম্পিউটের আড়ালে কমিউনিকেশন লুকাতে FSDP পরের লেয়ারের ওয়েট আগেভাগেই আনতে থাকে (Backward Prefetching), এবং বড় ব্যাচে Activation মেমোরি নিয়ন্ত্রণে রাখতে প্রতি Transformer Block-এর সীমানায় Activation Checkpointing ব্যবহার করা হয়।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে যাচাই করুন: ZeRO-2 থাকতে কখন ZeRO-3 নেবেন (আর কখন নেবেন না)?",
+          "body": "ধরুন ৮টি ৮০ GB H100 GPU-এর একটি একক নোডে আপনি একটি 13B মডেল ট্রেন করছেন। ZeRO-2 ব্যবহার করলেই মডেল ও Activation মেমোরি অনায়াসে ৮০ GB-এর ভেতরে এঁটে যাচ্ছে। এই পরিস্থিতিতে কি ZeRO-3 (FULL_SHARD) চালু করা বুদ্ধিমানের কাজ হবে?",
+          "solution": "সাধারণত না—যদি না সেই বাড়তি ফাঁকা মেমোরি দিয়ে Micro-batch Size বাড়িয়ে Tensor Core-এর ব্যবহার উল্লেখযোগ্যভাবে বাড়ানো যায়। কারণ ZeRO-2 ইতিমধ্যেই DDP-এর সমান ২Ψ কমিউনিকেশন খরচে মডেলটিকে মেমোরিতে বসিয়ে দিয়েছে; অযথা ZeRO-3 চালু করলে প্রতি ধাপে অতিরিক্ত ১Ψ (মোট ১.৫ গুণ) AllGather ট্রাফিক যোগ হবে এবং নেটওয়ার্ক ওভারহেড কম্পিউটকে ধীর করে দিতে পারে। কেবল যখন মডেল এত বড় হয় যে ZeRO-2-তে জায়গা হয় না (যেমন 70B মডেল) অথবা বড় Batch নেওয়ার ফলে অর্জিত কম্পিউট লাভ বাড়তি AllGather খরচকে ছাড়িয়ে যায়, তখনই ZeRO-3 সেরা পছন্দ।",
+          "reference": "https://arxiv.org/abs/1910.02054"
+        }
+      ]
+    },
+    {
+      "id": "ch44_tensor_pipeline",
+      "title": "Megatron-LM Tensor Parallelism ও Pipeline Parallelism-এর Bubble গণিত",
+      "subtitle": "একক লেয়ার বিশাল হলে কীভাবে Column ও Row প্যারালাল ভাগে মাত্র ১টি AllReduce লাগে এবং একাধিক নোডে Pipeline Bubble কমানো যায়।",
+      "duration": "32 min",
+      "icon": "split",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন শুধু Data Parallelism বা FSDP যথেষ্ট নয়?",
+          "body": "আগের পাঠে দেখা ZeRO-3 বা FSDP ট্রেনিংয়ের জন্য অসাধারণ হলেও এর দুটি মৌলিক সীমাবদ্ধতা আছে। প্রথমত, সার্ভিংয়ের (Inference) সময় কম Latency বজায় রাখতে প্রতি ধাপে প্যারামিটার AllGather করা অসম্ভব—আমাদের দরকার ওয়েটগুলো স্থায়ীভাবে একাধিক GPU-তে ভাগ করে রেখে সবার HBM Bandwidth একত্রে যোগ করা! দ্বিতীয়ত, ট্রেনিংয়েও যখন মডেলের আকার ৭০B বা ৪০৫B ছাড়িয়ে যায় এবং হাজার হাজার GPU ব্যবহৃত হয়, তখন শুধু ডেটা প্যারালাল র‍্যাঙ্ক বাড়ালে প্রতি GPU-এর Micro-batch একদম ছোট হয়ে যায় এবং ধীরগতির আন্তঃনোড নেটওয়ার্কে FSDP-এর AllGather মুখ থুবড়ে পড়ে। এই সমস্যা সমাধান করতেই মডেলকে ভেতর থেকে দুটি ভিন্ন মাত্রায় কাটা হয়: একটি লেয়ারের ভেতরের ম্যাট্রিক্সগুলোকে আড়াআড়ি ও লম্বালম্বি ভাগ করাকে বলে Tensor Parallelism (TP), আর পুরো মডেলের লেয়ারগুলোকে তলার পর তলা ভাগ করে আলাদা নোডে বসানোকে বলে Pipeline Parallelism (PP)।"
+        },
+        {
+          "type": "text",
+          "title": "Megatron-LM-এর জাদুকরী কৌশল: Column-Parallel এর পর Row-Parallel",
+          "body": "ধরুন একটি Transformer-এর MLP ব্লকে দুটি Linear লেয়ার আছে: Z = sigma(X W_1) W_2, যেখানে sigma হলো GeLU বা SiLU/SwiGLU-এর মতো উপাদানভিত্তিক (Element-wise) নন-লিনিয়ার ফাংশন। আমরা যদি দুটো ম্যাট্রিক্সকেই ইচ্ছেমতো ভাগ করি, তবে প্রতি গুণের পরেই GPU-গুলোর মধ্যে ডেটা আদান-প্রদান করতে হবে। Megatron-LM এখানে এক অসামান্য বীজগাণিতিক কৌশল কাজে লাগায়:\n১. প্রথম ম্যাট্রিক্স W_1-কে কলাম বরাবর t ভাগে কাটা হয় (Column-Parallel): W_1 = [W_{1,1}, ..., W_{1,t}]। ইনপুট X সব র‍্যাঙ্কে একই থাকায় র‍্যাঙ্ক i নিজের অংশ X W_{1,i} হিসাব করে। যেহেতু sigma প্রতিটি কলামের উপাদানের ওপর আলাদাভাবে কাজ করে, তাই কোনো কমিউনিকেশন ছাড়াই প্রতিটি র‍্যাঙ্ক নিজের Y_i = sigma(X W_{1,i}) বের করে ফেলতে পারে!\n২. দ্বিতীয় ম্যাট্রিক্স W_2-কে কাটা হয় সারি বা Row বরাবর (Row-Parallel): W_2 = [W_{2,1}^T, ..., W_{2,t}^T]^T। এবার ব্লক ম্যাট্রিক্স গুণের নিয়মে চূড়ান্ত আউটপুট দাঁড়ায় Z = sum_i (Y_i W_{2,i})! অর্থাৎ মাঝখানে কোনো সিঙ্ক্রোনাইজেশন ছাড়াই প্রতিটি র‍্যাঙ্ক Y_i W_{2,i} গুণ করে, এবং একদম শেষে মাত্র ১টি AllReduce চালিয়ে আংশিক যোগফলগুলো একত্র করে নেয়! একইভাবে Attention ব্লকেও Q, K, V হেড অনুযায়ী Column-Parallel এবং আউটপুট প্রজেকশন W_O থাকে Row-Parallel—ফলে পুরো Transformer লেয়ারের Forward পাসে মাত্র ২টি (MLP-তে ১টি + Attention-এ ১টি) AllReduce লাগে!"
+        },
+        {
+          "type": "math",
+          "title": "Column-Parallel ও Row-Parallel MLP এবং Pipeline Bubble ভগ্নাংশ",
+          "body": "Z=\\sum_{i=1}^{t}\\sigma(XW_{1,i})W_{2,i},\\qquad f_{\\mathrm{bubble}}=\\frac{p-1}{m+p-1}"
+        },
+        {
+          "type": "text",
+          "title": "Pipeline Parallelism: GPipe বনাম 1F1B এবং Bubble সমীকরণ",
+          "body": "Tensor Parallelism-এ যেহেতু প্রতি লেয়ারেই ২বার করে বিশাল Activation টেনসর AllReduce করতে হয়, তাই একে সবসময় একটি নোডের ভেতরের অতি দ্রুতগতির NVLink-এর (যেমন ৮টি GPU) মধ্যে সীমাবদ্ধ রাখা হয়। কিন্তু মডেল যদি ৮টি GPU-তেও না ধরে? তখন আমরা লেয়ারগুলোকে p-টি নোডে ভাগ করি—যেমন ৮০ লেয়ারের মডেলকে p = 4 স্টেজে ভাগ করলে প্রতি নোডে ২০টি করে লেয়ার পড়ে (Pipeline Parallelism)। এখানে শুধু স্টেজের সীমানায় একটিমাত্র লেয়ারের Activation পরের নোডে পাঠাতে হয় (Point-to-Point Send/Recv)!\n\nকিন্তু শুরুর স্টেজ কাজ করার সময় পরের স্টেজগুলো তো ইনপুটের অপেক্ষায় অলস বসে থাকে (Pipeline Bubble)! তা কমাতে পুরো মিনি-ব্যাচকে m-টি ছোট Micro-batch-এ ভাগ করে পাইপলাইনে ঢুকিয়ে দেওয়া হয়। প্রতিটি Micro-batch-এর সময় ১ ধরলে কাজ শুরু ও শেষ হতে মোট (p - 1) একক সময় অলস যায় এবং আসল কাজ হয় m একক সময়—তাই অলস সময়ের ভগ্নাংশ বা Bubble Fraction হলো (p - 1) / (m + p - 1)। খেয়াল করুন, m যত বড় হবে (যেমন m >= 4p), Bubble তত ছোট হবে। এখানে GPipe শিডিউল সব m-টি Forward শেষ করে তবেই Backward শুরু করে—ফলে m-টি Micro-batch-এরই Activation মেমোরিতে ধরে রাখতে হয়! বিপরীতে 1F1B (One-Forward-One-Backward) শিডিউল স্টেডি-স্টেটে ১টি Forward শেষ হতেই ১টি Backward চালিয়ে সাথে সাথে তার Activation মেমোরি মুক্ত করে দেয়—ফলে ঠিক একই Bubble রেখেও মেমোরি খরচ O(m) থেকে কমে মাত্র O(p)-তে নেমে আসে!"
+        },
+        {
+          "type": "code",
+          "title": "Megatron-LM Column+Row MLP সমতুল্যতা এবং Pipeline Bubble যাচাই",
+          "body": "import numpy as np\n\nrng = np.random.default_rng(7)\nX = rng.normal(size=(4, 16))\nW1 = rng.normal(size=(16, 32))\nW2 = rng.normal(size=(32, 16))\nsilu = lambda u: u / (1.0 + np.exp(-u))\n\n# Single-GPU reference\nZ_ref = silu(X @ W1) @ W2\n\n# TP = 4: W1 split by columns (axis=1), W2 split by rows (axis=0), 1 final AllReduce\ntp = 4\nW1_cols = np.split(W1, tp, axis=1)\nW2_rows = np.split(W2, tp, axis=0)\npartial_outputs = [silu(X @ W1_cols[r]) @ W2_rows[r] for r in range(tp)]\nZ_tp = np.sum(partial_outputs, axis=0)  # Single AllReduce(SUM)\nassert np.allclose(Z_tp, Z_ref, atol=1e-12)\n\n# Pipeline Bubble fractions for p = 4 stages\np = 4\nbubbles = {m: round((p - 1) / (m + p - 1), 4) for m in (4, 16, 32)}\nassert bubbles[4] == round(3 / 7, 4) and bubbles[32] < 0.09\nprint(\"TP max diff:\", float(np.max(np.abs(Z_tp - Z_ref))), \"| Bubbles:\", bubbles)"
+        },
+        {
+          "type": "text",
+          "title": "3D Parallelism প্লেসমেন্ট নীতি ও Sequence Parallelism",
+          "body": "কোডের আউটপুটে দেখুন: ৪টি র‍্যাঙ্কে মাঝখানে কোনো কমিউনিকেশন ছাড়া কেবল শেষে একবার যোগ (AllReduce) করেই চূড়ান্ত আউটপুট ১০^-১৫ সূক্ষ্মতায় মিলে গেছে! উল্টো আপনি যদি ভুল করে প্রথমে Row-Parallel নিতেন, তবে নন-লিনিয়ার SiLU চালানোর আগেই একটি অতিরিক্ত AllReduce লাগত, কারণ silu(A + B) কখনোই silu(A) + silu(B)-এর সমান নয়! আর Pipeline অংশে p = 4 স্টেজে m = 4 নিলে যেখানে প্রায় ৪২.৮৬% সময় নষ্ট হচ্ছিল, m = 32 নেওয়ায় সেই Bubble নেমে এসেছে মাত্র ৮.৫৭%-এ (এবং 1F1B সেখানে ৩২টির বদলে সর্বোচ্চ ৪টি Micro-batch-এর Activation মেমোরিতে রাখছে)।\n\nবাস্তব 3D Parallelism ক্লাস্টার সাজানোর সোনালী নিয়মটি মুখস্থ রাখুন:\n১. নোডের ভেতরে (NVLink): Tensor Parallelism (TP <= 8) + Sequence Parallelism (SP)—যেখানে LayerNorm ও Dropout-এর অংশে টোকেন অক্ষ বরাবর Activation ভাগ করে মেমোরি আরও কমানো হয় (কারণ AllReduce ভাঙলে সমান খরচের ReduceScatter + AllGather পাওয়া যায়)।\n২. পাশের নোডগুলোর মাঝে: Pipeline Parallelism (PP), কারণ এতে কেবল স্টেজ সীমান্তে ছোট টেনসর যায়।\n৩. সবার বাইরের স্তরে: Data Parallelism / ZeRO-1 (DP), যার গ্র্যাডিয়েন্ট সিঙ্ক সব Micro-batch শেষে Backward পাসের আড়ালে ঢাকা পড়ে যায়!"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে যাচাই করুন: দুটি নোডে TP = 16 নাকি TP = 8, PP = 2?",
+          "body": "আপনার কাছে ২টি নোড আছে, প্রতিটিতে ৮টি করে H100 GPU NVLink (900 GB/s) দিয়ে যুক্ত, আর দুটি নোডের মাঝখানে রয়েছে তুলনামূলক ধীরগতির নেটওয়ার্ক (যেমন প্রতি NIC-এ 50 GB/s)। একটি বিশাল মডেল ট্রেন বা সার্ভ করার সময় আপনি কি TP = 16 বেছে নেবেন, নাকি TP = 8 এবং PP = 2?",
+          "solution": "নিঃসন্দেহে TP = 8 এবং PP = 2 বেছে নেব! কারণ TP = 16 নিলে প্রতিটি Transformer লেয়ারের ভেতরে ২টি করে blocking AllReduce (৮০ লেয়ারে মোট ১৬০ বার!) ধীরগতির আন্তঃনোড নেটওয়ার্ক পার হতে বাধ্য হবে, যার Latency কম্পিউটের সাথে লুকানো যায় না এবং পুরো ক্লাস্টার স্থবির হয়ে পড়বে। বিপরীতে নোডের ভেতরে NVLink-এ TP = 8 রাখলে সব ভারী AllReduce ৯০০ GB/s গতিতে চলে, আর দুটি নোডের মাঝখানে PP = 2 কেবল ৪০তম লেয়ার পার হওয়ার সময় মাত্র একবার ছোট Activation টেনসর পাঠায়।",
+          "reference": "https://arxiv.org/abs/2104.04473"
+        }
+      ]
+    },
+    {
+      "id": "ch44_paged_batching",
+      "title": "PagedAttention, Continuous Batching ও Prefill-Decode Disaggregation",
+      "subtitle": "অপারেটিং সিস্টেমের Virtual Memory ধারণা ব্যবহার করে KV Fragmentation দূর করুন এবং হাই-থ্রুপুট LLM সার্ভার গড়ে তুলুন।",
+      "duration": "30 min",
+      "icon": "grid_view",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "প্রথাগত সার্ভারে কেন ৬০%–৮০% KV মেমোরি অকেজো পড়ে থাকে?",
+          "body": "এতক্ষণ আমরা মডেল আর্কিটেকচার ও ডিস্ট্রিবিউটেড ট্রেনিং দেখলাম; এবার ঢুকে পড়ি আধুনিক হাই-থ্রুপুট LLM Serving ইঞ্জিনের (যেমন vLLM, SGLang ও TensorRT-LLM) হৃদপিণ্ডে। আমরা জানি, সার্ভারে একসাথে যত বেশি রিকোয়েস্ট Batch করা যায়, Decode ধাপের Arithmetic Intensity তত বাড়ে। কিন্তু Batch বাড়ানোর পথে প্রধান দেয়াল হলো KV Cache মেমোরি! প্রথম প্রজন্মের সার্ভারগুলো প্রতিটি নতুন রিকোয়েস্ট এলেই তার সর্বোচ্চ সম্ভাব্য দৈর্ঘ্য (যেমন max_seq_len = 2048 বা 8192) ধরে HBM-এ একটানা (Contiguous) মেমোরি স্লট আগেভাগে বরাদ্দ করে রাখত, কারণ ভবিষ্যতে ব্যবহারকারী ঠিক কতগুলো Token জেনারেট করবেন তা শুরুতে জানা অসম্ভব। UC Berkeley-র গবেষকরা দেখান যে এর ফলে বাস্তবে বরাদ্দ করা KV মেমোরির ৬০% থেকে ৮০% সম্পূর্ণ অপচয় হয়—কখনো ছোট উত্তরের জন্য বিশাল স্লট খালি পড়ে থেকে (Internal Fragmentation ও Reservation Waste), আবার কখনো ছোট-বড় রিকোয়েস্ট শেষ হওয়ার পর মেমোরির মাঝে ছোট ছোট অব্যবহারযোগ্য ফাঁকা টুকরো তৈরি হয়ে (External Fragmentation)!"
+        },
+        {
+          "type": "text",
+          "title": "PagedAttention ও Block Table: শূন্য External Fragmentation",
+          "body": "vLLM এই সমস্যার সমাধান করে অপারেটিং সিস্টেমের ক্ল্যাসিক Virtual Memory ও Paging ধারণাটিকে সরাসরি Attention কার্নেলের ভেতর নিয়ে এসে—যার নাম PagedAttention! এখানে পুরো KV মেমোরিকে ছোট ছোট স্থির আকারের ফিজিক্যাল ব্লকে (যেমন প্রতি ব্লকে B_blk = 16 বা 32-টি Token-এর জায়গা) ভাগ করে রাখা হয়। কোনো রিকোয়েস্ট এলে আগেভাগে হাজার হাজার স্লট রিজার্ভ করার কোনো দরকার নেই; যতটুকু বর্তমান দৈর্ঘ্য, কেবল ততগুলো ব্লক ফ্রি লিস্ট থেকে দেওয়া হয়। সিকোয়েন্স লম্বা হওয়ার সাথে সাথে নতুন ব্লক অন-ডিমান্ড বরাদ্দ হয়, এবং ফিজিক্যাল HBM-এ ব্লকগুলোর পাশাপাশি থাকার কোনো বাধ্যবাধকতা নেই—একটি হালকা Block Table প্রতিটি রিকোয়েস্টের লজিক্যাল ব্লক নম্বরকে আসল ফিজিক্যাল ব্লক অ্যাড্রেসে ম্যাপ করে রাখে!\n\nএর দুটি জাদুকরী সুফল মেলে: প্রথমত, সব ব্লক সমান আকারের হওয়ায় External Fragmentation হয়ে যায় নিখুঁত শূন্য! দ্বিতীয়ত, মেমোরি অপচয় কেবল প্রতিটি সিকোয়েন্সের একদম শেষ আংশিক পূর্ণ ব্লকটিতেই সীমাবদ্ধ থাকে (সর্বোচ্চ B_blk - 1-টি স্লট, যা বাস্তবে ৪%-এরও কম)। বোনাস হিসেবে শত শত রিকোয়েস্টের শুরুতে যদি একই লম্বা System Prompt থাকে, তবে তাদের সবার Block Table একই ফিজিক্যাল KV ব্লকগুলোর দিকে নির্দেশ করতে পারে (Prefix Caching ও Copy-on-Write)!"
+        },
+        {
+          "type": "math",
+          "title": "PagedAttention-এ প্রতি সিকোয়েন্সে ব্লক সংখ্যা ও সর্বোচ্চ Internal Fragmentation",
+          "body": "N_{\\mathrm{blocks}}(S)=\\left\\lceil\\frac{S}{B_{\\mathrm{blk}}}\\right\\rceil,\\qquad W_{\\mathrm{internal}}(S)=N_{\\mathrm{blocks}}(S)\\cdot B_{\\mathrm{blk}}-S\\leq B_{\\mathrm{blk}}-1"
+        },
+        {
+          "type": "text",
+          "title": "Continuous Batching এবং Prefill-Decode Disaggregation",
+          "body": "মেমোরি সাশ্রয়ের পর দ্বিতীয় বড় উদ্ভাবন হলো Orca-প্রবর্তিত Continuous Iteration-Level Batching। পুরোনো Static Batching-এ ৮টি রিকোয়েস্ট একসাথে শুরু হলে ৭টি রিকোয়েস্ট ৫০ Token লিখেই থেমে গেলেও (EOS পেলেও) ৮ম রিকোয়েস্টটি ১০০০ Token শেষ না করা পর্যন্ত সবাইকে অপেক্ষা করতে হতো এবং GPU স্লট আটকে থাকত। Continuous Batching প্রতি একক Token তৈরির ধাপেই (Iteration Level) শেষ হয়ে যাওয়া রিকোয়েস্টকে ব্যাচ থেকে বের করে দেয় এবং কিউ থেকে নতুন অপেক্ষমাণ রিকোয়েস্ট সাথে সাথে ঢুকিয়ে নেয়!\n\nকিন্তু এতে নতুন এক সূক্ষ্ম বিপদ দেখা দেয়—যার নাম Prefill Interference! ধরুন আপনার ব্যাচে ৫০ জন ব্যবহারকারীর দ্রুতগতির Decode চলছে (প্রতি ধাপ ২০ ms)। হঠাৎ নতুন একজন ব্যবহারকারী ১৬,০০০ Token-এর একটি বিশাল RAG ডকুমেন্ট পাঠালেন। আপনি যদি ওই নতুন রিকোয়েস্টের বিশাল Compute-Bound Prefill চলমান Decode ব্যাচের সাথে মিশিয়ে চালান, তবে ওই এক ধাপেই সময় লেগে যাবে ৪০০ ms—ফলে বাকি ৫০ জন ব্যবহারকারীর স্ক্রিনে লেখা হঠাৎ থমকে যাবে (TPOT স্পাইক)! এটি সামলাতে দুটি আধুনিক কৌশল ব্যবহৃত হয়: (১) Chunked Prefill—বড় প্রম্পটকে ৫১২ বা ১০২৪ টোকেনের ছোট টুকরোয় ভেঙে কয়েক ধাপে প্রসেস করা, এবং (২) Prefill-Decode Disaggregation (যেমন DistServe, Splitwise, Mooncake)—যেখানে Compute-অপ্টিমাইজড আলাদা Prefill GPU পুল কেবল প্রম্পট পড়ে দ্রুত RDMA/NVLink দিয়ে প্রস্তুত KV Cache পাঠিয়ে দেয় আলাদা Bandwidth-অপ্টিমাইজড Decode GPU পুলে!"
+        },
+        {
+          "type": "code",
+          "title": "Contiguous বরাদ্দ বনাম PagedAttention ও Prefix Caching মেমোরি তুলনা",
+          "body": "import math\n\nlengths = [190, 520, 45, 1030]\nmax_seq_len = 2048\nblock_size = 16\nshared_prefix = 128  # 8 full blocks of shared system prompt\n\nactual_tokens = sum(lengths)\ncontiguous_slots = len(lengths) * max_seq_len\ncontiguous_waste_pct = (contiguous_slots - actual_tokens) / contiguous_slots * 100\n\npaged_blocks = sum(math.ceil(s / block_size) for s in lengths)\npaged_slots = paged_blocks * block_size\npaged_waste_pct = (paged_slots - actual_tokens) / paged_slots * 100\n\nprefix_blocks = shared_prefix // block_size\ndedup_blocks = paged_blocks - (len(lengths) - 1) * prefix_blocks\n\nassert round(contiguous_waste_pct, 2) == 78.21 and round(paged_waste_pct, 2) == 1.27\nassert dedup_blocks == 89\nprint(f\"Contiguous waste: {contiguous_waste_pct:.2f}% | Paged waste: {paged_waste_pct:.2f}% | Dedup blocks: {dedup_blocks}\")"
+        },
+        {
+          "type": "text",
+          "title": "প্রোডাকশন শিডিউলারের প্রান্তিক কেস: KV Cache Preemption",
+          "body": "কোডে দেখুন, ৪টি চলমান রিকোয়েস্টে (মোট ১৭৮৫টি আসল Token) প্রথাগত Contiguous বরাদ্দে যেখানে ৭৮.২১% মেমোরি অপচয় হচ্ছিল, সেখানে ১৬ আকারের ব্লকে PagedAttention সেই অভ্যন্তরীণ অপচয় কমিয়ে এনেছে মাত্র ১.২৭%-এ (মোট ১১৩টি ব্লকে মাত্র ২৩টি ফাঁকা স্লট)! আর ১২৮ টোকেনের শেয়ারড System Prompt-এ Prefix Caching চালু করায় ফিজিক্যাল ব্লক সংখ্যা ১১৩ থেকে কমে দাঁড়িয়েছে মাত্র ৮৯টিতে (১৪২৪টি ফিজিক্যাল স্লট, যা লজিক্যাল ১৭৮৫টি টোকেনের চেয়েও কম)!\n\nতবে একটি গুরুতর প্রোডাকশন প্রান্তিক কেস মনে রাখুন: যেহেতু PagedAttention আগেভাগে পুরো মেমোরি রিজার্ভ করে না (Optimistic Allocation), তাই যদি একসাথে অনেকগুলো রিকোয়েস্ট অপ্রত্যাশিতভাবে খুব লম্বা উত্তর লিখতে শুরু করে, তবে মাঝপথে ফিজিক্যাল ব্লক পুল ফুরিয়ে যেতে পারে! তখন শিডিউলারকে বাধ্য হয়ে কম অগ্রাধিকারের কোনো চলমান রিকোয়েস্টকে সাময়িক বিরতি (Preemption) দিতে হয়—হয় তার KV ব্লকগুলো PCIe দিয়ে CPU RAM-এ সরিয়ে রেখে (Swapping), নয়তো ব্লকগুলো মুছে ফেলে পরে পুরো সিকোয়েন্স আবার নতুন করে Prefill করে (Recomputation)। ভালো প্রোডাকশন সার্ভারে তাই সবসময় Watermark ও Admission Control রাখা হয় যাতে এই ব্যয়বহুল Preemption Thrashing না ঘটে।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে যাচাই করুন: একই পুলে মিশ্রণ বনাম Prefill-Decode Disaggregation",
+          "body": "কেন প্রোডাকশন ক্লাস্টারে Prefill এবং Decode-কে দুটি আলাদা GPU পুলে ভাগ করলে (Disaggregation) আপনি প্রতিটি পুলের জন্য আলাদা আলাদা অপ্টিমাল Tensor Parallelism (TP) ও Batch কৌশল বেছে নিতে পারেন?",
+          "solution": "কারণ Prefill হলো Compute-Bound এবং এর লক্ষ্য থাকে TTFT (Time To First Token) কমানো, যেখানে মাঝারি বা ছোট TP এবং উচ্চ কম্পিউট ব্যবহারই যথেষ্ট; অন্যদিকে Decode হলো Memory-Bandwidth-Bound এবং এর লক্ষ্য থাকে কঠোর TPOT বজায় রেখে বিশাল Batch চালানো। এক পুলে মিশে থাকলে লম্বা Prefill যেমন Decode-এর TPOT নষ্ট করে, তেমনি একক TP ডিগ্রি দুটি বিপরীতধর্মী কাজের জন্যই আপস করতে বাধ্য হয়। আলাদা পুল রাখলে Prefill নোডগুলোকে Compute-অপ্টিমাইজড এবং Decode নোডগুলোকে উচ্চ-ব্যান্ডউইথ ও বড় KV মেমোরি-অপ্টিমাইজড করে স্বাধীনভাবে স্কেল করা যায়—শুধু খেয়াল রাখতে হয় যেন উচ্চগতির ইন্টারকানেক্টে KV Cache ট্রান্সফার নতুন বটলনেক না হয়ে দাঁড়ায়।",
+          "reference": "https://arxiv.org/abs/2309.06180"
+        }
+      ]
+    },
+    {
+      "id": "ch44_speculative",
+      "title": "Speculative Decoding: অবিকৃত Output Distribution রেখেই দ্রুততর জেনারেশন",
+      "subtitle": "Memory-Bound Decode-এর অব্যবহৃত Compute কাজে লাগিয়ে ছোট Draft Model ও Rejection Sampling দিয়ে ২–৩ গুণ গতি বৃদ্ধি।",
+      "duration": "30 min",
+      "icon": "functions",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "অটো-রিগ্রেসিভ দেয়াল ভাঙার হার্ডওয়্যার অন্তর্দৃষ্টি",
+          "body": "PagedAttention ও Continuous Batching সামগ্রিক ক্লাস্টার Throughput বাড়ালেও একটি মৌলিক প্রশ্ন থেকেই যায়: যখন একজন একক ব্যবহারকারী বা ছোট Batch-এর কোডিং অ্যাসিস্ট্যান্টে দ্রুত উত্তর দরকার (কম TPOT), তখন সিরিয়াল Autoregressive জেনারেশনকে দ্রুত করবেন কীভাবে? প্রথম পাঠের Roofline সমীকরণটি আবার মনে করুন: ছোট Batch-এ ৭০B মডেল দিয়ে ১টি Token জেনারেট করতে ১৪০ GB ওয়েট HBM থেকে পড়তে যত সময় লাগে, একসাথে ৫টি Token-কে প্যারালাল ইনপুট হিসেবে পাঠিয়ে যাচাই (Verify) করতেও প্রায় হুবহু একই সময় লাগে—কারণ দুটো ক্ষেত্রেই ওয়েট ম্যাট্রিক্সগুলো মাত্র একবারই পড়তে হয় এবং অলস পড়ে থাকা Tensor Core নিমেষেই ৫টি Token-এর গুণ সেরে ফেলে!\n\nSpeculative Decoding এই হার্ডওয়্যার বৈশিষ্ট্যটিকেই দারুণ কৌশলে কাজে লাগায় (অনেকটা CPU-এর Branch Prediction-এর মতো)। এখানে মূল বিশাল Target Model (p)-এর পাশে একটি খুব ছোট ও চটপটে Draft Model (q, যেমন ১B–৮B মডেল বা হালকা Draft Head) রাখা হয়। ছোট Draft Model দ্রুত পরপর K-টি সম্ভাব্য Token আন্দাজ করে নেয়, আর বড় Target Model মাত্র একটিমাত্র প্যারালাল Forward পাসে একসাথে সবগুলো অনুমান যাচাই করে ফেলে!"
+        },
+        {
+          "type": "text",
+          "title": "Lossless Rejection Sampling: ছোট মডেলের ভুলে মান কি খারাপ হয় না?",
+          "body": "ইন্টারভিউয়ের সবচেয়ে গুরুত্বপূর্ণ প্রশ্নটি এখানেই ওঠে: ছোট Draft Model তো বড় Target Model-এর চেয়ে কম বুদ্ধিমান; তার প্রস্তাব নেওয়া মানে কি চূড়ান্ত উত্তরের গুণমান বা Output Distribution নষ্ট হয়ে যাওয়া নয়? উত্তর হলো—একদমই না! Speculative Decoding একটি বিশেষ Modified Rejection Sampling ব্যবহার করে, যা গাণিতিকভাবে গ্যারান্টি দেয় যে চূড়ান্ত আউটপুট টোকেনগুলো ১০০% নিখুঁতভাবে মূল Target Distribution p(x) থেকেই আসবে (অর্থাৎ Lossless)!\n\nপ্রক্রিয়াটি দেখুন: ধরা যাক i-তম ধাপে Draft Model তার বণ্টন q(x) থেকে একটি টোকেন x_tilde বেছে নিয়েছে। Target Model-এর বণ্টন p(x) প্রস্তুত হওয়ার পর আমরা min(1, p(x_tilde) / q(x_tilde)) সম্ভাবনায় টোকেনটিকে গ্রহণ করি। অর্থাৎ যেখানে বড় মডেলের আস্থা ছোট মডেলের চেয়ে সমান বা বেশি (p >= q), সেখানে টোকেনটি সবসময় গৃহীত হয়! আর যদি কোনো ধাপে টোকেনটি প্রত্যাখ্যাত (Rejected) হয়, তবে পরের খসড়া টোকেনগুলো ফেলে দিয়ে আমরা সংশোধিত অবশিষ্ট বণ্টন p'(x) ∝ max(0, p(x) - q(x)) থেকে সরাসরি একটি সঠিক টোকেন স্যাম্পল করি—যা ছোট মডেল যেসব টোকেনকে কম গুরুত্ব দিয়েছিল ঠিক সেই ঘাটতিটুকু পূরণ করে দেয়! আর যদি সব K-টি খসড়া টোকেনই গৃহীত হয়ে যায়, তবে Target Model-এর অলরেডি হিসাব করা (K+1)-তম পজিশনের বণ্টন থেকে ফ্রি আরও ১টি বোনাস টোকেন পাওয়া যায়!"
+        },
+        {
+          "type": "math",
+          "title": "Lossless Rejection Sampling এবং প্রতি ধাপে প্রত্যাশিত গৃহীত Token সংখ্যা",
+          "body": "a(x)=\\min\\!\\left(1,\\,\\frac{p(x)}{q(x)}\\right),\\quad p'(x)=\\frac{\\max\\!\\left(0,\\,p(x)-q(x)\\right)}{\\sum_{x'}\\max\\!\\left(0,\\,p(x')-q(x')\\right)},\\quad \\mathbb{E}[N_{\\mathrm{tok}}]=\\frac{1-\\alpha^{K+1}}{1-\\alpha}"
+        },
+        {
+          "type": "text",
+          "title": "প্রত্যাশিত টোকেন সংখ্যার সূত্র ও গাণিতিক প্রমাণ",
+          "body": "কেন এই পদ্ধতিতে মূল বণ্টন একটুও বদলায় না, তার এক-লাইনের বীজগণিতটি চোখে দেখলেই মুগ্ধ হবেন। যেকোনো টোকেন x চূড়ান্তভাবে নির্বাচিত হওয়ার মোট সম্ভাবনা হলো: প্রথমে খসড়ায় উঠে গৃহীত হওয়ার সম্ভাবনা q(x) * min(1, p(x)/q(x)) = min(q(x), p(x)), যোগ প্রথম চেষ্টায় প্রত্যাখ্যাত হওয়ার মোট সম্ভাবনা (1 - alpha) গুণ সংশোধিত বণ্টনের সম্ভাবনা p'(x)। যেহেতু p'(x)-এর হর বা Denominator হলো sum max(0, p - q) = 1 - sum min(p, q) = 1 - alpha, তাই (1 - alpha) দুটি কাটাকাটি গিয়ে অবশিষ্ট থাকে: min(q(x), p(x)) + max(0, p(x) - q(x)) = p(x)! অর্থাৎ ফলাফল হুবহু Target Model-এর নিজস্ব বণ্টন!\n\nঅন্যদিকে প্রতিটি ধাপে গড় গ্রহণের হার যদি alpha হয় (যেখানে 0 <= alpha < 1), তবে বোনাস টোকেনসহ একটি ভেরিফিকেশন চক্রে উৎপাদিত প্রত্যাশিত টোকেন সংখ্যা দাঁড়ায় জ্যামিতিক ধারা 1 + alpha + alpha^2 + ... + alpha^K = (1 - alpha^(K+1)) / (1 - alpha)। চলুন নিচের কোডে এই দুটি গাণিতিক সত্যই সরাসরি সংখ্যা দিয়ে পরীক্ষা করে দেখি।"
+        },
+        {
+          "type": "code",
+          "title": "Rejection Sampling-এর নিখুঁত Distribution রক্ষণ ও Speedup যাচাই",
+          "body": "import numpy as np\n\n# Target distribution p and imperfect Draft distribution q over 4 tokens\np = np.array([0.50, 0.30, 0.15, 0.05])\nq = np.array([0.35, 0.45, 0.10, 0.10])\n\naccept_prob = np.minimum(1.0, p / q)\naccepted_mass = q * accept_prob                   # min(q, p)\nalpha = float(np.sum(accepted_mass))              # overall acceptance rate\nresidual = np.maximum(0.0, p - q)\np_prime = residual / np.sum(residual)\nmarginal_out = accepted_mass + (1.0 - alpha) * p_prime\n\nassert np.allclose(marginal_out, p, atol=1e-12)\n\n# Expected tokens and net speedup for K=4, alpha=0.80, draft cost ratio c=0.05\nK, alpha_code, c = 4, 0.80, 0.05\nexp_tokens = (1.0 - alpha_code ** (K + 1)) / (1.0 - alpha_code)\nnet_speedup = exp_tokens / (1.0 + K * c)\nassert round(exp_tokens, 4) == 3.3616\nprint(f\"max_dist_diff={np.max(np.abs(marginal_out - p)):.2e}, exp_tokens={exp_tokens:.4f}, speedup={net_speedup:.2f}x\")"
+        },
+        {
+          "type": "text",
+          "title": "কখন Speculative Decoding উল্টো গতি কমিয়ে দেয়?",
+          "body": "কোডের আউটপুট প্রমাণ করছে যে যথেষ্ট আলাদা একটি Draft বণ্টন q নেওয়া সত্ত্বেও চূড়ান্ত প্রান্তিক সম্ভাবনা p-এর সাথে ১০^-১৬ সূক্ষ্মতায় মিলে গেছে! আর কোডিং বা JSON জেনারেশনের মতো অনুমানযোগ্য টাস্কে যেখানে alpha ≈ 0.80 পাওয়া খুবই স্বাভাবিক এবং Draft মডেলের আপেক্ষিক খরচ c = 0.05, সেখানে K = 4 নিলে প্রতি পাসে গড়ে ৩.৩৬টি করে টোকেন পাওয়া যায় এবং নিট গতি বাড়ে প্রায় ২.৮০ গুণ!\n\nকিন্তু প্রোডাকশনে দুটি বড় সীমাবদ্ধতা ভুলে গেলে চলবে না:\n১. উচ্চ Batch Size-এর ফাঁদ: যখন আপনার সার্ভার ইতিমধ্যেই খুব বড় Batch Size-এ (যেমন B = 128) চলছে, তখন প্রতিটি রিকোয়েস্টে (K + 1) = 5-টি করে টোকেন যাচাই করতে গেলে কার্যকর টোকেন সংখ্যা হয়ে যায় 128 × 5 = 640—যা H100-এর Ridge Point (295.22) পেরিয়ে সরাসরি Compute-Bound অঞ্চলে ঢুকে পড়ে! তখন সেই ৫ গুণ বাড়তি FLOPs আর ফ্রি থাকে না, বরং যাচাইয়ের সময় বাড়িয়ে এবং বাতিল হওয়া টোকেনের কম্পিউট নষ্ট করে সামগ্রিক Throughput উল্টো কমিয়ে দেয়! তাই ব্যস্ত সার্ভারে Queue বাড়ার সাথে সাথে স্বয়ংক্রিয়ভাবে K কমিয়ে ০ (অর্থাৎ Speculative বন্ধ) করে দিতে হয়।\n২. Tokenizer শর্ত ও আধুনিক বিকল্প: স্ট্যান্ডার্ড Speculative Decoding-এ Draft ও Target উভয় মডেলের একই Vocabulary ও Tokenizer হওয়া বাধ্যতামূলক। আলাদা ছোট মডেল ম্যানেজ করার ঝামেলা এড়াতে আধুনিক সিস্টেমে মূল মডেলের ওপরই অতিরিক্ত হালকা প্রেডিকশন হেড (যেমন Medusa, EAGLE বা Multi-Token Prediction) যুক্ত করা হচ্ছে।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে যাচাই করুন: কোডিং বনাম সৃজনশীল কবিতায় Speculative Decoding",
+          "body": "একই Draft ও Target মডেল জোড়া ব্যবহার করে দেখা গেল Python কোড জেনারেশনে ২.৭x Speedup পাওয়া যাচ্ছে, কিন্তু উচ্চ Temperature-এ সৃজনশীল গল্প লেখার সময় Speedup নেমে আসছে ১.২x-এ। চূড়ান্ত আউটপুটের গুণমান কি সৃজনশীল গল্পে খারাপ হয়ে গেছে, নাকি শুধু গতি কমেছে—এবং কেন?",
+          "solution": "আউটপুটের গুণমান বা সম্ভাব্যতা বণ্টন একটুও খারাপ হয়নি—Lossless Rejection Sampling যেকোনো Temperature-এই নিখুঁত Target বণ্টন বজায় রাখে। কেবল গতি কমেছে! কারণ Python কোডের সিনট্যাক্স ও ব্র্যাকেট-ইনডেন্টেশন অত্যন্ত নিয়মতান্ত্রিক হওয়ায় ছোট Draft মডেলের Acceptance Rate (alpha) অনেক উঁচু থাকে; কিন্তু উচ্চ Temperature-এর সৃজনশীল লেখায় Entropy বেশি হওয়ায় p(x) ও q(x)-এর ব্যবধান বাড়ে, alpha কমে যায় এবং (1 - alpha^(K+1)) / (1 - alpha) সূত্র অনুযায়ী প্রতি চক্রে গৃহীত গড় টোকেন সংখ্যা কমে গিয়ে Draft মডেলের নিজস্ব ওভারহেড প্রকট হয়ে ওঠে।",
+          "reference": "https://arxiv.org/abs/2211.17192"
+        }
+      ]
+    },
+    {
+      "id": "ch44_quant_serving",
+      "title": "Post-Training Quantization: W8A8 (FP8/INT8) বনাম W4A16 (AWQ/GPTQ)",
+      "subtitle": "কেন সব Quantization একই রকম গতি বাড়ায় না: Weight-Only বনাম Weight-Activation Quantization-এর Roofline বিশ্লেষণ।",
+      "duration": "28 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "দুটি সম্পূর্ণ ভিন্ন ধারার Quantization ও তাদের হার্ডওয়্যার পার্থক্য",
+          "body": "মেমোরি কমানো এবং সার্ভিং দ্রুত করার সবচেয়ে জনপ্রিয় উপায় হলো Post-Training Quantization (PTQ)—অর্থাৎ ট্রেনিং শেষে ১৬-বিটের (BF16/FP16) ওয়েট বা অ্যাক্টিভেশনকে ৮-বিট বা ৪-বিটে নামিয়ে আনা। কিন্তু অনেক ইঞ্জিনিয়ারই একটি মারাত্মক ভুল ধারণা পোষণ করেন যে ‘৪-বিট সবসময় ৮-বিটের চেয়ে দ্রুত চলবে!’ বাস্তবতা সম্পূর্ণ ভিন্ন এবং তা নির্ভর করে আপনি কোন ধরনের PTQ ব্যবহার করছেন তার ওপর:\n১. Weight-Only Quantization (যেমন W4A16 — GPTQ, AWQ): এখানে শুধু মডেল ওয়েটগুলো ৪-বিট পূর্ণসংখ্যায় (INT4, প্রতি প্যারামিটার ০.৫ বাইট + সামান্য স্কেল ওভারহেড) সংরক্ষিত থাকে, কিন্তু ইনপুট Activation থাকে ১৬-বিট (BF16/FP16)। যেহেতু GPU-তে ৪-বিটের সাথে ১৬-বিট সরাসরি গুণ করার কোনো Tensor Core নেই, তাই কার্নেলটি HBM থেকে সংকুচিত ৪-বিট ওয়েট দ্রুত পড়ে এনে Register-এর ভেতর সাথে সাথে ১৬-বিটে রূপান্তর (On-the-fly Dequantization) করে ১৬-বিটের Tensor Core-এই গুণ চালায়!\n২. Weight-Activation Quantization (যেমন W8A8 — SmoothQuant INT8 বা Hopper নেটিভ FP8): এখানে ওয়েট এবং Activation দুটোই ৮-বিটে (১ বাইট) থাকে, ফলে সরাসরি হার্ডওয়্যারের দ্রুততর ৮-বিট Tensor Core-এ গুণ চলে (H100-এ FP8 Peak Compute হলো 1979 TFLOP/s—যা BF16-এর 989 TFLOP/s-এর ঠিক দ্বিগুণ)!"
+        },
+        {
+          "type": "text",
+          "title": "Activation Outliers এবং SmoothQuant ও AWQ-এর গাণিতিক কৌশল",
+          "body": "মনে প্রশ্ন জাগা স্বাভাবিক—তাহলে আমরা কেন W4A4 করে ৪-বিট Tensor Core ব্যবহার করি না? কারণ বিলিয়ন প্যারামিটারের Transformer মডেলে এক অদ্ভুত ভৌত বৈশিষ্ট্য দেখা যায়: ওয়েটগুলোর মান মোটামুটি সুষম ও ছোট পরিসরে থাকলেও, নির্দিষ্ট কিছু হিডেন চ্যানেলে সব টোকেন জুড়ে Activation-এর মান বাকি চ্যানেলগুলোর চেয়ে ৫০ থেকে ১০০ গুণ বড় হয়ে ফুটে ওঠে (Systematic Activation Outliers)! ফলে পুরো Activation টেনসরকে সরাসরি কম বিটে কোয়ান্টাইজ করতে গেলে ওই কয়েকটি বিশাল সংখ্যার চাপে বাকি ৯৯% স্বাভাবিক সংখ্যার সব সূক্ষ্মতা মুছে শূন্য হয়ে যায়!\n\nএখান থেকেই দুটি বিখ্যাত অ্যালগরিদম কাজ করে:\n• SmoothQuant (W8A8-এর জন্য): এটি লক্ষ্য করে যে XW গুণের ফলাফল অপরিবর্তিত রেখেই আমরা X-এর কলামগুলোকে একটি ধনাত্মক স্কেল ভেক্টর s দিয়ে ভাগ এবং W-এর সারিগুলোকে সেই একই s দিয়ে গুণ করতে পারি: Y = (X diag(s)^-1)(diag(s) W)। এখানে s_j = max(|X_j|)^alpha / max(|W_j|)^(1-alpha) নিলে Activation-এর তীক্ষ্ণ চূড়াগুলো নিচু হয়ে কোয়ান্টাইজেশন-বান্ধব হয় এবং সেই বাড়তি পাল্লাটুকু অফলাইনে স্থির ওয়েট ম্যাট্রিক্সের ঘাড়ে চলে যায়!\n• AWQ ও GPTQ (W4A16-এর জন্য): GPTQ ক্যালিব্রেশন ডেটার দ্বিতীয় ক্রমের Hessian তথ্য ব্যবহার করে একটি ওয়েট কোয়ান্টাইজ করার ত্রুটি পরের ওয়েটগুলোতে সমন্বয় করে। অন্যদিকে AWQ (Activation-Aware Weight Quantization) দেখায় যে সব ওয়েট সমান জরুরি নয়—যে ১% ওয়েট চ্যানেল বড় Activation চ্যানেলের সাথে গুণ হয় কেবল সেগুলোকে স্কেল করে রক্ষা করলেই মিশ্র-প্রিসিশনের জটিলতা ছাড়াই চমৎকার ৪-বিট মান পাওয়া যায়, যেখানে সাধারণত প্রতি G = 128-টি ওয়েটের দলের জন্য ১টি স্কেল ও ১টি জিরো-পয়েন্ট রাখা হয়।"
+        },
+        {
+          "type": "math",
+          "title": "Group-Wise Quantization বাইট হিসাব এবং SmoothQuant সমতুল্য চ্যানেল স্কেলিং",
+          "body": "b_{\\mathrm{eff}}=\\frac{b_w}{8}+\\frac{b_{\\mathrm{scale}}+b_{\\mathrm{zp}}}{8G},\\qquad Y=XW=\\left(X\\operatorname{diag}(s)^{-1}\\right)\\left(\\operatorname{diag}(s)W\\right)"
+        },
+        {
+          "type": "text",
+          "title": "সমীকরণ দুটি থেকে বাস্তব মেমোরি ও নির্ভুলতার হিসাব",
+          "body": "প্রথম সমীকরণটি আপনাকে ইন্টারভিউয়ে একদম নিখুঁত মেমোরি হিসাব করতে সাহায্য করবে। যেমন W4A16 কোয়ান্টাইজেশনে মূল ওয়েট b_w = 4 বিট (০.৫ বাইট) হলেও প্রতি G = 128-টি ওয়েটের দলের জন্য ১টি ১৬-বিট FP16 স্কেল (b_scale = 16) এবং ১টি ৪-বিট জিরো-পয়েন্ট (b_zp = 4) রাখতে হয়। ফলে প্যারামিটার প্রতি প্রকৃত খরচ হয় 4/8 + (16 + 4)/(8 × 128) = 0.51953125 বাইট—অর্থাৎ ৭০B মডেলের ওয়েট ঠিক ৩৫ GB নয়, বরং প্রায় ৩৬.৩৭ GB জায়গা নেয়! আর ডানদিকের সমীকরণে দেখুন, diag(s)^-1 এবং diag(s) পরস্পরকে নিখুঁতভাবে কাটাকাটি করে দেয়; কিন্তু কোয়ান্টাইজ করার আগে এই রূপান্তরটি চালালে Activation চ্যানেলের ১০০ গুণ বড় Outlier সঙ্কুচিত হয়ে মাঝারি পাল্লায় চলে আসে এবং স্থির ওয়েটের সাথে সুষমভাবে ভাগাভাগি হয়ে যায়। নিচের কোডে আমরা এই দুটি ঘটনা এবং H100-এর Prefill বনাম Decode সময়ের পার্থক্য সরাসরি যাচাই করব।"
+        },
+        {
+          "type": "code",
+          "title": "W4A16 কার্যকর বাইট, SmoothQuant ত্রুটি হ্রাস ও Roofline তুলনা",
+          "body": "import numpy as np\n\n# 1. Effective bytes/param for W4A16 (4-bit weight, 16-bit scale, 4-bit zero-point, G=128)\nb_eff_w4 = 4 / 8 + (16 + 4) / (8 * 128)\nassert b_eff_w4 == 0.51953125\n\n# 2. SmoothQuant vs naive per-tensor INT8 quantization under 100x activation outlier\nrng = np.random.default_rng(11)\nX = rng.normal(0, 1.0, size=(32, 256))\nX[:, 0] *= 100.0  # Channel-0 systematic activation outlier\nW = rng.normal(0, 1.0, size=(256, 64))\nW[0, :] *= 0.1    # Corresponding compressed weight row\nY_ref = X @ W\n\ndef q_int8(t):\n    scale = np.max(np.abs(t)) / 127.0\n    return np.round(np.clip(t / scale, -127, 127)) * scale\n\nerr_naive = np.linalg.norm(Y_ref - (q_int8(X) @ q_int8(W))) / np.linalg.norm(Y_ref)\ns = (np.max(np.abs(X), axis=0) ** 0.5) / (np.max(np.abs(W), axis=1) ** 0.5)\nX_sm, W_sm = X / s[None, :], W * s[:, None]\nassert np.allclose(X_sm @ W_sm, Y_ref, atol=1e-12)\nerr_smooth = np.linalg.norm(Y_ref - (q_int8(X_sm) @ q_int8(W_sm))) / np.linalg.norm(Y_ref)\n\n# 3. 70B H100 step time (ms): Decode (M=1) vs Prefill (M=4096)\ndef step_ms(m, b_param, peak_tflops, bw_tbs=3.35):\n    t_mem = (70e9 * b_param) / (bw_tbs * 1e12)\n    t_cmp = (2 * m * 70e9) / (peak_tflops * 1e12)\n    return round(max(t_mem, t_cmp) * 1e3, 2)\n\ndec_bf16, dec_w4, dec_fp8 = step_ms(1, 2.0, 989), step_ms(1, b_eff_w4, 989), step_ms(1, 1.0, 1979)\npre_bf16, pre_w4, pre_fp8 = step_ms(4096, 2.0, 989), step_ms(4096, b_eff_w4, 989), step_ms(4096, 1.0, 1979)\nassert err_smooth < err_naive / 15 and dec_w4 < dec_fp8 < dec_bf16 and pre_fp8 < pre_w4 == pre_bf16\nprint(f\"Err naive={err_naive:.4f} -> smooth={err_smooth:.4f} | Decode(ms) W4={dec_w4}, FP8={dec_fp8} | Prefill(ms) W4={pre_w4}, FP8={pre_fp8}\")"
+        },
+        {
+          "type": "text",
+          "title": "কোডের Roofline রায়: কখন W4A16 আর কখন W8A8 FP8 বেছে নেবেন?",
+          "body": "কোডের আউটপুটটি একজন সিনিয়র সিস্টেম ইঞ্জিনিয়ারের পুরো সিদ্ধান্তের ছক পরিষ্কার করে দিচ্ছে:\nপ্রথমত, ১০০ গুণ বড় Activation Outlier থাকা অবস্থায় সাধারণ Per-Tensor INT8 কোয়ান্টাইজেশনে আপেক্ষিক ত্রুটি যেখানে মারাত্মক উঁচু, SmoothQuant সেখানে স্কেলিং করে নিখুঁত সমতুল্যতা বজায় রেখেই ত্রুটি ১০ গুণেরও বেশি কমিয়ে এনেছে!\nদ্বিতীয়ত, ৭০B মডেলের Roofline সময়গুলোর তুলনা দেখুন:\n• ছোট ব্যাচের Decode ধাপে (M = 1, Memory-Bound): BF16 নেয় ৪১.৭৯ ms, FP8 নেয় ২০.৯০ ms, আর W4A16 নেয় মাত্র ১০.৮৬ ms! কারণ এখানে ওয়েট পড়ার বাইট সংখ্যাই রাজা (২.০ বনাম ১.০ বনাম ০.৫২ বাইট)। তাই কম মেমোরির GPU-তে মডেল বসানো বা কম Concurrency-তে দ্রুততম Decode পেতে W4A16 (AWQ/GPTQ/Marlin কার্নেল) সেরা!\n• বড় ব্যাচ বা লম্বা Prefill ধাপে (M = 4096, Compute-Bound): BF16 নেয় ৫৭৯.৯০ ms, আর W4A16-ও নেয় ঠিক সেই ৫৭৯.৯০ ms (বাস্তবে অন-দ্য-ফ্লাই Dequantization ওভারহেডের কারণে উল্টো ৫%–১০% বেশি সময় নেয়!), কারণ তার কম্পিউট এখনও BF16 Tensor Core-এই আটকে আছে! অথচ W8A8 FP8 নেটিভ FP8 Tensor Core (1979 TFLOP/s) ব্যবহার করে সময়কে প্রায় অর্ধেক কমিয়ে ২৮৯.৮০ ms-এ নামিয়ে আনে! তাই H100/B200 ক্লাস্টারে হাই-থ্রুপুট এন্টারপ্রাইজ সার্ভিংয়ে FP8 (ওয়েট + অ্যাক্টিভেশন + FP8 KV Cache) আজ ইন্ডাস্ট্রি স্ট্যান্ডার্ড।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে যাচাই করুন: লম্বা RAG Prefill পাইপলাইনে W4A16 কেন ব্যর্থ হলো?",
+          "body": "আপনার টিম H100 GPU-তে বিশাল ডকুমেন্ট সামারাইজেশনের একটি অফলাইন ব্যাচ পাইপলাইন চালায়, যেখানে প্রতি রিকোয়েস্টে প্রম্পট দৈর্ঘ্য ১৬,৩৮৪ Token এবং আউটপুট মাত্র ৬৪ Token। কম্পিউট বিল অর্ধেক করার আশায় একজন ইঞ্জিনিয়ার BF16 থেকে W4A16 AWQ-তে সুইচ করলেন, কিন্তু দেখলেন মোট রানটাইম একটুও কমেনি—বরং ৪% বেড়ে গেছে! কেন এমন হলো এবং আপনার পরামর্শ কী?",
+          "solution": "১৬,৩৮৪ টোকেনের বিশাল Prefill এবং মাত্র ৬৪ টোকেনের ছোট আউটপুট হওয়ায় পুরো ওয়ার্কলোডটি ৯৫ শতাংশেরও বেশি সময় গভীরভাবে Compute-Bound অবস্থায় কাটায়। W4A16 কেবল HBM থেকে ওয়েট পড়ার বাইট কমায়, কিন্তু ভেতরে ১৬-বিট Tensor Core-এই (989 TFLOP/s) গুণ চালায়—তাই Compute-Bound ধাপে এর কোনো গতিবৃদ্ধি নেই, উল্টো প্রতি টাইলে INT4 থেকে ১৬-বিটে রূপান্তরের অতিরিক্ত ইনস্ট্রাকশন ৪% সময় বাড়িয়ে দিয়েছে। কম্পিউট সময় সত্যিই অর্ধেক করতে হলে H100-এর নেটিভ W8A8 FP8 কোয়ান্টাইজেশন (1979 TFLOP/s) ব্যবহার করতে হবে।",
+          "reference": "https://arxiv.org/abs/2306.00978"
+        }
+      ]
+    },
+    {
+      "id": "ch44_capacity_mock",
+      "title": "FAANG Capacity Planning Walkthrough: 70B LLM ক্লাস্টার সাইজিং ও SLA গণিত",
+      "subtitle": "একটি 70B GQA Model কতগুলো 80GB H100 GPU-তে বসবে এবং নির্দিষ্ট TTFT ও TPOT বজায় রেখে সর্বোচ্চ কত QPS সেবা দিতে পারবে।",
+      "duration": "36 min",
+      "icon": "evaluation",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "FAANG ML Systems Design ইন্টারভিউয়ের চূড়ান্ত পরীক্ষা",
+          "body": "আগের আটটি পাঠে আমরা হার্ডওয়্যারের প্রতিটি কলকব্জা আলাদাভাবে খুলে দেখেছি। এবার আসুন একটি বাস্তব FAANG Staff ML Systems ইন্টারভিউয়ের সবচেয়ে গুরুত্বপূর্ণ সমস্যাটি শুরু থেকে শেষ পর্যন্ত সমাধান করি: ‘আমাদের একটি ৭০ বিলিয়ন প্যারামিটারের GQA মডেল (L = 80, H_q = 64, H_kv = 8, d_h = 128, BF16 প্রিসিশন) প্রোডাকশনে সার্ভ করতে হবে। গড় ইনপুট দৈর্ঘ্য ৩,০৭২ Token, গড় আউটপুট ৫১২ Token (পিক স্লট ৪,০৯৬ Token)। কঠোর SLA হলো: TTFT <= 400 ms এবং TPOT <= 35 ms। প্রতি সেকেন্ডে ৩০টি রিকোয়েস্ট (30 QPS) সামলাতে আমাদের মোট কতগুলো 80 GB H100 SXM GPU লাগবে?’\n\nইন্টারভিউয়ের শুরুতেই একটি পেশাদার অভ্যাস দেখান: একক স্পষ্ট করুন! হার্ডওয়্যার ভেন্ডরদের মতো আমরা এখানে দশমিক একক (1 GB = 10^9 Bytes, 1 TB/s = 10^12 Bytes/s) ব্যবহার করব এবং তাত্ত্বিক পিকের বদলে বাস্তব কার্যকর দক্ষতা (যেমন ৭৫% কার্যকর HBM ব্যান্ডউইথ এবং ৭০% কার্যকর কম্পিউট MFU) ধরে হিসাব করব।"
+        },
+        {
+          "type": "text",
+          "title": "ধাপ ১ ও ২: সর্বনিম্ন Tensor Parallelism নির্বাচন ও মেমোরি Concurrency (B_mem)",
+          "body": "প্রথম কাজ হলো একটি একক মডেল রেপ্লিকা বসানোর জন্য সঠিক TP ডিগ্রি বেছে নেওয়া। ৭০B মডেলের BF16 ওয়েট = 70 × 10^9 × 2 = 140 GB।\n• TP = 1 (৮০ GB): ওয়েটই ধরবে না।\n• TP = 2 (১৬০ GB): প্রতি GPU-তে CUDA Context, NCCL বাফার ও চলমান Activation-এর জন্য অন্তত ৮ GB (মোট ১৬ GB) রিজার্ভ বাদ দিলে অবশিষ্ট থাকে মাত্র 160 - 140 - 16 = 4 GB—যাতে ৩টি রিকোয়েস্টেরও KV Cache ধরবে না!\n• TP = 4 (৪টি NVLink-যুক্ত H100, মোট ৩২০ GB মেমোরি): ১৪০ GB ওয়েট এবং ৪ × ৮ = ৩২ GB রিজার্ভ বাদ দিলে নিখুঁত PagedAttention KV Cache-এর জন্য হাতে থাকে 320 - 140 - 32 = 148 GB!\n\nএবার প্রতি টোকেনের KV মেমোরি (পাঠ ৩ থেকে): 2 × 80 × 8 × 128 × 2 = 327,680 Bytes। সর্বোচ্চ ৪,০৯৬ টোকেনের স্লট ধরলে প্রতি সক্রিয় রিকোয়েস্টে KV মেমোরি লাগে 4096 × 327,680 ≈ 1.3422 GB। সুতরাং মেমোরির সীমানা অনুযায়ী একটি TP = 4 রেপ্লিকায় একসাথে চলতে পারে সর্বোচ্চ B_mem = floor(148 / 1.3422) = 110-টি রিকোয়েস্ট!"
+        },
+        {
+          "type": "math",
+          "title": "কার্যকর Concurrency সীমা এবং Little's Law ভিত্তিক QPS সমীকরণ",
+          "body": "B_{\\max}=\\min\\!\\left(B_{\\mathrm{mem}},\\,B_{\\mathrm{TPOT}},\\,B_{\\mathrm{TTFT}}\\right),\\qquad \\mathrm{QPS}_{\\mathrm{replica}}=\\frac{B_{\\mathrm{eff}}}{\\mathrm{TTFT}+N_{\\mathrm{out}}\\cdot\\mathrm{TPOT}}"
+        },
+        {
+          "type": "text",
+          "title": "ধাপ ৩ ও ৪: TPOT ব্যান্ডউইথ সীমা যাচাই এবং Little's Law দিয়ে মোট GPU সংখ্যা",
+          "body": "অনেক প্রার্থী B_mem = 110 বের করেই থেমে যান—কিন্তু একজন Staff ইঞ্জিনিয়ার সাথে সাথে পরীক্ষা করেন: ১১০টি রিকোয়েস্ট একসাথে চালালে কি আমাদের ৩৫ ms TPOT SLA ভাঙবে না তো?\nচারটি H100-এর ৭৫% কার্যকর HBM ব্যান্ডউইথ = 4 × 3.35 × 0.75 = 10.05 TB/s (১০,০৫০ GB/s)। প্রতি Decode ধাপে ৮০ লেয়ারের ১৬০টি ছোট NVLink AllReduce ও কার্নেল ওভারহেডে ধরা যাক ৪ ms চলে যায়; তাহলে HBM পড়ার সময় বাজেট থাকে 35 - 4 = 31 ms, যাতে পড়া যাবে সর্বোচ্চ 0.031 × 10,050 = 311.55 GB। এর থেকে ১৪০ GB মডেল ওয়েট বাদ দিলে KV Cache পড়ার বাজেট থাকে ১৭১.৫৫ GB। ডিকোড চলাকালীন একটি রিকোয়েস্টের গড় দৈর্ঘ্য S_avg = 3072 + 512/2 = 3328 টোকেন (≈ 1.0905 GB)। তাই ব্যান্ডউইথ অনুযায়ী সর্বোচ্চ ব্যাচ B_TPOT = floor(171.55 / 1.0905) = 157! যেহেতু 110 < 157, তাই ৩৫ ms SLA-তে মেমোরিই আসল সীমা (কিন্তু লক্ষ করুন—যদি কঠোর SLA ২৫ ms হতো, তবে B_TPOT কমে ৬৫-তে নেমে আসত এবং তখন মেমোরি ফাঁকা থাকা সত্ত্বেও ব্যান্ডউইথই ব্যাচ আটকে দিত!)। একইভাবে ৭০% কম্পিউট দক্ষতায় (2,769.2 TFLOP/s) ৩,০৭২ টোকেনের একক Prefill সময় লাগে 2 × 70e9 × 3072 / 2.7692e15 ≈ 155.3 ms, যা ৪০০ ms TTFT বাজেটের অনেক ভেতরে।\n\nসবশেষে Queueing Theory-র বিখ্যাত Little's Law (L = lambda * W)! একটি রিকোয়েস্ট সার্ভারে গড়ে অবস্থান করে W = TTFT + 512 × TPOT = 0.40 + 512 × 0.035 = 18.32 সেকেন্ড। ট্রাফিকের আকস্মিক ঢেউ (Burstiness) সামলাতে ১১০টির ৮০% অর্থাৎ গড়ে B_eff = 88-টি সক্রিয় স্লট ব্যবহার করলে প্রতি রেপ্লিকার টেকসই ক্ষমতা দাঁড়ায় 88 / 18.32 ≈ 4.80 QPS। সুতরাং ৩০ QPS সামলাতে রেপ্লিকা লাগবে ceil(30 / 4.80) = 7-টি, অর্থাৎ 7 × 4 = 28-টি H100 GPU (বাস্তব ডেটাসেন্টারে N+1 নোড ফেইলওভার ধরে ৪টি ৮-GPU HGX নোড বা মোট ৩২টি H100)!"
+        },
+        {
+          "type": "code",
+          "title": "পূর্ণাঙ্গ 70B LLM ক্লাস্টার Capacity ও SLA যাচাই স্ক্রিপ্ট",
+          "body": "import math\n\n# Workload & SLA parameters\nparams, elem_b = 70e9, 2\ns_in, n_out, s_max = 3072, 512, 4096\ns_avg = s_in + n_out // 2\nttft_sla, tpot_sla, target_qps = 0.40, 0.035, 30.0\n\n# TP = 4 on 80 GB H100 SXM (75% eff BW, 70% eff FLOPs, 8 GB/GPU reserve)\ntp = 4\nweights_b = params * elem_b\nkv_budget_b = tp * 80e9 - weights_b - tp * 8e9\nkv_tok_b = 2 * 80 * 8 * 128 * elem_b\n\nb_mem = int(kv_budget_b // (s_max * kv_tok_b))\neff_bw = tp * 3.35e12 * 0.75\nread_budget_b = (tpot_sla - 0.004) * eff_bw - weights_b\nb_tpot = int(read_budget_b // (s_avg * kv_tok_b))\n\n# Tight 25ms TPOT check for comparison\nb_tpot_25ms = int(((0.025 - 0.004) * eff_bw - weights_b) // (s_avg * kv_tok_b))\n\nprefill_s = (2 * params * s_in) / (tp * 989e12 * 0.70)\nb_max = min(b_mem, b_tpot)\nb_eff = 0.80 * b_max\nreq_duration_w = ttft_sla + n_out * tpot_sla\nqps_per_replica = b_eff / req_duration_w\nreplicas = math.ceil(target_qps / qps_per_replica)\ngpus_needed = replicas * tp\n\nassert b_mem == 110 and b_tpot == 157 and b_tpot_25ms == 65\nassert prefill_s < ttft_sla and replicas == 7 and gpus_needed == 28\nprint(f\"B_mem={b_mem}, B_tpot={b_tpot} (at 25ms: {b_tpot_25ms}), QPS/rep={qps_per_replica:.2f}, GPUs={gpus_needed}\")"
+        },
+        {
+          "type": "text",
+          "title": "কীভাবে Staff ইঞ্জিনিয়ারের মতো খরচ অর্ধেক করার প্রস্তাব দেবেন?",
+          "body": "ওপরের স্ক্রিপ্টটি একটি নিখুঁত Baseline ডিজাইন (২৮টি GPU, অথবা রিডান্ড্যান্সিসহ ৩২টি GPU) দাঁড় করানোর পর ইন্টারভিউয়ের শেষ ২ মিনিটে আপনি যদি নিজের থেকেই খরচ অপ্টিমাইজেশনের লিভারগুলো তুলে ধরেন, তবে ইন্টারভিউয়ার মুগ্ধ হতে বাধ্য:\n১. FP8 Quantization (W8A8 + FP8 KV Cache): ওয়েট ১৪০ GB থেকে কমে ৭০ GB এবং প্রতি রিকোয়েস্টের KV মেমোরি অর্ধেক হয়ে যাবে! ফলে TP = 4-এর বদলে মাত্র TP = 2 (১৬০ GB)-তেই রেপ্লিকা বসবে, FP8 Tensor Core-এ Prefill দ্বিগুণ দ্রুত হবে এবং প্রয়োজনীয় মোট H100 সংখ্যা প্রায় অর্ধেকে (১৪–১৬টি GPU) নেমে আসবে!\n২. Prefix Caching: এন্টারপ্রাইজ অ্যাপ্লিকেশনে ৩,০৭২ ইনপুট টোকেনের মধ্যে যদি ২,০০০ টোকেন শেয়ারড ডকুমেন্ট বা System Prompt হয়, তবে TTFT কম্পিউট এবং KV মেমোরি দুটোই বিপুল পরিমাণে সাশ্রয় হবে।\n৩. Queueing Headroom সতর্কতা: কখনোই ১০০% ইউটিলাইজেশনে ক্লাস্টার চালাবেন না! M/G/k কিউইং তত্ত্ব অনুযায়ী সার্ভার ইউটিলাইজেশন rho যখন ১.০-এর দিকে যায়, গড় অপেক্ষার সময় rho / (1 - rho) অনুপাতে অসীমে ছুটতে থাকে—তাই ৭০%–৮০% লক্ষ্যমাত্রা এবং অটো-স্কেলিং বাফার রাখা অপরিহার্য।\n\nঅভিনন্দন! এরই মধ্য দিয়ে আমাদের Book 3 (Deep Learning & RL)-এর সমাপনী অধ্যায়টি পূর্ণ হলো। হার্ডওয়্যার ও ডিস্ট্রিবিউটেড সিস্টেমের এই মজবুত ভিত্তি নিয়ে এরপর আপনি প্রবেশ করবেন Book 4 (LLMs, RAG & Generative AI)-এর বিশাল জগতে!"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে যাচাই করুন: কখন মেমোরি বাড়িয়েও আর ১টিও বাড়তি QPS মেলে না?",
+          "body": "ওপরের ৭০B সার্ভিং উদাহরণে ধরুন প্রোডাক্ট টিম TPOT SLA ৩৫ ms থেকে কমিয়ে কঠোর ২৫ ms করল, আর মেমোরি বাড়ানোর জন্য আপনি ৮০ GB H100-এর বদলে একই ব্যান্ডউইথের (ধরুন কাল্পনিকভাবে একই 3.35 TB/s) ১৪১ GB মেমোরির চিপ বসালেন। এতে কি প্রতি রেপ্লিকার সর্বোচ্চ Concurrency ও QPS বাড়বে?",
+          "solution": "একটুও বাড়বে না! কোডের হিসাব অনুযায়ী ২৫ ms TPOT SLA-তে ৪ ms কমিউনিকেশন বাদ দিলে ২১ ms-এ মোট ২১১.০৫ GB ডেটা পড়া যায়—যার মধ্যে ১৪০ GB ওয়েট বাদে KV Cache পড়ার বাজেট থাকে মাত্র ৭১.০৫ GB, অর্থাৎ সর্বোচ্চ B_tpot = 65-টি রিকোয়েস্ট! যেহেতু পুরোনো ৮০ GB চিপেই মেমোরি ১১০টি রিকোয়েস্ট ধারণ করতে পারছিল (110 > 65), তাই এখানে সীমাবদ্ধতা মেমোরির আকার নয়, বরং HBM Bandwidth! এই অবস্থায় Concurrency বাড়াতে হলে মেমোরি নয়—বরং উচ্চতর ব্যান্ডউইথের চিপ (যেমন H200-এর 4.8 TB/s HBM3e) অথবা FP8/INT4 কোয়ান্টাইজেশন দিয়ে ওয়েট ও KV বাইট কমাতে হবে।",
+          "reference": "https://arxiv.org/abs/2401.09670"
+        }
+      ]
+    }
+  ],
+  "quizzes": [
+    {
+      "id": "ch44_q_1",
+      "question": "একটি GPU-এর Peak BF16 Compute 989 TFLOP/s এবং HBM Bandwidth 3.35 TB/s হলে এর Ridge Point কত, এবং একক রিকোয়েস্টের (Batch = 1) Autoregressive Decode কেন ধীর হয়?",
+      "options": [
+        "প্রায় 295.2 FLOPs/Byte; কারণ Decode ধাপে Arithmetic Intensity প্রায় 1 FLOP/Byte হওয়ায় এটি গভীরভাবে Memory-Bandwidth-Bound থাকে",
+        "প্রায় 295.2 FLOPs/Byte; কারণ Decode ধাপে Tensor Core-এর সক্ষমতা পুরোপুরি শেষ হয়ে এটি Compute-Bound হয়ে পড়ে",
+        "প্রায় 3.35 FLOPs/Byte; কারণ Decode ধাপে প্রতি Token-এ O(T^3) ম্যাট্রিক্স গুণ করতে হয়",
+        "প্রায় 989.0 FLOPs/Byte; কারণ Prefill এবং Decode উভয় ধাপেই সমান সংখ্যক বাইট ও সমান FLOPs ব্যবহৃত হয়"
+      ],
+      "answer": 0,
+      "explanation": "Peak FLOP/s (989e12)-কে HBM Bandwidth (3.35e12) দিয়ে ভাগ করলে Ridge Point পাওয়া যায় প্রায় 295.22 FLOPs/Byte। Batch = 1 Decode-এ পুরো মডেল ওয়েট HBM থেকে পড়ে মাত্র একটি ভেক্টরের সাথে গুণ করা হয় বলে AI ≈ 1 FLOP/Byte থাকে, যা পুরোপুরি Memory-Bandwidth-Bound।"
+    },
+    {
+      "id": "ch44_q_2",
+      "question": "স্ট্যান্ডার্ড Attention-এর তুলনায় FlashAttention মূলত কোন হার্ডওয়্যার কৌশলটির মাধ্যমে লম্বা সিকোয়েন্সে বিশাল গতিবৃদ্ধি অর্জন করে?",
+      "options": [
+        "Softmax ফাংশনকে রৈখিক আসন্ন মান (Linear Approximation) দিয়ে প্রতিস্থাপন করে মোট FLOPs অর্ধেক কমিয়ে দেয়",
+        "T × T আকারের মধ্যবর্তী স্কোর ও Softmax ম্যাট্রিক্স কখনোই ধীরগতির HBM-এ না লিখে দ্রুতগতির On-Chip SRAM-এ Tiling ও Online Softmax চালায়",
+        "সবগুলো Attention Head মুছে মাত্র ১টি শেয়ারড Key-Value ভেক্টর রেখে মডেল প্যারামিটার কমায়",
+        "Forward পাসে সব মধ্যবর্তী মান CPU RAM-এ পাঠিয়ে কেবল Backward পাসে GPU ব্যবহার করে"
+      ],
+      "answer": 1,
+      "explanation": "FlashAttention কোনো গাণিতিক আসন্ন মান (Approximation) নেয় না; এটি Q, K, V-কে ছোট টাইলে ভেঙে দ্রুতগতির On-Chip SRAM-এই চলমান সর্বোচ্চ মান (m) ও যোগফল (l) রিস্কেল করে নিখুঁত আউটপুট হিসাব করে এবং O(T^2) HBM রিড/রাইট এড়িয়ে যায়।"
+    },
+    {
+      "id": "ch44_q_3",
+      "question": "FlashAttention-এর Online Softmax আপডেটে পুরোনো সর্বোচ্চ মান m_old থেকে নতুন ব্লকে বড় সর্বোচ্চ মান m_new পাওয়া গেলে আগের আংশিক যোগফল l_old-কে কোন গুণক দিয়ে স্কেল করতে হয়?",
+      "options": [
+        "exp(m_new - m_old)",
+        "m_old / m_new",
+        "exp(m_old - m_new)",
+        "log(m_new - m_old)"
+      ],
+      "answer": 2,
+      "explanation": "সূচকের নিয়ম অনুযায়ী exp(x - m_old) * exp(m_old - m_new) = exp(x - m_new)। যেহেতু m_new >= m_old, তাই গুণক exp(m_old - m_new)-এর মান সবসময় (0, 1]-এর ভেতর থাকে এবং কোনো সংখ্যার Overflow ছাড়াই আগের যোগফলকে নিখুঁতভাবে নতুন স্কেলে নিয়ে আসে।"
+    },
+    {
+      "id": "ch44_q_4",
+      "question": "একটি 80-লেয়ার মডেলে মোট Query Head 64-টি এবং Head Dimension 128। প্রথাগত MHA-এর বদলে 8-টি KV Head-বিশিষ্ট GQA-8 ব্যবহার করলে KV Cache-এর আকার কত গুণ কমবে?",
+      "options": [
+        "4 গুণ",
+        "64 গুণ",
+        "16 গুণ",
+        "8 গুণ"
+      ],
+      "answer": 3,
+      "explanation": "KV Cache মেমোরি সরাসরি H_kv-এর সমানুপাতিক (2 * L * H_kv * d_h * b * S * B)। MHA-তে H_kv = 64 এবং GQA-8-এ H_kv = 8 হওয়ায় KV মেমোরি এবং প্রতি Decode ধাপের KV রিড ব্যান্ডউইথ ঠিক 64 / 8 = 8 গুণ কমে যায়।"
+    },
+    {
+      "id": "ch44_q_5",
+      "question": "Mixed-Precision (BF16) ট্রেনিংয়েও Adam অপটিমাইজারের ভেতর প্যারামিটার প্রতি অতিরিক্ত ৪ বাইটের FP32 Master Weights কেন রাখা বাধ্যতামূলক?",
+      "options": [
+        "কারণ আধুনিক GPU-এর Tensor Core কেবলমাত্র FP32 সংখ্যা গুণ করতে পারে",
+        "কারণ BF16-এ মাত্র ৭টি Mantissa বিট থাকায় ক্ষুদ্র Learning Rate-এর আপডেট সরাসরি BF16 ওয়েটের সাথে যোগ করলে রাউন্ডিংয়ে শূন্য হয়ে মুছে যায় (Swamping)",
+        "কারণ NCCL লাইব্রেরি BF16 ডেটার ওপর AllGather বা ReduceScatter চালাতে পারে না",
+        "কারণ FP32 Master Weights রাখলে Activation মেমোরি অর্ধেক হয়ে যায়"
+      ],
+      "answer": 1,
+      "explanation": "BF16-এর ডাইনামিক রেঞ্জ বড় হলেও এর সূক্ষ্মতা (Mantissa ৭ বিট) কম। যেমন ১.০ মানের ওয়েটের সাথে ১০^-৪ মানের গ্র্যাডিয়েন্ট আপডেট যোগ করলে তা হারিয়ে যায়। তাই FP32 Master Copy-তে নিখুঁত যোগ করে প্রতি ধাপে সেখান থেকে BF16 কপি তৈরি করা হয়।"
+    },
+    {
+      "id": "ch44_q_6",
+      "question": "N_d সংখ্যক GPU-তে স্ট্যান্ডার্ড DDP-এর তুলনায় ZeRO-2 এবং ZeRO-3 (FSDP)-এর প্রতি ধাপের মোট কালেক্টিভ কমিউনিকেশন ভলিউমের অনুপাত কী দাঁড়ায়?",
+      "options": [
+        "ZeRO-2-তে DDP-এর সমান (2Ψ উপাদান), কিন্তু ZeRO-3-তে ১.৫ গুণ (3Ψ উপাদান)",
+        "ZeRO-2-তে DDP-এর দ্বিগুণ (4Ψ উপাদান) এবং ZeRO-3-তে তিন গুণ (6Ψ উপাদান)",
+        "উভয় ক্ষেত্রেই DDP-এর অর্ধেক (1Ψ উপাদান)",
+        "ZeRO-2-তে ১.৫ গুণ (3Ψ উপাদান), কিন্তু ZeRO-3-তে DDP-এর সমান (2Ψ উপাদান)"
+      ],
+      "answer": 0,
+      "explanation": "DDP-এর ১টি AllReduce মানে ১টি ReduceScatter (Ψ) + ১টি AllGather (Ψ) = 2Ψ উপাদান; ZeRO-1 ও ZeRO-2 ঠিক একই 2Ψ পরিমাণ ডেটা আদান-প্রদান করে। কিন্তু ZeRO-3 / FSDP-তে ওয়েটও শার্ড থাকায় Forward-এ AllGather (Ψ), Backward-এ AllGather (Ψ) এবং গ্র্যাডিয়েন্ট ReduceScatter (Ψ) মিলে মোট 3Ψ উপাদান (১.৫ গুণ) স্থানান্তরিত হয়।"
+    },
+    {
+      "id": "ch44_q_7",
+      "question": "Megatron-LM-এর MLP ব্লকে কেন প্রথম Linear লেয়ারটিকে Column-Parallel এবং দ্বিতীয় Linear লেয়ারটিকে Row-Parallel হিসেবে সাজানো হয়?",
+      "options": [
+        "যাতে Forward পাসে মাঝখানের নন-লিনিয়ার ফাংশনের (যেমন GeLU/SwiGLU) আগে কোনো AllReduce না লাগে এবং পুরো MLP কেবল শেষের ১টি AllReduce-এ সম্পন্ন হয়",
+        "যাতে কোনো GPU-দের মধ্যে আদৌ কোনো নেটওয়ার্ক কমিউনিকেশন করার প্রয়োজন না পড়ে",
+        "কারণ GPU মেমোরিতে কলাম বরাবর ম্যাট্রিক্স কাটা সারির তুলনায় দশ গুণ কম জায়গা নেয়",
+        "যাতে Pipeline Bubble ভগ্নাংশ স্বয়ংক্রিয়ভাবে শূন্য হয়ে যায়"
+      ],
+      "answer": 0,
+      "explanation": "প্রথম লেয়ার Column-Parallel হলে প্রতিটি র‍্যাঙ্ক স্বাধীনভাবে তার নিজস্ব কলামগুলোর ওপর Element-wise GeLU/SiLU চালাতে পারে। এরপর দ্বিতীয় লেয়ার Row-Parallel হওয়ায় আংশিক গুণফলগুলো যোগ করতে শেষে মাত্র ১টি AllReduce লাগে। ক্রম উল্টে দিলে নন-লিনিয়ার ফাংশনের আগেই একটি বাড়তি AllReduce বাধ্যতামূলক হয়ে পড়ত।"
+    },
+    {
+      "id": "ch44_q_8",
+      "question": "Pipeline Parallelism-এ p স্টেজ ও m Micro-batch (যেখানে m >> p) থাকলে GPipe শিডিউলের তুলনায় 1F1B শিডিউলের প্রধান সুবিধা কোনটি?",
+      "options": [
+        "1F1B-তে Pipeline Bubble পুরোপুরি শূন্য হয়ে যায়",
+        "একই (p - 1) / (m + p - 1) Bubble ভগ্নাংশ বজায় রেখেই ইন-ফ্লাইট Activation মেমোরির খরচ O(m) থেকে কমিয়ে O(p)-তে নামিয়ে আনে",
+        "1F1B-তে কোনো Backward পাস চালানোর প্রয়োজন হয় না",
+        "1F1B আন্তঃনোড InfiniBand-এর বদলে শুধুমাত্র লোকাল ডিস্ক ব্যবহার করে"
+      ],
+      "answer": 1,
+      "explanation": "GPipe সবগুলো m Micro-batch-এর Forward শেষ হওয়া পর্যন্ত সবার Activation মেমোরিতে ধরে রাখে। কিন্তু 1F1B স্টেডি-স্টেটে ১টি Forward-এর পরপরই ১টি Backward চালিয়ে মেমোরি মুক্ত করে দেয়, ফলে সর্বোচ্চ p-টি Micro-batch-এর Activation ধরে রাখলেই চলে এবং তাই মেমোরি না বাড়িয়ে বড় m নিয়ে Bubble কমানো যায়।"
+    },
+    {
+      "id": "ch44_q_9",
+      "question": "vLLM-এর PagedAttention ব্লক আকার B_blk = 16 হলে KV Cache মেমোরি Fragmentation সম্পর্কে কোন বক্তব্যটি শতভাগ সঠিক?",
+      "options": [
+        "External Fragmentation সম্পূর্ণ দূর হয় এবং প্রতি সিকোয়েন্সে Internal Fragmentation সর্বোচ্চ ১৫টি স্লটে সীমাবদ্ধ থাকে",
+        "Internal Fragmentation সম্পূর্ণ শূন্য হয়, কিন্তু External Fragmentation ৫০% থেকে যায়",
+        "প্রতিটি নতুন রিকোয়েস্টের শুরুতেই max_seq_len সমান সংখ্যক ফিজিক্যাল ব্লক আগেভাগে রিজার্ভ করে রাখা হয়",
+        "Prefix Caching ব্যবহার করতে হলে প্রতিটি রিকোয়েস্টের জন্য ফিজিক্যাল ব্লক আলাদা কপি করা বাধ্যতামূলক"
+      ],
+      "answer": 0,
+      "explanation": "সব ফিজিক্যাল ব্লক সমান আকারের (১৬ টোকেন) হওয়ায় মেমোরিতে কখনো অব্যবহারযোগ্য অসমান ফাঁকা জায়গা বা External Fragmentation তৈরি হয় না। আর কেবল প্রতিটি সিকোয়েন্সের একদম শেষ ব্লকটিতে সর্বোচ্চ (B_blk - 1) = 15-টি স্লট খালি থাকতে পারে।"
+    },
+    {
+      "id": "ch44_q_10",
+      "question": "Speculative Decoding-এ কোনো খসড়া টোকেন প্রত্যাখ্যাত (Rejected) হলে কেন সরাসরি শুধু Target বণ্টন p(x) থেকে না নিয়ে সংশোধিত p'(x) ∝ max(0, p(x) - q(x)) থেকে স্যাম্পল করা হয়?",
+      "options": [
+        "যাতে ছোট মডেলটি যে টোকেনগুলোতে অতিরিক্ত সম্ভাবনা দিয়েছিল সেগুলোর পক্ষপাত কেটে গিয়ে গৃহীত ও প্রত্যাখ্যাত উভয় পথ মিলিয়ে চূড়ান্ত বণ্টন হুবহু p(x) থাকে",
+        "কারণ Target মডেলের আসল Softmax বণ্টন p(x) তখন আমাদের হাতে উপলব্ধ থাকে না",
+        "কেবলমাত্র Temperature = 0 হলে এই সূত্রটি কাজ করে",
+        "যাতে পরবর্তী ধাপে KV Cache পুরোপুরি মুছে ফেলা যায়"
+      ],
+      "answer": 0,
+      "explanation": "প্রথম ধাপে টোকেন গৃহীত হওয়ার কার্যকর ভর হলো min(q(x), p(x))। তাই নিখুঁতভাবে মূল p(x) ফিরে পেতে অবশিষ্ট যে ঘাটতি ভরটুকু পূরণ করা দরকার তা হলো p(x) - min(q(x), p(x)) = max(0, p(x) - q(x))। এই সংশোধনের কারণেই পদ্ধতিটি ১০০% Lossless হয়।"
+    },
+    {
+      "id": "ch44_q_11",
+      "question": "H100 GPU-তে বড় ব্যাচের লম্বা Prefill ওয়ার্কলোডে W4A16 (AWQ/GPTQ)-এর চেয়ে W8A8 (FP8) কেন অনেক বেশি দ্রুত কাজ করে?",
+      "options": [
+        "কারণ FP8-এ প্যারামিটার প্রতি ওয়েটের বাইট সংখ্যা W4A16-এর চেয়েও কম",
+        "কারণ W4A16 ভেতরে ১৬-বিট Tensor Core-এই গুণ চালায়, অথচ W8A8 নেটিভ FP8 Tensor Core ব্যবহার করে পিক কম্পিউট TFLOP/s দ্বিগুণ করে দেয়",
+        "কারণ W4A16 কেবল CPU-তে চলে, GPU-তে নয়",
+        "কারণ লম্বা Prefill সবসময় গভীরভাবে Memory-Bandwidth-Bound থাকে"
+      ],
+      "answer": 1,
+      "explanation": "বড় ব্যাচের লম্বা Prefill একটি Compute-Bound অপারেশন। W4A16 কেবল মেমোরি ব্যান্ডউইথ বাঁচায় কিন্তু অন-দ্য-ফ্লাই ১৬-বিটে ডিকোয়ান্টাইজ করে 989 TFLOP/s রেটের ১৬-বিট Tensor Core-এ চলে; বিপরীতে W8A8 সরাসরি 1979 TFLOP/s রেটের নেটিভ FP8 Tensor Core ব্যবহার করায় কম্পিউট সময় প্রায় অর্ধেক করে দেয়।"
+    },
+    {
+      "id": "ch44_q_12",
+      "question": "চলমান দ্রুতগতির Decode ব্যাচের ভেতর হঠাৎ একটি বিশাল ১৬K টোকেনের নতুন রিকোয়েস্টের পূর্ণ Prefill ঢুকিয়ে দিলে বিদ্যমান ব্যবহারকারীদের কোন মেট্রিকটি সবচেয়ে খারাপভাবে ক্ষতিগ্রস্ত হবে?",
+      "options": [
+        "শুধুমাত্র মডেল ওয়েটের স্ট্যাটিক মেমোরি আকার বেড়ে যাবে",
+        "চলমান সব রিকোয়েস্টের ওই ধাপের TPOT (Time Per Output Token) হঠাৎ কয়েকশ মিলিসেকেন্ড লাফ দিয়ে SLA ভেঙে ফেলবে (Prefill Interference)",
+        "আগের রিকোয়েস্টগুলোর আউটপুট টোকেনের গাণিতিক মান ভুল হয়ে যাবে",
+        "Pipeline Bubble ভগ্নাংশ ঋণাত্মক হয়ে যাবে"
+      ],
+      "answer": 1,
+      "explanation": "একই ব্যাচে বিশাল Compute-Bound Prefill মেশালে ওই ইটারেশনটি শেষ হতে অনেক বেশি সময় নেয়, যার ফলে সাথে থাকা সব চলমান Decode রিকোয়েস্ট পরবর্তী টোকেন পাওয়ার জন্য আটকে থাকে। এটি এড়াতেই Chunked Prefill অথবা Prefill-Decode Disaggregation ব্যবহার করা হয়।"
+    }
+  ],
+  "exercises": [
+    {
+      "id": "ch44_ex_1",
+      "title": "Roofline Ridge Point ও Batched Decode অনুপাত",
+      "prompt": "একটি H100 GPU-এর BF16 Peak Compute 989.0 TFLOP/s এবং HBM Bandwidth 3.35 TB/s। এতে BF16 প্রিসিশনে (2 bytes/element) K = 8192, N = 8192 আকারের একটি Linear Layer (FLOPs = 2*M*K*N এবং Bytes = 2*(M*K + K*N + M*N)) M = 64 Batch Size-এ চালানো হচ্ছে। এই অপারেশনটির Arithmetic Intensity হার্ডওয়্যারের Ridge Point-এর কত ভগ্নাংশ (AI / Ridge_Point), তা হিসাব করে প্রিন্ট করুন।",
+      "starter": "peak_tflops, hbm_tbs = 989.0, 3.35\nM, K, N = 64, 8192, 8192\n# Print AI / ridge_point\n",
+      "solution": "peak_tflops, hbm_tbs = 989.0, 3.35\nM, K, N = 64, 8192, 8192\nridge_point = peak_tflops / hbm_tbs\nai = (2 * M * K * N) / (2 * (M * K + K * N + M * N))\nprint(ai / ridge_point)",
+      "expected": 0.21344949650924025,
+      "explanation": "এখানে Ridge Point = 989.0 / 3.35 ≈ 295.2239 FLOPs/Byte এবং M = 64 হলে AI = (2*64*8192*8192) / (2*(64*8192 + 8192*8192 + 64*8192)) = 4096 / 65 ≈ 63.0154 FLOPs/Byte। ফলে ভগ্নাংশটি দাঁড়ায় 63.0153846 / 295.2238806 ≈ 0.21344949650924024 (অর্থাৎ এখনও Memory-Bandwidth-Bound)।"
+    },
+    {
+      "id": "ch44_ex_2",
+      "title": "GQA মডেলের পূর্ণাঙ্গ KV Cache মেমোরি (GiB এককে)",
+      "prompt": "একটি 70B GQA মডেলে layers = 80, kv_heads = 8, head_dim = 128 এবং প্রতিটি উপাদান BF16 (2 bytes) ফরম্যাটে সংরক্ষিত। যদি batch = 10 এবং প্রতিটি রিকোয়েস্টের seq_len = 12288 হয়, তবে মোট KV Cache-এর আকার কত বাইনারি GiB (1 GiB = 2**30 bytes) হবে তা হিসাব করে প্রিন্ট করুন।",
+      "starter": "layers, kv_heads, head_dim, elem_bytes = 80, 8, 128, 2\nbatch, seq_len = 10, 12288\n# Print total KV cache size in GiB\n",
+      "solution": "layers, kv_heads, head_dim, elem_bytes = 80, 8, 128, 2\nbatch, seq_len = 10, 12288\ntotal_bytes = 2 * layers * kv_heads * head_dim * elem_bytes * seq_len * batch\nprint(total_bytes / (2 ** 30))",
+      "expected": 37.5,
+      "explanation": "Key ও Value দুটো মিলিয়ে প্রতি টোকেনে লাগে 2 * 80 * 8 * 128 * 2 = 327,680 বাইট। মোট 10 * 12288 = 122,880-টি টোকেনের জন্য 40,265,318,400 বাইট লাগে, যাকে 2**30 (1,073,741,824) দিয়ে ভাগ করলে নিখুঁত 37.5 GiB পাওয়া যায়।"
+    },
+    {
+      "id": "ch44_ex_3",
+      "title": "ZeRO-2 শার্ডিংয়ে প্রতি GPU-তে স্ট্যাটিক মেমোরি (GB এককে)",
+      "prompt": "Mixed-Precision Adam ট্রেনিংয়ে (২ বাইট BF16 ওয়েট + ২ বাইট BF16 গ্র্যাডিয়েন্ট + ১২ বাইট FP32 Master Weights ও Adam States) একটি 13B (13e9 প্যারামিটার) মডেল N_d = 8-টি ডেটা-প্যারালাল GPU-তে ZeRO-2 দিয়ে ট্রেন করা হচ্ছে। প্রতি GPU-তে স্ট্যাটিক Model State মেমোরি কত দশমিক GB (1e9 bytes) লাগবে তা প্রিন্ট করুন।",
+      "starter": "psi = 13e9\nn_d = 8\n# Print per-GPU static model-state memory in decimal GB (1e9 bytes)\n",
+      "solution": "psi = 13e9\nn_d = 8\nbytes_per_gpu = (2 + 14 / n_d) * psi\nprint(bytes_per_gpu / 1e9)",
+      "expected": 48.75,
+      "explanation": "ZeRO-2-তে ২ বাইট BF16 ওয়েট প্রতিটি GPU-তে থাকে, আর বাকি ১৪ বাইট (২ বাইট গ্র্যাডিয়েন্ট + ১২ বাইট অপটিমাইজার স্টেট) ৮টি GPU-তে সমান ভাগে ভাগ হয়: (2 + 14/8) * 13 GB = 3.75 * 13 = 48.75 GB।"
+    },
+    {
+      "id": "ch44_ex_4",
+      "title": "Pipeline Parallelism-এ Bubble ভগ্নাংশ গণনা",
+      "prompt": "একটি বিশাল মডেল p = 8-টি Pipeline Stage জুড়ে ভাগ করা হয়েছে এবং প্রতি মিনি-ব্যাচে m = 28-টি সমান Micro-batch পাঠানো হচ্ছে (1F1B শিডিউল)। এখানে Pipeline Bubble ভগ্নাংশ কত হবে তা প্রিন্ট করুন।",
+      "starter": "p, m = 8, 28\n# Print the pipeline bubble fraction\n",
+      "solution": "p, m = 8, 28\nprint((p - 1) / (m + p - 1))",
+      "expected": 0.2,
+      "explanation": "Pipeline Bubble ভগ্নাংশের সূত্র (p - 1) / (m + p - 1) অনুযায়ী এখানে মান হবে (8 - 1) / (28 + 8 - 1) = 7 / 35 = 0.2 (অর্থাৎ ২০% সময় অলস যায়)।"
+    },
+    {
+      "id": "ch44_ex_5",
+      "title": "Speculative Decoding-এর প্রত্যাশিত Token ও নিট Speedup",
+      "prompt": "একটি Speculative Decoding সিস্টেমে ছোট Draft Model প্রতি চক্রে K = 5-টি Token প্রস্তাব করে, যার গড় Acceptance Rate alpha = 0.75। যদি Draft Model-এর একটি একক ধাপের সময় Target Model-এর একটি ভেরিফিকেশন পাসের তুলনায় c = 0.06 গুণ হয় (অর্থাৎ এক চক্রের মোট আপেক্ষিক সময় 1 + K * c), তবে সাধারণ Autoregressive Decode-এর তুলনায় নিট তাত্ত্বিক Speedup কত গুণ হবে তা প্রিন্ট করুন।",
+      "starter": "K, alpha, c = 5, 0.75, 0.06\n# Print net theoretical speedup\n",
+      "solution": "K, alpha, c = 5, 0.75, 0.06\nexpected_tokens = (1 - alpha ** (K + 1)) / (1 - alpha)\nspeedup = expected_tokens / (1 + K * c)\nprint(speedup)",
+      "expected": 2.529296875,
+      "explanation": "প্রতি চক্রে বোনাস টোকেনসহ প্রত্যাশিত টোকেন সংখ্যা (1 - 0.75**6) / (1 - 0.75) = 3.2880859375। আর এক চক্রের আপেক্ষিক সময় খরচ 1 + 5 * 0.06 = 1.30। সুতরাং নিট Speedup = 3.2880859375 / 1.30 = 2.529296875 গুণ।"
+    },
+    {
+      "id": "ch44_ex_6",
+      "title": "SLA ও Little's Law দিয়ে রেপ্লিকার সর্বোচ্চ টেকসই QPS",
+      "prompt": "৪টি 80 GB (80e9 bytes) H100 GPU নিয়ে গঠিত একটি TP = 4 রেপ্লিকায় 140 GB ওয়েট এবং মোট 32 GB রিজার্ভ বাদে বাকি সম্পূর্ণ মেমোরি KV Cache-এর জন্য বরাদ্দ। প্রতি সক্রিয় রিকোয়েস্টে পিক 4096-টি Token এবং প্রতি Token-এ 327680 bytes KV মেমোরি লাগে। যদি TTFT = 0.35 সেকেন্ড, TPOT = 0.03 সেকেন্ড, গড় আউটপুট N_out = 400 Token হয় এবং কিউইং স্পাইক এড়াতে মেমোরি-ভিত্তিক সর্বোচ্চ পূর্ণসংখ্যা Concurrency (B_mem)-এর ঠিক 80% গড় সক্রিয় লোড রাখা হয়, তবে Little's Law অনুযায়ী এই রেপ্লিকাটি সর্বোচ্চ কত QPS সামলাতে পারবে তা প্রিন্ট করুন।",
+      "starter": "kv_budget = 4 * 80e9 - 140e9 - 32e9\nkv_per_req = 4096 * 327680\nttft, tpot, n_out = 0.35, 0.03, 400\n# Print sustainable QPS for this replica\n",
+      "solution": "kv_budget = 4 * 80e9 - 140e9 - 32e9\nkv_per_req = 4096 * 327680\nttft, tpot, n_out = 0.35, 0.03, 400\nb_mem = int(kv_budget // kv_per_req)\nw = ttft + n_out * tpot\nprint((0.80 * b_mem) / w)",
+      "expected": 7.125506072874494,
+      "explanation": "উপলব্ধ 148e9 বাইট KV বাজেটে প্রতি রিকোয়েস্ট 1,342,177,280 বাইট ধরলে সর্বোচ্চ স্লট B_mem = 110 এবং ৮০% লক্ষ্যমাত্রায় B_eff = 88। একটি রিকোয়েস্টের মোট সেবা সময় W = 0.35 + 400 * 0.03 = 12.35 সেকেন্ড; তাই টেকসই QPS = 88 / 12.35 ≈ 7.125506072874494।"
+    }
+  ],
+  "interviews": [
+    {
+      "title": "1,024-টি H100 GPU-তে 405B LLM ট্রেনিংয়ের 3D Parallelism ডিজাইন",
+      "tag": "Distributed training",
+      "prompt": "আপনার কাছে ১২৮টি নোডে মোট ১,০২৪টি 80 GB H100 GPU আছে (প্রতি নোডে ৮টি GPU NVLink 900 GB/s দিয়ে যুক্ত, আর নোডগুলোর মাঝে 400 Gbps InfiniBand)। একটি 405B প্যারামিটারের (১২৬ লেয়ার, GQA-8) মডেল ট্রেন করার জন্য আপনি TP, PP এবং DP/ZeRO কীভাবে নির্বাচন করবেন?",
+      "answer": "প্রথমেই হার্ডওয়্যার টপোলজির সাথে কমিউনিকেশন প্যাটার্ন মেলাব। প্রতি প্যারামিটার ১৬ বাইট ধরলে 405B মডেলের মোট স্ট্যাটিক স্টেট প্রায় ৬,৪৮০ GB—তাই একক নোডে (৬৪০ GB) এটি কখনোই ধরবে না।\n১. Tensor Parallelism (TP = 8) + Sequence Parallelism: ভারী ও Latency-সংবেদনশীল AllReduce/ReduceScatter যেন কখনোই ধীরগতির InfiniBand পার না হয়, সেজন্য TP ঠিক ১টি নোডের ৮টি NVLink GPU-তে সীমাবদ্ধ রাখব। খেয়াল রাখব GQA-তে অন্তত ৮টি KV Head থাকতে হবে যাতে অযথা KV ডুপ্লিকেশন না ঘটে।\n২. Pipeline Parallelism (PP = 8 বা 16): মডেল স্টেট ও Activation ভাগ করতে আমরা যেমন PP = 8 (মোট ৮ × ৮ = ৬৪টি GPU-তে ১টি পূর্ণ মডেল কপি, প্রতি স্টেজে প্রায় ১৫–১৬টি লেয়ার; প্রথম ও শেষ স্টেজে Embedding/LM Head-এর ভারসাম্য বজায় রেখে) নেব এবং Activation মেমোরি বাঁচাতে Interleaved 1F1B শিডিউল চালাব।\n৩. Data Parallelism + ZeRO-1 (DP = 1024 / 64 = 16): অবশিষ্ট ১৬টি মডেল রেপ্লিকার মাঝে ZeRO-1 চালিয়ে অপটিমাইজার স্টেট ১৬ ভাগে ভাগ করব। এতে প্রতি GPU-তে স্ট্যাটিক মেমোরি নেমে আসবে প্রায় (4 + 12/16) * (405 / 64) ≈ 30 GB-তে, ফলে সিকোয়েন্স দৈর্ঘ্য ৮K–১৬K ও Selective Activation Checkpointing-এর জন্য প্রচুর মেমোরি থাকবে। সবশেষে গ্লোবাল ব্যাচে যথেষ্ট Micro-batch (যেমন m >= 64) রাখব যাতে Pipeline Bubble ১০%-এর নিচে থাকে এবং Backward পাসের সাথে DP ReduceScatter পুরোপুরি ওভারল্যাপ হয়ে যায়।",
+      "prerequisiteLessons": [
+        "ch44_zero_fsdp",
+        "ch44_tensor_pipeline"
+      ]
+    },
+    {
+      "title": "শেয়ারড RAG সার্ভিং ক্লাস্টারে হঠাৎ P99 TPOT স্পাইকের মূল কারণ ও প্রতিকার",
+      "tag": "Serving latency & SLA",
+      "prompt": "আপনার প্রোডাকশন vLLM ক্লাস্টারে গড় TPOT ২৫ ms থাকলেও পিক আওয়ারে P99 TPOT হঠাৎ ৬০০ ms ছাড়িয়ে যাচ্ছে, অথচ গড় GPU মেমোরি ৭০%-এর নিচে আছে। সমস্যার মূল কারণ কীভাবে নির্ণয় করবেন এবং স্থাপত্যগত সমাধান কী?",
+      "answer": "গড় মেমোরি ৭০%-এর নিচে থাকা সত্ত্বেও P99 TPOT ৬০০ ms-এ লাফ দেওয়ার প্রধান সন্দেহভাজন হলো Prefill Interference (এবং গৌণত আকস্মিক KV Preemption)। RAG ওয়ার্কলোডে যখনই ২০K–৩২K টোকেনের বিশাল কনটেক্সটসহ নতুন রিকোয়েস্ট আসে, Continuous Batching শিডিউলার যদি সেই বিশাল Compute-Bound Prefill-কে চলমান Decode ব্যাচের একই ইটারেশনে ঢুকিয়ে দেয়, তবে ওই একটি ফরোয়ার্ড পাসেই ৫০০+ ms লেগে যায় এবং ব্যাচের বাকি সব চলমান ব্যবহারকারীর পরবর্তী টোকেন আটকে যায়!\nপ্রমাণের জন্য আমরা ইটারেশন-ভিত্তিক টেলিমেট্রি লগ করব: যেসব ধাপে TPOT > 50 ms হয়েছে, সেসব ধাপে ব্যাচে কোনো নতুন প্রম্পটের Prefill টোকেন সংখ্যা কত ছিল এবং কোনো KV ব্লক Swapping/Recomputation ঘটেছে কি না।\nসমাধান দেব দুটি ধাপে:\n১. তাৎক্ষণিক প্রশমন (Single-Pool): Chunked Prefill চালু করে প্রতি ইটারেশনে সর্বোচ্চ প্রম্পট টোকেন বাজেট (যেমন ৫১২ বা ১,০২৪ টোকেন) বেঁধে দেব এবং শেয়ারড RAG ডকুমেন্ট/System Prompt-এর জন্য Prefix Caching সক্রিয় করব।\n২. দীর্ঘমেয়াদি স্থাপত্য (High-Scale SLA): Prefill-Decode Disaggregation বাস্তবায়ন করব—যেখানে আলাদা Prefill GPU পুল বিশাল প্রম্পট প্রসেস করে কেবল প্রস্তুত KV ব্লকগুলো RDMA/NVLink দিয়ে Decode পুলে পাঠাবে, ফলে Decode ইটারেশনগুলো চিরকাল বিশুদ্ধ ও সুষম থাকবে।",
+      "prerequisiteLessons": [
+        "ch44_roofline",
+        "ch44_paged_batching"
+      ]
+    },
+    {
+      "title": "কেন W4A16 Quantization অফলাইন ব্যাচ পাইপলাইন দ্রুত করতে ব্যর্থ হলো?",
+      "tag": "Quantization & Roofline",
+      "prompt": "একজন টিম মেম্বার H100 ক্লাস্টারে ৭০B মডেলের বড় ব্যাচের ডকুমেন্ট ক্লাসিফিকেশন ও সামারাইজেশন জব দ্রুত করার জন্য BF16 থেকে W4A16 (AWQ) কোয়ান্টাইজেশনে গেলেন, কিন্তু Throughput একটুও বাড়ল না। ফার্স্ট-প্রিন্সিপাল Roofline দিয়ে এর ব্যাখ্যা দিন এবং সঠিক সমাধান বলুন।",
+      "answer": "ডকুমেন্ট ক্লাসিফিকেশন ও সামারাইজেশনে ইনপুট প্রম্পট বিশাল এবং আউটপুট খুব ছোট থাকে, উপরন্তু বড় ব্যাচে চালানোর ফলে প্রতি ধাপে একসাথে হাজার হাজার টোকেন (বড় M) প্রসেস হয়। ফলে অপারেশনটির Arithmetic Intensity H100-এর Ridge Point (≈ ২৯৫ FLOPs/Byte) বহু গুণ ছাড়িয়ে গভীরভাবে Compute-Bound অঞ্চলে অবস্থান করে।\nW4A16 (Weight-Only Quantization) কেবল HBM থেকে ওয়েট পড়ার বাইট সংখ্যা প্রায় ৪ গুণ কমায়, যা শুধুমাত্র ছোট ব্যাচের Memory-Bound Decode-এ জাদুর মতো কাজ করে। কিন্তু যেহেতু Activation এখনও ১৬-বিটে রয়েছে, তাই কার্নেলটিকে অন-দ্য-ফ্লাই ৪-বিট ওয়েটগুলো ১৬-বিটে ডিকোয়ান্টাইজ করে সেই আগের ৯৮৯ TFLOP/s গতির ১৬-বিট Tensor Core-এই ম্যাট্রিক্স গুণ চালাতে হয়—ফলে Compute-Bound অঞ্চলের ছাদ (Peak Roof) এক চুলও ওপরে ওঠে না, বরং ডিকোয়ান্টাইজেশন ইনস্ট্রাকশনের কারণে সামান্য ধীর হতে পারে!\nসঠিক সমাধান হলো H100-এর নেটিভ W8A8 FP8 (অথবা SmoothQuant INT8) ব্যবহার করা, যেখানে ওয়েট ও Activation উভয়ই ৮-বিটে থাকায় হার্ডওয়্যারের ১৯৭৯ TFLOP/s গতির FP8 Tensor Core সক্রিয় হয় এবং Compute-Bound Prefill-ও প্রায় ১.৭–২ গুণ দ্রুত চলে (পাশাপাশি মেমোরি অর্ধেক হওয়ায় TP কমিয়ে কমিউনিকেশন ওভারহেডও কমানো যায়)।",
+      "prerequisiteLessons": [
+        "ch44_roofline",
+        "ch44_quant_serving"
+      ]
+    },
+    {
+      "title": "১২৮K Long-Context সার্ভিংয়ে স্ট্যান্ডার্ড FlashAttention বনাম FlashDecoding",
+      "tag": "GPU kernel optimization",
+      "prompt": "ধরুন H100 GPU-তে Batch = 2 এবং Context Length = 128,000 অবস্থায় একটি GQA-8 মডেল (H_kv = 8) ডিকোড করছে। স্ট্যান্ডার্ড FlashAttention কার্নেল চালালে এখানে GPU ইউটিলাইজেশন মারাত্মকভাবে কমে যায় কেন, এবং FlashDecoding তা কীভাবে সমাধান করে?",
+      "answer": "স্ট্যান্ডার্ড FlashAttention কার্নেল মূলত ট্রেনিং ও Prefill-এর কথা ভেবে প্যারালালাইজেশন সাজায় তিনটি অক্ষে: Batch (B), Head এবং Query Tile ব্লক। কিন্তু আমাদের ডিকোড উদাহরণে প্রতি রিকোয়েস্টে নতুন Query টোকেন মাত্র ১টি (T_q = 1), অর্থাৎ মাত্র ১টি Query Tile! আর Batch = 2 এবং GQA গ্রুপ অনুযায়ী কার্যকর স্বাধীন কাজের একক তৈরি হয় মাত্র B × H_kv = 2 × 8 = 16-টি (কিংবা Query Head ধরলেও খুব সীমিত ব্লক), অথচ একটি H100 GPU-তে মোট ১৩২টি Streaming Multiprocessor (SM) রয়েছে! এর ফলে সিংহভাগ SM পুরোপুরি অলস বসে থাকে, আর হাতেগোনা কয়েকটি SM একা একা ১,২৮,০০০ টোকেনের বিশাল KV Cache সিরিয়ালি স্ক্যান করতে গিয়ে প্রচণ্ড সময় নষ্ট করে।\nFlashDecoding এই সমস্যার সমাধান করে চতুর্থ একটি নতুন মাত্রায় প্যারালালাইজ করে: দীর্ঘ KV Cache সিকোয়েন্সটিকে সমান K_split খণ্ডে (যেমন প্রতি খণ্ডে ২,০৪৮ টোকেন করে ৬৪টি খণ্ডে) কেটে সবগুলো ১৩২টি SM-এ ছড়িয়ে দেয়! প্রতিটি SM নিজের ছোট KV খণ্ডটির আংশিক আউটপুট O_tilde এবং নিজস্ব Online Softmax পরিসংখ্যান (স্থানীয় সর্বোচ্চ m এবং যোগফল l) বের করে। সবশেষে একটি অত্যন্ত হালকা Reduction কার্নেল সেই একই exp(m_part - m_global) রিস্কেলিং সূত্র দিয়ে সব খণ্ডের ফল নিখুঁতভাবে একত্র করে—যাতে পুরো GPU-এর পূর্ণ HBM ব্যান্ডউইথ ব্যবহৃত হয় এবং Latency কয়েক গুণ কমে আসে।",
+      "prerequisiteLessons": [
+        "ch44_flash_attention",
+        "ch44_kv_gqa"
+      ]
+    },
+    {
+      "title": "ব্যস্ত সার্ভারে Speculative Decoding উল্টো Throughput কমালে ডাইনামিক নিয়ন্ত্রণ কৌশল",
+      "tag": "Inference optimization",
+      "prompt": "অফ-পিক সময়ে Speculative Decoding আপনার সার্ভারে ২.৫x কম Latency দিচ্ছিল, কিন্তু পিক আওয়ারে উচ্চ QPS আসার পর দেখা গেল এটি চালু রাখলে সার্ভারের সর্বোচ্চ QPS ক্ষমতা উল্টো কমে যাচ্ছে! কেন এমন ঘটে এবং একটি বুদ্ধিমান অ্যাডাপ্টিভ শিডিউলার কীভাবে ডিজাইন করবেন?",
+      "answer": "এর মূল কারণ হলো Roofline Crossover! অফ-পিক সময়ে সক্রিয় Batch Size (B) খুব ছোট থাকে (যেমন B = 1 থেকে 8), যেখানে সার্ভার গভীরভাবে Memory-Bandwidth-Bound—তাই Draft মডেলের প্রস্তাবিত K-টি টোকেনসহ প্রতি রিকোয়েস্টে (K + 1)-টি টোকেন যাচাই করার বাড়তি FLOPs অলস পড়ে থাকা Tensor Core বিনা মূল্যে করে দেয়। কিন্তু পিক আওয়ারে যখন সক্রিয় ব্যাচ বড় হয়ে যায় (যেমন B = 64 বা 128), তখন একসাথে B × (K + 1) = 64 × 5 = 320-টি টোকেন প্রসেস করতে গিয়ে Target মডেলটি H100-এর Ridge Point (২৯৫ FLOPs/Byte) পেরিয়ে Compute-Bound অঞ্চলে ঢুকে পড়ে! তখন প্রতিটি প্রত্যাখ্যাত খসড়া টোকেনের পেছনে ব্যয় হওয়া কম্পিউট সরাসরি আসল ফরোয়ার্ড পাসের সময় বাড়িয়ে দেয় এবং Draft মডেলের নিজস্ব মেমোরি ও কার্নেল ওভারহেড যোগ হয়ে মোট সিস্টেম Goodput কমিয়ে ফেলে।\nসমাধান হিসেবে আমি একটি Queue- ও Batch-সচেতন Adaptive Speculative Scheduler ডিজাইন করব:\n১. চলমান কার্যকর টোকেন সংখ্যা B * (K + 1) যেন কখনোই হার্ডওয়্যারের কার্যকর Ridge Point না ছাড়ায়, সেজন্য লাইভ Batch Size বাড়ার সাথে সাথে K-এর মান ধাপে ধাপে কমানো হবে (যেমন B <= 8 হলে K = 5, B = 16 হলে K = 3, B = 32 হলে K = 1, এবং B >= 48 হলে K = 0 অর্থাৎ Speculative সম্পূর্ণ বাইপাস)।\n২. পাশাপাশি চলমান রিকোয়েস্টের সাম্প্রতিক গড় Acceptance Rate (alpha) ট্র্যাক করে যেসব সৃজনশীল রিকোয়েস্টে alpha < 0.5 নেমে যাবে, সেখানেও স্বয়ংক্রিয়ভাবে K কমিয়ে অপ্রয়োজনীয় কম্পিউট অপচয় রোধ করব।",
+      "prerequisiteLessons": [
+        "ch44_roofline",
+        "ch44_speculative"
+      ]
+    },
+    {
+      "title": "FSDP-তে স্ট্যাটিক মেমোরি মাত্র ১৪ GB হওয়া সত্ত্বেও কেন ৮০ GB GPU-তে OOM হয়?",
+      "tag": "Memory debugging",
+      "prompt": "৮টি 80 GB H100 GPU-তে PyTorch FSDP (FULL_SHARD) দিয়ে একটি 7B মডেল (১২৮K Vocabulary, ১৬K Context Length) ট্রেন করার সময় কাগজে-কলমে স্ট্যাটিক মেমোরি মাত্র ১৪ GB হলেও প্রথম ধাপেই CUDA Out-Of-Memory আসছে! সম্ভাব্য লুকানো মেমোরি খাদকগুলো কী কী এবং সেগুলো কীভাবে সারাবেন?",
+      "answer": "১৪ GB হলো কেবল শার্ড করা স্থির মডেল স্টেট; বাস্তবে ট্রেনিংয়ের পিক মেমোরি নির্ধারিত হয় আরও চারটি বিশাল গতিশীল উপাদানের যোগফলে, যেগুলো আমি নিচের ক্রমে নিরীক্ষা ও সমাধান করব:\n১. অ-শার্ডকৃত Activation মেমোরি: FSDP ওয়েট শার্ড করলেও প্রতিটি GPU-তে নিজস্ব Micro-batch-এর পূর্ণ Activation তৈরি হয়, যা ১৬K লম্বা সিকোয়েন্সে বিশাল আকার ধারণ করে। সমাধান: অবশ্যই FlashAttention-2 নিশ্চিত করব এবং প্রতিটি একক Transformer Decoder Layer-এর সীমানায় Activation Checkpointing (এবং প্রয়োজনে Sequence Parallelism) চালু করব।\n২. বিশাল Vocabulary Logits বিস্ফোরণ: ১৬K টোকেন ও ১২৮K Vocabulary-তে শুধু শেষের Logits টেনসরটি FP32-তে রূপান্তর করলেই একটিমাত্র সিকোয়েন্সে 16,384 × 128,000 × 4 ≈ 8.4 GB (Backward গ্র্যাডিয়েন্টসহ প্রায় ১৭ GB!) মেমোরি এক ধাক্কায় গিলে ফেলে! সমাধান: পুরো Logits ম্যাট্রিক্স কখনোই একসাথে তৈরি না করে Fused Chunked Cross-Entropy কার্নেল (যেমন Liger Kernel) ব্যবহার করব।\n৩. FSDP Wrapping ও Prefetch বাফার: ভুলবশত পুরো মডেলকে একটি একক FSDP ইউনিটে মুড়ে দিলে AllGather করার সময় পুরো 7B মডেল একসাথে আনশার্ড হয়ে মেমোরি ফাটিয়ে দেয়! তাই অবশ্যই TransformerBlock-ভিত্তিক Auto-Wrap Policy এবং সীমিত Backward Prefetch (`BACKWARD_PRE` মাত্র ১টি পরবর্তী লেয়ারের জন্য) নিশ্চিত করব।\n৪. অ্যালোকেটর Fragmentation: গতিশীল আকারের টেনসরে ক্যাশ ফ্র্যাগমেন্টেশন এড়াতে `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` সেট করব।",
+      "prerequisiteLessons": [
+        "ch44_flash_attention",
+        "ch44_zero_fsdp"
+      ]
+    },
+    {
+      "title": "১০০ QPS এন্টারপ্রাইজ কোডিং অ্যাসিস্ট্যান্টের পূর্ণাঙ্গ ক্লাস্টার সাইজিং ফ্রেমওয়ার্ক",
+      "tag": "Capacity planning",
+      "prompt": "একটি বড় প্রতিষ্ঠানের ১০,০০০ সফটওয়্যার ইঞ্জিনিয়ারের জন্য একটি 70B কোডিং অ্যাসিস্ট্যান্ট ডিজাইন করতে হবে যার পিক লোড ১০০ QPS, গড় প্রম্পট ৪,০০০ Token (যার ৩,০০০ Token রিপোজিটরি কনটেক্সট), গড় আউটপুট ৪০০ Token, এবং SLA হলো TTFT <= 350 ms ও TPOT <= 25 ms। ধাপে ধাপে আপনার হার্ডওয়্যার বাজেট নির্ণয় করুন।",
+      "answer": "আমি ছয়টি সুশৃঙ্খল ধাপে ক্যাপাসিটি মডেলটি সাজাব:\n১. প্রিসিশন ও রেপ্লিকা টপোলজি: কঠোর ২৫ ms TPOT মেটাতে H100-এ BF16-এর (১৪০ GB ওয়েট) বদলে আমি নেটিভ FP8 (W8A8 + FP8 KV Cache, ১ বাইট/উপাদান) বেছে নেব। এতে ওয়েট কমে ৭০ GB হবে এবং মাত্র TP = 2 (২টি 80 GB H100, মোট ১৬০ GB HBM, কার্যকর ব্যান্ডউইথ 2 × 3.35 × 0.75 ≈ 5.025 TB/s) দিয়েই একটি দ্রুত রেপ্লিকা তৈরি করা যাবে (রিজার্ভ ১৬ GB বাদে KV বাজেট থাকবে ৭৪ GB)।\n২. Prefix Caching ও KV হিসাব: FP8-এ প্রতি টোকেন KV = 2 × 80 × 8 × 128 × 1 = 163.84 KB। একই রিপোজিটরিতে বারবার কোয়েরি আসায় PagedAttention Prefix Caching-এ ৩,০০০ রিপোজিটরি টোকেনের অন্তত ৬০%–৭০% ফিজিক্যাল ব্লক শেয়ার হবে এবং কার্যকর নতুন Prefill নেমে আসবে প্রায় ১,৫০০ টোকেনে (যাতে FP8 কম্পিউটে TTFT ১০০ ms-এরও নিচে থাকবে)। ৪,৪০০ টোকেনে প্রতি রিকোয়েস্টের অনন্য KV মেমোরি বড়জোর ~০.৪৫–০.৭২ GB হওয়ায় B_mem > 100।\n৩. TPOT ব্যান্ডউইথ ও Speculative লিভার: কোডিং টাস্কে টোকেনের অনুমানযোগ্যতা খুব উঁচু (alpha ≈ 0.80); মাঝারি ব্যাচে হালকা EAGLE/Medusa ড্রাফট হেড বা FP8 ব্যান্ডউইথের হিসাব কষে ২৫ ms বাজেটে প্রতি রেপ্লিকার নিরাপদ কার্যকর Concurrency B_eff নির্ণয় করব (ধরা যাক ৮০% ইউটিলাইজেশন হেডরুমে B_eff ≈ 36)।\n৪. Little's Law: প্রতি রিকোয়েস্টের গড় সেবা সময় W = 0.35 + 400 × 0.025 = 10.35 সেকেন্ড; ফলে প্রতি TP = 2 রেপ্লিকার টেকসই ক্ষমতা 36 / 10.35 ≈ 3.48 QPS।\n৫. মোট ফ্লিট ও হাই-অ্যাভেইলেবিলিটি: ১০০ QPS-এর জন্য ceil(100 / 3.48) = 29-টি রেপ্লিকা = ৫৮টি H100 GPU লাগবে; নোড ফেইলওভার ও রক্ষণাবেক্ষণের জন্য N+1 রিডান্ড্যান্সি ধরে ৮টি ৮-GPU HGX নোড (মোট ৬৪টি H100) বরাদ্দ করব এবং Session/Repo-Affinity রাউটিং বসাব যাতে একই রিপোজিটরির কোয়েরি একই রেপ্লিকায় গিয়ে সর্বোচ্চ Prefix Cache Hit পায়।",
+      "prerequisiteLessons": [
+        "ch44_kv_gqa",
+        "ch44_capacity_mock"
+      ]
+    }
+  ],
+  "book": {
+    "order": 23,
+    "part": "Book 3 · Deep Learning & RL",
+    "bookId": "deep_learning",
+    "bookChapter": 9,
+    "prerequisites": [
+      "chapter_17",
+      "chapter_20",
+      "chapter_21"
+    ],
+    "purpose": "আগের অধ্যায়ে (Book 3 · Chapter 8: Reinforcement Learning & Bandits) আমরা সিকোয়েন্সিয়াল সিদ্ধান্ত গ্রহণ ও পলিসি অপ্টিমাইজেশন শিখেছি। Book 3-এর এই সমাপনী FAANG GPU Systems অধ্যায়ে আমরা জানব কীভাবে আধুনিক GPU-এর মেমোরি হায়ারার্কি, FlashAttention, GQA KV Cache, 3D Parallelism (ZeRO/FSDP, Tensor ও Pipeline Parallelism), PagedAttention এবং Speculative Decoding কাজে লাগিয়ে বিশাল ডিপ লার্নিং ও LLM মডেলগুলোকে বাস্তবে ট্রেন ও কম Latency-তে সার্ভ করতে হয়।",
+    "outcomes": [
+      "Roofline Model ও Arithmetic Intensity দিয়ে যেকোনো ট্রেনিং বা সার্ভিং ওয়ার্কলোড কখন Compute-Bound আর কখন Memory-Bandwidth-Bound তা নিখুঁতভাবে নির্ণয় করা।",
+      "FlashAttention-এর Tiled Online Softmax, GQA KV Cache বাইট হিসাব এবং Mixed-Precision ট্রেনিংয়ে DDP, ZeRO-1/2/3 ও FSDP-এর মেমোরি ও কমিউনিকেশন ট্রেড-অফ প্রতিপাদন করা।",
+      "মাল্টি-নোড GPU ক্লাস্টারে 3D Parallelism (TP, PP ও DP) টপোলজি এবং সার্ভিংয়ে PagedAttention, Continuous Batching, Speculative Decoding ও W8A8/W4A16 Quantization ডিজাইন করা।",
+      "নির্ধারিত TTFT ও TPOT SLA এবং Little's Law অনুসরণ করে একটি প্রোডাকশন 70B LLM ক্লাস্টারের পূর্ণাঙ্গ Capacity Planning ও GPU সংখ্যা হিসাব করতে পারা।"
+    ],
+    "recall": [
+      "একক রিকোয়েস্টের Autoregressive Decode কেন H100 GPU-তেও ৯৯%-এর বেশি Tensor Core অলস ফেলে রাখে এবং কীভাবে GQA ও Batching সেই সীমাবদ্ধতা কমায়?",
+      "ZeRO-2 ও ZeRO-3 (FSDP)-এর কমিউনিকেশন ভলিউমের পার্থক্য কত এবং কেন Tensor Parallelism নোডের ভেতর NVLink-এ সীমাবদ্ধ রেখে আন্তঃনোডে Pipeline Parallelism চালানো হয়?",
+      "কখন W4A16 (AWQ/GPTQ) কোয়ান্টাইজেশন W8A8 (FP8)-এর চেয়ে দ্রুত চলে, আর কখন বড় ব্যাচের Compute-Bound Prefill-এ কোনো কম্পিউট গতিবৃদ্ধিই দিতে পারে না?"
+    ],
+    "bridge": "একক টেনসর থেকে শুরু করে পূর্ণাঙ্গ নিউরাল নেটওয়ার্ক, ট্রান্সফরমার, রিইনফোর্সমেন্ট লার্নিং এবং সবশেষে হাজার GPU-এর সিস্টেম ইঞ্জিনিয়ারিংয়ের মধ্য দিয়ে আমাদের Book 3 · Deep Learning & RL-এর যাত্রা সফলভাবে পূর্ণ হলো। এই সুদৃঢ় হার্ডওয়্যার ও আর্কিটেকচার ভিত্তির ওপর দাঁড়িয়ে এরপর আপনি শুরু করবেন Book 4 (LLMs, RAG & Generative AI), যেখানে আধুনিক ভাষা মডেল তৈরি, Retrieval-Augmented Generation, Fine-tuning ও এজেন্টিক সিস্টেমের গভীরে প্রবেশ করা হবে।"
+  }
+}

@@ -1,0 +1,1628 @@
+{
+  "id": "chapter_29",
+  "number": 29,
+  "title": "LLM/Generative AI Capstone",
+  "shortTitle": "LLM/Generative AI Capstone",
+  "displayTitle": "LLM/Generative AI Capstone\nRetrieve. Generate. Audit.",
+  "subtitle": "উৎস যাচাই, Neural Trace, Failure Analysis এবং Release সিদ্ধান্ত নিয়ে একটি পূর্ণাঙ্গ ও Reproducible Evidence Workbench তৈরি।",
+  "description": "Build the pipeline. Follow the evidence.\nKeep the failure in the report.",
+  "difficulty": "LLM · capstone",
+  "lab": "gen_capstone",
+  "lessons": [
+    {
+      "id": "ch29_contract",
+      "title": "Capstone পরিচিতি: একটি Evidence Workbench গড়ে তোলা",
+      "subtitle": "কার্যকর সফটওয়্যার সিস্টেম আর নির্ভরযোগ্য বৈজ্ঞানিক সহকারী এক কথা নয়",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "প্রজেক্টের মূল লক্ষ্য",
+          "body": "Book 4-এর আগের অধ্যায়গুলোতে আমরা Tokenization, Retrieval, RAG, Fine-tuning, Evaluation এবং Generative Modeling-এর প্রতিটি কলকব্জা আলাদাভাবে খুলে দেখেছি (সর্বশেষ Book 4 · Chapter 9-এ আমরা Diffusion & Multimodal Systems নিয়ে কাজ করেছি)। এই সমাপনী Capstone অধ্যায়ে আমাদের লক্ষ্য হলো সেই শেখা ধারণাগুলোকে একত্র করে একটি বাস্তব ও স্বচ্ছ Evidence Workbench তৈরি করা। এখানে আমরা একটি ইংরেজি বৈজ্ঞানিক দাবি (Claim) ইনপুট হিসেবে নেব, মূল Corpus থেকে প্রাসঙ্গিক Source Passage খুঁজে আনব, একটি ছোট Autoregressive Decoder সম্ভাব্য উত্তর হিসেবে কোন শব্দটি তৈরি করে তা পর্যবেক্ষণ করব এবং সবশেষে Citation ও Response Policy কঠোরভাবে পরীক্ষা করব।\n\nশুরুতেই একটি গুরুত্বপূর্ণ সীমানা স্পষ্ট করে নেওয়া দরকার: এই প্রজেক্টটি কোনো স্বয়ংক্রিয় বৈজ্ঞানিক সত্যতা যাচাইকারী (Truth Verifier) বা মুক্তভাবে উত্তর দেওয়া Research Assistant নয়। আমাদের ইঞ্জিনিয়ারিং দৃষ্টিভঙ্গিতে কোনো Quality Gate-এ ব্যর্থ হওয়াটা লুকানোর মতো কিছু নয়, বরং সেটিই আমাদের পরীক্ষার অন্যতম প্রধান ফলাফল। আউটপুটের বাহ্যিক Format নিখুঁত হয়েছে দেখেই আমরা কখনোই ধরে নেব না যে উত্তরের ভেতরকার অর্থও (Semantics) সঠিক হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "প্রজেক্টের মূল Deliverable-সমূহ",
+          "body": "এই প্রজেক্টের সাথে যুক্ত প্রতিটি অংশ শতভাগ স্বচ্ছ ও নিজে চালিয়ে দেখার উপযোগী। এখানে একটি সম্পূর্ণ কার্যকর Offline Workflow, ট্রেন করা Model Weights, মূল ডেটার Source Hashes, অবিকৃত মূল উদ্ধৃতি (Original Quotations), প্রতিটি ধাপের Stage Traces, নিয়ন্ত্রিত Controlled Diagnostics এবং একটি পূর্ণাঙ্গ Model Card দেওয়া আছে। Python স্ক্রিপ্টটি আপনার লোকাল মেশিনেই Training সম্পন্ন করে, আর Flutter অ্যাপটি কোনো ইন্টারনেট ছাড়াই পুরো Retrieval এবং Neural Forward Pass অফলাইনে চালায়। আড়ালে কোনো গোপন ক্লাউড API বা বিশাল কোনো Pretrained Large Model লুকিয়ে রাখা হয়নি—নিচের সমীকরণের প্রতিটি ধাপ আপনি নিজের চোখে কোডে মিলিয়ে দেখতে পারবেন।"
+        },
+        {
+          "type": "math",
+          "title": "এন্ড-টু-এন্ড Pipeline প্রবাহ",
+          "body": "\\mathrm{pipeline}=\\mathrm{retrieve}\\to\\mathrm{pack}\\to\\mathrm{generate}\\to\\mathrm{audit}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ প্রজেক্টের প্রাথমিক পরিসংখ্যান যাচাই করি",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/scifact_rag/capstone_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nassert lab[\"report\"][\"fit_count\"] == 505 and lab[\"report\"][\"diagnostic_count\"] == 188\nassert lab[\"report\"][\"parameters\"] == 5710\nprint(lab[\"report\"][\"limits\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "Scope ও দায়িত্বের স্পষ্ট সীমারেখা",
+          "body": "উপরের কোডে যেমন দেখা গেল, আমাদের সিস্টেমটি মাত্র 5710টি Parameter-এর একটি ছোট মডেল, যা 505টি Fit উদাহরণের ওপর দাঁড়িয়ে 188টি Diagnostic উদাহরণে পরীক্ষা করা হয়েছে। এখানে সফটওয়্যার ও Neural Model-এর কাজের সীমানা খুব কড়াভাবে আলাদা রাখা হয়েছে: আমাদের Decoder কেবল উত্তরের অক্ষরগুলো (support বা contradict) এবং সমাপ্তি নির্দেশক EOS Token তৈরি করে। মূল নথির হুবহু উদ্ধৃতি বা Citation কখনোই Neural Model নিজের মনগড়াভাবে লেখে না; বরং সফটওয়্যার সরাসরি মূল Source থেকে তা কপি করে আনে। তদুপরি, ইউজার ইন্টারফেস (UI) মডেলের এই অনুমানকে সবসময় unverified হিসেবে চিহ্নিত করে—কারণ একটি বৈধ শব্দ আর নিখুঁত Citation পাশাপাশি থাকলেই তা বৈজ্ঞানিক Entailment প্রমাণ করে না।"
+        },
+        {
+          "type": "text",
+          "title": "এই Capstone থেকে আমরা কী শিখব",
+          "body": "একজন দক্ষ ML Engineer জানেন যে একটি জটিল সিস্টেমে সব সমস্যাকে এক পাল্লায় মাপা যায় না। তাই এই অধ্যায়ে আমরা Retrieval Relevance, Context Selection, Generation Format, Label Correctness, Rationale Coverage এবং Policy Coverage—প্রতিটি দিককে আলাদাভাবে মূল্যায়ন করতে শিখব। একই Claim-এর ওপর নিয়ন্ত্রিত Paired Controls চালিয়ে আমরা যাচাই করব মডেলটি সত্যিই তথ্য পড়ছে কি না; আর কোথাও প্রত্যাশিত ফলাফল না এলে সুবিধামতো Metric পাল্টে ব্যর্থতাকে কৃত্রিম সাফল্যে রূপান্তর করব না।"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের বাস্তব ফলাফল ও Release সিদ্ধান্ত",
+          "body": "খোলাখুলিভাবে আমাদের পরীক্ষার ফলাফলটি দেখুন: 188টি Diagnostic উদাহরণের মধ্যে Retrieved Context ব্যবহার করে আমাদের মডেল সঠিক উত্তর দিয়েছে 89/188টি ক্ষেত্রে, যেখানে সরল Majority Baseline নিজেই পায় 124/188 এবং ইচ্ছাকৃতভাবে উল্টে দেওয়া ভুল তথ্যে (Rotated-Context Control) মডেলটি পায় 107/188! এই সংখ্যাগুলো দ্ব্যর্থহীনভাবে প্রমাণ করে যে আমাদের ছোট মডেলটি এখনো অর্থবহ Evidence Reasoning আয়ত্ত করতে পারেনি। তাই প্রকৌশলগত সিদ্ধান্ত হিসেবে এটি একটি চমৎকার ও সম্পূর্ণ স্বচ্ছ Functional Prototype হিসেবে রিভিউ করা যাবে, কিন্তু Semantic-Quality Deployment Gate-এ এটি উত্তীর্ণ হয়নি। বাস্তব কর্মক্ষেত্রে এই দুই ধরনের মূল্যায়নই পাশাপাশি স্পষ্টভাবে রিপোর্ট করতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "অধ্যায়ের পরিধি ও পরবর্তী যাত্রা",
+          "body": "Book 4-এর আগের নয়টি অধ্যায়ের (Chapter 1 থেকে Chapter 9—অর্থাৎ LLM Foundations, Embeddings & Retrieval, RAG Systems, Fine-tuning & Adaptation, LLM Reliability & Serving, LLM Evaluation & Benchmark Design, Mechanistic Interpretability, VAE & GAN এবং Diffusion & Multimodal Systems) মূল তাত্ত্বিক ও ব্যবহারিক শিক্ষাগুলো এই প্রজেক্টের নকশায় কাজে লাগানো হয়েছে। তবে মনে রাখবেন, প্রতিটি গবেষণা ধারার বিশাল Production Implementation এখানে জোর করে ঢোকানো হয়নি—যেমন এখানে আড়ালে কোনো Diffusion বা Multimodal Generator বসানো নেই। এই Capstone অধ্যায়টি ভালোভাবে শেষ করার পর আপনি Book 5 (Recommender Systems) · Chapter 1 (Recommendation Foundations)-এর মাধ্যমে সম্পূর্ণ নতুন একটি ডোমেইনে প্রবেশ করবেন।"
+        }
+      ]
+    },
+    {
+      "id": "ch29_data",
+      "title": "Source, License এবং Observed-Role Contract",
+      "subtitle": "Evidence Annotation অনুপস্থিত থাকা মানেই কিন্তু Negative Label নয়",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "মূল Dataset ও Source Provenance",
+          "body": "যেকোনো Evidence Workbench তৈরির প্রথম ধাপ হলো তার তথ্যের উৎস এবং আইনি সীমারেখা সম্পর্কে শতভাগ নিশ্চিত হওয়া। আমাদের সাথে যুক্ত SciFact Corpus-এ মোট 5183টি বৈজ্ঞানিক নথি (Documents) এবং সেখান থেকে আলাদা করা 45952টি বাক্য বা Sentence Spans রয়েছে। এর মধ্যে Claim Annotations-এর লাইসেন্স হলো CC BY 4.0, আর মূল গবেষণাপত্রের সারাংশ বা Abstract Database-এর লাইসেন্স হলো ODC-By 1.0। অ্যাপের পর্দায় দেখানো প্রতিটি উদ্ধৃতি যেন মূল নথি ও নির্দিষ্ট Span পর্যন্ত নিখুঁতভাবে মিলিয়ে দেখা যায়, সেজন্য আমরা সবসময় Source Notices এবং ফাইলগুলোর Byte Hashes সংরক্ষণ করি।"
+        },
+        {
+          "type": "text",
+          "title": "Observed Data Roles ও Denominator-এর হিসাব",
+          "body": "মূল ডেটাসেটে 809টি Train এবং 300টি Dev দাবি (Claims) থাকলেও, তার সবগুলোতে স্পষ্ট Evidence চিহ্নিত করা নেই। আমরা কেবল সেই উদাহরণগুলোই বেছে নিয়েছি যেখানে সুনির্দিষ্ট Annotation উপস্থিত আছে—যার ফলে আমরা পাচ্ছি 505টি Fit (Train) এবং 188টি Diagnostic (Dev/Test) উদাহরণ। এখানে একটি সূক্ষ্ম ডেটা ইঞ্জিনিয়ারিং নীতি খেয়াল করুন: যেসব দাবিতে Evidence Annotation অনুপস্থিত, সেগুলোকে আমরা কখনোই জোর করে false, unsupported বা unanswerable বলে ধরে নিইনি। তাই আমাদের এই 505 ও 188-এর Denominator কেবল চিহ্নিত উদাহরণগুলোর হিসাব দেয়; এটি বিশ্বের সমস্ত বৈজ্ঞানিক সত্যের সার্বজনীন Population-এর প্রতিনিধিত্ব দাবি করে না।"
+        },
+        {
+          "type": "math",
+          "title": "Dataset-এর আকার ও বিভাজন",
+          "body": "D_{fit}=505,\\quad D_{diag}=188,\\quad D_{source}=5183\\ \\mathrm{documents}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Source ও Annotated Role-এর সংখ্যা মিলিয়ে দেখি",
+          "body": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter29_local\", Path(\"assets/datasets/scifact_rag/capstone_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\n\nrag = m.rag_module()\nsystem, roles, _ = rag.load_inputs()\nassert len(system.source) == 5183\nassert sum(bool(q[\"evidence\"]) for q in roles[\"train\"]) == 505\nassert sum(bool(q[\"evidence\"]) for q in roles[\"test\"]) == 188\nprint(len(roles[\"train\"]), len(roles[\"test\"]))\n"
+        },
+        {
+          "type": "text",
+          "title": "ডেটার স্বাধীনতা ও পুনরাবৃত্তির সীমাবদ্ধতা",
+          "body": "উপরের কোডে আমরা 5183টি নথি এবং 505/188টি উদাহরণের হিসাব মিলিয়ে দেখলাম। তবে এই Data Split কতটা স্বাধীন, তা নিয়েও আমাদের সচেতন থাকতে হবে। Book 4-এর Chapter 2 থেকে Chapter 5 (Embeddings & Retrieval, RAG Systems, Fine-tuning & Adaptation এবং LLM Reliability & Serving)-এ আমরা এই ডেটা রোলগুলো আগেই দেখেছি। পুরো ডেটাসেটের ভেতরে দুটি হুবহু একই Claim Text, একাধিক দাবির পেছনে একই গবেষণাপত্র (Shared Papers), কিংবা পরস্পর সম্পর্কিত দাবি (Related Claims) থাকতে পারে। কাজেই আমাদের বর্তমান Diagnostic সেটটিকে সম্পূর্ণ নতুন কোনো Blind Confirmation বা উৎস-নিরপেক্ষ (Source-family-independent) পরীক্ষা হিসেবে দাবি করা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "Gold Label ও Runtime-এর কঠোর দেয়াল",
+          "body": "ট্রেনিং ও মূল্যায়নে Gold Data কোন ভূমিকায় কাজ করছে তা আলাদা করা অত্যন্ত জরুরি। মূল নথির Source Labels হলো আমাদের মডেলের শেখার লক্ষ্য (Response Targets), আর কোন বাক্যে প্রমাণ আছে সেই Rationale Annotations কেবলই পরবর্তী ধাপের Diagnostics-এর জন্য রাখা হয়েছে। চলাকালীন সময়ে (Inference Time) আমাদের Retriever, Packed Text, Hashed Features কিংবা Runtime Gate—কেউই কিন্তু এই Gold Rationale ছুঁয়েও দেখে না। যদি ভুল করেও Inference-এর সময় Gold Annotation দেখে প্রমাণ বেছে নেওয়া হতো, তবে পুরো প্রজেক্টের আসল Retrieval Task-টাই অর্থহীন হয়ে যেত (Data Leakage)।"
+        },
+        {
+          "type": "text",
+          "title": "ভাষাগত সীমারেখা (Language Contract)",
+          "body": "এই প্রজেক্টের আরেকটি বাস্তব দিক হলো এর ভাষাগত চুক্তি। মূল বৈজ্ঞানিক দাবিগুলো এবং আমাদের সিস্টেমের Lexical Tokenization পুরোপুরি ইংরেজি তথা ASCII শব্দের ওপর ভিত্তি করে তৈরি। অন্যদিকে আপনি যে বাংলা ব্যাখ্যাগুলো পড়ছেন, তা হলো আমাদের শেখানোর মাধ্যম বা ইউজার ইন্টারফেসের ভাষা। তাই কেউ যদি কৌতূহলবশত বাংলায় কোনো Query লিখে সার্চ করেন এবং ফলাফল শূন্য (Empty Retrieval) বা শূন্য Feature আসে, তবে সেটি সিস্টেমের বাগ নয়; বরং সিস্টেমটি কখনোই Multilingual Capability দাবি করেনি।"
+        },
+        {
+          "type": "text",
+          "title": "কোডিং অনুশীলনের সতর্কতা",
+          "body": "নিজের হাতে ডেটা পাইপলাইন পরীক্ষা করার সময় Corpus, Index, Train এবং Dev ফাইলের Byte Hashes সবসময় যাচাই করে নেবেন। মনে রাখবেন, দুটি উদাহরণের ID আলাদা হওয়া মানেই তারা পরিসংখ্যানগতভাবে পরস্পর স্বাধীন (Independent Examples) নয়। ভবিষ্যতে কখনো ডেটাসেট পরিবর্তন বা হালনাগাদ করতে হলে তার Split, License, Source Joins এবং প্রতিটি মেট্রিকের Denominator নতুন করে অডিট করে নিতে হবে।"
+        }
+      ]
+    },
+    {
+      "id": "ch29_architecture",
+      "title": "সিস্টেম Architecture ও Stage Interface নকশা",
+      "subtitle": "প্রতিটি ধাপের সীমানায় ঠিক কী ইনপুট ঢোকে এবং কী আউটপুট বের হয়?",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Retriever Interface",
+          "body": "একটি বড় এমএল সিস্টেম তখনই নির্ভরযোগ্য হয়, যখন তার প্রতিটি ধাপের (Stage) ইনপুট ও আউটপুটের চুক্তি (Interface Contract) একদম স্বচ্ছ থাকে। আমাদের পাইপলাইনের শুরুতেই আছে Retriever, যেখানে ইউজারের দেওয়া Query String-এর সর্বোচ্চ সীমা হলো 4096টি UTF-16 ইউনিট। এটি Book 4 · Chapter 2 (Embeddings & Retrieval)-এ তৈরি করা Frozen TF-IDF Index ব্যবহার করে প্রাসঙ্গিক নথির তালিকা ও তাদের স্কোর (Scored Document IDs) ফিরিয়ে দেয়। এখানে Query Transformation, Index Version এবং সংরক্ষিত Cached Representations—সবকিছুকেই একই নিয়ম মেনে চলতে হয়। সবচেয়ে গুরুত্বপূর্ণ বিষয় হলো, আমাদের Diagnostic উদাহরণগুলোর ওপর ভিত্তি করে কোনো Embedding বা IDF Statistics নতুন করে Fit করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "Packer Interface",
+          "body": "দ্বিতীয় ধাপে Retriever থেকে পাওয়া নথিগুলোর বাক্য নিয়ে কাজ করে Packer। এটি নথির বাক্যগুলোকে ছোট ছোট Chunk-এ ভাগ করে, Lexical Reranking চালায় এবং নির্দিষ্ট Byte Budget-এর ভেতরে পূর্ণাঙ্গ বাক্য সাজিয়ে নেয় (Whole-span Byte Packing)। এর আউটপুট হিসেবে বেরিয়ে আসে হুবহু Citation ও Text Spans, কেন বাকি অংশগুলো বাদ পড়ল তার সুনির্দিষ্ট কারণ (Skipped Reasons), এবং মোট কত বাইট ব্যবহৃত হলো (Used Bytes)। নিরাপত্তার স্বার্থে মূল নথির টেক্সটকে সবসময় নিরেট Data হিসেবে রাখা হয়—এটিকে কখনোই মডেলের কোনো গোপন Instruction হিসেবে চালানো হয় না।"
+        },
+        {
+          "type": "math",
+          "title": "মডিউলার Stage Pipeline",
+          "body": "R(q)\\to C(q,R)\\to x(q,C)\\to G(x)\\to P(G,C)"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ প্রতিটি Stage-এর আউটপুট চুক্তি যাচাই করি",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/scifact_rag/capstone_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nr = lab[\"samples\"][3][\"cases\"][\"retrieved\"]\nassert len(r[\"features\"]) == 256\nassert len(r[\"pack\"][\"selected\"]) <= 3\nassert r[\"pack\"][\"used_bytes\"] <= 1024\nassert len(r[\"generation\"][\"ids\"]) <= 12\nprint(r[\"decision\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "Decoder Interface",
+          "body": "উপরের সমীকরণে x(q, C) এবং G(x) অংশ দুটি কীভাবে কাজ করে দেখুন। Query এবং বাছাই করা Passage Text থেকে আমরা আলাদাভাবে নরমালাইজ করা দুটি 128-D Hashed Block তৈরি করি এবং সেগুলোকে পাশাপাশি জুড়ে (Concatenate) একটি 256-D Condition Vector পাই। এই Condition Vector থেকেই আমাদের GRU-এর প্রাথমিক Hidden State তৈরি হয়, এবং এরপর ধাপে ধাপে একটি করে অক্ষর ও শেষে EOS Token Autoregressively জেনারেট হতে থাকে। কোডে আপনি যেমন দেখলেন, ইনপুট ভেক্টরের দৈর্ঘ্য ঠিক 256 এবং জেনারেট হওয়া সিকোয়েন্সের দৈর্ঘ্য সর্বোচ্চ 12। তবে মনে রাখতে হবে, শব্দের ঝুড়ি বা Bag-of-Words ধাঁচের এই Feature-এ বাক্যের শব্দের ক্রম (Sequence Semantics) হারিয়ে যায়।"
+        },
+        {
+          "type": "text",
+          "title": "Policy Interface",
+          "body": "মডেল একটি শব্দ তৈরি করলেই তা সরাসরি ইউজারকে দেখানো যায় না; এর মাঝখানে দাঁড়িয়ে থাকে আমাদের Runtime Policy P(G, C)। এটি চারটি বস্তুনিষ্ঠ শর্ত পরীক্ষা করে: Context খালি কি না (Nonempty Context), উদ্ধৃতিটি মূল নথির সাথে অক্ষরে অক্ষরে মিলছে কি না (Exact Quote Match), তৈরি হওয়া শব্দটি বৈধভাবে শেষ হয়েছে কি না (Valid Ended Word), এবং মডেলের আত্মবিশ্বাস নির্দিষ্ট Confidence Threshold পার করেছে কি না। লক্ষ্য করুন, কোনো Gold Label, Rationale Hit বা প্রকৃত উত্তরের সঠিকতা কিন্তু এই Policy-র ইনপুট নয়—কারণ বাস্তব সময়ে সেগুলো আমাদের জানা থাকে না। সব শর্ত পূরণ হলেও এর আউটপুট স্ট্যাটাস হয় unverified_hypothesis, কখনোই চূড়ান্ত verified verdict নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Audit Interface",
+          "body": "সবশেষে পুরো সিস্টেমটিকে মানুষের কাছে স্বচ্ছ করার জন্য রয়েছে Audit Interface। এখান থেকে একজন প্রকৌশলী বা রিভিউয়ার পুরো Generation Trace, মূল Source Spans, তুলনামূলক Matched Diagnostic Controls এবং মডেলের Fingerprints একনজরে দেখে নিতে পারেন। তবে অডিট করার সময় তিনটি বিষয়কে কখনোই গুলিয়ে ফেলবেন না: Citation মূল নথিতে খুঁজে পাওয়া (Resolve হওয়া), উদ্ধৃতিটি হুবহু অবিকৃত থাকা, আর সেই উদ্ধৃতিটি বৈজ্ঞানিক দাবিকে সত্যিই সমর্থন করা (Semantic Support)—এই তিনটি সম্পূর্ণ আলাদা পরীক্ষা। আর স্ক্রিনে কেবল সেভ করা Metadata দেখানো মানেই কিন্তু রানটাইমে নতুন করে ফাইলের Checksum হিসাব করা নয়।"
+        },
+        {
+          "type": "text",
+          "title": "সাক্ষাৎকারে যেভাবে ব্যাখ্যা করবেন",
+          "body": "সিস্টেম ডিজাইন ইন্টারভিউতে কোনো একটি Stage বদলে আরও উন্নত কিছু বসানোর প্রস্তাব দেওয়ার আগে অবশ্যই তার Interface এবং Version Invariants স্পষ্ট করে বলুন। ইন্টারভিউয়ারকে বুঝিয়ে বলুন যে শুধু আরও শক্তিশালী Decoder বসালেই ভুলভাবে তুলে আনা Context ঠিক হয়ে যাবে না; আবার উল্টোদিকে শতভাগ নিখুঁত Quote Provenance থাকলেও মডেলের তৈরি Hypothesis ভুল হতে পারে। তাই যেকোনো RAG বা GenAI সিস্টেমে সামগ্রিক End-to-End Metrics এবং প্রতিটি ধাপের নিজস্ব Stage Diagnostics—দুটোই অপরিহার্য।"
+        }
+      ]
+    },
+    {
+      "id": "ch29_retrieval",
+      "title": "Frozen Retrieval Baseline ও Candidate Coverage",
+      "subtitle": "প্রাথমিক Candidate Set-এ আসল প্রমাণ না এলে পরবর্তী কোনো Reranker-ই তা উদ্ধার করতে পারবে না",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন এই Frozen Lexical Baseline?",
+          "body": "জটিল নিউরাল সার্চের দিকে ঝোঁকার আগে যেকোনো প্রকৌশলীর উচিত একটি সরল, Reproducible এবং সহজেই পরীক্ষাযোগ্য (Inspectable) Baseline তৈরি করা। আমাদের সিস্টেমের Frozen Lexical Search ঠিক এই কাজটিই করে। এখানে শব্দের গণনা (Token Counts), Sublinear TF, পুরো Corpus-এর ওপর আগে থেকে হিসাব করা IDF, এবং L2-নরমালাইজড ভেক্টরের Cosine Similarity—সবই আগে থেকে তৈরি করা একটি অপরিবর্তনীয় Index থেকে আসে। আমরা এটিকে ভুলেও Neural Semantic Search বলে দাবি করছি না; শব্দের হুবহু মিল না থাকলে বা অপরিচিত শব্দ (OOV) এলে এই পদ্ধতির যে বাস্তব সীমাবদ্ধতা রয়েছে, তা মেনেই আমরা এগোচ্ছি।"
+        },
+        {
+          "type": "text",
+          "title": "Shortlist তৈরি ও Tie-breaking নিয়ম",
+          "body": "সার্চের পর এই ধাপটি কেবল ধনাত্মক স্কোর পাওয়া শীর্ষ 10টি নথি (Top 10 Positive-Score Documents) বেছে নিয়ে একটি Shortlist তৈরি করে। যদি দুটি নথির স্কোর হুবহু সমান হয়ে যায় (Tie), তবে নথির গাণিতিক Numeric ID দেখে ক্রম নির্ধারণ করা হয়, যাতে ফলাফলে কোনো দৈব পরিবর্তন না ঘটে। আর Query-র সাথে কোনো নথির একটি শব্দেরও মিল না থাকলে (No Lexical Overlap) ফলাফল আসে শূন্য তালিকা (Empty Result)। খেয়াল রাখবেন, Query Parsing-এর নিয়ম বা এই Candidate Count (10) সামান্য বদলালেও পরের ধাপের Packed Context এবং মডেলের ইনপুট পুরোপুরি বদলে যাবে।"
+        },
+        {
+          "type": "math",
+          "title": "Cosine Similarity সমীকরণ",
+          "body": "\\cos(q,d)=\\frac{v_q^Tv_d}{\\|v_q\\|\\|v_d\\|}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Frozen Retriever চালিয়ে দেখি",
+          "body": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter29_local\", Path(\"assets/datasets/scifact_rag/capstone_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\n\nrag = m.rag_module()\nsystem, _, _ = rag.load_inputs()\nhits = system.retrieve(\"0-dimensional biomaterials show inductive properties.\", 10)\nassert len(hits) <= 10\nassert all(score > 0 for _, score in hits)\nassert system.retrieve(\"\") == []\nprint(hits[:2])\n"
+        },
+        {
+          "type": "text",
+          "title": "Candidate Coverage-এর সর্বোচ্চ সীমা (Ceiling)",
+          "body": "উপরের কোডে একটি বৈজ্ঞানিক দাবি দিয়ে সার্চ করে আমরা সর্বোচ্চ 10টি ধনাত্মক স্কোরের নথি পেলাম, আর খালি স্ট্রিং দিলে পেলাম খালি তালিকা। এবার পাইপলাইনের একটি মৌলিক সত্য ভেবে দেখুন: আসল প্রমাণ বহনকারী নথিটি যদি এই প্রথম 10টি নথির Shortlist-এই জায়গা না পায়, তবে পরের ধাপের যত চতুর Sentence Reranking-ই থাকুক না কেন, সে ওই হারিয়ে যাওয়া নথিটি আর কখনোই দেখতে পাবে না! মূল্যায়নের সময় আমরা Diagnostic Gold Annotations দিয়ে এই Candidate Availability মেপে দেখতে পারি, যদিও বাস্তব Runtime থাকে সম্পূর্ণ Gold-free। আবার উল্টো দিকটাও সত্য: শুধু উচ্চ Recall@K পাওয়া মানেই এই নয় যে সেখান থেকে কাজের মতো সঠিক বাক্যটিই বেছে নেওয়া হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "Retrieval Leakage সম্পর্কে সতর্কতা",
+          "body": "অনেকেই অজান্তে একটি বড় ভুল করে বসেন—Diagnostic বা Test সেটের ফলাফল দেখার পর সেই ডেটার ওপর আবার নতুন করে Vocabulary বা IDF হিসাব (Refit) করেন। এমনটি করলে আপনার মূল্যায়ন প্রটোকলই ভেঙে পড়বে। যদিও মূল Source Corpus Index তৈরিতে কোনো Label লাগে না (Unsupervised), তবুও কোন সংস্করণের Corpus ব্যবহার করা হচ্ছে এবং মডেলের অনুমোদিত জ্ঞানের সীমানা (Allowed Knowledge Boundary) কতটুকু, তা স্পষ্টভাবে নথিভুক্ত রাখতে হবে। এছাড়া Train ও Dev সেটের দাবির পেছনে যদি একই গবেষণাপত্র বারবার ফিরে আসে (Source Overlap), তবে সেটিও পরীক্ষার কাঠিন্যকে প্রভাবিত করে।"
+        },
+        {
+          "type": "text",
+          "title": "বিকল্প Retrieval পদ্ধতি তুলনা করার শর্ত",
+          "body": "আপনি যদি ভবিষ্যতে এই TF-IDF বেসলাইনের বদলে BM25, Dense Retrieval কিংবা উভয়ের সমন্বয়ে Hybrid RRF পরীক্ষা করে দেখতে চান, তা চমৎকার একটি গবেষণা হতে পারে। কিন্তু তুলনাটি ন্যায্য (Fair Comparison) হতে হলে ঠিক একই Data Roles, একই Byte Budget এবং একই Candidate সীমা বজায় রেখে পরীক্ষা চালাতে হবে। আমাদের বর্তমান Capstone প্রজেক্টে নতুন কোনো Neural Retriever ট্রেন করা হয়নি—আমরা বিদ্যমান ইনডেক্সের ওপর দাঁড়িয়ে পুরো পাইপলাইনের আচরণ বিশ্লেষণ করছি।"
+        },
+        {
+          "type": "text",
+          "title": "কোডিং অনুশীলনের খুঁটিনাটি",
+          "body": "আপনার Retrieval কোড পরীক্ষা করার সময় খালি বা সম্পূর্ণ অপরিচিত শব্দের OOV Query, সমান স্কোরের Tie, Unicode স্ট্রিংয়ের দৈর্ঘ্য, মূল ডেটার সাথে Source ID Join এবং প্রতিবার একই ক্রমে ফলাফল আসার বিষয়টি (Deterministic Order) ইউনিট টেস্টে যাচাই করুন। সবসময় মনে রাখবেন, উচ্চ Search Score মানেই দাবির সত্যতা (Truth Confidence) নয়—কারণ সাধারণ শব্দের মিল (Lexical Relevance) কখনোই বৈজ্ঞানিক সমর্থন (Support) এবং বিরোধিতার (Contradiction) পার্থক্য বুঝতে পারে না।"
+        }
+      ]
+    },
+    {
+      "id": "ch29_packing",
+      "title": "Context Packing: Byte Budget, Span ও হারিয়ে যাওয়া Rationale",
+      "subtitle": "ফরম্যাট করা Byte Budget আর LLM-এর Token Budget কিন্তু এক জিনিস নয়",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Chunk তৈরি ও Reranking-এর রেসিপি",
+          "body": "Retriever আমাদের হাতে সর্বোচ্চ 10টি আস্ত গবেষণাপত্রের সারাংশ তুলে দিয়েছে, কিন্তু তার সবটুকু একসাথে মডেলের ইনপুটে দেওয়া সম্ভব বা সমীচীন নয়। তাই Context Packing ধাপে আমরা প্রতিটি নথির বাক্যগুলোকে পরপর দুটি করে বাক্যের Chunk-এ (Two-sentence Chunks) ভাগ করি, যেখানে পাশাপাশি দুটি Chunk-এর মধ্যে একটি বাক্যের মিল (One-sentence Overlap) থাকে। এরপর ওই Frozen IDF ব্যবহার করে প্রতিটি Chunk-এর সাথে Query-র Cosine Similarity মাপা হয়। আমাদের ছাঁকনির নিয়ম খুবই স্পষ্ট: ন্যূনতম স্কোর হতে হবে 0.05, মোট সর্বোচ্চ 3টি Passage নেওয়া যাবে এবং বৈচিত্র্য বজায় রাখতে একটি মূল নথি (Parent Document) থেকে সর্বোচ্চ একটিই Chunk জায়গা পাবে। এখানে সবসময় মূল নথির আসল বাক্যের সীমানা অক্ষুণ্ণ রাখা হয়—মনগড়াভাবে বাক্য কেটে কোনো কৃত্রিম অংশ তৈরি করা হয় না।"
+        },
+        {
+          "type": "text",
+          "title": "পূর্ণাঙ্গ Span নিয়ম (Whole-span Rule)",
+          "body": "বাজেট মাপার ক্ষেত্রে আমরা কোনো অনুমানের আশ্রয় নিই না; প্রতিটি বাছাইকৃত অংশের Citation, মূল টেক্সট এবং নতুন লাইন (Newline)-সহ পুরো সাজানো স্ট্রিংটি UTF-8 এনকোডিংয়ে ঠিক কত বাইট জায়গা নিচ্ছে তা গোনা হয়। যদি দেখা যায় কোনো একটি Candidate Chunk যোগ করলে মোট সীমা (1024 বাইট) ছাড়িয়ে যাচ্ছে, তবে সেটিকে মাঝপথে কেটে ঢোকানোর বদলে পুরো Candidate-টিকেই বাদ (Skip) দেওয়া হয়। ফলে কখনোই ভাঙা Unicode অক্ষর বা অর্ধেক কাটা Citation তৈরি হওয়ার ঝুঁকি থাকে না। কোনো Chunk কেন বাদ পড়ল—স্কোর কম হওয়ায় (score), একই নথি থেকে আগেই নেওয়া হওয়ায় (parent), সংখ্যা 3 পূর্ণ হওয়ায় (limit), নাকি বাইট সীমা ছাড়িয়ে যাওয়ায় (budget)—তার প্রতিটি কারণ আমরা অডিটের জন্য সংরক্ষণ করি।"
+        },
+        {
+          "type": "math",
+          "title": "UTF-8 Byte Budget-এর গাণিতিক শর্ত",
+          "body": "\\sum_{c\\in selected}|\\mathrm{citation}(c)+\\mathrm{newline}+\\mathrm{text}(c)+\\mathrm{newline}|_{UTF8}\\le1024"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Byte Accounting ও Parent Diversity যাচাই করি",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/scifact_rag/capstone_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nfor sample in lab[\"samples\"]:\n    for r in sample[\"cases\"].values():\n        p = r[\"pack\"]\n        assert len(p[\"context\"].encode(\"utf-8\")) == p[\"used_bytes\"] <= 1024\n        assert len({c[\"doc_id\"] for c in p[\"selected\"]}) == len(p[\"selected\"])\nassert lab[\"samples\"][3][\"cases\"][\"empty_budget\"][\"pack\"][\"used_bytes\"] == 0\nprint(\"Whole spans,one parent each,exact formatted UTF8 accounting.\")\n"
+        },
+        {
+          "type": "text",
+          "title": "সঠিক নথি পেয়েও যখন আসল Rationale হারিয়ে যায়",
+          "body": "উপরের কোডটি নিশ্চিত করল যে প্রতিটি উদাহরণেই ফরম্যাট করা UTF-8 বাইটের হিসাব কাঁটায় কাঁটায় 1024-এর নিচে আছে এবং প্রতিটি Selected Chunk ভিন্ন ভিন্ন নথি থেকে এসেছে। কিন্তু এর ভেতরে একটি গভীর প্রকৌশলগত Trade-off লুকিয়ে আছে! ধরুন, Retriever ঠিকই আসল গবেষণাপত্রটি খুঁজে এনেছে; তবুও আমাদের বেছে নেওয়া দুই বাক্যের Chunk-টি হয়তো গবেষকদের চিহ্নিত সম্পূর্ণ প্রমাণ (Complete Annotated Rationale) কভার করতে পারল না। আবার 'প্রতি নথি থেকে মাত্র একটি Chunk' নেওয়ার নিয়মটির কারণে একই পেপারের একাধিক জায়গায় ছড়িয়ে থাকা প্রমাণ (Multi-sentence Evidence) বাদ পড়ে যেতে পারে। তাই মনে রাখবেন: Candidate Recall, বাছাইকৃত অংশে Rationale Hit পাওয়া, আর তা থেকে সঠিক উত্তর তৈরি হওয়া—এই তিনটি এক জিনিস নয়।"
+        },
+        {
+          "type": "text",
+          "title": "মডেল আসলে কোন টেক্সটটুকু দেখে?",
+          "body": "এখানে আরেকটি সূক্ষ্ম পার্থক্য খেয়াল করুন। Packer যদিও Citation ID-সহ পুরো টেক্সট সাজিয়ে 1024 বাইটের হিসাব কষে, আমাদের নিউরাল মডেল কিন্তু ইনপুট হিসেবে কেবল বাছাইকৃত Passage-গুলোর সাধারণ টেক্সট (Newline দিয়ে যুক্ত) গ্রহণ করে—কোনো Citation ID মডেলের Feature-এ ঢোকে না, যাতে মডেল ডকুমেন্টের নম্বর মুখস্থ করে উত্তর দেওয়ার শর্টকাট না শেখে। এছাড়া এই 1024 ফরম্যাট করা বাইট কিন্তু কোনো আধুনিক LLM-এর Tokenizer Context Limit নয়, আর আমাদের পরের ধাপের Hashed Bag-of-Words রিপ্রেজেন্টেশনে বাক্যের ভেতরকার শব্দের ক্রমও হারিয়ে যায়।"
+        },
+        {
+          "type": "text",
+          "title": "শূন্য বাজেটের পরীক্ষা (Zero-budget Control)",
+          "body": "কোডের শেষ লাইনে আমরা empty_budget নামের একটি বিশেষ পরীক্ষার কথা দেখেছি। আমরা যদি ইচ্ছাকৃতভাবে Byte Budget = 0 করে দিই, তবে কোনো Context-ই প্যাক হতে পারবে না এবং আমাদের Runtime Policy সাথে সাথে no_context স্ট্যাটাস দিয়ে উত্তর প্রকাশ আটকে দেবে। ডিবাগিংয়ের জন্য আমরা তখনো ভেতরকার Decoder-এর কাঁচা Raw Trace দেখতে পারি, কিন্তু ইউজারের কাছে কোনো Hypothesis ছাড়া হয় না। আর হ্যাঁ, Empty Context পাওয়া মানে শুধু এটুকুই যে আমাদের পাইপলাইন কোনো তথ্য জোগাড় করতে পারেনি—এটি কখনোই ওই বৈজ্ঞানিক দাবিটি মিথ্যা বা উত্তরহীন হওয়ার প্রমাণ নয়।"
+        },
+        {
+          "type": "text",
+          "title": "সাক্ষাৎকারে যেভাবে ব্যাখ্যা করবেন",
+          "body": "বাস্তব প্রোডাকশনে যখন আপনি কোনো বৃহৎ LLM-এর জন্য Token Budget ডিজাইন করবেন, তখন আপনাকে অবশ্যই মডেলটির আসল Tokenizer, প্রম্পট Template Overhead এবং আউটপুট জেনারেট করার সংরক্ষিত জায়গা (Output Reserve) নিখুঁতভাবে গুনতে হবে—আমাদের এই সরল Byte Counter-কে কখনোই Token Budget বলে চালিয়ে দেবেন না। পাশাপাশি ইন্টারভিউতে উল্লেখ করবেন যে, মডেল অপরিবর্তিত (Frozen Decoder) রেখেও যদি শুধু Context Packing-এর নিয়ম বদলানো হয়, তবে মডেলের ইনপুটে বড় ধরনের Distribution Shift ঘটতে পারে, যা আলাদাভাবে পরীক্ষা করা আবশ্যক।"
+        }
+      ]
+    },
+    {
+      "id": "ch29_features",
+      "title": "FNV Hash Features: Deterministic ও সীমিত Representation",
+      "subtitle": "Hash Collision এবং হারিয়ে যাওয়া Word Order-এর সীমাবদ্ধতা জেনে তবেই ব্যবহার করি",
+      "duration": "60 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কীভাবে টেক্সট থেকে Hash Bucket তৈরি হয়",
+          "body": "এবার প্রশ্ন হলো, Query এবং বাছাই করা Context Passage-কে আমরা কীভাবে সংখ্যার ভেক্টরে রূপান্তর করব যাতে Python ও Dart (Flutter)—উভয় পরিবেশেই একদম অভিন্ন ফল পাওয়া যায়? এজন্য আমরা প্রথমে ইংরেজি ASCII অক্ষর ও অঙ্কের ধারাবাহিক অংশগুলোকে ছোট হাতের অক্ষরে (Lowercase) রূপান্তর করে Token তৈরি করি। এরপর প্রতিটি Token-এর ওপর একটি Unsigned 32-bit FNV-1a Hash চালিয়ে সেটিকে 128 দিয়ে ভাগশেষ (Modulo 128) নিয়ে তার নির্দিষ্ট Bucket ঠিক করি। এখানে Query এবং Context-এর জন্য আমরা আলাদা দুটি 128-D ব্লক রাখি—ফলে একই শব্দ Query-তে থাকলে প্রথম ব্লকের ঘর বাড়ায়, আর Context-এ থাকলে দ্বিতীয় ব্লকের ঘর বাড়ায়।"
+        },
+        {
+          "type": "text",
+          "title": "গণনা রূপান্তর ও L2 Normalization",
+          "body": "শুধু শব্দের কাঁচা গণনা (Count) ব্যবহার করলে কোনো একটি শব্দের অতিরিক্ত পুনরাবৃত্তি পুরো ভেক্টরকে প্রভাবিত করে ফেলতে পারে। তাই প্রতিটি বাকেটের গণনার ওপর প্রথমে log1p বা log(1 + count) প্রয়োগ করা হয় এবং তারপর প্রতিটি 128-D ব্লককে আলাদাভাবে L2 Normalize করা হয়। কোনো ব্লকে একটিও বৈধ Token না থাকলে সেটি পুরোটাই শূন্য ভেক্টর (Zeros) থেকে যায়। খেয়াল করুন, শব্দগুলো গোনার আগেই কিন্তু Hash হয়ে যাচ্ছে—তাই দুটি ভিন্ন শব্দের হ্যাশ মিলে গেলে (Hash Collision) তারা একই বাকেটের সংখ্যা বাড়িয়ে দেয়। এই সরল Feature Extractor-এ কোনো আলাদা Vocabulary তালিকা বা ডেটা থেকে শেখা Learned IDF নেই।"
+        },
+        {
+          "type": "math",
+          "title": "256-D Condition Vector-এর গাণিতিক রূপ",
+          "body": "x=[\\mathrm{L2}(\\log(1+\\mathrm{count}_{hash(q)}));\\mathrm{L2}(\\log(1+\\mathrm{count}_{hash(C)}))]\\in\\mathbb R^{256}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Feature Vector-এর আকার ও Norm যাচাই করি",
+          "body": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter29_local\", Path(\"assets/datasets/scifact_rag/capstone_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\n\nimport numpy as np\n\nx = m.features(\"Evidence evidence claim\", \"Original source passage\")\nassert x.shape == (256,) and np.isfinite(x).all()\nassert abs(np.linalg.norm(x[:128]) - 1) < 1e-12\nassert abs(np.linalg.norm(x[128:]) - 1) < 1e-12\nassert np.array_equal(m.features(\"\", \"\"), np.zeros(256))\nprint(m.bucket(\"evidence\"))\n"
+        },
+        {
+          "type": "text",
+          "title": "কেন এই সীমাবদ্ধ Representation বেছে নেওয়া হলো?",
+          "body": "উপরের কোডে আমরা দেখলাম, যেকোনো দৈর্ঘ্যের ইংরেজি টেক্সট দিলেই আমরা ঠিক 256 আকারের একটি সসীম ভেক্টর পাচ্ছি, যার দুটি অর্ধাংশের L2 Norm নিখুঁতভাবে 1। এই নির্দিষ্ট আকারের (Fixed 256-D) ভেক্টর ব্যবহারের বড় সুবিধা হলো—এতে আমাদের নিউরাল নেটওয়ার্কের Condition Encoder অত্যন্ত ছোট ও দ্রুতগতির রাখা যায় এবং আগে কখনো না দেখা যেকোনো নতুন ASCII Token-ও কোনো ক্র্যাশ ছাড়াই হ্যান্ডেল করা যায়। কিন্তু এর চড়া মূল্যও আছে: এই রিপ্রেজেন্টেশনে বাক্যের না-বোধক শব্দের অবস্থান (Negation Order), কে কার ওপর কাজ করছে সেই সম্পর্ক (Entity Binding), সংখ্যার ছোট-বড় তুলনা (Number Comparison) এবং দীর্ঘ যুক্তির কাঠামো (Long Rationale Structure) পুরোপুরি হারিয়ে যায়। এটি কোনোভাবেই আধুনিক LLM-এর Subword Tokenizer বা Attention Context Window-এর সমতুল্য নয়।"
+        },
+        {
+          "type": "text",
+          "title": "ক্রস-প্ল্যাটফর্ম Determinism কেন এত জরুরি",
+          "body": "আমাদের সিস্টেমটি Python-এ ট্রেন হয়ে Dart (Flutter)-এ অফলাইনে চলে। তাই দুই ভাষাতেই Byte Encoding, 32-bit Unsigned Wrap, Modulo, লগারিদম এবং Normalization-এর প্রতিটি বিট ও গাণিতিক ধাপ হুবহু এক হতে হয়। আপনি যদি ভুল করে এই FNV-1a হ্যাশের বদলে Python-এর ডিফল্ট hash() ফাংশন ব্যবহার করেন—যা নিরাপত্তার স্বার্থে প্রতিবার প্রোগ্রাম চালানোর সময় Random Seed পাল্টে ফেলে—তবে পুরো সিস্টেমের Reproducibility নিমেষেই নষ্ট হয়ে যাবে! এজন্যই ছোট হাতের অক্ষরে রূপান্তর এবং Unsigned Overflow-এর নিয়মগুলো আমাদের Golden Tests-এ কঠোরভাবে বেঁধে (Pin করে) রাখা হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "Hash Collision নিয়ে বাড়তি সতর্কতা",
+          "body": "হাজার হাজার বৈজ্ঞানিক শব্দের জন্য মাত্র 128টি বাকেট খুবই ছোট জায়গা। এখানে দুটি শব্দ কাছাকাছি বা একই বাকেটে পড়ার মানে কখনোই এই নয় যে তাদের অর্থের মিল (Semantic Similarity) আছে; নিছক গাণিতিক কাকতালীয় কারণেই তা ঘটে। তাই Query আর Context-এর Feature Value মিলে গেলেই তা বৈজ্ঞানিক Entailment প্রমাণ করে না। আপনি যদি বাকেটের সংখ্যা বাড়াতে চান বা আরও সমৃদ্ধ কোনো Encoder ব্যবহার করতে চান, তবে সেটিকে একটি সম্পূর্ণ নতুন Experiment হিসেবে সাজাতে হবে—Dev সেটের ফলাফল দেখে চুপিসারে ভেতরের Representation বদলে দেওয়া প্রকৌশলগত নিয়মের পরিপন্থী।"
+        },
+        {
+          "type": "text",
+          "title": "কোডিং অনুশীলনে কী কী পরীক্ষা করবেন",
+          "body": "এই ধরনের হ্যাশ ফিচার লেখার সময় একই শব্দের পুনরাবৃত্তি (Repeated Tokens), খালি ইনপুট (Empty Block), শুধুমাত্র Non-ASCII অক্ষরের ইনপুট, হ্যাশ বাকেটের সীমা (0 থেকে 127) এবং ভেক্টরের Norm সবসময় পরীক্ষা করবেন। আরেকটি সূক্ষ্ম বাগ প্রায়ই ঘটে: Query এবং Context ব্লক দুটি জোড়া লাগানোর ক্রম (Concatenation Order) যদি ভুল করে উল্টে যায়, তবে ভেক্টরের আকার 256 থাকায় মডেল কোনো এরর ছাড়াই Weights লোড করে নেবে, কিন্তু ভেতরে ভেতরে সব Prediction উল্টোপাল্টা হয়ে যাবে! তাই ফাইলে সবসময় স্পষ্ট Schema Version সংরক্ষণ করুন।"
+        },
+        {
+          "type": "text",
+          "title": "চোখের সামনেই Hash Collision ও খালি ভেক্টরের বাস্তব উদাহরণ",
+          "body": "তাত্ত্বিক কথা তো অনেক হলো, চলুন আমাদের এই 128-bucket FNV-1a রিপ্রেজেন্টেশনে একটি বাস্তব Collision নিজের চোখে দেখি! ইংরেজি ছোট হাতের দুটি সম্পূর্ণ ভিন্ন টোকেন \"v\" এবং \"ca\" হ্যাশ হওয়ার পর কিন্তু একই bucket 73-এ গিয়ে পড়ে। ফলে এক শব্দের Query হিসেবে পাঠালে নরমালাইজ করার পর দুটির 256-D ভেক্টরই বিট-টু-বিট অভিন্ন হয়ে যায়! অন্যদিকে আমরা যদি বাংলা শব্দ \"মডেল\" ইনপুট দিই, আমাদের বর্তমান ASCII টোকেনাইজার সেখানে একটিও বৈধ টোকেন খুঁজে পায় না এবং পুরো শূন্য ভেক্টর ফিরিয়ে দেয়। এই ছোট্ট পরীক্ষাটি আমাদের মনে করিয়ে দেয় যে একটি Representation ঠিক কোন তথ্যটুকু আলাদা করে চিনতে পারছে, তা সবসময় প্রজেক্টের ভাষা ও অর্থগত চাহিদার (Semantic Requirements) সাথে মিলিয়ে দেখতে হয়। নিচের কোডে এই আচরণটি সরাসরি চালিয়ে দেখুন।"
+        },
+        {
+          "type": "code",
+          "title": "Collision ও Non-ASCII Empty-feature পথ পরীক্ষা করি",
+          "body": "import runpy\nimport numpy as np\n\napi = runpy.run_path(\"assets/datasets/scifact_rag/capstone_workflow.py\")\nfirst = api[\"features\"](\"v\", \"\")\nsecond = api[\"features\"](\"ca\", \"\")\nbangla = api[\"features\"](\"মডেল\", \"\")\nassert api[\"bucket\"](\"v\") == api[\"bucket\"](\"ca\") == 73\nnp.testing.assert_array_equal(first, second)\nnp.testing.assert_array_equal(bangla, np.zeros(256))\nprint(api[\"bucket\"](\"v\"), int(np.array_equal(first, second)), np.linalg.norm(bangla))\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে চিন্তা করে উত্তর দিন",
+          "body": "ধরুন আমরা Hash Dimension 128 থেকে বাড়িয়ে 4096 বা 16384 করে দিলাম। শুধু এই পরিবর্তনের ফলেই কি আমাদের সিস্টেমে বাংলা শব্দের (Bangla Token) কভারেজ চলে আসবে?",
+          "solution": "মোটেই না! কারণ হ্যাশ করার আগেই আমাদের বর্তমান ASCII Tokenization নিয়ম বাংলা অক্ষরগুলোকে ছেঁকে বাদ দিয়ে দিচ্ছে। বাংলা বা অন্যান্য ভাষার শব্দ সমর্থন করতে হলে সবার আগে আমাদের Unicode-aware Tokenizer বা উপযুক্ত Subword/Multilingual Representation প্রবর্তন করতে হবে; এবং তার জন্য নতুন Feature Contract, মডেলের Retraining, Schema Versioning এবং Held-out Evaluation—সবকিছু নতুন করে সাজাতে হবে। মনে রাখবেন, Hash Collision-এর হার কমানো আর ভাষার কভারেজ (Language Coverage) বাড়ানো সম্পূর্ণ ভিন্ন দুটি বৈশিষ্ট্য।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch29_decoder",
+      "title": "Conditional Autoregressive Decoder: পূর্ণাঙ্গ Tensor Trace",
+      "subtitle": "একটি শব্দ অক্ষরে অক্ষরে Generate করলেই তা Classification-এর সীমাবদ্ধতা ছাড়িয়ে যায় না",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Decoder-এর অভ্যন্তরীণ Architecture",
+          "body": "এবার চলুন আমাদের নিউরাল জেনারেটরের একদম ভেতরের গঠনটি খুলে দেখি। আমাদের এই ছোট Conditional Decoder-টি চারটি সুনির্দিষ্ট অংশ নিয়ে গঠিত: প্রথমে একটি Linear(256 -> 16) এবং tanh অ্যাক্টিভেশন দিয়ে তৈরি Condition Projection, এরপর 14 x 8 আকারের একটি Token Embedding টেবিল, মাঝখানে 8 -> 16 আকারের একটি GRUCell, এবং সবশেষে 16 -> 14 আকারের একটি Output Head। সব মিলিয়ে Bias-সহ মডেলটিতে মোট 5710টি Parameter রয়েছে। এখানে মূল নথির প্রমাণগুলো আগের ধাপে তৈরি করা 256-D Hashed Condition হিসেবে মডেলে প্রবেশ করে। মনে রাখবেন, এটি লোকাল পরিবেশে শূন্য থেকে ট্রেন করা একটি ছোট্ট Conditional Decoder—তাই এর সক্ষমতা এবং সীমাবদ্ধতা দুটোই আমাদের রিপোর্টের অবিচ্ছেদ্য অংশ।"
+        },
+        {
+          "type": "text",
+          "title": "ক্ষুদ্র Vocabulary ও Decoding নিয়ম",
+          "body": "আমাদের মডেলের সম্পূর্ণ Vocabulary মাত্র 14টি চিহ্ন বা টোকেনে সীমাবদ্ধ: ইনডেক্স 0-তে PAD, 1-এ BOS (শুরু), 2-এ EOS (শেষ), এবং বাকি 11টি ঘরে রয়েছে support ও contradict শব্দ দুটির বর্ণানুক্রমিকভাবে সাজানো 11টি অনন্য ইংরেজি অক্ষর। ট্রেনিং এবং Inference—উভয় সময়েই আউটপুট হিসেবে PAD ও BOS-এর Logits নিষিদ্ধ (Excluded) রাখা হয়। ডিকোডিংয়ের সময় মডেলটি সর্বোচ্চ 12টি টোকেন পর্যন্ত Greedy Decoding চালায়। তবে এখানে জোর করে সঠিক বানান বা বাধ্যতামূলক EOS চাপিয়ে দেওয়া হয় না—ফলে মডেল ভালোভাবে না শিখলে ভুল বানানের শব্দও তৈরি হতে পারে।"
+        },
+        {
+          "type": "math",
+          "title": "Conditioning ও Autoregressive বণ্টন",
+          "body": "h_0=\\tanh(W_cx+b_c),\\quad p(y_t|y_{<t},x)=\\mathrm{softmax}(W_oh_t+b_o)"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Saved Weights লোড করে Tensor Trace দেখি",
+          "body": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter29_local\", Path(\"assets/datasets/scifact_rag/capstone_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/scifact_rag/capstone_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nd = m.ResponseDecoder()\nd.load_state_dict(\n    {k: torch.tensor(v, dtype=torch.float64) for k, v in lab[\"weights\"].items()}\n)\ng = m.decode(d, lab[\"samples\"][3][\"cases\"][\"retrieved\"][\"features\"])\nassert len(g[\"initial_hidden\"]) == 16 and len(g[\"trace\"]) <= 12\nassert all(len(s[\"probabilities\"]) == 14 for s in g[\"trace\"])\nprint(g[\"text\"], g[\"ended\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "Autoregressive প্রবাহ কীভাবে এগোয়",
+          "body": "উপরের সমীকরণ ও কোডের সংযোগটি খেয়াল করুন। ডিকোডিং শুরু হয় BOS টোকেন দিয়ে; এরপর প্রতিটি ধাপে আগের বেছে নেওয়া টোকেন এবং আগের Hidden State মিলে পরের ধাপের নতুন Logits তৈরি করে। এভাবে চলতে চলতে যেই মুহূর্তে মডেল EOS টোকেন বেছে নেয়, জেনারেট করা থেমে যায়। এর ফলে মডেলটি পরিবর্তনশীল দৈর্ঘ্যের (Variable-length) একটি শব্দ তৈরি করে। কিন্তু ভুলে যাবেন না, মূল নথির উদ্ধৃতিগুলো (Source Quotations) কখনোই এই ডিকোডার তৈরি করে না। মাত্র দুটি শব্দের অক্ষর জেনারেট করার এই সীমিত কাজটি কখনোই মুক্তভাবে লেখা কোনো বৈজ্ঞানিক সারাংশের (Free-form Research Summary) বিকল্প নয়।"
+        },
+        {
+          "type": "text",
+          "title": "প্রাথমিক Hidden State ও স্মৃতির সীমা",
+          "body": "এখানে তথ্যের প্রবাহ নিয়ে একটি গুরুত্বপূর্ণ কারিগরি সূক্ষ্মতা আছে। আমাদের 256-D Query/Context Vector-টি কেবল একবারই ব্যবহৃত হয়—একদম শুরুতে প্রাথমিক স্টেট h_0 তৈরি করার জন্য। এরপর প্রতিটি Recurrent Step-এ ওই মূল কনটেক্সট ভেক্টরটিকে আর নতুন করে জুড়ে (Concatenate) দেওয়া হয় না; মডেলকে ওই 16 মাত্রার h_0-এর স্মৃতির ওপরই নির্ভর করতে হয়। তার ওপর বাক্যের দীর্ঘমেয়াদি সম্পর্ক (Long-range Source Relation) তো আগের Hash Features ধাপেই হারিয়ে গেছে! তাই শুধু Hidden Size বা Parameter Count দেখেই কখনো কোনো মডেলের গভীর Reasoning Competence অনুমান করে নেবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "Trace Inspection থেকে পাওয়া বাস্তব শিক্ষা",
+          "body": "আমাদের অ্যাপে প্রতিটি ধাপে মডেলের বেছে নেওয়া প্রকৃত Probabilities, আগের ও বর্তমান টোকেন এবং EOS টোকেন সরাসরি দেখা যায়। এই Trace বিশ্লেষণ করতে গিয়ে একটি চমৎকার ঘটনা ধরা পড়েছে: আমাদের Query-only Control পরীক্ষায় একটি উদাহরণে মডেলটি একটি অবৈধ বানানের শব্দ তৈরি করেছে, অথচ Teacher-forced Token Loss মাপলে সেটি বেশ কম দেখায়! এটি হাতে-কলমে প্রমাণ করে যে বাহ্যিক Formatting Quality, টোকেন লস এবং আসল Label Correctness—সম্পূর্ণ আলাদা বিষয়।"
+        },
+        {
+          "type": "text",
+          "title": "সাক্ষাৎকারে যেভাবে ব্যাখ্যা করবেন",
+          "body": "ইন্টারভিউতে আপনার প্রজেক্ট বোঝানোর সময় Conditioned Neural Decoder এবং সফটওয়্যারের Template Assembly—এই দুটি অংশকে স্পষ্টভাবে আলাদা করে দেখাবেন। পুরো আউটপুটটিকে ঢালাওভাবে 'LLM Generation' বলে চালালে মডেলের প্রকৃত কাজের পরিধি ঢাকা পড়ে যায়। বরং একজন নিখুঁত প্রকৌশলীর মতো প্রতিটি ধাপের ইনপুট-আউটপুট, বৈধ টোকেনের তালিকা (Legal Token Set) এবং ডিকোডিং থামার শর্ত (Termination Contract) পরিষ্কারভাবে তুলে ধরুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch29_gru",
+      "title": "GRU Gates ও PyTorch-সামঞ্জস্যপূর্ণ Implementation",
+      "subtitle": "Reset Gate ঠিক কোন জায়গায় গুণ হয়—সামান্য ভুলেই কেন পুরো রেজাল্ট পাল্টে যায়?",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "PyTorch-এ Gate সাজানোর ক্রম (Gate Ordering)",
+          "body": "আমরা যখন Python-এ ট্রেন করা একটি GRU মডেলকে কোনো থার্ড-পার্টি লাইব্রেরি ছাড়াই সরাসরি Dart-এ (Flutter অ্যাপে) রান করাতে চাই, তখন আমাদের PyTorch-এর অভ্যন্তরীণ গাণিতিক নিয়ম অক্ষরে অক্ষরে মানতে হয়। PyTorch-এর GRUCell তার ওয়েট ম্যাট্রিক্সগুলোকে সবসময় r (Reset), z (Update) এবং n (New/Candidate)—এই নির্দিষ্ট ক্রমে একসাথে জুড়ে (Concatenate করে) সংরক্ষণ করে। এখানে ইনপুট রূপান্তর (Input Affine) এবং হিডেন রূপান্তরের (Hidden Affine) জন্য আলাদা আলাদা Bias ভেক্টর থাকে। আমাদের মডেলের ইনপুট ওয়েটের আকার 48 x 8 এবং হিডেন ওয়েটের আকার 48 x 16—কারণ তিনটি গেটের প্রতিটির আকার 16-D। কোডে এই r, z, n ক্রমটি একটু এদিক-সেদিক হলেই এক্সপোর্ট করা ওয়েটগুলো আর কাজ করবে না!"
+        },
+        {
+          "type": "text",
+          "title": "Reset Gate-এর সেই সূক্ষ্ম গাণিতিক পার্থক্য",
+          "body": "অনেক টেক্সটবুকে GRU-এর সমীকরণ একরকম লেখা থাকে, আর PyTorch-এর বাস্তব ইমপ্লিমেন্টেশনে থাকে সামান্য ভিন্ন রূপ—যা না জানলে ক্রস-প্ল্যাটফর্ম পোর্টিংয়ে ভয়াবহ বাগ তৈরি হয়! PyTorch-এ ক্যান্ডিডেট স্টেট হিসাব করা হয় n = tanh(i_n + r ⊙ h_n) সূত্র দিয়ে, যেখানে h_n-এর ভেতরে Hidden Bias আগেই যোগ করা থাকে। অথচ কিছু বইয়ের সংস্করণে ম্যাট্রিক্স গুণের আগেই পুরনো হিডেন ভেক্টরের সাথে r গুণ করা হয়। গাণিতিকভাবে এই দুটি কিন্তু এক ফলাফল দেয় না! তাই রানটাইমে আপনি যে সমীকরণ লিখছেন, তা অবশ্যই সেভ করা Checkpoint-এর নিয়মের সাথে হুবহু মিলতে হবে।"
+        },
+        {
+          "type": "math",
+          "title": "PyTorch GRUCell-এর নিখুঁত সমীকরণ",
+          "body": "\\begin{aligned}r&=\\sigma(i_r+h_r),\\quad z=\\sigma(i_z+h_z)\\\\n&=\\tanh(i_n+r\\odot h_n),\\quad h_{new}=(1-z)\\odot n+z\\odot h\\end{aligned}"
+        },
+        {
+          "type": "code",
+          "title": "NumPy দিয়ে প্রথম ধাপের GRU Hidden State হাতে-কলমে যাচাই করি",
+          "body": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter29_local\", Path(\"assets/datasets/scifact_rag/capstone_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/scifact_rag/capstone_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nimport numpy as np\n\nw = {k: np.array(v) for k, v in lab[\"weights\"].items()}\ncase = lab[\"samples\"][3][\"cases\"][\"retrieved\"][\"generation\"]\nh = np.array(case[\"initial_hidden\"])\ne = w[\"embedding.weight\"][1]\ni = w[\"cell.weight_ih\"] @ e + w[\"cell.bias_ih\"]\nhh = w[\"cell.weight_hh\"] @ h + w[\"cell.bias_hh\"]\nsig = lambda v: 1 / (1 + np.exp(-v))\nr = sig(i[:16] + hh[:16])\nz = sig(i[16:32] + hh[16:32])\nn = np.tanh(i[32:] + r * hh[32:])\nactual = (1 - z) * n + z * h\nassert np.allclose(actual, case[\"trace\"][0][\"hidden\"], atol=1e-12)\nprint(actual[:3])\n"
+        },
+        {
+          "type": "text",
+          "title": "Gate-গুলোর কাজ ও অতিরিক্ত ব্যাখ্যার ঝুঁকি",
+          "body": "উপরের কোডে আমরা কোনো PyTorch ফাংশন ছাড়াই স্রেফ NumPy ম্যাট্রিক্স গুণ দিয়ে প্রথম ধাপের হিডেন স্টেট হিসাব করলাম এবং দেখলাম তা সেভ করা ট্রেসের সাথে 1e-12 সূক্ষ্মতায় মিলে গেছে! সহজভাবে বললে, এখানে আপডেট গেট z ঠিক করে পুরনো স্মৃতি কতটুকু ধরে রাখা হবে, আর (1 - z) ঠিক করে নতুন ক্যান্ডিডেট n থেকে কতটুকু নেওয়া হবে; অন্যদিকে রিসেট গেট r নিয়ন্ত্রণ করে নতুন ক্যান্ডিডেট তৈরিতে আগের স্মৃতির প্রভাব কতটা থাকবে। তবে একটি বিষয়ে সাবধান: এই গেটের মানগুলো মডেলের ভেতরকার হিসাব বোঝার যন্ত্র মাত্র—এগুলোকে কখনোই বৈজ্ঞানিক দাবির প্রমাণ বা Causal Explanation হিসেবে ব্যাখ্যা করবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "Dart-এ সম্পূর্ণ Forward Pass",
+          "body": "অ্যাপের ভেতরে আমাদের Dart কোড ঠিক এই একই ধারাবাহিকতা অনুসরণ করে: প্রথমে Embedding Lookup, তারপর দুটি Affine রূপান্তর, এরপর Sigmoid ও tanh গেটগুলোর হিসাব, নতুন Hidden State তৈরি, এবং সবশেষে আউটপুট হেডে Legal-mask Softmax। সংখ্যার ওভারফ্লো ঠেকাতে আমরা এখানে নিউমেরিক্যালি স্থিতিশীল (Numerically Stable) Sigmoid এবং বৈধ টোকেনের মাস্কিং ব্যবহার করি। এর ফলে প্রতিটি ধাপের হিডেন ভেক্টর এবং প্রবাবিলিটি আমাদের Python রেফারেন্সের সাথে হুবহু মিলে যায়।"
+        },
+        {
+          "type": "text",
+          "title": "কীভাবে বুঝব পোর্টিং শতভাগ নিখুঁত হয়েছে?",
+          "body": "অনেক সময় নতুন প্রকৌশলীরা দেখেন যে মডেল শেষ পর্যন্ত 'support' শব্দটিই প্রিন্ট করেছে, আর তাতেই ধরে নেন যে তাদের ইমপ্লিমেন্টেশন ঠিক আছে। এটি মারাত্মক ভুল! ভেতরের প্রবাবিলিটি বা হিডেন ভেক্টরে ছোট ভুল থাকলেও অনেক সময় argmax কাকতালীয়ভাবে একই অক্ষর বেছে নিতে পারে। তাই প্রকৃত যাচাইয়ের জন্য আমরা সেভ করা সবগুলো (18টি) স্যাম্পল ও কন্ট্রোল ট্রেসের প্রতিটি ধাপের ফ্লোটিং-পয়েন্ট সংখ্যার সাথে আমাদের স্বাধীন NumPy ও Dart হিসাব মিলিয়ে পরীক্ষা করি।"
+        },
+        {
+          "type": "text",
+          "title": "সাক্ষাৎকারে যেভাবে ব্যাখ্যা করবেন",
+          "body": "এমএল ইঞ্জিনিয়ারিং ইন্টারভিউতে মডেল পোর্টিং নিয়ে প্রশ্ন এলে চারটি সাধারণ ভুলের কথা সুনির্দিষ্টভাবে উল্লেখ করুন: Bias কোথায় যোগ হচ্ছে, Reset Gate লিনিয়ার লেয়ারের আগে নাকি পরে গুণ হচ্ছে, আপডেট সমীকরণে z এবং (1 - z) উল্টে গেছে কি না, এবং Gate Concatenation ক্রম ঠিক আছে কি না। সবশেষে বলুন যে Checkpoint Portability কখনো লেয়ারের নাম মিলিয়ে নিশ্চিত করা যায় না; এর জন্য চাই নিখুঁত সমীকরণ এবং কঠোর Floating-point Tolerance Tests।"
+        }
+      ]
+    },
+    {
+      "id": "ch29_loss",
+      "title": "Teacher Forcing, Padding ও Response-only Loss",
+      "subtitle": "ট্রেনিংয়ে কম Token NLL পাওয়া মানেই কিন্তু সঠিক Label শেখার গ্যারান্টি নয়",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Target Sequence কীভাবে সাজানো হয়",
+          "body": "এবার দেখা যাক আমাদের এই ডিকোডারটি ট্রেনিংয়ের সময় ঠিক কী শেখে। ডেটাসেটের SUPPORT লেবেল থেকে আমরা তৈরি করি support + EOS (মোট 8টি টোকেন), আর CONTRADICT লেবেল থেকে তৈরি করি contradict + EOS (মোট 11টি টোকেন)। ট্রেনিংয়ের সময় আমরা Teacher Forcing পদ্ধতি ব্যবহার করি—অর্থাৎ প্রতিটি ধাপে পরের অক্ষর অনুমান করার জন্য মডেল ইনপুট হিসেবে পায় শুরুর BOS টোকেন এবং আগের আসল (Gold) অক্ষরগুলো। ব্যাচের সব সিকোয়েন্সের দৈর্ঘ্য সমান (11) করার জন্য ডানদিকে যে PAD টোকেন বসানো হয় (Right Padding), তা লসের হিসাব থেকে সম্পূর্ণ বাদ দেওয়া হয়। আর পুরো সময়টায় Claim ও Context-এর ফিচার ভেক্টর প্রাথমিক শর্ত (Condition) হিসেবে কাজ করে।"
+        },
+        {
+          "type": "text",
+          "title": "Masking ও Token-level গড় লসের হিসাব",
+          "body": "লস হিসাব করার সময় আমরা দুটি কড়া নিয়ম মেনে চলি: প্রথমত, PAD পজিশনগুলোর জন্য ignore_index = 0 ব্যবহার করা হয় এবং আউটপুট থেকে PAD ও BOS-এর Logits সরিয়ে রাখা হয়; তবে EOS টোকেনটি অবশ্যই একটি বৈধ টার্গেট হিসেবে লসে অংশ নেয়, নইলে মডেল কখনোই থামতে শিখবে না! দ্বিতীয়ত, আমাদের লসটি হলো পুরো ব্যাচের সবগুলো বৈধ রেসপন্স টোকেনের গড় (Mean over Valid Response Tokens)—প্রতিটি উদাহরণের আলাদা গড় (Mean per Sequence) নয়। এর একটি সূক্ষ্ম গাণিতিক ফলাফল হলো, contradict শব্দটিতে অক্ষর বেশি থাকায় (11 বনাম 8) প্রতিটি CONTRADICT উদাহরণ মোট লসে তুলনামূলক বেশি টোকেনের অবদান রাখে। তাই মডেল রিপোর্ট করার সময় লসের এই Normalization নিয়মটি স্পষ্টভাবে উল্লেখ করা উচিত।"
+        },
+        {
+          "type": "math",
+          "title": "Masked Response-only Negative Log-Likelihood",
+          "body": "\\mathcal L=-\\frac1{N_{valid}}\\sum_{i,t:y_{it}\\ne PAD}\\log p(y_{it}|y_{i,<t},x_i)"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Teacher-forced Input ও Padding দৈর্ঘ্য পরীক্ষা করি",
+          "body": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter29_local\", Path(\"assets/datasets/scifact_rag/capstone_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\n\ntargets = [\n    [m.VOCAB.index(c) for c in word] + [m.EOS] for word in [\"support\", \"contradict\"]\n]\nassert [len(t) for t in targets] == [8, 11]\nwidth = max(map(len, targets))\nprevious = [[m.BOS] + t[:-1] + [m.PAD] * (width - len(t)) for t in targets]\nassert len(previous[0]) == len(previous[1]) == 11\nprint(sum(map(len, targets)))\n"
+        },
+        {
+          "type": "text",
+          "title": "Teacher Forcing ও Exposure Bias-এর ফাঁদ",
+          "body": "উপরের কোডে যেমন দেখলেন, 'support' ও 'contradict' মিলিয়ে মোট বৈধ টার্গেট টোকেন হয় 8 + 11 = 19টি, আর পেলোড সমান রাখতে দুটিরই ইনপুট দৈর্ঘ্য প্যাক হয়ে দাঁড়ায় 11-তে। কিন্তু ট্রেনিং ও রানটাইমের মধ্যে একটি মৌলিক পার্থক্য রয়েই যায়: ট্রেনিংয়ের সময় মডেল সবসময় আগের নির্ভুল Gold অক্ষরগুলো দেখে পরের অক্ষর অনুমান করে; অথচ বাস্তব Inference-এর সময় তাকে নিজের তৈরি করা আগের অক্ষরগুলোর (Generated Prefix) ওপরই ভরসা করতে হয়। এই পার্থক্য বা Exposure Bias-এর কারণে রানটাইমে ভুল বানান বা সময়ের আগেই EOS চলে আসতে পারে। তাই ট্রেনিংয়ে কম Token NLL দেখেই কখনোই ধরে নেবেন না যে মডেল নিখুঁত শব্দ বা সঠিক উত্তর তৈরি করবে।"
+        },
+        {
+          "type": "text",
+          "title": "বানান শেখা বনাম বৈজ্ঞানিক সম্পর্ক বোঝা",
+          "body": "আরেকটি মজার ফাঁদ খেয়াল করুন! আমাদের টার্গেট শব্দ মাত্র দুটি—'support' এবং 'contradict'। প্রথম অক্ষরটি 's' নাকি 'c' তা একবার ঠিক হয়ে গেলে বাকি অক্ষরগুলো ('upport' বা 'ontradict') বানান করা যেকোনো মডেলের জন্য পানির মতো সহজ! ফলে বাকি অক্ষরগুলোতে প্রায় শূন্য লস পেয়ে গড় Token Loss হু হু করে কমে যেতে পারে, অথচ মডেলটি হয়তো প্রথম সিদ্ধান্তেই (Support বনাম Contradict) নিছক আন্দাজে ঢিল ছুড়ছে! এজন্যই ক্লাস ভারসাম্যহীনতার (Label Imbalance) প্রভাব বুঝতে সবসময় Majority Baseline-এর সাথে ক্লাস অ্যাকুরেসির তুলনা করতে হয়। কম বানান-লস (Low Spelling Loss) কখনোই প্রমাণ করে না যে মডেল বৈজ্ঞানিক সম্পর্ক শিখে ফেলেছে।"
+        },
+        {
+          "type": "text",
+          "title": "অপরিবর্তনীয় Training Contract",
+          "body": "আমাদের ট্রেনিং রেসিপিটি শতভাগ স্বচ্ছ ও স্থির রাখা হয়েছে: CPU float64 প্রিসিশন, মূল Seed = 29, শাফল সিড 290, AdamW অপটিমাইজার (lr = 0.005, weight_decay = 0), গ্র্যাডিয়েন্ট ক্লিপিং 1.0, ব্যাচ সাইজ 64, এবং মোট 60টি Epoch (অর্থাৎ 480টি আপডেট ধাপ)। আমরা ট্রেনিং শেষের চূড়ান্ত চেকপয়েন্টটিই (Final Checkpoint) গ্রহণ করেছি—মাঝপথে Dev সেটের স্কোর দেখে সেরা সিড বা সেরা ইপক বেছে নেওয়ার (Cherry-picking) কোনো কৌশল খাটানো হয়নি। এছাড়া আগের কোনো অধ্যায়ের ওয়েট লোড না করে মডেলটিকে একদম শূন্য থেকে (From Scratch) ট্রেন করা হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "কোডিং অনুশীলনে যা যা যাচাই করবেন",
+          "body": "সিকোয়েন্স লস লেখার সময় অবশ্যই ইউনিট টেস্ট দিয়ে নিশ্চিত করবেন যে BOS টোকেনটি ঠিকমতো ডানে সরেছে (Shift হয়েছে), প্রতিটি উদাহরণে EOS গোনা হচ্ছে, Padding টোকেনগুলো থেকে শূন্য গ্র্যাডিয়েন্ট আসছে এবং বৈধ টোকেনের Denominator নিখুঁত আছে। মূল্যায়নের সময় কাঁচা Inference Trace এবং Format Metric আলাদাভাবে রিপোর্ট করবেন। আর মনে রাখবেন, শুধু মডেলের ওয়েট সেভ করলে তা দিয়ে ইনফারেন্স চালানো যায় বটে, কিন্তু Optimizer State ও র‍্যান্ডম জেনারেটরের স্টেট ছাড়া ঠিক মাঝপথ থেকে হুবহু ট্রেনিং পুনরায় শুরু (Full Training Resume) করা যায় না।"
+        }
+      ]
+    },
+    {
+      "id": "ch29_workbench",
+      "title": "End-to-End Evidence Workbench চালিয়ে দেখি",
+      "subtitle": "মুক্ত Query থেকে মূল Source Span উদ্ধার এবং Unverified Hypothesis পর্যবেক্ষণ",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "উৎস চিনে পরীক্ষা শুরু করা",
+          "body": "এতক্ষণ আমরা পাইপলাইনের প্রতিটি কলকব্জা আলাদাভাবে তৈরি করেছি; এবার পুরো Evidence Workbench-টি একসাথে চালিয়ে দেখার পালা! অ্যাপের ভেতরে মূল ডেটাসেট থেকে নেওয়া 6টি বাস্তব Train ও Test উদাহরণ সরাসরি দেওয়া আছে, যার মধ্যে প্রথম Test উদাহরণটি ডিফল্ট হিসেবে খোলা থাকে। চাইলে আপনি নিজের মতো যেকোনো ইংরেজি বৈজ্ঞানিক বাক্য (Arbitrary English Query) লিখেও পরীক্ষা চালাতে পারেন। স্বচ্ছতার খাতিরে প্রতিটি প্রিসেট উদাহরণের ডেটা রোল (Train নাকি Test) পর্দায় স্পষ্ট করে লেখা থাকে—যাতে ট্রেনিংয়ে দেখা কোনো উদাহরণকে ভুল করে অদেখা (Unseen) সাফল্য বলে ভ্রম না হয়। আর টাইপ করার সাথে সাথে অযথা মডেল না চালিয়ে Query সম্পাদনা ও Run বাটন আলাদা রাখা হয়েছে, যাতে কেবল আপনার সুচিন্তিত ইনপুটটিই প্রসেস হয়।"
+        },
+        {
+          "type": "text",
+          "title": "পাইপলাইনের প্রতিটি ধাপ খালি চোখে পর্যবেক্ষণ",
+          "body": "আপনি যখনই একটি কুয়েরি চালান, ওয়ার্কবেঞ্চ আপনাকে পুরো যাত্রাপথের হিসাব দেখিয়ে দেয়: কয়টি নথি খুঁজে পাওয়া গেল (Retrieved Doc Count), প্যাকার কোন কোন অংশ বেছে নিল (Selected Passages), ফরম্যাট করার পর ঠিক কত বাইট খরচ হলো (Formatted Bytes), ডিকোডার কাঁচা অবস্থায় কোন শব্দ ও EOS তৈরি করল, এবং সবশেষে Runtime Policy কী সিদ্ধান্ত নিল। এখানে দেখানো প্রতিটি উদ্ধৃতি মূল উৎস থেকে হুবহু কপি করা। খেয়াল করুন, সাধারণ ওয়ার্কবেঞ্চ চালানোর সময় কোথাও কিন্তু Gold Label ব্যবহার করা হয় না; মূল্যায়নের Diagnostic Metrics সম্পূর্ণ আলাদাভাবে স্কোরকার্ডে রাখা হয়েছে।"
+        },
+        {
+          "type": "math",
+          "title": "Workbench-এর ইনপুট থেকে দৃশ্যমান আউটপুট",
+          "body": "\\mathrm{input\\ query}\\to\\{\\mathrm{quotes},\\mathrm{raw\\ trace},\\mathrm{policy\\ status}\\}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ একটি পূর্ণাঙ্গ Workbench Case পরীক্ষা করি",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/scifact_rag/capstone_lab.json\").read_text(encoding=\"utf-8\")\n)\n\ncase = lab[\"samples\"][3][\"cases\"][\"retrieved\"]\nassert case[\"decision\"][\"reason\"] == \"unverified_hypothesis\"\nassert case[\"generation\"][\"format_valid\"]\nassert case[\"pack\"][\"used_bytes\"] <= 1024\nprint(case[\"generation\"][\"text\"], case[\"pack\"][\"selected\"][0][\"doc_id\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "Byte Budget ঘুরিয়ে লাইভ পরীক্ষা",
+          "body": "উপরের কোডে চতুর্থ উদাহরণের (samples[3]) জন্য আমরা দেখলাম মডেল একটি বৈধ ফরম্যাটের শব্দ তৈরি করেছে, বাইট খরচ 1024-এর ভেতরেই আছে, এবং পলিসি সেটিকে unverified_hypothesis হিসেবে চিহ্নিত করেছে। এবার ভাবুন তো, আপনি যদি ইন্টারফেসে বাজেট 1024 থেকে কমিয়ে 0 বাইট করে দেন, কী ঘটবে? সাথে সাথে Packer খালি কনটেক্সট পাঠাবে এবং আমাদের গেট no_context কারণ দেখিয়ে আউটপুট আটকে দেবে! প্রকৌশলী হিসেবে আপনি তখনো ভেতরের Decoder Trace খুলে দেখতে পারবেন মডেল অন্ধকারে কী অনুমান করছিল, কিন্তু ইউজারের কাছে কোনো সিদ্ধান্ত প্রকাশিত হবে না। আবারও মনে করিয়ে দিই—কনটেক্সট খালি থাকার অর্থ কেবল তথ্যের অনুপস্থিতি বা রিসোর্সের সীমাবদ্ধতা; এটি দাবিটি মিথ্যা হওয়ার প্রমাণ নয়।"
+        },
+        {
+          "type": "gen_capstone_workbench",
+          "title": "আউটপুটের প্রকৃত অর্থ কীভাবে পড়বেন",
+          "body": "নিচের ইন্টারঅ্যাক্টিভ ওয়ার্কবেঞ্চে মডেলের তৈরি Unverified Hypothesis-এর ঠিক পাশেই ডিকোডারের কাঁচা প্রবাবিলিটি দেখানো হচ্ছে। এই সংখ্যাটিকে কখনোই বৈজ্ঞানিক সত্যতার নিশ্চয়তা (Truth Confidence) বা প্রতিষ্ঠিত বৈজ্ঞানিক উত্তর বলে ধরে নেবেন না। এমনকি ইউজার ইন্টারফেস হুবহু মূল উদ্ধৃতিগুলোকেও নিজে থেকে 'প্রমাণিত উত্তর' (Verified Answer) তকমা দেয় না। আরেকটি বড় সুবিধা হলো, মূল পেপারের ID এবং বাক্যের Span আমাদের অ্যাপের ভেতরেই বান্ডেল করা আছে—তাই উদ্ধৃতিগুলো মিলিয়ে দেখতে বাইরে কোনো ইন্টারনেট সংযোগের প্রয়োজন নেই।"
+        },
+        {
+          "type": "text",
+          "title": "সীমানা ও ত্রুটি সামলানো (Error Handling)",
+          "body": "একটি পরিপক্ব সফটওয়্যার সিস্টেমে প্রতিটি ব্যতিক্রমী পরিস্থিতি স্পষ্টভাবে সামলাতে হয়। আমাদের ওয়ার্কবেঞ্চে ইনপুটের সর্বোচ্চ সীমা (4096 UTF-16 ইউনিট), খালি বা অপরিচিত শব্দের কুয়েরি (Empty/OOV Query), বাইট বাজেট এবং ফাইল স্কিমার যেকোনো অসামঞ্জস্য সুস্পষ্ট বার্তার মাধ্যমে জানানো হয়। যদি কোনো কারণে বান্ডেল করা সোর্স ফাইল পড়তে সমস্যা হয়, তবে অ্যাপটি নীরবে ভুল উত্তর দেওয়ার বদলে স্পষ্ট Loading বা Error State দেখায়। আড়ালে কোনো ক্লাউড API, লগইন ব্যবস্থা বা গোপন নেটওয়ার্ক ফলব্যাক নেই।"
+        },
+        {
+          "type": "text",
+          "title": "নিজের হাতে একটি ব্যবহারিক অনুশীলন",
+          "body": "ওয়ার্কবেঞ্চটি শুধু দেখেই থেমে যাবেন না—নিজে একটি বৈজ্ঞানিক দাবি লিখুন, তুলে আনা মূল উদ্ধৃতিগুলো মনোযোগ দিয়ে পড়ুন, এবং একজন সচেতন মানুষ হিসেবে বিচার করে দেখুন মডেলের তৈরি শব্দটি (support বা contradict) সত্যিই ওই উদ্ধৃতি থেকে যুক্তিসঙ্গতভাবে আসে (Entailment) কি না! অন্তত একটি উদাহরণ খুঁজে বের করুন যেখানে আউটপুট দেখতে খুব পরিপাটি হলেও মডেলের অনুমান আসলে ভুল (Counterexample), এবং সেটি নোট করে রাখুন। পর্দায় সাজানো সুন্দর আউটপুট দেখলেই যে প্রজেক্টের Quality Gate পাস হয়ে যায় না, এই অনুশীলনটি আপনাকে সেই শিক্ষাই দেবে।"
+        }
+      ]
+    },
+    {
+      "id": "ch29_gate",
+      "title": "Runtime Gate: Provenance ও Format যাচাই (সত্যতা নয়)",
+      "subtitle": "কোনো Gold Label ছাড়াই কীভাবে একটি নির্ভুল Deterministic Policy লিখতে হয়",
+      "duration": "60 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Policy ঠিক কী কী ইনপুট দেখে এবং কোন ক্রমে সিদ্ধান্ত নেয়?",
+          "body": "বাস্তব প্রোডাকশনে যখন একজন ইউজার নতুন কোনো প্রশ্ন করেন, তখন আমাদের হাতে কোনো Gold Label, Rationale Annotation বা আগে থেকে মাপা Accuracy থাকে না। তাই আমাদের Runtime Gate বা পলিসিকে হতে হয় শতভাগ Gold-free এবং Deterministic। এটি সুনির্দিষ্ট চারটি ধাপের ক্রম (Decision Order) মেনে চলে: সবার আগে দেখে কোনো কনটেক্সট বাছাই হয়েছে কি না (no_context) → এরপর দেখে দেখানো উদ্ধৃতিটি মূল নথির সাথে অক্ষরে অক্ষরে মিলছে কি না (citation_mismatch) → তারপর পরীক্ষা করে ডিকোডারের তৈরি শব্দটি বৈধ ফরম্যাটে শেষ হয়েছে কি না (invalid_format) → এরপর দেখে প্রথম টোকেনের আত্মবিশ্বাস নির্ধারিত সীমার ওপরে আছে কি না (low_confidence)। এই চারটি বাধাই সফলভাবে পেরোলে তবেই আউটপুটটি পায় unverified_hypothesis স্ট্যাটাস।"
+        },
+        {
+          "type": "text",
+          "title": "Format বৈধ হওয়ার গণ্ডি কতটুকু?",
+          "body": "আমাদের নিয়মে একটি আউটপুট তখনই Format Valid হয়, যখন ডিকোডার হুবহু support অথবা contradict শব্দটি লিখে ঠিক তার পরেই EOS টোকেন বসিয়ে থামে। কিন্তু একটু ঠান্ডা মাথায় ভাবুন: বানান সঠিক হওয়া মানেই কি উত্তরটি অর্থগতভাবে সঠিক (Semantic Correctness) হওয়া? মোটেই না! আমাদের সীমিত বর্ণমালা অপ্রত্যাশিত অক্ষর ঠেকায় এবং সর্বোচ্চ 12 টোকেনের সীমা অসীম লুপ থামায় বটে (Termination Bound), কিন্তু এর কোনোটাই বৈজ্ঞানিক যুক্তিবোধ (Scientific Reasoning) তৈরি করে না।"
+        },
+        {
+          "type": "math",
+          "title": "Hypothesis প্রকাশের বুলিয়ান সমীকরণ",
+          "body": "\\mathrm{emit}=C_{nonempty}\\land Q_{exact}\\land F_{valid}\\land(p_{first}\\ge\\tau)"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Runtime Policy-র প্রতিটি শাখা পরীক্ষা করি",
+          "body": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter29_local\", Path(\"assets/datasets/scifact_rag/capstone_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\n\ng = dict(format_valid=True, first_token_confidence=0.8)\nassert m.policy(g, True, True)[\"emitted\"]\nassert m.policy(g, False, True)[\"reason\"] == \"citation_mismatch\"\nassert m.policy(g, True, False)[\"reason\"] == \"no_context\"\nassert m.policy(g, True, True, 0.9)[\"reason\"] == \"low_confidence\"\nprint(m.policy(g, True, True))\n"
+        },
+        {
+          "type": "text",
+          "title": "First-token Confidence আসলে কী মাপে?",
+          "body": "সমীকরণের p_first >= tau অংশটি খেয়াল করুন। এখানে Confidence হিসেবে নেওয়া হয়েছে জেনারেট করা প্রথম অক্ষরের বৈধ ভোকাবুলারির মধ্যকার সর্বোচ্চ প্রবাবিলিটি (Max Legal-vocabulary Probability)। এটি কিন্তু পুরো শব্দের যৌথ প্রবাবিলিটি (Sequence Probability) নয়, কোনো Calibrated Correctness স্কোর নয়, আর জাগতিক সত্যতা তো নয়ই! কারণ মডেল খুব সহজেই প্রথম অক্ষর 's' বা 'c' উচ্চ আত্মবিশ্বাসে বেছে নিতে শিখতে পারে, অথচ তার পরের বানান বা প্রমাণের সাথে তার প্রকৃত সম্পর্ক (Evidence Alignment) পুরোপুরি ভুল হতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "Threshold-এর অর্থ ও শূন্য সেটের হিসাব",
+          "body": "আমাদের সিস্টেমে ডিফল্ট থ্রেশহোল্ড রাখা হয়েছে tau = 0, আর ইউজার ইন্টারফেসে দেওয়া কঠোর 0.9 ও 1.0 অপশনগুলো মূলত শিক্ষামূলক পরীক্ষার (Diagnostic Illustrations) জন্য। একটি গুরুত্বপূর্ণ সততার জায়গা হলো, এই 0.9 সংখ্যাটি কিন্তু Dev সেটের ফলাফল ঘেঁটে সেরা দেখানোর জন্য টিউন (Optimize) করা হয়নি। আর থ্রেশহোল্ড খুব বাড়িয়ে দিলে যদি একটিও উদাহরণ গেট পাস না করে (Empty Accepted Set), তবে গৃহীত সেটের ওপর Accuracy বা Risk হয়ে যায় অসংজ্ঞায়িত (Null)—শূন্য ভুল হয়েছে বলে সেটিকে 100% সাফল্য দাবি করা যায় না! মনে রাখবেন, পলিসি কত শতাংশ উত্তর ছাড়ছে (Policy Coverage) আর সিস্টেম আসল কাজ কতটা পারছে (Useful Task Coverage)—দুটো সম্পূর্ণ ভিন্ন হিসাব।"
+        },
+        {
+          "type": "text",
+          "title": "প্রমাণ না পাওয়ার সূক্ষ্মতা (No-evidence Nuance)",
+          "body": "আমাদের বর্তমান রেসিপিতে কোনো নথি বা চাঙ্ক না পাওয়ার অর্থ স্রেফ এটুকুই যে আমাদের এই নির্দিষ্ট সার্চ ও প্যাকিং নিয়মে কোনো প্রমাণ উঠে আসেনি। এর মানে কিন্তু এই নয় যে বৈজ্ঞানিক দাবিটি সার্বজনীনভাবে উত্তরহীন (Unanswerable) বা মিথ্যা! তবে একটি নীতিতে আমাদের গেট আপসহীন: ডিকোডারের ভেতরের আত্মবিশ্বাস যত উঁচুতেই থাকুক না কেন, কনটেক্সট খালি থাকলে (Empty Context) উত্তর কখনোই প্রকাশ করা হবে না। প্রমাণ ছাড়া নিছক আন্দাজে কথা বলা (Guessing) আমাদের সিস্টেমে নিষিদ্ধ।"
+        },
+        {
+          "type": "text",
+          "title": "সাক্ষাৎকারে যেভাবে ব্যাখ্যা করবেন",
+          "body": "ইন্টারভিউয়ার যদি জিজ্ঞেস করেন, 'আপনার Runtime Gate-ই কি তাহলে উত্তরের সত্যতা নিশ্চিত করছে?'—তখন পাল্টা যুক্তি দিয়ে বুঝিয়ে বলুন যে রানটাইমে যদি সত্যতা যাচাই করার মতো Gold Entailment আমাদের হাতে থাকতই, তবে তো আর মডেলেরই দরকার হতো না! স্পষ্টভাবে ব্যাখ্যা করুন যে স্বয়ংক্রিয় Provenance Checks কেবল উদ্ধৃতির উৎস ও বানানের কাঠামো নিশ্চিত করে, ভেতরের বৈজ্ঞানিক অর্থ নয়। তাই Runtime Gate Pass হওয়াকে কখনোই Semantic Quality Pass বলে দাবি করা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "প্রথম টোকেনের আত্মবিশ্বাস বনাম পুরো সিকোয়েন্সের প্রবাবিলিটি",
+          "body": "চলুন একটি ছোট্ট গাণিতিক উদাহরণ দিয়ে প্রথম টোকেনের প্রবাবিলিটি আর পুরো শব্দের প্রবাবিলিটির পার্থক্যটি চিরতরে পরিষ্কার করে নিই। ধরুন বৈধ উত্তর support + EOS-এ মোট 8টি টার্গেট টোকেন আছে। মডেল প্রথম অক্ষর 's' বেছে নিল প্রচণ্ড আত্মবিশ্বাসে—প্রবাবিলিটি 0.99; কিন্তু পরের সাতটি টোকেনের প্রতিটিতে তার প্রবাবিলিটি ছিল মাত্র 0.5 করে। তাহলে পুরো সিকোয়েন্সটির যৌথ প্রবাবিলিটি (Joint Sequence Probability) দাঁড়াবে 0.99 × 0.5^7 = 0.007734375—অর্থাৎ এক শতাংশেরও কম! দেখলেন তো, First-token Confidence 0.99 হওয়া সত্ত্বেও পুরো সিকোয়েন্সের Likelihood কতটা আলাদা একটি রাশি! তাই রানটাইম গেটের স্কোর, ফরম্যাট চেক এবং প্রোভেন্যান্স চেক—প্রতিটি ঠিক কতটুকু প্রমাণ দিচ্ছে তা আলাদা করে বুঝতে হবে।"
+        },
+        {
+          "type": "code",
+          "title": "Log Probabilities যোগ করে Joint Sequence Likelihood হিসাব করি",
+          "body": "import math\n\ntoken_probabilities = [0.99] + [0.5] * 7\nlog_probability = sum(math.log(value) for value in token_probabilities)\nsequence_probability = math.exp(log_probability)\nassert math.isclose(sequence_probability, 0.99 * 0.5**7)\nprint(\n    token_probabilities[0],\n    sequence_probability,\n    len(token_probabilities),\n    int(token_probabilities[0] >= 0.9),\n)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে চিন্তা করে উত্তর দিন",
+          "body": "তাহলে প্রথম টোকেনের বদলে আমরা যদি পুরো সিকোয়েন্সের Joint Probability হিসাব করি, সেটিকে কি উত্তরের সঠিক হওয়ার সম্ভাবনা (Correctness Probability) বলা যাবে?",
+          "solution": "না, তবুও বলা যাবে না! কারণ Sequence Likelihood হলো কেবল টোকেন মডেলটি নিজের ভেতরের ওয়েট অনুযায়ী ওই অক্ষরগুলোর ক্রমকে কতটা সম্ভাব্য মনে করছে তার গাণিতিক মান। উত্তরটি বাস্তবে কতটা সঠিক, তার Calibration এবং Semantic Evidence অবশ্যই আলাদা Held-out Label দিয়ে মূল্যায়ন করতে হয়। তাছাড়া সিকোয়েন্সের দৈর্ঘ্য (যেমন 8 বনাম 11 টোকেন) এবং Tokenization নিয়মের কারণেও লম্বা শব্দের Joint Likelihood স্বভাবতই ছোট হয়ে যায়, তাই সরাসরি তুলনার ক্ষেত্রে এগুলোও বিবেচনায় নিতে হয়।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch29_citation",
+      "title": "Citation Mutation Audit ও মূল Source Resolution",
+      "subtitle": "বৈধ Document ID থাকলেও মূল উদ্ধৃতিতে এক চুল পরিবর্তন হলে তা সাথে সাথে প্রত্যাখ্যান করুন",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Citation-এর সুনির্দিষ্ট গাণিতিক চুক্তি",
+          "body": "যেকোনো RAG সিস্টেমে তথ্যের উৎসকে বিশ্বাসযোগ্য করতে হলে প্রতিটি Citation-কে হতে হবে গাণিতিকভাবে যাচাইযোগ্য। আমাদের সিস্টেমে [document_id:start-end] ফরম্যাটের প্রতিটি Citation-এ শূন্য থেকে শুরু হওয়া (Zero-based) এবং শেষ সীমা বাদ দেওয়া (End-exclusive) বাক্যের পরিসর বা Sentence Span থাকে। আমাদের Resolver ফাংশনটি সরাসরি মূল গবেষণাপত্রের বাক্যের তালিকা (Original Abstract Array) থেকে ওই নির্দিষ্ট ইনডেক্সের টেক্সটটুকু তুলে আনে। যদি কোনো অপরিচিত Document ID, সীমার বাইরের পরিসর (Out-of-range Interval) কিংবা শূন্য দৈর্ঘ্যের Empty Span দেওয়া হয়, তবে তা তাৎক্ষণিকভাবে প্রত্যাখ্যাত হয়। তাই নথির সংস্করণ, শিরোনাম এবং বাক্যের সীমানা মিলিয়েই মূল তথ্যের পরিচয় (Source Identity) নিশ্চিত করতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "হুবহু উদ্ধৃতির পরীক্ষা (Exact Quote Audit)",
+          "body": "শুধু ডকুমেন্ট আইডি খুঁজে পাওয়াই যথেষ্ট নয়; আমরা মূল বাক্যগুলোকে জোড়া লাগিয়ে তার বাইট ও টেক্সটের সাথে দেখানো উদ্ধৃতির অক্ষরে অক্ষরে মিল (Exact Match) পরীক্ষা করি। ধরুন, কোনোভাবে Citation ID অপরিবর্তিত রেখে ভেতরের উদ্ধৃতিতে একটি শব্দও বদলে দেওয়া হলো—তখন আইডিটি মূল ডেটাবেসে খুঁজে পাওয়া (resolvable = True) গেলেও আমাদের অডিট পরীক্ষায় exact_quote = False ধরা পড়বে! আমাদের ল্যাবে একটি বাস্তব সোর্স প্যাসেজের শেষে ইচ্ছাকৃতভাবে ' [edited]' অংশটি জুড়ে দিয়ে (Declared Mutation) দেখানো হয়েছে কীভাবে রানটাইম গেট সাথে সাথে citation_mismatch ধরে ফেলে।"
+        },
+        {
+          "type": "math",
+          "title": "Exact Quote যাচাইয়ের শর্ত",
+          "body": "\\mathrm{exact}=\\mathrm{resolved}(d,s,e)\\land quote=\\mathrm{join}(source_d[s:e])"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Citation Resolution ও Quote Mutation পরীক্ষা করি",
+          "body": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter29_local\", Path(\"assets/datasets/scifact_rag/capstone_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/scifact_rag/capstone_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nrag = m.rag_module()\nsystem, _, _ = rag.load_inputs()\nq = dict(lab[\"samples\"][3][\"cases\"][\"retrieved\"][\"pack\"][\"selected\"][0])\nassert rag.audit_quote(q, system.source)[\"exact_quote\"]\nq[\"text\"] += \" [edited]\"\nassert rag.audit_quote(q, system.source) == dict(resolvable=True, exact_quote=False)\nprint(rag.citation(q))\n"
+        },
+        {
+          "type": "text",
+          "title": "উদ্ধৃতি সঠিক হওয়া আর দাবি প্রমাণিত হওয়ার ব্যবধান",
+          "body": "উপরের কোডে আপনি দেখলেন, উদ্ধৃতির শেষে মাত্র ' [edited]' টুকু যোগ করতেই আমাদের অডিটর সেটিকে ধরে ফেলল। কিন্তু এখানে একটি গভীর প্রকৌশলগত সত্য মনে রাখা চাই: মূল পেপার থেকে শতভাগ হুবহু উদ্ধৃতি (Exact Quote) তুলে আনা হলেও সেই উদ্ধৃতিটি প্রদত্ত বৈজ্ঞানিক দাবিকে সমর্থন করতে পারে, খণ্ডন করতে পারে, আবার পুরোপুরি অপ্রাসঙ্গিকও হতে পারে! এমনকি মূল বৈজ্ঞানিক প্রবন্ধটি নিজেই হয়তো অনিশ্চিত বা কালের বিবর্তনে পুরনো (Outdated) হয়ে গেছে। সংক্ষেপে বললে, নিখুঁত Provenance আমাদের জন্য মানুষের অডিট করা সম্ভব করে তোলে—কিন্তু এটি নিজে থেকে কোনো বৈজ্ঞানিক সত্য প্রতিষ্ঠা করে না।"
+        },
+        {
+          "type": "gen_capstone_release",
+          "title": "মডেলের আউটপুট থেকে স্বাধীন নিরাপত্তা বেষ্টনী",
+          "body": "নিচের ইন্টারেক্টিভ প্যানেলে খেয়াল করুন: নিউরাল ডিকোডারের তৈরি শব্দটি দেখতে যতই বৈধ হোক না কেন, যদি উদ্ধৃতির অখণ্ডতা (Quote Integrity) ব্যর্থ হয়, তবে কোনো অবস্থাতেই সেই Hypothesis ইউজারের কাছে প্রকাশ করা হয় না। আবার অন্যদিকে, এই গেটটি আড়ালে কোনো Gold Rationale Hit দেখে সিদ্ধান্ত নেয় না। তাই সিস্টেম আর্কিটেক্ট হিসেবে কখনোই এই কাঠামোগত Format ও Provenance চেকগুলোকে অর্থ বোঝার বিচারক (Semantic Judge) হিসেবে প্রচার করবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "উৎস ডেটার নিরাপত্তা ও ভবিষ্যৎ সতর্কতা",
+          "body": "নিরাপত্তার দৃষ্টিতে বাইরের যেকোনো নথি বা Evidence হলো অবিশ্বস্ত ডেটা (Untrusted Data)। আমাদের বর্তমান সিস্টেমে টেক্সটকে কেবল সংখ্যার হ্যাশ বাকেটে ফেলা হয় বলে নথির ভেতরে লুকানো কোনো নির্দেশনা (Instruction) কার্যকর হওয়ার সুযোগ নেই। কিন্তু সাবধান—এটি মোটেও কোনো বৃহৎ LLM-এর Prompt Injection Resistance-এর প্রমাণ নয়! ভবিষ্যতে আপনি যদি এই ছোট ডিকোডার বদলে একটি পূর্ণাঙ্গ জেনারেটিভ LLM বসান, তবে সিস্টেম প্রম্পট ও বাহ্যিক ডেটার সীমানা (Instruction Boundaries) এবং সিকিউরিটি টেস্ট সম্পূর্ণ নতুন করে ডিজাইন করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "কোডিং অনুশীলনে যা যা যাচাই করবেন",
+          "body": "আপনার Citation Resolver-এর ইউনিট টেস্টে অবশ্যই টেক্সট পরিবর্তন (Text Mutation), স্প্যানের সীমানা পরিবর্তন (Span Mutation), অজানা ডকুমেন্ট আইডি, শেষ প্রান্তের ইনডেক্স এবং অবিকৃত মূল উদ্ধৃতি—সব কয়টি কেস পরীক্ষা করবেন। মনে রাখবেন, স্ট্রিংয়ের স্পেস বা লাইনব্রেক সাজানোর নিয়ম (Normalization Policy) সামান্য বদলালেও Exact Match-এর সংজ্ঞা বদলে যেতে পারে; তাই পুরো পাইপলাইনে বাক্য জোড়া লাগানোর নিয়ম একই রাখুন এবং সাইটেশন অনুপস্থিত থাকলে কেন তা প্রত্যাখ্যাত হলো তা স্পষ্টভাবে লগ করুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch29_evaluation",
+      "title": "Stage Metrics, Denominator ও Joint Diagnostic",
+      "subtitle": "নিখুঁত Citation Fidelity পাওয়া মানেই কিন্তু সঠিক উত্তর পাওয়া নয়",
+      "duration": "60 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Format Metric বনাম আসল Label Accuracy",
+          "body": "এবার চলুন সংখ্যার আয়নায় আমাদের সিস্টেমের প্রকৃত পারফরম্যান্স মুখোমুখি দাঁড় করাই। Retrieved Context ব্যবহার করে আমাদের মডেল 188টি টেস্ট উদাহরণের মধ্যে 188টিতেই নির্ধারিত word + EOS ফরম্যাট নিখুঁতভাবে মেনে চলেছে। এটি নিঃসন্দেহে প্রমাণ করে যে আমাদের সফটওয়্যার ও ডিকোডারের আউটপুট কাঠামো শতভাগ ঠিকমতো কাজ করছে। কিন্তু আসল বৈজ্ঞানিক লেবেল (support বনাম contradict) কয়টিতে ঠিক হয়েছে জানেন? মাত্র 89/188 ≈ 0.473404 ক্ষেত্রে! অথচ কোনো মডেল ছাড়াই চোখ বন্ধ করে কেবল সংখ্যাগরিষ্ঠ ক্লাস (Majority Class) অনুমান করলেও পাওয়া যায় 124/188 ≈ 0.659574!\n\nঅর্থাৎ বাহ্যিক ফরম্যাটের পরীক্ষায় পুরো নম্বর পেলেও আসল কাজের বেলায় মডেলটি সরল বেসলাইনের চেয়েও পিছিয়ে আছে। একটি সৎ ইঞ্জিনিয়ারিং রিপোর্টে এই ব্যর্থতাটি লুকানোর কোনো সুযোগ নেই—কারণ ফরম্যাট ঠিক থাকা আর অর্থগত সঠিকতা (Semantic Correctness) কখনোই এক মেট্রিক নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Rationale Coverage Metric",
+          "body": "এবার ডিকোডারের কথা বাদ দিয়ে শুধু প্যাকারের দিকে তাকানো যাক। আমাদের মূল Pack রেসিপি 188টি উদাহরণের মধ্যে 68/188টিতে গবেষকদের চিহ্নিত সম্পূর্ণ প্রমাণ (Complete Annotated Rationale) তুলে আনতে পেরেছে। খেয়াল করুন, এই 68/188 সংখ্যাটি এসেছে সরাসরি সোর্স অ্যানোটেশনের সাথে বাছাইকৃত প্যাসেজের তুলনা করে—ডিকোডার কোন শব্দ তৈরি করল তার সাথে এর কোনো সম্পর্ক নেই। প্রাথমিক সার্চে নথি থাকা (Candidate Availability) বনাম প্যাকিংয়ের পর আসল যুক্তি টিকে থাকার (Selected Rationale Coverage) এই পার্থক্যটি আমরা Book 4 · Chapter 3 (RAG Systems)-এ আলাদাভাবে বিশ্লেষণ করেছিলাম, এবং এখানে সেই একই রেসিপি অপরিবর্তিত রাখা হয়েছে।"
+        },
+        {
+          "type": "math",
+          "title": "Joint Hit-এর গাণিতিক সংজ্ঞা",
+          "body": "\\mathrm{JointHit}=\\frac1N\\sum_i\\mathbf1[\\hat y_i=y_i\\land\\mathrm{CompleteRationaleHit}_i]"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Stage ও Joint Scorecard যাচাই করি",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/scifact_rag/capstone_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nr = lab[\"report\"][\"variants\"][\"retrieved\"][\"summary\"]\nassert (\n    r[\"n\"],\n    r[\"valid\"],\n    r[\"correct\"],\n    r[\"complete_rationale_hits\"],\n    r[\"joint_hits\"],\n) == (188, 188, 89, 68, 33)\nassert r[\"accuracy\"] < lab[\"report\"][\"majority_accuracy\"]\nprint(r)\n"
+        },
+        {
+          "type": "text",
+          "title": "Joint Diagnostic আমাদের কী জানায়?",
+          "body": "উপরের সমীকরণ ও কোড আমাদের আরও একটি কঠোর সত্যের মুখোমুখি করে: যেখানে প্যাকার সম্পূর্ণ সঠিক প্রমাণ তুলে এনেছে এবং ডিকোডারও সঠিক লেবেল দিয়েছে—এমন যৌথ সাফল্য (Joint Hit) ঘটেছে মাত্র 33/188টি ক্ষেত্রে! তদুপরি মনে রাখতে হবে, এই Joint Hit কেবল দুটি শর্ত একসাথে ঘটার একটি ন্যূনতম বর্ণনামূলক হিসাব (Minimal Descriptive Conjunction); এটি কিন্তু প্রমাণ করে না যে মডেল সত্যিই ওই বাক্য পড়ে অর্থ বুঝে (Sentence Entailment) উত্তর দিয়েছে, কিংবা এটি কোনো পূর্ণাঙ্গ মুক্ত-উত্তরের (Free-form Answer) মানদণ্ডও নয়। বাস্তব প্রোডাকশনে ভুল উদ্ধৃতি দিয়ে বিভ্রান্ত করার ঝুঁকি মাপতে আরও বাড়তি মেট্রিক প্রয়োজন হতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "গৃহীত সেটের ওপর Conditional Metrics",
+          "body": "যখন আমাদের Runtime Policy কিছু উত্তর আটকে দেয়, তখন মেট্রিকের ভগ্নাংশের নিচের সংখ্যাটি (Denominator) বদলে যায়—তখন হিসাব হয় কেবল গৃহীত উদাহরণের সংখ্যার (Accepted Count) ওপর। থ্রেশহোল্ড 0 রাখলে সবগুলো 188টি উদাহরণই গৃহীত হয়; কিন্তু থ্রেশহোল্ড বাড়িয়ে 0.9 করলে গৃহীত হয় 119টি এবং তার মধ্যে সঠিক হয় 63টি। লক্ষ করুন, তখনো কিন্তু ভুলের ঝুঁকি (Risk ≈ 0.470588) প্রায় 47 শতাংশের মতো চড়া থেকে যাচ্ছে! অর্থাৎ কভারেজ কমিয়ে কিছু উত্তর ছাঁটাই করলেই যে বাকি উত্তরগুলোর মান সন্তোষজনক হয়ে যাবে, এমনটা ধরে নেওয়া যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "স্বচ্ছ রিপোর্টিংয়ের Metric Inventory",
+          "body": "যেকোনো মূল্যায়ন রিপোর্টে উদাহরণের মোট সংখ্যা, পজিটিভ ক্লাসের সংজ্ঞা, ক্যান্ডিডেট ও বাইট বাজেট, কনডিশনিং মোড এবং ফরম্যাট, লেবেল ও জয়েন্ট মেট্রিকের সুনির্দিষ্ট সংজ্ঞা ও ডেটা রোল স্পষ্টভাবে তালিকাভুক্ত করতে হয়। আউটপুটের দৈর্ঘ্য ও বাজেটের এককও (Bytes বনাম Tokens) উল্লেখ করা জরুরি। পাশাপাশি যা করা হয়নি তাও পরিষ্কার বলে দেওয়া ভালো—যেমন এই ক্যাপস্টোনে কোনো ইমেজ জেনারেশন মেট্রিক (FID), আলাদা কোনো LLM Judge বা বৃহৎ ফ্যাকচুয়ালিটি বেঞ্চমার্ক চালানো হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "সাক্ষাৎকারে যেভাবে ব্যাখ্যা করবেন",
+          "body": "ইন্টারভিউতে হাতে-কলমে একটি উদাহরণ দিয়ে দেখান কীভাবে শতভাগ নিখুঁত উদ্ধৃতি (High Quote Exactness) থাকা সত্ত্বেও মডেলের চূড়ান্ত লেবেল ভুল হতে পারে। কখনোই থ্রেশহোল্ড বাড়িয়ে Denominator ছোট করে দেওয়াকে মডেলের প্রকৃত মানোন্নয়ন বলে দাবি করবেন না। পরিষ্কারভাবে বলুন যে আমাদের সিস্টেমটি সফটওয়্যার হিসেবে সবগুলো Functional Release Check পাস করলেও Semantic Deployment Gate পাস করেনি।"
+        },
+        {
+          "type": "text",
+          "title": "গড় মেট্রিকের গুণফল কেন প্রকৃত Joint Rate দেয় না?",
+          "body": "একটি দারুণ গাণিতিক উদাহরণ দিয়ে দেখা যাক কেন আলাদা ধাপের গড় স্কোর গুণ করে পুরো পাইপলাইনের সাফল্য পাওয়া যায় না। ধরুন 8টি উদাহরণে সম্পূর্ণ প্রমাণ পাওয়ার ফ্ল্যাগ হলো [1, 1, 1, 1, 1, 1, 0, 0] (গড় Completeness = 0.75), আর মডেলের সঠিক শব্দ বলার ফ্ল্যাগ হলো [1, 1, 0, 0, 0, 0, 1, 1] (গড় Accuracy = 0.50)। আলাদা গড় দুটি গুণ করলে পাওয়া যায় 0.75 × 0.50 = 0.375; কিন্তু জোড়ায় জোড়ায় (Paired) মিলিয়ে দেখুন তো কয়টিতে দুটোই একসাথে 1 হয়েছে? মাত্র প্রথম দুটিতে—অর্থাৎ প্রকৃত Joint Rate হলো 2/8 = 0.25! আরও লক্ষণীয় বিষয় হলো, যে 6টি ক্ষেত্রে হাতে সম্পূর্ণ প্রমাণ ছিল, তার মধ্যে মডেল সঠিক উত্তর দিয়েছে মাত্র 2/6টিতে—যার মানে Retrieval সফল হওয়ার পরও Generation ধাপে বড় ধরনের ব্যর্থতা রয়ে গেছে।"
+        },
+        {
+          "type": "code",
+          "title": "Paired Conjunction ও Conditional Accuracy হিসাব করি",
+          "body": "import numpy as np\n\ncomplete = np.array([1, 1, 1, 1, 1, 1, 0, 0], dtype=bool)\ncorrect = np.array([1, 1, 0, 0, 0, 0, 1, 1], dtype=bool)\njoint = np.mean(complete & correct)\nconditional = correct[complete].mean()\nprint(\n    complete.mean(),\n    correct.mean(),\n    joint,\n    complete.mean() * correct.mean(),\n    round(conditional, 6),\n)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে চিন্তা করে উত্তর দিন",
+          "body": "শুধু এই Joint Success Count (যেমন 33/188 বা 2/8) দেখেই কি আমরা এককভাবে নিশ্চিত হতে পারি যে ভুলের আসল কারণ (Causal Source) ঠিক কোন ধাপটি?",
+          "solution": "না, এককভাবে তা নির্ধারণ করা যায় না; কারণ এটি কেবল দুটি ঘটনা একসাথে ঘটার একটি বর্ণনামূলক হিসাব (Descriptive Conjunction)। ভুলের প্রকৃত উৎস আলাদা করতে হলে Retrieval, Context Packing, Feature Representation এবং Decoder—প্রতিটি ধাপের ওপর নিয়ন্ত্রিত পরীক্ষা (Controlled Ablations) চালাতে হবে এবং প্রতিটি উদাহরণ ধরে (Paired Item-level Outcomes) দেখতে হবে প্রমাণ বদলালে মডেলের আচরণ কীভাবে বদলায়।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch29_controls",
+      "title": "Paired Query-only ও Mismatched-Context Controls",
+      "subtitle": "মডেল সত্যিই Evidence পড়ছে—এই দাবি করার আগে আবশ্যিক Counterfactual পরীক্ষা",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "নিখুঁতভাবে মেলানো তিনটি পরীক্ষার পরিবেশ (Matched Inputs)",
+          "body": "একটি RAG মডেল সঠিক উত্তর দিলেই কি প্রমাণ হয় যে সে খুঁজে আনা প্যাসেজ পড়েই উত্তরটি দিয়েছে? নাকি সে শুধু প্রশ্নের শব্দের ধাঁচ মুখস্থ করে উত্তর দিচ্ছে? এই প্রশ্নের উত্তর পেতে আমরা একই 188টি Claim ID, একই ক্রম, একই Gold Labels, একই ট্রেন করা Weights এবং একই ডিকোডার সীমা অপরিবর্তিত রেখে তিনটি সমান্তরাল পরীক্ষা চালাই। প্রথমটি হলো Retrieved Mode, যেখানে মডেল নিজের জন্য খুঁজে আনা প্যাসেজই পায়। দ্বিতীয়টি হলো Query-only Mode, যেখানে কনটেক্সট ব্লকের পুরোটাই শূন্য (Zero) করে দেওয়া হয়। আর তৃতীয়টি হলো Rotated-Context Mode, যেখানে প্রতিটি দাবির সাথে ইচ্ছাকৃতভাবে তালিকার ঠিক পরের দাবিটির কনটেক্সট জুড়ে দেওয়া হয় (এবং শেষটির সাথে প্রথমটির)। কোনো ক্ষেত্রেই মডেলকে নতুন করে ট্রেন করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব Control পরীক্ষার চমকে দেওয়া ফলাফল",
+          "body": "এবার আমাদের সেই তিনটি পরীক্ষার আসল ফলাফলের দিকে তাকান: কনটেক্সট ছাড়া Query-only মোডে মডেল সঠিক উত্তর দিয়েছে 82/188টি (187টি বৈধ ফরম্যাট); নিজের আসল Retrieved কনটেক্সট নিয়ে সঠিক দিয়েছে 89/188টি (188টি বৈধ); আর অন্য দাবির ভুল কনটেক্সট জুড়ে দেওয়া Rotated মোডে সঠিক দিয়েছে 107/188টি (188টি বৈধ)! ভাবুন একবার—আসল প্রমাণের চেয়ে ভুল প্রমাণ দিলে স্কোর উল্টো বেড়ে গেছে! ভুল কনটেক্সটে ভালো স্কোর আসা কখনোই সুস্থ Grounding প্রমাণ করে না; বরং এটি জোরালো ইঙ্গিত দেয় যে মডেলটি কোনো শর্টকাট বা অস্থিতিশীলতার (Shortcut/Instability) শিকার হয়েছে।"
+        },
+        {
+          "type": "math",
+          "title": "প্রতিটি উদাহরণে Paired পার্থক্যের সমীকরণ",
+          "body": "\\Delta_i=\\mathbf1[\\hat y_i^{retrieved}=y_i]-\\mathbf1[\\hat y_i^{control}=y_i]"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Retrieved বনাম Rotated Control-এর পার্থক্য গুনব",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/scifact_rag/capstone_lab.json\").read_text(encoding=\"utf-8\")\n)\n\na = lab[\"variants\"][\"retrieved\"][\"rows\"]\nb = lab[\"variants\"][\"rotated_context\"][\"rows\"]\nassert [r[\"id\"] for r in a] == [r[\"id\"] for r in b]\nd = sum(\n    int(x[\"generation\"][\"text\"] == x[\"gold\"])\n    - int(y[\"generation\"][\"text\"] == y[\"gold\"])\n    for x, y in zip(a, b)\n)\nassert d == 89 - 107\nprint(d, len(a))\n"
+        },
+        {
+          "type": "text",
+          "title": "এই Ablation পরীক্ষার ব্যাখ্যার সীমা",
+          "body": "উপরের কোডে আমরা প্রতিটি উদাহরণ জোড়ায় জোড়ায় মিলিয়ে দেখলাম যে নিট পার্থক্য হলো 89 - 107 = -18। তবে এই পরীক্ষার প্রকৃত অর্থ বুঝতে হবে: মডেলকে নতুন করে ট্রেন না করে (Ablation without Refit) ইনপুট বদলে দেওয়া মূলত বর্তমান Frozen Model-টি ইনপুটের ওপর কীভাবে নির্ভর করছে তা পরীক্ষা করে। এটি কিন্তু শুরু থেকেই শুধু প্রশ্নের ওপর ট্রেন করা কোনো আলাদা মডেলের (Query-only Trained Model) সাথে সমান বাজেটের আর্কিটেকচারাল তুলনা নয়। আরও গভীর গবেষণার জন্য একাধিক র‍্যান্ডম রোটেশন, একাধিক ট্রেনিং সিড এবং উৎস-সচেতন (Source-aware) মূল্যায়ন ব্যবহার করা যেতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "Control সারিতে Rationale হিসাব রাখার নিয়ম",
+          "body": "স্কোরকার্ডের টেবিল পড়ার সময় একটি হিসাবরক্ষণের (Bookkeeping) নিয়ম খেয়াল রাখবেন: কন্ট্রোল সারিগুলোতে যে Rationale Hit সংখ্যাটি দেখানো হয়, তা কিন্তু মূল Original Retrieval Pack-এর সাপেক্ষেই রাখা হয়েছে—ইচ্ছাকৃতভাবে ঘুরিয়ে দেওয়া ভুল প্যাসেজের সাপেক্ষে নয়। ফলে কন্ট্রোল মোডের Joint Count কেবল ওই মূল প্যাকের হিট এবং নতুন লেবেলের মিল নির্দেশ করে; এটি কখনোই বোঝায় না যে ভুল কনটেক্সটটি ওই দাবিকে বৈজ্ঞানিকভাবে সমর্থন করছে। অ্যাপের ইউজার ইন্টারফেসেও এই সীমানাটি স্পষ্ট করে লেখা আছে।"
+        },
+        {
+          "type": "text",
+          "title": "গভীরে গিয়ে কী কী খতিয়ে দেখবেন?",
+          "body": "এমন অপ্রত্যাশিত ফলাফল দেখলে একজন প্রকৌশলী হিসেবে আপনার কাজ হলো প্রতিটি উদাহরণ ধরে পরিবর্তন (Per-query Changes), ক্লাসের ভারসাম্যহীনতা (Class Imbalance), Hash Collisions, না-বোধক শব্দ হারিয়ে যাওয়া (Negation Loss), ট্রেনিং ডেটা মুখস্থ করা (Memorization) এবং সম্পর্কিত গবেষণাপত্রের প্রভাব খতিয়ে দেখা। শুধু একটি সামগ্রিক সংখ্যা দেখে একক কোনো চূড়ান্ত কারণ ঘোষণা করে দেবেন না। আর হ্যাঁ, যেহেতু আপনি এই 188টি ডায়াগনস্টিক উদাহরণ খুলে ভেতরের ত্রুটি বিশ্লেষণ করে ফেলেছেন, তাই এই সেটটিকে আর ভবিষ্যতে কখনো 'অদেখা ব্লাইন্ড টেস্ট' (Blind Score) বলে দাবি করবেন না!"
+        },
+        {
+          "type": "text",
+          "title": "সাক্ষাৎকারে যেভাবে ব্যাখ্যা করবেন",
+          "body": "ইন্টারভিউতে যেকোনো কন্ট্রোল পরীক্ষা ব্যাখ্যা করার সময় তিনটি জিনিস আলাদা করে বলবেন: কী স্থির রাখা হয়েছে (Fixed), কী পরিবর্তন করা হয়েছে (Changed), এবং ঠিক কী মাপা হচ্ছে (Measured)। খেয়াল করিয়ে দিন যে রানটাইম গেটে যদি আগে থেকেই বলে দেওয়া হয় কোনটি ভুল কনটেক্সট, তবে সেটি আর বাস্তবসম্মত পাইপলাইন থাকে না। সবশেষে বলুন কীভাবে আপনি একটি নতুন পরীক্ষার নকশা করবেন যা আপনার বর্তমান অনুমানকে ভুল প্রমাণ (Falsify) করার ক্ষমতা রাখে।"
+        }
+      ]
+    },
+    {
+      "id": "ch29_book_negative_controls",
+      "title": "Negative Controls: মূল্যায়ন যেন মডেলের বদলে Shortcut না মাপে",
+      "subtitle": "প্রথমে ধারণাটি বুঝি, এরপর সমীকরণ ও উদাহরণ মিলিয়ে দেখে Python-এ নিজে পরীক্ষা করি",
+      "duration": "18 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "এই ধারণাটি কেন এত জরুরি?",
+          "body": "কল্পনা করুন, আপনার তৈরি একটি পাইপলাইন খুব চমৎকার ফরম্যাটে উত্তর দিচ্ছে, কিন্তু ভেতরে ভেতরে সে খুঁজে আনা প্রমাণ (Evidence) ছুঁয়েও দেখছে না! এমন অবস্থায় শুধু আউটপুট পার্সার পাস করাকে কি ভালো মান বলা চলে? নিশ্চয়ই না। ঠিক এই ফাঁদটি ধরার জন্যই ব্যবহার করা হয় Negative Control—যেখানে আমরা ইচ্ছাকৃতভাবে সমাধানের জন্য অপরিহার্য তথ্যটুকু সরিয়ে বা নষ্ট করে দিয়ে দেখি মডেলের স্কোর প্রত্যাশামতো কমে কি না। Label Shuffle, Evidence Removal, Wrong-document Swap কিংবা ডুপ্লিকেট শনাক্তকরণ—এসব পরীক্ষাই আমাদের বলে দেয় আমাদের ইভ্যালুয়েশন আসলে মডেলের মেধা মাপছে নাকি কোনো লুকানো শর্টকাট মাপছে।"
+        },
+        {
+          "type": "text",
+          "title": "ধাপে ধাপে Negative Control-এর যুক্তি",
+          "body": "যেকোনো পরীক্ষা চালানোর আগেই খাতায় লিখে ফেলুন ফলাফল কেমন হওয়া উচিত (Expected Sensitivity)। যে কাজে প্রমাণ ছাড়া উত্তর দেওয়া অসম্ভব, সেখানে প্রমাণ মুছে দিলে সঠিক উত্তরের হার অবশ্যই কমে যাওয়া উচিত। কিন্তু প্রমাণ সরিয়ে নেওয়ার পরও যদি স্কোর হুবহু একই থেকে যায়, তবে বুঝতে হবে কোথাও গলদ আছে—হয় মডেলটি ট্রেনিং ডেটা মুখস্থ (Memorization) করেছে, নয়তো আপনার মেট্রিকটি খুব ভোঁতা (Metric Weakness), অথবা টাস্কটিই এমনভাবে সাজানো যেখানে প্রমাণ ছাড়াই উত্তর অনুমান করা যায়। এই কন্ট্রোল পরীক্ষায় ব্যর্থ হওয়া একটি অত্যন্ত মূল্যবান Diagnostic সংকেত; এরপর ঠিক কোন কারণটি দায়ী তা আলাদা পরীক্ষা দিয়ে বের করতে হয়।"
+        },
+        {
+          "type": "math",
+          "title": "Control Sensitivity-র গাণিতিক সূত্র",
+          "body": "\\Delta_{control}=M(\\text{intact evidence})-M(\\text{ablated evidence})"
+        },
+        {
+          "type": "text",
+          "title": "খাতা-কলমে একটি সহজ উদাহরণ",
+          "body": "বিষয়টি একদম স্পষ্ট করার জন্য চলুন মাত্র চারটি প্রশ্নের একটি ছোট উদাহরণ হাতে-কলমে হিসেব করি। ধরুন আসল লেবেলগুলো হলো [1, 0, 1, 0]। সম্পূর্ণ প্রমাণ থাকা অবস্থায় (Intact) মডেলটির অনুমান হলো [1, 0, 1, 1]—অর্থাৎ 4টির মধ্যে 3টিই সঠিক (Accuracy = 0.75)। এবার আমরা সব প্রমাণ মুছে দিলাম (Removed), আর মডেল অনুমান করল [1, 0, 0, 0]—লক্ষ করুন, এখনো কিন্তু 4টির মধ্যে 3টিই সঠিক (Accuracy = 0.75)! ফলে আমাদের সমীকরণে Delta = 0.75 - 0.75 = 0। এতে স্পষ্ট বোঝা গেল যে সামগ্রিক স্কোরে সিস্টেমটি প্রমাণের প্রতি সংবেদনশীলতা দেখাতে পারেনি—যদিও এর পেছনে প্রমাণ অপ্রয়োজনীয় হওয়া বা মেট্রিকের স্থূলতা যেকোনোটিই থাকতে পারে।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ চারটি উদাহরণের Control পরীক্ষা চালাই",
+          "body": "labels = [1, 0, 1, 0]\nintact = [1, 0, 1, 1]\nremoved = [1, 0, 0, 0]\n\n\ndef accuracy(predictions):\n    return sum(y == p for y, p in zip(labels, predictions)) / len(labels)\n\n\n# Compare paired items; inspect which individual outcomes changed as well.\nprint(accuracy(intact), accuracy(removed), accuracy(intact) - accuracy(removed))\n"
+        },
+        {
+          "type": "text",
+          "title": "কোডের আউটপুট আমাদের কোন গভীর সত্যটি দেখাল?",
+          "body": "কোডটি চালালে প্রিন্ট হয় 0.75 0.75 0.0। কিন্তু একটু থেমে তালিকার ভেতরের পদগুলো মিলিয়ে দেখুন তো! সামগ্রিক গড় স্কোর (0.75) এক থাকলেও তৃতীয় এবং চতুর্থ প্রশ্নের উত্তর কিন্তু বদলে গেছে! তাই শুধু গড় সংখ্যার দিকে না তাকিয়ে সবসময় জোড়ায় জোড়ায় তুলনামূলক তালিকা (Paired Table) এবং গুণগত ব্যর্থতাগুলো (Qualitative Failures) খতিয়ে দেখতে হয়। আর আগেই যেমন দেখেছি, আমাদের সেভ করা ক্যাপস্টোন মডেলটি এই সেমান্টিক গেটে ব্যর্থ হয়েছে—এবং সেই বাস্তব ফলাফলকে আমরা কোনো তাত্ত্বিক ব্যাখ্যার আড়ালে ঢেকে রাখছি না।"
+        },
+        {
+          "type": "text",
+          "title": "কখন Negative Control-এর ব্যাখ্যায় সতর্ক থাকতে হয়?",
+          "body": "কন্ট্রোল তৈরি করার সময় খেয়াল রাখতে হবে, তথ্য পরিবর্তন করতে গিয়ে ইনপুটটি যেন একেবারে অর্থহীন আবর্জনায় (Out-of-distribution Nonsense) পরিণত না হয়—তাহলে স্কোর কমার কারণ বোঝা কঠিন হয়ে পড়ে। অনেক ক্ষেত্রে অর্থবহ বিপরীত উদাহরণ (Counterfactual Edit) তৈরি করতে এবং তার সঠিক লেবেল ঠিক করতে মানুষের স্বাধীন অ্যানোটেশন প্রয়োজন হয়। আর একটি সোনালী নিয়ম কখনোই ভুলবেন না: কন্ট্রোল পরীক্ষার ফলাফল দেখে চূড়ান্ত Held-out টেস্ট সেটের উদাহরণগুলো কখনোই কাটাছেঁড়া বা টিউন করবেন না।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে চিন্তা করে উত্তর দিন (১)",
+          "body": "ধরুন একটি RAG সিস্টেমে আপনি ইচ্ছাকৃতভাবে ভুল প্রমাণ (Wrong Evidence) দেওয়ার পরও দেখলেন মডেলের উত্তর হুবহু একই থাকছে। এর পেছনে কোন তিনটি সম্ভাব্য Hypothesis আপনি দাঁড় করাবেন এবং প্রতিটিকে যাচাই করার Falsifiable Check কী হবে?",
+          "solution": "তিনটি প্রধান Hypothesis হতে পারে: (১) মডেলের Prior বা Memorization (মডেল প্রশ্ন চিনেই মুখস্থ উত্তর দিচ্ছে)—এটি যাচাই করতে মডেলের ট্রেনিংয়ের পরের সম্পূর্ণ নতুন বা কাল্পনিক তথ্য (New Unseen Facts) দিয়ে পরীক্ষা করুন; (২) প্রম্পট বা ফিচার কনটেক্সট উপেক্ষা করছে (Evidence Ignored)—এটি যাচাই করতে প্যাসেজে দাবির সরাসরি বিপরীত তথ্য (Explicit Contradiction) বসিয়ে দেখুন আউটপুট উল্টায় কি না; অথবা (৩) মূল্যায়ন মেট্রিকটিই কেবল বাহ্যিক কাঠামো দেখছে, ভেতরের তথ্য নয় (Coarse Metric)—এটি যাচাই করতে কঠোর Claim-level Entailment Rubric দিয়ে মানুষের মূল্যায়নের সাথে মেট্রিকটির তুলনা করুন।",
+          "reference": "https://www.statlearning.com/"
+        },
+        {
+          "type": "text",
+          "title": "একই গড় স্কোরের আড়ালে লুকানো Item-level পরিবর্তন",
+          "body": "গড় স্কোর কীভাবে আমাদের চোখকে ফাঁকি দিতে পারে তার আরেকটি ছোট্ট হিসাব দেখুন। ধরুন চারটি প্রশ্নে আসল প্রমাণে সঠিকতার তালিকা হলো [1, 1, 0, 0], আর কন্ট্রোল পরীক্ষায় সঠিকতার তালিকা হলো [1, 0, 1, 0]। দুটো ক্ষেত্রেই গড় Accuracy কিন্তু ঠিক 0.5! অথচ ভেতরে তাকালে দেখবেন মাঝখানের দুটি প্রশ্নেরই ফলাফল পাল্টে গেছে—দ্বিতীয় প্রশ্নটিতে প্রমাণ সরানোয় ক্ষতি হয়েছে (Harmed), আর তৃতীয়টিতে উল্টো কাকতালীয়ভাবে লাভ হয়েছে (Helped)! অর্থাৎ গড় স্কোর সমান হওয়া মানে কখনোই প্রতিটি উদাহরণে ফলাফল অপরিবর্তিত থাকা (Per-item Invariance) নয়। তাই সবসময় কন্ট্রোল রূপান্তরের পাশাপাশি ঠিক কোন কোন উদাহরণের উত্তর বদলেছে তা পাশাপাশি রেখে দেখুন।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে হিসাব করে বলুন (২)",
+          "body": "উপরের [1, 1, 0, 0] এবং [1, 0, 1, 0] উদাহরণ দুটিতে সামগ্রিক গড় স্কোর 0.5 হলেও, প্রতিটি আইটেম ধরে ফলাফলের হুবহু মিল বা Item-level Agreement কত?",
+          "solution": "চারটি উদাহরণের মধ্যে কেবল প্রথমটি (1 == 1) এবং শেষটি (0 == 0) হুবহু মিলেছে; মাঝখানের দুটি মেলেনি। সুতরাং Item-level Agreement হলো 2/4 = 0.5। তাই মূল্যায়নের সময় আসল লেবেলের সঠিকতা (Original-label Correctness), দুটি উত্তরের অভিন্নতা (Answer Identity) এবং প্রকৃত প্রমাণের ব্যবহার—এই তিনটি বিষয়কে আলাদা Diagnostic হিসেবে পরীক্ষা করা উচিত।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch29_selective",
+      "title": "Selective Release, Calibration ও Empty-set Handling",
+      "subtitle": "শুধু Confidence Threshold বাড়িয়ে একটি ব্যর্থ টাস্ককে সফল বলে দাবি করা যায় না",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "গৃহীত সেটের ঝুঁকি বনাম সামগ্রিক অ্যাকুরেসি",
+          "body": "অনেক সময় সিস্টেম ডিজাইনাররা ভাবেন, 'মডেল যখন কম আত্মবিশ্বাসী তখন উত্তর না দিলেই তো হলো (Selective Abstention)!' আমাদের Accept/Reject Policy ফরম্যাট ও প্রোভেন্যান্সের পাশাপাশি প্রথম টোকেনের আত্মবিশ্বাসও পরীক্ষা করে। কিন্তু এখানে সংখ্যার হিসাব খুব পরিষ্কার রাখা দরকার: গৃহীত উত্তরগুলোর অ্যাকুরেসি (Accepted Accuracy) মাপার সময় ভগ্নাংশের হরে (Denominator) থাকে কেবল গৃহীত উত্তরের সংখ্যা; আর সামগ্রিক অ্যাকুরেসি (Unconditional Accuracy) মাপার সময় হরে থাকে পুরো 188টি উদাহরণ। রিপোর্টের শিরোনামে এই দুটি সম্পূর্ণ ভিন্ন রাশিকে কখনোই একসাথে গুলিয়ে ফেলবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "স্কোরকার্ডে শূন্য কভারেজের (Empty Set) সঠিক আচরণ",
+          "body": "আমাদের অ্যাপের স্কোরকার্ডে আপনি Threshold ঘুরিয়ে 0, 0.90 এবং 1.0—এই তিনটি স্তরে ফলাফল দেখতে পাবেন। যখনই আপনি থ্রেশহোল্ড বাড়িয়ে 1.0 করবেন, তখন একটি উদাহরণও আর গেট পার হতে পারবে না (Accepted = 0)। তখন গৃহীত সেটের Risk এবং Accuracy গাণিতিকভাবে অসংজ্ঞায়িত (Undefined বা None) হয়ে যায়, কারণ শূন্য দিয়ে ভাগ করা যায় না! একটি উত্তরও প্রকাশ না করে 'আমাদের সিস্টেমে শূন্য ভুল, তাই 100% নিরাপদ বা 100% অ্যাকুরেসি'—এমন চতুর দাবি কখনোই করবেন না; বরং স্পষ্টভাবে দেখান যে তখন Coverage = 0।"
+        },
+        {
+          "type": "math",
+          "title": "Coverage এবং Conditional Risk-এর সমীকরণ",
+          "body": "\\mathrm{Coverage}=\\frac{|A_\\tau|}{N},\\quad\\mathrm{Risk}=1-\\frac{\\sum_{i\\in A_\\tau}\\mathbf1[\\hat y_i=y_i]}{|A_\\tau|}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ বিভিন্ন Threshold-এ Coverage ও Risk হিসাব করি",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/scifact_rag/capstone_lab.json\").read_text(encoding=\"utf-8\")\n)\nfrom pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter29_local\", Path(\"assets/datasets/scifact_rag/capstone_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\n\nrows = lab[\"variants\"][\"retrieved\"][\"rows\"]\nr = m.summarize(rows, 0.9)\nassert r[\"accepted\"] == 119\nassert abs(r[\"accepted_accuracy\"] - 63 / 119) < 1e-12\nempty = m.summarize(rows, 1.0)\nassert empty[\"accepted\"] == 0 and empty[\"accepted_risk\"] is None\nprint(r, empty)\n"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের Confidence স্কোরের Calibration সীমাবদ্ধতা",
+          "body": "উপরের কোডে দেখা গেল, থ্রেশহোল্ড 0.9 করলে 188টির মধ্যে 119টি উদাহরণ গৃহীত হয় এবং তার মধ্যে সঠিক হয় 63/119টি; আর থ্রেশহোল্ড 1.0 করলে গৃহীত সংখ্যা 0 এবং ঝুঁকি None আসে। এখানে মনে রাখতে হবে, আমাদের এই Confidence হলো কেবল প্রথম অক্ষরের সর্বোচ্চ প্রবাবিলিটি। মডেলটি কোনো শব্দের বানান নিয়ে নিশ্চিত হওয়া মানেই কিন্তু বৈজ্ঞানিক লেবেলটির সত্যতা নিয়ে নিশ্চিত হওয়া নয়! এই প্রজেক্টে আলাদা কোনো Calibration Fit (যেমন Temperature Scaling), হেল্ড-আউট সেটে পলিসি নির্বাচন কিংবা তাত্ত্বিক Uncertainty Certificate চালানো হয়নি। গড় আত্মবিশ্বাস ও গড় অ্যাকুরেসির ব্যবধান কাকতালীয়ভাবে কম দেখালেও তা সুষ্ঠু ক্যালিব্রেশনের প্রমাণ নয়।"
+        },
+        {
+          "type": "gen_capstone_score",
+          "title": "বাস্তব প্রোডাকশনে Deployment Policy নির্ধারণের নিয়ম",
+          "body": "নিচের ইন্টারেক্টিভ স্কোরকার্ডটি নাড়াচাড়া করার সময় একটি পেশাদার নিয়ম মনে রাখবেন: কতটুকু Risk গ্রহণযোগ্য এবং ন্যূনতম কতটুকু Coverage থাকতেই হবে—তা বাস্তব ইউজারের ক্ষতির মাত্রা (User Cost) বিবেচনা করে পরীক্ষার আগেই ঘোষণা (Pre-declare) করতে হয়। আপনি যদি একটি Selection Set দেখে সেরা থ্রেশহোল্ড বেছে নেন, তবে চূড়ান্ত সিদ্ধান্তের জন্য সম্পূর্ণ আলাদা একটি Confirmation Set-এ কেবল একবারই সেটিকে মূল্যায়ন করতে হবে। আমাদের ইতিমধ্যেই বারবার পর্যবেক্ষণ করা এই 188টি সারিকে নতুন কোনো Confirmation প্রমাণ হিসেবে দাবি করা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "বিভিন্ন Control মোডে একই Threshold-এর আচরণ",
+          "body": "মজার ব্যাপার হলো, একই কঠোর থ্রেশহোল্ড (0.9) প্রয়োগ করলেও বিভিন্ন কন্ট্রোল মোডে ফলাফল বেশ আলাদা আসে: Rotated Control-এ গৃহীত হয় 130টি এবং সঠিক হয় 75টি; আবার Query-only মোডে গৃহীত হয় 122টি এবং সঠিক হয় মাত্র 48টি! অর্থাৎ থ্রেশহোল্ড একই থাকলেও ইনপুটের বণ্টন (Input Distribution) বদলে গেলে কভারেজ এবং ঝুঁকি দুটোই বদলে যায়। স্কোরকার্ডের মোড পাল্টে আপনি নিজের চোখেই এই পার্থক্যটি মিলিয়ে দেখতে পারেন।"
+        },
+        {
+          "type": "text",
+          "title": "সাক্ষাৎকারে যেভাবে ব্যাখ্যা করবেন",
+          "body": "ইন্টারভিউতে প্রায়ই একটি চমৎকার প্রশ্ন করা হয়: 'Confidence Threshold বাড়ালেও কেন কখনো কখনো গৃহীত উত্তরগুলোর মান (Conditional Quality) উল্টো খারাপ হতে পারে?' উত্তরে বলুন যে মডেল যদি মারাত্মকভাবে Miscalibrated হয় বা কোনো নির্দিষ্ট শর্টকাটের ওপর অতি-আত্মবিশ্বাসী হয়ে ওঠে (Selection Bias), তবে উচ্চ থ্রেশহোল্ড কেবল ওই ভুল কিন্তু অতি-আত্মবিশ্বাসী উদাহরণগুলোকেই ছেঁকে তুলবে! আর সবশেষে যোগ করুন যে রানটাইমে মডেল উত্তর না দেওয়া (Abstention) মানে কেবল আমাদের পলিসির সীমাবদ্ধতা—এর মানে এই নয় যে প্রশ্নটির উত্তর পৃথিবীর কারো জানা নেই।"
+        }
+      ]
+    },
+    {
+      "id": "ch29_failure",
+      "title": "Failure Analysis: মডেল কি আদৌ Evidence ব্যবহার করতে শিখেছে?",
+      "subtitle": "পর্যবেক্ষণ এবং অনুমান আলাদা রেখে একটি যুক্তিনির্ভর Incident Report লিখি",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "সবার আগে নিরেট পর্যবেক্ষণ (Observation First)",
+          "body": "একটি সিস্টেম কেন ব্যর্থ হলো তা বিশ্লেষণ করার প্রথম শর্ত হলো—চোখের সামনে মাপা বাস্তব ফলাফল (Measured Observations) এবং তার সম্ভাব্য কারণ (Hypotheses) দুটোকে কখনোই গুলিয়ে না ফেলা। আমাদের মাপা ফলাফলগুলো একদম স্পষ্ট: Retrieved Accuracy (89/188) আমাদের সরল Majority Baseline (124/188)-এর নিচে, ইচ্ছাকৃত ভুল তথ্যের Rotated-Context Control-এর স্কোর (107/188) উল্টো বেশি, অথচ সফটওয়্যারের তুলে আনা হুবহু উদ্ধৃতিগুলো (Exact Quotations) শতভাগ বৈধ ছিল। এগুলো হলো নিরেট তথ্য। অন্যদিকে Hash Collisions, Overfitting কিংবা দুর্বল সুপারভিশন (Weak Supervision) হলো এর সম্ভাব্য কারণ বা Hypotheses। একজন প্রকৌশলীর কাজ হলো প্রতিটি অনুমানের বিপরীতে আলাদাভাবে ভুল প্রমাণযোগ্য পরীক্ষা (Falsifiable Test) সাজিয়ে আসল কারণ খুঁজে বের করা।"
+        },
+        {
+          "type": "text",
+          "title": "Feature সংক্রান্ত সম্ভাব্য কারণ",
+          "body": "আমাদের প্রথম সন্দেহের তীর যেতে পারে ফিচারের দিকে। Bag-of-Words ধাঁচের হ্যাশ ফিচারে শব্দের ক্রম, না-বোধক শব্দ (Negation) এবং কে কার ওপর ক্রিয়া করছে সেই সম্পর্ক (Entity Relations) পুরোপুরি হারিয়ে যায়; তার ওপর মাত্র 128টি বাকেটে প্রচুর Collision ঘটে। এটি যাচাই করতে আমরা বাকেট কলিশনের হার, না-বোধক বাক্যের জোড়া এবং সোর্স পেপারের পরিবার ধরে পরীক্ষা চালাতে পারি। তবে মনে রাখবেন, আরও সমৃদ্ধ কোনো Representation বসানো মানে একটি সম্পূর্ণ নতুন গবেষণা—হাতে-কলমে উন্নতি না মেপে আগেভাগেই সাফল্য দাবি করা যাবে না।"
+        },
+        {
+          "type": "math",
+          "title": "পর্যবেক্ষণ থেকে পরীক্ষিত সিদ্ধান্তে যাওয়ার পথ",
+          "body": "\\mathrm{observation}\\ne\\mathrm{cause};\\quad\\mathrm{testable\\ hypothesis}\\to\\mathrm{controlled\\ experiment}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ ব্যর্থতার মূল প্রমাণগুলো আরেকবার যাচাই করি",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/scifact_rag/capstone_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nvariants = lab[\"report\"][\"variants\"]\nassert (\n    variants[\"rotated_context\"][\"summary\"][\"correct\"]\n    > variants[\"retrieved\"][\"summary\"][\"correct\"]\n)\nassert variants[\"retrieved\"][\"summary\"][\"correct\"] < 124\nprint(\"Semantic task deployment gate: not demonstrated.\")\n"
+        },
+        {
+          "type": "text",
+          "title": "Training সংক্রান্ত সম্ভাব্য কারণ",
+          "body": "দ্বিতীয় সন্দেহটি হতে পারে আমাদের ট্রেনিং প্রক্রিয়া নিয়ে: মাত্র 505টি উদাহরণের বিপরীতে 5710টি প্যারামিটার, একই শব্দের অক্ষর বারবার জেনারেট করা, Teacher Forcing-এর একপাক্ষিক অভ্যাস এবং ক্লাসের ভারসাম্যহীনতা (Class Imbalance)। এটি পরীক্ষা করার জন্য আমরা ট্রেনিং বনাম ডায়াগনস্টিক সেটের অ্যাকুরেসি তুলনা (Fit vs. Diagnostic), Learning Curves, একাধিক স্থির সিড এবং ওই একই ফিচারের ওপর একটি অতি সরল Logistic Regression Baseline চালিয়ে দেখতে পারি। সততার খাতিরে বলে রাখা ভালো, বর্তমান রিপোর্টে আমরা কোনো মনগড়া বাড়তি ফলাফল যোগ করিনি।"
+        },
+        {
+          "type": "text",
+          "title": "Retrieval ও Packing সংক্রান্ত সম্ভাব্য কারণ",
+          "body": "তৃতীয়ত, প্যাকিং ধাপে 188টির মধ্যে মাত্র 68টিতে সম্পূর্ণ প্রমাণ (Complete Pack Hits) উঠে আসা এবং বাকিগুলোতে আসল যুক্তি বাদ পড়ে যাওয়া পরের ধাপের জন্য একটি কঠিন সীমা (Downstream Ceiling) তৈরি করে দেয়। ভবিষ্যতে ডিকোডারের নিজস্ব ক্ষমতা আলাদা করে মাপতে আমরা গবেষকদের চিহ্নিত আসল বাক্য সরাসরি ইনপুটে দিয়ে একটি Oracle-Evidence Control পরীক্ষা চালাতে পারি—যদিও বাস্তব প্রোডাকশনে কখনোই Gold Input দেওয়া যাবে না। মোটকথা, নথি খোঁজা, প্যাকিং এবং ডিকোডিংয়ের ভুলগুলোকে সবসময় আলাদাভাবে অডিট করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "পরবর্তী ধাপের Remediation Plan",
+          "body": "এই সমস্যাগুলো সমাধানের পরবর্তী পরিকল্পনাটি হতে হবে সুশৃঙ্খল: কাজ শুরুর আগেই আরও শক্তিশালী বেসলাইন, মডেলের ক্যাপাসিটি ও কন্ট্রোল বাজেট, পেপার-পরিবার আলাদা রেখে নতুন একটি Confirmation Split এবং গ্রহণযোগ্যতার মাপকাঠি (Task Acceptance Criteria) পূর্বঘোষণা (Pre-declare) করতে হবে। কখনোই থ্রেশহোল্ড ঘুরিয়ে জোর করে গেট পাস করানোর চেষ্টা করবেন না। মনে রাখবেন, মডেলের অনুমান (Hypothesis Quality) ব্যর্থ হলেও মূল উদ্ধৃতি খুঁজে দেখার ওয়ার্কবেঞ্চটি একটি স্বচ্ছ প্রকৌশলগত টুল হিসেবে রিভিউযোগ্য থাকতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "সাক্ষাৎকারে যেভাবে ব্যাখ্যা করবেন",
+          "body": "প্রোডাকশন ইনসিডেন্ট রিপোর্ট বা ইন্টারভিউতে সবসময় পাঁচটি অংশ গুছিয়ে বলবেন: সমস্যার প্রভাব (Impact), মাপা পরিধি (Measured Scope), বিকল্প সম্ভাব্য কারণ (Alternative Causes), পরবর্তী পরীক্ষা (Next Tests), এবং নিরাপদ বিকল্প ব্যবস্থা (Rollback/Fallback)। তথ্যপ্রমাণ দেখে নির্দ্বিধায় 'এই মডেলটি এখনো কাজের উপযোগী প্রমাণিত হয়নি' বলতে পারাটাই একজন পরিপক্ব ML Engineer-এর পরিচয়। চকচকে ইউজার ইন্টারফেস বা 100% ফরম্যাট টেস্ট দিয়ে কখনোই অর্থগত ব্যর্থতা (Semantic Failure) ঢেকে রাখা যায় না।"
+        }
+      ]
+    },
+    {
+      "id": "ch29_artifacts",
+      "title": "Reproducible Artifacts, SHA-256 Hashes ও Golden Traces",
+      "subtitle": "শুধু Saved Weights থাকলেই কিন্তু মাঝপথ থেকে হুবহু Training Resume করা যায় না",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "প্রজেক্টের সংরক্ষিত ফাইল ও CLI নিয়ম",
+          "body": "একটি ক্যাপস্টোন প্রজেক্ট তখনই বিশ্বাসযোগ্য হয়, যখন অন্য যে কেউ নিজের মেশিনে ঠিক একই ফাইল ও ফলাফল পুনরুৎপাদন করতে পারেন। আমাদের রিপোজিটরিতে capstone_workflow.py স্ক্রিপ্ট এবং তার থেকে তৈরি capstone_lab.json একসাথে যুক্ত (Bundled) করা আছে। আপনি যখন --artifact-dir ফ্ল্যাগ দিয়ে স্ক্রিপ্টটি চালাবেন, তখন এটি আলাদা ফোল্ডারে মডেলের State Dictionary, Model Card, ট্রেনিং Protocol, Golden Traces এবং ফাইলের Checksums লিখে রাখবে। নিরাপত্তার স্বার্থে সাধারণ ইমপোর্ট বা সাধারণ CLI রান কখনোই মূল বান্ডেল করা অ্যাসেট ফাইল বদলে দেয় না; কেবল --write-labs ফ্ল্যাগ দিলেই সচেতনভাবে মূল ল্যাব ফাইল নতুন করে তৈরি হয়। আর পুরো প্রক্রিয়াটিতে বাইরের ইন্টারনেট থেকে কিছুই ডাউনলোড করার প্রয়োজন হয় না।"
+        },
+        {
+          "type": "text",
+          "title": "SHA-256 Fingerprint ও এর পরিধি",
+          "body": "ডেটা বা ওয়েট ফাইলে এক বিটও এদিক-সেদিক হয়েছে কি না তা ধরার জন্য আমরা মূল Corpus, Index, Train/Dev ফাইল এবং ক্যানোনিক্যাল JSON ওয়েটের SHA-256 হ্যাশ সংরক্ষণ করি। JSON ফরম্যাটে স্পেস বা কী-এর ক্রম বদলে যেন হ্যাশ পাল্টে না যায়, সেজন্য সিরিয়ালাইজারে sort_keys=True এবং কম্প্যাক্ট সেপারেটর (',', ':') কঠোরভাবে নির্দিষ্ট করা হয়েছে। তবে হ্যাশের পরিধি (Hash Scope) বুঝতে হবে: শুধু ওয়েটের হ্যাশ মিলে যাওয়া মানে কিন্তু অপটিমাইজার, রানটাইম কোড বা আর্কিটেকচার কোডের অভিন্নতা প্রমাণিত হওয়া নয়—প্রতিটির নিজস্ব সীমানা স্পষ্টভাবে উল্লেখ করতে হয়।"
+        },
+        {
+          "type": "math",
+          "title": "একটি পূর্ণাঙ্গ Reproducible Artifact বান্ডেল",
+          "body": "\\mathrm{artifact}=\\{\\mathrm{source},\\mathrm{protocol},\\theta,\\mathrm{goldens},\\mathrm{checksums}\\}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Canonical JSON Weight Hash মিলিয়ে দেখি",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/scifact_rag/capstone_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nimport hashlib\n\nw = lab[\"weights\"]\nactual = hashlib.sha256(\n    json.dumps(w, sort_keys=True, separators=(\",\", \":\")).encode()\n).hexdigest()\nassert actual == lab[\"report\"][\"weights_sha256\"]\nassert len(lab[\"history\"]) == 60\nprint(lab[\"report\"][\"protocol\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "Golden Traces কেন সংরক্ষণ করা হয়?",
+          "body": "উপরের কোডে আমরা দেখলাম কীভাবে সেভ করা ওয়েট থেকে হিসাব করা SHA-256 হ্যাশ রিপোর্টের হ্যাশের সাথে কাঁটায় কাঁটায় মিলে গেল এবং ট্রেনিংয়ের 60টি ইপকের ইতিহাসও সংরক্ষিত আছে। এর পাশাপাশি আমরা 6টি মূল উদাহরণের প্রতিটির জন্য তিনটি মোডে (Retrieved, Query-only এবং Empty Budget) সম্পূর্ণ 256-D ফিচার, প্রতিটি ধাপের হিডেন ভেক্টর ও প্রবাবিলিটি ট্রেস, উদ্ধৃতি এবং পলিসি সিদ্ধান্ত Golden Behavior হিসেবে সেভ করে রেখেছি। কেন জানেন? যদি কখনো ডেটা লোড করার ক্রম (Batch Order) বা Source ID মেলানোতে সূক্ষ্ম ভুল হয়ে যায়, তবে সামগ্রিক অ্যাকুরেসি কাকতালীয়ভাবে কাছাকাছি থাকলেও এই Golden Trace পরীক্ষায় সাথে সাথে ধরা পড়ে যাবে!"
+        },
+        {
+          "type": "text",
+          "title": "র‍্যান্ডমনেস নিয়ন্ত্রণ (RNG Policy) ও হার্ডওয়্যারের বাস্তবতা",
+          "body": "ট্রেনিং শতভাগ নিয়ন্ত্রিত রাখতে আমরা মডেলের সিড 29, শাফল সিড 290, CPU float64 প্রিসিশন ব্যবহার করেছি এবং ফাংশন শেষে কলকারীর থ্রেড ও RNG State আগের অবস্থায় ফিরিয়ে (Restore) দিয়েছি। ফলে একই সফটওয়্যার ও হার্ডওয়্যার পরিবেশে পুরো রানটি চালালে বিট-টু-বিট হুবহু একই এক্সপোর্ট পাওয়া যায়। তবে ভিন্ন প্রসেসর আর্কিটেকচার বা ভিন্ন লাইব্রেরি সংস্করণে ফ্লোটিং-পয়েন্ট রাউন্ডিংয়ের কারণে বিট-পর্যায়ের অভিন্নতা (Bit Identity) সবসময় নিশ্চিত নাও হতে পারে; তাই ইনফারেন্সের সংখ্যা মেলানোর সময় আমরা সূক্ষ্ম Tolerance (যেমন 1e-12) ব্যবহার করি।"
+        },
+        {
+          "type": "text",
+          "title": "নিরাপদ রিলোড এবং Inference বনাম Training Resume",
+          "body": "পাইটর্চে নিজের তৈরি সামঞ্জস্যপূর্ণ চেকপয়েন্ট লোড করার সময় সবসময় weights_only=True ব্যবহার করা একটি জরুরি নিরাপত্তা অভ্যাস, যাতে অবিশ্বস্ত পিকল কোড রান না হতে পারে। আরেকটি প্রকৌশলগত পার্থক্য মনে রাখবেন: আমাদের বর্তমান আর্টিফ্যাক্টে কেবল মডেলের ওয়েট রাখা আছে—কোনো Optimizer State, ডেটা শাফল কার্সর বা ইপকের মাঝপথের স্টেট রাখা হয়নি। অর্থাৎ শূন্য থেকে পুরো নির্দিষ্ট রানটি পুনরুৎপাদন করা (Full Fixed-run Reproduce) আর মাঝপথে থেমে যাওয়া ট্রেনিং ঠিক সেখান থেকেই শুরু করা (Mid-training Resume)—দুটোর জন্য আলাদা আর্টিফ্যাক্টের প্রয়োজন হয়।"
+        },
+        {
+          "type": "text",
+          "title": "সাক্ষাৎকারে যেভাবে ব্যাখ্যা করবেন",
+          "body": "ইন্টারভিউতে আর্টিফ্যাক্ট ব্যবস্থাপনা নিয়ে প্রশ্ন এলে বলুন যে যদি কখনো ফাইল বা মডেলের সংস্করণ না মেলে (Version Mismatch), তবে সিস্টেমের উচিত পুরনো ক্যাশ বাতিল (Cache Invalidate) করা, সোর্স জয়েন পরীক্ষা করা এবং Golden Forward Pass চালিয়ে নিশ্চিত হওয়া। পাশাপাশি মনে করিয়ে দিন যে পর্দায় একটি হ্যাশ নম্বর দেখানোই কোনো ক্রিপ্টোগ্রাফিক নিরাপত্তা প্রত্যয়ন (Security Attestation) নয়—ফাইলের অখণ্ডতা, তথ্যের উৎস, অ্যাক্সেস পারমিশন এবং অর্থগত সঠিকতা প্রতিটি আলাদা স্তরের প্রশ্ন।"
+        }
+      ]
+    },
+    {
+      "id": "ch29_testing",
+      "title": "বহুস্তরীয় Testing: Numeric, UI, Migration ও Offline Release",
+      "subtitle": "সফটওয়্যারের প্রতিটি স্তরের প্রমাণ আলাদা রাখি—একটির পাস অন্যটির গ্যারান্টি নয়",
+      "duration": "60 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "গাণিতিক স্তরের পরীক্ষা (Numerical Checks)",
+          "body": "একটি ডিপ লার্নিং অ্যাপ পরীক্ষা করার সময় যদি আপনি PyTorch-এর ফাংশনকে ওই একই PyTorch ফাংশনের আউটপুট দিয়ে টেস্ট করেন, তবে কোডের ভেতরের আসল গাণিতিক ভুল কখনোই ধরা পড়বে না! তাই আমরা স্বাধীনভাবে লেখা খাঁটি NumPy ও Dart কোড দিয়ে হ্যাশ ফিচার, GRU গেটসমূহ, Masked Softmax, প্রতিটি টোকেনের প্রবাবিলিটি এবং হিডেন স্টেট মিলিয়ে পরীক্ষা করি। এর পাশাপাশি সীমান্তবর্তী কেসগুলো—যেমন টোকেন মাস্কিং, EOS থামা, খালি ফিচার ভেক্টর এবং ভুল আকারের ইনপুট (Invalid Shape)—প্রতিটির জন্য আলাদা ইউনিট টেস্ট থাকা অপরিহার্য।"
+        },
+        {
+          "type": "text",
+          "title": "উৎস ও ডেটা সমন্বয়ের পরীক্ষা (Source Checks)",
+          "body": "গাণিতিক হিসাব ঠিক থাকলেও ডেটা জোড়া লাগাতে ভুল হতে পারে। তাই দ্বিতীয় স্তরে আমরা মূল ফাইলের হ্যাশ, মূল উদ্ধৃতি, Citation ইনডেক্সের পরিসর, প্যাক করা কনটেক্সটের বাইট সংখ্যা, Case ID এবং Gold Label-এর জয়েন যাচাই করি। মনে রাখবেন, ডিকোডার কাকতালীয়ভাবে একই শব্দ তৈরি করলেই প্রমাণ হয় না যে সে সঠিক প্রমাণ ইনপুট পেয়েছিল! এজন্যই আমাদের টেস্ট স্যুট পুরো 188টি জোড়ায় মেলানো সারির ক্রম এবং মূল অ্যানোটেশন ধরে ধরে পরীক্ষা করে।"
+        },
+        {
+          "type": "math",
+          "title": "চার স্তরের পূর্ণাঙ্গ Validation কাঠামো",
+          "body": "\\mathrm{validation}=\\mathrm{numeric}+\\mathrm{source}+\\mathrm{state}+\\mathrm{platform}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Runtime ও Trace Invariant-গুলো পরীক্ষা করি",
+          "body": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter29_local\", Path(\"assets/datasets/scifact_rag/capstone_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/scifact_rag/capstone_lab.json\").read_text(encoding=\"utf-8\")\n)\n\ng = dict(format_valid=False, first_token_confidence=0.99)\nassert m.policy(g, True, True)[\"reason\"] == \"invalid_format\"\nfor sample in lab[\"samples\"]:\n    for case in sample[\"cases\"].values():\n        assert len(case[\"features\"]) == 256\n        assert len(case[\"generation\"][\"trace\"]) <= 12\nprint(\"Numerical and runtime contracts are independently checked.\")\n"
+        },
+        {
+          "type": "text",
+          "title": "ইউজার ইন্টারফেস পরীক্ষা (UI Checks)",
+          "body": "তৃতীয় স্তরে আসে ব্যবহারকারীর পর্দার আচরণ। মোবাইল ও ডেস্কটপ আকারের স্ক্রিন, Light ও Dark থিম, কুয়েরি লেখা ও রান বাটন, শূন্য বাজেটে উত্তর আটকানো (Zero-budget Abstention), থ্রেশহোল্ড কন্ট্রোল, উদ্ধৃতি বিকৃত করলে তা প্রত্যাখ্যান ও রিসেট করা, এবং অধ্যায়ের সবগুলো লেসন, কুইজ ও স্ক্র্যাচপ্যাড ঠিকমতো রেন্ডার হচ্ছে কি না—সবই পরীক্ষা করতে হয়। এমনকি ফাইল লোড হতে ব্যর্থ হলে অ্যাপটি ক্র্যাশ না করে পরিষ্কার Error State দেখাচ্ছে কি না, তাও এই স্তরের অংশ।"
+        },
+        {
+          "type": "text",
+          "title": "ডেটা স্থায়িত্ব ও আপগ্রেড পরীক্ষা (Persistence & Migration Checks)",
+          "body": "একজন শিক্ষার্থী যখন আগের অধ্যায় অর্থাৎ Book 4 · Chapter 9 (Diffusion & Multimodal Systems) শেষ করে এই Chapter 10 (LLM/Generative AI Capstone)-এ প্রবেশ করেন বা অ্যাপ আপডেট করেন, তখন তার আগে লেখা নোট, বুকমার্ক, সম্পন্ন করা পাঠের অগ্রগতি, কুইজের উত্তর, কোড ড্রাফট, থিম এবং সর্বশেষ পড়ার অবস্থান যেন হুবহু অক্ষত থাকে! আমাদের ইন্টিগ্রেশন টেস্টগুলো একটি সম্পূর্ণ বিচ্ছিন্ন ডেটাবেসে (Isolated DB) চলে, যাতে শিক্ষার্থীর মূল ডেটাবেস কখনোই মুছে না যায়; আর এই অধ্যায়ের কুইজ পুনরায় দিলে অন্য কোনো অধ্যায়ের উত্তরও প্রভাবিত হয় না।"
+        },
+        {
+          "type": "text",
+          "title": "অফলাইন রিলিজ ও প্ল্যাটফর্ম পরীক্ষা (Release Checks)",
+          "body": "চূড়ান্ত রিলিজের আগে বিল্ড করা APK-র সংস্করণ, ভেতরে থাকা সোর্স অ্যাসেটের বাইট আকার, কোনো গোপন INTERNET পারমিশন না থাকা এবং ফোনের Airplane Mode অন রেখে একদম নতুন করে অ্যাপ চালু হওয়া (Cold Launch) হাতে-কলমে যাচাই করতে হয়। শুধু লগ না দেখে স্প্ল্যাশ স্ক্রিন পেরিয়ে হোম পেজ লোড হওয়া পর্যন্ত নিজের চোখে দেখে নেওয়া জরুরি। আর সততার নিয়ম অনুযায়ী, Android Emulator-এ টেস্ট পাস করলে কেবল অ্যান্ড্রয়েডের কথাই বলুন—macOS ও Xcode-এ আলাদাভাবে না চালিয়ে কখনোই iOS Validation দাবি করবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "সাক্ষাৎকারে যেভাবে ব্যাখ্যা করবেন",
+          "body": "ইন্টারভিউয়ারকে স্পষ্টভাবে বলুন যে সবগুলো সফটওয়্যার টেস্ট পাস করার অর্থ হলো সিস্টেমটি তার গাণিতিক ও কার্যকরী চুক্তি (Functional & Numerical Contract) পূরণ করেছে—এর মানে কিন্তু Semantic Quality Pass নয়! একটি মডেল Majority Baseline-এর কাছে হেরে গিয়েও সফটওয়্যার আর্টিফ্যাক্টের সব পরীক্ষায় 100% উত্তীর্ণ হতে পারে। একজন রিভিউয়ারের সামনে এই দুই শ্রেণির প্রমাণ সবসময় আলাদা করে তুলে ধরতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Truth Table দিয়ে Runtime Gate-এর সবগুলো সমন্বয় যাচাই",
+          "body": "আমাদের লোকাল পলিসি কখন unverified_hypothesis প্রকাশ করে তা নিশ্চিত করতে আমরা একটি নিখুঁত Truth Table পরীক্ষা চালাতে পারি। তিনটি বুলিয়ান শর্ত (context, exact_quote, format_valid) এবং দুটি আত্মবিশ্বাসের মান (0.2 ও 0.99) মিলিয়ে মোট 16টি সম্ভাব্য সমন্বয় তৈরি হয়। থ্রেশহোল্ড 0.9 ধরলে এই 16টি কেসের মধ্যে কেবল একটিমাত্র কেসে—যেখানে তিনটি বুলিয়ান ফ্ল্যাগই True এবং আত্মবিশ্বাস 0.99—আউটপুট প্রকাশিত হওয়া উচিত! এই পরীক্ষাটি আমাদের অপারেশনাল গেটের সীমানা নিশ্ছিদ্রভাবে প্রমাণ করে, যদিও অর্থগত সঠিকতা যাচাইয়ের জন্য আলাদা মানব-অ্যানোটেশন প্রয়োজন।"
+        },
+        {
+          "type": "code",
+          "title": "সবগুলো সমন্বয়ে Policy Helper-এর ১৬-ঘরের Truth Table পরীক্ষা",
+          "body": "import runpy\nfrom itertools import product\n\napi = runpy.run_path(\"assets/datasets/scifact_rag/capstone_workflow.py\")\nemitted = 0\ncases = 0\nfor context, exact, valid, confidence in product(\n    [False, True], [False, True], [False, True], [0.2, 0.99]\n):\n    generation = dict(format_valid=valid, first_token_confidence=confidence)\n    result = api[\"policy\"](generation, exact, context, 0.9)\n    expected = context and exact and valid and confidence >= 0.9\n    assert result[\"emitted\"] == expected\n    cases += 1\n    emitted += result[\"emitted\"]\nprint(cases, emitted)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে চিন্তা করে উত্তর দিন",
+          "body": "উপরের 16টি সমন্বয়ের সবগুলো ইউনিট টেস্ট এবং সব সফটওয়্যার চেক নিখুঁতভাবে পাস করার পরও, মডেলটি বাস্তবে রিলিজ করার সিদ্ধান্ত (Model Release Decision) নিতে আর কী কী বাকি থাকে?",
+          "solution": "বাস্তব রিলিজ সিদ্ধান্তের জন্য তখনো আসল কাজটাই বাকি থাকে—অর্থাৎ অদেখা ডেটায় মডেলের প্রকৃত টাস্ক অ্যাকুরেসি (Held-out Task Accuracy), প্রমাণের প্রতি সংবেদনশীলতা (Evidence Sensitivity), গৃহীত উত্তরের ঝুঁকি (Selective Risk), এবং সঠিক উদ্ধৃতি থাকা উদাহরণগুলোর গভীর অর্থগত পর্যালোচনা (Semantic Review)। সম্ভাব্য ব্যর্থতার ধরন ও নিরাপদ Fallback Contract স্পষ্টভাবে লিখে প্রকৃত Quality Gate-এর মানদণ্ডগুলো আলাদাভাবে পূরণ করতে হবে।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch29_handoff",
+      "title": "Model Card, Product Fallback ও চূড়ান্ত Release সিদ্ধান্ত",
+      "subtitle": "একটি স্বচ্ছ ও রিভিউযোগ্য Prototype কীভাবে অন্য প্রকৌশলী বা স্টেকহোল্ডারের হাতে তুলে দেবেন?",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "একটি সৎ Model Card-এ কী কী থাকতে হবে?",
+          "body": "প্রজেক্ট হস্তান্তরের (Handoff) প্রধান দলিল হলো এর Model Card। এতে মডেলের নির্দিষ্ট কাজ (Task), ব্যবহৃত ফিচার, ইনপুটের মাত্রা ও সীমা, ট্রেনিং ডেটার রোল, সুপারভিশনের ধরন, নিউরাল আর্কিটেকচার, ডিকোডিং পদ্ধতি এবং সবগুলো মেট্রিক ও বেসলাইন পরিষ্কারভাবে লিপিবদ্ধ থাকতে হবে। সবচেয়ে জরুরি অংশ হলো মডেলের জানা ব্যর্থতা (Known Failures) এবং বিকল্প নিরাপত্তা ব্যবস্থা (Fallback Policy) লুকোচুরি না করে স্পষ্ট ভাষায় লিখে দেওয়া। আমাদের এই আর্টিফ্যাক্টটির পরীক্ষিত ব্যবহার হলো কেবল একটি শিক্ষামূলক ওয়ার্কবেঞ্চ (Teaching Workbench); বাস্তব বৈজ্ঞানিক রায় দেওয়া বা চিকিৎসাবিষয়ক পরামর্শ (Clinical Recommendation) দেওয়ার কোনো বৈধতা এই পরীক্ষার পরিধিতে নেই।"
+        },
+        {
+          "type": "text",
+          "title": "প্রোডাক্টের নিরাপদ Fallback নকশা",
+          "body": "যখন দেখা যায় নিউরাল মডেলটি অর্থগত মানদণ্ডে উত্তীর্ণ হতে পারেনি, তখনো কি পুরো সফটওয়্যারটি ফেলনা হয়ে যায়? মোটেই না! মূল গবেষণাপত্র থেকে হুবহু উদ্ধৃতি খুঁজে এনে পাঠকের চোখের সামনে তুলে ধরা (Source Quotation Inspection) নিজেই একটি অত্যন্ত কার্যকর ইঞ্জিনিয়ারিং Fallback—যদিও এটি স্বয়ংক্রিয়ভাবে প্রশ্নের উত্তর প্রমাণ করে না। এমন অবস্থায় প্রোডাক্টের দায়িত্ব হলো মডেলের অনুমানকে স্পষ্টভাবে unverified লেবেল দিয়ে রাখা অথবা পুরোপুরি বন্ধ (Disable) করে রাখা। কখনোই নিছক কনফিডেন্স বা সাইটেশন গেট বসিয়ে একটি ব্যর্থ মডেলের আউটপুটকে 'প্রমাণিত উত্তর' (Verified Answer) বলে চালিয়ে দেবেন না।"
+        },
+        {
+          "type": "math",
+          "title": "প্রোডাকশনে Ship করার ত্রিমুখী শর্ত",
+          "body": "\\mathrm{ship\\ decision}=\\mathrm{functional\\ readiness}\\land\\mathrm{task\\ acceptance}\\land\\mathrm{operational\\ constraints}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ চূড়ান্ত রিপোর্টের সীমাবদ্ধতা ও Fallback নীতি দেখি",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/scifact_rag/capstone_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nr = lab[\"report\"]\nassert r[\"variants\"][\"retrieved\"][\"summary\"][\"accuracy\"] < r[\"majority_accuracy\"]\nassert all(\"limits\" in lab[\"report\"] for _ in [0])\nprint(\"Fallback: inspect exact source quotations;hypotheses remain unverified.\")\n"
+        },
+        {
+          "type": "text",
+          "title": "অপারেশনাল পরিধি ও পারফরম্যান্সের বাস্তবতা",
+          "body": "সিস্টেমটির অপারেশনাল পরিবেশ সম্পর্কেও সুনির্দিষ্ট তথ্য দিন: পুরো পাইপলাইনটি অফলাইনে চলে, ডার্ট CPU-তে ইনফারেন্স হয়, লোকাল পাইথনে ট্রেনিং হয় এবং সব অ্যাসেট ভার্সন করা থাকে। এখানে কোনো ক্লাউড API, লগইন ব্যবস্থা, সার্ভার ল্যাটেন্সি বেঞ্চমার্ক কিংবা GPU Throughput মাপা হয়নি। অ্যাপটি প্রথমবার চালু হওয়ার সময় ডেটা সিডিং বা SQLite লোড হতে কিছুটা সময় লাগতে পারে; তাই যতটুকু প্ল্যাটফর্ম পরীক্ষা সত্যিই চালানো হয়েছে, ঠিক ততটুকুই দাবি করুন।"
+        },
+        {
+          "type": "text",
+          "title": "পরিবর্তন নিয়ন্ত্রণ (Change Control)",
+          "body": "ভবিষ্যতে অন্য কোনো প্রকৌশলী যদি এই প্রজেক্টে নতুন Corpus, নতুন মডেল, ভিন্ন Tokenizer, নতুন ফিচার, ভিন্ন স্যাম্পলার কিংবা আউটপুট ফরম্যাট যোগ করেন, তবে মনে রাখতে হবে যে এর ফলে আগের সব Golden Traces, ক্যাশ চুক্তি এবং মূল্যায়ন ফলাফল বাতিল (Invalidate) হয়ে যেতে পারে। তাই অপ্রয়োজনীয় অথেনটিকেশন বা ক্লাউড ডিপ্লয়মেন্টের জটিলতা না বাড়িয়ে একটি পরিষ্কার রিলিজ চেকলিস্ট ও রিভিউযোগ্য আর্টিফ্যাক্টের মাধ্যমেই দলগতভাবে কাজ এগিয়ে নিন।"
+        },
+        {
+          "type": "text",
+          "title": "চূড়ান্ত Go / No-Go সিদ্ধান্ত",
+          "body": "তাহলে আমাদের এই ক্যাপস্টোন প্রজেক্টের চূড়ান্ত রায় কী? সফটওয়্যার ও এমএল পাইপলাইনের স্বচ্ছতার বিচারে আমাদের এই Functional Prototype-টি শিক্ষামূলক রিভিউয়ের জন্য সম্পূর্ণ প্রস্তুত (Go for Learning Review)। কিন্তু বৈজ্ঞানিক প্রশ্নের উত্তর দেওয়ার অর্থগত উপযোগিতার বিচারে এটি উত্তীর্ণ নয় (No-Go for Semantic Deployment)—কারণ এর স্কোর 89/188 সরল Majority Baseline (124/188)-এর নিচে এবং ভুল কনটেক্সটে স্কোর উল্টো বেশি। ডেটা লিকেজ ছাড়া আরও শক্তিশালী ও নিয়ন্ত্রিত পরীক্ষায় সাফল্য প্রমাণিত না হওয়া পর্যন্ত এটিকে কখনোই স্বয়ংক্রিয় বৈজ্ঞানিক সহকারী হিসেবে দাবি করা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "সাক্ষাৎকারে যেভাবে ব্যাখ্যা করবেন",
+          "body": "ইন্টারভিউতে নন-টেকনিক্যাল স্টেকহোল্ডার বা প্রোডাক্ট ম্যানেজারকে মাত্র এক অনুচ্ছেদে পুরো চিত্রটি বুঝিয়ে বলার অভ্যাস করুন: আমাদের কাজটি কী ছিল, পরীক্ষায় কী ব্যর্থতা ধরা পড়েছে, ইউজারের জন্য নিরাপদ Fallback কী থাকছে এবং পরের ধাপে আমরা ঠিক কী মাপব। তাদের বুঝিয়ে বলুন যে ডেটা ও কোড শতভাগ Reproducible হওয়া আর মডেলটি ব্যবসায়িকভাবে Useful হওয়া—দুটি সম্পূর্ণ স্বাধীন মাত্রা। একটি সৎ ও তথ্যনিষ্ঠ No-Go Analysis যেকোনো কৃত্রিম সাফল্যের চেয়ে অনেক বেশি শক্তিশালী ক্যাপস্টোন ডেলিভারেবল!"
+        }
+      ]
+    },
+    {
+      "id": "ch29_interview",
+      "title": "Capstone Defense: গাণিতিক Derivation, Code ও System Design",
+      "subtitle": "ইন্টারভিউ বোর্ডে নিজের প্রতিটি প্রকৌশলগত সিদ্ধান্ত তথ্যপ্রমাণ দিয়ে প্রতিষ্ঠা করুন",
+      "duration": "45 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "দশ মিনিটের সুসংহত প্রজেক্ট উপস্থাপনা (Ten-minute Defense)",
+          "body": "ধরুন ইন্টারভিউ বোর্ডে আপনাকে বলা হলো দশ মিনিটে আপনার এই Capstone প্রজেক্টটি ব্যাখ্যা করতে। শুরুটা করুন ইউজারের আসল কাজ ও তার সীমাবদ্ধতা দিয়ে; এরপর বলুন শুরুর টোকেন ও ফিচারগুলো কীভাবে তৈরি হয়, সোর্স ডেটার চুক্তি কী এবং কেন পুরো সিস্টেমটি অফলাইন সীমার মধ্যে রাখা হয়েছে। এরপর একটি বাস্তব Query ধরে পুরো পাইপলাইনটি শুরু থেকে শেষ পর্যন্ত হাঁটিয়ে দেখান—এবং স্পষ্টভাবে আলাদা করে দেখান কীভাবে নিউরাল মডেল কেবল উত্তরের শব্দটি (support বা contradict) জেনারেট করে, আর সফটওয়্যার মূল পেপার থেকে হুবহু উদ্ধৃতি কপি করে আনে।"
+        },
+        {
+          "type": "text",
+          "title": "হোয়াইটবোর্ডে গাণিতিক প্রস্তুতি (Whiteboard Readiness)",
+          "body": "বোর্ডে সমীকরণ লেখার জন্য ছয়টি জায়গা একদম নখদর্পণে রাখুন: হ্যাশ বাকেটের গণনা ও L2 Normalization, পাইটর্চের GRU গেটগুলোর (r, z, n) সঠিক ক্রম ও সমীকরণ, অবৈধ টোকেন বাদ দিয়ে Masked Softmax, প্যাডিং বাদ দিয়ে Response-only Cross-Entropy Loss, রানটাইম পলিসির বুলিয়ান সংযোগ এবং গৃহীত সেটের Conditional Risk। বোর্ডে দাঁড়িয়ে পরিষ্কার যুক্তি দিন কেন রানটাইমে Gold Label ইনপুট হতে পারে না, এবং কেন চূড়ান্ত শব্দ (argmax) মিলে যাওয়ার পরও ভেতরের প্রবাবিলিটি ভুল হতে পারে।"
+        },
+        {
+          "type": "math",
+          "title": "যুক্তিনির্ভর Capstone Defense-এর পাঁচ স্তম্ভ",
+          "body": "\\mathrm{defense}=\\mathrm{contract}+\\mathrm{trace}+\\mathrm{control}+\\mathrm{failure}+\\mathrm{next\\ test}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ এক কমান্ডে পুরো প্রজেক্ট Reproduce করার যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/scifact_rag/capstone_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nassert len(lab[\"samples\"]) == 6 and len(lab[\"variants\"]) == 3\nassert lab[\"report\"][\"protocol\"][\"updates\"] == 480\nassert lab[\"report\"][\"protocol\"][\"max_generated_tokens\"] == 12\nprint(\n    \"Reproduce: python assets/datasets/scifact_rag/capstone_workflow.py --artifact-dir output29\"\n)\n"
+        },
+        {
+          "type": "text",
+          "title": "সংখ্যার ভাষায় নিখুঁত গল্প বলা (Evidence Narrative)",
+          "body": "সংখ্যার হিসাব বলার সময় যেন কোনো অস্পষ্টতা না থাকে: প্যাকিং ধাপে 68টি সম্পূর্ণ র‍্যাশনাল হিট, ডিকোডারের 89টি সঠিক লেবেল, দুয়ে মিলে 33টি জয়েন্ট হিট, বিপরীতে মেজরিটি বেসলাইনের 124টি এবং রোটেটেড কন্ট্রোলের 107টি সঠিক উত্তর—প্রতিটি সংখ্যা তার সঠিক হর (188টি মোট উদাহরণ বনাম 0.9 থ্রেশহোল্ডে গৃহীত 119টি উদাহরণ) সহ উল্লেখ করুন। ভুল কনটেক্সটের কন্ট্রোলে বেশি নম্বর পাওয়াটাকে কোনো জাদুকরী প্রমাণ না বানিয়ে সেটিকে একটি বৈজ্ঞানিক সূত্র হিসেবে ধরুন এবং তা যাচাই করার পরবর্তী হাইপোথিসিস টেস্ট ডিজাইন করে দেখান।"
+        },
+        {
+          "type": "text",
+          "title": "কোডিং অনুশীলনের চূড়ান্ত প্রস্তুতি",
+          "body": "এই অধ্যায়ের শেষে দেওয়া 10টি কোডিং অনুশীলনী নিজের লোকাল পাইথন পরিবেশে চালিয়ে হাতে-কলমে সমাধান করুন। মনে রাখবেন, অ্যাপের ভেতরের নিউমেরিক চেকপয়েন্ট এবং ড্রাফট সেভ ফিচার আপনার লেখা পাইথন কোড সরাসরি এক্সিকিউট করে না; আমাদের স্বতন্ত্র কোয়ালিটি টেস্টে পূর্ণ সমাধানগুলো যাচাই করা থাকলেও, নিজের হাতে প্রতিটি Edge Case লিখে ও বুঝে নেওয়াই আপনাকে আসল ইন্টারভিউয়ের জন্য তৈরি করবে।"
+        },
+        {
+          "type": "text",
+          "title": "পূর্ণাঙ্গ Review Deliverable প্যাকেজ",
+          "body": "একজন পেশাদার প্রকৌশলীর মতো রিভিউয়ারের হাতে পুরো প্যাকেজটি তুলে দিন: Model Card, ট্রেনিং Protocol, ওয়েট ও সোর্স ফাইলের হ্যাশ, পূর্ণাঙ্গ ট্রেস, মেট্রিকের সংজ্ঞা, জানা ব্যর্থতার তালিকা এবং পরবর্তী গবেষণার নকশা। ইন্টারভিউয়ার যদি কথার মাঝখানে প্রজেক্টের শর্ত বা পরিধি বদলে নতুন প্রশ্ন করেন ('ধরুন এখানে 7B প্যারামিটারের মডেল দিলে কী হতো?'), তবে বাস্তব পরীক্ষা না চালিয়ে কখনোই মনগড়া নতুন কোনো সংখ্যার দাবি (Numeric Claim) করবেন না—বরং কীভাবে সেই পরীক্ষাটি সাজাবেন তা বলুন।"
+        },
+        {
+          "type": "text",
+          "title": "সমাপনী কথা ও Book 5-এর আমন্ত্রণ",
+          "body": "অভিনন্দন! এই Capstone প্রজেক্টের ব্যর্থতা বিশ্লেষণ, Negative Controls, Runtime Gate-এর প্রকৃত অর্থ এবং Reproducible Artifact Contract সার্থকভাবে ডিফেন্ড করতে পারার মাধ্যমে আপনি Book 4 (LLMs, RAG & Generative AI)-এর পুরো যাত্রাটি পূর্ণতা দিলেন। এবার কুইজ, কোডিং অনুশীলনী ও ইন্টারভিউ প্রশ্নগুলো ঝালিয়ে নিয়ে প্রস্তুত হোন আমাদের পরবর্তী বই Book 5 (Recommender Systems) · Chapter 1 (Recommendation Foundations)-এর জন্য—যেখানে আমরা জানব কীভাবে মানুষের পছন্দ ও আচরণের ইতিহাস থেকে Recommendation Task, Temporal Split এবং Neighborhood Baselines তৈরি করতে হয়!"
+        }
+      ]
+    }
+  ],
+  "quizzes": [
+    {
+      "id": "ch29_q1",
+      "question": "আমাদের এই Capstone প্রজেক্টের Conditional Decoder-টি আসলে কী Generate করে?",
+      "options": [
+        "কেবল support বা contradict শব্দের অক্ষরগুলো এবং সমাপ্তিসূচক EOS টোকেন",
+        "নিজের মনগড়াভাবে মূল গবেষণাপত্রের উদ্ধৃতি (Source Quotations)",
+        "মুক্তভাবে লেখা পূর্ণাঙ্গ বৈজ্ঞানিক প্রবন্ধ পর্যালোচনা (Free-form Scientific Review)",
+        "বৃহৎ Pretrained Chat মডেলের মতো কথোপকথনমূলক উত্তর"
+      ],
+      "answer": 0,
+      "explanation": "এটি একটি ছোট এবং নির্দিষ্ট কাজের জন্য তৈরি Autoregressive Word Decoder। মূল নথির উদ্ধৃতিগুলো সফটওয়্যার সরাসরি কপি করে আনে; এখানে কোনো উন্মুক্ত LLM-এর সক্ষমতা দাবি করা হয়নি।"
+    },
+    {
+      "id": "ch29_q2",
+      "question": "রানটাইমে (Inference Time) আমাদের Retrieval কিংবা Policy Gate কি ডেটাসেটের Gold Rationale পড়ে সিদ্ধান্ত নেয়?",
+      "options": [
+        "হ্যাঁ, অনুপস্থিত প্রমাণ পূরণ করার জন্য Gold ডেটা পড়া হয়",
+        "না, রানটাইম পাইপলাইন সম্পূর্ণভাবে Gold-free থাকে",
+        "শুধুমাত্র সঠিক উত্তরগুলোর ক্ষেত্রে Gold Rationale দেখা হয়",
+        "ডিফল্ট হিসেবে একটি গোপন Oracle Mode চালু থাকে"
+      ],
+      "answer": 1,
+      "explanation": "Gold Labels কেবল ট্রেনিংয়ের Target হিসেবে এবং Gold Rationales অফলাইন Diagnostics-এ ব্যবহৃত হয়; বাস্তব Runtime Gate কখনোই Gold ডেটা স্পর্শ করে না।"
+    },
+    {
+      "id": "ch29_q3",
+      "question": "প্রমাণ চিহ্নিত থাকা (Annotated) আমাদের Fit এবং Diagnostic সেটের উদাহরণের সংখ্যা কত?",
+      "options": [
+        "809 / 300 (মূল সেটের সবগুলোই অ্যানোটেটেড)",
+        "5183 / 45952",
+        "505 / 188",
+        "188 / 505"
+      ],
+      "answer": 2,
+      "explanation": "মূল 809টি Train ও 300টি Dev দাবির মধ্যে সুনির্দিষ্ট প্রমাণযুক্ত (Rationale-bearing) অংশটুকু নিয়েই 505টি Fit এবং 188টি Diagnostic উদাহরণ তৈরি হয়েছে। অ্যানোটেশন না থাকাকে কখনোই Negative Label ধরা হয়নি।"
+    },
+    {
+      "id": "ch29_q4",
+      "question": "আমাদের Context Packing ধাপে নির্ধারিত 1024 বাজেটটি কোন এককে (Unit) মাপা হয়?",
+      "options": [
+        "মডেলের Subword Tokens এককে",
+        "সবসময় সাধারণ অক্ষরের (Characters) সংখ্যায়",
+        "Decoder-এর আউটপুট টোকেনের সংখ্যায়",
+        "Citation ও Newline-সহ ফরম্যাট করা UTF-8 Bytes এককে"
+      ],
+      "answer": 3,
+      "explanation": "এই 1024 সীমাটি হলো Citation এবং Newline-সহ সাজানো স্ট্রিংয়ের প্রকৃত UTF-8 বাইট সংখ্যা; এটি কোনো LLM Tokenizer বা পূর্ণ প্রম্পটের টোকেন বাজেট নয়।"
+    },
+    {
+      "id": "ch29_q5",
+      "question": "ডিকোডারকে শর্তযুক্ত করার জন্য আমরা কী ধরনের Input Features ব্যবহার করেছি?",
+      "options": [
+        "Query ও Context-এর জন্য আলাদাভাবে নরমালাইজ করা দুটি 128-D Hash-count ব্লক",
+        "বৃহৎ কর্পাসে আগে থেকে ট্রেন করা ঘন Semantic Embeddings",
+        "গবেষকদের দেওয়া Gold Rationale-এর One-hot ভেক্টর",
+        "পুরো বাক্যের ক্রম ধরে রাখা Full-sequence Attention Memory"
+      ],
+      "answer": 0,
+      "explanation": "প্রতিটি ব্লকে 128টি FNV-1a বাকেটে log1p গণনা ও L2 Normalization চালিয়ে জোড়া লাগিয়ে 256-D ভেক্টর তৈরি করা হয়। এতে Hash Collision ঘটে এবং শব্দের ক্রম (Word Order) হারিয়ে যায়।"
+    },
+    {
+      "id": "ch29_q6",
+      "question": "আমাদের Conditional Decoder-এ GRU-এর Hidden State-এর আকার (Hidden Size) কত?",
+      "options": [
+        "256",
+        "16",
+        "128",
+        "14"
+      ],
+      "answer": 1,
+      "explanation": "আর্কিটেকচার অনুযায়ী Condition Projection হলো 256 -> 16, Token Embedding 14 x 8, GRUCell 8 -> 16, এবং Output Head হলো 16 -> 14। সুতরাং Hidden Size হলো 16।"
+    },
+    {
+      "id": "ch29_q7",
+      "question": "PyTorch-এর GRUCell ইমপ্লিমেন্টেশনে নতুন Candidate State (n) হিসাব করার সঠিক সমীকরণ কোনটি?",
+      "options": [
+        "tanh(W_h(r ⊙ h)), যা সব সংস্করণে একই ফল দেয়",
+        "r + z",
+        "tanh(i_n + r ⊙ h_n), যেখানে h_n-এর ভেতরে Hidden Bias যুক্ত থাকে",
+        "softmax(h)"
+      ],
+      "answer": 2,
+      "explanation": "PyTorch-এ হিডেন অ্যাফাইন রূপান্তরের (Bias যোগ হওয়ার) পরে Reset Gate r গুণ করা হয়। অন্য কোনো পাঠ্যবইয়ের সমীকরণ বসালে এক্সপোর্ট করা Checkpoint-এর সাথে সংখ্যার অমিল ঘটবে।"
+    },
+    {
+      "id": "ch29_q8",
+      "question": "আউটপুট জেনারেট করার সময় আমাদের Legal Output Mask কোন টোকেনগুলোকে বাদ (Exclude) দেয়?",
+      "options": [
+        "EOS টোকেনকে",
+        "সবগুলো ইংরেজি অক্ষরকে",
+        "শুধুমাত্র contradict শব্দটিকে",
+        "PAD এবং BOS টোকেন দুটিকে"
+      ],
+      "answer": 3,
+      "explanation": "আউটপুট হেড থেকে PAD এবং BOS-এর Logits মাস্ক করে বাদ দেওয়া হয়, তবে EOS একটি বৈধ আউটপুট ও টার্গেট টোকেন। এখানে জোর করে সঠিক বানান চাপিয়ে দেওয়া হয় না।"
+    },
+    {
+      "id": "ch29_q9",
+      "question": "ট্রেনিংয়ের সময় Teacher Forcing পদ্ধতিতে পরের টোকেন অনুমান করার জন্য মডেল কী ইনপুট হিসেবে দেখে?",
+      "options": [
+        "আসল উত্তরের আগের নির্ভুল অক্ষরগুলো (Gold Previous Response Prefix)",
+        "সবসময় মডেলের নিজের তৈরি করা সম্ভাব্য অক্ষরগুলো",
+        "ভবিষ্যতের সোর্স নথির Gold Rationale",
+        "Dev সেটের উত্তরের গোপন ID"
+      ],
+      "answer": 0,
+      "explanation": "ট্রেনিংয়ে মডেল আসল প্রিফিক্স দেখলেও Inference-এর সময় নিজের তৈরি প্রিফিক্স দেখে, ফলে Exposure Bias তৈরি হয়। তাই কম Token NLL মানেই নিখুঁত শব্দ তৈরির গ্যারান্টি নয়।"
+    },
+    {
+      "id": "ch29_q10",
+      "question": "আমাদের Greedy Decoding লুপে সর্বোচ্চ কয়টি টোকেন জেনারেট করার সীমা (Cap) নির্ধারণ করা আছে?",
+      "options": [
+        "1024",
+        "12",
+        "256",
+        "188"
+      ],
+      "answer": 1,
+      "explanation": "মডেল EOS টোকেন তৈরি করলে তার আগেই থেমে যায়, অন্যথায় সর্বোচ্চ 12টি টোকেনে এসে ডিকোডিং সমাপ্ত হয়। এতে কোনো অসীম লুপ তৈরি হতে পারে না।"
+    },
+    {
+      "id": "ch29_q11",
+      "question": "একটি বৈধ Citation এবং মূল নথির সাথে অক্ষরে অক্ষরে মেলা উদ্ধৃতি (Exact Quote) আসলে কী প্রমাণ করে?",
+      "options": [
+        "বৈজ্ঞানিক দাবিটি জাগতিকভাবে সত্য",
+        "উদ্ধৃতিটি সর্বদা দাবিটিকে বৈজ্ঞানিকভাবে সমর্থন (Entailment) করে",
+        "উদ্ধৃতিটি সত্যিই মূল উৎস নথি থেকে অবিকৃতভাবে এসেছে (Source Provenance)",
+        "মডেলের Confidence স্কোর শতভাগ Calibrated"
+      ],
+      "answer": 2,
+      "explanation": "Exact Quote কেবল নিশ্চিত করে যে টেক্সটটি মূল পেপারেই ঠিক ওইভাবে আছে; কিন্তু তা দাবিকে সমর্থন করছে, খণ্ডন করছে নাকি অপ্রাসঙ্গিক—তা যাচাই করতে আলাদা বিশ্লেষণ প্রয়োজন।"
+    },
+    {
+      "id": "ch29_q12",
+      "question": "যদি আমরা Context Byte Budget কমিয়ে 0 করে দিই, তবে আমাদের Runtime Policy কী সিদ্ধান্ত দেবে?",
+      "options": [
+        "সরাসরি contradict রায় দেবে",
+        "প্রমাণিত support হিসেবে প্রকাশ করবে",
+        "গোপনে Gold ডেটা থেকে উত্তর নেবে",
+        "no_context কারণ দেখিয়ে উত্তর প্রকাশ স্থগিত রাখবে"
+      ],
+      "answer": 3,
+      "explanation": "বাজেট শূন্য হওয়ায় প্যাকার কোনো সোর্স পাঠাতে পারে না, ফলে গেট no_context স্ট্যাটাস দেয়। তবে এতে দাবিটি মিথ্যা বা উত্তরহীন প্রমাণিত হয় না।"
+    },
+    {
+      "id": "ch29_q13",
+      "question": "কোনো উদ্ধৃতির Citation ID বৈধ থাকা সত্ত্বেও যদি তার ভেতরের টেক্সট সামান্য সম্পাদনা (Edit) করা হয়, তবে Runtime Gate কী করবে?",
+      "options": [
+        "citation_mismatch কারণ দেখিয়ে আউটপুট প্রত্যাখ্যান করবে",
+        "আইডি বৈধ বলে স্বয়ংক্রিয়ভাবে ভেরিফাই করে নেবে",
+        "ডিকোডারের উচ্চ Confidence থাকলে পরিবর্তনটি উপেক্ষা করবে",
+        "সবসময় no_context দেখাবে"
+      ],
+      "answer": 0,
+      "explanation": "আইডি খুঁজে পাওয়া (Resolvable ID) এবং উদ্ধৃতির হুবহু মিল (Exact Quote) আলাদা দুটি পরীক্ষা। আমাদের Mutation Audit যেকোনো বিকৃত উদ্ধৃতিকে সাথে সাথে আটকে দেয়।"
+    },
+    {
+      "id": "ch29_q14",
+      "question": "আমাদের পরীক্ষায় Retrieved Context ব্যবহার করে ডিকোডারের প্রকৃত Label Accuracy কত পাওয়া গেছে?",
+      "options": [
+        "188/188",
+        "89/188",
+        "124/188",
+        "68/188"
+      ],
+      "answer": 1,
+      "explanation": "188টি উদাহরণের সবকটিতেই ফরম্যাট বৈধ হলেও সঠিক লেবেল এসেছে 89টিতে, সম্পূর্ণ র‍্যাশনাল হিট 68টিতে এবং জয়েন্ট হিট 33টিতে। ফরম্যাট এবং অর্থগত সঠিকতা সম্পূর্ণ আলাদা মেট্রিক।"
+    },
+    {
+      "id": "ch29_q15",
+      "question": "188টি Diagnostic উদাহরণের ওপর সরল Majority Baseline-এর অ্যাকুরেসি কত?",
+      "options": [
+        "89/188",
+        "33/188",
+        "124/188",
+        "187/188"
+      ],
+      "answer": 2,
+      "explanation": "ডেটাসেটে SUPPORT ক্লাস সংখ্যাগরিষ্ঠ হওয়ায় শুধু সেটি অনুমান করলেই 124/188 পাওয়া যায়। আমাদের মডেল (89/188) এই বেসলাইনের চেয়ে পিছিয়ে থাকায় টাস্কের উপযোগিতা প্রমাণিত হয়নি।"
+    },
+    {
+      "id": "ch29_q16",
+      "question": "ইচ্ছাকৃতভাবে ভুল প্রমাণ দেওয়া Rotated-Context Control পরীক্ষায় আমাদের মডেলের ফলাফল কী হয়েছিল?",
+      "options": [
+        "বাধ্যতামূলকভাবে 0/188 হয়েছিল",
+        "এই প্রজেক্টে এমন কোনো কন্ট্রোল মাপা হয়নি",
+        "মডেলটির নিখুঁত Grounded Reasoning প্রমাণিত হয়েছিল",
+        "107/188 সঠিক হয়েছিল, যা আসল Retrieved Context-এর চেয়েও বেশি"
+      ],
+      "answer": 3,
+      "explanation": "আমরা ব্যর্থতার এই কন্ট্রোল ফলাফলটি অকপটে সংরক্ষণ করেছি। ভুল কনটেক্সটে বেশি স্কোর পাওয়া সুস্থ Grounding নয়; বরং এটি মডেলের শর্টকাট বা অস্থিতিশীলতা খতিয়ে দেখার দাবি রাখে।"
+    },
+    {
+      "id": "ch29_q17",
+      "question": "আমাদের Query-only Control পরীক্ষাটিকে কি আলাদাভাবে ট্রেন করা একটি ন্যায্য Query-only Baseline মডেল বলা যায়?",
+      "options": [
+        "না, এটি একই Frozen Weights রেখে ইনপুট কনটেক্সট শূন্য করে দেওয়ার একটি Ablation পরীক্ষা",
+        "হ্যাঁ, এজন্য সম্পূর্ণ নতুন একটি মডেল ট্রেন করা হয়েছে",
+        "এটি একটি Gold Oracle পরীক্ষা",
+        "এটি দুটি প্রোডাকশন আর্কিটেকচারের চূড়ান্ত তুলনা"
+      ],
+      "answer": 0,
+      "explanation": "এখানে মডেলের ওয়েট অপরিবর্তিত রেখে কেবল কনটেক্সট ব্লকটি শূন্য করে ইনপুটের নির্ভরশীলতা দেখা হয়েছে। আলাদাভাবে ট্রেন করা বেসলাইন বা মাল্টি-সিড স্টাডি ভিন্ন একটি পরীক্ষা।"
+    },
+    {
+      "id": "ch29_q18",
+      "question": "স্কোরকার্ডের Control সারিগুলোতে দেখানো Rationale Hit সংখ্যাটি কোন প্যাকের সাপেক্ষে হিসাব করা হয়েছে?",
+      "options": [
+        "রোটেট করা ভুল ডিকোডার কনটেক্সটের Entailment সাপেক্ষে",
+        "মূল দাবির জন্য তৈরি Original Retrieved Pack-এর সাপেক্ষে",
+        "ডিকোডারের তৈরি করা কাল্পনিক সাইটেশনের সাপেক্ষে",
+        "রানটাইমের কোনো গোপন Ground-truth প্যাকের সাপেক্ষে"
+      ],
+      "answer": 1,
+      "explanation": "হিসাবরক্ষণের সমতা বজায় রাখতে Original Pack-এর র‍্যাশনাল হিটই রাখা হয়েছে। তাই কন্ট্রোল সারির Joint Metric কেবল একটি বর্ণনামূলক সংযোগ, ভুল কনটেক্সটের অর্থগত সমর্থন নয়।"
+    },
+    {
+      "id": "ch29_q19",
+      "question": "আমাদের Runtime Gate-এ ব্যবহৃত Confidence স্কোরটি আসলে কোন গাণিতিক রাশি?",
+      "options": [
+        "পুরো বাক্যটির জাগতিক সত্য হওয়ার প্রবাবিলিটি",
+        "একটি পরীক্ষিত Calibration Certificate",
+        "জেনারেট করা প্রথম টোকেনের বৈধ ভোকাবুলারির মধ্যকার সর্বোচ্চ প্রবাবিলিটি",
+        "সোর্স নথিতে প্রমাণের প্রাপ্যতা (Rationale Availability)"
+      ],
+      "answer": 2,
+      "explanation": "প্রথম অক্ষর ('s' বা 'c') নিয়ে মডেল আত্মবিশ্বাসী হলেও চূড়ান্ত বৈজ্ঞানিক লেবেল ভুল হতে পারে। এছাড়া 0.9 থ্রেশহোল্ডটি কেবল ডায়াগনস্টিক উদাহরণ, কোনো প্রোডাকশন সুপারিশ নয়।"
+    },
+    {
+      "id": "ch29_q20",
+      "question": "Confidence Threshold বাড়িয়ে 1.0 করার ফলে যদি একটি উদাহরণও গৃহীত না হয় (Empty Accepted Set), তবে গৃহীত সেটের Risk কত হবে?",
+      "options": [
+        "0 (অর্থাৎ শতভাগ নিখুঁত নিরাপত্তা)",
+        "সবসময় 1",
+        "100% Accuracy",
+        "Undefined বা Null (অসংজ্ঞায়িত)"
+      ],
+      "answer": 3,
+      "explanation": "যখন Coverage = 0, তখন Conditional Risk ও Accuracy-র হর শূন্য হয়ে যায়। তাই এটিকে শতভাগ নিরাপদ না বলে সততার সাথে Undefined/Null হিসেবে রিপোর্ট করতে হয়।"
+    },
+    {
+      "id": "ch29_q21",
+      "question": "Retrieved মোডে কঠোর Threshold = 0.9 প্রয়োগ করলে 188টির মধ্যে কয়টি উদাহরণ গৃহীত (Accepted) হয়?",
+      "options": [
+        "119",
+        "188",
+        "0",
+        "505"
+      ],
+      "answer": 0,
+      "explanation": "থ্রেশহোল্ড 0.9-এ 119টি উদাহরণ গৃহীত হয়, যার মধ্যে 63টি সঠিক এবং 56টি ভুল (অর্থাৎ Risk = 56/119)। মূল্যায়নে সবসময় Coverage এবং Risk পাশাপাশি দেখতে হয়।"
+    },
+    {
+      "id": "ch29_q22",
+      "question": "রিপোর্টে সংরক্ষিত Canonical Weights SHA-256 হ্যাশটি ঠিক কতটুকু বিষয়ের অভিন্নতা নিশ্চিত করে?",
+      "options": [
+        "মাঝপথ থেকে হুবহু ট্রেনিং পুনরায় শুরু করার (Full Training Resume) সব স্টেট",
+        "নির্দিষ্ট JSON সিরিয়ালাইজেশন নিয়মের অধীনে সেভ করা ওয়েটের সংখ্যাগুলোর অভিন্নতা",
+        "সফটওয়্যারের সমস্ত নিরাপত্তা বৈশিষ্ট্য (Security Properties)",
+        "স্বয়ংক্রিয়ভাবে প্রতিটি সোর্স নথির লাইসেন্স বৈধতা"
+      ],
+      "answer": 1,
+      "explanation": "sort_keys এবং কম্প্যাক্ট সেপারেটর দিয়ে তৈরি এই হ্যাশটি কেবল ওয়েটের মানগুলোর অখণ্ডতা দেখে; অপটিমাইজার স্টেট, RNG কার্সর, রানটাইম কোড ও সোর্স ডেটার জন্য আলাদা চেক প্রয়োজন।"
+    },
+    {
+      "id": "ch29_q23",
+      "question": "সবগুলো সফটওয়্যার ও Functional Test পাস করার অর্থই কি মডেলটি Semantic Deployment Gate পাস করেছে?",
+      "options": [
+        "হ্যাঁ, সবসময়",
+        "শুধুমাত্র অ্যাপে Dark Mode সচল থাকলে",
+        "না, সফটওয়্যারের কারিগরি চুক্তি আর মডেলের অর্থগত মান সম্পূর্ণ আলাদা",
+        "কেবল উদ্ধৃতি হুবহু মিললেই তা পাস ধরে নেওয়া যায়"
+      ],
+      "answer": 2,
+      "explanation": "গাণিতিক সূক্ষ্মতা, ডেটাবেস আপগ্রেড ও অফলাইন রান করার চুক্তি পাস করলেও টাস্কের অর্থগত মানদণ্ডে মডেলটি ব্যর্থ হয়েছে—এবং এই দুটি সত্যই পাশাপাশি রিপোর্ট করতে হয়।"
+    },
+    {
+      "id": "ch29_q24",
+      "question": "এই Capstone প্রজেক্টের পরিধি পেরিয়ে পরবর্তী অধ্যায় (Book 5 · Chapter 1: Recommendation Foundations)-এ যাওয়ার সঠিক প্রক্রিয়া কী?",
+      "options": [
+        "এই Capstone-এর ভেতরেই গোপনে Recommender মডেল বসিয়ে দেওয়া হয়েছে",
+        "অ্যাপটি স্বয়ংক্রিয় ক্লাউড API কলের মাধ্যমে পরের অধ্যায় তৈরি করে",
+        "সবগুলো বইয়ের প্রোডাকশন মডেল এই প্রজেক্টেই একসাথে ট্রেন করা হয়েছে",
+        "এই Capstone-এর ফলাফল ও সীমাবদ্ধতা রিভিউ এবং যাচাই সম্পন্ন করার পরে"
+      ],
+      "answer": 3,
+      "explanation": "আমাদের বর্তমান প্রজেক্টের পরিধি কেবল Book 4 · Chapter 10 (LLM/Generative AI Capstone) পর্যন্তই সুনির্দিষ্টভাবে সীমাবদ্ধ। এই অধ্যায়ের রিভিউ ও অনুশীলন শেষে আপনি Book 5 · Chapter 1 (Recommendation Foundations) শুরু করবেন।"
+    },
+    {
+      "id": "ch29_q_confidence_revision",
+      "question": "ধরুন 8 টোকেনের একটি উত্তরে প্রথম টোকেনের প্রবাবিলিটি 0.99 এবং বাকি সাতটি টোকেনের প্রতিটির প্রবাবিলিটি 0.5। তাহলে পুরো সিকোয়েন্সটির Joint Probability কত?",
+      "options": [
+        "0.99",
+        "0.5",
+        "0.007734375",
+        "1"
+      ],
+      "answer": 2,
+      "explanation": "শর্তযুক্ত টোকেন প্রবাবিলিটিগুলোর গুণফল হলো 0.99 × 0.5^7 = 0.007734375। তাই প্রথম টোকেনের স্কোর, পুরো সিকোয়েন্সের Likelihood এবং উত্তরের প্রকৃত সঠিকতা—তিনটি সম্পূর্ণ আলাদা পরিমাপ।"
+    },
+    {
+      "id": "ch29_q_joint_revision",
+      "question": "ধরুন সম্পূর্ণ প্রমাণ পাওয়ার হার 0.75 এবং উত্তর সঠিক হওয়ার হার 0.50। শুধু এই দুটি সংখ্যা গুণ করে Joint Success = 0.375 ধরতে হলে কোন বাড়তি অনুমানটি (Extra Assumption) সত্য হতে হতো?",
+      "options": [
+        "ঘটনা দুটির পরিসংখ্যানগত স্বাধীনতা (Statistical Independence)",
+        "মডেলের নাম একই হওয়া",
+        "বৈধ JSON ফরম্যাট থাকা",
+        "সব উত্তরের দৈর্ঘ্য সমান হওয়া"
+      ],
+      "answer": 0,
+      "explanation": "দুটি ঘটনা পরস্পর স্বাধীন হলেই কেবল তাদের প্রান্তিক হার (Marginal Rates) গুণ করে যৌথ হার পাওয়া যায়। বাস্তব পাইপলাইনে এই স্বাধীনতা অনুমান না করে সবসময় জোড়ায় জোড়ায় (Paired Conjunction) সরাসরি গুনে দেখতে হয়।"
+    }
+  ],
+  "exercises": [
+    {
+      "id": "ch29_ex_accuracy",
+      "title": "এন্ড-টু-এন্ড Label Accuracy হিসাব",
+      "prompt": "সেভ করা `retrieved` ডায়াগনস্টিক সারিগুলো (188টি উদাহরণ) থেকে বৈধ ফরম্যাটসহ সঠিক লেবেল শব্দের প্রকৃত Accuracy (correct / total) পুনর্গণনা করুন এবং দশমিক মানটি Numeric Answer-এ লিখুন।",
+      "starter": "from pathlib import Path\n\n# TODO: paired label score\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/scifact_rag/capstone_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nrows = lab[\"variants\"][\"retrieved\"][\"rows\"]\ncorrect = sum(\n    r[\"generation\"][\"format_valid\"] and r[\"generation\"][\"text\"] == r[\"gold\"]\n    for r in rows\n)\nresult = correct / len(rows)\nassert correct == 89\nprint(result)\n",
+      "expected": 0.4734042553191489,
+      "explanation": "এখানে মোট 188টি উদাহরণের মধ্যে সঠিক ও বৈধ উত্তর রয়েছে 89টি। সুতরাং Accuracy = 89 / 188 ≈ 0.4734043। মনে রাখবেন, ফরম্যাটের বৈধতা এবং আসল বৈজ্ঞানিক লেবেলের সঠিকতা দুটি আলাদা পরীক্ষা।"
+    },
+    {
+      "id": "ch29_ex_features",
+      "title": "Hash Feature ব্লকের Normalization যাচাই",
+      "prompt": "প্রদত্ত Query (\"evidence evidence claim\") ও Context (\"original source passage\") ইনপুট থেকে তৈরি দুটি পৃথক 128-D ফিচার ব্লকের মধ্যে কয়টি ব্লক শূন্য নয় (Nonempty তথা L2 Norm = 1), সেই সংখ্যাটি Numeric Answer-এ লিখুন।",
+      "starter": "import numpy as np\n\n# TODO: feature norms\n",
+      "solution": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter29_local\", Path(\"assets/datasets/scifact_rag/capstone_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\n\nimport numpy as np\n\nx = m.features(\"evidence evidence claim\", \"original source passage\")\nresult = sum(np.isclose(np.linalg.norm(block), 1) for block in [x[:128], x[128:]])\nassert x.shape == (256,)\nprint(result)\n",
+      "expected": 2,
+      "explanation": "এখানে Query এবং Context—উভয় অংশেই বৈধ ইংরেজি টোকেন থাকায় দুটি 128-D ব্লকই Nonempty এবং প্রতিটির L2 Norm 1; তাই উত্তর হলো 2। হ্যাশ ভেক্টরের গাণিতিক Norm এবং ভেতরের অর্থগত তথ্যের পার্থক্য সবসময় মনে রাখবেন।"
+    },
+    {
+      "id": "ch29_ex_parameters",
+      "title": "Decoder-এর মোট Parameter গণনা",
+      "prompt": "আমাদের ResponseDecoder মডেলের সবগুলো লেয়ারের Weight ও Bias মিলিয়ে মোট কয়টি Trainable Scalar Parameter রয়েছে তা হিসাব করে Numeric Answer-এ লিখুন।",
+      "starter": "import torch\n\n# TODO: parameter count\n",
+      "solution": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter29_local\", Path(\"assets/datasets/scifact_rag/capstone_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\n\nmodel = m.ResponseDecoder()\nresult = sum(p.numel() for p in model.parameters())\nassert result == (256 * 16 + 16) + (14 * 8) + (48 * 8 + 48 * 16 + 96) + (16 * 14 + 14)\nprint(result)\n",
+      "expected": 5710,
+      "explanation": "Condition Projection (256×16 + 16 = 4112), Embedding (14×8 = 112), GRUCell ইনপুট ও হিডেন ওয়েট এবং বায়াস (48×8 + 48×16 + 48 + 48 = 1248), এবং Output Head (16×14 + 14 = 238)—সব মিলিয়ে মোট Parameter সংখ্যা হলো 5710।"
+    },
+    {
+      "id": "ch29_ex_tokens",
+      "title": "বৈধ Response Target টোকেনের সংখ্যা",
+      "prompt": "আমাদের দুটি বৈধ উত্তর \"support\" এবং \"contradict\"-এর প্রতিটির অক্ষরগুলোর শেষে একটি করে EOS টোকেন যোগ করে Target সিকোয়েন্স তৈরি করলে, দুটি উত্তর মিলিয়ে মোট কয়টি বৈধ Target Token হবে তা Numeric Answer-এ লিখুন।",
+      "starter": "words = [\"support\", \"contradict\"]\n# TODO\n",
+      "solution": "words = [\"support\", \"contradict\"]\nresult = sum(len(word) + 1 for word in words)\nassert result == 8 + 11\nprint(result)\n",
+      "expected": 19,
+      "explanation": "support + EOS মিলে 8টি এবং contradict + EOS মিলে 11টি টোকেন হয়; সুতরাং মোট বৈধ টার্গেট টোকেন 8 + 11 = 19। এখানে EOS একটি বৈধ টার্গেট, আর ডানদিকের PAD টোকেন লস থেকে বাদ পড়ে।"
+    },
+    {
+      "id": "ch29_ex_risk",
+      "title": "গৃহীত সেটের Selective Risk হিসাব",
+      "prompt": "আমাদের `retrieved` মোডের অনুমানগুলোর ওপর Threshold = 0.9 প্রয়োগ করে গৃহীত (Accepted) সেটের ওপর Conditional Risk (wrong / accepted) হিসাব করুন এবং দশমিক মানটি Numeric Answer-এ লিখুন।",
+      "starter": "from pathlib import Path\n\n# TODO: conditional risk\n",
+      "solution": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter29_local\", Path(\"assets/datasets/scifact_rag/capstone_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/scifact_rag/capstone_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nscore = m.summarize(lab[\"variants\"][\"retrieved\"][\"rows\"], 0.9)\nassert score[\"accepted\"] == 119\nresult = score[\"accepted_risk\"]\nassert abs(result - 56 / 119) < 1e-12\nprint(result)\n",
+      "expected": 0.47058823529411764,
+      "explanation": "থ্রেশহোল্ড 0.9-এ মোট 119টি উদাহরণ গৃহীত হয়, যার মধ্যে 63টি সঠিক এবং 56টি ভুল। গৃহীত সংখ্যার Denominator ব্যবহার করে পাই Risk = 56 / 119 ≈ 0.4705882।"
+    },
+    {
+      "id": "ch29_ex_joint",
+      "title": "Joint Label ও Rationale Hit গণনা",
+      "prompt": "সেভ করা `retrieved` ডায়াগনস্টিক সারিগুলোর মধ্যে কয়টি উদাহরণে ডিকোডারের তৈরি শব্দটি সঠিক (gold-এর সমান ও বৈধ) হওয়ার পাশাপাশি প্যাকারে সম্পূর্ণ মূল প্রমাণ (rationale_hit) উঠে এসেছে, সেই যৌথ সংখ্যাটি Numeric Answer-এ লিখুন।",
+      "starter": "from pathlib import Path\n\n# TODO: joint count\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/scifact_rag/capstone_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nrows = lab[\"variants\"][\"retrieved\"][\"rows\"]\nresult = sum(\n    r[\"rationale_hit\"]\n    and r[\"generation\"][\"format_valid\"]\n    and r[\"generation\"][\"text\"] == r[\"gold\"]\n    for r in rows\n)\nprint(result)\n",
+      "expected": 33,
+      "explanation": "উভয় শর্ত একসাথে পূরণ হওয়া উদাহরণের সংখ্যা (Joint Count) হলো 33। এটি দুটি ঘটনার বর্ণনামূলক সংযোগ মাত্র; প্রকৃত Sentence Entailment যাচাই করতে আলাদা রুব্রিক প্রয়োজন।"
+    },
+    {
+      "id": "ch29_ex_paired",
+      "title": "Paired Control-এর নিট পার্থক্য",
+      "prompt": "একই 188টি দাবিতে `retrieved` মোডের সঠিক উত্তরের সংখ্যা থেকে `rotated_context` কন্ট্রোল মোডের সঠিক উত্তরের সংখ্যা বিয়োগ করুন (retrieved minus rotated) এবং ফলাফলটি চিহ্নসহ Numeric Answer-এ লিখুন।",
+      "starter": "from pathlib import Path\n\n# TODO: pair by ID\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/scifact_rag/capstone_lab.json\").read_text(encoding=\"utf-8\")\n)\n\na = lab[\"variants\"][\"retrieved\"][\"rows\"]\nb = lab[\"variants\"][\"rotated_context\"][\"rows\"]\nassert [r[\"id\"] for r in a] == [r[\"id\"] for r in b]\nresult = sum(\n    int(x[\"generation\"][\"text\"] == x[\"gold\"] and x[\"generation\"][\"format_valid\"])\n    - int(y[\"generation\"][\"text\"] == y[\"gold\"] and y[\"generation\"][\"format_valid\"])\n    for x, y in zip(a, b)\n)\nprint(result)\n",
+      "expected": -18,
+      "explanation": "Retrieved মোডে সঠিক 89টি এবং Rotated মোডে সঠিক 107টি; ফলে নিট পার্থক্য হলো 89 - 107 = -18। এই ঋণাত্মক মানটি দেখে প্রতিটি উদাহরণ খতিয়ে সম্ভাব্য শর্টকাটের নতুন পরীক্ষা সাজাতে হয়।"
+    },
+    {
+      "id": "ch29_ex_gate",
+      "title": "কনটেক্সটবিহীন অবস্থায় Runtime Gate পরীক্ষা",
+      "prompt": "ধরুন ডিকোডারের তৈরি আউটপুটটি format_valid = True এবং first_token_confidence = 0.99, কিন্তু কোনো কনটেক্সট পাওয়া যায়নি (has_context = False)। এই অবস্থায় আমাদের Policy আউটপুট প্রকাশ করবে কি না তা 1 (হ্যাঁ) বা 0 (না) হিসেবে Numeric Answer-এ লিখুন।",
+      "starter": "g = {\"format_valid\": True, \"first_token_confidence\": 0.99}\n# TODO\n",
+      "solution": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter29_local\", Path(\"assets/datasets/scifact_rag/capstone_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\n\ng = dict(format_valid=True, first_token_confidence=0.99)\nr = m.policy(g, True, False)\nassert r[\"reason\"] == \"no_context\"\nresult = int(r[\"emitted\"])\nprint(result)\n",
+      "expected": 0,
+      "explanation": "কনটেক্সট থাকার প্রাথমিক শর্তটি (no_context precondition) ব্যর্থ হওয়ায় উচ্চ আত্মবিশ্বাস সত্ত্বেও কোনো আউটপুট প্রকাশিত হবে না; তাই উত্তর 0। মনে রাখবেন, রানটাইম গেটে কোনো Gold Label ইনপুট থাকে না।"
+    },
+    {
+      "id": "ch29_ex_quote",
+      "title": "সম্পাদিত উদ্ধৃতির অখণ্ডতা (Quote Integrity) যাচাই",
+      "prompt": "একটি বাস্তব সোর্স উদ্ধৃতির Citation ID অপরিবর্তিত রেখে তার টেক্সটের শেষে ' [edited]' যোগ করে অডিট চালালে exact_quote ফ্ল্যাগের মান কী আসবে তা 1 (সত্য) বা 0 (মিথ্যা) হিসেবে Numeric Answer-এ লিখুন।",
+      "starter": "from pathlib import Path\n\n# TODO: source quote audit\n",
+      "solution": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter29_local\", Path(\"assets/datasets/scifact_rag/capstone_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/scifact_rag/capstone_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nrag = m.rag_module()\nsystem, _, _ = rag.load_inputs()\nquote = dict(lab[\"samples\"][3][\"cases\"][\"retrieved\"][\"pack\"][\"selected\"][0])\nquote[\"text\"] += \" [edited]\"\naudit = rag.audit_quote(quote, system.source)\nassert audit[\"resolvable\"]\nresult = int(audit[\"exact_quote\"])\nprint(result)\n",
+      "expected": 0,
+      "explanation": "সম্পাদিত উদ্ধৃতিটি মূল সোর্স স্প্যানের টেক্সটের সাথে হুবহু না মেলায় exact_quote ফ্ল্যাগ False বা 0 আসবে (যদিও আইডিটি Resolvable থাকে)। তাই Resolver এবং Quote Fidelity সবসময় আলাদাভাবে পরীক্ষা করতে হয়।"
+    },
+    {
+      "id": "ch29_ex_reload",
+      "title": "ট্রাস্টেড Decoder রিলোড ও পূর্ণ Trace মিলানো",
+      "prompt": "সেভ করা ওয়েট থেকে ResponseDecoder পুনরায় লোড করে ল্যাবের 6টি সোর্স স্যাম্পলের প্রতিটির 3টি করে কন্ট্রোল কেসে ডিকোডিং চালান। মোট কয়টি কেসে সম্পূর্ণ জেনারেশন ট্রেস হুবহু মিলে যায় তা Numeric Answer-এ লিখুন।",
+      "starter": "import torch\n\n# TODO: frozen trace reload\n",
+      "solution": "from pathlib import Path\nimport importlib.util\n\ns = importlib.util.spec_from_file_location(\n    \"chapter29_local\", Path(\"assets/datasets/scifact_rag/capstone_workflow.py\")\n)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nimport torch\nfrom pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/scifact_rag/capstone_lab.json\").read_text(encoding=\"utf-8\")\n)\n\nd = m.ResponseDecoder()\nd.load_state_dict(\n    {k: torch.tensor(v, dtype=torch.float64) for k, v in lab[\"weights\"].items()}\n)\nresult = 0\nfor sample in lab[\"samples\"]:\n    for case in sample[\"cases\"].values():\n        assert m.decode(d, case[\"features\"]) == case[\"generation\"]\n        result += 1\nprint(result)\n",
+      "expected": 18,
+      "explanation": "6টি স্যাম্পলের প্রতিটিতে 3টি করে কেস থাকায় মোট 6 × 3 = 18টি পূর্ণ ট্রেসই হুবহু মিলে যায়। CPU float64 ওয়েট, হ্যাশিং, GRU সমীকরণ, Greedy নিয়ম এবং EOS সীমানা ঠিক থাকলেই কেবল এমন নিখুঁত মিল পাওয়া সম্ভব।"
+    }
+  ],
+  "interviews": [
+    {
+      "title": "Capstone সিস্টেমের চুক্তি ও পরিধি নির্ধারণ",
+      "tag": "System design · scope",
+      "prompt": "শূন্য থেকে একটি সম্পূর্ণ Offline Evidence Workbench ডিজাইন করতে হলে এর আর্কিটেকচার কেমন হবে এবং আপনি এর কী কী সক্ষমতা দাবি করবেন (এবং কোনগুলো দাবি করবেন না)?",
+      "answer": "পাইপলাইনটি পাঁচটি স্পষ্ট ধাপে সাজাব: মূল Corpus ও Frozen Index → Lexical Retrieval → Byte-budgeted Context Packing → Conditioned Decoder → Provenance ও Format Policy → অফলাইন Diagnostics। প্রতিটি ধাপের ইনপুট, একক (যেমন 4096 UTF-16 কুয়েরি সীমা ও 1024 UTF-8 প্যাকড বাইট), ডকুমেন্ট ID এবং আউটপুট স্ট্যাটাস সুনির্দিষ্ট চুক্তিতে বাঁধা থাকবে। আমাদের বর্তমান ডিকোডারটি মাত্র 5710 প্যারামিটারের একটি ছোট মডেল যা কেবল সীমিত শব্দ (support বা contradict) তৈরি করে, আর মূল উদ্ধৃতিগুলো সফটওয়্যার সরাসরি কপি করে আনে। আমি স্পষ্টভাবে জানাব যে এটি কোনো বৃহৎ Pretrained LLM বা বৈজ্ঞানিক সত্যতা যাচাইকারী (Truth Verifier) নয়। ট্রেনিংয়ের Gold Target এবং ডায়াগনস্টিকের Gold Rationale রানটাইম থেকে সম্পূর্ণ বিচ্ছিন্ন থাকবে, এবং সফটওয়্যারের Functional Readiness ও মডেলের Semantic Utility আলাদাভাবে রিপোর্ট করা হবে।"
+    },
+    {
+      "title": "Retrieval এবং Context Packing-এর ব্যর্থতা নির্ণয়",
+      "tag": "RAG · diagnosis",
+      "prompt": "ধরুন মূল Corpus-এ প্রাসঙ্গিক গবেষণাপত্র থাকা সত্ত্বেও সিস্টেমটি কাজের মতো উত্তর দিতে পারছে না। কোন কোন ধাপে সমস্যা থাকতে পারে এবং আপনি কীভাবে তা পরীক্ষা করবেন?",
+      "answer": "আমি ধাপে ধাপে পাঁচটি জায়গা আলাদাভাবে পরীক্ষা করব: (১) আসল পেপারটি প্রাথমিক Top-10 Shortlist-এ এসেছে কি না (Candidate Availability), (২) দুই বাক্যের Chunk কাটার সীমানায় মূল যুক্তি ভেঙে গেছে কি না, (৩) 1024 UTF-8 বাইটের Whole-span Budget-এর কারণে প্রাসঙ্গিক চাঙ্কটি বাদ পড়েছে কি না, (৪) প্রতি নথি থেকে একটিমাত্র চাঙ্ক নেওয়ার নিয়মে একই পেপারের বহু-বাক্যের প্রমাণ (Multi-sentence Evidence) হারিয়ে গেছে কি না, এবং (৫) প্যাক করা অংশে আসল Rationale Coverage কতটুকু। পাশাপাশি ফরম্যাট করা বাইট বনাম মডেল টোকেনের পার্থক্য এবং সোর্স জয়েন ঠিক আছে কি না তা যাচাই করব। মনে রাখতে হবে, ভুল কনটেক্সট গেলে শুধু শক্তিশালী Decoder বসিয়ে তা উদ্ধার করা সম্ভব নয়; আর Gold Rationale কেবল অফলাইন অডিটেই ব্যবহার করা যাবে, রানটাইম ওরাকল হিসেবে নয়।"
+    },
+    {
+      "title": "Hash Feature Representation-এর শক্তি, সীমাবদ্ধতা ও পোর্টেবিলিটি",
+      "tag": "ML engineering · coding",
+      "prompt": "আমাদের ব্যবহৃত Hash Bag-of-Words ফিচারের মূল শক্তি, সীমাবদ্ধতা এবং ক্রস-প্ল্যাটফর্ম পোর্টেবিলিটির শর্তগুলো কী কী?\n\nপাশাপাশি ইংরেজি টোকেন 'v' ও 'ca' এবং বাংলা শব্দ 'মডেল' ইনপুট দিয়ে বর্তমান ফিচার হেল্পারটি পরীক্ষা করলে কোন সুনির্দিষ্ট সীমাবদ্ধতাগুলো চোখে পড়ে?",
+      "answer": "আমাদের ফিচার এক্সট্রাক্টরটি 32-bit Unsigned FNV-1a হ্যাশ (Modulo 128), বাকেট গণনার ওপর log1p এবং Query ও Context ব্লকে আলাদা L2 Normalization চালিয়ে একটি নির্দিষ্ট 256-D ভেক্টর তৈরি করে। এর বড় শক্তি হলো স্থির মেমোরি ও অফলাইনে দ্রুত চলা; কিন্তু সীমাবদ্ধতা হলো Hash Collision এবং শব্দের ক্রম, না-বোধক পদ (Negation) ও Entity সম্পর্ক হারিয়ে যাওয়া। Python ও Dart-এ অভিন্ন ফল পেতে Python-এর র‍্যান্ডম সিডযুক্ত ডিফল্ট hash() বর্জন করে বাইট এনকোডিং, Unsigned Overflow এবং নরমালাইজেশন Golden Test দিয়ে বেঁধে রাখতে হয়।\n\nবাস্তব পরীক্ষায় দেখা যায়, 'v' এবং 'ca' দুটি ভিন্ন টোকেন হওয়া সত্ত্বেও একই bucket 73-এ গিয়ে পড়ে এবং এক-শব্দের কুয়েরিতে হুবহু অভিন্ন নরমালাইজড ভেক্টর তৈরি করে (Collision)। অন্যদিকে বাংলা শব্দ 'মডেল' দিলে আমাদের ASCII টোকেনাইজার কোনো বৈধ টোকেনই পায় না এবং পুরো শূন্য ভেক্টর ফিরিয়ে দেয়। অর্থাৎ ভাষাগত ও অর্থগত কভারেজ বাড়াতে হলে টাস্কের চাহিদা অনুযায়ী নতুন Tokenizer ও Representation নিয়ে আলাদাভাবে ভার্সনকৃত পরীক্ষা চালাতে হবে।",
+      "prerequisiteLessons": [
+        "ch29_features"
+      ]
+    },
+    {
+      "title": "হোয়াইটবোর্ডে PyTorch-সামঞ্জস্যপূর্ণ GRU সমীকরণ",
+      "tag": "Deep learning · derivation",
+      "prompt": "Python-এ ট্রেন করে এক্সপোর্ট করা একটি PyTorch GRUCell-কে সরাসরি Dart-এ নিখুঁতভাবে ইমপ্লিমেন্ট করতে হলে কোন সমীকরণ এবং খুঁটিনাটি নিয়মগুলো মানতে হবে?",
+      "answer": "সবার আগে ওয়েট ম্যাট্রিক্সের গেট ক্রম ঠিক রাখতে হবে: PyTorch সবসময় r (Reset), z (Update), এবং n (New/Candidate) ক্রমে ওয়েট সাজায় (আমাদের ক্ষেত্রে ইনপুট 48×8 এবং হিডেন 48×16), এবং ইনপুট ও হিডেন অংশের দুটি আলাদা Bias ভেক্টর থাকে। সবচেয়ে সূক্ষ্ম জায়গা হলো Reset Gate প্রয়োগের অবস্থান: হিডেন অ্যাফাইন রূপান্তরের (Bias যোগ করার) পরে r গুণ করতে হয়, অর্থাৎ n = tanh(i_n + r ⊙ h_n), এবং চূড়ান্ত আপডেট হয় h_new = (1 - z) ⊙ n + z ⊙ h। অন্য কোনো বইয়ের সংস্করণ (যেখানে ম্যাট্রিক্স গুণের আগেই r গুণ হয়) ব্যবহার করলে এক্সপোর্ট করা চেকপয়েন্টের সাথে সংখ্যা মিলবে না। যাচাই করার সময় শুধু চূড়ান্ত শব্দ (argmax) না মিলিয়ে প্রতিটি ধাপের হিডেন ভেক্টর, Numerically Stable Sigmoid, Legal-masked Softmax প্রবাবিলিটি এবং EOS/Padding সীমানা ফ্লোটিং-পয়েন্ট টলারেন্সে মিলিয়ে দেখতে হবে।"
+    },
+    {
+      "title": "Teacher Forcing এবং কম Token Loss-এর বিভ্রান্তি",
+      "tag": "Training · evaluation",
+      "prompt": "কীভাবে এমন হতে পারে যে ট্রেনিংয়ে মডেলের Token NLL অনেক কম এবং রানটাইমে সে বৈধ বানানের শব্দও তৈরি করছে, অথচ আসল বৈজ্ঞানিক লেবেলটির বেলায় বারবার ভুল করছে?",
+      "answer": "কারণ আমাদের বৈধ শব্দ মাত্র দুটি—'support' (8 টোকেন) এবং 'contradict' (11 টোকেন)। প্রথম অক্ষরটি 's' বা 'c' হওয়ার পর বাকি অক্ষরগুলো বানান করা অত্যন্ত যান্ত্রিক ও সহজ কাজ, তাই সেগুলোতে প্রায় শূন্য লস পেয়ে গড় Token NLL অনেক কমে যায়! তার ওপর ট্রেনিংয়ে Teacher Forcing থাকায় মডেল সবসময় নির্ভুল Gold Prefix দেখে, কিন্তু রানটাইমে নিজের তৈরি প্রিফিক্সের ওপর নির্ভর করে; আবার লসটি সব বৈধ টোকেনের গড় হওয়ায় লম্বা শব্দ ('contradict') লসে বেশি ওজন পায়। আমাদের বাস্তব ফলাফলেই এর প্রমাণ আছে: 188টির মধ্যে 188টিই বৈধ ফরম্যাটে জেনারেট হলেও সঠিক লেবেল হয়েছে মাত্র 89টি, যা Majority Baseline (124/188)-এর চেয়েও কম! তাই বানানের বৈধতা, টোকেন লস, আসল টাস্ক অ্যাকুরেসি এবং প্রমাণের ব্যবহার—প্রতিটিকে আলাদাভাবে মূল্যায়ন করতে হয়।",
+      "prerequisiteLessons": [
+        "ch29_loss",
+        "ch29_gate"
+      ]
+    },
+    {
+      "title": "Paired Negative Control-এর ফলাফল বিশ্লেষণ",
+      "tag": "Experiment design",
+      "prompt": "আমাদের পরীক্ষায় আসল Retrieved কনটেক্সটে 89টি উত্তর সঠিক হয়েছে, অথচ ভুল কনটেক্সট জুড়ে দেওয়া Rotated Control-এ 107টি সঠিক হয়েছে! এখান থেকে আপনি কী সিদ্ধান্ত নেবেন এবং আপনার পরবর্তী পরীক্ষা কী হবে?",
+      "answer": "প্রথমেই স্পষ্ট করব যে এটি একই Claim ID, একই ক্রম, একই Gold Label এবং একই Frozen Weights রেখে চালানো একটি Input-dependence Ablation পরীক্ষা—আলাদাভাবে ট্রেন করা কোনো বেসলাইন বা একক কার্যকারণ প্রমাণ (Causal Proof) নয়। তবে ভুল কনটেক্সটে ভালো স্কোর আসা দ্ব্যর্থহীনভাবে প্রমাণ করে যে মডেলটি প্রদত্ত প্রমাণের ওপর অর্থবহ Grounding প্রতিষ্ঠা করতে পারেনি। পরবর্তী ধাপে আমি প্রতিটি উদাহরণ ধরে পরিবর্তন, Negation হারিয়ে যাওয়া, বাকেট কলিশন, সোর্স পেপারের ওভারল্যাপ এবং Overfitting অডিট করব; এরপর একাধিক র‍্যান্ডম রোটেশন, একাধিক ট্রেনিং সিড এবং পেপার-পরিবার আলাদা রাখা নতুন Confirmation সেট দিয়ে পরীক্ষা সাজাব—এবং ততক্ষণ সৎভাবে রিপোর্ট করব যে বর্তমান মডেলের উপযোগিতা প্রমাণিত হয়নি।",
+      "prerequisiteLessons": [
+        "ch29_book_negative_controls"
+      ]
+    },
+    {
+      "title": "Confidence Gate, Conditional Risk এবং Empty Set",
+      "tag": "Reliability · math",
+      "prompt": "ধরুন Threshold = 0.9 করার পর 188টির মধ্যে 119টি উদাহরণ গৃহীত হলো এবং তার মধ্যে 63টি সঠিক হলো। এখান থেকে Coverage ও Risk কীভাবে ব্যাখ্যা করবেন, এবং Threshold = 1.0 হলে কী ঘটবে?",
+      "answer": "এখানে সামগ্রিক Coverage হলো 119/188 ≈ 63.3%, আর গৃহীত সেটের ওপর ভুলের ঝুঁকি বা Conditional Risk হলো (119 - 63) / 119 = 56/119 ≈ 47.1%। মনে রাখতে হবে, আমাদের Confidence হলো কেবল প্রথম অক্ষরের Uncalibrated সর্বোচ্চ প্রবাবিলিটি—এটি পুরো সিকোয়েন্সের বা বৈজ্ঞানিক সত্যতার নিশ্চয়তা নয়। আর Threshold বাড়িয়ে 1.0 করলে যখন একটি উদাহরণও গৃহীত হয় না (Accepted = 0), তখন হর শূন্য হওয়ায় Risk এবং Accuracy গাণিতিকভাবে Undefined হয়ে যায়—এটিকে ভুলেও 'শূন্য ভুল তাই শতভাগ নিরাপদ' বলে দাবি করা যাবে না। প্রোডাকশনে থ্রেশহোল্ড বাছাই করতে হলে একটি আলাদা Selection Set ব্যবহার করে তারপর অদেখা Confirmation Set-এ একবারই তা যাচাই করতে হয়।"
+    },
+    {
+      "title": "Citation-এর অখণ্ডতা এবং নিরাপত্তার সীমানা",
+      "tag": "Provenance · failure analysis",
+      "prompt": "একটি উদ্ধৃতির Citation ID বৈধ কিন্তু ভেতরের টেক্সট সামান্য সম্পাদনা করা হয়েছে—সিস্টেম কোন ধাপে এটি আটকাবে? আর আমাদের বর্তমান সিস্টেম কি তবে LLM-এর Prompt Injection সমস্যা সমাধান করে ফেলেছে?",
+      "answer": "আমাদের সিস্টেমে Citation ID ও স্প্যান খুঁজে পাওয়া (Resolution) এবং মূল পেপারের বাক্যের সাথে অক্ষরে অক্ষরে মিল থাকা (Exact Text Match)—দুটি সম্পূর্ণ স্বাধীন পরীক্ষা। টেক্সট সামান্য বদলালেও অডিটর citation_mismatch ফ্ল্যাগ তুলবে এবং ডিকোডারের আত্মবিশ্বাস যত বেশিই হোক না কেন উত্তর প্রকাশ আটকে যাবে। তবে নিখুঁত উদ্ধৃতিও দাবির সাথে অপ্রাসঙ্গিক, বিপরীত বা পুরনো হতে পারে। আর নিরাপত্তার প্রশ্নে উত্তর হলো—না, এটি LLM-এর Prompt Injection সমস্যার সমাধান বা পরীক্ষা নয়! আমাদের বর্তমান হ্যাশ ফিচার টেক্সটকে কেবল সংখ্যার বাকেটে গোনে বলে কোনো নির্দেশনা রান হয় না; ভবিষ্যতে এখানে প্রকৃত জেনারেটিভ LLM বসালে আলাদাভাবে Instruction Boundary ও Adversarial Security পরীক্ষা চালাতে হবে।"
+    },
+    {
+      "title": "Reproducible Artifact এবং Regression Testing চুক্তি",
+      "tag": "Reproducibility · testing",
+      "prompt": "একটি এমএল প্রজেক্টে ঠিক কী কী সংরক্ষণ করলে হুবহু Rerun, পোর্টেবল Inference এবং মাঝপথ থেকে Training Resume—এই তিনটি সুবিধা পাওয়া যায়?",
+      "answer": "মূল সোর্স ফাইল, ইনডেক্স ও স্প্লিটের SHA-256 হ্যাশ, ট্রেনিং Protocol, সিরিয়ালাইজড Weights, ভোকাবুলারি ও ফিচার স্কিমা, পূর্ণাঙ্গ Golden Traces এবং নির্দিষ্ট সিড ও লাইব্রেরি সংস্করণ সংরক্ষণ করলে হুবহু Rerun এবং অন্য প্ল্যাটফর্মে পোর্টেবল Inference নিশ্চিত করা যায়। কিন্তু মাঝপথ থেকে হুবহু Training Resume করতে হলে এর বাইরেও Optimizer State, ডেটা শাফল কার্সর এবং RNG স্টেট সংরক্ষণ করা আবশ্যক। পাশাপাশি ক্যানোনিক্যাল ওয়েট হ্যাশের পরিধি স্পষ্ট রাখা এবং রিগ্রেশন ধরার জন্য স্বাধীন NumPy/Dart GRU টেস্ট, সোর্স অডিট, বিচ্ছিন্ন ডেটাবেসে SQLite মাইগ্রেশন টেস্ট ও Airplane-mode অফলাইন লঞ্চ পরীক্ষা চালানো অপরিহার্য।",
+      "prerequisiteLessons": [
+        "ch29_testing",
+        "ch29_evaluation"
+      ]
+    },
+    {
+      "title": "চূড়ান্ত Release Defense এবং নিরাপদ Product Fallback",
+      "tag": "Product judgment · interview",
+      "prompt": "আপনার সিস্টেমের সবগুলো সফটওয়্যার ও Functional Test শতভাগ পাস করেছে, কিন্তু মডেলটি Majority Baseline-এর কাছে হেরে গেছে। আপনি কি এটি প্রোডাকশনে Ship করবেন?",
+      "answer": "একজন প্রকৌশলী হিসেবে আমার সিদ্ধান্ত হবে দ্বিমুখী ও স্পষ্ট: শিক্ষামূলক প্রোটোটাইপ এবং মূল উদ্ধৃতি খুঁজে দেখার টুল হিসেবে এটি রিভিউয়ের যোগ্য (Go for Prototype Review), কিন্তু স্বয়ংক্রিয় বৈজ্ঞানিক সহকারী হিসেবে এটি প্রোডাকশনে রিলিজ পাওয়ার অযোগ্য (No-Go for Semantic Deployment)। প্রোডাক্ট Fallback হিসেবে ইউজারকে অবিকৃত মূল উদ্ধৃতিগুলো দেখানো যেতে পারে (তাদেরকে চূড়ান্ত সত্য দাবি না করে), আর মডেলের অনুমানকে স্পষ্টভাবে unverified রাখতে হবে বা বন্ধ করে দিতে হবে। রিপোর্টে 89/188 অ্যাকুরেসি, 124/188 মেজরিটি বেসলাইন, 107/188 রোটেটেড কন্ট্রোল এবং 33/188 জয়েন্ট হিট সব সীমাবদ্ধতাসহ তুলে ধরব এবং লিকেজমুক্ত নতুন Confirmation সেটে পরবর্তী গবেষণার পরিকল্পনা পূর্বঘোষণা করব। কারিগরি টেস্ট পাস করাকে কখনোই ব্যবসায়িক বা বৈজ্ঞানিক উপযোগিতার সনদ হিসেবে চালানো যাবে না।"
+    }
+  ],
+  "book": {
+    "order": 33,
+    "part": "Book 4 · LLMs, RAG & Generative AI",
+    "prerequisites": [
+      "chapter_24",
+      "chapter_25",
+      "chapter_26",
+      "chapter_28"
+    ],
+    "purpose": "Book 4 জুড়ে শেখা Retrieval, Context Packing, Autoregressive Generation এবং Evaluation-এর সবগুলো অংশকে এক সুতোয় গেঁথে একটি স্বচ্ছ, Reproducible এবং যুক্তিনির্ভর Evidence Workbench গড়ে তোলা—যেখানে সফলতার পাশাপাশি সিস্টেমের সীমাবদ্ধতা ও ব্যর্থতাকেও সমান সততার সাথে বিশ্লেষণ করা হবে।",
+    "outcomes": [
+      "Source Provenance, Frozen Retrieval, Byte-budgeted Context Packing, GRU Decoder এবং Deterministic Runtime Gate একত্র করে একটি সম্পূর্ণ Offline Evidence Workbench পরিচালনা ও যাচাই করতে পারা।",
+      "Paired Query-only এবং Rotated-context Negative Control চালিয়ে Model সত্যিই প্রদত্ত Evidence ব্যবহার করছে নাকি নিছক Shortcut শিখছে তা শনাক্ত করা এবং যেকোনো Failed Gate সৎভাবে রিপোর্ট করে বস্তুনিষ্ঠ Release সিদ্ধান্ত নেওয়া।"
+    ],
+    "recall": [
+      "একটি সিস্টেমে Citation Parser Pass হওয়া আর Semantic Gate Pass হওয়া কেন সম্পূর্ণ আলাদা দুটি প্রমাণ—তা উদাহরণসহ ব্যাখ্যা করতে পারবেন কি?",
+      "প্রদত্ত Evidence ইচ্ছাকৃতভাবে ভুল বা অপ্রাসঙ্গিক করে দেওয়ার পরও যদি Model-এর উত্তর একই থেকে যায়, তবে এর পেছনে কোন তিনটি সম্ভাব্য Hypothesis কাজ করতে পারে এবং প্রতিটিকে যাচাই করার Falsifiable Check কী হবে?"
+    ],
+    "bridge": "এটি Book 4 (LLMs, RAG & Generative AI)-এর সমাপনী Capstone অধ্যায়। এই প্রজেক্টের সবগুলো Quiz, Coding Exercise এবং Closed-book Interview প্রশ্ন নিজের হাতে যাচাই করে নেওয়ার পর আমরা নতুন যাত্রা শুরু করব Book 5 (Recommender Systems) · Chapter 1 (Recommendation Foundations) দিয়ে।",
+    "bookId": "llm",
+    "bookChapter": 10
+  }
+}

@@ -1,0 +1,1620 @@
+{
+  "id": "chapter_16",
+  "number": 16,
+  "title": "Neural Networks & Backpropagation",
+  "shortTitle": "Neural Networks",
+  "displayTitle": "Neural Networks\n& Backpropagation",
+  "subtitle": "Forward Pass বোঝা, হাতে ও কোডে Derivative বের করা এবং শূন্য থেকে নিজের Neural Network ট্রেন করা।",
+  "description": "From a single neuron to a working MLP.\nTrace the signal. Derive the gradient. Read the learning curve.",
+  "difficulty": "Deep learning foundations",
+  "lab": "neural",
+  "lessons": [
+    {
+      "id": "ch16_contract",
+      "title": "Neural Network: শেখার নতুন Building Blocks",
+      "subtitle": "Function Composition থেকে শুরু করে পূর্ণাঙ্গ Trainable MLP গড়ার নকশা",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "আগের ভিত্তি থেকে পরের ধাপ",
+          "body": "আগের অধ্যায়ে (Book 3 · Chapter 1) আমরা PyTorch Tensor এবং Autograd কীভাবে গাণিতিক অপারেশনের হিসাব রাখে তা শিখেছি। এবার সেই ভিত্তির ওপর দাঁড়িয়ে কয়েকটি Trainable Function একের পর এক সাজিয়ে আমরা তৈরি করব আমাদের প্রথম Multilayer Perceptron (MLP)। প্রতিটি Layer ঠিক কী ধরনের Input নেয়, কী Output তৈরি করে এবং শেষের Loss থেকে আসা সংকেত কীভাবে পেছনের Layer-গুলোতে ফিরে যায়—এই পুরো প্রবাহটি আমরা ধাপে ধাপে খুলে দেখব।\n\nশুরুতেই বিশাল কোনো জটিল Architecture-এ ঝাঁপ দেওয়ার বদলে একটি ছোট ও স্বচ্ছ Network-এর Forward Pass, Loss, Backpropagation এবং Training Loop নিখুঁতভাবে বোঝা অনেক বেশি জরুরি। কারণ এখানে যে মূল কলকবজা আপনি নিজের হাতে গড়ে তুলবেন, পরের অধ্যায়গুলোর সব বড় Deep Learning Model-এও ঠিক সেই একই নীতি কাজ করবে।"
+        },
+        {
+          "type": "text",
+          "title": "এই অধ্যায়ের মূল MLP Model",
+          "body": "পুরো অধ্যায়জুড়ে আমাদের মূল উদাহরণ হিসেবে থাকবে একটি পরিষ্কার কাঠামোর MLP, যা ওয়াইনের 11টি রাসায়নিক Feature Input নিয়ে প্রথমে 4টি Hidden ReLU Unit-এ পাঠায় এবং সেখান থেকে চূড়ান্তভাবে একটি Binary Logit তৈরি করে। খেয়াল রাখা ভালো, মাঝখানের এই Hidden Representation কিন্তু Dataset-এর নতুন কোনো ল্যাবরেটরি মাপজোখ নয়; বরং Trainable Weight ও Bias-এর মাধ্যমে ডেটা থেকে শেখা একটি গাণিতিক রূপান্তর (Transformation)। মাত্র একটি Hidden Layer এবং একটি Nonlinear Activation যোগ করলেই আমাদের Model এমন সব বক্র ও জটিল Function Family প্রকাশ করতে পারে, যা কোনো একক Linear Model দিয়ে কখনোই সম্ভব নয়।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "X\\in\\mathbb{R}^{B\\times D},\\quad H=\\phi(XW_1^T+b_1),\\quad z=HW_2^T+b_2"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Model ও Parameter গণনা",
+          "body": "import torch\nfrom torch import nn\n\nmodel = nn.Sequential(nn.Linear(11, 4), nn.ReLU(), nn.Linear(4, 1))\nX = torch.zeros(3, 11)  # Explicit mathematical shape illustration.\nlogits = model(X).squeeze(-1)\nassert logits.shape == (3,)\nprint(sum(p.numel() for p in model.parameters()))  # 53\n"
+        },
+        {
+          "type": "text",
+          "title": "চারটি অপরিবর্তনীয় Tensor Contract",
+          "body": "যেকোনো Neural Network কোড করার আগে খাতায় চারটি Tensor-এর Shape পরিষ্কারভাবে লিখে নেওয়ার অভ্যাস করুন: `X[B, 11]`, `hidden[B, 4]`, `logits[B]` এবং `labels[B]`। পাশাপাশি নিশ্চিত করতে হবে যেন Input ডেটা এবং সব Parameter-এর `dtype` ও `device` পরস্পরের সাথে সামঞ্জস্যপূর্ণ থাকে। আরেকটি খুব দরকারি ইঞ্জিনিয়ারিং অভ্যাস হলো অন্ধভাবে `.squeeze()` না লিখে সুনির্দিষ্টভাবে `.squeeze(-1)` ব্যবহার করা; এতে কোনো কারণে Batch Size `1` হলেও কেবল শেষের Output Axis-টিই সরবে, কিন্তু শুরুর Batch Axis-টি অক্ষত থাকবে।"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব Dataset ও Data Leakage-এর সীমানা",
+          "body": "বাস্তব ডেটার উদাহরণগুলোতে আমরা UCI Wine Quality Dataset-এর আগের 966টি Fit Row ব্যবহার করব এবং এর ভেতরেই একটি Group-disjoint Inner Split তৈরি করে নেব। যেকোনো ধরনের Data Leakage এড়াতে প্রতিটি Feature-এর Mean এবং Scale কেবল এই Inner Training অংশের ওপরই Fit করা হবে। আগে আলাদা করে রাখা চূড়ান্ত Test অংশের কোনো Prediction বা মূল্যায়ন এখানে পুনরায় চালানো হচ্ছে না, যাতে মূল Test সেটের নিরপেক্ষতা পুরোপুরি অটুট থাকে।"
+        },
+        {
+          "type": "text",
+          "title": "কোড যাচাই ও Interactive Lab-এর কাজের পরিধি",
+          "body": "আমাদের সব গাণিতিক সমীকরণ ও Gradient-এর নিখুঁততা স্থানীয়ভাবে CPU-তে `float64` Precision-এর PyTorch দিয়ে যাচাই করা হয়েছে। অন্যদিকে অ্যাপের ভেতরের তিনটি Interactive Lab মোবাইলে সরাসরি কোনো Python Training Engine চালায় না; বরং সেগুলো Dart-এর নিজস্ব গাণিতিক হিসাব এবং পূর্বসংরক্ষিত বাস্তব Training Run-এর ফলাফল ব্যবহার করে। আর ধারণা পরিষ্কার করার জন্য শুরুতে যেসব ছোট সংখ্যাগত উদাহরণ আমরা দেখব, সেগুলো মূলত ভেতরের গণিতটি হাতে-কলমে বোঝার জন্য—কোনো বাস্তব Dataset-এর Predictive Benchmark হিসেবে নয়।"
+        },
+        {
+          "type": "text",
+          "title": "এই পাঠে দক্ষতার লক্ষ্যমাত্রা",
+          "body": "এই পাঠ শেষে আপনার লক্ষ্য হবে কোনো কোডের সাহায্য ছাড়াই একটি একক Row-এর Forward Score, একটি পুরো Batch-এর প্রতিটি Layer-এর Gradient এবং SGD Update-এর হিসাব খাতায়-কলমে বুঝিয়ে বলতে পারা—সেই সাথে প্রতিটি Tensor-এর Shape ও মোট 53টি Parameter কীভাবে এল তা নিমিষে বলে দেওয়া (`11×4 + 4 + 4×1 + 1 = 53`)। পাশাপাশি একজন দক্ষ ইঞ্জিনিয়ার হিসেবে সবসময় মনে রাখবেন: Training Loss সুন্দরমতো কমতে থাকলেই কিন্তু প্রমাণিত হয় না যে আপনার Data Alignment নির্ভুল আছে বা অদেখা ডেটায় ভালো Generalization পাওয়া যাবে।"
+        }
+      ]
+    },
+    {
+      "id": "ch16_neuron",
+      "title": "Neuron: Weighted Sum, Bias ও Activation",
+      "subtitle": "একক একটি Computational Unit-এর Forward ও Backward হিসাব হাতে-কলমে বোঝা",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "একটি একক Neuron কীভাবে কাজ করে?",
+          "body": "আগের পাঠে আমরা পুরো MLP-এর সামগ্রিক নকশা দেখেছি; এবার জুম করে এর সবচেয়ে ক্ষুদ্র একক—অর্থাৎ একটি একক Neuron বা Unit-এর ভেতরে উঁকি দেওয়া যাক। একটি গাণিতিক Neuron মূলত তিনটি সহজ ধাপে কাজ করে: প্রথমে প্রতিটি Input-কে তার নিজস্ব Weight দিয়ে গুণ করে একটি Weighted Sum নেয়, এরপর তার সাথে একটি Bias যোগ করে, এবং সবশেষে পুরো ফলাফলটির ওপর একটি Activation Function প্রয়োগ করে। এখানে Weight নির্ধারণ করে কোন Input Feature-এর অবদান কতটুকু হবে, আর Bias সিদ্ধান্তের Threshold বা শুরুর অবস্থানটিকে প্রয়োজনমতো ডানে-বামে সরিয়ে দেয়। নামের মিল থাকলেও মনে রাখা ভালো, এই গাণিতিক Unit-টি মানুষের মস্তিষ্কের জৈবিক নিউরনের পূর্ণাঙ্গ অনুকরণ নয়, বরং Function তৈরির একটি পরিষ্কার গাণিতিক উপাদান।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে একটি সংখ্যাগত উদাহরণ",
+          "body": "সমীকরণটি রক্তমাংসে অনুভব করার জন্য ছোট একটি হিসাব হাতেই করে ফেলা যাক। ধরুন, আমাদের Input হলো `x = [2, -1]`, Weight হলো `w = [0.5, 0.25]` এবং Bias হলো `b = 0.25`। তাহলে রৈখিক যোগফল বা Preactivation হবে `z = (2 × 0.5) + (-1 × 0.25) + 0.25 = 1 - 0.25 + 0.25 = 1`। এবার এর ওপর ReLU Activation প্রয়োগ করলে আমরা পাই `h = max(0, 1) = 1`। যেহেতু এখানে `z`-এর মান ধনাত্মক (`z > 0`), তাই এই বিন্দুতে ReLU-এর Local Derivative হবে `1`। ফলে Chain Rule অনুযায়ী Weight-এর সাপেক্ষে পরিবর্তন দাঁড়াবে `dh/dw = [2, -1]` এবং Bias-এর সাপেক্ষে পরিবর্তন হবে `dh/db = 1`।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "z=w^Tx+b,\\quad h=\\max(0,z),\\quad {\\partial h\\over\\partial w_k}=\\mathbf{1}_{z>0}x_k"
+        },
+        {
+          "type": "code",
+          "title": "PyTorch Autograd দিয়ে হিসাবটি মিলিয়ে দেখা",
+          "body": "import torch\n\nx = torch.tensor([2.0, -1.0], dtype=torch.float64)  # Mathematical illustration.\nw = torch.tensor([0.5, 0.25], dtype=torch.float64, requires_grad=True)\nb = torch.tensor(0.25, dtype=torch.float64, requires_grad=True)\n# Backward accumulates into .grad; the seed or reduction sets the scale.\nz = x @ w + b\nh = torch.relu(z)\nh.backward()\nprint(z.item(), h.item(), w.grad.tolist(), b.grad.item())\nassert z.item() == 1 and w.grad.tolist() == [2.0, -1.0]\n"
+        },
+        {
+          "type": "text",
+          "title": "Preactivation ঋণাত্মক হলে কী ঘটে?",
+          "body": "উপরের উদাহরণেই যদি একই Input রেখে শুধু Bias-এর মান কমিয়ে `-2` করে দেওয়া হয়, তবে কী ঘটবে? তখন Preactivation `z` ঋণাত্মক হয়ে যাবে, ফলে ReLU-এর Output হবে `0` এবং ওই বিন্দুতে এর Gate বা Local Derivative-ও হয়ে যাবে `0`। তবে এখানে একটি খুব প্রচলিত ভুল ধারণা থেকে সতর্ক থাকুন: মাত্র একটি Sample-এর জন্য কোনো Unit-এর Output বা Gradient শূন্য হওয়া মানেই কিন্তু সেটি পুরো Dataset-জুড়ে অকেজো বা Dead Neuron হয়ে যাওয়া নয়! কোনো Unit সত্যিই পুরোপুরি নিষ্ক্রিয় হয়ে পড়েছে কি না, তা জানতে বাকি সব Row-এর Preactivation পরীক্ষা করে দেখতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "পুরো Batch-এ Bias-এর Gradient কীভাবে যোগ হয়?",
+          "body": "একটি একক Sample থেকে যখন আমরা একসাথে অনেকগুলো Row বা একটি Batch-এ হিসাব করি, তখন একই Scalar Bias প্রতিটি Sample-এর সাথে Broadcast হয়ে যোগ হয়। তাই Backward Pass-এর সময় প্রতিটি Sample থেকে ফিরে আসা Upstream Derivative-গুলো পরস্পরের সাথে যোগ (Sum) হয়ে একক Scalar Bias Gradient তৈরি করে। এখানে একটি সূক্ষ্ম গাণিতিক ভুল প্রায়ই ঘটে: আপনি যদি Mean Loss ব্যবহার করেন, তবে Upstream Derivative-গুলোর ভেতরেই আগে থেকে Batch Size দিয়ে ভাগের (`1/B`) স্কেলটি ঢুকে থাকে; তাই Bias-এর Gradient বের করার সময় ভুল করে দ্বিতীয়বার গড় করতে যাবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "Feature-এর একক ও Standardization-এর ভূমিকা",
+          "body": "বাস্তব টেবিল ডেটায় একেকটি Feature একেক এককে মাপা হতে পারে—যেমন একটি হয়তো মিলিগ্রামে, অন্যটি শতকরা হারে। এই ভিন্ন ভিন্ন এককের কারণে কাঁচা সংখ্যায় Weighted Sum নিলে কোনো একটি Feature কেবল বড় এককের কারণেই পুরো যোগফলকে নিয়ন্ত্রণ করে ফেলতে পারে। Standardization করলে প্রতিটি Feature-এর গড় (Mean) শূন্য এবং বিস্তার (Scale) একক মানে চলে আসে, যা Optimization-কে অনেক মসৃণ করে। তবে মনে রাখবেন, Standardization কেবল সংখ্যার স্কেল সমান করে; এটি কোনো Feature-এর গুরুত্ব বা কার্যকারণ সম্পর্ক (Causality) তৈরি করে না। আর Training অংশে শেখা সেই একই Mean ও Scale পরে Inference-এর সময় হুবহু একই ক্রমে সাজানো Feature-গুলোর ওপর প্রয়োগ করতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "নিজে কোড চালিয়ে যাচাই করার অনুশীলন",
+          "body": "উপরের Python কোডটিতে এবার নিজেই একটি ঋণাত্মক Bias এবং `Batch Size = 1` বসিয়ে ফলাফল পরীক্ষা করে দেখুন। বিশেষ করে ঠিক `z = 0` বিন্দুতে—যেখানে ReLU রেখাটি কোণ তৈরি করে বাঁক নেয় (Kink)—সেখানে PyTorch কোন মানটিকে Gradient হিসেবে নির্ধারণ করেছে তা পর্যবেক্ষণ করুন। খেয়াল রাখবেন, এই বাঁকের বিন্দুতে বাম ও ডান দিকের ঢাল অসমান হওয়ায় যেকোনো Symmetric Numerical Derivative থেকে পাওয়া সংখ্যাকে যেন একমাত্র গাণিতিক Derivative ভেবে ভুল না করা হয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch16_capacity",
+      "title": "Linear Layer পরপর বসালেই কেন Nonlinear Model হয় না",
+      "subtitle": "Representation, Capacity ও Symmetry Breaking-এর গাণিতিক ভিত্তি",
+      "duration": "55 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "শুধু Linear Composition-এর গাণিতিক সীমাবদ্ধতা",
+          "body": "একক Neuron বোঝার পর স্বাভাবিকভাবেই প্রশ্ন জাগে: মাঝখানে কোনো Activation না দিয়ে যদি আমরা একের পর এক অনেকগুলো Linear (বা Affine) Layer সাজিয়ে দিই, তাহলেই কি গভীর ও শক্তিশালী Model তৈরি হয়ে যাবে? বীজগণিত বলছে—মোটেই না! দুটি Affine Layer-এর মাঝখানে কোনো Nonlinear Activation না থাকলে সেগুলো গুণ হয়ে গুটিয়ে যায় (Collapse করে) এবং শেষ পর্যন্ত আরেকটি সাধারণ Affine Map-এই পরিণত হয়। এতে খাতায়-কলমে Parameter-এর সংখ্যা বাড়লেও Model-টি যে ধরনের সরলরৈখিক Decision Boundary প্রকাশ করতে পারে, তার পরিধি একচুলও বাড়ে না। মূলত মাঝখানের Nonlinear Activation-ই একাধিক Layer-এর সংযোজনকে সত্যিকার অর্থে অর্থবহ করে তোলে।"
+        },
+        {
+          "type": "text",
+          "title": "Hidden Representation আসলে কী শেখে?",
+          "body": "যখনই আমরা মাঝখানে Nonlinear Activation বসাই, তখন Hidden Unit-গুলো মূল Input Space-এ বিভিন্ন দিক (Direction) ও সুইচ বা Gate তৈরি করতে পারে, আর শেষের Output Layer সেগুলোর সমন্বয়ে জটিল আকারের সিদ্ধান্ত নেয়। এই মধ্যবর্তী Representation সরাসরি Loss Objective এবং ডেটা থেকে শেখা হয়। তবে বাস্তব কাজের অভিজ্ঞতা থেকে একটি কথা মনে রাখা জরুরি: নেটওয়ার্কের ভেতরের প্রতিটি একক Neuron যে মানুষের ভাষায় নাম দেওয়া যায় এমন আলাদা ও পরিষ্কার কোনো ধারণা (Human-readable Concept) ধারণ করবেই, তার কোনো গ্যারান্টি নেই।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "(XW_1^T+b_1)W_2^T+b_2=X(W_2W_1)^T+b_1W_2^T+b_2"
+        },
+        {
+          "type": "code",
+          "title": "Activation ছাড়া দুটি Layer গুটিয়ে যাওয়ার প্রমাণ",
+          "body": "import torch\n\ntorch.manual_seed(16)\nX = torch.arange(6, dtype=torch.float64).reshape(3, 2)  # Illustration.\nW1 = torch.randn(3, 2, dtype=torch.float64)\nb1 = torch.randn(3, dtype=torch.float64)\nW2 = torch.randn(1, 3, dtype=torch.float64)\nb2 = torch.randn(1, dtype=torch.float64)\nstack = (X @ W1.T + b1) @ W2.T + b2\ncollapsed = X @ (W2 @ W1).T + b1 @ W2.T + b2\ntorch.testing.assert_close(stack, collapsed)\n"
+        },
+        {
+          "type": "text",
+          "title": "Width বনাম Depth: ক্ষমতা ও বাস্তব সীমা",
+          "body": "Nonlinear Activation যোগ করার পর আমাদের সামনে দুটি নকশাগত পছন্দ আসে: Layer-এর চওড়া (Width) বাড়াব নাকি Layer-এর গভীরতা (Depth)? Width বাড়ালে একই Layer-এ সমান্তরাল Intermediate Feature-এর সংখ্যা বাড়ে, আর Depth বাড়ালে ধাপে ধাপে Function Composition-এর সংখ্যা বাড়ে। এর সাথে সাথে Parameter সংখ্যা, মেমোরি ব্যবহার, Optimization-এর গতিপ্রকৃতি এবং Statistical Capacity সবই বদলে যায়। তবে ভুলে গেলে চলবে না যে বেশি Parameter মানেই অদেখা ডেটায় স্বয়ংক্রিয়ভাবে ভালো Generalization নয়; এর জন্য Dataset-এর আকার, গুণমান ও নিখুঁত মূল্যায়ন পদ্ধতি অপরিহার্য।"
+        },
+        {
+          "type": "text",
+          "title": "Symmetry সমস্যা: সবাই একই বিন্দু থেকে শুরু করলে কী হয়?",
+          "body": "কল্পনা করুন, একটি Hidden Layer-এর সবকটি Unit হুবহু একই Weight ও Bias নিয়ে যাত্রা শুরু করল এবং Output Layer-এর সাথেও একই মানের সংযোগ পেল। তাহলে Forward Pass-এ প্রতিটি Unit একই Output দেবে এবং Backward Pass-এ হুবহু একই Gradient Update পাবে! ফলে হাজার Epoch ট্রেন করলেও তারা সবাই একে অপরের নকল হয়েই থেকে যাবে—আলাদা আলাদা কোনো Feature শিখতে পারবে না। এই অচলাবস্থা ভাঙার নামই Symmetry Breaking। তাই ভালো Initialization মানে নিছক এলোমেলো কিছু সংখ্যা বসানো নয়; Symmetry ভাঙা এবং গভীর Layer পর্যন্ত সিগন্যালের Scale সুষম রাখা—দুটোই এর প্রধান দায়িত্ব।"
+        },
+        {
+          "type": "text",
+          "title": "Universal Approximation Theorem-এর বাস্তব সীমানা",
+          "body": "তাত্ত্বিক আলোচনায় প্রায়ই শোনা যায় যে পর্যাপ্ত চওড়া একটি একক Hidden Layer-ওয়ালা নেটওয়ার্ক যেকোনো অবিচ্ছিন্ন Function-কে ইচ্ছেমতো নিখুঁতভাবে অনুকরণ করতে পারে (Universal Approximation)। উপপাদ্যটি নির্দিষ্ট গাণিতিক শর্তে একটি Function Family-র প্রকাশক্ষমতা (Expressive Power) প্রমাণ করে বটে, কিন্তু বাস্তবে সীমিত ডেটা, গ্রহণযোগ্য আকারের Width, Gradient Descent দিয়ে সেই Weight-গুলো আদৌ খুঁজে পাওয়া যাবে কি না, কিংবা অদেখা ডেটায় ভালো Accuracy মিলবে কি না—এসবের কোনো নিশ্চয়তাই দেয় না। তাই Interview-এ তত্ত্বটির গাণিতিক বক্তব্য এবং বাস্তব Training-এর সীমাবদ্ধতা সবসময় আলাদা করে তুলে ধরবেন।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে গুছিয়ে উত্তর দেবেন",
+          "body": "Interview-এ যদি জানতে চাওয়া হয় কেন দশটি Linear Layer পরপর বসিয়েও একটি বক্রাকার Class সীমানা শেখা যায় না, তবে প্রথমে এক লাইনের Matrix বীজগণিত দিয়ে দেখান কীভাবে `(XW₁ᵀ + b₁)W₂ᵀ + b₂` ভেঙে একটি একক রৈখিক সমীকরণে রূপ নেয়। এরপর দেখান মাঝখানে একটি Nonlinear Function `φ(...)` বসালেই কীভাবে ব্র্যাকেট খুলে গুণ করার সেই পথটি বন্ধ হয়ে যায়। সবশেষে যোগ করুন যে একটি Architecture তাত্ত্বিকভাবে কোনো Function প্রকাশ করতে পারা আর বাস্তবে সেটিকে সফলভাবে Optimize করতে পারা—দুটি সম্পূর্ণ আলাদা চ্যালেঞ্জ।"
+        },
+        {
+          "type": "text",
+          "title": "XOR সমস্যার জন্য হাতে গড়া একটি Nonlinear Representation",
+          "body": "ধারণাটি চোখে দেখার জন্য চার বিন্দুর ক্লাসিক Binary XOR উদাহরণটি নেওয়া যাক: `[0, 0]`, `[0, 1]`, `[1, 0]` এবং `[1, 1]`। সমতলে একটি মাত্র সরলরেখা টেনে `[0, 1]` ও `[1, 0]`-কে বাকি দুটি বিন্দু থেকে আলাদা করা অসম্ভব। কিন্তু ধরুন আমরা যোগফল `s = x₁ + x₂` নিয়ে দুটি Hidden ReLU Unit তৈরি করলাম: `h₁ = ReLU(s)` এবং `h₂ = ReLU(s - 1)`। এবার `h₁ - 2h₂` হিসাব করলেই চারটি বিন্দুর জন্য পাওয়া যায় যথাক্রমে `[0, 1, 1, 0]`—যা হুবহু XOR Function! লক্ষ্য করুন, এখানে আমরা কোনো Training চালাইনি; একটি সঠিক Nonlinear Representation কীভাবে জটিল সমস্যাকে রৈখিকভাবে সমাধানযোগ্য করে তোলে তা দেখানোর জন্য Weight-গুলো হাতে নির্ধারণ করেছি। আর মনে রাখবেন, এমন চারটি নির্দিষ্ট বিন্দু মেলানো এবং বাস্তব অদেখা ডেটায় Generalization যাচাই করা এক প্রশ্ন নয়।"
+        },
+        {
+          "type": "code",
+          "title": "Nonlinearity দিয়ে XOR-এর চারটি বিন্দু আলাদা করা",
+          "body": "import torch\n\ninputs = torch.tensor(\n    [[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]], dtype=torch.float64\n)\nsums = inputs.sum(dim=1)\nhidden = torch.stack((sums.relu(), (sums - 1).relu()), dim=1)\nprediction = hidden @ torch.tensor([1.0, -2.0], dtype=inputs.dtype)\ntorch.testing.assert_close(\n    prediction, torch.tensor([0.0, 1.0, 1.0, 0.0], dtype=inputs.dtype)\n)\n# Opposite corners have the same sum for any affine classifier.\ncorner_sum = inputs[0] + inputs[3] - inputs[1] - inputs[2]\nprint(*prediction.tolist(), corner_sum.abs().sum().item())\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে ভেবে উত্তর দিন",
+          "body": "একটি একক Affine Threshold Model কেন XOR-এর দুটি ধনাত্মক কোণা (`[0, 1]` ও `[1, 0]`) এবং দুটি ঋণাত্মক কোণা (`[0, 0]` ও `[1, 1]`)-কে কখনোই আলাদা করতে পারে না?",
+          "solution": "যেকোনো Affine Function `f(x) = w₁x₁ + w₂x₂ + b`-এর জন্য দুটি ধনাত্মক কোণার স্কোরের যোগফল `f(0, 1) + f(1, 0) = w₁ + w₂ + 2b`, আর দুটি ঋণাত্মক কোণার স্কোরের যোগফলও `f(0, 0) + f(1, 1) = w₁ + w₂ + 2b`—অর্থাৎ দুটি যোগফল হুবহু সমান! অথচ কোনো একক Threshold দিয়ে এদের পুরোপুরি আলাদা করতে হলে এক জোড়ার স্কোরের যোগফল অবশ্যই অন্য জোড়ার চেয়ে বড় হতে হতো। মাঝখানে একটি Nonlinear Representation যোগ করলেই কেবল এই রৈখিক অচলাবস্থা কাটানো সম্ভব।",
+          "reference": "https://d2l.ai/"
+        }
+      ]
+    },
+    {
+      "id": "ch16_activations",
+      "title": "ReLU, Sigmoid ও Tanh-এর আচরণ ও Derivative",
+      "subtitle": "Gating, Saturation এবং Hidden বনাম Output Activation-এর পার্থক্য",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "সঠিক Activation Function বেছে নেওয়ার যুক্তি",
+          "body": "আগের পাঠে আমরা দেখলাম যে Nonlinearity ছাড়া গভীর নেটওয়ার্ক অর্থহীন; কিন্তু বাস্তবে আমরা কোন Activation Function বেছে নেব? আমাদের পরিচিত তিনটি Function-এর আচরণ তিন রকম: ReLU সব ধনাত্মক মানকে সরাসরি পার হতে দেয় এবং ঋণাত্মক মানগুলোকে শূন্য করে দেয়; Sigmoid যেকোনো বাস্তব সংখ্যাকে `[0, 1]` সীমার ভেতরে সংকুচিত করে; আর Tanh সেটিকে রাখে `[-1, 1]` সীমার ভেতরে। কোন Activation নেওয়া হচ্ছে তার ওপর যেমন ভেতরের Representation নির্ভর করে, তেমনি নির্ভর করে Backward Pass-এ Gradient কতটা স্বচ্ছন্দে প্রবাহিত হতে পারবে। তবে শুরুতেই একটি নিয়ম গেঁথে নিন: চূড়ান্ত Output Distribution-এর গাণিতিক অর্থ (Semantics) আর মাঝখানের Hidden Layer-এর Activation নির্বাচনকে কখনোই এক করে ফেলবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "Saturation ও Vanishing Gradient সমস্যা",
+          "body": "যখন Preactivation `z`-এর পরম মান অনেক বড় হয়ে যায় (খুব বড় ধনাত্মক বা খুব বড় ঋণাত্মক), তখন Sigmoid এবং Tanh উভয় Function-এর গ্রাফই প্রায় সমতল হয়ে পড়ে—যাকে বলা হয় Saturation। সমতল অঞ্চলে এদের Local Derivative হয়ে যায় শূন্যের কাছাকাছি ক্ষুদ্র সংখ্যা। ফলে গভীর নেটওয়ার্কে Chain Rule অনুযায়ী এমন অনেকগুলো ক্ষুদ্র ভগ্নাংশ পরপর গুণ হতে থাকলে শুরুর দিকের Layer-গুলোতে পৌঁছানোর আগেই Gradient প্রায় মিলিয়ে যায় (Vanishing Gradient)। শুধু Learning Rate বাড়িয়ে দিলেই এই হারিয়ে যাওয়া দরকারি সংকেত ফিরে আসে না; এর প্রকৃত সমাধান লুকিয়ে থাকে সিগন্যালের Scale নিয়ন্ত্রণ, সঠিক Initialization এবং উপযুক্ত Architecture নির্বাচনের ভেতর।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "\\sigma^{\\prime}(z)=\\sigma(z)(1-\\sigma(z)),\\quad \\tanh^{\\prime}(z)=1-\\tanh^2(z),\\quad \\mathrm{ReLU}^{\\prime}(z)=\\mathbf1_{z>0}"
+        },
+        {
+          "type": "code",
+          "title": "PyTorch-এ তিনটি Activation ও তাদের Gradient তুলনা",
+          "body": "import torch\n\nz = torch.tensor(\n    [-2.0, 0.0, 2.0], dtype=torch.float64, requires_grad=True\n)  # Illustration.\nfor function in [torch.sigmoid, torch.tanh, torch.relu]:\n    value = function(z)\n    grad = torch.autograd.grad(value.sum(), z)[0]\n    print(function.__name__, value.detach().tolist(), grad.tolist())\n"
+        },
+        {
+          "type": "text",
+          "title": "ReLU-এর সুবিধা এবং Dead Path-এর ঝুঁকি",
+          "body": "উপরের সমীকরণ ও কোডের ফলাফল দেখলেই বোঝা যায় কেন Hidden Layer-এ ReLU এত জনপ্রিয়: ধনাত্মক অঞ্চলে (`z > 0`) এর Local Derivative সবসময় ঠিক `1`, তাই এখানে Sigmoid বা Tanh-এর মতো মান চ্যাপ্টা হয়ে Gradient ক্ষয়ে যাওয়ার ভয় নেই। তবে ঋণাত্মক অঞ্চলে (`z < 0`) এর Gate পুরোপুরি `0`। যদি কোনো কারণে একটি Hidden Unit আমাদের সবকটি Training Row-এর জন্যই ঋণাত্মক অঞ্চলে আটকে যায়, তবে তার ভেতর দিয়ে আসা সব Gradient শূন্য হয়ে যাবে এবং সেটি আর কখনোই শিখতে পারবে না (Dead ReLU)। ডিবাগ করার সময় একটি সূক্ষ্ম পার্থক্য মনে রাখবেন: কম্পিউটেশন গ্রাফ থেকে বিচ্ছিন্ন থাকার কারণে `.grad` এর মান `None` থাকা আর গ্রাফে সংযুক্ত থেকেও সংখ্যাগতভাবে `0.0` পাওয়া—দুটি সম্পূর্ণ আলাদা পরিস্থিতি।"
+        },
+        {
+          "type": "text",
+          "title": "কাজের ধরন অনুযায়ী Output Layer-এর গঠন",
+          "body": "ভেতরের Layer-এ ReLU ব্যবহার করলেও শেষের Output Layer সাজাতে হয় সমস্যার লক্ষ্য অনুযায়ী। যেমন, Binary Classification-এ আমরা শেষ Layer থেকে একটি কাঁচা Logit নিই এবং ট্রেনিংয়ে `BCEWithLogitsLoss` ব্যবহার করি; পরে রিপোর্ট বা মূল্যায়নের সময় Probability দরকার হলে আলাদাভাবে Sigmoid প্রয়োগ করি। একইভাবে পরস্পর বর্জনশীল (Mutually Exclusive) Multiclass সমস্যার জন্য `C`টি কাঁচা Logit ও `CrossEntropyLoss` ব্যবহার করা হয়, আর যেখানে একটি Sample একসাথে একাধিক Class-এ থাকতে পারে (Independent Multilabel), সেখানে `C`টি আলাদা Binary BCE Logit নেওয়া হয়।"
+        },
+        {
+          "type": "text",
+          "title": "What-if পরীক্ষা বনাম নতুন করে Retraining",
+          "body": "পরের পাঠের Forward Lab-এ আপনি একটি Tanh টগল দেখতে পাবেন, যা আগে থেকে ReLU দিয়ে ট্রেন করা একই সংরক্ষিত Weight-গুলোর ওপর কেবল Activation Function-টি পাল্টে দেয়। এটি মূলত একই Input-এ গ্রাফের ভেতরের সংখ্যাগুলো কীভাবে বদলে যায় তা বোঝার জন্য একটি দারুণ 'What-if' পরীক্ষা। কিন্তু ভুলেও এটিকে 'ReLU বনাম Tanh Model-এর পারফরম্যান্স তুলনা' ভাববেন না—সেরকম তুলনামূলক দাবি করতে হলে শুরু থেকে Tanh দিয়ে আলাদাভাবে Model ট্রেন করে সুশৃঙ্খল Experiment চালাতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে অনুশীলন",
+          "body": "খাতায় `z = -2, 0, 2` বিন্দুগুলোতে তিনটি Function-এর মান ও তাদের Derivative আনুমানিক হিসাব করে উপরের কোডের Output-এর সাথে মিলিয়ে দেখুন। পাশাপাশি গাণিতিকভাবে ভেবে দেখুন কেন Sigmoid-এর Derivative কখনোই `0.25`-এর চেয়ে বড় হতে পারে না (`z = 0` বিন্দুতে `0.5 × (1 - 0.5) = 0.25`-ই এর সর্বোচ্চ চূড়া!), এবং ঠিক `z = 0` বিন্দুতে ReLU-এর জন্য PyTorch কোন মানটিকে নির্বাচিত Gradient হিসেবে ব্যবহার করে তা যাচাই করুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch16_forward",
+      "title": "বাস্তব ডেটার একটি Row দিয়ে পূর্ণাঙ্গ Forward Pass",
+      "subtitle": "Feature Contribution থেকে শুরু করে Hidden Activation ও চূড়ান্ত Probability পর্যন্ত",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ডেটার উৎস এবং Preprocessing-এর ধারাবাহিকতা",
+          "body": "তাত্ত্বিক ও ছোট উদাহরণ পেরিয়ে এবার আমাদের Wine Quality Dataset-এর বাস্তব ডেটায় হাত দেওয়া যাক। নিচের Lab-এ আমাদের Inner-training অংশের প্রথম আটটি প্রকৃত Row দেওয়া আছে। শুরুতেই একটি ডেটা-সংক্রান্ত সতর্কতা পরিষ্কার করে নিই: এখানে প্রতিটি Sample-এর যে `source_row_1based` নম্বর দেখছেন, তা নিছক মূল ফাইলে Row-টির অবস্থান নির্দেশ করে—এটি কোনো যাচাইকৃত ওয়াইনের বোতল বা উৎপাদন লটের পরিচয় নয়। কাঁচা রাসায়নিক Feature-গুলোকে Inner-training সেটের Mean ও Scale দিয়ে Standardize করে তবেই Model-এ পাঠানো হয়েছে, এবং প্রতিটি ধাপে এই 11টি Feature-এর ক্রম (Order) হুবহু অভিন্ন থাকা অপরিহার্য।"
+        },
+        {
+          "type": "text",
+          "title": "Hidden Layer-এর ভেতরের হিসাব",
+          "body": "যেকোনো একটি নির্বাচিত Hidden Unit `j`-এর হিসাব কীভাবে এগোয়? প্রথমে ওই Row-এর 11টি Standardized Input `x[k]`-কে সংশ্লিষ্ট Weight `W1[j, k]` দিয়ে গুণ করে সবকটি গুণফল যোগ করা হয় এবং তার সাথে যোগ হয় ওই Unit-এর Bias `b1[j]`। এরপর ReLU এসে যেকোনো ঋণাত্মক Preactivation-কে শূন্যে নামিয়ে দেয়। Interactive Lab-এ আপনি প্রতিটি একক Feature-এর এই গুণফল বা Contribution আলাদাভাবে দেখতে পাবেন; তবে মনে রাখবেন, কোনো একটি নির্দিষ্ট Sample ও একটি নির্দিষ্ট Unit-এ বড় একটি গুণফল দেখা মানেই কিন্তু সেটি পুরো Model-এর সামগ্রিক Feature Importance বা কোনো কার্যকারণ প্রভাব (Causal Effect) নয়।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "Z_1=XW_1^T+b_1,\\quad H=\\mathrm{ReLU}(Z_1),\\quad z=Hw_2+b_2,\\quad p=\\sigma(z)"
+        },
+        {
+          "type": "code",
+          "title": "সংরক্ষিত Checkpoint থেকে Python-এ Forward Pass",
+          "body": "from pathlib import Path\nimport json, numpy as np\n\nasset = json.loads(Path(\"assets/datasets/wine_quality/neural_lab.json\").read_text())\np = asset[\"checkpoints\"][0][\"parameters\"]\nx = np.array(asset[\"samples\"][0][\"standardized\"])\nz1 = np.array(p[\"w1\"]) @ x + np.array(p[\"b1\"])\nh = np.maximum(z1, 0)\nlogit = float(h @ np.array(p[\"w2\"]) + p[\"b2\"])\nprobability = float(np.exp(-np.logaddexp(0, -logit)))\nprint(asset[\"samples\"][0][\"source_row_1based\"], z1, h, logit, probability)\n"
+        },
+        {
+          "type": "text",
+          "title": "Output Layer থেকে Logit ও Probability নির্ণয়",
+          "body": "চারটি Hidden Unit থেকে পাওয়া সক্রিয় মানগুলোকে এবার Output Weight Vector `w2` দিয়ে গুণ করে যোগ করা হয় এবং শেষে Output Bias `b2` যোগ করলেই পাওয়া যায় আমাদের কাঙ্ক্ষিত Logit। এই Logit যেকোনো বাস্তব সংখ্যা হতে পারে, আর এর ওপর Sigmoid প্রয়োগ করলেই মেলে `[0, 1]` পরিসরের একটি Probability-সদৃশ স্কোর (কোডে সংখ্যার স্থিতিশীলতার জন্য `logaddexp` কৌশল ব্যবহার করা হয়েছে)। তবে খেয়াল রাখবেন, Sigmoid স্কোরটি `0` থেকে `1`-এর ভেতরে আবদ্ধ থাকলেই কিন্তু স্বয়ংক্রিয়ভাবে প্রমাণিত হয় না যে Model-টি সুষমভাবে Calibrated।"
+        },
+        {
+          "type": "neural_forward_lab",
+          "title": "Interactive Lab: ধাপে ধাপে Forward Pass পর্যবেক্ষণ",
+          "body": "নিচের Lab থেকে বাস্তব ডেটার যেকোনো একটি Row, যেকোনো একটি Hidden Unit এবং সংরক্ষিত যেকোনো Epoch বেছে নিয়ে প্রতিটি গাণিতিক ধাপ নিজের চোখে অনুসরণ করুন। Tanh টগলটি অন-অফ করে দেখুন ভেতরের সংখ্যাগুলো কীভাবে বদলে যায়। এখানে প্রদর্শিত প্রারম্ভিক ও চূড়ান্ত Checkpoint-গুলো একটি সুনির্দিষ্ট ও অপরিবর্তিত Training Run থেকে নেওয়া হয়েছে; অ্যাপটি এখানে নতুন করে কোনো Weight ফিট করে না।"
+        },
+        {
+          "type": "text",
+          "title": "একক Row বনাম পুরো Batch: ফলাফল কি একই থাকে?",
+          "body": "আমাদের এই সাধারণ Linear এবং ReLU সমন্বয়ে গড়া Model-এ আপনি একটি Row এককভাবে পাঠান কিংবা অন্য অনেক Row-এর সাথে একটি Batch-এ ভরে পাঠান—স্বাভাবিক Floating-point Tolerance-এর মধ্যে উভয় ক্ষেত্রেই হুবহু একই Prediction পাবেন। কারণ এখানে একটি Sample-এর হিসাব পাশের Sample-এর ওপর নির্ভরশীল নয়। তবে পরের অধ্যায়ে যখন আমরা BatchNorm বা Dropout-এর মতো Layer যোগ করব, তখন Training বনাম Evaluation মোড এবং Batch-ভিত্তিক আচরণের পার্থক্য আলাদাভাবে বিবেচনা করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "নিজের বোঝাপড়া যাচাই",
+          "body": "একটি ক্যালকুলেটর বা ছোট স্ক্রিপ্ট ব্যবহার করে অন্তত একটি Hidden Preactivation এবং চূড়ান্ত Output Logit নিজে হিসাব করে Lab-এর ফলাফলের সাথে মিলিয়ে দেখুন। পাশাপাশি ভেবে দেখুন ও ব্যাখ্যা করুন: Standardized Input-এর ওপর ট্রেন করা Weight-গুলো যদি ভুলবশত সরাসরি কাঁচা (Raw) রাসায়নিক মানের ওপর প্রয়োগ করা হয়, তবে Model-এর Output কেন পুরোপুরি ভুল হয়ে যাবে? যেকোনো কারিগরি রিপোর্টে ব্যবহৃত Checkpoint-এর পরিচয় এবং Preprocessing-এর পরিধি স্পষ্টভাবে নথিভুক্ত করার অভ্যাস গড়ে তুলুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch16_losses",
+      "title": "Loss Function-এর সাথে Task Contract নিখুঁতভাবে মেলানো",
+      "subtitle": "Logits, Targets, Reductions এবং সংখ্যার স্থিতিশীলতা (Numerical Stability)",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Binary Classification-এ কাঁচা Logit কেন ব্যবহার করি?",
+          "body": "আগের পাঠে আমরা দেখেছি কীভাবে Forward Pass শেষে Logit ও Probability পাওয়া যায়। কিন্তু ট্রেনিংয়ের সময় PyTorch-এর `BCEWithLogitsLoss` Input হিসেবে চায় সরাসরি কাঁচা Logit—Sigmoid করার পর পাওয়া Probability নয়! কারণ ভেতরে ভেতরে এটি Sigmoid ও Cross-Entropy-কে একটি সংখ্যার দিক থেকে স্থিতিশীল (Numerically Stable) একক সমীকরণে মিলিয়ে হিসাব করে, ফলে `+1000` বা `-1000`-এর মতো চরম Logit মানেও কোনো Overflow বা `NaN` ঘটে না। আপনি যদি ভুল করে Model-এর শেষেই একবার Sigmoid বসিয়ে সেই Output আবার `BCEWithLogitsLoss`-এ পাঠান, তবে কোড কোনো এরর ছাড়াই চলবে ঠিকই, কিন্তু দ্বিগুণ রূপান্তরের কারণে আপনার শেখার Objective পুরোপুরি বিকৃত হয়ে যাবে!"
+        },
+        {
+          "type": "text",
+          "title": "Target Tensor-এর Shape ও Data Type চুক্তি",
+          "body": "সঠিক Function বেছে নেওয়ার পাশাপাশি Output ও Target-এর আকারের চুক্তিটিও মানতে হবে: Binary ক্ষেত্রে `logits[B]`-এর সাথে হুবহু একই আকারের Floating-point `targets[B]` থাকা চাই। কখনো যদি Target-এর আকার `[B, 1]` থাকে, তবে চোখ বন্ধ করে `reshape` করার আগে কোনটি Sample Axis তা ভালোভাবে বুঝে নিন, যাতে অনাকাঙ্ক্ষিত Broadcasting না ঘটে। এছাড়া মনে রাখবেন, পূর্ণসংখ্যার Class Index এবং One-hot বা Multilabel Indicator Vector সম্পূর্ণ আলাদা ধরনের প্রকাশভঙ্গি; তাই সমস্যার প্রকৃতি অনুযায়ীই সঠিক Target ও সঠিক Loss Function জোড়া দিতে হবে।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "\\ell(z,y)=\\max(z,0)-yz+\\log(1+e^{-|z|}),\\quad {\\partial L\\over\\partial z_i}={\\sigma(z_i)-y_i\\over B}"
+        },
+        {
+          "type": "code",
+          "title": "চরম Logit মানেও স্থিতিশীল BCEWithLogitsLoss",
+          "body": "import torch\nimport torch.nn.functional as F\n\nz = torch.tensor([1000.0, -1000.0, 0.0], dtype=torch.float64, requires_grad=True)\ny = torch.tensor([0.0, 1.0, 1.0], dtype=torch.float64)  # Mathematical edge cases.\nloss = F.binary_cross_entropy_with_logits(z, y)\n# Backward accumulates into .grad; the seed or reduction sets the scale.\nloss.backward()\nassert torch.isfinite(loss) and torch.isfinite(z.grad).all()\nprint(loss.item(), z.grad.tolist())\n"
+        },
+        {
+          "type": "text",
+          "title": "অন্যান্য Task-এর ক্ষেত্রে Output ও Loss নির্বাচন",
+          "body": "অন্যান্য পরিচিত মেশিন লার্নিং টাস্কেও একইভাবে Output এবং Loss-এর চুক্তি মিলিয়ে নিতে হয়। যেমন, Regression সমস্যার ক্ষেত্রে Model সরাসরি বাস্তব সংখ্যা Output দেয় এবং সেখানে ডেটার প্রকৃতি বুঝে Squared Error (MSE) বা Outlier-সহনশীল Robust Loss ব্যবহার করা হয়। অন্যদিকে যেখানে প্রতিটি Sample কেবল একটি Class-এই পড়তে পারে (Single-label Multiclass), সেখানে Model `[B, C]` আকারের কাঁচা Logit দেয় এবং Target থাকে পূর্ণসংখ্যার `y[B]`; চূড়ান্ত Class দেখতে আমরা Softmax বা `argmax` ব্যবহার করলেও ট্রেনিংয়ের `CrossEntropyLoss`-কে কিন্তু সরাসরি সেই কাঁচা Logit-ই দিতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Reduction: Mean বনাম Sum এবং হরের হিসাব",
+          "body": "সমীকরণটির দিকে তাকালে দেখবেন, Mean BCE প্রতিটি Sample-এর Loss যোগ করে শেষে মোট Sample সংখ্যা `B` দিয়ে ভাগ করে। এর সরাসরি ফলাফল হলো—আপনি যদি গড় না নিয়ে Sum Loss ব্যবহার করেন, তবে প্রতিটি Gradient-এর মান Mean-এর তুলনায় ঠিক `B` গুণ বড় হয়ে যাবে! অর্থাৎ Sum Reduction ব্যবহার করলে কেবল Batch Size বদলেই পুরো Optimization-এর স্কেল ও কার্যকর Learning Rate ওলটপালট হয়ে যেতে পারে। বিশেষ করে যখন Weighted বা Masked Objective নিয়ে কাজ করবেন, তখন হরে (Denominator) ঠিক কোন সংখ্যাটি দিয়ে ভাগ হচ্ছে তা কোড এবং ডকুমেন্টেশন দুই জায়গাতেই দ্ব্যর্থহীনভাবে উল্লেখ করবেন।"
+        },
+        {
+          "type": "text",
+          "title": "Training Loss বনাম Evaluation Metric",
+          "body": "ট্রেনিংয়ে আমরা কমাচ্ছি অবিচ্ছিন্ন BCE Loss, অথচ ফলাফল দেখার সময় প্রায়ই হিসাব করি Accuracy—এই দুটির চরিত্র কিন্তু এক নয়। BCE মাপে Model-এর প্রদত্ত Probability স্কোরগুলোর সূক্ষ্ম গুণমান ও আত্মবিশ্বাস, আর Accuracy নির্ভর করে একটি নির্দিষ্ট কাট-অফ বা Threshold-এর ওপর। তাই একই Accuracy বজায় রেখেও কেবল Prediction-এর আত্মবিশ্বাস বাড়া-কমার কারণে BCE অনেকখানি বদলে যেতে পারে। আমাদের এই অধ্যায়ে ব্যবহৃত `0.5` Threshold-টি নিছক একটি ঘোষিত ডায়াগনস্টিক মাপকাঠি; এটিকে কোনো Empirical সর্বোত্তম সিদ্ধান্ত-নীতি বা ব্যবসায়িক Utility মনে করবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "নিজে ডিবাগ করার মহড়া",
+          "body": "উপরের কোডটিতে যেমন চরম মানের Logit দিয়ে পরীক্ষা করা হয়েছে, তেমনি ইচ্ছে করে ভুল আকারের বা ভুল পরিসরের Target বসিয়ে দেখুন কখন ফ্রেমওয়ার্ক আপনাকে আটকে দেয় আর কখন নীরবে ভুল হিসাব চালিয়ে যায়। মনে রাখবেন, Loss একটি সুন্দর সসীম সংখ্যা (Finite) আসা মানেই কিন্তু আপনার ডেটার Source-row Alignment সঠিক আছে—তা নিশ্চিত হয় না। সবশেষে ভেবে বলুন: কেউ যদি চূড়ান্ত Class পাওয়ার আশায় Model-এর ভেতরেই `argmax` বসিয়ে তার ওপর একটি Differentiable Loss বানাতে চায়, তবে দরকারি Gradient পাথটি কেন পুরোপুরি নষ্ট হয়ে যাবে?"
+        }
+      ]
+    },
+    {
+      "id": "ch16_chain",
+      "title": "Backpropagation আসলে ক্যালকুলাসেরই Chain Rule",
+      "subtitle": "Local Derivative এবং Upstream Signal-এর ধাপে ধাপে পশ্চাৎমুখী প্রবাহ",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "বিপরীতমুখী গণনা (Reverse Computation) কীভাবে কাজ করে?",
+          "body": "Forward Pass এবং Loss কীভাবে হিসাব করতে হয় তা আমরা দেখেছি; এবার প্রশ্ন হলো, চূড়ান্ত Loss কমানোর জন্য ভেতরের প্রতিটি Weight কতটুকু বদলাতে হবে তা নেটওয়ার্ক কীভাবে জানে? উত্তরটির নামই Backpropagation, যা আসলে ক্যালকুলাসের চিরচেনা Chain Rule-এর একটি সুশৃঙ্খল প্রয়োগ। Forward ধাপে আমরা বাম থেকে ডানে মানগুলো হিসাব করি, আর Backward ধাপে একদম শেষের Loss থেকে শুরু করে উল্টো পথে Upstream Derivative পাঠাতে থাকি। পথে পড়া প্রতিটি গাণিতিক অপারেশন শুধু নিজের Local Derivative দিয়ে ওই আগত Upstream Signal-কে গুণ করে পেছনে পাঠিয়ে দেয়। আর কোনো চলক যদি একাধিক পথে ব্যবহৃত হয়ে থাকে, তবে সবকটি পথ থেকে ফিরে আসা অবদানগুলো পরস্পরের সাথে যোগ (Sum) হয়ে যায়।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে একটি পূর্ণাঙ্গ শিকল (Worked Chain)",
+          "body": "চলুন ছোট একটি উদাহরণে পুরো শিকলটি হাতে মিলিয়ে দেখি। আগের মতোই `x = [2, -1]`, `w = [0.5, 0.25]` ও `b = 0.25` নিলে প্রথম ধাপে `z1 = 1` এবং `h = ReLU(1) = 1` পাওয়া যায়। এবার ধরুন পরের ধাপে Output Weight `v = 2` এবং Bias `c = -2`; তাহলে চূড়ান্ত Logit দাঁড়ায় `z2 = (1 × 2) - 2 = 0`। প্রকৃত Target যদি `y = 1` হয়, তবে `dL/dz2 = Sigmoid(0) - 1 = 0.5 - 1 = -0.5`। এবার পেছনে হাঁটুন: Output গুণক `v = 2` এবং `z1 > 0` হওয়ায় ReLU Gate-এর মান `1`, তাই Hidden অংশে পৌঁছানো সংকেত বা Delta হবে `-0.5 × 2 × 1 = -1`। সবশেষে প্রথম Input `x0 = 2` দিয়ে গুণ করলেই মিলে যায় প্রথম Weight-এর পরিবর্তন হার: `dL/dw0 = -1 × 2 = -2`!"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "{\\partial L\\over\\partial w}={\\partial L\\over\\partial z_2}{\\partial z_2\\over\\partial h}{\\partial h\\over\\partial z_1}{\\partial z_1\\over\\partial w}"
+        },
+        {
+          "type": "code",
+          "title": "PyTorch Autograd দিয়ে চারটি Parameter-এর Gradient যাচাই",
+          "body": "import torch\nimport torch.nn.functional as F\n\nx = torch.tensor([2.0, -1.0], dtype=torch.float64)  # Mathematical illustration.\nw = torch.tensor([0.5, 0.25], dtype=torch.float64, requires_grad=True)\nb = torch.tensor(0.25, dtype=torch.float64, requires_grad=True)\nv = torch.tensor(2.0, dtype=torch.float64, requires_grad=True)\nc = torch.tensor(-2.0, dtype=torch.float64, requires_grad=True)\nh = torch.relu(x @ w + b)\nlogit = h * v + c\nloss = F.binary_cross_entropy_with_logits(logit, torch.tensor(1.0, dtype=torch.float64))\n# Backward accumulates into .grad; the seed or reduction sets the scale.\nloss.backward()\nprint(w.grad.tolist(), b.grad.item(), v.grad.item(), c.grad.item())\nassert w.grad[0].item() == -2.0\n"
+        },
+        {
+          "type": "text",
+          "title": "Gradient-এর চিহ্ন (Sign) আমাদের কী বলে?",
+          "body": "উপরের হিসাবে `w0`-এর Gradient ঋণাত্মক (`-2.0`) এসেছে। এর গাণিতিক অর্থ হলো, যথেষ্ট ছোট একটি Gradient Descent ধাপ (`w ← w - η · grad`) নিলে বিয়োগে-বিয়োগে যোগ হয়ে `w0`-এর মান কিছুটা বাড়বে—যাতে ধনাত্মক Class-এর দিকে Model-এর Logit আরও ওপরে ওঠে। তবে বাস্তব নেটওয়ার্কে কেবল একটি নির্দিষ্ট Weight-এর চিহ্ন দেখেই পুরো Model-এর আচরণ সম্পর্কে চূড়ান্ত সিদ্ধান্ত নেবেন না; কারণ সবকটি Parameter একই সাথে আপডেট হয় এবং ভেতরের Nonlinear Gate-গুলোর অবস্থা যেকোনো ধাপে বদলে যেতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "স্থানীয় সুইচ (Local Gate) এবং ত্রুটি শনাক্তকরণ",
+          "body": "যদি কোনো কারণে `z1` ঋণাত্মক হতো, তবে ওই পথের ReLU Derivative শূন্য হয়ে যেত এবং `w` ও `b` পর্যন্ত কোনো সংকেত পৌঁছাত না। লক্ষ্য করুন, তখনো কিন্তু শেষের Output Bias `c` কিংবা অন্য কোনো সক্রিয় Hidden Unit ঠিকই অশূন্য Gradient পেত! বাস্তব ডিবাগিংয়ের সময় তাই সব সমস্যাকে এক পাল্লায় না মেপে Vanishing Gradient, ভুল Loss নির্বাচন, অসাবধানতাবশত `.detach()` কল করা এবং পুরোনো জমে থাকা Buffer—এই প্রতিটি উপসর্গকে আলাদাভাবে চিহ্নিত করতে শিখুন।"
+        },
+        {
+          "type": "text",
+          "title": "Autograd বনাম Finite Difference-এর ভূমিকা",
+          "body": "আমরা খাতায় যে গুণ ও যোগগুলো করলাম, PyTorch-এর Autograd ইঞ্জিন কম্পিউটেশন গ্রাফ ধরে একটি মাত্র দক্ষ Reverse Traversal-এ ঠিক সেই কাজটিই সম্পন্ন করে। অন্যদিকে সংখ্যাত্মক Finite Difference পদ্ধতিতে প্রতিটি Parameter-কে আলাদা আলাদাভাবে সামান্য নাড়িয়ে (Perturb করে) পরিবর্তন মাপা হয়—হাজার বা লক্ষ Parameter-এর Model-এ ট্রেনিংয়ের জন্য যা অসম্ভব ধীরগতির। তবুও হাতে সমীকরণ বের করা (Manual Derivation) এবং ছোট স্কেলে Finite Difference চালানো—দুটোই আমাদের কোড নির্ভুল কি না তা যাচাইয়ের স্বাধীন মাপকাঠি হিসেবে অপরিহার্য।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ দক্ষতার প্রস্তুতি",
+          "body": "খাতায় এই ছোট কম্পিউটেশন গ্রাফটি নিজে এঁকে চারটি Parameter (`w`, `b`, `v`, `c`)-এর প্রতিটির Gradient সমীকরণ বের করুন। এরপর নিজেকে প্রশ্ন করুন: Target বদলে `y = 0` করে দিলে কিংবা ReLU নিষ্ক্রিয় হয়ে গেলে কোন কোন সংখ্যা কীভাবে বদলাবে? কোড না চালিয়েই কেবল যুক্তি দিয়ে Derivative-এর চিহ্ন এবং Parameter Update-এর দিক—দুটোকে পরিষ্কারভাবে আলাদা করে ব্যাখ্যা করার অভ্যাস করুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch16_output",
+      "title": "Output Layer-এর Batched Derivative নির্ণয়",
+      "subtitle": "Mean BCE থেকে এক ধাপে Output Weight ও Bias-এর Gradient বের করা",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Matrix-এর আকার মিলিয়ে সমীকরণ তৈরি",
+          "body": "একটি একক Sample-এর Chain Rule তো বোঝা গেল, কিন্তু বাস্তবে আমরা একসাথে পুরো একটি Batch নিয়ে কাজ করি। ধরুন, Hidden Activation Matrix-এর আকার `H[B, H]` এবং Output Weight Vector-এর আকার `w2[H]`, যা থেকে তৈরি হয় `logits[B]`। এখন প্রতিটি Sample-এর Logit Derivative মিলে যদি `δ2[B]` Vector তৈরি করে, তবে `Hᵀ[H, B] @ δ2[B]` Matrix গুণটি এক লহমায় সবকটি Sample-এর অবদান যোগ করে `[H]` আকারের Output Weight Gradient দিয়ে দেয়! আর PyTorch-এর `nn.Linear` যেহেতু একক Output-এর Weight-কে `[1, H]` আকারে রাখে, তাই সেখানে সমতুল্য Gradient-টির আকারও হয় `[1, H]`।"
+        },
+        {
+          "type": "text",
+          "title": "Bias Gradient-এ গড় বনাম যোগের হিসাব",
+          "body": "একই Output Bias Scalar-টি যেহেতু Batch-এর প্রতিটি Row-এর সাথে যোগ হয়েছিল, তাই Backward ধাপে তার Derivative হবে সবকটি Sample-এর অবদানের যোগফল (`sum`)। এখানে আগের সেই গুরুত্বপূর্ণ সতর্কবার্তাটি আবারও মনে করিয়ে দিই: Mean Reduction ব্যবহার করার ফলে `δ2`-এর ভেতরেই আগে থেকে হরের `B` দিয়ে ভাগের কাজটি হয়ে আছে; তাই `db2` বের করার সময় ভুলেও আবার `.mean()` নিলে অতিরিক্ত আরেকবার `B` দিয়ে ভাগ হয়ে Gradient ভুল হয়ে যাবে।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "\\delta_2={\\sigma(z)-y\\over B},\\quad \\nabla_{w_2}L=H^T\\delta_2,\\quad \\nabla_{b_2}L=\\sum_i\\delta_{2i}"
+        },
+        {
+          "type": "code",
+          "title": "Autograd ও হাতে লেখা সূত্রের নিখুঁত মিল",
+          "body": "import torch\nimport torch.nn.functional as F\n\nH = torch.tensor([[1.0, 0.0], [2.0, 3.0]], dtype=torch.float64)  # Illustration.\nw = torch.tensor([0.2, -0.1], dtype=torch.float64, requires_grad=True)\nb = torch.tensor(0.0, dtype=torch.float64, requires_grad=True)\ny = torch.tensor([0.0, 1.0], dtype=torch.float64)\n# Backward accumulates into .grad; the seed or reduction sets the scale.\nz = H @ w + b\nloss = F.binary_cross_entropy_with_logits(z, y)\nloss.backward()\ndelta = (torch.sigmoid(z.detach()) - y) / len(y)\ntorch.testing.assert_close(w.grad, H.T @ delta)\ntorch.testing.assert_close(b.grad, delta.sum())\n"
+        },
+        {
+          "type": "text",
+          "title": "আত্মবিশ্বাসী ভুল বনাম আত্মবিশ্বাসী সঠিক অনুমান",
+          "body": "`Sigmoid(z) - y` রাশিটির সৌন্দর্য একটু খেয়াল করে দেখুন! Model যখন প্রবল আত্মবিশ্বাসের সাথে ভুল Prediction দেয় (যেমন `y = 0` অথচ `Sigmoid(z) ≈ 0.99`), তখন এই Residual-এর মান হয় অনেক বড়, যা Weight শোধরানোর জন্য জোরালো ধাক্কা দেয়। বিপরীতে Model যখন আত্মবিশ্বাসের সাথে সঠিক অনুমান করে, তখন পার্থক্যটি শূন্যের কাছাকাছি নেমে আসে। মজার ব্যাপার হলো, Sigmoid এবং Log-loss-এর আলাদা জটিল Derivative দুটিকে Chain Rule-এ গুণ করে কাটাকাটি করলেই এই সরল ও স্থিতিশীল বিয়োগফলটি পাওয়া যায়—তাই আলাদা করে অস্থিতিশীল `log(sigmoid(z))` লেখার কোনো প্রয়োজনই পড়ে না।"
+        },
+        {
+          "type": "text",
+          "title": "শূন্য Logit ও Class Balance-এর দারুণ একটি Sanity Check",
+          "body": "ধরুন ট্রেনিংয়ের শুরুতে সব Logit শূন্য; তাহলে প্রতিটি Sample-এর জন্য `p = 0.5`। এই অবস্থায় Mean Bias Gradient হিসাব করলে তার মান আসবে ঠিক `0.5 - positive_fraction`! নিজের কোড ঠিকমতো কাজ করছে কি না তা পরখ করার জন্য এটি চমৎকার একটি তাৎক্ষণিক পরীক্ষা (Sanity Check)। এমনকি Logit অশূন্য হলেও গড় Predicted Probability থেকে ধনাত্মক Class-এর অনুপাত (Prevalence) বিয়োগ করে আপনি সহজেই মিলিয়ে দেখতে পারেন Bias Gradient-এর গাণিতিক হিসাব সঠিক আছে কি না—এর জন্য কোনো Calibration দাবি করারও দরকার নেই।"
+        },
+        {
+          "type": "text",
+          "title": "Textbook বনাম PyTorch-এর Weight Orientation",
+          "body": "বইপত্র পড়ার সময় একটি বিষয়ে সবসময় সজাগ থাকবেন: অনেক পাঠ্যবইয়ে Weight Matrix-কে `[in, out]` আকারে লেখা হয়, অথচ PyTorch-এর `nn.Linear` সেটিকে সংরক্ষণ করে `[out, in]` আকারে। তাই যেকোনো সমীকরণ কোডে অনুবাদ করার সময় কোথায় Transpose (`.T`) বসবে তা মিলিয়ে নেওয়া জরুরি। তাছাড়া কেবল দুটি Matrix-এর ভেতরের Dimension মিলে গিয়ে গুণফল বের হওয়া মানেই কিন্তু এই নয় যে প্রতিটি Row ও Feature তার সঠিক গাণিতিক অর্থ (Semantics) বজায় রেখেছে!"
+        },
+        {
+          "type": "text",
+          "title": "নিজে অনুশীলন করুন",
+          "body": "উপরের কোডে একই `H` Batch-এর ওপর `reduction='mean'` এবং `reduction='sum'` চালিয়ে দুটি Gradient তুলনা করে দেখুন। পাশাপাশি মনে রাখবেন, কেবল Scalar Bias Gradient-এর চিহ্ন দেখেই Dataset-এ ধনাত্মক Class-এর অনুপাত অনুমান করার আগে যাচাই করে নিতে হয় Logit-গুলো আসলেই শূন্য কি না। যেকোনো Interview-এ উত্তর দেওয়ার সময় হরের স্কেল (`1/B` নাকি `1`) এবং Weight-এর আকার (`[out, in]` নাকি `[in, out]`) শুরুতেই স্পষ্ট করে বলে নেবেন।"
+        }
+      ]
+    },
+    {
+      "id": "ch16_hidden",
+      "title": "Hidden Layer-এ Error Signal পৌঁছে দেওয়া",
+      "subtitle": "ReLU Mask, Matrix Gradient এবং বিচ্ছিন্ন পাথ (Disconnected Paths)",
+      "duration": "55 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Output থেকে Hidden Layer-এ সংকেত কীভাবে ছড়ায়?",
+          "body": "Output Layer-এর হিসাব শেষ করার পর এবার আমাদের সেই Error Signal-কে আরও এক ধাপ পেছনে—অর্থাৎ Hidden Layer-এ পৌঁছে দিতে হবে। চূড়ান্ত Layer-এর Residual `δ2` প্রথমে Output Weight-গুলোর মাধ্যমে প্রতিটি Hidden Unit-এর দিকে ছড়িয়ে পড়ে। এরপর প্রতিটি Sample এবং প্রতিটি Unit-এর নিজস্ব ReLU Gate অনুযায়ী সেই সংকেতটি ছাঁকা হয়। এখানে সবচেয়ে গুরুত্বপূর্ণ বিষয়টি হলো, এই ReLU Gate কিন্তু Sample-ভেদে আলাদা (`Sample-dependent`)—কোনো একটি Sample-এর একক একটি Mask ধরে পুরো Batch-এর সব Row-এর ওপর বসিয়ে দিলে পুরো হিসাবই ভুল হয়ে যাবে!"
+        },
+        {
+          "type": "text",
+          "title": "Vectorized আকারে প্রতিটি ধাপের Shape",
+          "body": "Matrix-এর আকার ধরে এগোলে সমীকরণটি পানির মতো পরিষ্কার হয়ে যায়: `δ2[B]`-কে `[:, None]` আকারে নিয়ে `w2[H]` দিয়ে গুণ করলে তৈরি হয় `[B, H]` আকারের Upstream Matrix। এরপর বুলিয়ান শর্ত `Z1[B, H] > 0` থেকে পাওয়া Mask দিয়ে পদ-বরাবর (Elementwise) গুণ করলেই আমরা পাই `δ1[B, H]`। সবশেষে `δ1ᵀ[H, B] @ X[B, D]` গুণ করলেই পুরো Batch-এর অবদান একত্র হয়ে ঠিক `[H, D]` আকারের প্রথম Layer-এর Weight Gradient তৈরি করে।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "\\delta_1=(\\delta_2w_2^T)\\odot\\mathbf1_{Z_1>0},\\quad \\nabla_{W_1}L=\\delta_1^TX,\\quad \\nabla_{b_1}L=\\sum_i\\delta_{1i}"
+        },
+        {
+          "type": "code",
+          "title": "বাস্তব ডেটার আটটি Row-এ Hidden Gradient যাচাই",
+          "body": "import json\nfrom pathlib import Path\nimport numpy as np\n\na = json.loads(Path(\"assets/datasets/wine_quality/neural_lab.json\").read_text())\nr = a[\"backprop_references\"][0]\np = a[\"checkpoints\"][0][\"parameters\"]\nX = np.array([s[\"standardized\"] for s in a[\"samples\"]])\ndelta = np.array(r[\"dlogit\"])\ngate = np.array(r[\"gate\"])\ndz1 = delta[:, None] * np.array(p[\"w2\"]) * gate\nnp.testing.assert_allclose(dz1.T @ X, r[\"dw1\"], atol=1e-12)\nprint(dz1.sum(axis=0), r[\"db1\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "Hidden Bias-এর সঠিক Axis ধরে যোগফল",
+          "body": "প্রথম Layer-এর Hidden Bias Vector-টির আকার হলো `[H]`। তাই `δ1[B, H]` Matrix-টিকে Batch Axis (`axis=0`) বরাবর যোগ করলেই আমরা পাই `db1[H]`। ভুল করে যদি আপনি পরের Axis (`axis=1`, অর্থাৎ Hidden Unit বরাবর) যোগ করে ফেলেন, তবে `[B]` আকারের একটি Vector পাবেন—যা কোনো Parameter-এরই Derivative নয়! তাই ভালো কোডে শুধু `assert` দিয়ে আকার মেলানোই যথেষ্ট নয়, কোন Axis ধরে যোগ হচ্ছে তার গাণিতিক অর্থও পরিষ্কার থাকতে হয়।"
+        },
+        {
+          "type": "neural_backprop_lab",
+          "title": "Interactive Lab: Backpropagation ও Detach পরীক্ষা",
+          "body": "নিচের Lab-এ বাস্তব ডেটার আটটি Training Row-এর ওপর Mean এবং Sum—উভয় ধরনের Gradient তুলনা করে দেখুন। বিশেষ করে 'Detach Hidden' অপশনটি চালু করে পর্যবেক্ষণ করুন: মাঝখানের Hidden Activation-কে গ্রাফ থেকে বিচ্ছিন্ন করে দিলে প্রথম Layer-এর Parameter-গুলোর `.grad` কীভাবে `None` হয়ে যায়, অথচ শেষ Layer-এর Output Gradient অবিকল আগের মতোই থাকে! গ্রাফে যুক্ত থেকেও সংখ্যাগতভাবে শূন্য হওয়া (`0.0`) এবং গ্রাফ থেকে বিচ্ছিন্ন থাকা (`None`)—এই দুই অবস্থাকে এখানে আলাদাভাবে চিহ্নিত করে দেখানো হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "ReLU নিষ্ক্রিয় হওয়া ও Kink বিন্দুর সতর্কতা",
+          "body": "কোনো একটি নির্দিষ্ট Row-এ যদি কোনো Unit-এর ReLU Gate বন্ধ (`0`) থাকে, তবে কেবল ওই Row-টির অবদানই বাদ পড়ে; Batch-এর অন্য সক্রিয় Row-গুলোর কারণে সামগ্রিক `dW` তখনো অশূন্য হতে পারে। আরেকটি সূক্ষ্ম বিষয় হলো, সংখ্যাত্মক Gradcheck চালানোর সময় সবসময় `z = 0` বাঁকের বিন্দু (Kink) থেকে দূরে মসৃণ Input বেছে নেবেন, কারণ ঠিক শূন্য বিন্দুতে গাণিতিক Subgradient প্রথার কারণে ডান ও বাম দিকের ঢাল এক হয় না।"
+        },
+        {
+          "type": "text",
+          "title": "দক্ষতা যাচাই",
+          "body": "খাতা-কলমে যেকোনো একটি Hidden Unit-এর প্রথম Row-এর `delta` এবং সবকটি Row মিলিয়ে তার সামগ্রিক Weight Gradient হিসাব করে Lab-এর মানের সাথে মিলিয়ে দেখুন। পাশাপাশি খেয়াল করুন Sum Reduction বেছে নিলে হরের হিসাব কীভাবে বদলে যায়, এবং নিজের ভাষায় ব্যাখ্যা করুন কেন `.detach()` কল করলে Forward Loss অপরিবর্তিত থাকে কিন্তু পেছনের দিকের Gradient প্রবাহ পুরোপুরি কেটে যায়।"
+        },
+        {
+          "type": "text",
+          "title": "দুই Row-এর একটি সম্পূর্ণ Backward Pass হাতে-কলমে",
+          "body": "পুরো প্রক্রিয়াটি এক নজরে গেঁথে নেওয়ার জন্য দুটি Row-এর একটি পরিচ্ছন্ন উদাহরণ দেখা যাক: ধরুন `X = [[1, 0], [0, 1]]`, প্রথম Layer-এর `W₁ = [[1, -1], [-1, 1]]` এবং `b₁ = [0, 0]`। তাহলে ReLU-এর পর Hidden Row দুটি হবে `[1, 0]` এবং `[0, 1]`। এবার Output Weight `[1, -1]` ও Bias `0` নিলে চূড়ান্ত Logit দুটি দাঁড়ায় `[1, -1]`, যেখানে আসল Target হলো `[1, 0]`। Mean BCE ব্যবহার করলে `dlogit` পাওয়া যায় প্রায় `[-0.134471, +0.134471]`। Output Weight ও ReLU Gate প্রয়োগ করার পর Hidden Delta Matrix-টি হয় `[[-0.134471, 0], [0, -0.134471]]`। ফলে প্রথম Layer-এর Weight Gradient Matrix-এর কর্ণ (Diagonal) বরাবর ঠিক ওই দুটি মানই বসে যায়, আর প্রতিটি Bias-এর Gradient আসে Batch Axis বরাবর যোগফল থেকে!"
+        },
+        {
+          "type": "code",
+          "title": "সবকটি Parameter-এর Analytical ও Autograd Gradient মিলিয়ে দেখা",
+          "body": "import torch\nimport torch.nn.functional as F\n\ninputs = torch.eye(2, dtype=torch.float64)\nlabels = torch.tensor([1.0, 0.0], dtype=inputs.dtype)\nincoming = torch.tensor(\n    [[1.0, -1.0], [-1.0, 1.0]], dtype=inputs.dtype, requires_grad=True\n)\nhidden_bias = torch.zeros(2, dtype=inputs.dtype, requires_grad=True)\noutgoing = torch.tensor([1.0, -1.0], dtype=inputs.dtype, requires_grad=True)\noutput_bias = torch.zeros((), dtype=inputs.dtype, requires_grad=True)\npreactivation = inputs @ incoming.T + hidden_bias\nhidden = preactivation.relu()\nlogits = hidden @ outgoing + output_bias\nloss = F.binary_cross_entropy_with_logits(logits, labels)\nactual = torch.autograd.grad(loss, (incoming, hidden_bias, outgoing, output_bias))\ndelta = (logits.detach().sigmoid() - labels) / len(labels)\nhidden_delta = delta[:, None] * outgoing.detach() * (preactivation.detach() > 0)\nmanual = (\n    hidden_delta.T @ inputs,\n    hidden_delta.sum(0),\n    hidden.detach().T @ delta,\n    delta.sum(),\n)\nfor computed, reference in zip(actual, manual):\n    torch.testing.assert_close(computed, reference)\nprint(round(loss.item(), 6), *[round(v, 6) for v in actual[0].flatten().tolist()])\nprint(\n    *[round(v, 6) for v in actual[1].tolist()],\n    *[round(v, 6) for v in actual[2].tolist()],\n    round(actual[3].item(), 6)\n)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে হিসাব করে বলুন",
+          "body": "Mean BCE-এর হরের `/ B` ভাগটি যদি আপনি ভুল করে `dlogit` বের করার সময় একবার এবং পরে `dW` বের করার সময় আরেকবার বসান, তাহলে কী সমস্যা হবে?",
+          "solution": "Mean Reduction-এর কারণে `/ B` ভাগটি একবার `dlogit`-এর ভেতরেই চলে আসে, আর পরের সব রৈখিক গুণফলে সেই গড় স্কেলটি স্বয়ংক্রিয়ভাবে বজায় থাকে। পরে `dW` হিসাব করার সময় আবার `B` দিয়ে ভাগ করলে প্রাপ্ত Gradient আসল মানের চেয়ে আরও `B` গুণ ছোট হয়ে যাবে! এতে Tensor-এর আকার মিলে গেলেও মূল Objective-এর Derivative ভুল হয়ে যায়—যেমন উপরের `B = 2` উদাহরণে ভুল Gradient আসল মানের ঠিক অর্ধেক হয়ে যেত।",
+          "reference": "https://d2l.ai/"
+        }
+      ]
+    },
+    {
+      "id": "ch16_vectorized",
+      "title": "শূন্য থেকে Backprop: সাধারণ Loop থেকে Matrix বীজগণিত",
+      "subtitle": "Outer Product, Transpose এবং স্বাধীন রেফারেন্স দিয়ে কোড যাচাই",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "একক Sample-এর Outer Product থেকে পুরো Batch-এর Matrix গুণ",
+          "body": "আগের পাঠে আমরা দেখেছি যে প্রথম Layer-এর Weight Gradient বের করতে `δ1ᵀ @ X` গুণটি করতে হয়—কিন্তু কেন ঠিক এই আকারেই গুণটি কাজ করে? একটি একক Sample-এর কথা ভাবুন: তার Hidden Delta Vector `[H]` এবং Input Vector `[D]`-এর Outer Product নিলেই `[H, D]` আকারের একটি Matrix পাওয়া যায়, যা ওই Sample-এর নিজস্ব অবদান। পুরো Batch-এর মোট Gradient হলো প্রতিটি Sample-এর এমন সব Outer Product Matrix-এর যোগফল। আর রৈখিক বীজগণিতের জাদু হলো—`δ1ᵀ @ X` এই একটি মাত্র Matrix Multiplication দিয়েই সব Sample-এর সেই যোগফল এক ধাপে বের করে দেয়, যেখানে গড় করার হরটি (`1/B`) আগে থেকেই Upstream `δ1`-এর ভেতর নিহিত থাকে।"
+        },
+        {
+          "type": "text",
+          "title": "সরল Loop কেন আমাদের বিশ্বস্ত রেফারেন্স (Oracle)?",
+          "body": "বাস্তব প্রোডাকশন কোডে দ্রুতগতির জন্য আমরা সবসময় Vectorized Matrix অপারেশন ব্যবহার করি। কিন্তু মুশকিল হলো, ভুল জায়গায় একটি Transpose বসলে Vectorized কোডও সমান দ্রুতগতিতেই ভুল সংখ্যা উগরে দেয়! তাই নতুন কোনো সমীকরণ কোডে লেখার সময় মাত্র ২-৩টি Sample-এর ওপর একটি স্পষ্ট `for` লুপ লিখে এবং পাশে PyTorch Autograd রেখে দুটি স্বাধীন রেফারেন্সের সাথে আপনার Matrix সূত্রটি মিলিয়ে নেওয়া একজন পাকা ইঞ্জিনিয়ারের লক্ষণ।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "W_1\\in\\mathbb R^{4\\times11},\\quad b_1\\in\\mathbb R^4,\\quad w_2\\in\\mathbb R^4,\\quad b_2\\in\\mathbb R,\\quad P=44+4+4+1=53"
+        },
+        {
+          "type": "code",
+          "title": "Loop ও Matrix গুণের সমতুল্যতা প্রমাণ",
+          "body": "import torch\n\ntorch.manual_seed(16)\nX = torch.randn(3, 2, dtype=torch.float64)\nD = torch.randn(3, 4, dtype=torch.float64)  # Illustration.\nvector = D.T @ X\nloop = torch.zeros(4, 2, dtype=torch.float64)\nfor i in range(3):\n    loop += D[i, :, None] * X[i, None, :]\ntorch.testing.assert_close(vector, loop)\nassert vector.shape == (4, 2)\n"
+        },
+        {
+          "type": "text",
+          "title": "মোট 53টি Trainable Parameter-এর পুঙ্খানুপুঙ্খ হিসাব",
+          "body": "আমাদের মূল Wine Quality Model-টির মোট Weight সংখ্যা আরেকবার ঝালিয়ে নেওয়া যাক: `11 → 4` আকারের Hidden Affine Layer-এ আছে `11 × 4 = 44`টি Weight এবং `4`টি Bias; আর `4 → 1` আকারের Output Layer-এ আছে `4`টি Weight এবং `1`টি Bias—সব মিলিয়ে মোট `44 + 4 + 4 + 1 = 53`টি Trainable Scalar। খেয়াল রাখবেন, Batch Size ছোট-বড় করলে এই `53` সংখ্যাটি একচুলও বদলায় না; তবে মধ্যবর্তী Activation রাখার মেমোরি খরচ Sample সংখ্যা `B`-এর সাথে সমানুপাতিক হারে বাড়ে-কমে।"
+        },
+        {
+          "type": "text",
+          "title": "Memory খরচের বাস্তব হিসাব",
+          "body": "কেবল ওই 53টি Parameter সংরক্ষণ করলেই কিন্তু ট্রেনিংয়ের মেমোরি হিসাব শেষ হয়ে যায় না! Forward ধাপে তৈরি হওয়া প্রতিটি মধ্যবর্তী Activation এবং Backward ধাপের জন্য প্রয়োজনীয় মানগুলো মেমোরিতে ধরে রাখতে হয় যতক্ষণ না Gradient হিসাব শেষ হচ্ছে। তাই Batch Size, সংখ্যার `dtype` (`float32` বনাম `float64`) এবং নেটওয়ার্কের গভীরতা—সবই মেমোরি খরচ নিয়ন্ত্রণ করে। আমাদের এই অধ্যায়ের হিসাবগুলো মূলত CPU-তে গাণিতিক নির্ভুলতা যাচাইয়ের জন্য সাজানো, কোনো GPU গতির (Throughput) বেঞ্চমার্ক হিসেবে নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Weight Orientation এবং ডেটা আদান-প্রদানের সতর্কতা",
+          "body": "PyTorch যেহেতু Weight-কে `[out, in]` আকারে রাখে, তাই Forward ধাপে আমরা লিখি `X @ W.T`। আপনি যদি নিজের Scratch কোডে `[in, out]` প্রথা অনুসরণ করেন, তবে Forward এবং Backward দুই জায়গাতেই Transpose-এর অবস্থান সেই অনুযায়ী বদলে নিতে হবে। বিশেষ করে যখন এক ফ্রেমওয়ার্ক থেকে অন্য প্ল্যাটফর্মে (যেমন Python থেকে JSON ফাইলের মাধ্যমে আমাদের মোবাইল অ্যাপে) Model আদান-প্রদান করা হয়, তখন Feature-এর ক্রম এবং প্রতিটি Tensor-এর Orientation স্পষ্টভাবে লিখে রাখা অপরিহার্য।"
+        },
+        {
+          "type": "text",
+          "title": "কোডিং অনুশীলন",
+          "body": "`B = 1, D = 2, H = 4` এবং অসম আকারের ছোট ছোট Partial Batch দিয়ে লুপ বনাম Matrix গুণের সমতুল্যতা পরীক্ষা করে দেখুন। অনাকাঙ্ক্ষিতভাবে কোনো Dimension হারিয়ে যাওয়া (Rank Collapse) কিংবা ভুল করে দুবার গড় হয়ে যাওয়া ধরার জন্য কোডে কড়া `assert` বসান। আর ইউনিট টেস্ট লেখার সময় কখনোই মূল ইমপ্লিমেন্টেশনের লাইনটিই কপি-পেস্ট করে Expected মান তৈরি করবেন না—তাতে কোনো স্বাধীন প্রমাণ তৈরি হয় না!"
+        }
+      ]
+    },
+    {
+      "id": "ch16_modules",
+      "title": "nn.Module, nn.Parameter ও Registered Layers",
+      "subtitle": "সঠিকভাবে Module সাজানো যাতে Optimizer আসল Parameter-গুলো খুঁজে পায়",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Parameter Registration কীভাবে কাজ করে?",
+          "body": "হাতে-কলমে Matrix দিয়ে Backpropagation শেখার পর এবার দেখা যাক PyTorch কীভাবে এই সব Weight ও Layer-কে গুছিয়ে রাখে। নিজস্ব কোনো Model বানাতে হলে `nn.Module` থেকে Subclass করে শুরুতেই `__init__`-এর ভেতর `super().__init__()` কল করতে হয়। এরপর আপনি যখন `self.hidden = nn.Linear(...)` লেখেন, তখন সেটি একটি নিবন্ধিত (Registered) Child Module হিসেবে যুক্ত হয় এবং এর ভেতরের সব Weight স্বয়ংক্রিয়ভাবে `model.parameters()` ও `model.state_dict()`-এ চলে আসে। মনে রাখবেন, Class-এর ভেতরে সাধারণ কোনো `torch.Tensor` অ্যাট্রিবিউট রাখলেই কিন্তু সেটি আপনাআপনি Trainable `nn.Parameter` হয়ে যায় না!"
+        },
+        {
+          "type": "text",
+          "title": "Python List বনাম nn.ModuleList-এর নীরব ফাঁদ",
+          "body": "নতুনদের কোডে সবচেয়ে বেশি যে নীরব বাগটি দেখা যায় তা হলো: লুপ চালিয়ে কয়েকটি Layer বানিয়ে সেগুলোকে সাধারণ একটি Python `list`-এ রেখে দেওয়া! সাধারণ লিস্টে রাখলে মূল `nn.Module` টেরই পায় না যে ভেতরে কোনো Layer আছে। এর জন্য অবশ্যই `nn.ModuleList` বা `nn.Sequential` ব্যবহার করতে হবে। তা না হলে Optimizer ভুল বা অসম্পূর্ণ Parameter তালিকা পাবে—ফলে `.backward()` চললেও আপনার কাঙ্ক্ষিত Weight-গুলো আদৌ আপডেট হবে না। সন্দেহ হলেই `model.named_parameters()` প্রিন্ট করে নিরীক্ষা করে নিন।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "\\mathrm{Linear}(D,H):\\quad Y=XW^T+b,\\quad \\mathrm{shape}(W)=[H,D]"
+        },
+        {
+          "type": "code",
+          "title": "TinyMLP Class তৈরি ও 53টি Parameter যাচাই",
+          "body": "import torch\nfrom torch import nn\n\n\nclass TinyMLP(nn.Module):\n    def __init__(self):\n        super().__init__()\n        self.hidden = nn.Linear(11, 4, dtype=torch.float64)\n        self.output = nn.Linear(4, 1, dtype=torch.float64)\n\n    def forward(self, X):\n        return self.output(torch.relu(self.hidden(X))).squeeze(-1)\n\n\nmodel = TinyMLP()\nassert sum(p.numel() for p in model.parameters()) == 53\nassert model(torch.zeros(1, 11, dtype=torch.float64)).shape == (1,)\nprint(list(model.state_dict()))\n"
+        },
+        {
+          "type": "text",
+          "title": "forward() মেথড লেখার সোনালি নিয়ম",
+          "body": "Model-এর `forward()` মেথডটির কাজ হওয়া উচিত কেবল Input থেকে পরিষ্কারভাবে কাঁচা Logit বের করে দেওয়া; Loss হিসাব করার অংশটুকু বাইরে রাখলে ইউনিট টেস্টিং এবং বাস্তব Inference দুটোই অনেক সহজ হয়। Model চালানোর সময় সরাসরি `model.forward(X)` না ডেকে সবসময় `model(X)` ব্যবহার করবেন, যাতে PyTorch-এর নিজস্ব কল-মেকানিজম ও Hook-গুলো ঠিকমতো কাজ করতে পারে। আর কখনোই `forward()`-এর ভেতরে নতুন করে `nn.Linear(...)` তৈরি করবেন না—তাতে প্রতিবার নতুন এলোমেলো Weight তৈরি হবে এবং ট্রেনিংয়ে শেখা Weight কখনোই পুনর্ব্যবহৃত হবে না!"
+        },
+        {
+          "type": "text",
+          "title": "state_dict আসলে কী সংরক্ষণ করে?",
+          "body": "একটি Model-এর `state_dict` মূলত প্রতিটি নিবন্ধিত Parameter ও Buffer-এর নামের বিপরীতে তাদের Tensor মানগুলোকে ধরে রাখে; কিন্তু Model-এর Python Class কাঠামো এবং Input ডেটার Preprocessing চুক্তি আপনাকে আলাদাভাবে সংরক্ষণ করতে হয়। এছাড়া শুধু Model-এর `state_dict` মানেই মাঝপথ থেকে ট্রেনিং পুনরায় শুরু করার পূর্ণাঙ্গ Checkpoint নয়—তার জন্য Optimizer ও Scheduler-এর অবস্থাও দরকার হয়। নির্ভরযোগ্যভাবে বড় ট্রেনিং পরিচালনার এই পুরো কৌশল আমরা পরের অধ্যায়ে (Book 3 · Chapter 3: Reliable Deep Learning Training) বিস্তারিত শিখব।"
+        },
+        {
+          "type": "text",
+          "title": "train() ও eval() মোডের অর্থ",
+          "body": "`model.train()` এবং `model.eval()` মেথড দুটি মূলত ভেতরের Layer-গুলোর আচরণগত মোড বদলায়—যা `torch.no_grad()` দিয়ে Gradient রেকর্ডিং বন্ধ করার থেকে আলাদা একটি বিষয়। আমাদের বর্তমান `TinyMLP` Model-এ কেবল `Linear` ও `ReLU` থাকায় (এখানে Dropout বা চলমান পরিসংখ্যান রাখা BatchNorm নেই) মোড বদলালেও Forward মানের কোনো হেরফের ঘটে না। তবুও কোডের উদ্দেশ্য স্পষ্ট রাখতে এবং ভবিষ্যতের সম্প্রসারণ নিরাপদ করতে মূল্যায়নের আগে স্পষ্টভাবে `model.eval()` লেখার অভ্যাস রাখা উচিত।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে ব্যাখ্যা করবেন",
+          "body": "Interview-এ প্রশ্ন এলে একটি সাধারণ `Tensor`, `nn.Parameter`, `Registered Buffer` (যেমন `register_buffer`) এবং Child `nn.Module`-এর সুনির্দিষ্ট পার্থক্য উদাহরণসহ তুলে ধরুন। কীভাবে Model-এর মোট Parameter সংখ্যা ও Optimizer-এ পাঠানো অবজেক্টগুলোর পরিচয় (`id`) মিলিয়ে দেখতে হয় তা বলুন। সেই সাথে একটি চিরচেনা বাগ ধরার কৌশল মনে রাখুন: অনেকেই একটি Model ইনস্ট্যান্স ট্রেন করার পর মূল্যায়নের ঠিক আগে ভুল করে আবার নতুন একটি ট্রেনিংবিহীন `TinyMLP()` তৈরি করে তার ওপর টেস্ট চালিয়ে বসেন!"
+        }
+      ]
+    },
+    {
+      "id": "ch16_initialization",
+      "title": "Initialization: Symmetry ভাঙা এবং সিগন্যালের Scale নিয়ন্ত্রণ",
+      "subtitle": "Xavier, Kaiming (He) এবং Reproducibility-র বাস্তব সীমানা",
+      "duration": "55 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Variance বা বিস্তারের সহজ হিসাব",
+          "body": "ট্রেনিং শুরু করার ঠিক আগের মুহূর্তে নেটওয়ার্কের Weight-গুলো আমরা কীভাবে বসাব? সরল কিছু স্বাধীনতার অনুমান (Independence Assumptions) ধরে নিলে দেখা যায়, একটি Weighted Sum-এর বিস্তার বা Variance Input সংখ্যার (`fan_in`) এবং Weight-এর Variance-এর সাথে পাল্লা দিয়ে বাড়তে পারে। শুরুর Weight-গুলোর Scale যদি অতিরিক্ত বড় হয়ে যায়, তবে প্রথম ধাপেই Activation ও Logit হয় চরম মানে পৌঁছে Saturate করবে, নয়তো বিস্ফোরিত (Explode) হবে; আর অতিরিক্ত ছোট হলে কয়েক Layer পেরোতে না পেরোতেই সংকেত নিস্তেজ হয়ে পড়বে। সঠিক Initialization হলো শুরু থেকেই এই সিগন্যাল প্রবাহকে সুষম রাখার প্রথম হাতিয়ার।"
+        },
+        {
+          "type": "text",
+          "title": "ReLU নেটওয়ার্কের জন্য Kaiming (He) Initialization",
+          "body": "আমরা জানি ReLU ঋণাত্মক দিকের সংকেতকে শূন্য করে দেয়—অর্থাৎ প্রতি ধাপে শক্তির একটি বড় অংশ কেটে পড়ে। He বা Kaiming Initialization ঠিক এই ঘাটতিটুকু পুষিয়ে দেওয়ার হিসাব করেই Weight-এর Variance নির্ধারণ করে (`2 / fan_in`)। এখানে মনে রাখা ভালো, `fan_in` ব্যবহারের লক্ষ্য হলো সামনের দিকের Forward Variance স্থিতিশীল রাখা, আর `fan_out`-এর লক্ষ্য পেছনের দিকের Backward Gradient Variance ঠিক রাখা। PyTorch যেহেতু Weight-কে `[out, in]` আকারে রাখে, তাই কোন সংখ্যাটি `fan_in` আর কোনটি `fan_out` তা ওই আকারের সাথে মিলিয়ে বুঝে নিন।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "\\mathrm{Var}(W)\\approx {2\\over\\mathrm{fan\\_in}}\\;\\text{(ReLU)},\\qquad \\mathrm{Var}(W)\\approx {2\\over\\mathrm{fan\\_in}+\\mathrm{fan\\_out}}\\;\\text{(Xavier)}"
+        },
+        {
+          "type": "code",
+          "title": "PyTorch-এ Kaiming ও Xavier Initialization প্রয়োগ",
+          "body": "import torch\nfrom torch import nn\n\nwith torch.random.fork_rng(devices=[]):\n    torch.manual_seed(16)\n    hidden = nn.Linear(11, 4, dtype=torch.float64)\n    output = nn.Linear(4, 1, dtype=torch.float64)\n    nn.init.kaiming_uniform_(hidden.weight, nonlinearity=\"relu\")\n    nn.init.zeros_(hidden.bias)\n    nn.init.xavier_uniform_(output.weight)\n    nn.init.zeros_(output.bias)\nassert torch.isfinite(hidden.weight).all()\nprint(hidden.weight.shape, output.weight.shape)\n"
+        },
+        {
+          "type": "text",
+          "title": "Xavier প্রথা ও আমাদের Model-এর রেসিপি",
+          "body": "অন্যদিকে Xavier (বা Glorot) পদ্ধতি `fan_in` এবং `fan_out` দুটোর মধ্যে ভারসাম্য রাখে, যেখানে রৈখিক বা প্রতিসম Activation-এর অনুমান ও `gain` গুরুত্বপূর্ণ ভূমিকা পালন করে। আমাদের Wine Quality Model-এ মাঝখানের ReLU Layer-এর Weight-এ `Kaiming Uniform` এবং শেষের রৈখিক Logit Layer-এর Weight-এ `Xavier Uniform` ব্যবহার করা হয়েছে। এটি এই Model-এর জন্য একটি সুস্পষ্ট ও যুক্তিসঙ্গত প্রারম্ভিক রেসিপি—তবে তার মানে এই নয় যে পৃথিবীর সব Dataset ও সব সমস্যার জন্য এটিই একমাত্র সেরা Initialization।"
+        },
+        {
+          "type": "text",
+          "title": "সব Weight শূন্য করা বনাম শুধু Bias শূন্য করা",
+          "body": "অনেকেই প্রশ্ন করেন: Weight শূন্য করা নিষেধ হলে আমরা `nn.init.zeros_` দিয়ে Bias কেন শূন্য করছি? পার্থক্যটি খুব পরিষ্কার: সব Hidden Weight এবং পরের Layer-এর সংযোগ সমান হলে প্রতিটি Unit একই আচরণ শেখে এবং Symmetry কখনোই ভাঙে না। কিন্তু Weight-গুলো এলোমেলো (Random) রেখে কেবল Bias শূন্য করলে কোনো সমস্যাই হয় না—কারণ ভিন্ন ভিন্ন এলোমেলো Weight প্রথম ধাপেই প্রতিটি Unit-কে আলাদা পথে চালিত করে Symmetry ভেঙে দেয়।"
+        },
+        {
+          "type": "text",
+          "title": "Random Seed নিয়ন্ত্রণ ও Reproducibility-র বাস্তবতা",
+          "body": "আমাদের পরীক্ষায় `Seed 16` শুরুতেই একবার স্থির করা হয়েছে; কখনোই বিশটি ভিন্ন Seed চালিয়ে সবচেয়ে ভালো দেখানো ফলাফলটি বেছে নেওয়া (Cherry-picking) হয়নি! কোডে `torch.random.fork_rng` ব্যবহার করা হয়েছে যাতে বাইরের প্রোগ্রামের Random State নষ্ট না হয়। তবে বাস্তব ইঞ্জিনিয়ারিংয়ে মনে রাখবেন, একই CPU ও `float64`-এ রানটি হুবহু পুনরুৎপাদনযোগ্য (Reproducible) হলেও ভিন্ন অপারেটিং সিস্টেম, লাইব্রেরি সংস্করণ বা GPU হার্ডওয়্যারে বিট-এ-বিট অভিন্ন ফলাফলের কোনো গ্যারান্টি থাকে না।"
+        },
+        {
+          "type": "text",
+          "title": "ট্রেনিং শুরুর আগের তাৎক্ষণিক পরীক্ষা (Sanity Checks)",
+          "body": "Weight বসানোর পর ট্রেনিং লুপ চালানোর আগেই শুরুর Logit-গুলোর বিস্তার, সক্রিয় ReLU Unit-এর অনুপাত, প্রাথমিক Loss এবং Gradient Norm একবার চোখ বুলিয়ে নিন। এখানে একটি ছোট্ট খুঁটিনাটি খেয়াল রাখবেন: এলোমেলো Weight থাকার কারণে শুরুর বাস্তব BCE Loss যে ঠিক কাঁটায় কাঁটায় `log(2) ≈ 0.6931` হতেই হবে এমন কোনো কথা নেই, কারণ `log(2)` আসে কেবল তখনই যখন প্রতিটি Logit নিখুঁত শূন্য হয়। তাই কোনো সূত্রের প্রত্যাশিত মান মেলানোর আগে তার পেছনের অনুমানগুলো সবসময় মিলিয়ে নিন।"
+        },
+        {
+          "type": "text",
+          "title": "Second Moment বনাম Variance: একটি সূক্ষ্ম গাণিতিক পার্থক্য",
+          "body": "শূন্য-গড় ও প্রতিসম Preactivation `z`-এর ক্ষেত্রে `ReLU(z)²`-এর গড় বা Second Moment হয় ঠিক `E[z²] / 2`। কিন্তু যেহেতু ReLU কখনো ঋণাত্মক সংখ্যা দেয় না, তাই এর Output-এর গড় `E[ReLU(z)]` সাধারণত ধনাত্মক হয়—ফলে প্রকৃত Variance দাঁড়ায় `Var(ReLU(z)) = E[ReLU(z)²] - (E[ReLU(z)])²`! ছোট একটি উদাহরণে বিষয়টি হাতেনাতে দেখা যাক: ধরুন দুটি স্বাধীন Input কেবল `+1` বা `-1` হতে পারে এবং Weight হলো `[1, 1]`। তাহলে সমান সম্ভাব্য চারটি `z` হবে `[-2, 0, 0, 2]`, আর ReLU-এর পর Output হবে `[0, 0, 0, 2]`। হিসাব করে দেখুন: এর Second Moment `(0+0+0+4)/4 = 1.0`, গড় `(0+0+0+2)/4 = 0.5`, কিন্তু প্রকৃত Variance হলো `1.0 - 0.5² = 0.75`! He স্কেলিং কীভাবে সিগন্যালের শক্তি ধরে রাখে তা গভীরভাবে বুঝতে এই পার্থক্যটি দারুণ কাজে লাগে।"
+        },
+        {
+          "type": "math",
+          "title": "ReLU-এর Second Moment ও Variance সমীকরণ",
+          "body": "\\mathbb E[h^2]=\\tfrac12\\mathbb E[z^2],\\quad \\operatorname{Var}(h)=\\mathbb E[h^2]-(\\mathbb E[h])^2,\\qquad h=\\max(0,z)"
+        },
+        {
+          "type": "code",
+          "title": "পূর্ণ গণনার (Exact Enumeration) মাধ্যমে সিগন্যালের Scale যাচাই",
+          "body": "import numpy as np\nfrom itertools import product\n\ninputs = np.array(list(product([-1.0, 1.0], repeat=2)))\npreactivation = inputs @ np.ones(2)\nhidden = np.maximum(preactivation, 0)\nprint(np.mean(preactivation**2), np.mean(hidden**2), hidden.mean(), hidden.var())\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে ভেবে বলুন",
+          "body": "He Initialization-এর `2 / fan_in` যুক্তিটি ব্যবহার করলেই কি বাস্তবে গভীর নেটওয়ার্কের প্রতিটি Layer-এর নিখুঁত Variance সবসময় হুবহু সমান থাকবে?",
+          "solution": "না, কারণ এই গাণিতিক যুক্তিটি চলকগুলোর স্বাধীনতা (Independence), প্রতিসম Distribution এবং নির্দিষ্ট কিছু আসন্ন মানের (Approximations) ওপর দাঁড়িয়ে আছে। বাস্তব Model-এ সীমিত Width, পরস্পর সম্পর্কযুক্ত Activation এবং কয়েক ধাপ ট্রেনিং চলার পর পরিবর্তিত Weight-এর কারণে প্রকৃত Moment-গুলো বদলে যায়। তাই কেবল তাত্ত্বিক সূত্রের ওপর নির্ভর না করে প্রতিটি Layer-এর Activation ও Gradient পরিসংখ্যান সরাসরি মেপে অনুমানগুলো যাচাই করা উচিত।",
+          "reference": "https://d2l.ai/"
+        }
+      ]
+    },
+    {
+      "id": "ch16_loop",
+      "title": "নিজের হাতে পূর্ণাঙ্গ Training Loop লেখা",
+      "subtitle": "zero_grad → forward → backward → step: প্রতিটি ধাপের সঠিক ক্রম ও দায়িত্ব",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "একটি Training Step-এর জীবনচক্র",
+          "body": "Model তৈরি এবং Weight Initialization শেষ—এবার সব টুকরো জোড়া দিয়ে আমাদের নিজস্ব Training Loop লেখার পালা। প্রতিটি ধাপের জীবনচক্র চারটি সুনির্দিষ্ট কাজে বিভক্ত: বর্তমান Weight দিয়ে নতুন করে Forward কম্পিউটেশন গ্রাফ তৈরি করা, একক Scalar Loss বের করা, `.backward()` চালিয়ে Gradient হিসাব করা এবং সবশেষে `optimizer.step()` ডেকে Weight আপডেট করা। মনে রাখবেন, `optimizer.step()` নিজে থেকে কখনোই গ্রাফ বিশ্লেষণ করে Derivative বের করতে পারে না; তাই `.backward()` না চললে কোনো অর্থবহ আপডেটই ঘটবে না, আর পরের ধাপে যাওয়ার আগে পুরোনো Gradient বাফারও পরিষ্কার করে নিতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "কখন ও কেন zero_grad() কল করব?",
+          "body": "PyTorch ডিফল্টভাবে প্রতিবার `.backward()` চালানোর সময় নতুন Gradient-কে আগের `.grad` বাফারের সাথে যোগ (Accumulate) করতে থাকে। তাই আমাদের এই সাধারণ Full-batch লুপে প্রতিটি ধাপের শুরুতে `optimizer.zero_grad(set_to_none=True)` কল করে স্লেট পরিষ্কার করে নেওয়া জরুরি। আপনি যদি মেমোরি বাঁচাতে সচেতনভাবে একাধিক Microbatch জুড়ে Gradient জমাতে চান তবে আলাদা কথা, কিন্তু ভুল করে `zero_grad()` ভুলে গিয়ে পুরোনো Gradient মিশে যাওয়া কখনোই কোনো বৈধ ট্রেনিং রেসিপি নয়! পাশাপাশি খেয়াল রাখুন, `loss.backward()` কেবল `.grad` হিসাব করে রাখে—Weight বদলানোর আসল কাজটি করে `optimizer.step()`।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "\\theta_{t+1}=\\theta_t-\\eta\\nabla_\\theta L(\\theta_t)"
+        },
+        {
+          "type": "code",
+          "title": "তিন ধাপের একটি স্বচ্ছ PyTorch Training Loop",
+          "body": "import torch\nfrom torch import nn\nimport torch.nn.functional as F\n\ntorch.manual_seed(16)\nX = torch.tensor([[1.0, 0.0], [0.0, 1.0]], dtype=torch.float64)\ny = torch.tensor([1.0, 0.0], dtype=torch.float64)  # Illustration.\nmodel = nn.Linear(2, 1, dtype=torch.float64)\noptimizer = torch.optim.SGD(model.parameters(), lr=0.05)\nfor step in range(3):\n    # Gradients accumulate: clear them at the intended optimizer-step boundary.\n    model.train()\n    optimizer.zero_grad(set_to_none=True)\n    logits = model(X).squeeze(-1)\n    loss = F.binary_cross_entropy_with_logits(logits, y)\n    # Backward accumulates into .grad; the seed or reduction sets the scale.\n    loss.backward()\n    optimizer.step()\nmodel.eval()\nwith torch.no_grad():\n    print(F.binary_cross_entropy_with_logits(model(X).squeeze(-1), y).item())\n"
+        },
+        {
+          "type": "text",
+          "title": "Training বনাম Validation ধাপের কড়া সীমানা",
+          "body": "ট্রেনিং চলাকালে Model থাকে `model.train()` মোডে এবং Gradient ট্র্যাকিং চালু থাকে; কিন্তু Validation মাপার সময় আমরা অবশ্যই `model.eval()` এবং `with torch.no_grad():` ব্লক ব্যবহার করব। Validation Loss-এর ওপর কখনোই `.backward()` বা `optimizer.step()` চালানো যাবে না। আরেকটি সূক্ষ্ম লিকেজ সম্পর্কে সতর্ক থাকুন: আপনি হয়তো Validation ডেটা দিয়ে Weight আপডেট করলেন না, কিন্তু শুরুতেই যদি Validation Row-গুলো মিলিয়ে আপনার Feature Scaler ফিট করে থাকেন, তবুও কিন্তু পুরোদস্তুর Data Leakage ঘটে গেছে!"
+        },
+        {
+          "type": "text",
+          "title": "Loss কখন মাপা হচ্ছে তার সময়ানুগ হিসাব (Metric Timing)",
+          "body": "চার্ট বা লগ তৈরি করার সময় কোন মুহূর্তের Loss রেকর্ড করছেন তা পরিষ্কার থাকা চাই। আমাদের মূল Workflow-এ `Epoch 0` হলো একদম প্রারম্ভিক Weight-এর ফলাফল, আর প্রতিটি আপডেটের পর পরিবর্তিত Weight দিয়ে পুরো Train এবং Validation সেটের Loss নতুন করে মেপে ইতিহাসে সংরক্ষণ করা হয়েছে। কখনোই আপডেটের আগের এলোমেলো Mini-batch Loss এবং আপডেটের পরের পূর্ণাঙ্গ Validation Loss একই গ্রাফে পাশাপাশি বসিয়ে সমজাতীয় রেখা বলে দাবি করবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "অসীম বা NaN মান ঠেকানোর প্রহরা (Finite Guards)",
+          "body": "ট্রেনিংয়ের প্রতিটি পর্যায়ে Loss, Gradient এবং Parameter-গুলো সসীম সংখ্যা (`isfinite`) কি না সেদিকে নজর রাখুন। ভুল `dtype`, অমিল `Shape`, এলোমেলো ডেটা ক্রম, অতিরিক্ত বড় Learning Rate কিংবা খারাপ Initialization—প্রতিটি সমস্যার লক্ষণ আলাদা। মনে রাখবেন, বাইরে থেকে জোর করে Gradient Clipping বসালেও ভুলভাবে লেখা Objective কখনোই শুধরে যায় না; উন্নত Optimizer ও ট্রেনিং স্থিতিশীলতার এই কৌশলগুলো আমরা পরের অধ্যায়ে (Book 3 · Chapter 3) বিস্তারিত দেখব।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে কোডিং মহড়া",
+          "body": "উপরের কোডে একটি ধাপের ঠিক আগে ও পরে যেকোনো একটি নির্দিষ্ট Weight প্রিন্ট করে দেখুন তা ঠিক সূত্রমতো বদলেছে কি না। এরপর ইচ্ছে করে `zero_grad()` লাইনটি মুছে চালিয়ে দেখুন পরের ধাপগুলোর হিসাব কীভাবে পাল্টে যায়। আর একটি জরুরি অভ্যাস: `.item()` কেবল সংখ্যা প্রিন্ট বা লগ করার সময়ই ব্যবহার করবেন—Loss তৈরির মাঝপথে Tensor-কে Python ফ্লোটে রূপান্তর করে ফেললে কম্পিউটেশন গ্রাফ সেখানেই কেটে যাবে!"
+        }
+      ]
+    },
+    {
+      "id": "ch16_batching",
+      "title": "Full Batch, Mini-batch এবং Sample-এর সঠিক গড় (Sample Weighting)",
+      "subtitle": "Epoch, Optimizer Step এবং অসম আকারের Batch-এ হরের হিসাব",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "একটি Epoch বনাম একটি Optimizer Update",
+          "body": "ডিপ লার্নিংয়ের আলোচনায় `Epoch` এবং `Step` (বা `Update`) শব্দ দুটি প্রায়ই গুলিয়ে ফেলা হয়। সাধারণত একটি Epoch মানে পুরো Training Dataset একবার শুরু থেকে শেষ পর্যন্ত ঘুরে আসা; কিন্তু তাতে কয়বার Weight আপডেট হবে তা নির্ভর করে আপনার Batch আকারের ওপর। আমাদের বর্তমান Workflow-টি যেহেতু Full-batch পদ্ধতিতে চলছে, তাই এখানে `120`টি Optimizer Update মানে পুরো ট্রেনিং ডেটার ওপর ঠিক `120`টি পূর্ণ পাস—এবং আমাদের গ্রাফের অনুভূমিক অক্ষেও (x-axis) সেই সংখ্যাটিই দেখানো হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "Mini-batch Gradient কখন পুরো ডেটার ভালো অনুমান দেয়?",
+          "body": "বড় Dataset-এ আমরা পুরো ডেটা একসাথে না নিয়ে ছোট ছোট Mini-batch নিই, কারণ সুষম র‍্যান্ডম Sampling-এর শর্তে Mini-batch Gradient পুরো ডেটার প্রকৃত গড় Gradient-এর একটি কার্যকর আসন্ন মান (Approximation) দেয়। তবে ডেটার ভেতরে যদি দলবদ্ধ সম্পর্ক (Correlated Profiles) বা অসম Sampling থাকে, তবে সেই অনুমানটি যাচাই করে নেওয়া জরুরি—কেবল `shuffle=True` লিখে দিলেই কিন্তু পরস্পর নির্ভরশীল ডেটা আপনাআপনি স্বাধীন Sample হয়ে যায় না!"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "L={1\\over N}\\sum_i\\ell_i=\\sum_k{n_k\\over N}\\overline{\\ell}_k"
+        },
+        {
+          "type": "code",
+          "title": "অসম আকারের দুটি Batch থেকে নিখুঁত সামগ্রিক গড় নির্ণয়",
+          "body": "import torch\n\nlosses = torch.tensor([1.0, 3.0, 5.0, 7.0], dtype=torch.float64)  # Illustration.\nfirst = losses[:3].mean()\nlast = losses[3:].mean()\nweighted = (3 * first + last) / 4\nassert weighted.item() == losses.mean().item() == 4.0\nassert ((first + last) / 2).item() != 4.0\nprint(weighted.item())\n"
+        },
+        {
+          "type": "text",
+          "title": "শেষের ছোট Partial Batch-এর গড় করার ফাঁদ",
+          "body": "উপরের চার সংখ্যার কোডটি একটি দারুণ বাস্তব সমস্যার দিকে আঙুল তোলে! ধরুন আপনার Dataset-এর আকার Batch Size দিয়ে নিঃশেষে ভাগ যায় না, ফলে একদম শেষের Batch-টিতে Sample থাকল কম। আপনি যদি প্রতিটি Batch-এর গড় Loss নিয়ে শেষে সেগুলোর সাধারণ গড় করেন, তবে ওই ছোট্ট শেষ Batch-টির প্রতিটি Sample অন্যায্যভাবে অনেক বেশি গুরুত্ব পেয়ে যাবে! নিখুঁত Epoch Mean পেতে হলে প্রতিটি Batch-এর গড়কে তার নিজস্ব Sample সংখ্যা (`n_k / N`) দিয়ে Weighted Average করতে হবে; আর যদি `drop_last=True` দিয়ে শেষের অংশ বাদ দেন, তবে কতগুলো Sample বাদ পড়ল তা স্পষ্টভাবে নথিবদ্ধ করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "Gradient Accumulation বনাম পরপর Optimizer Step",
+          "body": "একইভাবে অসম আকারের কয়েকটি Microbatch থেকে যদি আপনি হুবহু একটি Full-batch Mean Gradient পুনরুদ্ধার করতে চান, তবে প্রতিটি খণ্ডের গড় Loss-কে `n_k / N` দিয়ে গুণ করে `.backward()` চালাতে হবে এবং শেষে একবার `optimizer.step()` দিতে হবে। কিন্তু আপনি যদি প্রতিটি Microbatch-এর পরেই সাথে সাথে `optimizer.step()` চালান, তবে তার গতিপথ একক Full-batch ধাপের সমান হবে না—কারণ মাঝপথেই তো Model-এর Parameter-গুলো বদলে যাচ্ছে!"
+        },
+        {
+          "type": "text",
+          "title": "কেন এই অধ্যায়ে আমরা Full-batch SGD বেছে নিয়েছি?",
+          "body": "আমাদের ওয়াইন Dataset-টি আকারে ছোট এবং এই অধ্যায়ে আমাদের মূল লক্ষ্য হলো ক্যালকুলাস ও Backpropagation-এর প্রতিটি সংখ্যা নিখুঁতভাবে মিলিয়ে দেখা। তাই Mini-batch-এর ক্রমজনিত এলোমেলো ওঠানামা (Order Noise) সরিয়ে রেখে আমরা এখানে সম্পূর্ণ নির্ধারণমূলক (Deterministic) Full-batch SGD ব্যবহার করেছি। অবশ্যই বিশাল প্রোডাকশন Dataset-এর গতির (Throughput) জন্য এটি আদর্শ রেসিপি নয়, বরং শেখার স্বচ্ছতার জন্য নেওয়া একটি সচেতন সিদ্ধান্ত।"
+        },
+        {
+          "type": "text",
+          "title": "অনুশীলন",
+          "body": "উপরের মতো `3`-Row ও `1`-Row-এর দুটি আলাদা Batch-এর Loss ও Gradient হিসাব করে দেখুন কীভাবে `3/4` ও `1/4` অনুপাতে যোগ করলে পূর্ণ `4`-Row-এর গড়ের সাথে হুবহু মিলে যায়। এরপর দুটি Batch-এ পরপর আলাদাভাবে `optimizer.step()` চালিয়ে দেখুন কেন চূড়ান্ত Weight আলাদা আসে। বাস্তব লগিংয়ে সবসময় কতগুলো Sample দেখা হলো (`Samples Seen`), কয়টি `Epoch` গেল এবং কয়টি `Update` হলো—এই তিনটি হিসাব আলাদা করে রাখুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch16_diagnostics",
+      "title": "Learning Curve পড়ার কৌশল এবং দাবির যৌক্তিক সীমা",
+      "subtitle": "Underfitting, Overfitting ও Validation ফলাফলের সঠিক ব্যাখ্যা",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "আমাদের বাস্তব রানের সংরক্ষিত সংখ্যাগুলো",
+          "body": "এবার দেখা যাক আমাদের নির্দিষ্ট `11 → 4 → 1` নেটওয়ার্কটি বাস্তব ডেটায় ট্রেন করার পর কী ঘটল। `120`টি Epoch জুড়ে আমাদের Training BCE Loss `0.672200` থেকে কমে `0.584304`-এ নেমেছে, আর একই সময়ে Inner-validation BCE `0.637044` থেকে কমে হয়েছে `0.601743`। মনে রাখবেন, এই সংখ্যাগুলো আমাদের এই নির্দিষ্ট Inner Split-এর ওপর পর্যবেক্ষণ করা স্থানীয় ডায়াগনস্টিক প্রমাণ—সম্পূর্ণ নতুন কোনো অদেখা ওয়াইন উৎসের ওপর সর্বজনীন পারফরম্যান্সের দাবি নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Train-Validation Gap দেখলেই কি আতঙ্কিত হব?",
+          "body": "Validation Loss সংখ্যাগতভাবে Training Loss-এর চেয়ে সামান্য বড় হলেই সাথে সাথে 'ভয়াবহ Overfitting হয়েছে' বলে রায় দেওয়া ঠিক নয়! ডেটা ভাগের গঠন এবং সীমিত Sample-এর স্বাভাবিক ওঠানামার কারণেও ছোটখাটো পার্থক্য তৈরি হয় (লক্ষ্য করুন, `Epoch 0`-তে তো শুরুর Validation Loss `0.637044` উল্টো Training Loss `0.672200`-এর চেয়ে কম ছিল!)। আসল সতর্কসংকেত হলো যখন দেখবেন Training Loss টানা কমছে অথচ Validation Loss উল্টো বাড়তে শুরু করেছে—তখনই Overfitting, ডেটার অসামঞ্জস্য বা মূল্যায়ন প্রক্রিয়া খতিয়ে দেখতে হয়।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "\\mathrm{gap}_t=L_{\\mathrm{validation},t}-L_{\\mathrm{train},t}"
+        },
+        {
+          "type": "code",
+          "title": "Epoch 0 থেকে Epoch 120 পর্যন্ত BCE পার্থক্য পর্যবেক্ষণ",
+          "body": "from pathlib import Path\nimport json\n\na = json.loads(Path(\"assets/datasets/wine_quality/neural_lab.json\").read_text())\nfirst, last = a[\"history\"][0], a[\"history\"][-1]\nprint(first, last)\nassert last[\"epoch\"] == 120\nprint(\"final BCE gap:\", last[\"validation_bce\"] - last[\"train_bce\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "Underfitting ধরা পড়লে প্রথমে কী দেখবেন?",
+          "body": "যদি দেখেন Training এবং Validation—দুটো Loss-ই চড়া হয়ে আটকে আছে (Underfitting), তবে শুরুতেই হুট করে বিশাল Model বানিয়ে ফেলা কোনো ভালো ইঞ্জিনিয়ারিং অভ্যাস নয়। Model-এর Capacity-কে দোষ দেওয়ার আগে পরীক্ষা করুন: Loss Function-টি ঠিক আছে তো? Feature-গুলোর Scale ঠিকমতো Standardized হয়েছে কি? Learning Rate খুব ছোট বা বড় নয় তো? সব Parameter ঠিকমতো Gradient পাচ্ছে এবং পর্যাপ্ত সংখ্যক Update চলেছে কি না? সবার আগে ছোট একটি Batch-এ Model শিখতে পারছে কি না এবং সংখ্যাত্মক হিসাব ঠিক আছে কি না তা নিশ্চিত করুন।"
+        },
+        {
+          "type": "neural_training_lab",
+          "title": "Interactive Lab: সংরক্ষিত Training ও Validation কার্ভ বিশ্লেষণ",
+          "body": "নিচের Lab-এ প্রতিটি সংরক্ষিত Epoch এবং Train/Validation রেখাগুলো ঘুরিয়ে-ফিরিয়ে দেখুন। এখানে `Epoch 120` সংখ্যাটি ট্রেনিং শুরুর আগেই নির্ধারিত একটি শেষ বিন্দু—Validation কার্ভ দেখে সবচেয়ে ভালো Epoch বেছে নেওয়া হয়নি। অ্যাপটি এখানে নতুন করে কোনো Weight ট্রেন করে না, বরং আমাদের প্রকৃত Python রানের সংরক্ষিত প্রমাণই নিখুঁতভাবে তুলে ধরে।"
+        },
+        {
+          "type": "text",
+          "title": "Validation ডেটা বারবার দেখে সিদ্ধান্ত নিলে কী হয়?",
+          "body": "আপনি যখনই Validation ফলাফল দেখে Model-এর Architecture, Learning Rate, Seed কিংবা থামার Epoch বেছে নেন, তখনই সেই কাজটি হয়ে ওঠে Model Selection-এর অংশ। এভাবে বারবার পছন্দ-অপছন্দ চালানোর পর সেই একই Validation সেটকে আর 'সম্পূর্ণ স্বাধীন চূড়ান্ত প্রমাণ' বলা চলে না! যেহেতু এই Dataset-টি আগের বইগুলোতেও ব্যবহৃত হয়েছে, তাই আগে আলাদা করে রাখা চূড়ান্ত Decision বা Test অংশকে এখানে আর নতুন করে স্পর্শ করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "সাদামাটা Baseline-এর সাথে তুলনা",
+          "body": "কোনো Model আসলে কিছু শিখল কি না তা বোঝার প্রথম মাপকাঠি হলো একটি সরল Baseline। আমাদের এই Inner-training অংশে ধনাত্মক Class-এর গড় অনুপাত (Prevalence) দিয়ে যদি একটি ধ্রুবক Prediction দেওয়া হয়, তবে একই Inner-validation সেটে তার BCE আসে প্রায় `0.691467` (যেখানে আমাদের MLP নামিয়ে এনেছে `0.601743`-এ)। একই ডেটা ভাগে এটি একটি পরিষ্কার গাণিতিক রেফারেন্স দেয়—তবে একটি নির্দিষ্ট রেসিপির এই উন্নতিকে যেন সব ট্যাবুলার ডেটায় ক্লাসিক্যাল Model-এর ওপর Neural Network-এর নিরঙ্কুশ শ্রেষ্ঠত্ব ভেবে ভুল না করা হয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch16_gradcheck",
+      "title": "Gradient Verification এবং Small-batch Debugging",
+      "subtitle": "Autograd, হাতে লেখা সমীকরণ এবং Finite Difference দিয়ে ত্রিভুজ যাচাই",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "স্বাধীন পথে নির্ভুলতা যাচাইয়ের গুরুত্ব",
+          "body": "নিজের হাতে লেখা Backpropagation কোড যে শতভাগ নির্ভুল, তা নিশ্চিত করবেন কীভাবে? আমাদের Workflow-এর শুরুর এবং শেষের—উভয় Checkpoint-এ বাস্তব ডেটার 8টি Row নিয়ে হাতে লেখা NumPy Chain Rule-এর ফলাফল সরাসরি PyTorch Autograd-এর সাথে মেলানো হয়েছে। ReLU ও Tanh এবং Mean ও Sum—সব মিলিয়ে মোট আটটি ভিন্ন সমন্বয়ে এই পরীক্ষা চালানো হয়েছে। নিজের লেখা ফর্মুলাটিই কপি করে টেস্টে না বসিয়ে ফ্রেমওয়ার্কের মতো একটি স্বাধীন রেফারেন্সের সাথে মেলানোই প্রকৃত নির্ভুলতার প্রমাণ দেয়।"
+        },
+        {
+          "type": "text",
+          "title": "মসৃণ বিন্দুতে Central Finite Difference",
+          "body": "Autograd ছাড়াও ক্যালকুলাসের সংজ্ঞা ব্যবহার করে যেকোনো নির্বাচিত Parameter-এ সামান্য `+ε` ও `-ε` পরিবর্তন ঘটিয়ে Central Difference সূত্রের সাহায্যে Derivative-এর খুব কাছাকাছি মান বের করা যায়। তবে মনে রাখবেন, ওই সামান্য পরিবর্তনের ফলে যদি কোনো Preactivation ভুলক্রমে ReLU-এর `z = 0` বাঁক (Kink) অতিক্রম করে ফেলে, তবে সংখ্যাত্মক ও তাত্ত্বিক মানের মিল ভেঙে যেতে পারে! তাই সবসময় `float64` Precision, পরিমিত আকারের `ε` এবং শূন্য থেকে নিরাপদ দূরত্বে থাকা মসৃণ Input বেছেই Numerical Gradcheck সাজানো উচিত।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "{\\partial L\\over\\partial\\theta_j}\\approx{L(\\theta+\\epsilon e_j)-L(\\theta-\\epsilon e_j)\\over2\\epsilon}"
+        },
+        {
+          "type": "code",
+          "title": "torch.autograd.gradcheck দিয়ে স্বয়ংক্রিয় যাচাই",
+          "body": "import torch\nimport torch.nn.functional as F\n\nX = torch.tensor([[1.0, 2.0], [2.0, 1.0]], dtype=torch.float64)\ny = torch.tensor([0.0, 1.0], dtype=torch.float64)  # Illustration.\nW = torch.tensor([[0.3, 0.2]], dtype=torch.float64, requires_grad=True)\nb = torch.tensor([0.1], dtype=torch.float64, requires_grad=True)\nv = torch.tensor([0.5], dtype=torch.float64, requires_grad=True)\n\n\ndef objective(W, b, v):\n    return F.binary_cross_entropy_with_logits(torch.relu(X @ W.T + b) @ v, y)\n\n\nassert torch.autograd.gradcheck(objective, (W, b, v))\n"
+        },
+        {
+          "type": "text",
+          "title": "ছোট একটি Batch মুখস্থ করানোর পরীক্ষা (Small-batch Sanity)",
+          "body": "ডিপ লার্নিং কোড ডিবাগ করার একটি অব্যর্থ কৌশল হলো: বাস্তব ডেটার মাত্র ৪ বা ৮ Row-এর ছোট একটি Batch নিয়ে দেখা যে Model-টি সেখানে Loss ক্রমাগত কমাতে পারছে কি না। এটি কিন্তু কোনো Validation বা Generalization পরীক্ষা নয়—নিছক পাইপলাইনের কলকবজা ঠিকমতো জুড়েছে কি না তা দেখার একটি Memorization Check! এত ছোট Batch-এও যদি Model ফিট করতে ব্যর্থ হয়, তবে বড় ডেটায় যাওয়ার আগেই ডেটার Column ক্রম, `.grad` প্রবাহ, Optimizer-এ নিবন্ধিত Parameter এবং Loss Function-টি ভালোভাবে তল্লাশি করুন।"
+        },
+        {
+          "type": "text",
+          "title": "সমস্যার লক্ষণ দেখে কারণ চেনার তালিকা (Failure Matrix)",
+          "body": "ট্রেনিং আটকে গেলে লক্ষণ দেখেই রোগ ধরার অভ্যাস করুন:\n- **Loss একচুলও নড়ছে না এবং `.grad` হয়ে আছে `None`:** কোথাও কম্পিউটেশন গ্রাফ কেটে গেছে (যেমন `.detach()` বা `.item()`) কিংবা ওই Parameter-গুলো `forward()`-এ ব্যবহৃতই হয়নি।\n- **`.grad` অশূন্য, তবুও Weight বদলাচ্ছে না:** Optimizer ভুল Parameter তালিকা পেয়েছে অথবা `optimizer.step()` ঠিকমতো কল হচ্ছে না।\n- **Loss হঠাৎ লাফিয়ে অসীম বা `NaN` হয়ে যাচ্ছে:** Input ডেটায় ত্রুটি আছে, সিগন্যালের Scale অসামঞ্জস্যপূর্ণ কিংবা Learning Rate অতিরিক্ত বড়।\n- **সবকটি Hidden Gate শূন্য হয়ে বসে আছে:** আপনার Initialization অথবা Input ডেটার স্কেল ও Distribution খতিয়ে দেখুন।"
+        },
+        {
+          "type": "text",
+          "title": "Floating-point পরীক্ষায় সঠিক Tolerance নির্ধারণ",
+          "body": "দশমিক সংখ্যার Gradient পরীক্ষায় কখনোই সরাসরি `==` দিয়ে নিখুঁত সমতা খুঁজতে যাবেন না! সংখ্যার `dtype` (`float64` বনাম `float32`), Parameter-এর স্কেল এবং Function-এর মসৃণতা বিবেচনা করে উপযুক্ত Absolute (`atol`) ও Relative Tolerance (`rtol`) নির্ধারণ করুন এবং টেস্টে তা স্পষ্টভাবে লিখে রাখুন। উচ্চতর ক্রমের Derivative এবং অ-অন্তরীকরণযোগ্য (Non-differentiable) সীমানা বিন্দুগুলোর জন্য আলাদা পরীক্ষার নিয়ম প্রয়োজন হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এর জন্য ডিবাগিং প্রস্তুতি",
+          "body": "নিজেকে যাচাই করার জন্য তিনটি সুনির্দিষ্ট টেস্ট কেস নকশা করুন, যা (১) ইচ্ছাকৃতভাবে দেওয়া ভুল Transpose, (২) ভুলে বাদ পড়া `/ B` হর, এবং (৩) মাঝপথে বিচ্ছিন্ন হওয়া Hidden পাথ—এই তিনটি বাগ নির্ভুলভাবে ধরে ফেলবে। পাশাপাশি একটি বাস্তব উদাহরণ দিয়ে বোঝান যে কেবল 'কয়েক ধাপে Training Loss কমেছে কি না'—এই একটিমাত্র পরীক্ষা চালালে কোন কোন মারাত্মক বাগ অনায়াসে চোখ ফাঁকি দিয়ে বেরিয়ে যেতে পারে! (যেমন ভুল `/ B` হর বা ভুল Class ওয়েটিং থাকলেও Loss কমতে পারে, অথচ Model শিখবে ভুল জিনিস।)"
+        }
+      ]
+    },
+    {
+      "id": "ch16_book_representation",
+      "title": "Self-supervised Learning, Representation ও Transfer Objectives",
+      "subtitle": "মানুষের দেওয়া Label ছাড়াই অর্থবহ Representation শেখা এবং Contrastive Loss-এর গণিত",
+      "duration": "33 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "এই ধারণাটি কেন দরকার?",
+          "body": "বাস্তব দুনিয়ায় ইন্টারনেটভর্তি টেক্সট, ছবি বা সেন্সর ডেটার প্রতিটি Sample-এ মানুষের হাতে তৈরি Label থাকে না। Self-supervised Learning এই সীমাবদ্ধতা কাটাতে কাঁচা ডেটার ভেতর থেকেই চমৎকার সব Prediction Target তৈরি করে নেয়—যেমন বাক্যের লুকানো শব্দ অনুমান করা (Masked Token), পরের শব্দ বলা (Next Token), কিংবা একই ছবির দুটি পরিবর্তিত রূপ (Augmented View) চিনে নেওয়া। খেয়াল রাখবেন, এটিকে 'কোনো Supervision ছাড়াই শেখা' ভাবলে ভুল হবে; এখানে তদারকির সংকেতটি ডেটার নিজস্ব গঠন থেকেই নির্মিত হয়। আর যখন অল্প কিছু Labeled ডেটার সাথে বিপুল Unlabeled ডেটা মিলিয়ে যৌথ Objective সাজানো হয়, তখন তাকে বলে Semi-supervised Learning।"
+        },
+        {
+          "type": "text",
+          "title": "Representation থেকে Downstream Task: ধাপে ধাপে প্রক্রিয়া",
+          "body": "এ ধরনের পদ্ধতির মূল কৌশল হলো: প্রথমে একটি এনকোডার দিয়ে অর্থবহ একটি অভ্যন্তরীণ Representation `h = f_θ(x)` শিখে নেওয়া, এবং পরে নির্দিষ্ট কাজের জন্য তার মাথার ওপর ছোট একটি Task Head `g_φ(h)` বসিয়ে ট্রেন করা। যেমন, জনপ্রিয় Contrastive Objective-এ একটি Positive Pair-এর মধ্যকার Similarity বাড়িয়ে সম্ভাব্য বাকি Negative প্রার্থীদের থেকে সেটিকে আলাদা করার চেষ্টা চলে। এর সবচেয়ে বড় গাণিতিক অনুমান হলো—আপনার ব্যবহৃত Augmentation যেন মূল বস্তুর অর্থগত পরিচয় (Semantic Identity) অক্ষুণ্ণ রাখে! যদি Positive বা Negative জোড়া তৈরির নিয়মেই গলদ থাকে, তবে ট্রেনিং Loss সুন্দরমতো কমলেও শেখা Representation বাস্তব কাজে অকেজো হয়ে পড়তে পারে।"
+        },
+        {
+          "type": "math",
+          "title": "Contrastive Loss-এর গাণিতিক সূত্র",
+          "body": "\\ell=-\\log\\frac{\\exp(s_+/\\tau)}{\\exp(s_+/\\tau)+\\sum_j\\exp(s_j^-/\\tau)},\\quad \\tau>0"
+        },
+        {
+          "type": "text",
+          "title": "খাতা-কলমে একটি সংখ্যাগত উদাহরণ",
+          "body": "সূত্রটির আচরণ বোঝার জন্য ছোট একটি উদাহরণ হাতে হিসাব করি। ধরুন, একটি Positive জোড়ার Similarity হলো `2.0`, একটিমাত্র Negative প্রার্থীর Similarity হলো `0.0` এবং Temperature `τ = 1.0`। তাহলে Positive প্রার্থীটির Softmax Probability হবে `e² / (e² + e⁰) = e² / (e² + 1) ≈ 0.880797`, আর ঋণাত্মক লগারিদম নিলে Loss আসবে প্রায় `-log(0.880797) ≈ 0.126928`। এখানে Temperature `τ` ছোট করলে একই স্কোরের ব্যবধানেই Probability Distribution অনেক বেশি তীক্ষ্ণ (Sharper) হয়ে ওঠে—তবে মনে রাখবেন, Distribution তীক্ষ্ণ হওয়া মানেই Model-এর প্রকৃত Accuracy বেড়ে যাওয়া নয়।"
+        },
+        {
+          "type": "code",
+          "title": "Log-space-এ স্থিতিশীলভাবে Contrastive Loss গণনা",
+          "body": "import math\n\npositive, negative, temperature = 2.0, 0.0, 1.0\nscaled = [positive / temperature, negative / temperature]\nmaximum = max(scaled)\nlog_partition = maximum + math.log(sum(math.exp(x - maximum) for x in scaled))\n# Compute loss in log space instead of taking log of a rounded probability.\nloss = log_partition - scaled[0]\nprint(round(loss, 6))\n"
+        },
+        {
+          "type": "text",
+          "title": "কোডটি আমাদের কী দেখাচ্ছে?",
+          "body": "কোডটি চালালে আমরা ঠিক `0.126928` Output পাই—যেখানে দশমিক রাউন্ডিংয়ের ত্রুটি এড়াতে সরাসরি Log-space-এ (`Log-sum-exp` কৌশলে) হিসাবটি করা হয়েছে। এখানে কোনো নেটওয়ার্ক ট্রেন হচ্ছে না, বরং Objective-টির ভেতরের নিখুঁত পাটিগণিত আমরা যাচাই করছি। পরবর্তীতে Book 4 · Chapter 2 (Embeddings & Retrieval)-এ অর্থভিত্তিক অনুসন্ধান এবং Book 4 · Chapter 9 (Diffusion & Multimodal)-এ ছবি ও ভাষার সমন্বয় শেখার সময় এই একই গাণিতিক ভিত্তি আরও বড় পরিসরে ব্যবহৃত হবে।"
+        },
+        {
+          "type": "text",
+          "title": "কখন এই অনুমান ভেঙে পড়ে?",
+          "body": "বাস্তব Batch-এ যদি একই মূল বস্তুর দুটি ভিন্ন দৃশ্যকে ভুলক্রমে পরস্পরের Negative বলে চালিয়ে দেওয়া হয়, তবে Model তাদের জোর করে দূরে ঠেলে দেওয়ার ক্ষতিকর চাপ তৈরি করে (False-negative Pressure)। তাছাড়া ট্রেনিংয়ের সময়কার Pretext Task Loss কমা মানেই যে চূড়ান্ত কাজে দুর্দান্ত ফল মিলবে তার কোনো নিশ্চয়তা নেই; এর প্রকৃত মান যাচাই করতে অবশ্যই Data Leakage-মুক্ত Linear Probe, Fine-tuning এবং বাস্তব Domain-transfer মূল্যায়ন দরকার।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে চেষ্টা করুন",
+          "body": "একটি Positive ও একটি Negative প্রার্থীর Similarity যদি হুবহু সমান হয়, তবে Contrastive Loss কত হবে? আর Semi-supervised Training-এ Model-এর নিজের তৈরি Pseudo-label ভুল হলে কী ধরনের বিপদ ঘটতে পারে?",
+          "solution": "দুটি প্রার্থীর Similarity সমান হলে প্রতিটির Softmax Probability দাঁড়াবে `0.5`, ফলে Loss হবে `-log(0.5) = log(2) ≈ 0.693147`। অন্যদিকে Semi-supervised পদ্ধতিতে Model যদি প্রবল আত্মবিশ্বাসের সাথে ভুল Pseudo-label তৈরি করে এবং সেই ভুল Label দিয়েই নিজেকে আবার ট্রেন করতে থাকে, তবে নিজের ভুল ধারণা আরও শক্তিশালী হওয়ার দুষ্টচক্র (Confirmation Bias) তৈরি হয়—কারণ বেশি Confidence মানেই কখনোই সঠিকতার প্রমাণ নয়।",
+          "reference": "https://d2l.ai/chapter_computer-vision/finetuning.html"
+        },
+        {
+          "type": "text",
+          "title": "Contrastive Logit-এর সাপেক্ষে Derivative",
+          "body": "এবার দেখা যাক Backpropagation এই স্কোরগুলোকে কোন দিকে ঠেলে দেয়। আগের মতোই Positive Similarity `2.0`, Negative `0.0` এবং Temperature `τ = 1.0` নিলে `Loss = -log softmax(s / τ)_positive`। ক্যালকুলাস করলে মূল Similarity স্কোরগুলোর সাপেক্ষে Derivative পাওয়া যায় খুব চমৎকার একটি আকারে: `(p - one_hot_positive) / τ`। ফলে এখানে Positive স্কোরের Gradient আসে প্রায় `0.880797 - 1 = -0.119203`, আর Negative স্কোরের Gradient আসে `+0.119203`! সুতরাং Gradient Descent ধাপ নিলে প্রত্যাশামতোই Positive স্কোর বাড়বে এবং Negative স্কোর কমবে। খেয়াল রাখবেন, `τ` বদলালে ভেতরের Softmax Probability এবং বাইরের `1 / τ` গুণক—দুটোই একসাথে পরিবর্তিত হয়।"
+        },
+        {
+          "type": "code",
+          "title": "Temperature-সহ Contrastive Score-এর Gradient যাচাই",
+          "body": "import torch\nimport torch.nn.functional as F\n\nscores = torch.tensor([2.0, 0.0], dtype=torch.float64, requires_grad=True)\ntemperature = 1.0\nloss = F.cross_entropy((scores / temperature)[None], torch.tensor([0]))\ngradient = torch.autograd.grad(loss, scores)[0]\nreference = (\n    (scores.detach() / temperature).softmax(0)\n    - torch.tensor([1.0, 0.0], dtype=scores.dtype)\n) / temperature\ntorch.testing.assert_close(gradient, reference)\nprint(round(loss.item(), 6), *[round(v, 6) for v in gradient.tolist()])\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে ভেবে বলুন",
+          "body": "বাস্তবে একই মূল বস্তুর আরেকটি নমুনাকে যদি ভুল করে Negative Candidate বানিয়ে দেওয়া হয়, তবে এই Gradient তাকে কোন দিকে চাপ দেবে?",
+          "solution": "Negative হিসেবে চিহ্নিত হওয়ায় তার Gradient হবে ধনাত্মক (`+p_j / τ`), ফলে Gradient Descent জোর করে ওই নমুনাটির Similarity কমিয়ে দূরে ঠেলে দেবে—যদিও বাস্তব কাজের প্রয়োজনে দুটি নমুনার Representation কাছাকাছি থাকা উচিত ছিল! তাই সতর্কতার সাথে Pair গঠন, অর্থবহ Augmentation নির্বাচন এবং আলাদা Held-out Downstream মূল্যায়ন দিয়েই এই False-negative সমস্যা শনাক্ত ও নিয়ন্ত্রণ করতে হয়।",
+          "reference": "https://d2l.ai/"
+        }
+      ]
+    },
+    {
+      "id": "ch16_workflow",
+      "title": "বাস্তব ডেটায় MLP: ডেটার উৎস, Split ও Preprocessing",
+      "subtitle": "কোনো রকম Data Leakage ছাড়াই স্বচ্ছ Inner Validation পাইপলাইন তৈরি",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "নিজের কম্পিউটারে পরিবেশ প্রস্তুত করা",
+          "body": "আপনি যদি নিজের কম্পিউটারে এই অধ্যায়ের সম্পূর্ণ পাইপলাইনটি চালিয়ে দেখতে চান, তবে `python -m pip install -r tool/requirements-pytorch-qa.txt` কমান্ড দিয়ে Windows CPU-র যাচাইকৃত প্যাকেজগুলো ইনস্টল করে নিতে পারেন (macOS বা GPU অ্যাক্সিলারেটরের জন্য PyTorch-এর অফিসিয়াল প্ল্যাটফর্ম নির্দেশিকা ব্যবহার করবেন)। ডেভেলপমেন্ট প্যাকেজ নামাতে ইন্টারনেট লাগলেও আমাদের ইনস্টল করা অ্যাপের সব পাঠ ও Interactive Lab কিন্তু সম্পূর্ণ অফলাইনেই চলে।"
+        },
+        {
+          "type": "text",
+          "title": "মূল ডেটা ফাইলের অখণ্ডতা ও সীমাবদ্ধতা",
+          "body": "আমাদের ব্যবহৃত মূল Red Wine Quality CSV ফাইলটি সম্পূর্ণ অপরিবর্তিত রাখা হয়েছে এবং এর `SHA-256` হ্যাশ মিলিয়ে নেওয়া হয়েছে। আগের মতোই শিক্ষামূলক উদ্দেশ্যে `quality ≥ 6` শর্ত দিয়ে Binary Target তৈরি করা হয়েছে—যদিও মানুষের ব্যক্তিগত স্বাদ-রেটিং এবং নির্দিষ্ট কাট-অফের সহজাত সীমাবদ্ধতা এখানেও প্রযোজ্য। আর অভিন্ন রাসায়নিক মানের Row-গুলোকে একসাথে রাখার জন্য যে Group ব্যবহৃত হয়েছে, তা মূলত হুবহু একরকম প্রোফাইল আলাদা রাখার একটি প্রক্সি—কোনো যাচাইকৃত বোতল বা উৎপাদন লটের প্রকৃত পরিচয়পত্র নয়।"
+        },
+        {
+          "type": "code",
+          "title": "ডেটা লোডিং এবং Group-disjoint Inner Split",
+          "body": "from pathlib import Path\nimport argparse\nimport importlib.util\nimport json\nimport platform\nimport sys\nimport numpy as np\nimport torch\nfrom torch import nn\nimport torch.nn.functional as F\nfrom sklearn.model_selection import GroupShuffleSplit\n\nDATA = Path(\"assets/datasets/wine_quality\").resolve()\nFEATURES = [\n    \"fixed acidity\",\n    \"volatile acidity\",\n    \"citric acid\",\n    \"residual sugar\",\n    \"chlorides\",\n    \"free sulfur dioxide\",\n    \"total sulfur dioxide\",\n    \"density\",\n    \"pH\",\n    \"sulphates\",\n    \"alcohol\",\n]\nEPOCHS = [0, 1, 5, 10, 20, 40, 80, 120]\n\n\ndef prepare(path):\n    spec = importlib.util.spec_from_file_location(\n        \"ch16_contract\", path.with_name(\"capstone_workflow.py\")\n    )\n    module = importlib.util.module_from_spec(spec)\n    sys.modules[spec.name] = module\n    spec.loader.exec_module(module)\n    frame, X, y, groups = module.load_source(path)\n    fit, _, _ = module.split_roles(X, y, groups)\n    a, b = next(\n        GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=16).split(\n            X[fit], y[fit], groups[fit]\n        )\n    )\n    train, validation = fit[a], fit[b]\n    assert set(groups[train]).isdisjoint(groups[validation])\n    mean = X[train].mean(axis=0)\n    scale = X[train].std(axis=0, ddof=0)\n    if np.any(scale <= 0):\n        raise ValueError(\"Positive training scale required\")\n    return frame, X, y, groups, fit, train, validation, mean, scale\n"
+        },
+        {
+          "type": "code",
+          "title": "WineMLP Model এবং হাতে লেখা Chain-rule যাচাইকারী Function",
+          "body": "class WineMLP(nn.Module):\n    def __init__(self):\n        super().__init__()\n        self.hidden = nn.Linear(11, 4, dtype=torch.float64)\n        self.output = nn.Linear(4, 1, dtype=torch.float64)\n\n    def forward(self, X):\n        if X.ndim != 2 or X.shape[1] != 11:\n            raise ValueError(\"X[B,11] required\")\n        return self.output(torch.relu(self.hidden(X))).squeeze(-1)\n\n\ndef initialize(model):\n    nn.init.kaiming_uniform_(model.hidden.weight, nonlinearity=\"relu\")\n    nn.init.zeros_(model.hidden.bias)\n    nn.init.xavier_uniform_(model.output.weight)\n    nn.init.zeros_(model.output.bias)\n\n\ndef snapshot(model):\n    return {\n        \"w1\": model.hidden.weight.detach().tolist(),\n        \"b1\": model.hidden.bias.detach().tolist(),\n        \"w2\": model.output.weight.detach()[0].tolist(),\n        \"b2\": model.output.bias.detach().item(),\n    }\n\n\ndef manual(X, y, p, reduction=\"mean\", activation=\"relu\"):\n    X = np.asarray(X, dtype=np.float64)\n    y = np.asarray(y, dtype=np.float64)\n    W1 = np.asarray(p[\"w1\"])\n    b1 = np.asarray(p[\"b1\"])\n    w2 = np.asarray(p[\"w2\"])\n    b2 = float(p[\"b2\"])\n    if (\n        X.ndim != 2\n        or X.shape[1] != 11\n        or X.shape[0] < 1\n        or y.shape != (len(X),)\n        or W1.shape != (4, 11)\n        or b1.shape != (4,)\n        or w2.shape != (4,)\n    ):\n        raise ValueError(\"11 ->4 ->1 exact-shape contract\")\n    if (\n        any(not np.isfinite(v).all() for v in [X, y, W1, b1, w2, np.asarray(b2)])\n        or not np.isin(y, [0, 1]).all()\n    ):\n        raise ValueError(\"Finite values and binary labels required\")\n    if reduction not in [\"mean\", \"sum\"] or activation not in [\"relu\", \"tanh\"]:\n        raise ValueError(\"Declared reduction/activation required\")\n    z1 = X @ W1.T + b1\n    h = np.maximum(z1, 0) if activation == \"relu\" else np.tanh(z1)\n    gate = (z1 > 0).astype(float) if activation == \"relu\" else 1 - h * h\n    logits = h @ w2 + b2\n    probability = np.exp(-np.logaddexp(0, -logits))\n    per_loss = np.logaddexp(0, logits) - y * logits\n    d = (probability - y) / (len(y) if reduction == \"mean\" else 1)\n    dh = d[:, None] * w2\n    dz1 = dh * gate\n    return {\n        \"z1\": z1.tolist(),\n        \"hidden\": h.tolist(),\n        \"gate\": gate.tolist(),\n        \"logits\": logits.tolist(),\n        \"probability\": probability.tolist(),\n        \"loss\": float(per_loss.mean() if reduction == \"mean\" else per_loss.sum()),\n        \"dlogit\": d.tolist(),\n        \"dw1\": (dz1.T @ X).tolist(),\n        \"db1\": dz1.sum(axis=0).tolist(),\n        \"dw2\": (h.T @ d).tolist(),\n        \"db2\": float(d.sum()),\n    }\n\n\ndef evaluate(model, X, y):\n    model.eval()\n    with torch.no_grad():\n        logits = model(X)\n        return {\n            \"bce\": F.binary_cross_entropy_with_logits(logits, y).item(),\n            \"accuracy_at_0_5\": ((logits >= 0) == (y == 1)).double().mean().item(),\n        }\n"
+        },
+        {
+          "type": "text",
+          "title": "Nested Split-এর সুনির্দিষ্ট সীমানা",
+          "body": "আগে নির্ধারিত 966টি Fit Row-এর ভেতরেই `GroupShuffleSplit` (`seed = 16`, `test_size = 0.2`) চালিয়ে আমরা `776`টি Row-এর Inner Training সেট এবং `190`টি Row-এর Inner Validation সেট তৈরি করেছি। গ্রুপভিত্তিক বিভাজনের ফলে হুবহু একই রাসায়নিক প্রোফাইলের কোনো Row Train ও Validation দুই জায়গায় ছড়িয়ে পড়তে পারে না। আর মূল Dataset-এর বাইরের চূড়ান্ত Decision বা Test অংশকে এখানে একেবারেই স্পর্শ বা স্কোর করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "Preprocessing কেন নতুন করে Fit করতে হলো?",
+          "body": "প্রতিটি Feature-এর গড় (`Mean`) এবং বিস্তার (`Scale`, যেখানে `ddof=0`) কেবল ওই 776টি Inner Training Row থেকেই হিসাব করা হয়েছে। একটু ভেবে দেখুন: আমরা যদি সুবিধার জন্য পুরো 966টি Fit Row-এর ওপর আগে থেকে তৈরি কোনো Scaler এখানে ব্যবহার করতাম, তবে নতুন এই 190টি Inner Validation Row-এর তথ্য গোপনে Preprocessing-এর ভেতরে ঢুকে পড়ত! তাই পুরোনো কোনো Dataset পুনর্ব্যবহার করলেও যখনই নতুন কোনো মূল্যায়ন সীমানা (Evaluation Boundary) টানবেন, তখনই Scaler ফিটিংয়ের পরিধি নতুন করে যাচাই করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "কোডের গঠন ও পরের ধাপের প্রস্তুতি",
+          "body": "উপরের প্রথম কোড ব্লকটি ডেটা পড়া ও বিভাজনের কাজ করে, আর দ্বিতীয় ব্লকটি নিবন্ধিত `WineMLP` Model, Initialization এবং শূন্য থেকে লেখা Derivative যাচাইয়ের Function-গুলো প্রস্তুত করে। দুটি ব্লক একই Python স্কোপে চালানোর উপযোগী, এবং ঠিক পরের পাঠেই আমরা এদের একত্র করে সম্পূর্ণ স্বয়ংসম্পূর্ণ ট্রেনিং পরীক্ষাটি চালাব। কাজ করার সময় ডেটা Matrix এবং Model-এর Weight-এর Orientation স্পষ্টভাবে লিখে রাখার অভ্যাস বজায় রাখুন।"
+        },
+        {
+          "type": "text",
+          "title": "ফলাফল দাবির যৌক্তিক গণ্ডি",
+          "body": "এই পুরো রেসিপিটি সাজানো হয়েছে Neural Network ট্রেনিংয়ের ভেতরের কলকবজা হাতে-কলমে শেখার জন্য—নতুন কোনো চ্যাম্পিয়ন বেঞ্চমার্ক দাবি করার জন্য নয়। যেহেতু এই ডেটা উৎসটি আগের অধ্যায়গুলোতেও ব্যবহৃত হয়েছে, তাই এখানকার Validation ডায়াগনস্টিক দেখার পর আপনি যদি ব্যাপক Hyperparameter টিউনিং করতে চান, তবে তার জন্য আলাদা Selection এবং নতুন নিরপেক্ষ Confirmation নকশা প্রয়োজন হবে।"
+        }
+      ]
+    },
+    {
+      "id": "ch16_experiment",
+      "title": "পূর্ণাঙ্গ Training Experiment এবং সংরক্ষিত প্রমাণের পুনর্যাচাই",
+      "subtitle": "Full-batch SGD থেকে শুরু করে অপরিবর্তনীয় Checkpoint ও অডিট রিপোর্ট",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "এক ফাইলে সম্পূর্ণ চালানোর যোগ্য Workflow",
+          "body": "নিচের কোড ব্লকে ডেটা লোডিং, Standardization, Model গঠন, হাতে লেখা Derivative যাচাই এবং নির্দিষ্ট 120 ধাপের Training Loop—সবকিছু একত্রে দেওয়া আছে। আপনি চাইলে কমান্ড লাইন থেকে `python assets/datasets/wine_quality/neural_workflow.py --output build/chapter-16-workflow-report.json` চালিয়েও পুরো পরীক্ষাটি স্বাধীনভাবে রান করতে পারেন; ফাইলটি শুধু `import` করলে নিজে থেকে ট্রেনিং শুরু হয়ে যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "পূর্বঘোষিত অপরিবর্তিত রেসিপি",
+          "body": "পরীক্ষার প্রতিটি শর্ত শুরুতেই স্থির করে নেওয়া হয়েছে: CPU-তে `float64` Precision, `Seed 16`, `11 → 4 → 1` আকারের ReLU নেটওয়ার্ক, Hidden Layer-এ Kaiming ও Output Layer-এ Xavier Weight, এবং কোনো Momentum বা Weight Decay ছাড়াই `0.05` Learning Rate-এ ঠিক 120টি Full-batch SGD আপডেট। এখানে কোনো গোপন Hyperparameter অনুসন্ধান বা সেরা Epoch বাছাই করা হয়নি; নির্দিষ্ট আটটি Epoch (`0, 1, 5, 10, 20, 40, 80, 120`)-এর Weight কেবল ভেতরের পরিবর্তন নিরীক্ষার জন্য সংরক্ষণ করা হয়েছে।"
+        },
+        {
+          "type": "code",
+          "title": "সম্পূর্ণ Neural Workflow এবং স্বয়ংক্রিয় Chain-rule অডিট",
+          "body": "from pathlib import Path\nimport argparse\nimport importlib.util\nimport json\nimport platform\nimport sys\nimport numpy as np\nimport torch\nfrom torch import nn\nimport torch.nn.functional as F\nfrom sklearn.model_selection import GroupShuffleSplit\n\nDATA = Path(\"assets/datasets/wine_quality\").resolve()\nFEATURES = [\n    \"fixed acidity\",\n    \"volatile acidity\",\n    \"citric acid\",\n    \"residual sugar\",\n    \"chlorides\",\n    \"free sulfur dioxide\",\n    \"total sulfur dioxide\",\n    \"density\",\n    \"pH\",\n    \"sulphates\",\n    \"alcohol\",\n]\nEPOCHS = [0, 1, 5, 10, 20, 40, 80, 120]\n\n\ndef prepare(path):\n    spec = importlib.util.spec_from_file_location(\n        \"ch16_contract\", path.with_name(\"capstone_workflow.py\")\n    )\n    module = importlib.util.module_from_spec(spec)\n    sys.modules[spec.name] = module\n    spec.loader.exec_module(module)\n    frame, X, y, groups = module.load_source(path)\n    fit, _, _ = module.split_roles(X, y, groups)\n    a, b = next(\n        GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=16).split(\n            X[fit], y[fit], groups[fit]\n        )\n    )\n    train, validation = fit[a], fit[b]\n    assert set(groups[train]).isdisjoint(groups[validation])\n    mean = X[train].mean(axis=0)\n    scale = X[train].std(axis=0, ddof=0)\n    if np.any(scale <= 0):\n        raise ValueError(\"Positive training scale required\")\n    return frame, X, y, groups, fit, train, validation, mean, scale\n\n\nclass WineMLP(nn.Module):\n    def __init__(self):\n        super().__init__()\n        self.hidden = nn.Linear(11, 4, dtype=torch.float64)\n        self.output = nn.Linear(4, 1, dtype=torch.float64)\n\n    def forward(self, X):\n        if X.ndim != 2 or X.shape[1] != 11:\n            raise ValueError(\"X[B,11] required\")\n        return self.output(torch.relu(self.hidden(X))).squeeze(-1)\n\n\ndef initialize(model):\n    nn.init.kaiming_uniform_(model.hidden.weight, nonlinearity=\"relu\")\n    nn.init.zeros_(model.hidden.bias)\n    nn.init.xavier_uniform_(model.output.weight)\n    nn.init.zeros_(model.output.bias)\n\n\ndef snapshot(model):\n    return {\n        \"w1\": model.hidden.weight.detach().tolist(),\n        \"b1\": model.hidden.bias.detach().tolist(),\n        \"w2\": model.output.weight.detach()[0].tolist(),\n        \"b2\": model.output.bias.detach().item(),\n    }\n\n\ndef manual(X, y, p, reduction=\"mean\", activation=\"relu\"):\n    X = np.asarray(X, dtype=np.float64)\n    y = np.asarray(y, dtype=np.float64)\n    W1 = np.asarray(p[\"w1\"])\n    b1 = np.asarray(p[\"b1\"])\n    w2 = np.asarray(p[\"w2\"])\n    b2 = float(p[\"b2\"])\n    if (\n        X.ndim != 2\n        or X.shape[1] != 11\n        or X.shape[0] < 1\n        or y.shape != (len(X),)\n        or W1.shape != (4, 11)\n        or b1.shape != (4,)\n        or w2.shape != (4,)\n    ):\n        raise ValueError(\"11 ->4 ->1 exact-shape contract\")\n    if (\n        any(not np.isfinite(v).all() for v in [X, y, W1, b1, w2, np.asarray(b2)])\n        or not np.isin(y, [0, 1]).all()\n    ):\n        raise ValueError(\"Finite values and binary labels required\")\n    if reduction not in [\"mean\", \"sum\"] or activation not in [\"relu\", \"tanh\"]:\n        raise ValueError(\"Declared reduction/activation required\")\n    z1 = X @ W1.T + b1\n    h = np.maximum(z1, 0) if activation == \"relu\" else np.tanh(z1)\n    gate = (z1 > 0).astype(float) if activation == \"relu\" else 1 - h * h\n    logits = h @ w2 + b2\n    probability = np.exp(-np.logaddexp(0, -logits))\n    per_loss = np.logaddexp(0, logits) - y * logits\n    d = (probability - y) / (len(y) if reduction == \"mean\" else 1)\n    dh = d[:, None] * w2\n    dz1 = dh * gate\n    return {\n        \"z1\": z1.tolist(),\n        \"hidden\": h.tolist(),\n        \"gate\": gate.tolist(),\n        \"logits\": logits.tolist(),\n        \"probability\": probability.tolist(),\n        \"loss\": float(per_loss.mean() if reduction == \"mean\" else per_loss.sum()),\n        \"dlogit\": d.tolist(),\n        \"dw1\": (dz1.T @ X).tolist(),\n        \"db1\": dz1.sum(axis=0).tolist(),\n        \"dw2\": (h.T @ d).tolist(),\n        \"db2\": float(d.sum()),\n    }\n\n\ndef evaluate(model, X, y):\n    model.eval()\n    with torch.no_grad():\n        logits = model(X)\n        return {\n            \"bce\": F.binary_cross_entropy_with_logits(logits, y).item(),\n            \"accuracy_at_0_5\": ((logits >= 0) == (y == 1)).double().mean().item(),\n        }\n\n\ndef analyse_source(path):\n    frame, raw, y, groups, fit, train, validation, mean, scale = prepare(path)\n    X = torch.tensor((raw[train] - mean) / scale, dtype=torch.float64)\n    target = torch.tensor(y[train], dtype=torch.float64)\n    V = torch.tensor((raw[validation] - mean) / scale, dtype=torch.float64)\n    vy = torch.tensor(y[validation], dtype=torch.float64)\n    # Isolate initialization RNG state from callers. No seed/model search.\n    with torch.random.fork_rng(devices=[]):\n        torch.manual_seed(16)\n        model = WineMLP()\n        initialize(model)\n    optimizer = torch.optim.SGD(model.parameters(), lr=0.05)\n    history = []\n    checkpoints = []\n    for epoch in range(121):\n        tr = evaluate(model, X, target)\n        va = evaluate(model, V, vy)\n        history.append(\n            {\n                \"epoch\": epoch,\n                \"train_bce\": tr[\"bce\"],\n                \"validation_bce\": va[\"bce\"],\n                \"train_accuracy\": tr[\"accuracy_at_0_5\"],\n                \"validation_accuracy\": va[\"accuracy_at_0_5\"],\n            }\n        )\n        if epoch in EPOCHS:\n            checkpoints.append(\n                {\"epoch\": epoch, \"parameters\": snapshot(model), **history[-1]}\n            )\n        if epoch == 120:\n            break\n        model.train()\n        optimizer.zero_grad(set_to_none=True)\n        logits = model(X)\n        if logits.shape != target.shape:\n            raise ValueError(\"BCE shapes must match\")\n        loss = F.binary_cross_entropy_with_logits(logits, target)\n        if not torch.isfinite(loss):\n            raise ValueError(\"Nonfinite training loss\")\n        loss.backward()\n        optimizer.step()\n    # Independently check the chain rule on actual source rows, initial weights.\n    reference = []\n    for checkpoint in [checkpoints[0], checkpoints[-1]]:\n        p = checkpoint[\"parameters\"]\n        W1 = torch.tensor(p[\"w1\"], dtype=torch.float64, requires_grad=True)\n        b1 = torch.tensor(p[\"b1\"], dtype=torch.float64, requires_grad=True)\n        w2 = torch.tensor(p[\"w2\"], dtype=torch.float64, requires_grad=True)\n        b2 = torch.tensor(p[\"b2\"], dtype=torch.float64, requires_grad=True)\n        for activation in [\"relu\", \"tanh\"]:\n            for reduction in [\"mean\", \"sum\"]:\n                hidden = X[:8] @ W1.T + b1\n                h = torch.relu(hidden) if activation == \"relu\" else torch.tanh(hidden)\n                logits = h @ w2 + b2\n                loss = F.binary_cross_entropy_with_logits(\n                    logits, target[:8], reduction=reduction\n                )\n                grads = torch.autograd.grad(loss, (W1, b1, w2, b2))\n                result = manual(X[:8], target[:8], p, reduction, activation)\n                for key, g in zip([\"dw1\", \"db1\", \"dw2\", \"db2\"], grads):\n                    np.testing.assert_allclose(\n                        result[key], g.detach(), atol=1e-12, rtol=1e-12\n                    )\n                reference.append(\n                    {\n                        \"epoch\": checkpoint[\"epoch\"],\n                        \"activation\": activation,\n                        \"reduction\": reduction,\n                        **result,\n                    }\n                )\n    prior = float(np.mean(y[train]))\n    prior_bce = float(\n        np.mean(-y[validation] * np.log(prior) - (1 - y[validation]) * np.log1p(-prior))\n    )\n    samples = [\n        {\n            \"source_row_1based\": int(i + 1),\n            \"quality\": int(frame.quality.iloc[i]),\n            \"positive\": int(y[i]),\n            \"raw\": raw[i].tolist(),\n            \"standardized\": X[j].tolist(),\n        }\n        for j, i in enumerate(train[:8])\n    ]\n    provenance = {\n        \"source\": \"UCI Wine Quality, Cortez et al. (2009), CC BY 4.0\",\n        \"sha256\": \"4a402cf041b025d4566d954c3b9ba8635a3a8a01e039005d97d6a710278cf05e\",\n    }\n    roles = {\n        \"outer_fit_rows\": len(fit),\n        \"inner_train_rows\": len(train),\n        \"inner_validation_rows\": len(validation),\n        \"inner_train_groups\": len(set(groups[train])),\n        \"inner_validation_groups\": len(set(groups[validation])),\n    }\n    asset = {\n        **provenance,\n        **roles,\n        \"feature_names\": FEATURES,\n        \"mean\": mean.tolist(),\n        \"scale\": scale.tolist(),\n        \"samples\": samples,\n        \"architecture\": [11, 4, 1],\n        \"parameter_count\": 53,\n        \"activation\": \"relu\",\n        \"learning_rate\": 0.05,\n        \"seed\": 16,\n        \"dtype\": \"float64\",\n        \"checkpoints\": checkpoints,\n        \"history\": history,\n        \"backprop_references\": reference,\n        \"torch_version\": torch.__version__,\n    }\n    report = {\n        **provenance,\n        **roles,\n        \"versions\": {\n            \"python\": platform.python_version(),\n            \"numpy\": np.__version__,\n            \"torch\": torch.__version__,\n        },\n        \"device\": \"cpu\",\n        \"dtype\": \"float64\",\n        \"architecture\": [11, 4, 1],\n        \"parameter_count\": sum(p.numel() for p in model.parameters()),\n        \"optimizer\": \"SGD, full batch, no momentum/weight decay\",\n        \"learning_rate\": 0.05,\n        \"updates\": 120,\n        \"seed\": 16,\n        \"initial\": history[0],\n        \"final\": history[-1],\n        \"inner_validation_prior_bce\": prior_bce,\n        \"analytical_autograd_checks\": len(reference),\n        \"assumptions\": [\n            \"Only existing966 fit-role rows used; inner grouped split seed16, fraction.2; scaler fitted only on inner training.\",\n            \"One declared11->4->1 ReLU recipe; no architecture/seed/learning-rate search or best-epoch selection.\",\n            \"Inner validation is diagnostic on previously explored source, not independent confirmatory evidence.\",\n            \"Chapter14 decision/test evidence is not re-evaluated; its published test remains observed.\",\n            \"Checkpoint0 and120 gradients checked for ReLU/tanh, mean/sum; tanh is a fixed-weight what-if, not a trained alternative.\",\n            \"CPU float64 only; no CUDA/MPS/AMP or throughput claim. Profiles are chemistry proxies, not bottle/batch identities.\",\n        ],\n    }\n    return report, asset, model\n\n\ndef run_analysis(path):\n    previous = torch.get_num_threads()\n    try:\n        torch.set_num_threads(1)\n        return analyse_source(path)\n    finally:\n        torch.set_num_threads(previous)\n\n\nreport, asset, model = run_analysis(DATA / \"winequality-red.csv\")\nprint(report)\n"
+        },
+        {
+          "type": "code",
+          "title": "প্রারম্ভিক ও চূড়ান্ত ফলাফল পরীক্ষা",
+          "body": "print(report[\"initial\"], report[\"final\"])\nassert report[\"updates\"] == 120 and report[\"parameter_count\"] == 53\n"
+        },
+        {
+          "type": "text",
+          "title": "প্রাপ্ত প্রকৃত ফলাফল",
+          "body": "এই রানে আমাদের Training BCE `0.672200` থেকে কমে `0.584304`-এ এবং Inner Validation BCE `0.637044` থেকে কমে `0.601743`-এ নেমেছে। ঘোষিত `0.5` Threshold-এ চূড়ান্ত Accuracy পাওয়া গেছে ট্রেনিংয়ে প্রায় `0.673969` এবং ভ্যালিডেশনে প্রায় `0.652632`। আমরা এখানে কোনো কাট-অফ টিউন করিনি কিংবা আগের বইয়ের (Book 2 · Chapter 9: Classical ML Capstone) Model-এর সাথে র‍্যাংকিং তুলনায় যাইনি, কারণ দুটির ডেটা বিভাজন ও পরীক্ষার উদ্দেশ্য সম্পূর্ণ ভিন্ন।"
+        },
+        {
+          "type": "text",
+          "title": "অ্যাপের রেফারেন্স JSON ফাইলের নিরাপত্তা",
+          "body": "সংরক্ষিত `neural_lab.json` ফাইলে প্রথম আটটি প্রকৃত ট্রেনিং Row, Mean ও Scale, পূর্ণ ইতিহাস, নির্বাচিত Checkpoint Weight এবং স্বাধীন Backprop রেফারেন্সগুলো জমা আছে। সাধারণভাবে স্ক্রিপ্টটি চালালে এই অ্যাসেট ফাইলটি বদলে যায় না—কেবল সুস্পষ্টভাবে `--write-labs` ফ্ল্যাগ দিলেই এটি নতুন করে তৈরি হয়, আর মূল CSV ফাইল ও Column-এর নাম সবসময় অপরিবর্তিত থাকে।"
+        },
+        {
+          "type": "text",
+          "title": "পুনরুৎপাদনযোগ্যতা (Reproducibility) ও থ্রেড নিয়ন্ত্রণ",
+          "body": "হিসাবের ধারাবাহিকতা বজায় রাখতে স্ক্রিপ্টটি সাময়িকভাবে PyTorch-এর থ্রেড সংখ্যা `1`-এ নামিয়ে কাজ শেষে আবার আগের অবস্থায় ফিরিয়ে দেয়, এবং `fork_rng` ব্যবহারের কারণে বাইরের কোডের র‍্যান্ডম স্টেটও নষ্ট হয় না। যেকোনো ফোল্ডার থেকেই রিপোর্টটি তৈরি করা সম্ভব। স্থানীয় ডেভেলপমেন্ট পরিবেশে Python সরাসরি Model চালায়, আর মোবাইল অ্যাপে Dart ইঞ্জিন ওই সংরক্ষিত Weight-গুলোর ওপর নিখুঁত গাণিতিক হিসাব পুনরুৎপাদন করে।"
+        },
+        {
+          "type": "text",
+          "title": "ফলাফল পর্যালোচনার সমন্বিত দৃষ্টিভঙ্গি",
+          "body": "যেকোনো ট্রেনিং রিপোর্ট মূল্যায়ন করার সময় Train ও Validation-এর গ্রুপ সংখ্যা, Mean ও Scale ফিটিংয়ের পরিধি, মোট Parameter সংখ্যা, শুরু ও শেষের Loss এবং আটটি Gradient Check—সবকিছু একসাথে মিলিয়ে পড়ুন। মনে রাখবেন, মূল ফাইলের `SHA-256` হ্যাশ মিলে যাওয়া মানেই কিন্তু পরিসংখ্যানগত স্বাধীনতা নিশ্চিত হওয়া নয়; Dataset-এর পুনর্ব্যবহার এবং Label-এর সংজ্ঞাগত সীমাবদ্ধতাও একটি সৎ ইঞ্জিনিয়ারিং রিপোর্টের অবিচ্ছেদ্য অংশ।"
+        }
+      ]
+    },
+    {
+      "id": "ch16_inference",
+      "title": "Inference, state_dict এবং Train-Serving Consistency",
+      "subtitle": "ট্রেনিং ও প্রোডাকশনে হুবহু একই Preprocessing, Schema ও Parameter বজায় রাখা",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "নির্ভুল Inference-এর অলঙ্ঘনীয় চুক্তি",
+          "body": "ট্রেনিং শেষ হওয়ার পর বাস্তব সিস্টেমে Prediction দেওয়ার সময় তিনটি জিনিস অবিচ্ছেদ্যভাবে একসাথে থাকতে হয়: ট্রেনিংয়ের সেই সুনির্দিষ্ট ক্রমে সাজানো কাঁচা Feature তালিকা, ট্রেনিং ডেটায় ফিট করা Mean ও Scale, এবং Model-এর শেখা Weight। যদি কোনো একটি Feature বাদ পড়ে, দুটি Column-এর জায়গা অদলবদল হয়ে যায় কিংবা কাঁচা পরিমাপের একক বদলে যায়, তবে Input Tensor-এর Shape হয়তো ঠিকই মিলে যাবে, কিন্তু Model নীরবে পুরোপুরি অর্থহীন সংখ্যা উগরে দেবে! তাই Model-এ Input পাঠানোর ঠিক আগেই কড়া Schema Validation বসানো বাধ্যতামূলক।"
+        },
+        {
+          "type": "text",
+          "title": "eval() মোড বনাম torch.no_grad()-এর আলাদা ভূমিকা",
+          "body": "Inference চালানোর সময় আমরা সবসময় সুস্পষ্টভাবে `model.eval()` এবং `with torch.no_grad():`—দুটোই একসাথে ব্যবহার করব। যদিও আমাদের বর্তমান সাধারণ `Linear` ও `ReLU` Model-এর সংখ্যাত্মক মান মোড পরিবর্তনের ওপর নির্ভর করে না, ভবিষ্যতে Dropout বা BatchNorm-এর মতো Layer যোগ করলেই তা অপরিহার্য হয়ে উঠবে। পাশাপাশি মনে রাখবেন, `torch.no_grad()` কেবল মেমোরি ও সময় বাঁচাতে Gradient ট্র্যাকিং বন্ধ করে; এটি নিজে থেকে Parameter ফ্রিজ করে না কিংবা `model.eval()` কল করে দেয় না।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "p(x)=\\sigma\\!\\left(w_2^T\\mathrm{ReLU}\\!\\left(W_1{(x-\\mu)\\over s}+b_1\\right)+b_2\\right)"
+        },
+        {
+          "type": "code",
+          "title": "state_dict ক্লোন করা ও নতুন Model-এ হুবহু লোড করা",
+          "body": "import torch\nfrom torch import nn\n\nmodel = nn.Sequential(\n    nn.Linear(11, 4, dtype=torch.float64),\n    nn.ReLU(),\n    nn.Linear(4, 1, dtype=torch.float64),\n)\nstate = {k: v.detach().clone() for k, v in model.state_dict().items()}\nother = nn.Sequential(\n    nn.Linear(11, 4, dtype=torch.float64),\n    nn.ReLU(),\n    nn.Linear(4, 1, dtype=torch.float64),\n)\nother.load_state_dict(state)\nother.eval()\nmodel.eval()\nX = torch.zeros(1, 11, dtype=torch.float64)  # Shape/round-trip illustration.\nwith torch.no_grad():\n    torch.testing.assert_close(model(X), other(X))\n"
+        },
+        {
+          "type": "text",
+          "title": "মেমোরিতে সেরা Weight কপি করার সূক্ষ্ম ফাঁদ",
+          "body": "নতুনদের কোডে খুব প্রচলিত কিন্তু মারাত্মক একটি বাগ হলো: ট্রেনিং চলাকালে সেরা Model-টি মনে রাখার আশায় শুধু `best = model.state_dict()` লিখে রাখা! মেমোরিতে থাকা `state_dict` আসলে মূল Tensor-গুলোর সরাসরি রেফারেন্স ধরে রাখে; ফলে পরের Epoch-এ ট্রেনিং চলতে থাকলেই আপনার সংরক্ষিত `best` Weight-ও ভেতরে ভেতরে বদলে যেতে থাকে! তাই সত্যিকারের স্বাধীন কপি রাখতে হলে কোডের মতো প্রতিটি Tensor-এ `.detach().clone()` অথবা `copy.deepcopy` ব্যবহার করতে হবে (আমাদের Workflow-এ Weight-গুলো আলাদা সংখ্যাগত লিস্টে কপি করে রাখা হয়েছে)।"
+        },
+        {
+          "type": "text",
+          "title": "সংরক্ষিত Checkpoint-এর পরিধি ও পরের অধ্যায়ের সেতু",
+          "body": "আমাদের অ্যাপটি স্থানীয় JSON ফাইলের Checkpoint থেকে Weight পড়ে সুনির্দিষ্ট গাণিতিক হিসাব সম্পন্ন করে; এটি কিন্তু কোনো সর্বজনীন প্রোডাকশন Model ফরম্যাট বা যেকোনো PyTorch কোড চালানোর ইঞ্জিন নয়। মাঝপথ থেকে ট্রেনিং পুনরায় শুরু করার পূর্ণাঙ্গ Checkpoint, Optimizer State সংরক্ষণ, সংস্করণ সামঞ্জস্য এবং নিরাপদ ফাইল লোডিংয়ের বিস্তারিত কৌশল আমরা ঠিক পরের অধ্যায়ে (Book 3 · Chapter 3: Reliable Deep Learning Training) শিখব।"
+        },
+        {
+          "type": "text",
+          "title": "Probability স্কোরের বাস্তব ব্যাখ্যা",
+          "body": "Model-এর শেষে Sigmoid বসিয়ে `0` থেকে `1`-এর ভেতর একটি সংখ্যা পাওয়া মানেই কিন্তু সেটি নিখুঁতভাবে Calibrated Probability হওয়ার গ্যারান্টি নয়। এখানে ব্যবহৃত `0.5` Threshold-টি কেবল গাণিতিক প্রক্রিয়া দেখানোর ডিফল্ট মান। বাস্তব ডিপ্লয়মেন্টে ভুল সিদ্ধান্তের খরচ, Calibration পরীক্ষা এবং ডোমেইন প্রমাণ ছাড়া কোনো ব্যবসায়িক উপযোগিতা দাবি করা চলে না—বিশেষত যেখানে মূল Label-গুলো মানুষের ব্যক্তিগত স্বাদ-বিচারের ওপর নির্ভরশীল।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে অনুশীলন",
+          "body": "যেকোনো একটি সংরক্ষিত Checkpoint নিয়ে একটি কাঁচা Row নিজে হাতে Standardize করুন এবং PyTorch Module ও আপনার নিজস্ব স্ক্রিপ্টের (বা অ্যাপের) Probability মান হুবহু মেলে কি না দেখুন। এরপর ইচ্ছে করে দুটি Feature-এর ক্রম পাল্টে পরীক্ষা করুন আপনার Schema যাচাইকারী কোড সেটি সাথে সাথে আটকে দিচ্ছে কি না। মনে রাখবেন, সেভ ও লোড করার সংখ্যাত্মক মিল (Numerical Round-trip) এবং বাইরের অদেখা ডেটায় Generalization—দুটি সম্পূর্ণ ভিন্ন ধরনের প্রমাণ।"
+        }
+      ]
+    },
+    {
+      "id": "ch16_readiness",
+      "title": "Coding, Interview ও চূড়ান্ত প্রস্তুতির Checklist",
+      "subtitle": "Forward Pass থেকে শুরু করে Training Loop ডিবাগিং পর্যন্ত আত্মমূল্যায়ন",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কোড না দেখে মুখে ও খাতায় বোঝানোর সক্ষমতা",
+          "body": "কোনো কোড বা নোট না দেখেই নিজের ভাষায় স্পষ্টভাবে ব্যাখ্যা করার অনুশীলন করুন: একটি একক Neuron কীভাবে কাজ করে, মাঝখানে Nonlinear Activation কেন অপরিহার্য, `11 → 4 → 1` নেটওয়ার্কে কেন ঠিক 53টি Parameter থাকে, প্রতিটি ধাপের Tensor Shape কী দাঁড়ায় এবং `BCEWithLogitsLoss`-এর সরল Derivative-টি কীভাবে আসে। এরপর খাতায় Matrix চিহ্ন ব্যবহার করে Output ও Hidden Layer-এর Gradient বের করে দেখান কীভাবে ReLU Gate এবং একাধিক পথের অবদান একত্র হয়।"
+        },
+        {
+          "type": "text",
+          "title": "সমাধান না দেখে নিজে কোড লেখার অভ্যাস",
+          "body": "এই অধ্যায়ের 10টি Coding Exercise-এ চূড়ান্ত সংখ্যাত্মক উত্তর মেলানোর আগে নিজের হাতে পুরো Function-গুলো লিখুন। বিশেষ করে `Batch Size = 1`, `Mean` বনাম `Sum`, নিষ্ক্রিয় ReLU Gate, চরম মানের Logit এবং ভুল Shape-এর প্রান্তিক কেসগুলো দিয়ে নিজের কোড পরখ করুন। খেয়াল রাখবেন, অ্যাপটি আপনার খসড়া ও সংখ্যাত্মক উত্তর সংরক্ষণ ও যাচাই করে—সরাসরি যেকোনো Python প্রোগ্রাম রান বা গ্রেড করে না।"
+        },
+        {
+          "type": "math",
+          "title": "",
+          "body": "\\text{input contract}\\rightarrow\\text{forward}\\rightarrow\\text{loss}\\rightarrow\\text{backward}\\rightarrow\\text{update}\\rightarrow\\text{validation}"
+        },
+        {
+          "type": "code",
+          "title": "অধ্যায়ের মূল অ্যাসেট ও পরিসংখ্যানের চূড়ান্ত যাচাই",
+          "body": "from pathlib import Path\nimport json\n\na = json.loads(Path(\"assets/datasets/wine_quality/neural_lab.json\").read_text())\nassert a[\"architecture\"] == [11, 4, 1] and a[\"parameter_count\"] == 53\nassert a[\"inner_train_rows\"] + a[\"inner_validation_rows\"] == 966\nassert len(a[\"history\"]) == 121 and a[\"checkpoints\"][-1][\"epoch\"] == 120\nprint(\"Review source, gradients, fit scope and endpoint before making claims.\")\n"
+        },
+        {
+          "type": "text",
+          "title": "পদ্ধতিগতভাবে ডিবাগ করার মানসিকতা",
+          "body": "বাস্তব কাজে সমস্যায় পড়লে আন্দাজে কোড না বদলে পদ্ধতিগতভাবে পার্থক্য করতে শিখুন: `.grad` কি `None` নাকি `0.0`? Parameter কি আপডেট হচ্ছে না, নাকি Derivative-ই শূন্য? Loss-এর স্কেল বদলেছে নাকি Learning Rate? সমস্যাটি কি Data Leakage নাকি Optimizer নিবন্ধনের ভুল? যেকোনো সিদ্ধান্তের পক্ষে প্রমাণ হিসেবে সবসময় ছোট পুনরুৎপাদনযোগ্য টেস্ট কেস, Finite Difference যাচাই এবং নিবন্ধিত Parameter অডিট উপস্থাপন করুন।"
+        },
+        {
+          "type": "text",
+          "title": "Interview প্রস্তুতির মানদণ্ড",
+          "body": "অধ্যায়ের শেষে দেওয়া দশটি মৌলিক FAANG-ধাঁচের প্রশ্ন মূলত আপনার গাণিতিক যুক্তি ও বাস্তব ইঞ্জিনিয়ারিং Tradeoff বিশ্লেষণের চর্চার জন্য তৈরি করা হয়েছে (এগুলো কোনো প্রতিষ্ঠানের অভ্যন্তরীণ বা ফাঁস হওয়া প্রশ্ন নয়)। উত্তর দেওয়ার সময় কেবল পরিভাষা মুখস্থ না বলে প্রতিটি সূত্রের সাথে সংশ্লিষ্ট Tensor Shape, গাণিতিক অনুমান এবং কোন পরিস্থিতিতে তা ব্যর্থ হতে পারে—সবকটি দিক গুছিয়ে তুলে ধরুন।"
+        },
+        {
+          "type": "text",
+          "title": "প্রাথমিক রেফারেন্স ও ডকুমেন্টেশন",
+          "body": "অতিরিক্ত রেফারেন্স হিসেবে PyTorch-এর মূল ডকুমেন্টেশন দেখতে পারেন—Linear (https://docs.pytorch.org/docs/2.15/generated/torch.nn.Linear.html), BCEWithLogitsLoss (https://docs.pytorch.org/docs/2.15/generated/torch.nn.BCEWithLogitsLoss.html), Initialization (https://docs.pytorch.org/docs/2.15/nn.init.html) এবং Optimization Tutorial (https://docs.pytorch.org/tutorials/beginner/basics/optimization_tutorial.html)। তবে এই অধ্যায়ের প্রয়োজনীয় সব পাঠ ও অনুশীলন অফলাইনেই অ্যাপের ভেতরে সম্পূর্ণ সংযুক্ত আছে।"
+        },
+        {
+          "type": "text",
+          "title": "পরের অধ্যায়ে যাওয়ার শেষ চেকপোস্ট",
+          "body": "নতুন বিষয়ে পা রাখার আগে একটি MLP-র সম্পূর্ণ Forward Pass, প্রতিটি Parameter-এর Backward সমীকরণ এবং সংখ্যাত্মক Gradient Check নিজের হাতে একবার সম্পন্ন করুন। এই ভিত্তিটুকু নিখুঁতভাবে আয়ত্ত হয়ে গেলেই পরের অধ্যায়ে (Book 3 · Chapter 3: Reliable Deep Learning Training) গিয়ে Optimizer State, Regularization এবং প্রোডাকশন-মানের নির্ভরযোগ্য Training Loop শেখা আপনার জন্য অত্যন্ত আনন্দদায়ক হবে!"
+        }
+      ]
+    }
+  ],
+  "quizzes": [
+    {
+      "id": "ch16_q1",
+      "question": "`11 → 4 → 1` আকারের একটি দুই-Layer-এর Affine MLP Model-এ মোট কয়টি Trainable Parameter থাকে?",
+      "options": [
+        "44",
+        "53",
+        "48",
+        "55"
+      ],
+      "answer": 1,
+      "explanation": "প্রথম Hidden Layer-এ `11 × 4 = 44`টি Weight ও `4`টি Bias এবং পরের Output Layer-এ `4 × 1 = 4`টি Weight ও `1`টি Bias—সব মিলিয়ে মোট `44 + 4 + 4 + 1 = 53`টি Parameter থাকে। Batch Size ছোট বা বড় করলে এই সংখ্যা বদলায় না।"
+    },
+    {
+      "id": "ch16_q2",
+      "question": "দুটি Affine Layer-এর মাঝখানে কোনো Nonlinear Activation Function না দিলে কী ঘটে?",
+      "options": [
+        "Model-টি সবসময়ই একটি জটিল Nonlinear Function তৈরি করে",
+        "প্রতিটি Layer আলাদা ও স্বাধীন Classifier হিসেবে কাজ করে",
+        "পুরো গঠনটিকে বীজগণিতের নিয়মে গুটিয়ে একটি একক Affine Map-এ প্রকাশ করা যায়",
+        "এমন গঠনে কোনো Gradient হিসাব করাই অসম্ভব হয়ে পড়ে"
+      ],
+      "answer": 2,
+      "explanation": "রৈখিক Function-এর সংযোজনে (Composition) দুই Layer-এর Weight ও Bias গুণ-যোগ হয়ে আবার একটি একক রৈখিক সমীকরণে পরিণত হয়। কেবল মাঝখানে Nonlinear Activation বসালেই এই গুটিয়ে যাওয়া (Collapse) রোধ করা সম্ভব।"
+    },
+    {
+      "id": "ch16_q3",
+      "question": "PyTorch-এ `nn.Linear(11, 4)` Layer-এর Weight Matrix-এর সংরক্ষিত Shape কোনটি?",
+      "options": [
+        "[11, 4]",
+        "[B, 4]",
+        "[11]",
+        "[4, 11]"
+      ],
+      "answer": 3,
+      "explanation": "PyTorch সবসময় `nn.Linear`-এর Weight-কে `[out_features, in_features]` অর্থাৎ `[4, 11]` আকারে সংরক্ষণ করে এবং Forward ধাপে `X @ W.T + b` হিসাব করে। অনেক পাঠ্যবইয়ের `[in, out]` প্রথার সাথে এই পার্থক্যটি খেয়াল রাখা জরুরি।"
+    },
+    {
+      "id": "ch16_q4",
+      "question": "সংযুক্ত কম্পিউটেশন গ্রাফে একটি Hidden ReLU Unit-এর Preactivation `z < 0` হলে ওই বিন্দুতে তার Local Derivative কত হয়?",
+      "options": [
+        "0",
+        "1",
+        "-1",
+        "সবসময় None"
+      ],
+      "answer": 0,
+      "explanation": "গ্রাফ সংযুক্ত থাকলে ঋণাত্মক Preactivation-এর জন্য ReLU-এর সংখ্যাত্মক Gate বা ঢাল হয় `0`। কেবল `.detach()` বা গ্রাফ বিচ্ছিন্ন হওয়ার কারণেই `.grad` এর মান `None` হতে পারে—দুটি সম্পূর্ণ আলাদা ঘটনা।"
+    },
+    {
+      "id": "ch16_q5",
+      "question": "Binary Classification-এ PyTorch-এর `BCEWithLogitsLoss`-এ Input হিসেবে কী দিতে হয়?",
+      "options": [
+        "আগে একবার Sigmoid করার পর পাওয়া Probability স্কোর",
+        "কাঁচা Logit এবং হুবহু একই Shape-এর Floating-point Target",
+        "Argmax থেকে পাওয়া পূর্ণসংখ্যার Class ID",
+        "যেকোনো আকারের Broadcast-যোগ্য Target Tensor"
+      ],
+      "answer": 1,
+      "explanation": "এই একীভূত Function-টি সংখ্যার স্থিতিশীলতা বজায় রেখে নিজেই ভেতরে Sigmoid ও Log-loss একসাথে হিসাব করে। ভুল করে আগে একবার Sigmoid করে পাঠালে দ্বিগুণ রূপান্তরের কারণে মূল শেখার Objective নষ্ট হয়ে যায়।"
+    },
+    {
+      "id": "ch16_q6",
+      "question": "Batch Size `B` হলে Mean BCE Loss-এর সাপেক্ষে কাঁচা Logit `z`-এর Gradient কোনটি?",
+      "options": [
+        "y - sigmoid(z)",
+        "B × z",
+        "(sigmoid(z) - y) / B",
+        "সবসময় 1"
+      ],
+      "answer": 2,
+      "explanation": "Mean Reduction ব্যবহারের কারণে হরের `/ B` ভাগটি সরাসরি এই Upstream Delta-র ভেতরেই চলে আসে। তাই পরে Bias Gradient বের করার সময় আবার গড় নিলে অতিরিক্ত আরেকবার `B` দিয়ে ভাগ হয়ে যাবে।"
+    },
+    {
+      "id": "ch16_q7",
+      "question": "প্রথম Layer-এর Preactivation সংকেত বা Hidden `δ1`-এর সঠিক গাণিতিক রূপ কোনটি?",
+      "options": [
+        "Xᵀy",
+        "কেবল δ2-এর সব উপাদানের যোগফল",
+        "সব Hidden Unit-এর জন্য ধ্রুবক Scalar 1",
+        "(δ2 w2ᵀ) ⊙ Activation Derivative"
+      ],
+      "answer": 3,
+      "explanation": "প্রথমে Output Weight `w2` দিয়ে চূড়ান্ত Layer-এর সংকেতটি প্রতিটি Hidden Unit-এ ছড়িয়ে পড়ে, এবং তারপর প্রতিটি Sample ও প্রতিটি Unit-এর নিজস্ব স্থানীয় Activation Gate দিয়ে গুণ হয়।"
+    },
+    {
+      "id": "ch16_q8",
+      "question": "যদি `δ1`-এর আকার `[B, H]` এবং Input `X`-এর আকার `[B, D]` হয়, তবে `[H, D]` আকারের প্রথম Layer-এর Weight Gradient `dW1` কোনটি?",
+      "options": [
+        "δ1ᵀ @ X",
+        "X @ δ1",
+        "δ1 @ X",
+        "Xᵀ @ δ1ᵀ"
+      ],
+      "answer": 0,
+      "explanation": "`δ1ᵀ @ X` গুণফলটি পুরো Batch-এর প্রতিটি Sample-এর Outer Product অবদানগুলোকে এক ধাপে যোগ করে `[H, D]` আকারের Matrix তৈরি করে। Weight-এর সংরক্ষিত আকারের সাথে এই Transpose সবসময় মিলতে হয়।"
+    },
+    {
+      "id": "ch16_q9",
+      "question": "`B = 1` হলেও `[B, 1]` আকারের Model Output থেকে নিরাপদে `[B]` আকার পেতে কোনটি ব্যবহার করবেন?",
+      "options": [
+        "সাধারণ squeeze()",
+        "squeeze(-1)",
+        "mean()",
+        "detach()"
+      ],
+      "answer": 1,
+      "explanation": "`squeeze(-1)` কেবল শেষের একক Output Axis-টিকেই সরায়। অনির্দিষ্টভাবে `squeeze()` কল করলে `B = 1` অবস্থায় প্রথম Batch Axis-টিও মুছে গিয়ে Vector-টি Scalar-এ পরিণত হতে পারে!"
+    },
+    {
+      "id": "ch16_q10",
+      "question": "একই Batch Size `B` বজায় রেখে `reduction='mean'` থেকে `reduction='sum'`-এ গেলে প্রতিটি Parameter-এর Gradient কীভাবে বদলাবে?",
+      "options": [
+        "সবসময় হুবহু একই থাকবে",
+        "আগের মানের 1/B গুণ হয়ে যাবে",
+        "আগের মানের ঠিক B গুণ হয়ে যাবে",
+        "সবগুলো None হয়ে যাবে"
+      ],
+      "answer": 2,
+      "explanation": "Sum Objective Sample-গুলোর যোগফলকে `B` দিয়ে ভাগ করে না; ফলে Gradient-এর স্কেল সরাসরি `B` গুণ বেড়ে যায় এবং কার্যকর Learning Rate-এর আচরণও বদলে যায়।"
+    },
+    {
+      "id": "ch16_q11",
+      "question": "Forward ধাপে মাঝখানের Hidden Activation-কে `.detach()` করে দিলে চূড়ান্ত Output Loss-এর মানের ওপর কী প্রভাব পড়ে?",
+      "options": [
+        "Loss অবশ্যই শূন্য হয়ে যাবে",
+        "Loss অবশ্যই NaN হয়ে যাবে",
+        "Model-এর সব Layer-এর Parameter সাথে সাথে Freeze হয়ে যাবে",
+        "সংখ্যাগত Loss একই থাকবে, কিন্তু প্রথম Layer-এর দিকের Backward গ্রাফ পাথটি কেটে যাবে"
+      ],
+      "answer": 3,
+      "explanation": "শুধু সামনের দিকের সংখ্যাগত মান দেখে গ্রাফ সংযুক্ত আছে কি না বোঝা যায় না। এখানে Output Layer ঠিকই Gradient পাবে, কিন্তু গ্রাফ কেটে যাওয়ায় প্রথম Layer-এর `.grad` হবে `None`।"
+    },
+    {
+      "id": "ch16_q12",
+      "question": "একটি `nn.Module`-এর ভেতর গতিশীলভাবে তৈরি একাধিক Layer সঠিকভাবে নিবন্ধন করতে কোনটি ব্যবহার করা উচিত?",
+      "options": [
+        "nn.ModuleList অথবা nn.Sequential",
+        "সাধারণ একটি Python list সবসময়ই যথেষ্ট",
+        "সব Tensor-এর .grad = None করে রাখা",
+        "forward() মেথডের ভেতরে প্রতিবার নতুন nn.Linear তৈরি করা"
+      ],
+      "answer": 0,
+      "explanation": "নিবন্ধিত Child Module-গুলোর Weight স্বয়ংক্রিয়ভাবে `model.parameters()` এবং `state_dict`-এ যুক্ত হয়। সাধারণ Python `list` ব্যবহার করলে মূল Module সেগুলোর অস্তিত্ব জানতে পারে না।"
+    },
+    {
+      "id": "ch16_q13",
+      "question": "ট্রেনিং লুপে `optimizer.step()` কল করলে আসলে কোন কাজটি ঘটে?",
+      "options": [
+        "এটি নিজে থেকেই কম্পিউটেশন গ্রাফে Backward Pass চালায়",
+        "Parameter-গুলোতে ইতোমধ্যে জমা থাকা .grad ব্যবহার করে Weight আপডেট করে",
+        "এটি স্বয়ংক্রিয়ভাবে Train ও Validation ডেটা ভাগ করে দেয়",
+        "Weight আপডেটের পর নিজে থেকেই সব .grad বাফার মুছে শূন্য করে দেয়"
+      ],
+      "answer": 1,
+      "explanation": "`forward`, `backward`, `step` এবং `zero_grad`—প্রতিটি ধাপের দায়িত্ব আলাদা। `step()` কেবল বর্তমান `.grad` দেখে Weight বদলায়; পরের ধাপের আগে আপনাকেই `zero_grad()` দিয়ে বাফার পরিষ্কার করতে হয়।"
+    },
+    {
+      "id": "ch16_q14",
+      "question": "মূল্যায়নের সময় `model.eval()` কল করাই কি `torch.no_grad()`-এর বিকল্প হিসেবে কাজ করে?",
+      "options": [
+        "হ্যাঁ, যেকোনো একটি লিখলেই অন্যটির কাজ হয়ে যায়",
+        "কেবল float64 ডেটা টাইপ ব্যবহার করলে বিকল্প হিসেবে কাজ করে",
+        "না, কারণ Module-এর আচরণগত মোড এবং Autograd গ্রাফ রেকর্ডিং সম্পূর্ণ আলাদা দুটি নিয়ন্ত্রণ",
+        "কেবল ReLU নেটওয়ার্কের ক্ষেত্রে বিকল্প হিসেবে কাজ করে"
+      ],
+      "answer": 2,
+      "explanation": "`model.eval()` Layer-গুলোর আচরণ বদলায় (যেমন Dropout বা BatchNorm থাকলে), আর `torch.no_grad()` অপ্রয়োজনীয় Gradient ট্র্যাকিং ও মেমোরি খরচ বন্ধ করে। দুটির উদ্দেশ্য আলাদা।"
+    },
+    {
+      "id": "ch16_q15",
+      "question": "এই অধ্যায়ের Wine Quality MLP Model-এ Hidden Layer-এর Weight-এর জন্য কোন Initialization ব্যবহৃত হয়েছে?",
+      "options": [
+        "সব Hidden Weight শূন্য দিয়ে শুরু করা হয়েছে",
+        "Validation ডেটা থেকে হিসাব করা ধ্রুবক বসানো হয়েছে",
+        "Xavier ছাড়া অন্য কোনো Initialization এখানে গাণিতিকভাবে অসম্ভব",
+        "ReLU-এর উপযোগী করে Kaiming Uniform ব্যবহার করা হয়েছে"
+      ],
+      "answer": 3,
+      "explanation": "মাঝখানের ReLU Layer-এ সিগন্যালের বিস্তার ধরে রাখতে Kaiming Uniform এবং শেষের রৈখিক Logit Layer-এ Xavier Uniform ব্যবহৃত হয়েছে—যা একটি সুনির্দিষ্ট প্রারম্ভিক রেসিপি।"
+    },
+    {
+      "id": "ch16_q16",
+      "question": "একটি Hidden Layer-এর সবকটি Unit-কে হুবহু একই Weight ও প্রতিসম সংযোগ দিয়ে শুরু করা কেন সমস্যাজনক?",
+      "options": [
+        "সব Unit একই আচরণ ও একই Gradient Update পেয়ে চিরকাল পরস্পরের নকল হয়ে থাকতে পারে",
+        "এতে Model-এর মোট Parameter সংখ্যা কমে যায়",
+        "এতে সব Logit আপনাআপনি Calibrated হয়ে যায়",
+        "এতে PyTorch-এর Autograd ইঞ্জিন কাজ করা বন্ধ করে দেয়"
+      ],
+      "answer": 0,
+      "explanation": "ভিন্ন ভিন্ন বৈশিষ্ট্য শেখার জন্য শুরুতেই Symmetry Breaking অপরিহার্য। তবে মনে রাখবেন, Weight এলোমেলো রেখে শুধু Bias শূন্য করা কিন্তু সব Weight শূন্য করার মতো ক্ষতিকর নয়।"
+    },
+    {
+      "id": "ch16_q17",
+      "question": "৯৬৬টি Fit Row-এর ভেতরে নতুন করে Inner Train ও Validation ভাগ করলে Feature Scaler-টি কোথায় Fit করতে হবে?",
+      "options": [
+        "আগের পুরো 966টি Fit Row-এর ওপর",
+        "কেবলমাত্র নতুন Inner Training Row-গুলোর ওপর",
+        "মূল ফাইলের সবকটি 1599টি Row-এর ওপর",
+        "কেবলমাত্র Inner Validation Row-গুলোর ওপর"
+      ],
+      "answer": 1,
+      "explanation": "নতুন মূল্যায়ন সীমানা টানার পর পুরো 966 Row-এর Scaler ব্যবহার করলে Inner Validation সেটের গড় ও বিস্তারের তথ্য ট্রেনিংয়ে ফাঁস (Data Leakage) হয়ে যেত। তাই কেবল Inner Training অংশেই এটি Fit করতে হয়।"
+    },
+    {
+      "id": "ch16_q18",
+      "question": "আমাদের ট্রেনিং পরীক্ষায় ঠিক `Epoch 120`-এর ফলাফল কেন রিপোর্ট করা হয়েছে?",
+      "options": [
+        "সব Epoch পরীক্ষা করে সেখানে সেরা Validation স্কোর পাওয়া গেছে বলে",
+        "চূড়ান্ত Test সেটে ওই ধাপে Accuracy সবচেয়ে বেশি এসেছে বলে",
+        "ট্রেনিং শুরুর আগেই এটিকে স্থির শেষ বিন্দু (Declared Endpoint) হিসেবে নির্ধারণ করা হয়েছিল বলে",
+        "মোবাইল অ্যাপটি অনলাইনে ট্রেন করে সেখানেই থেমেছে বলে"
+      ],
+      "answer": 2,
+      "explanation": "এখানে কোনো সেরা Epoch, Seed বা Architecture অনুসন্ধান চালানো হয়নি; পূর্বনির্ধারিত 120 ধাপের পূর্ণ ইতিহাস ও কয়েকটি Checkpoint নিছক পর্যবেক্ষণের জন্য রাখা হয়েছে।"
+    },
+    {
+      "id": "ch16_q19",
+      "question": "কেবল Training Loss ক্রমাগত কমতে দেখা একা কোন বিষয়টি প্রমাণ করে না?",
+      "options": [
+        "Optimizer কোনো একটি গাণিতিক হিসাব সম্পন্ন করেছে",
+        "পর্যবেক্ষণ করা Scalar মানটি আগের চেয়ে বদলেছে",
+        "Loss মানটি লগ বা প্রিন্ট করা সম্ভব হচ্ছে",
+        "ডেটা ও Label-এর সঠিক মিল (Alignment) আছে কিংবা অদেখা ডেটায় ভালো Generalization পাওয়া যাবে"
+      ],
+      "answer": 3,
+      "explanation": "ভুল Objective বা উল্টোপাল্টা Row দিয়েও সংখ্যাগতভাবে Loss কমানো সম্ভব! তাই গাণিতিক নির্ভুলতা, ডেটা চুক্তি এবং অদেখা ডেটার মূল্যায়ন—প্রতিটির জন্য আলাদা প্রমাণ প্রয়োজন।"
+    },
+    {
+      "id": "ch16_q20",
+      "question": "৩টি Row-এর একটি Microbatch-এর গড় Loss `L1` এবং ১টি Row-এর আরেকটি Microbatch-এর গড় Loss `L2` হলে পুরো ৪টি Row-এর প্রকৃত গড় Loss কত?",
+      "options": [
+        "(3L1 + L2) / 4",
+        "(L1 + L2) / 2",
+        "L1 + L2",
+        "L1 / 4"
+      ],
+      "answer": 0,
+      "explanation": "অসম আকারের Batch-এর গড় মেলানোর সময় প্রতিটিকে তার নিজস্ব Sample সংখ্যা দিয়ে Weight দিতে হয়। Gradient Accumulation করার সময়ও হরের এই একই গাণিতিক যুক্তি প্রযোজ্য।"
+    },
+    {
+      "id": "ch16_q21",
+      "question": "ReLU নেটওয়ার্কে সংখ্যাত্মক Finite-difference দিয়ে Gradient যাচাই করা কোথায় সবচেয়ে সমস্যাজনক হতে পারে?",
+      "options": [
+        "শূন্য থেকে অনেক দূরের মসৃণ ধনাত্মক বিন্দুগুলোতে",
+        "যখন z = 0 বাঁকের (Kink) খুব কাছে সামান্য পরিবর্তনেই ReLU Gate-এর অবস্থা বদলে যায়",
+        "কেবলমাত্র CPU-তে কোড চালানোর সময়",
+        "যেকোনো Scalar Bias Parameter-এর ক্ষেত্রে"
+      ],
+      "answer": 1,
+      "explanation": "বাঁকের বিন্দুতে Function-টি অন্তরীকরণযোগ্য নয়, ফলে `+ε` ও `-ε` দুই পাশে ঢাল আলাদা হয়ে সংখ্যাত্মক মিল ভেঙে যেতে পারে। তাই শূন্য থেকে নিরাপদ দূরত্বে মসৃণ বিন্দু ও উপযুক্ত Tolerance বেছে নিতে হয়।"
+    },
+    {
+      "id": "ch16_q22",
+      "question": "কোনো একটি নির্দিষ্ট ট্রেনিং Row-এর (Row) জন্য একটি Hidden Unit-এর ReLU Gate `0` হওয়ার প্রকৃত অর্থ কী?",
+      "options": [
+        "ওই Unit-টি পুরো Dataset-এর সব Row-এর জন্যই চিরতরে Dead হয়ে গেছে",
+        "Output Layer-এর সবকটি Gradient সাথে সাথে None হয়ে যাবে",
+        "কেবল ওই নির্দিষ্ট Row-টির ক্ষেত্রে ওই পথের অবদান শূন্য হবে",
+        "Dataset-এর সব Target Label ভুল দেওয়া হয়েছে"
+      ],
+      "answer": 2,
+      "explanation": "একটি Row-তে নিষ্ক্রিয় থাকলেও Batch-এর অন্য Row-গুলোতে ওই Unit সক্রিয় হতে পারে এবং সামগ্রিক Batch Gradient অশূন্য হতে পারে। একক Row ও পুরো Batch-এর আচরণ আলাদাভাবে দেখতে হয়।"
+    },
+    {
+      "id": "ch16_q23",
+      "question": "ট্রেনিং চলাকালে মেমোরিতে Model-এর সেরা অবস্থা (`state_dict`) নিরাপদে ধরে রাখতে কী প্রয়োজন?",
+      "options": [
+        "সাধারণ চলক অ্যাসাইনমেন্ট বা মিউটেবল রেফারেন্সই সবসময় যথেষ্ট",
+        "torch.no_grad() ব্লকের ভেতর রাখলেই সব Weight স্থির হয়ে যায়",
+        "প্রতিবার নতুন একটি র‍্যান্ডম Model তৈরি করা",
+        "প্রতিটি Tensor-এর স্বাধীন Clone অথবা Deep Copy সংরক্ষণ করা"
+      ],
+      "answer": 3,
+      "explanation": "মেমোরির `state_dict` মূল Weight-এর রেফারেন্স ধরে রাখতে পারে; ফলে আলাদাভাবে Clone না করলে পরের Epoch-এর আপডেটে সংরক্ষিত পুরোনো মানও বদলে যেতে পারে।"
+    },
+    {
+      "id": "ch16_q24",
+      "question": "এই অধ্যায়ে (Book 3 · Chapter 2) ব্যবহৃত বাস্তব ওয়াইন ডেটার মূল্যায়ন পরিধি (Evaluation Scope) আসলে কোনটি?",
+      "options": [
+        "আগের Fit অংশের ভেতরে তৈরি করা একটি ডায়াগনস্টিক Group-disjoint Split",
+        "সম্পূর্ণ নতুন ও অস্পর্শিত একটি চূড়ান্ত Test সেট",
+        "পুরোনো Test সেট দেখে সেরা Architecture খুঁজে বের করার পরীক্ষা",
+        "GPU-তে দ্রুততম প্রোডাকশন গতির একটি বেঞ্চমার্ক"
+      ],
+      "answer": 0,
+      "explanation": "ডেটা উৎসটি আগের অধ্যায়গুলোতেও ব্যবহৃত এবং পুরোনো চূড়ান্ত Test সেট এখানে স্পর্শ করা হয়নি; তাই এই Inner Validation কেবল ট্রেনিং প্রক্রিয়া বোঝার একটি স্থানীয় ডায়াগনস্টিক।"
+    },
+    {
+      "id": "ch16_q_gradient_revision",
+      "question": "দুই Row-এর Mean BCE-তে `/ B` ভাগটি ইতোমধ্যে `dlogit`-এর ভেতরে রয়েছে। এরপর `dW = deltaᵀ @ X` বের করার পর আবার `/ B` দিয়ে ভাগ করলে কী হবে?",
+      "options": [
+        "ঠিক একই সঠিক Gradient পাওয়া যাবে",
+        "প্রাপ্ত Gradient আসল মানের চেয়ে আরও B গুণ ছোট হয়ে যাবে",
+        "প্রাপ্ত Gradient আসল মানের চেয়ে B গুণ বড় হয়ে যাবে",
+        "কেবল Bias বদলাবে, কিন্তু Weight-এর মান ঠিকই থাকবে"
+      ],
+      "answer": 1,
+      "explanation": "Mean Objective-এর Derivative-এ কেবল একবারই `B` দিয়ে ভাগ করা প্রয়োজন। `delta`-র ভেতর সেই স্কেলটি থাকায় Matrix গুণফল সরাসরি গড় Gradient-ই দেয়; আবার ভাগ করলে স্কেল ভুল হয়ে যায়।"
+    },
+    {
+      "id": "ch16_q_moment_revision",
+      "question": "প্রতিসম Preactivation `z = [-2, 0, 0, 2]` সমানভাবে সম্ভাব্য হলে `h = ReLU(z)`-এর Second Moment এবং Variance কত হবে?",
+      "options": [
+        "দুটোই 1",
+        "দুটোই 0.75",
+        "Second Moment = 1 এবং Variance = 0.75",
+        "Second Moment = 2 এবং Variance = 1"
+      ],
+      "answer": 2,
+      "explanation": "এখানে `h = [0, 0, 0, 2]`। তাই `E[h²] = (0 + 0 + 0 + 4) / 4 = 1`, কিন্তু গড় `E[h] = 0.5`। ফলে প্রকৃত Variance হবে `1 - 0.5² = 0.75`। Initialization বিশ্লেষণে Second Moment ও Variance গুলিয়ে ফেলা যাবে না।"
+    }
+  ],
+  "exercises": [
+    {
+      "id": "ch16_ex_chain",
+      "title": "Hidden ReLU পেরিয়ে Backpropagation হিসাব",
+      "prompt": "একটি ছোট MLP-তে Input `x = [2, -1]`, প্রথম Layer-এর Weight `w = [0.5, 0.25]` এবং `bias = 0.25` দেওয়া আছে। `ReLU` Activation-এর পর Output Weight `2`, Output Bias `-2` এবং প্রকৃত Target `1` হলে একক Row-এর Mean BCE Loss-এর সাপেক্ষে প্রথম Weight-এর Gradient `dw[0]` কত হবে তা বের করে উত্তরে লিখুন।",
+      "starter": "# Implement in local Python. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "import torch\nimport torch.nn.functional as F\n\nx = torch.tensor([2.0, -1.0], dtype=torch.float64)\nw = torch.tensor([0.5, 0.25], dtype=torch.float64, requires_grad=True)\nlogit = 2 * torch.relu(x @ w + 0.25) - 2\nF.binary_cross_entropy_with_logits(\n    logit, torch.tensor(1.0, dtype=torch.float64)\n).backward()\nanswer = w.grad[0].item()\n",
+      "expected": -2,
+      "explanation": "এখানে Hidden Preactivation `z1 = (2 × 0.5) + (-1 × 0.25) + 0.25 = 1`, তাই `ReLU` Output `1` এবং চূড়ান্ত Output Logit `(1 × 2) - 2 = 0`। ফলে `dlogit = 0.5 - 1 = -0.5`। এরপর Output Weight `2`, সক্রিয় ReLU Gate `1` এবং প্রথম Input `x[0] = 2` পরপর গুণ করলে পাওয়া যায় `dw[0] = -0.5 × 2 × 1 × 2 = -2`।"
+    },
+    {
+      "id": "ch16_ex_count",
+      "title": "নিবন্ধিত Trainable Parameter গণনা",
+      "prompt": "একটি `11 → 4 → 1` আকারের Linear/ReLU MLP নেটওয়ার্কে দুটি `Linear` Layer-এই `Bias` সক্রিয় আছে। Model-টির মোট Trainable Scalar Parameter সংখ্যা কত তা উত্তরে লিখুন।",
+      "starter": "# Implement in local Python. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "from torch import nn\n\nmodel = nn.Sequential(nn.Linear(11, 4), nn.ReLU(), nn.Linear(4, 1))\nanswer = float(sum(p.numel() for p in model.parameters()))\n",
+      "expected": 53,
+      "explanation": "প্রথম `11 → 4` Layer-এ আছে `11 × 4 = 44`টি Weight এবং `4`টি Bias। পরের `4 → 1` Output Layer-এ আছে `4`টি Weight এবং `1`টি Bias। সব মিলিয়ে মোট `44 + 4 + 4 + 1 = 53`টি Parameter (`ReLU`-এর নিজস্ব কোনো Trainable Parameter থাকে না)।"
+    },
+    {
+      "id": "ch16_ex_collapse",
+      "title": "Activation ছাড়া দুটি Affine Layer একীভূত করা",
+      "prompt": "ধরুন একটি Scalar Input `x = 2`। প্রথম Affine Layer-এর `weight = 3` ও `bias = 1`, এবং দ্বিতীয় Affine Layer-এর `weight = 4` ও `bias = -2`। মাঝখানে কোনো Nonlinear Activation না থাকলে চূড়ান্ত Output কত হবে তা উত্তরে লিখুন।",
+      "starter": "# Implement in local Python. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "x = 2.0\nw1 = 3.0\nb1 = 1.0\nw2 = 4.0\nb2 = -2.0\nanswer = (x * w1 + b1) * w2 + b2\n",
+      "expected": 26,
+      "explanation": "ধাপে ধাপে হিসাব করলে পাওয়া যায় `Output = (2 × 3 + 1) × 4 - 2 = 7 × 4 - 2 = 26`। লক্ষ্য করুন, দুটি Layer গুটিয়ে আসলে `weight = 12` এবং `bias = 2`-বিশিষ্ট একটি একক Affine Map (`12 × 2 + 2 = 26`) তৈরি করেছে।"
+    },
+    {
+      "id": "ch16_ex_gate",
+      "title": "নিষ্ক্রিয় ReLU Gate-এর মধ্য দিয়ে Gradient",
+      "prompt": "ধরুন Input `x = 2`, একটি Trainable Scalar Weight `w = -1` এবং Output হলো `ReLU(x * w)`। এর ওপর Backward চালালে Weight `w`-এর সাপেক্ষে সংখ্যাত্মক Derivative কত পাওয়া যাবে তা উত্তরে লিখুন।",
+      "starter": "# Implement in local Python. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "import torch\n\nw = torch.tensor(-1.0, requires_grad=True)\ntorch.relu(2 * w).backward()\nanswer = w.grad.item()\n",
+      "expected": 0,
+      "explanation": "এখানে Preactivation হলো `2 × (-1) = -2`, যা ঋণাত্মক হওয়ায় `ReLU` Gate শূন্য হয়ে যায়। গ্রাফটি সংযুক্ত থাকায় `.grad` এখানে `None` না হয়ে সংখ্যাগতভাবে `0` দেয় (গ্রাফ বিচ্ছিন্ন হলে কেবল `None` হতো)।"
+    },
+    {
+      "id": "ch16_ex_bias",
+      "title": "Mean BCE-তে Output Bias-এর Derivative",
+      "prompt": "চারটি Sample-এর কাঁচা Logit সব শূন্য (`[0, 0, 0, 0]`) এবং তাদের প্রকৃত Binary Label হলো `[1, 1, 1, 0]`। Mean BCE Loss ব্যবহার করলে সবার সাথে যুক্ত Scalar Output Bias-এর Gradient কত হবে তা উত্তরে লিখুন।",
+      "starter": "# Implement in local Python. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "import torch\nimport torch.nn.functional as F\n\nb = torch.tensor(0.0, requires_grad=True)\nloss = F.binary_cross_entropy_with_logits(\n    torch.zeros(4) + b, torch.tensor([1.0, 1.0, 1.0, 0.0])\n)\nloss.backward()\nanswer = b.grad.item()\n",
+      "expected": -0.25,
+      "explanation": "সব Logit শূন্য হওয়ায় প্রতিটির Predicted Probability `0.5`, আর ধনাত্মক Class-এর অনুপাত `3 / 4 = 0.75`। যেহেতু একই Bias সব Row-এর Logit-এ যোগ হয়েছে, তাই এর Mean BCE Gradient হবে ঠিক `0.5 - 0.75 = -0.25`।"
+    },
+    {
+      "id": "ch16_ex_outer",
+      "title": "Outer Product দিয়ে Weight Gradient নির্ণয়",
+      "prompt": "একটি একক Row-এর জন্য Hidden Delta Vector `[2, -1]` এবং Input Vector `[3, 4]` দেওয়া আছে। প্রথম Layer-এর Weight-এর আকার `[hidden, input]` প্রথা অনুযায়ী সাজানো হলে Gradient Matrix-এর `dW[0, 1]` ঘরের মান কত হবে তা উত্তরে লিখুন।",
+      "starter": "# Implement in local Python. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "import numpy as np\n\ndelta = np.array([2.0, -1.0])\nx = np.array([3.0, 4.0])\ndW = delta[:, None] * x[None, :]\nanswer = float(dW[0, 1])\n",
+      "expected": 8,
+      "explanation": "একক Sample-এর Gradient আসে Outer Product `delta[:, None] × input[None, :]` থেকে। তাই `[0, 1]` ঘরের মান হবে প্রথম Hidden Delta (`2`) এবং দ্বিতীয় Input (`4`)-এর গুণফল: `2 × 4 = 8`।"
+    },
+    {
+      "id": "ch16_ex_weighted",
+      "title": "অসম আকারের Batch থেকে নিখুঁত সামগ্রিক গড়",
+      "prompt": "চারটি Row-এর একক Loss যথাক্রমে `[1, 3, 5, 7]`। প্রথম তিনটি Row নিয়ে প্রথম Batch এবং শেষের একটি Row নিয়ে দ্বিতীয় Batch তৈরি হলে Sample সংখ্যার সঠিক Weight ব্যবহার করে পুরো ডেটার প্রকৃত Mean Loss কত হবে তা উত্তরে লিখুন।",
+      "starter": "# Implement in local Python. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "import numpy as np\n\nloss = np.array([1.0, 3.0, 5.0, 7.0])\nanswer = float((3 * loss[:3].mean() + loss[3:].mean()) / 4)\n",
+      "expected": 4,
+      "explanation": "প্রথম Batch-এর গড় `(1 + 3 + 5) / 3 = 3` এবং দ্বিতীয় Batch-এর গড় `7`। Sample সংখ্যা দিয়ে Weighted Average নিলে পাই `(3 × 3 + 1 × 7) / 4 = 16 / 4 = 4`। ভুল করে দুটি Batch-এর গড়ের সাধারণ গড় নিলে `(3 + 7) / 2 = 5` পাওয়া যেত!"
+    },
+    {
+      "id": "ch16_ex_step",
+      "title": "এক ধাপের SGD Weight আপডেট",
+      "prompt": "ধরুন একটি Scalar Weight `w = 2`, Function-টি হলো `loss = w²` এবং SGD-এর `learning rate = 0.1`। একবার Backward এবং একবার `optimizer.step()` চালানোর পর পরিবর্তিত Weight-এর মান কত হবে তা উত্তরে লিখুন।",
+      "starter": "# Implement in local Python. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "import torch\n\nw = torch.nn.Parameter(torch.tensor(2.0, dtype=torch.float64))\noptimizer = torch.optim.SGD([w], lr=0.1)\noptimizer.zero_grad(set_to_none=True)\nw.square().backward()\noptimizer.step()\nanswer = w.item()\n",
+      "expected": 1.6,
+      "explanation": "`w = 2` বিন্দুতে `w²`-এর Derivative বা Gradient হলো `2w = 4`। সুতরাং এক ধাপ SGD আপডেটের পর নতুন Weight হবে `2 - (0.1 × 4) = 1.6`। পরের ধাপে যাওয়ার আগে অবশ্যই `.grad` বাফার পরিষ্কার করে নিতে ভুলবেন না।"
+    },
+    {
+      "id": "ch16_ex_detach",
+      "title": "গ্রাফ বিচ্ছিন্ন (Detach) হলে প্রথম Layer-এর অবস্থা",
+      "prompt": "ধরুন Trainable Weight `w = 2`, মধ্যবর্তী মান `h = 3w` এবং পরের Layer-এর Trainable Parameter `v = 1`। এখন `loss = h.detach() * v` লিখে এর ওপর Backward চালানো হলো। যদি `w.grad`-এর মান `None` থেকে যায় তবে উত্তরে `1` লিখুন (অন্যথায় `0`)।",
+      "starter": "# Implement in local Python. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "import torch\n\nw = torch.tensor(2.0, requires_grad=True)\nv = torch.tensor(1.0, requires_grad=True)\nloss = (3 * w).detach() * v\nloss.backward()\nanswer = float(w.grad is None)\n",
+      "expected": 1,
+      "explanation": "`h.detach()` কল করার সাথে সাথেই `h` থেকে পেছনের `w`-তে যাওয়ার Autograd গ্রাফ পাথটি কেটে গেছে। ফলে শেষ Layer-এর `v` ঠিকই Gradient পাবে, কিন্তু `w.grad` থেকে যাবে `None`—তাই সঠিক উত্তর `1`। Forward সংখ্যাগত মান একই থাকলেও গ্রাফের মালিকানা এখানে বিচ্ছিন্ন হয়ে গেছে।"
+    },
+    {
+      "id": "ch16_ex_tanh",
+      "title": "শূন্য বিন্দুতে Tanh-এর Local Derivative",
+      "prompt": "একটি Scalar চলক `z = 0` (`requires_grad=True`)-এর ওপর `tanh(z)` প্রয়োগ করলে ওই বিন্দুতে এর Derivative কত হবে তা উত্তরে লিখুন।",
+      "starter": "# Implement in local Python. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "import torch\n\nz = torch.tensor(0.0, requires_grad=True)\ntorch.tanh(z).backward()\nanswer = z.grad.item()\n",
+      "expected": 1,
+      "explanation": "`tanh(z)`-এর Derivative সূত্র হলো `1 - tanh²(z)`। যেহেতু `tanh(0) = 0`, তাই ওই বিন্দুতে ঢাল হবে `1 - 0² = 1`। কেবল `z`-এর পরম মান অনেক বড় হলেই `tanh` চ্যাপ্টা হয়ে (Saturate করে) এর Derivative শূন্যের দিকে নেমে আসে।"
+    }
+  ],
+  "interviews": [
+    {
+      "title": "পূর্ণাঙ্গ MLP Backward Pass-এর সমীকরণ ও সংখ্যাগত নির্ণয়",
+      "tag": "ML CODING · 30 MIN",
+      "prompt": "`X[B, D] → ReLU Hidden[B, H] → Binary Logits[B]` গঠনের একটি নেটওয়ার্কের জন্য Mean BCE Loss-এর সাপেক্ষে সবকটি Parameter-এর Derivative Matrix আকারে বের করুন।\n\nএরপর `X = I₂`, `W₁ = [[1, -1], [-1, 1]]`, `b₁ = 0`, `w₂ = [1, -1]`, `b₂ = 0` এবং `y = [1, 0]` ধরে সবকটি Parameter-এর সংখ্যাত্মক Gradient হিসাব করে দেখান।",
+      "answer": "প্রথমে চূড়ান্ত Logit-এর সাপেক্ষে Gradient হলো `δ2 = (sigmoid(z) - y) / B` (আকার `[B]`)। PyTorch-এর `[1, H]` প্রথায় Output Weight Gradient হবে `dW2 = δ2ᵀ @ H` (বা Vector আকারে `Hᵀ @ δ2`), এবং Output Bias Gradient হবে `db2 = sum(δ2)`। এরপর পেছনের Layer-এ সংকেত পাঠাতে `δ1 = (δ2[:, None] * w2) ⊙ (Z1 > 0)` (আকার `[B, H]`), যেখান থেকে প্রথম Layer-এর Weight-এর Gradient `dW1 = δ1ᵀ @ X` (আকার `[H, D]`) এবং Bias Gradient `db1 = δ1.sum(axis=0)` (আকার `[H]`)। এখানে ReLU Gate প্রতিটি Sample-এর জন্য আলাদাভাবে কাজ করে এবং শেয়ার করা Weight-গুলোর অবদান Batch বরাবর যোগ হয়। মসৃণ বিন্দুতে Autograd ও স্বাধীন Finite Difference দিয়ে আমরা এই সূত্র যাচাই করব।\n\nসংখ্যাত্মক অংশে: `X = I₂` হওয়ায় ReLU-এর পরের Hidden Matrix-টিও `I₂` থাকে এবং চূড়ান্ত Logit দুটি হয় `[1, -1]`। ফলে `B = 2` ধরে `dlogit` পাওয়া যায় প্রায় `[-0.134471, +0.134471]`। কর্ণ বরাবর ReLU Gate সক্রিয় থাকায় `dW₁`-এর কর্ণে (Diagonal) বসবে `[-0.134471, -0.134471]` এবং বাকি ঘর শূন্য থাকবে। একইভাবে `db₁ = [-0.134471, -0.134471]`, `dw₂ = [-0.134471, +0.134471]` এবং দুটি বিপরীত চিহ্ন যোগ হয়ে `db₂ = 0` হবে। খেয়াল রাখতে হবে যেন হরের `/ B` ভাগটি কেবল একবারই ব্যবহৃত হয়।",
+      "prerequisiteLessons": [
+        "ch16_hidden",
+        "ch16_vectorized"
+      ]
+    },
+    {
+      "title": "Training Loss কমছে, তবুও Model সম্পূর্ণ ভুল!",
+      "tag": "ML CODING · 30 MIN",
+      "prompt": "আপনার ট্রেনিং লুপে সসীম (Finite) Training Loss প্রতি ধাপে সুন্দরমতো কমছে, কিন্তু বাস্তবে Model-এর Prediction অর্থহীন হচ্ছে। কীভাবে লুকানো ভুল Objective বা ডেটার অসামঞ্জস্য খুঁজে বের করবেন?",
+      "answer": "Loss কমা কেবল প্রমাণ করে যে Optimizer কোনো একটি সংখ্যাগত রাশিকে ছোট করতে পারছে—কিন্তু রাশিটি যে আমাদের আসল ব্যবসায়িক বা গাণিতিক লক্ষ্যই, তার গ্যারান্টি দেয় না! প্রথমেই আমি চারটি চুক্তি পরীক্ষা করব: (১) `logits` ও `targets`-এর নিখুঁত Shape (যেন `[B, 1]` ও `[B]` মিলে ভুলবশত `[B, B]` আকারের Pairwise Broadcast না ঘটে!), (২) মূল ডেটা Row-এর সাথে Label-এর সঠিক সামঞ্জস্য (Row Alignment), (৩) Preprocessing Scaler কেবল ট্রেনিং অংশেই ফিট হয়েছে কি না, এবং (৪) `BCEWithLogitsLoss`-এ কাঁচা Logit পাঠানোর বদলে ভুল করে দুবার Sigmoid করা হয়েছে কি না। এরপর `Batch Size = 1`, অসম আকারের Partial Batch, হাতে হিসাব করা জানা উদাহরণ, স্বাধীন Gradient Check এবং ধ্রুবক Prevalence Baseline-এর সাথে তুলনা করে প্রকৃত গলদটি শনাক্ত করব।"
+    },
+    {
+      "title": "প্রথম Hidden Layer-এর Weight কখনোই আপডেট হচ্ছে না",
+      "tag": "ML CODING · 30 MIN",
+      "prompt": "ট্রেনিং চলাকালে দেখা যাচ্ছে Output Layer-এর Weight প্রতি ধাপে বদলাচ্ছে, কিন্তু প্রথম Hidden Layer-এর Weight একদম স্থির হয়ে আছে। কীভাবে ধাপে ধাপে রোগ নির্ণয় (Diagnosis) করবেন?",
+      "answer": "আমি প্রথমেই প্রথম Layer-এর `.grad` অ্যাট্রিবিউটটি পরীক্ষা করে তিনটি সম্ভাব্য শাখায় এগোব:\n১. **যদি `.grad` এর মান `None` হয়:** তার মানে কম্পিউটেশন গ্রাফ মাঝপথে কেটে গেছে—হয়তো ভুল করে `.detach()`, `torch.no_grad()`, `.item()` বা নতুন Tensor তৈরি করা হয়েছে, কিংবা ওই Layer-টি `forward()`-এ ব্যবহৃতই হয়নি।\n২. **যদি `.grad` সংখ্যাগতভাবে `0.0` হয়:** তাহলে গ্রাফ সংযুক্ত আছে কিন্তু সংকেত শূন্য হয়ে যাচ্ছে—আমি পরীক্ষা করব সব ট্রেনিং Row-তেই ReLU Gate ঋণাত্মক হয়ে বন্ধ আছে কি না (একক Row-এর শূন্য বনাম পুরো Dataset-এ Dead ReLU আলাদা করে দেখব), অন্য কোনো Activation চরমভাবে Saturate করেছে কি না, কিংবা Output Weight শূন্য হয়ে আছে কি না।\n৩. **যদি `.grad` অশূন্য হওয়া সত্ত্বেও Weight না বদলায়:** তবে গলদটি আছে Optimizer-এ! হতে পারে Layer-টি সাধারণ Python `list`-এ থাকায় `model.parameters()`-এ নিবন্ধিত হয়নি, Learning Rate শূন্য হয়ে আছে, অথবা ভিন্ন Model ইনস্ট্যান্সের Parameter আইডি Optimizer-এ পাঠানো হয়েছে—যা `named_parameters()` ও অবজেক্ট `id()` মিলিয়ে সাথে সাথে ধরা সম্ভব।",
+      "prerequisiteLessons": [
+        "ch16_activations",
+        "ch16_hidden"
+      ]
+    },
+    {
+      "title": "Nonlinear Activation কেন অপরিহার্য এবং Width বনাম Depth-এর ভূমিকা",
+      "tag": "ML CODING · 30 MIN",
+      "prompt": "একের পর এক অনেকগুলো Affine Layer বসালেও কেন বক্রাকার Decision Boundary পাওয়া যায় না? আর Activation যোগ করার পর Width ও Depth বাড়ালে আসলে কী কী বদলায়?",
+      "answer": "বীজগণিতের নিয়মে দুটি রৈখিক রূপান্তর পরপর বসালে `(XW₁ᵀ + b₁)W₂ᵀ + b₂ = X(W₂W₁)ᵀ + (b₁W₂ᵀ + b₂)`—অর্থাৎ সব Layer গুটিয়ে আবার একটি একক রৈখিক সমীকরণেই পরিণত হয়। মাঝখানে ReLU বা Tanh-এর মতো Nonlinear Activation দিলেই কেবল Input-নির্ভর স্থানীয় Gate ও বাঁক তৈরি হয়, যা রৈখিক গুটিয়ে যাওয়া থামিয়ে দেয়।\n\nএরপর `Width` বাড়ালে একই Layer-এ সমান্তরাল বৈশিষ্ট্যের সংখ্যা বাড়ে, আর `Depth` বাড়ালে ধাপে ধাপে Function সংযোজনের Layer বাড়ে—যার সাথে সাথে Parameter সংখ্যা, Activation মেমোরি এবং Optimization-এর জটিলতাও বদলায়। তবে মনে রাখতে হবে, Universal Approximation উপপাদ্য তাত্ত্বিক প্রকাশক্ষমতার কথা বললেও সীমিত ডেটায় সফল ট্রেনিং বা ভালো Generalization-এর নিশ্চয়তা দেয় না; তাই নেটওয়ার্ক বড় করার আগে সবসময় ডেটা, Loss এবং Gradient-এর নির্ভুলতা যাচাই করা উচিত।",
+      "prerequisiteLessons": [
+        "ch16_capacity"
+      ]
+    },
+    {
+      "title": "Batch Size 64-এ চলে, কিন্তু একক Row-এর Inference-এ ভেঙে পড়ে!",
+      "tag": "ML CODING · 30 MIN",
+      "prompt": "আপনার Model-টি `Batch Size = 64` দিয়ে ট্রেনিংয়ে দিব্যি কাজ করছে, কিন্তু প্রোডাকশনে একটি মাত্র Row (`Batch Size = 1`) দিয়ে Inference চালাতেই Logit Vector-এর বদলে Scalar হয়ে এরর দিচ্ছে। কারণ ও সমাধান কী?",
+      "answer": "এর প্রধান অপরাধী হলো Output Layer-এ অনির্দিষ্টভাবে লেখা `.squeeze()`! যখন Model-এর শেষ `nn.Linear(H, 1)` Layer `[B, 1]` Output দেয়, তখন `B = 64` হলে `.squeeze()` কেবল শেষের `1` সরিয়ে `[64]` রাখে; কিন্তু `B = 1` হলে আকার থাকে `[1, 1]`, ফলে `.squeeze()` দুটি অক্ষই মুছে সেটিকে শূন্য-মাত্রার Scalar-এ নামিয়ে দেয়!\n\nসমাধান হলো সুনির্দিষ্টভাবে `.squeeze(-1)` ব্যবহার করা, যাতে কেবল শেষের Output Axis-টিই সরে এবং `[B]` আকার সবসময় অক্ষত থাকে। পাশাপাশি আমি Input `X[B, D]`, `target[B]` ও Column-এর ক্রম `assert` দিয়ে যাচাই করব, `B = 1`, `B = 2` ও অসম Partial Batch দিয়ে ইউনিট টেস্ট লিখব এবং অন্ধভাবে `reshape` করে ডেটার Row Alignment নষ্ট করা থেকে বিরত থাকব।"
+    },
+    {
+      "title": "গাণিতিক অনুমান উল্লেখ করে সঠিক Initialization নির্বাচন",
+      "tag": "ML CODING · 30 MIN",
+      "prompt": "একটি ReLU MLP নেটওয়ার্ক কীভাবে Initialize করবেন এবং ট্রেনিং শুরুর ঠিক আগে কী কী Sanity Check চালাবেন?",
+      "answer": "প্রারম্ভিক রেসিপি হিসেবে আমি মাঝখানের ReLU Layer-এর Weight-এ `fan_in`-ভিত্তিক `Kaiming (He) Initialization` ও Bias-এ শূন্য বসাব, এবং শেষের রৈখিক Logit Layer-এ `Xavier Initialization` ব্যবহার করব। সব Hidden Weight শূন্য বা সমান রাখব না, যাতে শুরুতেই Symmetry ভেঙে যায়। সাথে সাথে আমি এর পেছনের অনুমানগুলো—যেমন Input ও Weight-এর স্বাধীনতা, শূন্য-গড় প্রতিসম Distribution (এবং ReLU Output-এর Second Moment বনাম প্রকৃত Variance-এর পার্থক্য) ও PyTorch-এর `[out, in]` Weight বিন্যাস—স্পষ্টভাবে উল্লেখ করব।\n\nট্রেনিং লুপ চালানোর আগে আমি প্রাথমিক Logit-গুলোর বিস্তার, প্রথম ধাপের Loss, সক্রিয় ReLU Unit-এর অনুপাত এবং প্রতি Layer-এর Gradient Norm পরীক্ষা করব। ব্যবহৃত Random Seed নথিবদ্ধ রাখব, তবে ভিন্ন হার্ডওয়্যার প্ল্যাটফর্মে বিট-এ-বিট অভিন্নতা বা সব Dataset-এ এর সর্বজনীন শ্রেষ্ঠত্ব দাবি করব না।",
+      "prerequisiteLessons": [
+        "ch16_initialization"
+      ]
+    },
+    {
+      "title": "Validation পাইপলাইনে সূক্ষ্ম Data Leakage শনাক্তকরণ",
+      "tag": "ML CODING · 30 MIN",
+      "prompt": "একজন সহকর্মী আগের ৯৬৬টি Fit Row-এর ওপর পুরো Scaler ফিট করার পর সেটিকে Inner Train ও Inner Validation সেটে ভাগ করেছেন। এতে কী সমস্যা হয়েছে এবং কীভাবে তা ঠিক করবেন?",
+      "answer": "এখানে সরাসরি Preprocessing জনিত Data Leakage ঘটেছে! পুরো 966টি Row-এর ওপর গড় (`Mean`) ও বিস্তার (`Scale`) হিসাব করার কারণে নতুন Inner Validation সেটের সংখ্যাত্মক Distribution-এর তথ্য ট্রেনিং শুরুর আগেই Model-এর Input রূপান্তরে ঢুকে পড়েছে।\n\nসঠিক পদ্ধতি হলো: আগে `GroupShuffleSplit` দিয়ে Row-গুলোকে নিখুঁতভাবে ভাগ করে নেওয়া (যাতে অভিন্ন রাসায়নিক প্রোফাইলের কোনো গ্রুপ দুই পাশে না যায়, এবং মনে রাখা যে এই গ্রুপগুলো কেবল ডুপ্লিকেট প্রোফাইলের প্রক্সি—বোতলের প্রকৃত পরিচয় নয়), এবং তারপর কেবলমাত্র Inner Training অংশের ওপর `Mean` ও `Scale` ফিট করে সেই একই মান দিয়ে উভয় অংশকে রূপান্তর করা। এছাড়া এই Validation দেখে যদি বারবার Model বা Epoch বাছাই করা হয়, তবে সেটিকে Model Selection হিসেবে নথিবদ্ধ করতে হবে—নিরপেক্ষ চূড়ান্ত প্রমাণ হিসেবে নয়।"
+    },
+    {
+      "title": "Epoch, Optimizer Step এবং অসম Batch-এর নিখুঁত হিসাব",
+      "tag": "ML CODING · 30 MIN",
+      "prompt": "Dataset-এর শেষ Batch-টি আকারে ছোট হলে পুরো Epoch-এর প্রকৃত গড় Loss এবং Accumulated Gradient কীভাবে নির্ভুলভাবে হিসাব করবেন?",
+      "answer": "অসম আকারের Batch-গুলোর গড় Loss মেলানোর সময় প্রতিটিকে তার নিজস্ব Sample সংখ্যা `n_k` দিয়ে Weight দিতে হবে: `L = sum(n_k * L_k) / N`। সাধারণ গড় নিলে শেষের ছোট Batch-টির প্রতিটি Sample অন্যায্যভাবে বেশি গুরুত্ব পেয়ে যায়। একইভাবে কয়েকটি অসম Microbatch জুড়ে একটি নিখুঁত Full-batch Mean Gradient জমাতে (Accumulate করতে) চাইলে প্রতিটি খণ্ডের গড় Loss-কে `n_k / N` দিয়ে গুণ করে `.backward()` চালাতে হবে।\n\nতবে মনে রাখতে হবে, প্রতিটি Microbatch শেষে আলাদা করে `optimizer.step()` চালালে তা কখনোই একক Full-batch আপডেটের সমান হবে না, কারণ মাঝপথেই Weight বদলে যায়। লগিংয়ের সময় আমি সবসময় `Epochs`, `Optimizer Updates`, `Samples Seen` এবং `drop_last`জনিত বাদ পড়া Sample-এর হিসাব আলাদা রাখব (আমাদের অধ্যায়ের Full-batch রানে অবশ্য 120টি আপডেট মানে ঠিক 120টি পূর্ণ ডেটা পাস)।"
+    },
+    {
+      "title": "হাতে লেখা Training Loop-এর কোড রিভিউ চেকলিস্ট",
+      "tag": "ML CODING · 30 MIN",
+      "prompt": "কারো হাতে লেখা `forward → loss → backward → step` ট্রেনিং লুপ কোড রিভিউ করার সময় আপনি কোন কোন জায়গায় বিশেষভাবে নজর দেবেন?",
+      "answer": "আমি ক্রমান্বয়ে ছয়টি জায়গা পরীক্ষা করব:\n১. Model-টি সঠিকভাবে নিবন্ধিত কি না এবং Optimizer ঠিক ওই Model ইনস্ট্যান্সের Parameter-গুলোই পেয়েছে কি না।\n২. প্রতিটি পরিকল্পিত আপডেটের আগে `optimizer.zero_grad(set_to_none=True)` কল হচ্ছে কি না এবং নতুন করে Forward গ্রাফ তৈরি হচ্ছে কি না।\n৩. `logits` ও `target`-এর আকার হুবহু মিলছে কি না এবং Loss ও Gradient-গুলো সসীম (`isfinite`) আছে কি না।\n৪. Validation অংশে স্পষ্টভাবে `model.eval()` ও `torch.no_grad()` ব্যবহৃত হয়েছে কি না এবং সেখানে কোনো ফিটিং বা আপডেট ঘটছে না কি না।\n৫. লগ করা ইতিহাসে আপডেটের আগের ও পরের Loss মাপার সময়কাল (Timing) সামঞ্জস্যপূর্ণ কি না।\n৬. `.item()` কেবল লগিংয়েই সীমাবদ্ধ আছে কি না (মাঝপথে গ্রাফ কেটে যাচ্ছে কি না), এবং সন্দেহ হলে একটি ধাপের আগে-পরে Weight-এর প্রকৃত পরিবর্তন মিলিয়ে দেখা হচ্ছে কি না।"
+    },
+    {
+      "title": "Neural Experiment-এর ফলাফল সততার সাথে উপস্থাপন",
+      "tag": "ML CODING · 30 MIN",
+      "prompt": "আপনার রান শেষে দেখা গেল Inner Validation BCE কমেছে। একজন দায়িত্বশীল ML Engineer হিসেবে এই ফলাফল দেখে আপনি কী দাবি করতে পারবেন, আর কী দাবি করতে পারবেন না?",
+      "answer": "**যা স্পষ্টভাবে বলতে পারব:** পূর্বঘোষিত একটি একক রেসিপি (`Seed 16`, `11 → 4 → 1` ReLU নেটওয়ার্ক, `SGD lr = 0.05`, কোনো Momentum বা Weight Decay ছাড়া ঠিক 120টি Full-batch আপডেট) আমাদের গ্রুপ-বিভক্ত Inner Split-এ পর্যবেক্ষণযোগ্য উন্নতি দেখিয়েছে এবং একই ভাগের ধ্রুবক Prevalence Baseline (`≈ 0.691467`)-এর চেয়ে কম Validation BCE (`0.601743`) অর্জন করেছে—যার সব Gradient স্বাধীনভাবে যাচাইকৃত।\n\n**যা কখনোই দাবি করব না:** যেহেতু ডেটা উৎসটি আগের অধ্যায়গুলোতেও বিশ্লেষিত হয়েছে, তাই এই Inner Validation একটি স্থানীয় ডায়াগনস্টিক মাত্র—কোনো নতুন অস্পর্শিত উৎসের ওপর চূড়ান্ত প্রমাণ নয় (আগের চূড়ান্ত Test সেট এখানে পুনর্মূল্যায়নও করা হয়নি)। এখান থেকে 'সব ট্যাবুলার ডেটায় Neural Network সেরা', 'Model-এর Probability স্কোর নিখুঁতভাবে Calibrated', '0.5 কাট-অফই ব্যবসায়িকভাবে সর্বোত্তম' কিংবা 'বাইরের যেকোনো ওয়াইন পপুলেশনে এটি একইভাবে কাজ করবে'—এমন কোনো অতিরঞ্জিত দাবি করা যাবে না।"
+    }
+  ],
+  "book": {
+    "order": 16,
+    "part": "Book 3 · Deep Learning & RL",
+    "prerequisites": [
+      "chapter_15",
+      "chapter_02",
+      "chapter_03"
+    ],
+    "purpose": "আগের অধ্যায়ে শেখা PyTorch Tensor ও Autograd-এর ভিত্তির ওপর দাঁড়িয়ে এবার আমরা Nonlinear Neural Network, Backpropagation এবং অর্থবহ Representation শেখার কৌশল আয়ত্ত করব।",
+    "outcomes": [
+      "একটি Multilayer Perceptron (MLP)-এর Forward Pass ও Layer-wise Derivative নির্ণয় করার পাশাপাশি Supervised, Self-supervised এবং Semi-supervised Objective-এর মূল পার্থক্য স্পষ্টভাবে ব্যাখ্যা করতে পারা।",
+      "গাণিতিক উদাহরণ, Python কোড এবং হাতে-কলমে যাচাইয়ের মাধ্যমে Backpropagation, Representation Learning ও Transfer Objective-এর পুরো প্রক্রিয়া নিখুঁতভাবে বিশ্লেষণ করতে পারা।"
+    ],
+    "recall": [
+      "মাঝখানে কোনো Nonlinear Activation ছাড়া একাধিক Linear Layer পরপর বসালে পুরো Model-টি কেন শেষ পর্যন্ত একটি সাধারণ Linear Map-এই সীমাবদ্ধ থেকে যায়?",
+      "Contrastive Learning-এ Positive ও Negative Pair-এর Similarity সমান হলে Loss কত হয়, এবং ভুল Pseudo-label থাকলে Semi-supervised Training-এ কী ধরনের ঝুঁকি তৈরি হতে পারে?"
+    ],
+    "bridge": "এই অধ্যায়ে আমরা ছোট ও স্বচ্ছ একটি MLP-র ভেতরের প্রতিটি সমীকরণ ও Gradient প্রবাহ নিজের হাতে গড়ে তুলব। এর পরের অধ্যায়ে (Book 3 · Chapter 3: Reliable Deep Learning Training) যাওয়ার আগে এখানকার Quiz, Coding Exercise ও Interview প্রশ্নগুলো সমাধান করে নিজের ভিত্তি ঝালিয়ে নিন।",
+    "bookId": "deep_learning",
+    "bookChapter": 2
+  }
+}

@@ -1,0 +1,1614 @@
+{
+  "id": "chapter_30",
+  "number": 30,
+  "title": "Recommendation Foundations",
+  "shortTitle": "Recommendation Foundations",
+  "displayTitle": "Recommendation Foundations\nPreferences. Neighbors. Rankings.",
+  "subtitle": "কার জন্য কোন Movie সাজানো হবে? Explicit ও Implicit Feedback থেকে শুরু করে Candidate Ranking পর্যন্ত পূর্ণাঙ্গ ভিত্তি।",
+  "description": "From real ratings to recommendations.\nBuild baselines. Explain every neighbor.",
+  "difficulty": "Intermediate · real MovieLens data",
+  "lab": "recommendation",
+  "lessons": [
+    {
+      "id": "ch30_contract",
+      "title": "Recommendation: User, Item ও চূড়ান্ত সিদ্ধান্ত",
+      "subtitle": "একই Catalog, কিন্তু ভিন্ন মানুষের জন্য ভিন্ন ক্রম (Ordering)",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "সমস্যার শুরু: Search ছাড়াই প্রাসঙ্গিক বাছাই",
+          "body": "আমরা যখন কোনো Movie বা Streaming অ্যাপ খুলি, প্রতিবার কিন্তু Search Box-এ নির্দিষ্ট কোনো Query লিখে খোঁজাখুঁজি করি না। বরং আমরা আশা করি, আমাদের পুরোনো History ও বর্তমান Context দেখে System নিজে থেকেই পছন্দের কিছু Item সামনে সাজিয়ে দেবে। Book 4-এ আমরা দেখেছি কীভাবে একটি স্পষ্ট Query থেকে প্রাসঙ্গিক তথ্য খুঁজে আনা হয়; আর এখান থেকেই শুরু হয় Recommender System-এর কাজ, যেখানে স্পষ্ট কোনো Query ছাড়াই প্রতিটি User-এর জন্য আলাদা অগ্রাধিকার ঠিক করতে হয়। তবে কেবল একটি মডেল বানানোই শেষ কথা নয়—কোন Item-গুলো দেখানোর যোগ্য (Eligible), সেগুলোকে কীভাবে Score দেওয়া হবে এবং শেষ পর্যন্ত স্ক্রিনে কোন ক্রমে সাজানো হবে, এই সবকিছু মিলেই চূড়ান্ত Recommendation সিদ্ধান্ত তৈরি হয়।\n\nএই অধ্যায়ে আমরা Rating, Like এবং অনুপস্থিত (Missing) Feedback-এর প্রকৃত অর্থ বুঝে Popularity, Content-based ও Neighborhood-ভিত্তিক শক্তিশালী Baseline তৈরি করব—কারণ শুধু একটি Star Rating অনুমান করতে পারাকেই কখনো পুরো Recommender System বলা যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "তিনটি ভিন্ন সমস্যা: Rating Prediction, Top-K Ranking ও Retrieval",
+          "body": "Recommendation-এর কথা বললে মূলত তিনটি আলাদা গাণিতিক কাজ সামনে আসে, যাদের লক্ষ্য পরস্পর থেকে ভিন্ন। প্রথমত, Rating Prediction জানতে চায় কোনো নির্দিষ্ট User-Item জোড়ার জন্য সম্ভাব্য Star মান কত হতে পারে। দ্বিতীয়ত, Top-K Ranking-এর লক্ষ্য হলো দেখানোর যোগ্য একটি Catalog থেকে সেরা K-সংখ্যক Item সঠিক ক্রমে সাজিয়ে দেওয়া। আর তৃতীয়ত, যখন Catalog-এ লক্ষ লক্ষ Item থাকে, তখন Candidate Retrieval সেখান থেকে দ্রুত ছোট ও সম্ভাবনাময় একটি Subset ছেঁকে আনে। আমাদের এই প্রথম অধ্যায়ে Fit Catalog-টি আকারে ছোট হওয়ায় আমরা প্রতিটি যোগ্য Item-কেই সরাসরি Score করে সাজাব; আর পরবর্তী অধ্যায়গুলোতে (Book 5 · Chapter 2 ও Chapter 3) ধাপে ধাপে Latent Factor এবং Multi-stage Retrieval নিয়ে কাজ করব।"
+        },
+        {
+          "type": "math",
+          "title": "Candidate Set ও Top-K নির্বাচনের সমীকরণ",
+          "body": "\\mathcal C_u=\\mathcal I_{fit}\\setminus\\mathcal H_u,\\quad \\mathrm{TopK}_u=\\operatorname{arg\\,topK}_{i\\in\\mathcal C_u}s(u,i)"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Candidate ও Top-K যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\n\nassert lab[\"report\"][\"source_ratings\"] == 100836\nassert len(lab[\"movies\"]) == lab[\"report\"][\"fit_catalog\"]\ncase = lab[\"samples\"][0]\nseen = {i for i, r in case[\"history\"]}\nassert not (seen & {i for i, s in case[\"top\"][\"user_cf\"]})\nprint(case[\"user\"], case[\"top\"][\"user_cf\"][:3])\n"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব ডেটায় সম্পূর্ণ Offline Pipeline",
+          "body": "উপরের কোডে যে `recommendation_lab.json` ফাইলটি লোড করা হয়েছে, তার পেছনে রয়েছে বাস্তব MovieLens ডেটাসেটের 100836 টি Rating। এই ডেটা ব্যবহার করেই আমরা পুরো অধ্যায় জুড়ে ধাপে ধাপে চারটি মডেল তৈরি করব: Popularity Baseline, Bayesian Rating Baseline, Genre-ভিত্তিক Content Model এবং User-neighborhood Collaborative Filtering (`user_cf`)। এখানে Python আমাদের Reproducible Experiment ও হিসাবনিকাশ তৈরি করে দেয়, আর অ্যাপের ভেতরে Flutter ঠিক একই গাণিতিক নিয়মে কোনো বাইরের API, Authentication বা Server Inference ছাড়াই সম্পূর্ণ Offline পরিবেশে সেই Scoring পুনরায় চালিয়ে দেখায়।"
+        },
+        {
+          "type": "text",
+          "title": "মডেল বানানোর আগেই স্পষ্ট Contract",
+          "body": "যেকোনো ভালো ML সিস্টেমের মতো এখানেও মডেল ট্রেন করার আগে আমাদের নিয়ম বা Contract স্থির করে নিতে হবে। আমরা একটি নির্দিষ্ট Global Timestamp Cutoff-এর আগের ডেটা দিয়েই কেবল মডেল Fit করব। কোনো User-কে Recommend করার সময় Candidate Catalog হিসেবে নেওয়া হবে শুধুমাত্র সেই Fit অংশে দেখা যাওয়া Item ID-গুলো। সেখান থেকে ওই User আগে যেসব Movie-তে Rating দিয়েছেন—তা উচ্চ বা নিম্ন যে Rating-ই হোক না কেন—সবই বাদ দেওয়া হবে, যেমনটি উপরের কোডের `seen` সেটের `assert` লাইনে যাচাই করা হয়েছে। এছাড়া পুরো Future Window জুড়ে User-এর History মাঝপথে আপডেট করা হবে না; অর্থাৎ এটি একটি পরিষ্কার Static Batch Recommendation সমস্যা।"
+        },
+        {
+          "type": "text",
+          "title": "সাফল্যের প্রকৃত মাপকাঠি ও সীমাবদ্ধতা",
+          "body": "আমাদের মূল শিক্ষণীয় লক্ষ্য হলো শক্তিশালী Baseline-এর সাপেক্ষে বিভিন্ন মডেলের Ranking Diagnostic, Cold-start Coverage এবং ব্যর্থতার জায়গাগুলো গভীরভাবে বুঝতে শেখা। মনে রাখতে হবে, MovieLens-এ যাঁরা নিজ উদ্যোগে Rating দিয়েছেন, সেই স্ব-নির্বাচিত (Self-selected) দর্শকের দলটি কোনো বাস্তব পণ্যের পুরো User Audience-এর নিখুঁত প্রতিনিধি নয়। তাই Offline পরীক্ষায় ভালো Hit পাওয়া মানেই বাস্তবে ব্যবসায়ে Causal Uplift, পুরো Movie দেখা শেষ করা (Watch Completion) কিংবা গ্রাহক সন্তুষ্টি নিশ্চিত হওয়া নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-তে সমস্যাটি যেভাবে সাজাবেন",
+          "body": "System Design বা ML Interview-তে কোনো Recommendation সমস্যা দেওয়া হলে শুরুতেই মডেল বেছে নেবেন না। আগে প্রশ্ন করে জেনে নিন—এখানে User কে, Item কী, কাঙ্ক্ষিত Action কোনটি, দেখানোর যোগ্য Inventory কীভাবে নির্ধারিত হয়, একই Item বারবার দেখানোর (Repeat-consumption) নিয়ম কী, Feedback আসতে কতটা সময় (Delay) লাগে এবং মূল Business Objective কী। যেমন ধরুন, একটি Movie Recommendation সিস্টেম আর একটি News Recommendation সিস্টেমে Freshness-এর গুরুত্ব সম্পূর্ণ আলাদা। আমাদের এই অধ্যায়ের Fixed Catalog অনুমানটি শেখার জন্য চমৎকার হলেও বাস্তব Production পরিবেশে যেকোনো মুহূর্তে Item-এর প্রাপ্যতা (Availability) বদলে যেতে পারে।"
+        }
+      ]
+    },
+    {
+      "id": "ch30_data",
+      "title": "MovieLens ডেটাসেট, Join ও ব্যবহারের শর্তাবলি",
+      "subtitle": "মূল ID এবং Timestamp অক্ষুণ্ণ রেখে পরিচ্ছন্ন ডেটা প্রস্তুতি",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ডেটাসেটের উৎস ও সংস্করণ পরিচিতি",
+          "body": "GroupLens-এর তৈরি জনপ্রিয় MovieLens `latest-small` ডেটাসেট নিয়ে আমরা কাজ শুরু করছি। এই Snapshot-এ রয়েছে 610 জন পরিচয়-গোপনকৃত (Anonymized) User, মোট 100836 টি Rating এবং 9742 টি Movie-এর Metadata। এই ডেটাটি 2018-09-26 তারিখে Export করা হয়েছিল এবং সম্পূর্ণ Reproducibility নিশ্চিত করতে আমাদের Manifest-এ মূল Zip ফাইল ও নির্বাচিত ফাইলগুলোর Hash নির্দিষ্ট (Pinned) করে রাখা আছে। যেহেতু এটি একটি Development Dataset এবং অনলাইনে এর লাইভ সংস্করণ ভবিষ্যতে বদলে যেতে পারে, তাই একে অপরিবর্তনীয় কোনো সর্বজনীন Research Benchmark হিসেবে দাবি না করে আমরা আমাদের সুনির্দিষ্ট Snapshot-এর ওপরই কাজ করব।"
+        },
+        {
+          "type": "text",
+          "title": "ফাইলের গঠন ও সঠিক Join করার নিয়ম",
+          "body": "এখানে মূল দুটি টেবিল রয়েছে: `ratings.csv` ফাইলে থাকে `userId`, `movieId`, `rating` ও `timestamp`; আর `movies.csv` ফাইলে থাকে `movieId`, `title` ও `genres`। খুব গুরুত্বপূর্ণ একটি কারিগরি বিষয় হলো, এখানকার ID-গুলো নিছক পূর্ণসংখ্যার Key—এগুলো কিন্তু 0 থেকে শুরু হওয়া ধারাবাহিক Array Index নয়! এছাড়া অনেক Movie-এর নামের (`title`) ভেতরে কমা বা উদ্ধৃতি চিহ্ন (Quoted Text) থাকতে পারে; তাই সাধারণ স্ট্রিং স্প্লিট ব্যবহার না করে সবসময় মানসম্মত CSV Parser ব্যবহার করতে হবে। স্টোরেজ বাঁচাতে ফাইলগুলো Byte-preserving `gzip` আকারে রাখা হলেও মূল আনকমপ্রেসড ফাইলের Hash-ও মিলিয়ে দেখার জন্য সংরক্ষিত আছে।"
+        },
+        {
+          "type": "math",
+          "title": "Interaction Tuple ও Rating-এর পরিসর",
+          "body": "R=\\{(u,i,r,t)\\},\\quad r\\in\\{0.5,1,\\ldots,5\\}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ ডেটা লোড ও অখণ্ডতা পরীক্ষা",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"rec30\", Path(\"assets/datasets/movielens/recommendation_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\n\nratings, movies = m.load()\nassert ratings.shape == (100836, 4) and len(movies) == 9742\nassert len({(int(u), int(i)) for u, i, r, t in ratings}) == len(ratings)\nassert all(int(i) in movies for i in ratings[:, 1])\nprint(len(set(ratings[:, 0])), int(ratings[:, 3].min()), int(ratings[:, 3].max()))\n"
+        },
+        {
+          "type": "text",
+          "title": "কোন Feature রাখা হয়েছে আর কোনটি বাদ?",
+          "body": "উপরের কোডে দেখুন, প্রতিটি `(user, item)` জোড়া ইউনিক কি না এবং প্রতিটি রেটিং পাওয়া Movie মেটাডেটায় উপস্থিত কি না, তা আমরা শুরুতেই `assert` করে নিয়েছি। আমাদের মডেলকে পরিচ্ছন্ন রাখতে আমরা এখানে অতিরিক্ত `tags` বা বাইরের ওয়েবসাইটের `links` ব্যবহার করিনি, আর এই ডেটাসেটে দর্শকদের কোনো ব্যক্তিগত বা Demographic তথ্যও নেই। Movie-এর `title` রাখা হয়েছে কেবল মানুষের পড়ে বোঝার সুবিধার্থে (Display-only)—মডেলের Score গণনায় এটি কোনো Feature হিসেবে ব্যবহৃত হয়নি। একইভাবে ভবিষ্যতের কোনো Rating, নামের ভেতর থাকা মুক্তির সাল বা ভবিষ্যতের কোনো Tag দিয়ে User Profile বানানো হয়নি। বাস্তব কাজে সবসময় মডেলের Training Input এবং মানুষের দেখার জন্য রাখা Display Metadata আলাদা রাখা জরুরি।"
+        },
+        {
+          "type": "text",
+          "title": "লাইসেন্স ও ব্যবহারের নীতিমালা",
+          "body": "আমাদের প্রজেক্টের সাথে মূল ডেটাসেটের `README` ফাইলটি সম্পূর্ণ যুক্ত করা আছে। সেই শর্ত অনুযায়ী, সঠিক Attribution দেওয়া এবং নির্মাতাদের কোনো প্রকার Endorsement দাবি না করার শর্তে এই ডেটাসেট ও তার রূপান্তরিত রূপ পুনরায় বিতরণ করা যায়। তবে কোনো বাণিজ্যিক বা রাজস্ব-আয়ের (Commercial/Revenue) কাজে এটি ব্যবহার করতে হলে আগে অবশ্যই GroupLens-এর অনুমতি নিতে হবে। আমাদের এই অ্যাপটি শুধুমাত্র শিক্ষামূলক প্রোটোটাইপ হিসেবে এটি ব্যবহার করছে, যা কখনোই বাণিজ্যিক ব্যবহারের অনুমোদন বোঝায় না।"
+        },
+        {
+          "type": "text",
+          "title": "Metadata Snapshot-এর একটি সূক্ষ্ম সীমাবদ্ধতা",
+          "body": "বাস্তব সিস্টেমের দৃষ্টিতে এখানে একটি সূক্ষ্ম সীমাবদ্ধতা খেয়াল রাখা দরকার। আমরা প্রতিটি Movie-এর `genres` নিয়েছি 2018 সালের পূর্ণাঙ্গ Metadata Snapshot থেকে, কারণ সময়ের সাথে সাথে আগে কখন কোন Genre ট্যাগ যোগ বা পরিবর্তন হয়েছিল তার ঐতিহাসিক সংস্করণ (Versioned Metadata) এখানে নেই। আমরা শুধু Fit সময়ের মধ্যে দেখা যাওয়া Item ID-গুলো বেছে নিয়ে ভবিষ্যতের অজানা Movie ঢুকে পড়ার ঝুঁকি (Catalog Leakage) কমিয়েছি ঠিকই, কিন্তু অতীতের ওই নির্দিষ্ট মুহূর্তে আমাদের দেখা Genre তালিকাটিই হুবহু ছিল কি না, তা এই ডেটা থেকে প্রমাণ করা সম্ভব নয়। পাশাপাশি কবে কোন সিনেমা মুক্তি পেয়েছে বা কোন অঞ্চলে দেখানোর স্বত্ব (Rights/Availability) ছিল, তার কোনো Log-ও এখানে নেই।"
+        },
+        {
+          "type": "text",
+          "title": "ইঞ্জিনিয়ারিং যাচাইয়ের তালিকা (Data Audit)",
+          "body": "যেকোনো Recommendation পাইপলাইন শুরু করার আগে চারটি জিনিস অবশ্যই Audit করে নেবেন: কোনো Duplicate `(user, item)` Row আছে কি না, Join করার সময় কোনো আইটেম হারিয়ে যাচ্ছে কি না, Rating-এর মানগুলো নির্ধারিত পরিসরে (0.5 থেকে 5.0) আছে কি না, এবং Timestamp-এর ক্রম ঠিক আছে কি না। এছাড়া মূল `README` অনুসারে এই ডেটাসেটে কেবল সেই User-দেরই রাখা হয়েছে যাঁরা অন্তত 20 টি করে Rating দিয়েছেন। অর্থাৎ ডেটা সংগ্রহের নিয়মই শুরু থেকে তুলনামূলক সক্রিয় (Active) দর্শকদের বেশি প্রতিনিধিত্ব করছে—তাই এই Snapshot-কে কখনোই সাধারণ দর্শকদের একটি Random Population Sample মনে করা যাবে না।"
+        }
+      ]
+    },
+    {
+      "id": "ch30_feedback",
+      "title": "Explicit ও Implicit Feedback-এর পার্থক্য",
+      "subtitle": "কোনো Item-এ Rating না থাকা মানেই অপছন্দ করা নয়",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Explicit Feedback: সরাসরি মতামত ও তার সীমাবদ্ধতা",
+          "body": "যখন একজন User স্বেচ্ছায় কোনো Movie-কে 2 Star দেন, তখন আমরা স্পষ্ট বুঝতে পারি যে এটি তাঁর একটি দেখা এবং কম পছন্দের (Low Preference) অভিজ্ঞতা। আবার 5 Star দেওয়া মানে সরাসরি একটি ইতিবাচক রায় (Explicit Positive Judgement)। কিন্তু মানুষভেদে এই Rating Scale ব্যবহারের অভ্যাস অনেক আলাদা হয়—কেউ খুব সহজেই 5 দেন, আবার কেউ দারুণ লাগলেও 4-এর বেশি দিতে চান না। তাছাড়া মানুষ কোন সিনেমাগুলো রেট করবেন আর কোনগুলো করবেন না, তার পেছনে প্রবল Selection Bias এবং পুরোনো স্মৃতির Recall Bias কাজ করে। তাই একটি Star Rating-কে কখনোই নিখুঁতভাবে Calibrated Probability হিসেবে ধরে নেওয়া ঠিক নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Implicit Feedback: আচরণের লগ থেকে পরোক্ষ ইঙ্গিত",
+          "body": "বাস্তব পৃথিবীর বেশিরভাগ প্ল্যাটফর্মে মানুষ কষ্ট করে Star Rating দেয় না; বরং আমরা পাই Click, Play, Purchase বা কতক্ষণ দেখল (Dwell Time) তার মতো আচরণগত Action Log। কিন্তু সঠিক Context ছাড়া এই Implicit Signal-গুলোর অর্থ বেশ ধোঁয়াশাচ্ছন্ন হতে পারে। ভুল করে চাপ লাগা (Accidental Click), স্বয়ংক্রিয়ভাবে চালু হয়ে যাওয়া (Autoplay), খুব অল্প সময়ের জন্য চোখে পড়া কিংবা দামের কারণে না কেনার মতো হাজারো ঘটনা এর পেছনে থাকতে পারে। সবচেয়ে বড় কথা, একজন User কোনো Item-এ Click করেননি—এ কথাটির অর্থ বোঝার আগে আমাদের জানতে হবে Item-টি আদৌ তাঁর স্ক্রিনে দেখানো হয়েছিল কি না। এর জন্য দরকার Impression Log, যা আমাদের এই MovieLens ডেটাসেটে নেই।"
+        },
+        {
+          "type": "math",
+          "title": "Positive Preference রূপান্তর ও Missing ডেটার অর্থ",
+          "body": "p_{ui}=\\mathbf1[r_{ui}\\ge4],\\quad (u,i)\\notin R\\ \\not\\Rightarrow\\ p_{ui}=0"
+        },
+        {
+          "type": "code",
+          "title": "Observed, Positive ও Unobserved সংখ্যার তুলনা",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\n\nrows = lab[\"train\"]\npositive = sum(r >= 4 for u, i, r, t in rows)\nobserved = len(rows)\npossible = lab[\"report\"][\"fit_users\"] * len(lab[\"movies\"])\nassert positive < observed < possible\nprint(\n    \"observed\",\n    observed,\n    \"transformed positive\",\n    positive,\n    \"unobserved\",\n    possible - observed,\n)\n"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের Binarization নিয়ম ও তার প্রভাব",
+          "body": "উপরের সমীকরণ ও কোডে যেমন দেখছেন, আমাদের এই Workflow-তে `rating >= 4` হলে সেটিকে আমরা একটি Positive Preference (1) হিসেবে Binarize করে নিচ্ছি। এটি মূলত হিসাব ও মডেলিং সহজ করার জন্য আমাদের নিজেদের নেওয়া একটি সিদ্ধান্ত—মূল ডেটাসেটে থাকা কোনো বাস্তব Click Label নয়। এর একটি পার্শ্বপ্রতিক্রিয়া হলো, এই Binary Positive মডেলে 3.5 Star পাওয়া মোটামুটি ভালো লাগা একটি সিনেমা এবং 0.5 Star পাওয়া তীব্র অপছন্দের একটি সিনেমা—দুটোই একই Non-positive শ্রেণিতে (0) পড়ে যায়, অথচ সরাসরি Explicit Rating মডেলে এই দুটির ব্যবধান কিন্তু বিশাল!"
+        },
+        {
+          "type": "recommendation_feedback",
+          "title": "Missingness: না দেখা মানেই কি নেতিবাচক?",
+          "body": "উপরের কোডের আউটপুট খেয়াল করলে দেখবেন, মোট সম্ভাব্য `(user, item)` জোড়ার তুলনায় আমাদের দেখা (`observed`) রেটিংয়ের সংখ্যা অতি সামান্য, আর বাকি বিশাল অংশটিই অদেখা (`unobserved`)। একজন User কোনো Movie-তে Rating দেননি—এর মানে কি তিনি সিনেমাটি অপছন্দ করেন? মোটেও তা নিশ্চিত নয়! এমনও হতে পারে তিনি সিনেমাটির নামই শোনেননি, দেখার সুযোগ পাননি, অথবা দেখে ভালো লাগলেও অ্যাপে এসে আর Rating দেননি। তাই Sparse Matrix-এ হিসাবের সুবিধার্থে যে শূন্য (0) বসানো হয়, তা কোনোভাবেই 'দেখে অপছন্দ করার প্রমাণপত্র' (Observed Negative Certificate) নয়। ঠিক একই কারণে, Offline মূল্যায়নের সময় আমাদের Recommend করা কোনো সিনেমা যদি User-এর অদেখা তালিকায় থাকে, তবুও সেটিকে চোখ বুজে 'ভুল প্রস্তাব' বলা যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "Preference বনাম Observation Confidence",
+          "body": "আধুনিক Implicit Feedback মডেলগুলোতে তাই দুটি জিনিস আলাদা করে ভাবা হয়: একটি হলো User আইটেমটি পছন্দ করেন কি না তার লক্ষ্যমাত্রা (`p`), আর অন্যটি হলো আমাদের কাছে ওই তথ্যের জোর বা ভরসা কতটুকু (`c`, অর্থাৎ Confidence Weight)। যেমন, কেউ একটি গান বারবার শুনলে (Play Count বেশি হলে) আমাদের কাছে তাঁর পছন্দের সপক্ষে বেশি প্রমাণ (Evidence) জমা হয়, যদিও তার মানে এই নয় যে গানটির নিখুঁত Utility তত গুণ বেশি। মনে রাখবেন, Confidence Calibration এবং Preference Prediction দুটি ভিন্ন ধারণা; পরবর্তী অধ্যায়ে (Book 5 · Chapter 2: Matrix Factorization & Feature Interactions) আমরা যখন Weighted ALS শিখব, তখন এই ধারণাটির সরাসরি প্রয়োগ দেখতে পাব।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে পরীক্ষা: Feedback Lab ব্যবহারের নিয়ম",
+          "body": "আমাদের ইন্টারেক্টিভ Feedback Lab-এ আপনি Threshold-এর মান 3, 4 বা 5-এ ওঠানামা করিয়ে দেখতে পারেন কীভাবে মোট Positive সংখ্যার হিসাব বদলে যায়। তবে লক্ষ্য করবেন, Threshold বদলালেও Bayesian Mean কিন্তু বদলায় না—কারণ সেটি বাইনারি কাটঅফের বদলে সবগুলো দেখা Star Rating সরাসরি ব্যবহার করে। আমাদের মূল্যায়নের স্থির (Frozen) পরীক্ষাগুলো সব Threshold 4 ধরেই করা হয়েছে; তাই আপনি যদি কখনো Slider ঘুরিয়ে ভিন্ন কোনো Threshold বেছে নেন, তবে সেটিকে সম্পূর্ণ নতুন একটি Experiment হিসেবে আলাদাভাবে রিপোর্ট করতে হবে।"
+        }
+      ]
+    },
+    {
+      "id": "ch30_split",
+      "title": "Global Temporal Split ও Data Leakage প্রতিরোধ",
+      "subtitle": "ভবিষ্যতের তথ্য যেন অতীতের মডেলে ঢুকে না পড়ে",
+      "duration": "55 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "বাস্তব Deployment-এর প্রশ্ন ও Global Cutoff",
+          "body": "বাস্তব প্রোডাকশনে আমাদের সামনে প্রশ্নটি থাকে খুব পরিষ্কার: 'আজকের মুহূর্ত পর্যন্ত যতগুলো Rating জমা পড়েছে, কেবল সেগুলোর ওপর ভিত্তি করে আগামী সময়ে কাকে কোন Movie দেখাব?' এই বাস্তব প্রশ্নের উত্তর খুঁজতে হলে আমাদের দরকার একটি Global Chronological Split। এজন্য আমরা পুরো ডেটাসেটের সবগুলো Timestamp সময়ের ক্রমানুসারে সাজিয়ে তার 80% সীমানাকে Cutoff হিসেবে বেছে নিয়েছি। যদি ঠিক ওই Cutoff সেকেন্ডে একাধিক Rating থেকে থাকে, তবে একই Timestamp দুই ভাগে না ভেঙে তার সবগুলোকেই Fit অংশে রাখা হয়েছে—ফলে মোট Row-এর অনুপাত 80% থেকে অতি সামান্য এদিক-ওদিক হতে পারে, কিন্তু সময়ের সীমানা থাকে শতভাগ নিশ্ছিদ্র।"
+        },
+        {
+          "type": "text",
+          "title": "Recommender System-এ কীভাবে Data Leakage ঘটে?",
+          "body": "সময় না মেনে ডেটা ভাগ করলে নানা দিক থেকে নিঃশব্দে Data Leakage ঢুকে পড়তে পারে। যেমন ধরুন: ভবিষ্যতের Positive Count যোগ করে কোনো সিনেমার Popularity হিসাব করা, ভবিষ্যতে পছন্দ করা সিনেমার Genre দেখে আজই User Profile সাজানো, ভবিষ্যতের যৌথ পছন্দ মিলিয়ে Neighbor Overlap মাপা কিংবা ভবিষ্যতের রেটিং মিলিয়ে Shrinkage Mean বের করা—এর প্রতিটিই সুস্পষ্ট Leakage! আমাদের এই সম্পূর্ণ Workflow-তে যাবতীয় পরিসংখ্যান ও প্যারামিটার শুধুমাত্র Cutoff সময়ের আগের রেটিং থেকে হিসাব করা হয়েছে, আর পরের অংশটি রাখা হয়েছে কেবলমাত্র মডেলের পারফরম্যান্স যাচাইয়ের (Diagnostics) জন্য।"
+        },
+        {
+          "type": "math",
+          "title": "Global Chronological Split-এর গাণিতিক সংজ্ঞা",
+          "body": "t_c=t_{(\\lfloor0.8N\\rfloor)},\\quad R_{fit}:t\\le t_c,\\quad R_{future}:t>t_c"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Cutoff এবং Fit-Future সীমানা যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\n\nfit = lab[\"train\"]\nfuture = lab[\"future\"]\ncut = lab[\"report\"][\"cutoff_timestamp\"]\nassert max(t for u, i, r, t in fit) == cut\nassert min(t for u, i, r, t in future) > cut\nassert len(fit) + len(future) == 100836\nprint(lab[\"report\"][\"cutoff_utc\"], len(fit), len(future))\n"
+        },
+        {
+          "type": "text",
+          "title": "Per-user Holdout বনাম Global Split-এর পার্থক্য",
+          "body": "অনেক টিউটোরিয়ালে দেখা যায়, প্রতিটি User-এর সর্বশেষ দেখা সিনেমাটিকে Test-এ রেখে বাকিগুলো Training-এ দেওয়া হয় (Per-user Last Item Holdout)। কিন্তু একটু ভেবে দেখুন তো—একজন User হয়তো তাঁর শেষ রেটিংটি দিয়েছেন 2016 সালে, অথচ অন্য একজন User 2018 সালে বসে যে রেটিংগুলো দিয়েছেন তা প্রথমজনের Training Neighbor হিসেবে ঢুকে পড়ল! অর্থাৎ প্রথম User-এর ভবিষ্যতের প্রবণতা পরোক্ষভাবে মডেলে ফাঁস হয়ে যাচ্ছে। আপনার লক্ষ্য যদি হয় একটি নির্দিষ্ট তারিখে পুরো সিস্টেমকে ভবিষ্যতের জন্য Deploy করা, তবে এই দুটি Protocol মোটেও এক নয়। আর সাধারণ Random Split তো মূলত অতীত-ভবিষ্যৎ মিলিয়ে শূন্যস্থান পূরণ (Interpolation) করতে শেখায়—তাকে কখনোই সময়ের সাথে এগিয়ে চলা বাস্তব Deployment-এর প্রমাণ ধরা যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "সময়ের সাথে আসা Cold Cohort-এর প্রভাব",
+          "body": "যেহেতু ডেটাসেটটি অনেক বছর জুড়ে সংগৃহীত, তাই সব User একই সময়ে প্ল্যাটফর্মে সক্রিয় ছিলেন না। দেখা যাবে, আমাদের নির্ধারিত Cutoff সময়ের পরে অনেক নতুন User প্রথমবারের মতো কোনো সিনেমায় Rating দিয়েছেন। Fit অংশে তাঁদের কোনো অতীত ইতিহাস না থাকায় কোনো মডেলই তাঁদের জন্য ব্যক্তিগত পছন্দ অনুযায়ী Personalize করতে পারবে না। তাই আমরা যদি কেবল পুরোনো সক্রিয় দর্শকদের (Warm Cohort) ফলাফল দেখিয়ে খুশি হই, তবে সেটি পুরো দর্শকসমাজের বাস্তব চিত্র হবে না। এই স্বচ্ছতা বজায় রাখতেই আমরা Warm Cohort এবং সব দর্শক মিলিয়ে Broad Cohort—উভয় ক্ষেত্রেই আলাদা Denominator ব্যবহার করে ফলাফল প্রকাশ করব।"
+        },
+        {
+          "type": "text",
+          "title": "স্থির মডেল (Frozen Horizon) ও Timestamp-এর প্রকৃত অর্থ",
+          "body": "আমাদের মূল্যায়নের আরেকটি গুরুত্বপূর্ণ নিয়ম হলো, Future Window চলাকালীন নতুন কোনো Rating দেখা গেলেও তা দিয়ে মডেলকে তাৎক্ষণিকভাবে আপডেট করা হয় না। অর্থাৎ এটি ক্রমাগত শিখতে থাকা Prequential বা Online Evaluation নয়। মনে রাখতে হবে, দীর্ঘ একটি সময়ের জন্য স্থির রাখা (Long Frozen Horizon) মডেলের ফলাফল আর প্রতি মুহূর্তের ক্লিকে বদলে যাওয়া Short-session Recommender-এর আচরণ একরকম হবে না। তাছাড়া MovieLens-এর এই Timestamp হলো ইউজার কবে ওয়েবসাইটে ঢুকে Rating এন্ট্রি করেছেন সেই সময়—তিনি ঠিক কবে সিনেমাটি দেখেছিলেন (Actual Watch Time), তার সময় কিন্তু অনেক আগেরও হতে পারে!"
+        },
+        {
+          "type": "text",
+          "title": "Hyperparameter নির্বাচন ও মূল্যায়নের শালীনতা",
+          "body": "এই অধ্যায়ের সবগুলো Hyperparameter আমরা শুরু থেকেই স্থির করে রেখেছি: `threshold = 4`, `prior = 20`, `overlap shrink = 10`, `min shared likes = 2`, এবং `max neighbors = 20`। এখানে বারবার বিভিন্ন মান চালিয়ে সেরা ফলাফল বেছে নেওয়ার কোনো গোপন Tuning Search করা হয়নি। যেহেতু আমরা শেখার প্রয়োজনে এই Future অংশের ফলাফল ও Diagnostics খুলে বিশ্লেষণ করছি, তাই একে আমরা আর পুরোপুরি অদেখা Blind Final Test বলে দাবি করব না। ভবিষ্যতে নতুন কোনো মডেল বা Hyperparameter চূড়ান্তভাবে নিশ্চিত করতে হলে তার জন্য সম্পূর্ণ নতুন একটি Holdout ডেটা বা সময়ের জানালা প্রয়োজন হবে।"
+        },
+        {
+          "type": "text",
+          "title": "একটি ছোট উদাহরণে Cutoff ও Seen-item Policy",
+          "body": "বিষয়টি একদম পানির মতো পরিষ্কার করতে চলুন চারটি ছোট ঘটনা `(user, item, rating, time)` হাতে-কলমে মিলিয়ে দেখি: `(1, A, 5, 1)`, `(1, B, 2, 2)`, `(2, C, 4, 3)` এবং `(2, D, 5, 8)`। আমরা যদি `cutoff = 5` ধরি, তবে সময়ের নিয়মে আমাদের Fit Catalog হবে `{A, B, C}`। এখানে User 1-এর পছন্দের (`rating >= 4`) ইতিহাস কেবল `{A}`, কিন্তু তাঁর দেখা (`seen`) পূর্ণ ইতিহাস হলো `{A, B}`। সুতরাং User 1-কে নতুন সিনেমা প্রস্তাব করার সময় আমাদের অদেখা Candidate তালিকা হবে শুধুমাত্র `{C}`। খেয়াল করুন, আমরা যদি ভুল করে কেবল পছন্দের সিনেমা বাদ দিয়ে (Positive-only Filter) Candidate বানাতাম, তবে তাঁর অপছন্দের 2-রেটিং দেওয়া `B` সিনেমাটি আবার তালিকায় ঢুকে পড়ত! অন্যদিকে `D` সিনেমাটি এসেছে `time = 8`-এ, তাই আমাদের Fit-observed Catalog নীতিমালায় এটি এখনো অস্তিত্বহীন এবং অযোগ্য। অবশ্য বাস্তব সিস্টেমে যদি আলাদা করে কোন তারিখে কোন সিনেমা ক্যাটালগে যুক্ত হয়েছে তার নির্ভরযোগ্য Metadata থাকে, তবে সেটি Cutoff মেনে নিরাপদ ইনপুট হিসেবে ব্যবহার করা যেতে পারে।"
+        },
+        {
+          "type": "code",
+          "title": "Fit Catalog, Seen Set ও Candidate যাচাই",
+          "body": "events = [(1, \"A\", 5, 1), (1, \"B\", 2, 2), (2, \"C\", 4, 3), (2, \"D\", 5, 8)]\ncutoff = 5\nfit = [row for row in events if row[3] <= cutoff]\nfuture = [row for row in events if row[3] > cutoff]\ncatalog = {item for user, item, rating, timestamp in fit}\nseen = {item for user, item, rating, timestamp in fit if user == 1}\nliked = {item for user, item, rating, timestamp in fit if user == 1 and rating >= 4}\ncandidates = catalog - seen\npositive_only_filter = catalog - liked\nfuture_catalog = {item for user, item, rating, timestamp in events} - seen\nassert candidates == {\"C\"} and \"B\" in positive_only_filter and \"D\" in future_catalog\nprint(\n    len(fit),\n    len(future),\n    len(candidates),\n    len(positive_only_filter),\n    len(future_catalog),\n)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে ভেবে উত্তর দিন",
+          "body": "প্রতিটি User-এর কেবল সর্বশেষ Interaction-টিকে Test-এ রেখে বাকিগুলো দিয়ে মডেল ট্রেন করলে (Per-user Last Interaction Split) কি Global Temporal Leakage পুরোপুরি এড়ানো সম্ভব?",
+          "solution": "না, তা সম্ভব নয়। কারণ একজন User-এর সর্বশেষ Test Interaction হয়তো দুই বছর আগের, অথচ অন্য একজন User-এর গতকালকের Training Interaction সেই পুরোনো সময়ের তুলনায় ভবিষ্যতের তথ্য বহন করছে—যা Popularity বা Neighbor Similarity-র ভেতর দিয়ে প্রথমজনের মডেলে ফাঁস হয়ে যেতে পারে। তাই বাস্তব Deployment প্রশ্নের সাথে মিল রেখে একটি নির্দিষ্ট Global Cutoff, ইভেন্টের প্রাপ্যতা এবং তৎকালীন Catalog Snapshot অনুযায়ী Split সাজাতে হবে, এবং Popularity বা Feature রূপান্তরের সব হিসাব কঠোরভাবে কেবল ওই Cutoff-এর আগের ডেটাতেই সীমাবদ্ধ রাখতে হবে।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch30_sparse",
+      "title": "Sparse Interaction Matrix ও ID Mapping",
+      "subtitle": "মেমোরিতে শূন্য রাখা আর বাস্তবে তথ্য না থাকার অর্থ আলাদা",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন আমাদের Sparse Matrix দরকার?",
+          "body": "একটু চিন্তা করলেই দেখা যায়, একজন সাধারণ দর্শক হাজার হাজার সিনেমার ক্যাটালগ থেকে বড়জোর কয়েক ডজন বা কয়েকশ সিনেমা দেখেন ও রেটিং দেন। আমরা যদি একটি পূর্ণাঙ্গ Dense `User × Item` টেবিল বানাতে যাই, তবে তার প্রায় সবকটি ঘরই ফাঁকা বা অদেখা (Unobserved) পড়ে থাকবে, যা অযথা প্রচুর মেমোরি নষ্ট করবে। এজন্য আমরা ব্যবহার করি CSR (Compressed Sparse Row) কাঠামো, যা কেবলমাত্র ইতিবাচক (Positive) এন্ট্রিগুলো এবং সেগুলোর অবস্থান বা Offset সংরক্ষণ করে। তবে একইসাথে আমরা একটি আলাদা Explicit History Map-এ ইউজারের দেওয়া সবগুলো রেটিং (কম রেটিংসহ) জমা রাখি, যাতে পজিটিভ ম্যাট্রিক্সে কোনো ঘর শূন্য দেখালেও আমরা ঠিকই চিনতে পারি কোন সিনেমাটি ইউজার আসলে দেখে কম রেটিং দিয়েছেন।"
+        },
+        {
+          "type": "text",
+          "title": "মূল ID থেকে ধারাবাহিক Array Index-এ রূপান্তর",
+          "body": "ডেটাবেসে কোনো সিনেমার `movieId` যদি 100 হয়, তার মানে কিন্তু এই নয় যে আমাদের ম্যাট্রিক্সের 100 নম্বর কলামেই সেটি বসে আছে—মাঝখানের অনেক নম্বর ক্যাটালগে নাও থাকতে পারে! তাই আমরা কেবল Fit অংশে দেখা যাওয়া ইউনিক ID-গুলোকে ছোট থেকে বড় ক্রমে সাজিয়ে `user_index` এবং `item_index` নামের ধারাবাহিক ম্যাপ তৈরি করি। বাইরে JSON এক্সপোর্ট করার সময় আমরা মূল ID-গুলোই অক্ষত রাখি এবং অ্যাপের ভেতর Flutter সেই ম্যাপ দিয়ে সেগুলোকে মিলিয়ে নেয়। আর কোনো Cold User বা নতুন Item যদি এই Fit ম্যাপে না থাকে, তবে তার জন্য জোর করে ভুয়া শূন্য-রেটিংয়ের ইতিহাস তৈরি না করে আমরা তাকে স্পষ্টভাবে অজানা হিসেবেই চিহ্নিত করি।"
+        },
+        {
+          "type": "math",
+          "title": "Binary Interaction Matrix ও Density-র সূত্র",
+          "body": "B_{ui}=\\mathbf1[(u,i)\\in R_{fit}\\land r_{ui}\\ge4],\\quad \\mathrm{density}=|R_{fit}|/(|U|\\,|I|)"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Sparse Binary Matrix ও History পরীক্ষা",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"rec30\", Path(\"assets/datasets/movielens/recommendation_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\n\nimport numpy as np\n\nr, movies = m.load()\ncut = int(np.sort(r[:, 3])[int(0.8 * len(r)) - 1])\nfit = r[r[:, 3] <= cut]\nmodel = m.Recommender(fit, movies)\nassert model.binary.nnz == sum(fit[:, 2] >= 4)\nprint(model.binary.shape, model.binary.nnz, model.hist[model.users[0]])\n"
+        },
+        {
+          "type": "text",
+          "title": "Binary Matrix-এর শূন্য বনাম Seen History",
+          "body": "উপরের সমীকরণে সংজ্ঞায়িত ম্যাট্রিক্স B-তে কেবল `rating >= 4` পাওয়া ঘরগুলোর মান 1 হয়; আর কম রেটিং পাওয়া সিনেমা এবং একেবারেই না দেখা সিনেমা—উভয় ক্ষেত্রেই গাণিতিক মান থাকে 0। কিন্তু কোডের `model.hist` ডিকশনারিতে ইউজারের দেখা কম রেটিংয়ের তথ্য ঠিকই সংরক্ষিত থাকে। আমরা যখন ইউজারের আগে দেখা সিনেমাগুলো বাদ দেওয়ার (Exclude-seen) ফিল্টার চালাই, তখন সেটি এই পূর্ণ `hist` থেকেই তথ্য পড়ে। এই দুটি আলাদা Data Structure গুলিয়ে ফেলে কেউ যদি শুধু B ম্যাট্রিক্সের 1-গুলো বাদ দেয়, তবে ইউজারের অপছন্দ করা সিনেমাগুলোই আবার নতুন করে Recommend হয়ে যাওয়ার বিব্রতকর ঘটনা ঘটবে!"
+        },
+        {
+          "type": "text",
+          "title": "ম্যাট্রিক্স গুণন ও বড় স্কেলের হিসাব",
+          "body": "এই বাইনারি ম্যাট্রিক্সের একটি চমৎকার বীজগাণিতিক সুবিধা হলো, B Bᵀ গুণফল নিলেই আমরা সরাসরি পেয়ে যাই কোন দুইজন User কতগুলো অভিন্ন সিনেমা একসাথে পছন্দ করেছেন (User-User Co-like Count), যার কর্ণ বা Diagonal বরাবর থাকে প্রতিটি User-এর মোট পছন্দের সংখ্যা। একইভাবে Bᵀ B দেয় কোন দুটি সিনেমা একই মানুষেরা পছন্দ করেছেন তার হিসাব (Item Co-like Count)। আমাদের বর্তমান ডেটাসেটের 610 জন User-এর জন্য সবার সাথে সবার মিল হিসাব করা খুবই সহজ; কিন্তু বাস্তব প্রোডাকশনে যেখানে কোটি কোটি User থাকে, সেখানে পূর্ণ All-pairs ম্যাট্রিক্স তৈরি করতে গেলে মেমোরি ও সময় দুই-ই Quadratic হারে বিস্ফোরিত হবে! কারণ ইনপুট ম্যাট্রিক্স B যতই Sparse হোক না কেন, B Bᵀ-এর গুণফল কিন্তু মোটেও ততটা Sparse নাও থাকতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "কম খরচে বাস্তবসম্মত বাস্তবায়ন",
+          "body": "প্রোডাকশনে বা হালকা অ্যাপে পুরো ম্যাট্রিক্স গুণ না করেও কেবল ইউজারের Positive History ধরে যৌথ পছন্দের ছেদ (Intersection) বের করে সীমিত সংখ্যক Neighbor থেকে Candidate স্কোর যোগ করা অনেক বেশি সাশ্রয়ী। আমাদের প্রজেক্টে Python রেফারেন্স কোডটি একসাথে সব ইউজারের Similarity হিসাব করে রাখে, আর অ্যাপের ভেতর নির্বাচিত ইউজারের জন্য সরাসরি সেই Intersection চালানো হয়। তবে পদ্ধতি যা-ই হোক, দুটি বাস্তবায়নই হুবহু একই গাণিতিক সূত্র, একই ডেটা এবং একই Tie-breaking নিয়ম মেনে চলে।"
+        },
+        {
+          "type": "text",
+          "title": "কোডিং করার সময় সচরাচর যে ভুলগুলো হয়",
+          "body": "Sparse Matrix নিয়ে কাজ করার সময় তিনটি সূক্ষ্ম ফাঁদ সম্পর্কে সবসময় সতর্ক থাকবেন। প্রথমত, ডেটায় যদি ভুলবশত একই `(user, item)` জোড়ার Duplicate Row থাকে, তবে CSR ম্যাট্রিক্স সেগুলোকে যোগ করে বাইনারি 1-এর বদলে 2 বানিয়ে ফেলতে পারে—তাই শুরুতেই ইউনিকনেস যাচাই করা জরুরি। দ্বিতীয়ত, কোনো User-এর যদি একটিও পজিটিভ রেটিং না থাকে, তবে তাঁর ভেক্টরের Norm হবে 0; তাই শূন্য দিয়ে ভাগের হাত থেকে বাঁচতে অবশ্যই নিরাপদ Division Guard ও Fallback রাখতে হবে। তৃতীয়ত, মোট দেখা রেটিংয়ের সংখ্যা আর পজিটিভ রেটিংয়ের সংখ্যা এক নয়—তাই কোথাও Sparsity বা Density রিপোর্ট করার সময় লব ও হরে ঠিক কোন ম্যাট্রিক্সটি বোঝানো হচ্ছে তা স্পষ্ট করে উল্লেখ করবেন।"
+        }
+      ]
+    },
+    {
+      "id": "ch30_popularity",
+      "title": "Popularity Baseline: সহজ কিন্তু অপরিহার্য শুরু",
+      "subtitle": "সবার জন্য একই গ্লোবাল Score, কিন্তু User অনুযায়ী দেখা সিনেমা বাদ",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "শুরুতেই কেন একটি শক্তিশালী Baseline দরকার?",
+          "body": "একজন একদম নতুন দর্শকের পছন্দ-অপছন্দ সম্পর্কে যখন আমরা কিছুই জানি না, তখন বেশিরভাগ মানুষ যেসব সিনেমা দারুণ পছন্দ করেছেন, সেগুলো দিয়েই শুরু করা সবচেয়ে যুক্তিসঙ্গত। Popularity Baseline যেমন তৈরি করা সহজ, তেমনি পুরোপুরি Reproducible এবং যে কাউকে এক কথায় ব্যাখ্যা করা যায়। কোনো জটিল মডেল এনে উন্নতির দাবি করার আগে ঠিক একই Data Split, একই Candidate Set এবং একই Seen-item Filtering-এর অধীনে এই সাধারণ Popularity মডেলটিকে হারিয়ে দেখাতে হবে। কেবল মডেলের আকার বড় বা আধুনিক হওয়া মানেই যে আমরা অনায়াসে Baseline-কে বাদ দিতে পারি, তা কিন্তু মোটেও নয়!"
+        },
+        {
+          "type": "text",
+          "title": "এখানে Popularity ঠিক কীভাবে সংজ্ঞায়িত?",
+          "body": "জনপ্রিয়তা মাপার কিন্তু নানা রকম সংজ্ঞা হতে পারে। আমাদের এই অধ্যায়ে কোনো সিনেমার Popularity Count বলতে বোঝানো হয়েছে Fit অংশে ঠিক কতজন স্বতন্ত্র (Distinct) User সিনেমাটিকে `rating >= 4` দিয়েছেন। যেহেতু আমাদের মূল ডেটায় প্রতিটি `(user, item)` জোড়া ইউনিক, তাই শর্ত পূরণকারী Row-এর সংখ্যাই সরাসরি User-এর সংখ্যার সমান। খেয়াল রাখবেন, এটি কিন্তু মোট রেটিংয়ের সংখ্যা, গড় Star মান, মোট দেখার সংখ্যা (Watch Count) কিংবা সিনেমার বক্স-অফিস আয় (Revenue) নয়—আর পজিটিভ রেটিংয়ের Threshold বদলে দিলে জনপ্রিয়তার এই ক্রমও বদলে যাবে।"
+        },
+        {
+          "type": "math",
+          "title": "Popularity গণনার সমীকরণ",
+          "body": "\\mathrm{pop}(i)=\\sum_u B_{ui}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Popularity ক্রম নির্ণয়",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\n\nfrom collections import Counter\n\ncounts = Counter(i for u, i, r, t in lab[\"train\"] if r >= 4)\norder = sorted((row[0] for row in lab[\"movies\"]), key=lambda i: (-counts[i], i))\nprint([(i, counts[i]) for i in order[:5]])\nassert all(counts[order[j]] >= counts[order[j + 1]] for j in range(4))\n"
+        },
+        {
+          "type": "text",
+          "title": "Personalization-এর সীমা কোথায়?",
+          "body": "মজার ব্যাপার হলো, প্রতিটি সিনেমার গ্লোবাল Score সবার জন্য হুবহু এক হওয়া সত্ত্বেও দুইজন পুরোনো User-এর চূড়ান্ত Top-K তালিকা কিছুটা আলাদা দেখাতে পারে—কারণ প্রত্যেকের তালিকা থেকে তাঁর নিজের আগে দেখা সিনেমাগুলো বাদ দেওয়া হয়! কিন্তু ফিল্টার করার ফলে তৈরি হওয়া এই পার্থক্যকে কখনোই প্রকৃত Personalized Preference Model বলা চলে না। আর যাঁরা একদম নতুন (Cold User), তাঁদের কোনো দেখা সিনেমার তালিকা না থাকায় সবাই হুবহু একই ক্রমের তালিকা পাবেন। যেখানে ইউজারের পছন্দ সম্পর্কে আমাদের কাছে কোনো তথ্যই নেই, সেখানে জোর করে পছন্দ জানার ভান না করাই সৎ ইঞ্জিনিয়ারিং।"
+        },
+        {
+          "type": "text",
+          "title": "Long Tail সমস্যা ও জনপ্রিয়তার চক্র",
+          "body": "শুধুমাত্র সংখ্যার বিচারে জনপ্রিয়তা মাপলে পুরোনো বা আগে থেকে প্রচুর প্রচার পাওয়া সিনেমাগুলো স্বাভাবিক নিয়মেই অনেক বেশি এগিয়ে থাকে। অন্যদিকে সদ্য মুক্তি পাওয়া বা নির্দিষ্ট ঘরানার ভালো সিনেমা (Niche Item) যথেষ্ট প্রমাণের অভাবে পেছনের সারিতে বা Long Tail-এ চাপা পড়ে যায়। বাস্তবে এটি একটি স্বয়ংক্রিয় Feedback Loop তৈরি করতে পারে: যে সিনেমা সামনে বেশি দেখানো হয় (Exposure), মানুষ সেটিই বেশি দেখে ও রেট করে, আর তার ফলে সেটি আরও বেশি সামনে চলে আসে! অবশ্য আমাদের ডেটায় কোনো Impression Log না থাকায় এই চক্রের প্রকৃত কার্যকারণ (Causal Loop) আমরা এখানে সরাসরি পরিমাপ করছি না।"
+        },
+        {
+          "type": "text",
+          "title": "সমান স্কোর ভাঙার নিয়ম (Tie-breaking Contract)",
+          "body": "দুটি সিনেমার Popularity Count যদি হুবহু সমান হয়ে যায়, তখন কোনটি আগে দেখাবে? আমাদের নিয়ম অনুযায়ী, তখন সিনেমার নামের বর্ণানুক্রম নয়, বরং ছোট থেকে বড় সাংখ্যিক `movieId` (Ascending Numeric movieId) ধরে ক্রম ঠিক করা হবে, যেমনটি উপরের কোডের `(-counts[i], i)` অংশে লেখা হয়েছে। আর দশমিক স্কোরওয়ালা মডেলগুলোর ক্ষেত্রে Python ও Flutter-এর ভাসমান সংখ্যার (Floating-point) সামঞ্জস্য বজায় রাখতে স্কোরগুলোকে 12 দশমিক ঘর পর্যন্ত Round করে তুলনা করা হয়। মনে রাখবেন, এই স্থির ক্রম কেবল পরীক্ষার Reproducibility নিশ্চিত করে—এটি সমান যোগ্য আইটেমগুলোর মধ্যে ন্যায্য Exposure নিশ্চিত করার কোনো কৌশল নয়; প্রোডাকশনে Tie ভাঙার জন্য আলাদা র‍্যান্ডমাইজেশন বা বৈচিত্র্যের নীতি পরীক্ষা করা যেতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "জটিল মডেল হেরে গেলে করণীয় কী?",
+          "body": "কখনো যদি দেখেন আপনার তৈরি করা শখের Neighborhood CF মডেলটি সাধারণ Popularity Baseline-এর চেয়ে খারাপ ফলাফল দিচ্ছে, তখন হতাশ হয়ে মূল্যায়নের নিয়ম বা Metric বদলে জোর করে নিজের মডেলকে জয়ী বানানোর চেষ্টা করবেন না! বরং একজন প্রকৃত ইঞ্জিনিয়ারের মতো গভীরে গিয়ে কারণ খুঁজুন: ইউজারদের মধ্যে যৌথ পছন্দের মিল (Overlap) কি খুব কম? টেস্টে কি প্রচুর Cold User রয়েছেন? ব্যবহৃত Genre ফিচারগুলো কি খুবই দুর্বল, নাকি ডেটা অনেক পুরোনো? বাস্তবতা হলো, অনেক সীমিত ডেটার পরিস্থিতিতে সস্তা ও স্বচ্ছ এই Baseline-ই সবচেয়ে নির্ভরযোগ্য চূড়ান্ত সমাধান হতে পারে—শুধু আপনার লক্ষ্য ও কাদের জন্য মডেলটি প্রযোজ্য তা স্পষ্টভাবে লিখে রাখুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch30_bayesian",
+      "title": "Average Rating ও Bayesian Shrinkage",
+      "subtitle": "একটি মাত্র 5-star রেটিং বনাম শত মানুষের প্রমাণের ভারসাম্য",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "সাধারণ গড়ের সমস্যা কোথায়?",
+          "body": "আগের পাঠে আমরা শুধু জনপ্রিয়তার সংখ্যা গুনেছি। এখন কেউ বলতেই পারেন, সংখ্যার বদলে সিনেমার গড় রেটিং (Raw Mean) দেখে সাজালে কেমন হয়? সমস্যা হলো, একটি সিনেমা হয়তো মাত্র একজনের কাছ থেকে 5.0 পেয়েছে, আর অন্য একটি সিনেমা শত শত দর্শকের রেটিং মিলিয়ে গড়ে 4.5 পেয়েছে! সাধারণ গড় হিসাব করলে মাত্র একটি রেটিং পাওয়া অচেনা সিনেমাটিই সবার ওপরে উঠে যাবে। এই অসামঞ্জস্য দূর করতেই আসে Bayesian Shrinkage: এটি অল্প রেটিং পাওয়া সিনেমার গড়কে টেনে নিয়ে আসে পুরো Fit ডেটার সার্বিক গড়ের (Global Mean) কাছাকাছি, আর রেটিংয়ের সংখ্যা যত বাড়তে থাকে, ওই সিনেমার নিজস্ব প্রমাণের (Evidence) গুরুত্ব ততই বাড়তে দেয়।"
+        },
+        {
+          "type": "text",
+          "title": "উত্তল গড় (Convex Combination) হিসেবে সূত্রের ব্যাখ্যা",
+          "body": "হিসাবটি আসলে খুবই সরল ও সুন্দর। ভগ্নাংশের লবে থাকে সিনেমাটির মোট রেটিংয়ের যোগফল যোগ `m × global mean`, আর হরে থাকে মোট রেটিং সংখ্যা যোগ `m` (`n + m`)। সমীকরণটিকে ভাঙলে দেখা যায়, এটি আসলে সিনেমার নিজস্ব গড় এবং গ্লোবাল গড়ের একটি উত্তল গড় (Convex Combination), যাদের ওজন যথাক্রমে `n / (n + m)` এবং `m / (n + m)`। এখানে `m` হলো Prior-এর শক্তি বা একটি কাল্পনিক Pseudo-count। যেমন `m = 20` ধরার অর্থ এই নয় যে বাস্তবে অতিরিক্ত 20 টি রেটিং ঘটেছে; বরং এটি আমাদের নেওয়া একটি পরিমিত Modeling Assumption, যা অল্প তথ্যের অস্থিরতাকে শান্ত রাখে।"
+        },
+        {
+          "type": "math",
+          "title": "Bayesian Shrinkage গড়ের সমীকরণ",
+          "body": "\\tilde r_i=\\frac{n_i\\bar r_i+m\\mu}{n_i+m}=\\frac{n_i}{n_i+m}\\bar r_i+\\frac{m}{n_i+m}\\mu"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Shrunk Rating গড় নির্ণয়",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\n\nfrom collections import defaultdict\n\ntotals = defaultdict(float)\ncounts = defaultdict(int)\nfor u, i, r, t in lab[\"train\"]:\n    totals[i] += r\n    counts[i] += 1\nmu = sum(totals.values()) / sum(counts.values())\nprior = 20\ni = min(counts)\nestimate = (totals[i] + prior * mu) / (counts[i] + prior)\nassert min(mu, totals[i] / counts[i]) <= estimate <= max(mu, totals[i] / counts[i])\nprint(i, counts[i], totals[i] / counts[i], estimate)\n"
+        },
+        {
+          "type": "text",
+          "title": "প্রান্তিক অবস্থা (Boundary Cases) ও নিরাপদ কোডিং",
+          "body": "সূত্রটির প্রান্তিক আচরণগুলো খেয়াল করলে এর সৌন্দর্য আরও স্পষ্ট বোঝা যায়। যদি `m = 0` ধরা হয়, তবে যেকোনো দেখা আইটেমের জন্য এটি সাধারণ গড়েই (Raw Mean) ফিরে যায়। আবার কোনো নতুন আইটেমের যদি একটিও রেটিং না থাকে (`n = 0`) কিন্তু `m > 0` হয়, তবে স্কোরটি স্বয়ংক্রিয়ভাবে গ্লোবাল গড়ে Fallback করে। কেবল `n = 0` এবং `m = 0` একসাথে হলে শূন্য দিয়ে ভাগের অসংজ্ঞায়িত অবস্থা তৈরি হয়, যার জন্য কোডে স্পষ্ট Guard রাখা দরকার। আমাদের বর্তমান Candidate Catalog যেহেতু Fit অংশে দেখা আইটেম দিয়েই তৈরি, তাই সেখানে সর্বদা `n >= 1`; তবে ভবিষ্যতের একদম নতুন (Cold) আইটেমের রেটিং অনুমান করতে হলে এই মডেল সরাসরি গ্লোবাল গড় ব্যবহার করে।"
+        },
+        {
+          "type": "text",
+          "title": "এই Score-এর একক ও প্রকৃত অর্থ",
+          "body": "মনে রাখতে হবে, এই স্কোরটির একক হলো Star—তাই একে Popularity-র পূর্ণসংখ্যার Count কিংবা Content ও CF মডেলের Cosine স্কোরের সাথে সরাসরি যোগ-বিয়োগ করা যাবে না। তাছাড়া এটি এখনো সবার জন্য একই গ্লোবাল মান দেয়, অর্থাৎ এটি একটি Non-personalized Rating Baseline। একে কখনোই ইউজার-ভেদে ব্যক্তিগত Star Calibration, নিখুঁত Uncertainty Interval কিংবা পূর্ণাঙ্গ Bayesian Posterior Distribution বলে দাবি করা যাবে না—কারণ এখানে পূর্ণ Prior ও Likelihood বণ্টন আনুষ্ঠানিকভাবে সংজ্ঞায়িত করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "Rating মূল্যায়ন বনাম Ranking মূল্যায়ন",
+          "body": "এই মডেলের Star অনুমান কতটা নিখুঁত তা মাপতে আমরা ভবিষ্যতের সবগুলো দেখা রেটিংয়ের ওপর RMSE পরীক্ষা করি, যেখানে নতুন আসা অচেনা সিনেমাগুলো গ্লোবাল গড় স্কোর পায়। তবে ভুললে চলবে না যে এই RMSE কেবল যাঁরা স্বেচ্ছায় রেটিং দিয়েছেন তাঁদের শর্তসাপেক্ষ (Conditional Observed) ত্রুটি মাপে—অদেখা সিনেমাগুলোর নয়। একই স্কোর দিয়ে সিনেমাগুলোকে বড় থেকে ছোট ক্রমে সাজিয়ে Ranking-ও করা যায় বটে, কিন্তু RMSE কমানো আর ভালো Recall@K পাওয়া মোটেও একই প্রশ্নের উত্তর নয়!"
+        },
+        {
+          "type": "text",
+          "title": "Lab-এ Prior ঘুরিয়ে প্রভাব দেখুন",
+          "body": "অ্যাপের Lab অংশে গিয়ে Prior-এর মান 20 থেকে কমিয়ে 0 করে দেখুন—দেখবেন কীভাবে মাত্র দু-একটি রেটিং পাওয়া বিরল সিনেমাগুলো হঠাৎ তালিকার শীর্ষস্থান দখল করে নেয়! আবার মানটি বাড়িয়ে 100 করে দিলে সব সিনেমার স্কোরই গ্লোবাল গড়ের দিকে প্রবলভাবে ঝুঁকে পড়বে। এই Slider-টি মূলত স্থির ঐতিহাসিক ডেটার ওপর বিভিন্ন অনুমানের প্রভাব বোঝার একটি শিক্ষামূলক হাতিয়ার; আমাদের মূল রিপোর্টে কিন্তু কোনো Tuning ছাড়াই পূর্বনির্ধারিত `prior = 20`-এর স্থির ফলাফলটি রাখা হয়েছে।"
+        }
+      ]
+    },
+    {
+      "id": "ch30_content",
+      "title": "Content-based Recommendation: Genre Vector",
+      "subtitle": "অন্য User-দের আচরণ ছাড়াই শুধু Item-এর বৈশিষ্ট্য দিয়ে মিল খোঁজা",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "সিনেমার Metadata থেকে গাণিতিক ভেক্টর",
+          "body": "এতক্ষণ আমরা যে দুটি Baseline দেখলাম, তাদের কোনোটিই সিনেমার ভেতরের ধরন বা বিষয়বস্তু চেনে না। এবার আমরা বানাব একটি Content-based মডেল, যেখানে প্রতিটি সিনেমাকে তার Action, Comedy, Drama ইত্যাদি Genre-এর একটি Multi-hot Vector দিয়ে প্রকাশ করা হয়। একটি সিনেমা একইসাথে একাধিক Genre-এর অন্তর্ভুক্ত হতে পারে। তবে সব সিনেমায় হরহামেশা দেখা যায় এমন সাধারণ Genre-এর তুলনায় বিরল ও সুনির্দিষ্ট Genre-কে বেশি গুরুত্ব দেওয়ার জন্য আমরা ব্যবহার করব IDF (Inverse Document Frequency) ওজন। খেয়াল রাখবেন, এটি কেবল আমাদের স্থানীয় ক্যাটালগের একটি পরিসংখ্যানগত কৌশল—কোনো Pretrained Semantic Embedding নয়, আর আমাদের মডেল সিনেমার নামের (`title`) স্ট্রিংও সরাসরি পড়ে না।"
+        },
+        {
+          "type": "text",
+          "title": "শুধুমাত্র Fit Catalog থেকেই পরিসংখ্যান গণনা",
+          "body": "আমাদের Leakage-মুক্ত নিয়ম অনুযায়ী, পুরো Genre তালিকা (Vocabulary) এবং কোন Genre কয়টি সিনেমায় আছে তার হিসাব (Document Frequency বা `df`) নেওয়া হয়েছে শুধুমাত্র Fit অংশে দেখা যাওয়া Movie Catalog থেকে। এখানে প্রতিটি স্বতন্ত্র সিনেমাকে একটি করে Document ধরা হয়েছে—তাই `df` মানে কয়টি সিনেমায় ওই Genre আছে, কতজন User রেটিং দিয়েছেন তা নয়। আগে বলা 2018 সালের মেটাডেটা স্ন্যাপশটের সীমাবদ্ধতা এখানেও প্রযোজ্য, তবে ভবিষ্যতের নতুন সিনেমাগুলোকে এই IDF গণনার বাইরে রাখা হয়েছে।"
+        },
+        {
+          "type": "math",
+          "title": "IDF ওজন ও L2-normalized Item Vector",
+          "body": "\\mathrm{idf}_g=1+\\log\\frac{1+|I_{fit}|}{1+\\mathrm{df}_g},\\quad v_i=\\frac{x_i\\odot\\mathrm{idf}}{\\|x_i\\odot\\mathrm{idf}\\|_2}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Genre IDF যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\n\nimport math\n\nmovies = lab[\"movies\"]\ngenres = lab[\"genres\"]\nn = len(movies)\nidf = [1 + math.log((1 + n) / (1 + sum(g in row[2] for row in movies))) for g in genres]\nassert max(abs(a - b) for a, b in zip(idf, lab[\"idf\"])) < 1e-12\nprint(list(zip(genres, idf)))\n"
+        },
+        {
+          "type": "text",
+          "title": "কেন L2 Normalization অপরিহার্য?",
+          "body": "কোনো সিনেমায় হয়তো মাত্র একটি Genre দেওয়া আছে, আবার কোনোটিতে পাঁচটি। আমরা যদি কাঁচা Genre-IDF ভেক্টরটিকে সরাসরি রেখে দিই, তবে বেশি ট্যাগ থাকা সিনেমাগুলো কেবল ভেক্টরের দৈর্ঘ্য (Magnitude) বড় হওয়ার কারণে অন্যায্য সুবিধা পেয়ে যাবে! এজন্য প্রতিটি সিনেমার ভেক্টরকে তার L2 Norm দিয়ে ভাগ করে একক দৈর্ঘ্যে (Unit Vector) নিয়ে আসা হয়, যাতে দুটি নরম্যালাইজড ভেক্টরের সাধারণ Dot Product-ই সরাসরি তাদের Cosine Similarity হয়ে ওঠে। আর কোনো সিনেমায় যদি একটিও বৈধ Genre না থাকে, তবে তার জন্য শূন্য দিয়ে ভাগ এড়িয়ে নিরাপদে একটি Zero Vector রাখা হয়।"
+        },
+        {
+          "type": "text",
+          "title": "এই ফিচার প্রকাশের বাস্তব সীমাবদ্ধতা",
+          "body": "আমাদের এই ভেক্টর প্রকাশটি অত্যন্ত স্বচ্ছ ও সহজে ব্যাখ্যাযোগ্য হলেও বেশ মোটা দাগের (Coarse)। একই Genre ট্যাগ থাকা সম্পূর্ণ ভিন্ন মানের দুটি সিনেমা এখানে হুবহু একই Feature Vector পাবে—কারণ পরিচালক, গল্পের গভীরতা, অভিনয়, ভাষা কিংবা দর্শকের সাময়িক মেজাজের কোনো তথ্যই এতে নেই। তাই এই মডেল সিনেমাগুলোর গভীর অর্থ (Semantic Understanding) বোঝে—এমন দাবি করা ভুল হবে; কখনো আকর্ষণীয় নামের দুটি সিনেমা পাশাপাশি এলে সেটিকে জটিল কোনো বুদ্ধিমত্তা ভেবে বসবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "নতুন আইটেমের সম্ভাবনা বনাম আমাদের পরীক্ষার সীমানা",
+          "body": "Content-based পদ্ধতির একটি বড় তাত্ত্বিক শক্তি হলো, কোনো নতুন সিনেমার একটিও রেটিং না থাকলেও শুধু তার Genre Metadata দেখেই সেটিকে ভেক্টরে রূপান্তর করে স্কোর দেওয়া সম্ভব। তবে মনে রাখবেন, সব মডেলের মধ্যে ন্যায্য তুলনার স্বার্থে আমাদের বর্তমান পরীক্ষাটি কেবল Fit-observed ক্যাটালগেই সীমাবদ্ধ রাখা হয়েছে—ভবিষ্যতে প্রথমবার আসা সিনেমার ওপর এর কার্যকারিতা আমরা এখানে মাপিনি। একটি মডেলের তাত্ত্বিক সক্ষমতা আর পরীক্ষায় মাপা ফলাফল সবসময় আলাদা করে বলা উচিত।"
+        },
+        {
+          "type": "text",
+          "title": "কোড লেখার সূক্ষ্ম সতর্কতা",
+          "body": "কোডে এই অংশটি লেখার সময় ধাপগুলোর ক্রম খুব পরিষ্কার রাখবেন: আগে লব ও হরে `+ 1` Smoothing সহ IDF সূত্রটি হিসাব করুন, তারপর বাইনারি Genre ভেক্টরের সাথে গুণ করে শেষে L2 Normalization করুন। ভুলেও কখনো একটি কাঁচা অ-নরম্যালাইজড ভেক্টরের সাথে নরম্যালাইজড ভেক্টরের Dot Product নিয়ে সেটিকে Cosine ভাববেন না! এছাড়া শূন্য দৈর্ঘ্যের (Zero Norm) নিরাপদ Guard এবং Genre-গুলোর সুনির্দিষ্ট ক্রম বজায় রাখা Python ও Flutter-এর অভিন্ন ফলাফলের (Cross-language Parity) জন্য অপরিহার্য।"
+        }
+      ]
+    },
+    {
+      "id": "ch30_profile",
+      "title": "User Profile নির্মাণ ও Content Ranking",
+      "subtitle": "পছন্দ করা সিনেমাগুলোর ভেক্টর যোগ করে দর্শকের রুচির দিক নির্ণয়",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "পছন্দের ইতিহাস থেকে User Profile তৈরি",
+          "body": "প্রতিটি সিনেমার জন্য নরম্যালাইজড Genre ভেক্টর তো তৈরি হলো; কিন্তু একজন দর্শকের নিজস্ব রুচিকে ভেক্টর আকারে প্রকাশ করব কীভাবে? এজন্য আমরা ওই দর্শকের Fit ইতিহাস থেকে কেবল পছন্দের সিনেমাগুলো (`rating >= 4`) বেছে নিই। এরপর সেই সিনেমাগুলোর নরম্যালাইজড ভেক্টরগুলো একসাথে যোগ করে যোগফলটিকে আবার নরম্যালাইজ করে নিই—যার ফলে তৈরি হয় দর্শকের পছন্দের একটি একক দিকনির্দেশক ভেক্টর (Profile Direction)। ভেক্টরগুলোর গড় নিয়ে তারপর নরম্যালাইজ করলেও যেকোনো অশূন্য ক্ষেত্রে হুবহু একই দিক পাওয়া যায়। লক্ষ্য করুন, এখানে 4 Star এবং 5 Star পাওয়া সব পছন্দের সিনেমাকে সমান ওজন দেওয়া হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "প্রোফাইল ভেক্টরটিকে কেন আবার Normalize করতে হয়?",
+          "body": "একজন দর্শক হয়তো 10 টি সিনেমা পছন্দ করেছেন, আর অন্যজন করেছেন 200 টি। যোগফলটিকে আবার L2 Normalize না করলে বেশি সিনেমা দেখা দর্শকের প্রোফাইল ভেক্টরটির মান অযথা অনেক বড় হয়ে যেত। দ্বিতীয়বার নরম্যালাইজ করার ফলে প্রোফাইলটি একটি খাঁটি Unit Vector থাকে, এবং যেকোনো Candidate সিনেমার সাথে এর Dot Product সরাসরি 0 থেকে 1-এর মধ্যে একটি বিষয়ভিত্তিক মিল (Thematic Affinity) প্রকাশ করে। যেহেতু আমাদের সব ফিচার অঋণাত্মক, তাই এখানে ঋণাত্মক Similarity আসে না; তবে এই স্কোরটিকে কখনোই Calibrated Probability বা ব্যক্তিগত Star Rating অনুমান ভাবা যাবে না।"
+        },
+        {
+          "type": "math",
+          "title": "User Profile ও Content Score-এর সমীকরণ",
+          "body": "p_u=\\frac{\\sum_{j\\in L_u}v_j}{\\|\\sum_{j\\in L_u}v_j\\|_2},\\quad s_{content}(u,i)=p_u^\\top v_i"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ User Profile ও শীর্ষ Content Score যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\n\nimport numpy as np\n\ngenres = lab[\"genres\"]\nidf = np.array(lab[\"idf\"])\nfeatures = {}\nfor i, title, gs in lab[\"movies\"]:\n    x = np.array([g in gs for g in genres]) * idf\n    features[i] = x / np.linalg.norm(x) if np.linalg.norm(x) else x\ncase = lab[\"samples\"][0]\nliked = [features[i] for i, r in case[\"history\"] if r >= 4]\np = np.sum(liked, axis=0)\np /= np.linalg.norm(p)\ni, ref = case[\"top\"][\"content\"][0]\nassert abs(float(features[i] @ p) - ref) < 1e-12\nprint(i, float(features[i] @ p))\n"
+        },
+        {
+          "type": "text",
+          "title": "প্রোফাইল তৈরি বনাম দেখা সিনেমা বাদ দেওয়ার নিয়ম",
+          "body": "এখানেও আমাদের আগের সেই দুটি আলাদা তালিকার নিয়ম সূক্ষ্মভাবে কাজ করছে: প্রোফাইল ভেক্টর তৈরির সময় পড়া হয় শুধু পজিটিভ রেটিংগুলো (`rating >= 4`), কিন্তু চূড়ান্ত তালিকা থেকে দেখা সিনেমা বাদ দেওয়ার সময় পড়া হয় ইউজারের সবগুলো দেখা রেটিং! ফলে ইউজার যে সিনেমাটিকে 1 বা 2 দিয়ে অপছন্দ করেছিলেন, সেটি তাঁর প্রোফাইল তৈরিতে অংশ না নিলেও দেখা সিনেমা হিসেবে ঠিকই বাদ পড়ে যাবে। তবে খেয়াল রাখুন, আমরা এখানে অপছন্দের সিনেমার Genre বিয়োগ করে কোনো নেতিবাচক অনীহা (Negative Genre Aversion) শেখাইনি।"
+        },
+        {
+          "type": "text",
+          "title": "পছন্দের ইতিহাস না থাকলে Fallback কী হবে?",
+          "body": "কোনো দর্শকের Fit ইতিহাসে যদি একটিও `rating >= 4` না থাকে, কিংবা তাঁর পছন্দের সব সিনেমাই যদি Genre-বিহীন শূন্য ভেক্টর হয়, তবে তাঁর কোনো বৈধ প্রোফাইল দিকনির্দেশ তৈরি হবে না। এমন অবস্থায় এলোমেলো কোনো ভুয়া রুচি তৈরি না করে আমাদের সিস্টেম সুশৃঙ্খলভাবে Popularity Baseline-এ Fallback করে। এমনকি একজন পুরোনো (Warm) দর্শকেরও যদি শুধু কম রেটিংয়ের ইতিহাস থাকে কিন্তু কোনো পজিটিভ রেটিং না থাকে, তবুও এই Content মডেল তাঁকে আলাদাভাবে Personalize করতে পারবে না—যদিও ইন্টারফেসে খাঁটি Cold User Fallback-কে আলাদা লেবেলে স্পষ্ট দেখানো হয়।"
+        },
+        {
+          "type": "text",
+          "title": "একঘেয়েমির ঝুঁকি (Over-specialization)",
+          "body": "শুধু অতীতে পছন্দ করা Genre-এর দিকেই বারবার তাকালে একটি বাস্তব সমস্যা দেখা দেয়: দর্শক কেবল একই ধাঁচের সংকীর্ণ প্রস্তাব পেতে থাকেন! চমকপ্রদ নতুন কিছু আবিষ্কার করা (Serendipity), তালিকার বৈচিত্র্য (Diversity) কিংবা নতুন রুচি যাচাই (Exploration) করা এই সরল মডেলের উদ্দেশ্যের মধ্যে নেই। তাছাড়া হুবহু একই Genre-এর একাধিক সিনেমার স্কোর সমান হয়ে গেলে আমাদের নিয়মমতো সংখ্যাসূচক `movieId` দিয়েই ক্রম ঠিক হয়—যা মোটেও সিনেমার গুণগত মানের ক্রম নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-তে এই মডেলকে কীভাবে আরও উন্নত করবেন?",
+          "body": "ইন্টারভিউতে যদি জিজ্ঞেস করা হয় এই সাধারণ Content প্রোফাইলকে প্রোডাকশনে কীভাবে আরও শক্তিশালী করা যায়, তখন আপনি বেশ কিছু বাস্তবসম্মত দিক তুলে ধরতে পারেন: যেমন শুরুতে নতুন ইউজারের কাছ থেকে পছন্দের Genre জেনে নেওয়া (Explicit Onboarding), পুরোনো পছন্দের চেয়ে সাম্প্রতিক পছন্দকে বেশি গুরুত্ব দেওয়া (Recency Decay), অপছন্দের থিমকে ঋণাত্মক ওজন দেওয়া, অথবা একজন মানুষের একাধিক ভিন্ন মেজাজের জন্য একটি গড় ভেক্টরের বদলে Multiple Interest Profiles রাখা। তবে মনে রাখবেন, এর প্রতিটি সংযোজনের জন্যই নতুন Data Contract এবং আলাদা মূল্যায়ন প্রয়োজন।"
+        }
+      ]
+    },
+    {
+      "id": "ch30_cf",
+      "title": "Collaborative Filtering-এর মূল Intuition",
+      "subtitle": "সিনেমার বর্ণনা নয়, মানুষের যৌথ পছন্দের মিল থেকে Neighbor খোঁজা",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "মিল খোঁজার সম্পূর্ণ ভিন্ন এক উৎস",
+          "body": "আগের Content মডেলটি তাকিয়েছিল সিনেমার নিজস্ব বৈশিষ্ট্য বা Genre-এর দিকে; আর Collaborative Filtering (CF) তাকায় মানুষ ও আইটেমের পারস্পরিক আচরণের নকশার দিকে! এখানে দুটি সিনেমার Genre এক কি না তা দেখা হয় না, বরং দেখা হয় কোন কোন দর্শক একই সিনেমাগুলো পছন্দ করেছেন। এর পেছনের মূল পরিসংখ্যানগত অনুমানটি খুব সহজ: অতীতে যাঁদের পছন্দের সাথে আপনার পছন্দের দারুণ মিল ছিল, তাঁরা নতুন যেসব সিনেমা পছন্দ করেছেন সেগুলো আপনারও ভালো লাগার সম্ভাবনা বেশি। খেয়াল রাখবেন, এই মিল কেবলই আচরণের পরিসংখ্যান—এর মানে বাস্তব জীবনের বন্ধুত্ব বা ব্যক্তিগত পরিচয়ের মিল নয়।"
+        },
+        {
+          "type": "text",
+          "title": "User-based Collaborative Filtering ও Binary Cosine",
+          "body": "আমাদের User-based পদ্ধতিতে আমরা লক্ষ্য (Target) ইউজারের পছন্দ করা সিনেমার সেটের সাথে Fit ডেটার অন্য প্রতিটি ইউজারের পছন্দের সেটের তুলনা করি। দুজনের মিল মাপার জন্য আমরা ব্যবহার করি Binary Cosine Similarity: দুজনের অভিন্ন পছন্দের সংখ্যাকে তাঁদের নিজ নিজ পছন্দের সংখ্যার গুণফলের বর্গমূল (Geometric Mean) দিয়ে ভাগ করা হয়। এই হরের নরম্যালাইজেশনটি ভীষণ জরুরি, যাতে সারাদিন শত শত সিনেমা রেট করা কোনো অতি-সক্রিয় ইউজার কেবল সংখ্যার জোরে সবার Neighbor তালিকা দখল করে নিতে না পারেন।"
+        },
+        {
+          "type": "math",
+          "title": "যৌথ পছন্দের Binary Cosine সমীকরণ",
+          "body": "\\mathrm{cos}(u,v)=\\frac{|L_u\\cap L_v|}{\\sqrt{|L_u|\\,|L_v|}}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Shared Overlap ও Cosine হিসাব",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\n\nfrom collections import defaultdict\n\nlikes = defaultdict(set)\nfor u, i, r, t in lab[\"train\"]:\n    if r >= 4:\n        likes[u].add(i)\ncase = lab[\"samples\"][0]\nu = case[\"user\"]\nv, ref, co = case[\"neighbours\"][0]\noverlap = len(likes[u] & likes[v])\ncosine = overlap / (len(likes[u]) * len(likes[v])) ** 0.5\nassert overlap == co and abs(cosine * co / (co + 10) - ref) < 1e-12\nprint(u, v, overlap, cosine, ref)\n"
+        },
+        {
+          "type": "text",
+          "title": "কাঁচা Cosine স্কোরের একটি বড় ফাঁদ",
+          "body": "উপরের সূত্রটি একটু তলিয়ে দেখলেই একটি দারুণ সূক্ষ্ম সমস্যা ধরা পড়ে! ধরুন, দুইজন দর্শক জীবনে মাত্র 1 টি করে সিনেমা পছন্দ করেছেন এবং কাকতালীয়ভাবে সেটি একই জনপ্রিয় সিনেমা। তাহলে সূত্র অনুযায়ী তাঁদের দুজনের Cosine Similarity হয়ে যাবে পূর্ণ 1.0! অর্থাৎ প্রমাণ (Evidence) অতি নগণ্য হওয়া সত্ত্বেও স্কোর হয়ে গেল সর্বোচ্চ। অথচ অন্য দুইজন দর্শক হয়তো 100 টি করে সিনেমা দেখেছেন এবং তার মধ্যে 10 টি অভিন্ন সিনেমা পছন্দ করেছেন—তাঁদের কাঁচা Cosine হবে মাত্র 0.10, যদিও তাঁদের রুচির মিলের পেছনে প্রমাণ অনেক বেশি জোরালো। তার মানে Similarity-র মান এবং তার পেছনের প্রমাণের সংখ্যা (Support Size) দুটি আলাদা সংকেত, যা আমরা পরের পাঠেই সমাধান করব।"
+        },
+        {
+          "type": "recommendation_workbench",
+          "title": "কোনো Metadata ছাড়াই সুপারিশের ক্ষমতা",
+          "body": "Collaborative Filtering-এর সবচেয়ে চমকপ্রদ দিক হলো, স্কোর হিসাব করতে এর কোনো Genre, পরিচালকের নাম বা সিনেমার Title জানারই প্রয়োজন নেই—নিছক পরিচয়হীন Item ID থেকেই এটি গভীর রুচির মিল খুঁজে বের করতে পারে! তবে এখানেও সতর্ক থাকতে হবে: খুব জনপ্রিয় ব্লকবাস্টার সিনেমাগুলো স্বাভাবিকভাবেই বহু মানুষের ইতিহাসে একসাথে উপস্থিত থাকে, ফলে এখানেও Exposure এবং Selection Bias-এর প্রভাব রয়ে যায়। একসাথে দুটি সিনেমা পছন্দ হওয়া মানেই যে তাদের বিষয়বস্তু এক বা একটির কারণেই অন্যটি ভালো লেগেছে, তেমন কোনো কার্যকারণ দাবি করা যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "Cold Start-এ Collaborative Filtering কেন অসহায়?",
+          "body": "Metadata না লাগার এই শক্তির উল্টো পিঠেই রয়েছে এর সবচেয়ে বড় দুর্বলতা। কোনো নতুন ইউজারের যদি Fit অংশে একটিও পজিটিভ রেটিং না থাকে, তবে তাঁর সাথে কারো Similarity সংজ্ঞায়িতই করা যায় না; আবার সদ্য আসা কোনো নতুন সিনেমার কোনো Interaction না থাকলে তার ভেক্টরও থাকে পুরোপুরি ফাঁকা। অর্থাৎ এককভাবে CF কখনোই খাঁটি Cold-start সমস্যার সমাধান করতে পারে না—তখন আমাদের বাধ্য হয়ে Metadata, Onboarding প্রশ্ন কিংবা Popularity Fallback-এর সাহায্য নিতে হয়, যেমনটি আমাদের সিস্টেমে Cold User-দের ক্ষেত্রে Popularity দিয়ে করা হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "Workbench-এ নিজে তুলনা করে দেখুন",
+          "body": "অ্যাপের ইন্টারেক্টিভ Workbench-এ গিয়ে একই ইউজারের জন্য একবার `user_cf` এবং আরেকবার `content` মডেল বেছে নিয়ে শীর্ষ তালিকা দুটি পাশাপাশি দেখুন। যেহেতু দুটি মডেলের জন্যই যোগ্য Candidate বাছাইয়ের নিয়ম হুবহু এক রাখা হয়েছে, তাই তালিকার পার্থক্য আপনাকে সরাসরি দেখিয়ে দেবে কীভাবে ফিচারের প্রকাশভঙ্গি বদলালে সুপারিশের ধরন বদলে যায়। তবে মনে রাখবেন, একজন নির্দিষ্ট ইউজারের তালিকা দেখে আপনার কাছে খুব ভালো লাগা মানেই পুরো দর্শকসমাজে মডেলটি জিতে গেছে তা নয়—সার্বিক বিচারের জন্য আমাদের দেখতে হবে Scorecard-এর সামষ্টিক ফলাফল।"
+        }
+      ]
+    },
+    {
+      "id": "ch30_shrink",
+      "title": "Overlap Shrinkage ও Neighbor নির্বাচন",
+      "subtitle": "উচ্চ Cosine স্কোরের পেছনে বাস্তবে কয়টি অভিন্ন সিনেমার প্রমাণ আছে?",
+      "duration": "55 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "অল্প প্রমাণের অতি-আত্মবিশ্বাস কমানো (Shrinkage Intuition)",
+          "body": "আগের পাঠেই আমরা দেখেছি, মাত্র দু-একটি সিনেমার মিল থেকেও কাঁচা Cosine Similarity বিভ্রান্তিকর রকমের বড় দেখাতে পারে। যখন যৌথ পছন্দের সংখ্যা `c` খুব কম হয়, তখন সেই মিলের ওপর চোখ বুজে ভরসা করা চলে না। এজন্য আমরা কাঁচা Cosine-কে একটি Shrinkage Factor `c / (c + lambda)` দিয়ে গুণ করি, যা অল্প প্রমাণের Similarity-কে নিচের দিকে নামিয়ে আনে। আমাদের মডেলে `lambda = 10` স্থির রাখা হয়েছে: ফলে দুজনের অভিন্ন পছন্দ যদি 10 টি হয় তবে Cosine অর্ধেক হয়ে যায়, আর যদি 100 টি হয় তবে তা `100 / 110` অংশ অর্থাৎ প্রায় পুরোপুরি অক্ষুণ্ণ থাকে। এটি কোনো আনুষ্ঠানিক পরিসংখ্যানগত Confidence Interval না হলেও বাস্তবে দারুণ কার্যকর একটি প্রমাণ-নির্ভর কৌশল।"
+        },
+        {
+          "type": "text",
+          "title": "ন্যূনতম মিলের শর্ত (Hard Support Gate) ও নিজেকে বাদ দেওয়া",
+          "body": "শুধু Shrinkage দিয়েই আমরা থেমে থাকিনি; আমাদের বাস্তবায়নে একটি কঠোর শর্ত (Hard Support Gate) রাখা হয়েছে যে কমপক্ষে 2 টি অভিন্ন পছন্দের সিনেমা (`shared positives >= 2`) না থাকলে কাউকে Neighbor হিসেবে নেওয়াই হবে না। ফলে আপনি যদি পরীক্ষার খাতিরে `lambda = 0`-ও করে দেন, তবুও মাত্র একটি সিনেমার কাকতালীয় মিল থাকা ইউজাররা হঠাৎ তালিকায় ঢুকে পড়তে পারবে না। আরেকটি অতি জরুরি কোডিং নিয়ম হলো নিজেকে (`v = u`) Neighbor তালিকা থেকে বাদ দেওয়া—নইলে নিজের সাথে নিজের Similarity 1.0 হয়ে পুরো মূল্যায়নকেই ভ্রান্ত করে দেবে!"
+        },
+        {
+          "type": "math",
+          "title": "Shrunk Similarity ও Neighbor যোগ্যতার শর্ত",
+          "body": "\\tilde s_{uv}=\\mathrm{cos}(u,v)\\frac{c_{uv}}{c_{uv}+\\lambda},\\quad c_{uv}\\ge2,\\quad v\\ne u"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Neighbor বাছাই ও Lambda-র প্রভাব পরীক্ষা",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\n\ncase = lab[\"samples\"][0]\nneighbors = case[\"neighbours\"]\nu = case[\"user\"]\nassert len(neighbors) <= 20 and all(\n    v != u and co >= 2 and s > 0 for v, s, co in neighbors\n)\nv, s, co = neighbors[0]\ncosine = s * (co + 10) / co\nassert abs(cosine * co / (co + 10) - s) < 1e-12\nprint(\"lambda0\", cosine, \"lambda10\", s, \"lambda50\", cosine * co / (co + 50))\n"
+        },
+        {
+          "type": "text",
+          "title": "সীমিত সংখ্যক সেরা Neighbor নির্বাচন",
+          "body": "শর্ত পূরণকারী এবং ধনাত্মক Shrunk Similarity পাওয়া ইউজারদের আমরা বড় থেকে ছোট ক্রমে সাজাই (12 দশমিক ঘর পর্যন্ত Round করা স্কোর এবং সমান হলে ছোট থেকে বড় সাংখ্যিক `userId` ধরে), এবং সেখান থেকে প্রথম 20 জনকে বেছে নিই। খুব মন দিয়ে একটি পার্থক্য খেয়াল করুন: এখানে প্রতিটি Candidate সিনেমার জন্য আলাদা করে 20 জন রেটিংদাতা খোঁজা হচ্ছে না, বরং ওই Target ইউজারের জন্য একবারই একটি গ্লোবাল সেরা 20 জন Neighbor-এর দল স্থির করা হচ্ছে। এই ছোট ছোট নিয়ম বদলে গেলেই মডেলের আচরণ বদলে যায়—তাই ডকুমেন্টেশনে শুধু এক শব্দে `kNN` লিখে দেওয়াই কখনো যথেষ্ট নয়।"
+        },
+        {
+          "type": "text",
+          "title": "প্যারামিটার পরিবর্তনের সংবেদনশীলতা",
+          "body": "Lambda-র মান কিংবা সর্বোচ্চ Neighbor-এর সীমা বদলালে প্রমাণের গুরুত্ব ও কভারেজ দুই-ই বদলে যায়। Neighbor সংখ্যা বাড়ালে যেমন নতুন ভালো সিনেমা খুঁজে পাওয়ার সুযোগ বাড়তে পারে, তেমনি দুর্বল মিলের ইউজারদের ভিড়ে আসল পছন্দের সংকেত ফিকে (Dilute) হয়েও যেতে পারে। অ্যাপের ভেতরে 5 বা 20 জন Neighbor এবং Shrinkage Slider ঘুরিয়ে এই প্রভাব শেখার ব্যবস্থা রাখা হয়েছে; তবে আমাদের মূল Scorecard-এর ফলাফল কোনো গোপন সার্চ ছাড়াই ডিফল্ট `lambda = 10` এবং `max neighbors = 20`-এ স্থির রাখা হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "যখন একজনও বৈধ Neighbor পাওয়া যায় না",
+          "body": "যদি কোনো ইউজারের পজিটিভ ইতিহাস ফাঁকা থাকে, কিংবা পুরো ডেটাসেটে কারো সাথেই তাঁর অন্তত 2 টি অভিন্ন পছন্দ না মেলে, তবে তাঁর Neighbor তালিকাটি ফাঁকা থাকবে। তখন শূন্য দিয়ে ভাগের ঝুঁকি এড়িয়ে সিস্টেম নিরাপদে Popularity Baseline-এ ফিরে যায়। কিন্তু সাবধান—এই Fallback যদি আড়ালে নিঃশব্দে ঘটে, তবে বাইরে থেকে দেখে মনে হতে পারে CF মডেলটি বুঝি দারুণ কাজ করছে, অথচ ভেতরে আসলে চলছে সাধারণ Popularity! তাই ইউজার ইন্টারফেসে বা লগে কখন Fallback ঘটেছে তা স্পষ্টভাবে দেখানো জরুরি।"
+        },
+        {
+          "type": "text",
+          "title": "কোড লেখার সময় যে বিষয়গুলো মাথায় রাখবেন",
+          "body": "Neighbor সর্ট করার আগেই নিজের (`self`) ইনডেক্সের স্কোর শূন্য করে দিন অথবা তালিকা থেকে সরিয়ে দিন। সমান স্কোরের Tie ভাঙতে মূল `userId` এবং ডিবাগিংয়ের সুবিধার্থে যৌথ পছন্দের সংখ্যা (Support Count) সাথে সংরক্ষণ করুন। আর খেয়াল রাখুন, আমাদের এই মডেলে কেবল ধনাত্মক মিলের Neighbor-দেরই নেওয়া হচ্ছে; ঋণাত্মক মিলের (Signed Pearson) ইউজারদের বিপরীত ভোট দেওয়ার ধারণাটি এখানে প্রয়োগ করা হয়নি, যার পার্থক্য আমরা একটু পরের পাঠেই দেখব।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে উদাহরণ: Shrinkage কীভাবে ক্রম উল্টে দেয়",
+          "body": "চলুন একটি বাস্তব সেটের হিসাব দিয়ে দেখি কীভাবে Shrinkage আমাদের সিদ্ধান্তকে আরও বিচক্ষণ করে তোলে। ধরুন আমাদের Target দর্শক পছন্দ করেছেন 6 টি সিনেমা: `{a, b, c, d, e, f}`। এবার প্রথম Neighbor পছন্দ করেছেন `{a, b, p}` (3 টি সিনেমা) এবং দ্বিতীয় Neighbor পছন্দ করেছেন `{a, b, c, q, x, y, z}` (7 টি সিনেমা)। দুজনেই ন্যূনতম 2 টি মিলের শর্ত পূরণ করেছেন—প্রথমজনের সাথে অভিন্ন পছন্দ 2 টি এবং দ্বিতীয়জনের সাথে 3 টি। কাঁচা Cosine হিসাব করলে প্রথমজন পান প্রায় 0.471405 আর দ্বিতীয়জন পান 0.462910—অর্থাৎ কাঁচা হিসাবে প্রথমজন এগিয়ে! কিন্তু যেই আমরা `lambda = 10` দিয়ে `s * co / (co + 10)` Shrinkage প্রয়োগ করি, অমনি প্রথমজনের স্কোর নেমে আসে প্রায় 0.078567-এ আর দ্বিতীয়জনের স্কোর দাঁড়ায় 0.106825-এ। ফলে বেশি প্রমাণের জোরে দ্বিতীয় Neighbor-ই যথার্থভাবে বেশি গুরুত্ব পান!"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Overlap ও Support Correction-এর প্রমাণ",
+          "body": "import math\n\ntarget = set(\"abcdef\")\nneighbors = [set(\"abp\"), set(\"abcqxyz\")]\nraw, shrunk = [], []\nfor liked in neighbors:\n    shared = len(target & liked)\n    similarity = shared / math.sqrt(len(target) * len(liked))\n    assert shared >= 2\n    raw.append(similarity)\n    shrunk.append(similarity * shared / (shared + 10))\nassert raw[0] > raw[1] and shrunk[0] < shrunk[1]\nprint(*[round(value, 6) for value in raw], *[round(value, 6) for value in shrunk])\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে ভেবে উত্তর দিন",
+          "body": "Shrinkage প্যারামিটার `lambda`-র মান যত বাড়ানো হবে, Recommendation-এর মান কি ততই নিশ্চিতভাবে ভালো হতে থাকবে?",
+          "solution": "মোটেও না। `lambda` বাড়ালে কেবল বেশি Overlap থাকা Neighbor-দের তুলনামূলক গুরুত্ব বাড়ে এবং র‍্যাঙ্কিংয়ের ক্রম বদলে যায়—কিন্তু মান অতিরিক্ত বাড়িয়ে দিলে স্বল্প ইতিহাসের ইউজারদের সূক্ষ্ম ব্যক্তিগত মিল চাপা পড়ে যেতে পারে। তাই ন্যূনতম Overlap Gate, Neighbor সংখ্যা, Coverage এবং আলাদা রাখা Validation ডেটার র‍্যাঙ্কিং মেট্রিক একসাথে দেখে তবেই `lambda` বেছে নিতে হবে; কখনোই চূড়ান্ত Test ফলাফল দেখে নিজের সুবিধামতো মান ঠিক করা যাবে না।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch30_scoring",
+      "title": "Neighbor Voting ও সুপারিশের ব্যাখ্যা (Explanation)",
+      "subtitle": "একটি Candidate সিনেমার চূড়ান্ত Score-এর লব ও হর কোথা থেকে আসে?",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Neighbor-দের ওজনযুক্ত ভোট (Weighted Vote)",
+          "body": "সেরা 20 জন Neighbor-এর দল তো নির্বাচন করা হলো; এবার তাঁদের পছন্দ থেকে প্রতিটি Candidate সিনেমার স্কোর কীভাবে তৈরি হবে? নিয়মটি খুব স্বচ্ছ: নির্বাচিত Neighbor-দের মধ্যে যাঁরা সিনেমাটিকে পছন্দ করেছেন (`B = 1`), তাঁদের Shrunk Similarity ভগ্নাংশের লবে যোগ হবে। আর হরে থাকবে নির্বাচিত সবকজন Neighbor-এর Similarity-র মোট যোগফল—কেবল ওই সিনেমাটি যাঁরা রেট করেছেন তাঁদের যোগফল নয়! তার মানে এই স্কোরটি আসলে নির্দেশ করে আপনার নির্বাচিত Neighbor দলের মোট সমর্থনের কতটুকু অংশ এই সিনেমাটির পক্ষে গেছে; কোনো Neighbor সিনেমাটি না দেখে থাকলে তাঁর অবদান লবে 0 থাকে (যদিও বাস্তবে না দেখা মানে অপছন্দ করা নয়)।"
+        },
+        {
+          "type": "text",
+          "title": "ভগ্নাংশের হরটি (Denominator) কেন সবার জন্য স্থির রাখা হলো?",
+          "body": "অনেকেই প্রশ্ন করেন, যাঁরা সিনেমাটি দেখেছেন কেবল তাঁদের Similarity দিয়ে ভাগ করলে কী সমস্যা হতো? একটু ভাবলেই বিপদটা ধরা পড়বে: তেমন Item-specific হর ব্যবহার করলে কোনো অখ্যাত সিনেমা যদি মাত্র একজন Neighbor দেখে পছন্দ করে থাকেন, তবে লব ও হর কেটে গিয়ে সিনেমাটির স্কোর হয়ে যেত পূর্ণ 1.0! আমাদের বর্তমান স্থির হরটি (Constant Denominator) সেই ফাঁদ এড়িয়ে কয়জন Neighbor সমর্থন দিচ্ছেন তার প্রকৃত ওজন ধরে রাখে। খেয়াল রাখবেন, এটি ক্ল্যাসিক্যাল পাঠ্যপুস্তকের Explicit Rating অনুমানের গড় সূত্রের হুবহু রূপ নয়, বরং বাইনারি পছন্দের Top-K র‍্যাঙ্কিংয়ের উপযোগী একটি সুচিন্তিত ফর্মুলা।"
+        },
+        {
+          "type": "math",
+          "title": "User-based CF Scoring সমীকরণ",
+          "body": "s_{CF}(u,i)=\\frac{\\sum_{v\\in N_u}\\tilde s_{uv}B_{vi}}{\\sum_{v\\in N_u}\\tilde s_{uv}}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ লব, হর ও চূড়ান্ত CF Score যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\n\ncase = lab[\"samples\"][0]\ni, ref = case[\"top\"][\"user_cf\"][0]\npositive = {(u, j) for u, j, r, t in lab[\"train\"] if r >= 4}\nden = sum(s for v, s, co in case[\"neighbours\"])\nnum = sum(s for v, s, co in case[\"neighbours\"] if (v, i) in positive)\nassert den > 0 and abs(num / den - ref) < 1e-12\nprint(\"item\", i, \"weighted votes\", num, \"all neighbor weight\", den, \"score\", ref)\n"
+        },
+        {
+          "type": "text",
+          "title": "স্কোরের পরিসর ও তার সঠিক ব্যাখ্যা",
+          "body": "যেহেতু আমাদের সব Neighbor ওজন অঋণাত্মক এবং বাইনারি এন্ট্রির মান 0 অথবা 1, তাই চূড়ান্ত স্কোরটি সবসময় 0 থেকে 1-এর মধ্যেই থাকবে। কিন্তু কোনো সিনেমার স্কোর 0.8 হওয়ার অর্থ কিন্তু এই নয় যে ইউজার সিনেমাটি পছন্দ করার বাস্তব সম্ভাবনা 80%! কারণ আমাদের Neighbor দলটিই ঐতিহাসিক ডেটার ঝোঁক (Bias) নিয়ে গঠিত, অদেখা রেটিংগুলোর আসল রায় অজানা, এবং এখানে কোনো Probability Calibration করা হয়নি। তাই উচ্চ স্কোর মানে কেবল যৌথ পছন্দের জোরালো একটি নকশা—কোনো পরম সত্যের নিশ্চয়তা নয়।"
+        },
+        {
+          "type": "text",
+          "title": "কেন এই সিনেমাটি দেখানো হলো? (Explainability)",
+          "body": "Neighborhood মডেলের একটি চমৎকার মানবিক গুণ হলো এর স্বচ্ছ ব্যাখ্যাযোগ্যতা। আমরা খুব সহজেই ভেতরে ঢুকে দেখতে পারি যে User 42 এবং User 105-এর সাথে লক্ষ্য ইউজারের অনেকগুলো পছন্দের সিনেমার মিল রয়েছে, এবং তাঁরা দুজনেই এই নতুন সিনেমাটি পছন্দ করেছেন বলেই এর স্কোর ওপরে উঠেছে। তবে প্রাইভেসি নীতিমালা মেনে কখনোই অ্যানোনিমাইজড ইউজার আইডি থেকে কারো ব্যক্তিগত পরিচয় অনুমান করা বা অন্য ইউজারের সামনে উন্মুক্ত করা যাবে না। আর মনে রাখতে হবে, এই ব্যাখ্যা কেবল অতীতের সাহচর্য (Association) দেখায়—এর কারণেই যে দর্শক সিনেমাটি পছন্দ করবেন, তেমন কোনো কার্যকারণ (Causal Claim) প্রমাণ করে না।"
+        },
+        {
+          "type": "text",
+          "title": "শূন্য স্কোরের ভিড় ও তালিকা পূরণের বাস্তবতা",
+          "body": "যদি নির্বাচিত কোনো Neighbor-ই একটি নির্দিষ্ট সিনেমা পছন্দ না করে থাকেন, তবে তার স্কোর হবে 0। স্বল্প ইতিহাসের ইউজারদের ক্ষেত্রে দেখা যেতে পারে মাত্র তিনটি সিনেমা ধনাত্মক স্কোর পেয়েছে, আর বাকি Top 10 তালিকা পূরণ করার সময় শূন্য স্কোর পাওয়া সিনেমাগুলো শুধু ছোট থেকে বড় সাংখ্যিক `movieId` ক্রমে ঢুকে পড়েছে! তার মানে স্ক্রিনে 10 টি আইটেম পূর্ণ হয়ে থাকা মানেই যে মডেল প্রতিটি আইটেম নিয়ে ভীষণ আত্মবিশ্বাসী, তা মোটেও নয়। বাস্তব প্রোডাকশনে ন্যূনতম কত স্কোর না থাকলে মডেল সুপারিশ দেওয়া থেকে বিরত থাকবে (Abstention Policy) বা অন্য মডেলে Fallback করবে, তা একটি স্বতন্ত্র ডিজাইন সিদ্ধান্ত।"
+        },
+        {
+          "type": "text",
+          "title": "Python ও Flutter-এ নিখুঁত Runtime সামঞ্জস্য",
+          "body": "আমাদের Python-এর Sparse ভেক্টর হিসাব এবং Flutter অ্যাপের Map-ভিত্তিক হিসাব—উভয় জায়গাতেই নির্বাচিত Neighbor তালিকা থেকে হুবহু একই নিয়মে সব Fit আইটেমের স্কোর গণনা করা হয়; এখানে কোনো আনুমানিক সার্চ (ANN) বা র‍্যান্ডম স্যাম্পলিং ব্যবহার করা হয়নি। আরেকটি সূক্ষ্ম ক্রম খেয়াল রাখবেন: আগে ইউজারের দেখা (Seen) সিনেমাগুলো বাদ দিয়ে তারপর অবশিষ্ট যোগ্য তালিকা থেকে Top 10 নেওয়া হয়। কেউ যদি উল্টোটা করেন—অর্থাৎ আগে Top 10 বেছে নিয়ে তারপর দেখা সিনেমাগুলো ছেঁটে ফেলেন—তবে তালিকা ছোট হয়ে যাবে এবং সেটি সম্পূর্ণ ভিন্ন একটি নীতি হয়ে দাঁড়াবে!"
+        }
+      ]
+    },
+    {
+      "id": "ch30_itemcf",
+      "title": "Item-based CF ও Content Similarity-র পার্থক্য",
+      "subtitle": "একই সিনেমাগুলো কারা পছন্দ করেছেন—তার ভিত্তিতে Item-এর মিল",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "ম্যাট্রিক্স ঘুরিয়ে দেখার Intuition (Row বনাম Column)",
+          "body": "এতক্ষণ আমরা User-based CF-এ আমাদের ইন্টারঅ্যাকশন ম্যাট্রিক্সের Row-গুলো অর্থাৎ দুজন মানুষের পছন্দের ইতিহাস তুলনা করেছি। এবার ঠিক একই ম্যাট্রিক্সের Column-গুলো তুলনা করলেই আমরা পেয়ে যাই Item-based Collaborative Filtering! এখানে দুটি সিনেমার মধ্যে মিল মাপা হয় এই দেখে যে কতজন দর্শক দুটি সিনেমাই একসাথে পছন্দ করেছেন। এর জন্যেও কোনো Genre বা মেটাডেটা জানার প্রয়োজন নেই। খেয়াল করুন, আগের Content Cosine এবং এই Item-CF Cosine—উভয় ক্ষেত্রেই গাণিতিক অপারেশনটি ভেক্টরের Cosine হলেও ভেক্টরের অক্ষ (Axes) এবং তথ্যের উৎস সম্পূর্ণ আলাদা!"
+        },
+        {
+          "type": "text",
+          "title": "Item-based পদ্ধতিতে সুপারিশ যেভাবে কাজ করে",
+          "body": "এই পদ্ধতিতে সুপারিশ করার পথটি বেশ সোজাসাপ্টা: একজন Target ইউজার অতীতে যেসব সিনেমা পছন্দ করেছেন, প্রতিটি Candidate সিনেমার সাথে সেগুলোর মিল খুঁজে ওজনযুক্ত যোগফল (Weighted Aggregation) নেওয়া হয়। প্রোডাকশন সিস্টেমে এর একটি বড় প্রকৌশলগত সুবিধা হলো, প্রতিটি সিনেমার সবচেয়ে কাছের Neighbor সিনেমাগুলোর তালিকা আগেভাগেই হিসাব করে (Precompute) ক্যাশে রেখে দেওয়া যায়, যা অনলাইনে দ্রুত সুপারিশ দেখাতে দারুণ কাজে লাগে। বাস্তবে User-based নাকি Item-based পদ্ধতি বেশি সাশ্রয়ী হবে, তা নির্ভর করে আপনার প্ল্যাটফর্মে ইউজার ও আইটেমের সংখ্যার অনুপাত, ডেটার Sparsity এবং ক্যাটালগ কত ঘন ঘন বদলায় তার ওপর।"
+        },
+        {
+          "type": "math",
+          "title": "Item-to-Item Binary Cosine সমীকরণ",
+          "body": "\\mathrm{cos}(i,j)=\\frac{|U_i^+\\cap U_j^+|}{\\sqrt{|U_i^+|\\,|U_j^+|}}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ দুটি সিনেমার Co-like ও Cosine যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\n\nimport math\n\npair = lab[\"item_pairs\"][0]\na, b = pair[\"a\"], pair[\"b\"]\nua = {u for u, i, r, t in lab[\"train\"] if i == a and r >= 4}\nub = {u for u, i, r, t in lab[\"train\"] if i == b and r >= 4}\nco = len(ua & ub)\ncos = co / math.sqrt(len(ua) * len(ub)) if ua and ub else 0\nassert co == pair[\"overlap\"] and abs(cos - pair[\"cosine\"]) < 1e-12\nprint(a, b, co, cos, cos * co / (co + 10))\n"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের প্রজেক্টে এই অংশের বাস্তব পরিধি",
+          "body": "উপরের কোডে দেখুন, বাস্তব MovieLens ডেটা থেকে নেওয়া তিনটি সিনেমা-জোড়ার (`item_pairs`) যৌথ পছন্দ ও Cosine স্কোর আমরা সরাসরি যাচাই করেছি। তবে স্বচ্ছতার খাতিরে মনে রাখবেন, আমাদের অ্যাপের মূল ব্যক্তিগতকৃত CF র‍্যাঙ্কিংটি User-based পদ্ধতিতে চালানো হয়েছে; পুরো ক্যাটালগের ওপর পূর্ণাঙ্গ Item-based র‍্যাঙ্কিং পরীক্ষা এখানে চালানো হয়নি। তাই জোড়া মিলিয়ে দেখার এই যাচাইটুকুকে আমরা পূর্ণাঙ্গ Item-based Recommender-এর বেঞ্চমার্ক বলে দাবি করব না।"
+        },
+        {
+          "type": "text",
+          "title": "Cosine-এর বিভিন্ন প্রকরণ: Binary, Adjusted ও Pearson",
+          "body": "Item-based মিলেরও বেশ কয়েকটি গাণিতিক রূপ রয়েছে: আমাদের ব্যবহৃত সরল Binary Cosine, ইউজারের গড় রেটিং বিয়োগ করা Adjusted Cosine, কিংবা আইটেমের গড় বিয়োগ করা Pearson Residual Similarity—এগুলোর প্রতিটিই আলাদা আচরণ করে। যেমন Adjusted Cosine একেক ইউজারের উদার বা কঠোর রেটিং দেওয়ার প্রবণতাকে (User Rating Tendency) আগে Center করে নেয়; আবার শুধুমাত্র দুজনের দেখা অভিন্ন আইটেমের গড় নেওয়া আর ইউজারের পুরো ইতিহাসের গড় নেওয়া এক কথা নয়। 2001 সালে Sarwar et al. তাঁদের বিখ্যাত গবেষণাপত্রে এই Item-based অ্যালগরিদম পরিবারের বিস্তারিত আলোচনা করেছিলেন; আমাদের এই বাইনারি জোড়া পরীক্ষাটি মূল ধারণা বোঝার একটি অংশমাত্র, সেই পূর্ণ পেপারের হুবহু পুনর্নির্মাণ নয়।"
+        },
+        {
+          "type": "text",
+          "title": "বড় ক্যাটালগে মেমোরির ফাঁদ (Scaling Trap)",
+          "body": "অনেকেই ভাবেন ইউজারের চেয়ে আইটেম কম হলে বুঝি কোনো সমস্যাই নেই। কিন্তু ক্যাটালগ বড় হলে `Bᵀ B` ম্যাট্রিক্সটি `catalog²` পরিমাণ মেমোরি খেয়ে ফেলতে পারে! বিশেষ করে জনপ্রিয় সিনেমাগুলো যখন অসংখ্য সাধারণ দর্শকের পছন্দের তালিকায় থাকে, তখন দুটি Sparse ম্যাট্রিক্সের গুণফলও বেশ ঘন (Dense) হয়ে উঠতে পারে। তাই বিশাল ক্যাটালগের বাস্তব সিস্টেমে শুধু শীর্ষ কয়েকটি Neighbor ছেঁকে রাখা (Top-neighbor Truncation), ডেটা ভাগ করা (Partitioning) অথবা Approximate Nearest Neighbor (ANN) সার্চ অপরিহার্য হয়ে পড়ে।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে অনুশীলনের নির্দেশনা",
+          "body": "অনুশীলনের সময় প্রথমে ছোট একটি কাল্পনিক উদাহরণে হাতে Cosine বের করে সূত্রটি আয়ত্ত করুন, তারপর উপরের কোডের মতো প্রথম সিনেমা-জোড়ার আসল সংখ্যাগুলো মিলিয়ে দেখুন। একটি মজার গাণিতিক খুঁটিনাটি লক্ষ্য করবেন: কোনো সিনেমার নিজের সাথে নিজের কাঁচা Cosine 1.0 হলেও, তার ওপর `c / (c + 10)` Shrinkage গুণ করলে কিন্তু মানটি 1.0-এর চেয়ে কমে যায়! তবুও ইউজারের আগে দেখা সিনেমা বাদ দেওয়ার ফিল্টারটি আলাদাভাবে রাখতেই হবে—কারণ Similarity-র সংজ্ঞা আর দেখানোর যোগ্যতার নীতি (Eligibility Policy) দুটি সম্পূর্ণ ভিন্ন দায়িত্ব পালন করে।"
+        }
+      ]
+    },
+    {
+      "id": "ch30_explicitcf",
+      "title": "Explicit-rating Neighborhood: Centering ও Pearson",
+      "subtitle": "মানুষের নিজস্ব Rating-scale ঝোঁক দূর করার জন্য আলাদা Estimator",
+      "duration": "55 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "একেক মানুষের রেটিং দেওয়ার স্কেল কেন আলাদা?",
+          "body": "বাস্তবে আমরা চারপাশে তাকালেই দেখি, একজন উদার দর্শক হয়তো মোটামুটি ভালো লাগলেই 4 বা 5 Star দিয়ে বসেন, আর একজন কড়া সমালোচক দারুণ সিনেমাতেও 2 থেকে 4-এর মধ্যে ঘোরাঘুরি করেন! আমরা যদি কাঁচা Star সংখ্যার ওপর সরাসরি Cosine চালাই, তবে মানুষের ব্যক্তিগত স্কেল ও গড়ের এই পার্থক্য (Scale and Offset Bias) আসল পছন্দের সাথে গুলিয়ে যাবে। কিন্তু প্রতিটি ইউজারের নিজস্ব গড় রেটিং তাঁর প্রতিটি রেটিং থেকে বিয়োগ করলে যে Residual পাওয়া যায়, তা চমৎকারভাবে প্রকাশ করে সিনেমাটি তাঁর স্বাভাবিক প্রত্যাশার চেয়ে কতটা বেশি বা কম ভালো লেগেছে। আমাদের আগের বাইনারি (`rating >= 4`) মডেলটি সরলতার স্বার্থে রেটিং স্কেলের এই সূক্ষ্ম মাত্রাগুলো বাদ দিয়েছিল।"
+        },
+        {
+          "type": "text",
+          "title": "Pearson Correlation-এর মূল ধারণা",
+          "body": "দুইজন ইউজার দুজনেই রেট করেছেন এমন অভিন্ন সিনেমাগুলোর (Common Observed Items) ওপর তাঁদের এই গড়-বিয়োগকৃত (Centered) রেটিংয়ের Covariance-কে নরম্যালাইজ করলেই পাওয়া যায় Pearson Similarity। এটি বাস্তবায়ন করার সময় স্পষ্টভাবে ঠিক করে নিতে হয় গড়টি কি ইউজারের সব রেটিং থেকে নেওয়া হবে নাকি শুধু অভিন্ন সিনেমা থেকে, ন্যূনতম কয়টি অভিন্ন সিনেমা লাগবে এবং কী ধরনের Shrinkage থাকবে। এছাড়া কোনো ইউজার যদি সব সিনেমায় হুবহু একই রেটিং দেন, তবে তাঁর Variance ও ভগ্নাংশের হর 0 হয়ে যাবে; আর এই Similarity ধনাত্মক ও ঋণাত্মক (Signed, -1 থেকে +1) দুই-ই হতে পারে!"
+        },
+        {
+          "type": "math",
+          "title": "Mean-centered Explicit Rating Prediction সূত্র",
+          "body": "\\hat r_{ui}=\\bar r_u+\\frac{\\sum_{v\\in N_u(i)}s_{uv}(r_{vi}-\\bar r_v)}{\\sum_{v\\in N_u(i)}|s_{uv}|}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ User Mean ও Residual যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\n\nimport numpy as np\n\nu = lab[\"samples\"][0][\"user\"]\nvalues = [r for uid, i, r, t in lab[\"train\"] if uid == u]\nmean = np.mean(values)\nresidual = np.array(values) - mean\nassert abs(float(residual.sum())) < 1e-10\nprint(u, float(mean), float(np.linalg.norm(residual)))\n"
+        },
+        {
+          "type": "text",
+          "title": "ঋণাত্মক Similarity থাকলে হরে কেন পরম মান (Absolute Value) লাগে?",
+          "body": "উপরের সমীকরণটি লক্ষ্য করুন: এখানে Target ইউজারের নিজস্ব গড়ের সাথে যোগ করা হচ্ছে ওই সিনেমায় রেটিং দেওয়া Neighbor-দের Residual-এর ওজনযুক্ত গড়। কিন্তু ভগ্নাংশের হরে সাধারণ যোগফলের বদলে নেওয়া হয়েছে Similarity-র পরম মানের যোগফল! কেন বলুন তো? কারণ ধনাত্মক ও ঋণাত্মক Similarity সরাসরি যোগ করলে তারা পরস্পরকে কেটেকুটে হরটিকে শূন্যের কাছাকাছি নামিয়ে আনতে পারে, যা অনুমানকে অবিশ্বাস্য রকম ফুলিয়ে-ফাঁপিয়ে দেবে! চূড়ান্ত অনুমানটিকে বৈধ রেটিং সীমার (0.5 থেকে 5.0) ভেতরে Clip করে রাখা যায়, তবে সেই Clipping ও Fallback নিয়ম আগে থেকেই পরিষ্কার করে লিখে রাখতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের বর্তমান প্রজেক্টের মডেলের সাথে পার্থক্য",
+          "body": "পাঠকের মনে যেন বিন্দুমাত্র বিভ্রান্তি না থাকে সেজন্য স্পষ্ট করে রাখি: আমাদের অ্যাপের `user_cf` মডেলটি বাইনারি পজিটিভ সমর্থনের অনুপাত ব্যবহার করে, এই Explicit Star Residual সূত্রটি নয়। আর আমাদের রিপোর্টের RMSE পরীক্ষাটি চালানো হয়েছে কেবল Bayesian Item Mean এবং Global Mean বেসলাইনের ওপর—কোনো Explicit Pearson Recommender-এর ওপর নয়। ইন্টারভিউ ও তাত্ত্বিক পূর্ণতার জন্য আমরা এখানে গাণিতিক ধারণাটি শিখছি, কিন্তু না চালানো কোনো মডেলের কাল্পনিক ফলাফল দাবি করছি না।"
+        },
+        {
+          "type": "text",
+          "title": "Sparse ডেটায় Centering করার একটি মারাত্মক ফাঁদ",
+          "body": "কোডে রেটিং Center করার সময় একটি খুব সাধারণ ভুলে পুরো ম্যাট্রিক্স নষ্ট হয়ে যেতে পারে: কেবল দেখা রেটিংগুলো থেকে ইউজারের গড় বিয়োগ করার পর অদেখা ঘরগুলোর মানও থাকে 0। এখানে 0 মানে কিন্তু অদেখা ঘর অথবা ঠিক গড়ের সমান রেটিং—মোটেও 0 Star রেটিং নয়! Sparse হিসাবের সময় দেখা ঘরগুলোর সঠিক Mask না রাখলে হাজার হাজার ফাঁকা ঘরের শূন্য মিলে গড় ও Variance সম্পূর্ণ ভুল হয়ে যাবে।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-র জনপ্রিয় প্রশ্ন: ভালো RMSE কিন্তু খারাপ Top-K কেন?",
+          "body": "ইন্টারভিউতে প্রায়ই জিজ্ঞেস করা হয়: আপনার মডেলের Rating RMSE কমেছে, কিন্তু Top-K র‍্যাঙ্কিং খারাপ হলো কেন? এর মূল কারণ হলো, দেখা রেটিংয়ের MSE বা RMSE মূলত বহুল পঠিত ও জনপ্রিয় আইটেমগুলোর ওপর নিখুঁত হওয়ার চেষ্টা করে, কিন্তু হাজারো অদেখা Candidate আইটেমের ভিড়ে সেরা 10 টিকে সবার ওপরে তুলে আনার (Candidate Discrimination) কাজটি সম্পূর্ণ আলাদা! পরবর্তী অধ্যায়গুলোতে (Book 5 · Chapter 2 ও Chapter 3) আমরা দেখব কীভাবে সরাসরি র‍্যাঙ্কিংয়ের উপযোগী Pairwise বা Listwise Objective সাজাতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে হিসাব: Signed Similarity দিয়ে রেটিং অনুমান",
+          "body": "চলুন সংখ্যার মাধ্যমে দেখি হরে পরম মান না নিলে কী ভয়াবহ বিপদ হতে পারত! ধরুন আমাদের Target ইউজারের গড় রেটিং 3.0। একটি নতুন সিনেমায় দুজন Neighbor রেটিং দিয়েছেন `[5.0, 1.0]`, যাঁদের নিজস্ব গড় রেটিং যথাক্রমে `[4.0, 3.0]` এবং Target ইউজারের সাথে যাঁদের Pearson Similarity যথাক্রমে `[0.8, -0.4]`। লক্ষ্য করুন, দুজনের Residual হলো `[5 - 4, 1 - 3] = [1.0, -2.0]`। দ্বিতীয় Neighbor-এর রুচি বিপরীত (`-0.4`) এবং তিনি সিনেমাটিকে নিজের গড়ের চেয়ে 2 কম দিয়েছেন—তাই গুণফলে দুজনেই আসলে পজিটিভ সংকেত দিচ্ছেন: লব হবে `0.8 * 1.0 + (-0.4) * (-2.0) = 1.6`! এবার হরে পরম মানের যোগফল নিলে পাই `|0.8| + |-0.4| = 1.2`, ফলে চূড়ান্ত অনুমান দাঁড়ায় `3.0 + 1.6 / 1.2 = 4.333333`—যা খুবই যৌক্তিক। অথচ কেউ যদি ভুল করে হরে চিহ্নসহ যোগফল (`0.8 - 0.4 = 0.4`) নিতেন, তবে অনুমান হয়ে যেত `3.0 + 1.6 / 0.4 = 7.0`, যা 5-star স্কেলেরই বাইরে!"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Residual Prediction ও হরের তুলনা",
+          "body": "import numpy as np\n\ntarget_mean = 3.0\nsimilarities = np.array([0.8, -0.4])\nratings = np.array([5.0, 1.0])\nmeans = np.array([4.0, 3.0])\nnumerator = similarities @ (ratings - means)\ndenominator = np.abs(similarities).sum()\nassert denominator > 0\nprediction = target_mean + numerator / denominator\nsigned_denominator = target_mean + numerator / similarities.sum()\nprint(\n    round(numerator, 6),\n    round(denominator, 6),\n    round(prediction, 6),\n    round(signed_denominator, 6),\n)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে ভেবে উত্তর দিন",
+          "body": "কোনো Candidate সিনেমায় যদি একজন Neighbor-ও রেটিং না দিয়ে থাকেন কিংবা সবার Similarity শূন্য হয়ে যায়, তবে এই সূত্রে কীভাবে রেটিং অনুমান করবেন?",
+          "solution": "এমন অবস্থায় ভগ্নাংশের হর 0 হয়ে যাবে, তাই আগে থেকেই ঘোষিত একটি নিরাপদ Fallback নীতি ব্যবহার করতে হবে—যেমন শুধু Fit ডেটা থেকে পাওয়া ওই ইউজারের নিজস্ব গড় রেটিং, সিনেমার Shrunk গড়, অথবা গ্লোবাল গড় রেটিং ব্যবহার করা। একইসাথে ইউজার বা আইটেমটি Cold কি না এবং বৈধ সীমায় Clipping করা হয়েছে কি না তা স্পষ্টভাবে রিপোর্ট করতে হবে।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch30_candidate",
+      "title": "Candidate Eligibility, Filtering ও Cold Start",
+      "subtitle": "গাণিতিক Model Score-এর বাইরেও বাস্তব নীতির ভূমিকা",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "স্কোরিংয়ের আগেই যোগ্যতার ছাঁকনি (Eligibility First)",
+          "body": "একটি মডেল গাণিতিকভাবে এমন কোনো সিনেমাকে সর্বোচ্চ স্কোর দিয়ে বসতে পারে যা দর্শক আগেই দেখে ফেলেছেন, যেটির স্ট্রিমিং মেয়াদ শেষ হয়ে গেছে, দর্শকের অঞ্চলে দেখানোর অনুমতি নেই (Region Restricted), অথবা ক্যাটালগ থেকে সরিয়ে নেওয়া হয়েছে! অর্থাৎ মডেলের স্কোরই শেষ কথা নয়—তার আগে দরকার একটি সুস্পষ্ট Candidate Eligibility নীতি। আমাদের এই অফলাইন পরীক্ষায় যেহেতু আঞ্চলিক স্বত্ব বা লাইভ ইনভেন্টরির লগ নেই, তাই আমরা দুটি পরিষ্কার নিয়ম কার্যকর করেছি: কেবল Fit সময়ে দেখা যাওয়া আইটেমগুলোই ক্যাটালগে থাকবে, এবং ইউজারের আগে রেট করা সব সিনেমা বাদ যাবে।"
+        },
+        {
+          "type": "text",
+          "title": "কেন সব দেখা সিনেমাই বাদ দিতে হয় (Exclude Seen)?",
+          "body": "একজন দর্শক কোনো সিনেমাকে 3 Star দিয়েছেন—তার মানে সিনেমাটি আমাদের `rating >= 4` পজিটিভ প্রোফাইলে ঢোকেনি ঠিকই, কিন্তু দর্শক সিনেমাটি ইতিমধ্যেই দেখেছেন! আমরা যদি শুধু পজিটিভ প্রোফাইলের সিনেমাগুলো বাদ দিতাম, তবে তাঁর দেখা এই মাঝারি বা কম রেটিংয়ের সিনেমাগুলোই আবার নতুন প্রস্তাব হিসেবে সামনে চলে আসত। অবশ্য গান শোনা বা খাবার অর্ডারের মতো বাস্তব পণ্যে মানুষ একই জিনিস বারবার উপভোগ (Repeat Consumption) করতে পারেন—তখন তার জন্য আলাদা বিজনেস অবজেক্টিভ সাজাতে হয়; তবে আমাদের বর্তমান কাজটি হলো সম্পূর্ণ অদেখা নতুন সিনেমার সন্ধান (Unseen-item Discovery) দেওয়া।"
+        },
+        {
+          "type": "math",
+          "title": "যোগ্য Candidate সেটের গাণিতিক সংজ্ঞা",
+          "body": "\\mathcal C_u=\\{i:i\\in I_{fit}\\}\\setminus\\{i:(u,i)\\in R_{fit}\\}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ প্রতিটি মডেলের Candidate বৈধতা পরীক্ষা",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\n\ncase = lab[\"samples\"][0]\nseen = {i for i, r in case[\"history\"]}\ncatalog = {i for i, t, g in lab[\"movies\"]}\nfor method, items in case[\"top\"].items():\n    ids = [i for i, s in items]\n    assert len(ids) == 10 and len(set(ids)) == 10\n    assert set(ids) <= catalog and not seen.intersection(ids)\nprint(\"all seen\", len(seen), \"eligible candidates\", len(catalog - seen))\n"
+        },
+        {
+          "type": "text",
+          "title": "নতুন দর্শকের সমস্যা (User Cold Start)",
+          "body": "যখন এমন একজন ইউজার আসেন যাঁর Fit অংশে কোনো অতীত ইতিহাসই নেই, তখন তাঁর ব্যক্তিগত রুচি অনুমান করার কোনো উপায় থাকে না। আমাদের সিস্টেমে তখন Content এবং User CF উভয় মডেলই স্বচ্ছভাবে Popularity Baseline-এ Fallback করে, আর Bayesian Baseline তার নিজস্ব নন-পার্সোনালাইজড গড় স্কোর বজায় রাখে। আমাদের ল্যাবে যে প্রথম Cold User-এর উদাহরণটি দেখানো হয়েছে, তা কোনো কৃত্রিমভাবে বানানো ডেটা নয়—মূল ডেটাসেটেরই একজন বাস্তব দর্শক যিনি Cutoff সময়ের পরে প্রথম রেটিং দিয়েছেন।"
+        },
+        {
+          "type": "text",
+          "title": "নতুন সিনেমার সমস্যা (Item Cold Start) ও মূল্যায়নের হর",
+          "body": "অন্যদিকে যেসব সিনেমা কেবল Cutoff-এর পরেই প্রথমবার রেটিং পেয়েছে (Future-only Items), সেগুলো আমাদের Fit ক্যাটালগেই নেই—তাই কোনো মডেলই সেগুলোকে Recommend করতে পারবে না। এজন্যই আমাদের মূল Warm মূল্যায়নে ইউজারের ভবিষ্যতের পজিটিভ সিনেমাগুলোর মধ্যে কেবল সেগুলোকেই হরে (Denominator) রাখা হয় যেগুলো Fit ক্যাটালগে ছিল এবং আগে দেখা হয়নি। কিন্তু Broad Cohort মূল্যায়নে ভবিষ্যতের সব পজিটিভ সিনেমাই হরে থাকে—ফলে এই নাগালের বাইরের নতুন সিনেমাগুলো সেখানে না পাওয়া (Missed) হিসেবেই গণ্য হয়। শুধু একটি মেট্রিক দেখে পুরো ক্যাটালগ কভারেজের দাবি করলে এই বাস্তব ফাঁকটুকু ঢাকা পড়ে যেত!"
+        },
+        {
+          "type": "text",
+          "title": "ভবিষ্যতের তথ্য দিয়ে কোনো জাদুকরী সুবিধা নয় (No Future Oracle)",
+          "body": "অনেক সময় ভুলবশত কেউ কেউ মূল্যায়ন করার সময় ইউজার ভবিষ্যতে যে সিনেমাগুলো পছন্দ করবেন সেগুলোকে জোর করে Candidate তালিকায় ঢুকিয়ে দেন—যা এক ধরনের মারাত্মক Data Leakage! আমরা কঠোরভাবে Metadata স্ন্যাপশট থেকে ভবিষ্যতের আইডিগুলো ছেঁকে বাদ দিয়েছি। শুধুমাত্র একদম শেষে মেট্রিক হিসাব করার সময় ভবিষ্যতের সত্যিকারের পজিটিভ তালিকা (Target Annotations) পড়া হয়; মডেলের স্কোরিং বা ফিল্টারিং ধাপ কখনোই তা ছুঁয়ে দেখে না। এই স্পষ্ট দেয়ালটিই আমাদের পুরো পাইপলাইনকে Leakage-মুক্ত রাখে।"
+        },
+        {
+          "type": "text",
+          "title": "Workbench-এ ফিল্টার বন্ধ করে পার্থক্য দেখুন",
+          "body": "অ্যাপের Workbench-এ গিয়ে Exclude Seen ফিল্টারটি একবার বন্ধ (Off) করে দেখুন কীভাবে তালিকার চেহারা মুহূর্তেই বদলে যায়! মনে রাখবেন, ফিল্টার বন্ধ করা এই তালিকাটি কেবল মডেল ভেতরে কী ভাবছে তা পরখ করার জন্য—আমাদের মূল মূল্যায়নের ডিফল্ট নিয়ম কিন্তু এটি নয়। আর পাশের History ড্রয়ারে ইউজারের অতীত রেটিংয়ের পাশাপাশি ভবিষ্যতের যে পজিটিভ চিহ্নগুলো দেখানো হয়, তা শুধু মানুষের মিলিয়ে দেখার সুবিধার্থে—মডেলের ইনপুট হিসেবে নয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch30_ranking",
+      "title": "Precision, Recall ও NDCG@K",
+      "subtitle": "তালিকার ক্রমের মান (Ordering Quality) এবং ভগ্নাংশের হর স্পষ্ট করুন",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Precision@K: শীর্ষ তালিকার কতটুকু লক্ষ্যভেদ করল?",
+          "body": "আমরা যখন একজন দর্শককে সেরা 10 টি সিনেমার তালিকা (Top 10) দেখাই, তখন প্রথম প্রশ্ন আসে: এই 10 টির মধ্যে কয়টি সিনেমা দর্শক ভবিষ্যতে সত্যিই দেখে পছন্দ করেছেন? সেই সংখ্যার (Hits) সাথে 10-এর অনুপাতই হলো Precision@10। তবে আগেই যেমন শিখেছি, তালিকায় থাকা বাকি যে সিনেমাগুলো দর্শক রেট করেননি সেগুলো সত্যিই অপ্রাসঙ্গিক কি না তা আমরা জানি না—তাই এটি আসলে কেবল দেখা পজিটিভ তথ্যের সাপেক্ষে মাপা (Observed-positive) Precision। আমাদের ক্যাটালগে যথেষ্ট Candidate থাকায় সবার তালিকাই পূর্ণ দৈর্ঘ্যের হয়; আর সাধারণ কোডে তালিকা ছোট হলেও হরে স্থির `K` রাখা হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "Recall@K: সম্ভাব্য পছন্দের কত অংশ খুঁজে পাওয়া গেল?",
+          "body": "দ্বিতীয় প্রশ্নটি হলো: দর্শকের ভবিষ্যতের মোট যোগ্য পজিটিভ সিনেমার (Gold Set) কত অংশ আমাদের Top K তালিকায় জায়গা করে নিতে পারল? এটাই Recall@K। এখানে ভগ্নাংশের হর কীভাবে সংজ্ঞায়িত হচ্ছে তা ভীষণ গুরুত্বপূর্ণ: আমাদের প্রধান Warm Cohort-এ হর হলো ভবিষ্যতের পজিটিভ এবং Fit ক্যাটালগের ছেদ থেকে আগে দেখা সিনেমা বাদ দিয়ে যা থাকে; আর Broad Cohort-এ হর হলো ভবিষ্যতের সব পজিটিভ সিনেমা। লবে একই Hit সংখ্যা থাকলেও হর বদলে যাওয়ায় ফলাফলের অর্থ বদলে যায়! আর যাঁদের ভবিষ্যতে একটিও পজিটিভ রেটিং নেই, তাঁদের এই গড় হিসাবের বাইরে রাখা হয়।"
+        },
+        {
+          "type": "math",
+          "title": "Precision@K, Recall@K ও NDCG@K-এর সমীকরণ",
+          "body": "P@K=\\frac{|T_K\\cap G|}{K},\\quad R@K=\\frac{|T_K\\cap G|}{|G|},\\quad \\mathrm{NDCG}@K=\\frac{\\sum_{j=1}^K\\mathbf1[i_j\\in G]/\\log_2(j+1)}{\\sum_{j=1}^{\\min(K,|G|)}1/\\log_2(j+1)}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ একটি সুনির্দিষ্ট উদাহরণে Ranking Metric যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"rec30\", Path(\"assets/datasets/movielens/recommendation_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\n\n# Explicit mathematical fixture, not a MovieLens benchmark.\nranked = [10, 20, 30, 40, 50]\ngold = [20, 40, 60]\nmetrics = m.row_metrics(ranked, gold, 5)\nassert (\n    metrics[\"hits\"] == 2 and metrics[\"recall\"] == 2 / 3 and metrics[\"precision\"] == 0.4\n)\nprint(metrics)\n"
+        },
+        {
+          "type": "text",
+          "title": "NDCG@K: তালিকার উপরের দিকের স্থান কেন বেশি মূল্যবান?",
+          "body": "Precision এবং Recall-এর একটি বড় সীমাবদ্ধতা হলো, পছন্দের সিনেমাটি তালিকার 1 নম্বরে এল নাকি 10 নম্বরে এল—তাতে এদের মান একটুও বদলায় না! অথচ বাস্তব স্ক্রিনে মানুষ শুরুর দিকের আইটেমগুলোতেই সবচেয়ে বেশি নজর দেয়। এই ক্রমের গুরুত্ব ধরতেই ব্যবহার করা হয় NDCG@K (Normalized Discounted Cumulative Gain): এখানে `rank`-তম অবস্থানে কোনো Hit পাওয়া গেলে তাকে `1 / log2(rank + 1)` ওজন দেওয়া হয়—ফলে 1 নম্বর স্থানের ওজন হয় পূর্ণ 1.0, আর নিচে নামলে ওজন ধীরে ধীরে কমতে থাকে। এরপর সম্ভাব্য সেরা সাজানোর (Ideal DCG, যেখানে সব সত্যিকারের পজিটিভ শুরুতেই পরপর থাকে) যোগফল দিয়ে ভাগ করে মানটিকে 0 থেকে 1-এর মধ্যে নিয়ে আসা হয়। খেয়াল রাখুন, এখানেও আমরা বাইনারি পজিটিভ লেবেল (`rating >= 4`) ব্যবহার করেছি, সরাসরি Star-এর মানকে Gain হিসেবে বসাইনি।"
+        },
+        {
+          "type": "text",
+          "title": "সব ইউজারের ফলাফল গড় করার নিয়ম: Macro বনাম Micro",
+          "body": "পুরো ডেটাসেটের সার্বিক স্কোর বের করার সময় আমরা প্রথমে প্রতিটি যোগ্য ইউজারের মেট্রিক আলাদাভাবে হিসাব করি এবং তারপর সবার সমান ওজনে গড় নিই—একে বলে User-macro Averaging। এর বদলে যদি সব ইউজারের মোট Hit যোগ করে মোট পজিটিভ দিয়ে ভাগ করা হতো (Micro-recall), তবে হাতেগোনা কয়েকজন অতি-সক্রিয় ইউজার পুরো ফলাফলকে একাই নিয়ন্ত্রণ করতেন, কারণ একজন ইউজারের ভবিষ্যতে অনেকগুলো পজিটিভ রেটিং থাকতে পারে। তাই যেকোনো রিপোর্টে গড়টি Macro নাকি Micro তা স্পষ্ট করে উল্লেখ করা অপরিহার্য।"
+        },
+        {
+          "type": "text",
+          "title": "কেন আমরা Sampled Negative ব্যবহার করিনি?",
+          "body": "অনেক পুরোনো পেপারে হিসাব দ্রুত করার জন্য প্রতিটি সত্যিকারের পজিটিভ আইটেমের সাথে র‍্যান্ডম মাত্র 100 টি অদেখা আইটেম নিয়ে তার ভেতর র‍্যাঙ্কিং মাপা হতো। কিন্তু গবেষণায় প্রমাণিত হয়েছে যে 100 টি স্যাম্পল করা আইটেমের ভেতর Recall@10 মাপা আর পুরো ক্যাটালগের হাজার হাজার আইটেমের ভেতর Recall@10 মাপা এক জিনিস নয়—এমনকি এতে দুটি মডেলের জয়-পরাজয়ের ক্রমও উল্টে যেতে পারে! এই পরিচিত অসামঞ্জস্য এড়াতেই আমরা প্রতিটি যোগ্য Fit আইটেমকে পূর্ণভাবে স্কোর করে র‍্যাঙ্ক করেছি।"
+        },
+        {
+          "type": "text",
+          "title": "প্রান্তিক অবস্থা (Edge Cases) ও K পরিবর্তনের নিয়ম",
+          "body": "কোনো ইউজারের সত্যিকারের পজিটিভ সেট যদি ফাঁকা হয়, তবে তাঁর জন্য Recall ও NDCG গাণিতিকভাবে অসংজ্ঞায়িত—তাই জোর করে সেখানে 0 বসিয়ে সার্বিক গড়কে কৃত্রিমভাবে ছোট করা হয় না; এমনকি পুরো Cohort ফাঁকা হলে Scorecard স্পষ্টভাবে `null` দেখায়। আর অ্যাপে `K = 5` এবং `K = 10` বদলানোর যে বাটনটি আছে, তা কেবল একই স্থির Top 10 তালিকার প্রথম 5 টি আইটেম কেটে দেখায়—নতুন করে মডেল টিউনিং বা রান করে না।"
+        }
+      ]
+    },
+    {
+      "id": "ch30_evaluation",
+      "title": "Temporal Scorecard ও বাস্তব ফলাফল বিশ্লেষণ",
+      "subtitle": "কোনো মডেলকে বিজয়ী ঘোষণা করার আগে Cohort ও হর পরীক্ষা করুন",
+      "duration": "55 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "আমাদের স্থির পরীক্ষার প্রকৃত পরিসংখ্যান",
+          "body": "চলুন এবার আমাদের স্থির (Frozen) পরীক্ষার আসল সংখ্যাগুলোর দিকে তাকাই। মোট 100836 টি রেটিংকে সময়ের 80% সীমানায় (`2016-03-22T08:26:02+00:00`) ভাগ করার পর Fit অংশে পড়েছে 80668 টি রেটিং এবং Future অংশে পড়েছে 20168 টি রেটিং। Fit অংশে ইউজার আছেন 522 জন এবং ক্যাটালগে সিনেমা আছে 7867 টি। কিন্তু সবচেয়ে শিক্ষণীয় সংখ্যাটি হলো মূল্যায়নের দর্শক দল: ভবিষ্যতের উইন্ডোতে যোগ্য পজিটিভ রেটিং থাকা পুরোনো (Warm Eligible) ইউজার পাওয়া গেছে মাত্র 28 জন, আর নতুন আসা (Cold Positive) ইউজার রয়েছেন 88 জন! যেকোনো স্কোরের অর্থ বোঝার আগে এই Cohort আকারের বাস্তবতা মাথায় রাখা ভীষণ জরুরি।"
+        },
+        {
+          "type": "text",
+          "title": "চারটি মডেলের প্রকৃত র‍্যাঙ্কিং ফলাফল",
+          "body": "এই 28 জনের Warm Cohort-এ Recall@10 মেট্রিকে চারটি মডেলের ফলাফল এসেছে এরকম: Popularity পেয়েছে 0.044923, Bayesian পেয়েছে 0.032983, Content পেয়েছে 0.006349, এবং User CF পেয়েছে সর্বোচ্চ 0.059447। দেখা যাচ্ছে, যৌথ পছন্দের সংকেত ব্যবহার করে User CF এখানে সাধারণ জনপ্রিয়তাকে ছাড়িয়ে গেছে, অন্যদিকে কেবল মোটা দাগের Genre দিয়ে বানানো Content মডেলটি অনেক পিছিয়ে পড়েছে। তবে মনে রাখবেন, এগুলো একটি সুনির্দিষ্ট প্রোটোকলের অফলাইন ডায়াগনস্টিক ফলাফল—সর্বজনীন কোনো অ্যালগরিদম র‍্যাঙ্কিং বা সরাসরি অনলাইন ব্যবসার লাভের প্রমাণ নয়।"
+        },
+        {
+          "type": "math",
+          "title": "Macro গড় মেট্রিক ও Catalog Coverage-এর সূত্র",
+          "body": "\\bar M=|U_{eval}|^{-1}\\sum_{u\\in U_{eval}}M_u,\\quad \\mathrm{coverage}_{catalog}=|\\cup_u T_K(u)|/|I_{fit}|"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Warm ও Broad Scorecard এবং RMSE পরিদর্শন",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\n\nfor method, scopes in lab[\"scorecards\"].items():\n    print(method, \"warm\", scopes[\"warm\"], \"all\", scopes[\"all\"])\nassert (\n    lab[\"report\"][\"warm_eligible_users\"]\n    == lab[\"scorecards\"][\"user_cf\"][\"warm\"][\"users\"]\n)\nprint(\"rating RMSE\", lab[\"report\"][\"bayesian_rmse\"], lab[\"report\"][\"global_mean_rmse\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "সার্বিক দর্শক দল (Broad Scope) কেন ভিন্ন গল্প বলে?",
+          "body": "এবার যখনই আমরা শুধু 28 জন পুরোনো দর্শকের গণ্ডি পেরিয়ে ভবিষ্যতের সব পজিটিভ দর্শকের (Broad Scope) দিকে তাকাই, তখন দৃশ্যপট বদলে যায়! কারণ সেখানে রয়েছেন 88 জন Cold User এবং এমন অনেক নতুন সিনেমা যা Fit ক্যাটালগেই ছিল না। এই বৃহত্তর দলে Content এবং User CF মডেল দুটি অধিকাংশ নতুন ইউজারের ক্ষেত্রে বাধ্য হয়ে সেই একই Popularity তালিকাতেই Fallback করে। তার মানে Warm দর্শকদের ওপর একটি মডেল যত ভালোই করুক না কেন, নতুন দর্শকদের সেবা দেওয়ার (Cold Serving) মান কিন্তু তাতে আপনাআপনি উন্নত হয়ে যায় না!"
+        },
+        {
+          "type": "recommendation_evaluation",
+          "title": "Rating Prediction ফলাফল: RMSE তুলনা",
+          "body": "অন্যদিকে তারকা রেটিং অনুমানের পরীক্ষায় ভবিষ্যতের সব দেখা রেটিংয়ের ওপর আমাদের Bayesian Shrinkage মডেলের RMSE এসেছে 1.033748, যেখানে সাধারণ Global Mean বেসলাইনের RMSE এসেছে 1.078712 (উভয় ক্ষেত্রেই নতুন অদেখা সিনেমার জন্য গ্লোবাল গড় ব্যবহার করা হয়েছে)। অর্থাৎ Shrinkage স্পষ্টভাবেই গড় অনুমানের ত্রুটি কমিয়েছে। তবে ভুলেও কখনো র‍্যাঙ্কিংয়ের Recall@10 সংখ্যার সাথে রেটিংয়ের RMSE সংখ্যার সরাসরি তুলনা করতে যাবেন না—কারণ দুটির একক এবং গাণিতিক প্রশ্ন সম্পূর্ণ আলাদা!"
+        },
+        {
+          "type": "text",
+          "title": "Catalog Coverage: তালিকাগুলো ক্যাটালগের কতটুকু ছুঁয়েছে?",
+          "body": "র‍্যাঙ্কিং মেট্রিকের পাশাপাশি আমরা মেপেছি Catalog Coverage: সব ইউজারের Top K তালিকাগুলো একত্র করলে (Union) মোট Fit ক্যাটালগের কত ভগ্নাংশ অন্তত একবার হলেও সুপারিশে এসেছে। জনপ্রিয়তার মডেল কেবল ঘুরেফিরে মুষ্টিমেয় কয়েকটি সিনেমাই সবাইকে দেখায় বলে তার কভারেজ থাকে অতি সামান্য, আর ব্যক্তিগতকৃত মডেল ক্যাটালগের অনেক গভীর থেকে সিনেমা তুলে আনতে পারে। তবে শুধু Coverage বেশি হওয়াই কিন্তু ভালো মডেলের লক্ষণ নয়—এলোমেলো সিনেমা দেখালেও কভারেজ অনেক বেশি হতে পারে! তাই প্রাসঙ্গিকতা (Relevance), প্রমাণের জোর এবং Exposure নীতি একসাথে মিলিয়ে বিচার করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "এই পরীক্ষার সীমাবদ্ধতা ও পরবর্তী পদক্ষেপ",
+          "body": "সম্পূর্ণ সততার সাথে খেয়াল রাখতে হবে যে আমরা এখানে কোনো Uncertainty Interval, একাধিক র‍্যান্ডম সিড, Hyperparameter Tuning, Exposure-সংশোধিত মেট্রিক কিংবা অনলাইন A/B Test চালাইনি। মাত্র 28 জনের ছোট Warm Cohort-এ দু-একজন ইউজারের আচরণ বদলালেই সংখ্যার বেশ ওঠানামা (Noise) হতে পারে। এজন্যই বাছাই করা দু-একটি সাফল্যের গল্প না শুনিয়ে আমরা সব বেসলাইন এবং প্রতি ইউজারের পূর্ণ ফলাফল উন্মুক্ত রেখেছি যাতে যে কেউ নিজেই তা যাচাই করতে পারেন।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে প্রমাণ: Sampled Candidate Pool কেন বিভ্রান্তিকর?",
+          "body": "আগের পাঠে বলা Sampled মূল্যায়নের ফাঁদটি চলুন একটি ছোট উদাহরণে হাতেনাতে ধরে ফেলি! ধরুন ক্যাটালগে 5 টি যোগ্য সিনেমা আছে `A, B, C, D, E`, যাদের মডেল স্কোর যথাক্রমে `0.9, 0.8, 0.7, 0.6, 0.1`, এবং ইউজারের একমাত্র সত্যিকারের পছন্দের সিনেমা হলো `E`। পূর্ণ ক্যাটালগে সাজালে `E` পড়ে একদম শেষে 5 নম্বর স্থানে—ফলে `Recall@2 = 0` এবং `NDCG@2 = 0`। কিন্তু কেউ যদি মূল্যায়নের সময় সত্যিকারের পজিটিভ `E`-এর সাথে কেবল একটি নেগেটিভ `A` স্যাম্পল করে নেয়, তবে তালিকা হবে `[A, E]`, যেখানে `E` চলে আসবে 2 নম্বর স্থানে! অমনি একই মডেল স্কোর থাকা সত্ত্বেও রিপোর্ট করা `Recall@2` লাফিয়ে হয়ে যাবে 1 এবং `NDCG@2` হয়ে যাবে `1 / log2(3) ≈ 0.630930`! তাই Candidate Pool ও স্যাম্পলিং নিয়ম না জেনে কখনোই দুটি পরীক্ষার মেট্রিক তুলনা করা উচিত নয়।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Full বনাম Sampled র‍্যাঙ্কিংয়ের তুলনা",
+          "body": "import math\n\nscores = {\"A\": 0.9, \"B\": 0.8, \"C\": 0.7, \"D\": 0.6, \"E\": 0.1}\ngold = \"E\"\nranks, recalls, ndcgs = [], [], []\nfor pool in [list(scores), [\"A\", \"E\"]]:\n    ranking = sorted(pool, key=lambda item: (-scores[item], item))\n    rank = ranking.index(gold) + 1\n    ranks.append(rank)\n    recalls.append(int(rank <= 2))\n    ndcgs.append(1 / math.log2(rank + 1) if rank <= 2 else 0.0)\nprint(*ranks, *recalls, *[round(value, 6) for value in ndcgs])\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে ভেবে উত্তর দিন",
+          "body": "অল্প কয়েকটি র‍্যান্ডম নেগেটিভ স্যাম্পল নিয়ে মাপা মেট্রিক (Sampled Negatives Metric) দেখে কি পূর্ণ ক্যাটালগে মডেলের আসল পারফরম্যান্স নিশ্চিতভাবে বলা যায়?",
+          "solution": "না, বলা যায় না। কারণ Candidate Pool-এর আকার এবং কীভাবে নেগেটিভ স্যাম্পল বাছাই করা হয়েছে তার ওপর র‍্যাঙ্কিং মেট্রিকের মান ও মডেলের আপেক্ষিক ক্রম প্রবলভাবে নির্ভর করে। নির্ভরযোগ্য তুলনার জন্য একই Seen-item ফিল্টার ও যোগ্যতার নিয়ম মেনে পূর্ণ Eligible Catalog-এর ওপর মূল্যায়ন করা উচিত (অথবা স্যাম্পলিংয়ের ঝোঁক সংশোধনকারী পদ্ধতি ব্যবহার করতে হবে), এবং তার সাথে Warm ও Cold উভয় Cohort-এর হর পাশাপাশি রিপোর্ট করতে হবে।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch30_bias",
+      "title": "Exposure Bias, Diversity ও Feedback Loop",
+      "subtitle": "অতীতের দেখা ডেটা থেকে সরাসরি কার্যকারণ (Causal Claim) দাবি নয়",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "একটি Rating জমা পড়ার পেছনের তিনটি ধাপ",
+          "body": "ডেটাবেসে যখন আমরা একটি রেটিং দেখি, তার পেছনে আসলে তিনটি আলাদা বাছাইয়ের ধাপ (Selection Stages) পার হয়ে এসেছে: প্রথমে সিনেমাটি দর্শকের নজরে এসেছে বা তিনি দেখেছেন, এরপর তাঁর ভালো বা মন্দ লেগেছে, এবং সবশেষে তিনি স্বেচ্ছায় অ্যাপে ঢুকে রেটিং দেওয়ার সিদ্ধান্ত নিয়েছেন! আমাদের MovieLens ডেটায় কিন্তু কোন সিনেমা কতবার স্ক্রিনে দেখানো হয়েছিল তার কোনো Exposure বা Impression Probability নেই। তাই অদেখা সিনেমাগুলো দেখালে দর্শক কী করতেন তা যেমন অজানা, তেমনি পুরোনো সিস্টেমের প্রভাবও এর ভেতর মিশে আছে—ফলে সবগুলো দেখা রেটিংয়ের ওপর মাপা স্কোরও পুরো জনগোষ্ঠীর প্রকৃত সন্তুষ্টির কোনো নিখুঁত ঝোঁকমুক্ত (Unbiased) পরিমাপ নয়।"
+        },
+        {
+          "type": "text",
+          "title": "জনপ্রিয়তার দুষ্টচক্র (Popularity Feedback Loop)",
+          "body": "যে সিনেমা আগে থেকেই জনপ্রিয়, সেটি হোমপেজে বেশি দেখানো হয়; বেশি মানুষ দেখে বলে তার ওপর নতুন রেটিংও জমা পড়ে বেশি; আর পরের বার ট্রেনিংয়ের সময় মডেল সেই বাড়তি সংখ্যা দেখে সিনেমাটিকে আরও জোরালোভাবে সামনে ঠেলে দেয়! আমাদের বর্তমান Popularity Count-ও কিন্তু অতীতের সেই সাহচর্যই ব্যবহার করছে। আমরা এখানে তাত্ত্বিকভাবে এই Feedback Loop-এর ঝুঁকি বোঝাচ্ছি, কিন্তু এর প্রকৃত কার্যকারণ মাত্রা (Causal Effect) মাপছি না—কারণ আসল Impression Propensity ডেটায় না থাকলে কেবল `Bias Correction` নাম দিলেই নিখুঁত সংশোধন পাওয়া যায় না।"
+        },
+        {
+          "type": "math",
+          "title": "দেখা রেটিংয়ের শর্তসাপেক্ষ বণ্টন বনাম প্রকৃত পছন্দ",
+          "body": "P(r\\mid u,i,\\mathrm{observed})\\ne P(r\\mid u,i),\\quad \\mathrm{observed}\\;\\text{not independent of}\\;\\mathrm{preference}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Warm, Cold ও Future-only সংখ্যার হিসাব",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\n\nrows = lab[\"rows\"]\ncold = sum(not r[\"train_count\"] and bool(r[\"positive\"]) for r in rows)\nassert cold == lab[\"report\"][\"cold_positive_users\"]\nwarm = [r for r in rows if r[\"train_count\"] and r[\"eligible\"]]\nprint(\n    \"warm users\",\n    len(warm),\n    \"cold positive\",\n    cold,\n    \"future-only items\",\n    lab[\"report\"][\"future_cold_items\"],\n)\n"
+        },
+        {
+          "type": "text",
+          "title": "প্রাসঙ্গিকতা বনাম বৈচিত্র্যের ভারসাম্য (Diversity Trade-off)",
+          "body": "ধরুন একজন দর্শকের Top 10 তালিকার সবকটি সিনেমাই একই সুপারহিরো ফ্র্যাঞ্চাইজি বা একই Genre-এর! এতে প্রতিটি সিনেমার আলাদা প্রাসঙ্গিকতা (Relevance) হয়তো উচ্চ দেখাবে, কিন্তু দর্শকের নতুন কিছু আবিষ্কারের সুযোগ (Discovery) পুরোপুরি সংকুচিত হয়ে যাবে। বাস্তব সিস্টেমে তাই র‍্যাঙ্কিং মেট্রিকের পাশাপাশি Genre Coverage, তালিকার ভেতরের বৈচিত্র্য (Intra-list Diversity) এবং নতুনত্ব (Novelty)-ও মাপা হয়। আমাদের এই অধ্যায়ে আমরা কেবল সামগ্রিক Catalog Coverage মেপেছি—বৈচিত্র্য বাড়ানোর কোনো বিশেষ কৌশলকে এখানে পরীক্ষামূলক বিজয়ী দাবি করিনি।"
+        },
+        {
+          "type": "text",
+          "title": "Cold Start কভারেজ বনাম Demographic Fairness",
+          "body": "এখানে একটি নৈতিক ও কারিগরি সীমানা খুব পরিষ্কার রাখা দরকার। আমাদের ডেটাসেটের দর্শকরা সম্পূর্ণ পরিচয়-গোপনকৃত (Anonymized) এবং এখানে কারো বয়স, লিঙ্গ বা অঞ্চলের মতো কোনো Demographic তথ্য নেই। তাই আমাদের Warm বনাম Cold দর্শকের তুলনাটি কেবল সিস্টেমের পরিচালনাগত কভারেজ (Operational Coverage) দেখায়—কোনো সংরক্ষিত জনগোষ্ঠীর প্রতি ন্যায্যতা (Protected-group Fairness) প্রমাণ করে না। কখনোই কেবল `userId` বা দেখা সিনেমার তালিকা থেকে কারো ব্যক্তিগত পরিচয় অনুমান করার চেষ্টা করবেন না; প্রকৃত Fairness বিশ্লেষণের জন্য দরকার যথাযথ সম্মতিসহ সংগৃহীত ডেটা এবং সুস্পষ্ট ক্ষতির মডেল (Harm Model)।"
+        },
+        {
+          "type": "text",
+          "title": "নতুন আইটেম পরখ করা (Exploration)",
+          "body": "বাস্তব প্রোডাক্টে নতুন সিনেমার ওপর দর্শকের মতামত সংগ্রহ করতে হলে তালিকায় সচেতনভাবে সামান্য নিয়ন্ত্রিত র‍্যান্ডমনেস বা Exploration যোগ করতে হয়—তবে তার জন্য ইউজার এক্সপেরিয়েন্স ও নিরাপদ এক্সপেরিমেন্ট ডিজাইন অপরিহার্য। আমাদের এই অফলাইন ডিটারমিনিস্টিক অ্যাপটি তেমন কোনো লাইভ সার্ভিং নীতি সিমুলেট করেনি। Exploration এবং Inverse Propensity Scoring (IPS)-এর গাণিতিক কৌশলগুলো আমরা সামনে Book 5 · Chapter 4 (RecSys Evaluation & Feedback Loops) এবং Book 6 · Chapter 3 (Experimentation & Causal Reasoning)-এ গভীরভাবে শিখব।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-তে লঞ্চের সিদ্ধান্ত যেভাবে বলবেন",
+          "body": "ইন্টারভিউতে যদি প্রশ্ন করা হয়: অফলাইন টেস্টে Recall@10 বেড়েছে—আপনি কি আজই মডেলটি প্রোডাকশনে লঞ্চ করবেন? আপনার উত্তর হওয়া উচিত পরিপক্ব ও সতর্ক। আগে জানতে চাইবেন ডেটা লগিংয়ের নিয়ম বদলেছে কি না, ক্যাটালগের প্রাপ্যতা ঠিক আছে কি না, নতুন ইউজারদের (Cohort Shift) ওপর প্রভাব কেমন এবং সার্ভিং Latency বা ইউজারের অভিযোগের মতো Guardrail Metric ঠিক আছে কি না। অফলাইন বিশ্লেষণ কেবল একটি জোরালো Hypothesis তৈরি করে; চূড়ান্ত প্রোডাক্ট সিদ্ধান্তের জন্য চাই নিয়ন্ত্রিত অনলাইন Randomized A/B Test এবং দীর্ঘমেয়াদি সন্তুষ্টির প্রমাণ।"
+        }
+      ]
+    },
+    {
+      "id": "ch30_book_cold_start",
+      "title": "Cold Start, Exposure ও Missing-not-negative Feedback",
+      "subtitle": "ধারণা, সম্ভাবনার সূত্র ও হাতে-কলমে Python উদাহরণের সমন্বয়",
+      "duration": "18 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন এই ধারণাটি এত গুরুত্বপূর্ণ?",
+          "body": "কোনো একটি সিনেমায় দর্শকের Click বা Rating নেই—এর মানেই যে তিনি সিনেমাটি অপছন্দ করেছেন, তা মোটেও নিশ্চিত নয়! হতে পারে সিনেমাটি তাঁর স্ক্রিনে কখনো দেখানোই হয়নি, তালিকার অনেক নিচে থাকায় চোখে পড়েনি, অথবা তিনি তখন অ্যাপেই ছিলেন না। অর্থাৎ ডেটা না থাকার (Missingness) ঘটনাটি সরাসরি Exposure Process-এর সাথে জড়িয়ে আছে। এমনকি আমাদের দেখা Explicit Rating-গুলোও দর্শকের নিজস্ব বাছাইয়ের ফল—তাই MovieLens-এ স্টার অনুমান করা আর পুরো ক্যাটালগে ক্লিক করার প্রকৃত পছন্দ জানা এক কথা নয়।"
+        },
+        {
+          "type": "text",
+          "title": "চারটি Cohort এবং প্রতিটির সুস্পষ্ট Fallback",
+          "body": "সমস্যাটিকে গুছিয়ে সমাধান করতে প্রথমেই সংজ্ঞায়িত করুন কে Warm আর কে Cold: আমাদের Fit Cutoff সময়ের আগে কি তাঁর ব্যবহারযোগ্য ইতিহাস আছে? ইউজার ও আইটেম মিলিয়ে চারটি স্পষ্ট ঘর তৈরি হয়: (১) Warm User ও Warm Item, (২) Cold User ও Warm Item, (৩) Warm User ও Cold Item, এবং (৪) Cold User ও Cold Item। সিস্টেম ডিজাইনের সময় এই চারটি ঘরের প্রতিটির জন্য যোগ্য ক্যাটালগ ও নিরাপদ Fallback নীতি আলাদাভাবে লিখে ফেলতে হয়। নতুন ইউজারের জন্য গ্লোবাল Popularity একটি নিরাপদ শুরু হতে পারে বটে, কিন্তু তাতে জনপ্রিয় আইটেমের আধিপত্য ও Exposure Bias থেকেই যায়।"
+        },
+        {
+          "type": "math",
+          "title": "Observed Click সম্ভাবনার উৎপাদক বিশ্লেষণ",
+          "body": "P(\\mathrm{click}\\mid u,i)=P(\\mathrm{exposed}\\mid u,i)P(\\mathrm{click}\\mid\\mathrm{exposed},u,i)"
+        },
+        {
+          "type": "text",
+          "title": "খাতাকলমে একটি সংখ্যার উদাহরণ",
+          "body": "উপরের সূত্রটি বলছে, কোনো আইটেমে ক্লিক পড়ার দেখা সম্ভাবনা হলো দুটি সংখ্যার গুণফল: আইটেমটি দেখানোর সম্ভাবনা (Exposure Probability) গুণন দেখানো হলে ক্লিক করার প্রকৃত আগ্রহ (Click Given Exposure)। ধরুন প্রথম একটি সিনেমার দেখানোর সম্ভাবনা 0.2, কিন্তু দেখানো হলে দর্শকের ক্লিক করার হার বেশ চমৎকার: 0.5—তাহলে লগে দেখা ক্লিকের হার হবে `0.2 * 0.5 = 0.1`। অন্যদিকে দ্বিতীয় একটি সিনেমা হোমপেজে প্রচুর দেখানো হয় (0.8), কিন্তু দর্শকের প্রকৃত সাড়া দেওয়ার হার মাত্র 0.25—তবুও লগে তার দেখা ক্লিকের হার দাঁড়াবে `0.8 * 0.25 = 0.2`! খেয়াল করুন, দ্বিতীয় সিনেমাটির কাঁচা ক্লিক দ্বিগুণ হলেও দর্শকের আসল আগ্রহ কিন্তু প্রথমটিতেই দ্বিগুণ বেশি ছিল!"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Exposure ও Click গুণফলের হিসাব",
+          "body": "exposure = [0.2, 0.8]\nclick_if_exposed = [0.5, 0.25]\nobserved_click = [e * c for e, c in zip(exposure, click_if_exposed)]\n# Products describe a specified exposure process, not inferred user preference.\nprint(*observed_click)\n"
+        },
+        {
+          "type": "text",
+          "title": "কোডের আউটপুট আমাদের কী শেখাচ্ছে?",
+          "body": "কোডটি চালালে আউটপুট আসে `0.1` এবং `0.2`। এখান থেকেই মূল শিক্ষাটি স্পষ্ট হয়ে ওঠে: শুধু কাঁচা ক্লিকের লগ (`0.1` বনাম `0.2`) দেখে আপনি কখনোই আলাদা করতে পারবেন না কোন অংশটুকু এসেছে বেশি দেখানোর কারণে আর কোন অংশটুকু এসেছে দর্শকের সত্যিকারের পছন্দের কারণে—যতক্ষণ না আপনার কাছে Exposure Propensity জানা থাকছে! আগে আমরা Book 3 · Chapter 8 (Reinforcement Learning & Bandits)-এ নীতি ও অন্বেষণের ধারণা দেখেছি, আর সামনে Book 5 · Chapter 4 (RecSys Evaluation & Feedback Loops)-এ দেখব কীভাবে লগ করা Propensity ও পর্যাপ্ত Support ব্যবহার করে এই ঝোঁক সংশোধন করা হয়।"
+        },
+        {
+          "type": "text",
+          "title": "কখন এই সংশোধন সরাসরি দাবি করা যাবে না?",
+          "body": "উপরের ছোট কোডে আমরা দেখানোর সম্ভাবনা (`0.2` ও `0.8`) নিজেরা বসিয়ে উদাহরণটি বুঝেছি। কিন্তু বাস্তব MovieLens ডেটাসেটে নির্ভরযোগ্য কোনো Impression Propensity লগ নেই—তাই সেখানে জোর করে কোনো কাল্পনিক সংখ্যা বসিয়ে IPS Causal Correction করে ফেলার দাবি করা সম্পূর্ণ অযৌক্তিক হবে। পাশাপাশি নতুন (Cold) আইটেমের মেটাডেটা ব্যবহার করার সময়ও খেয়াল রাখতে হবে, সেই ফিচার ও ক্যাটালগে আসার Timestamp যেন অবশ্যই আমাদের Cutoff সময়ের সাপেক্ষে নিরাপদ (Cutoff-safe) হয়।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজে ভেবে উত্তর দিন",
+          "body": "Training Cutoff-এর পরে নতুন মুক্তি পাওয়া কোনো সিনেমার জন্য তো আগে থেকে শেখা কোনো Embedding নেই—তাকে Recommend করার তিনটি কার্যকর Fallback উপায় কী হতে পারে?",
+          "solution": "যেহেতু Fit ডেটায় সিনেমাটির কোনো ইন্টারঅ্যাকশন নেই, তাই পুরোনো কোনো শেখা ID Embedding পাওয়া যাবে না। এক্ষেত্রে তিনটি বাস্তবসম্মত Fallback উপায় হলো: (১) সিনেমার Genre, বিবরণ বা মেটাডেটা থেকে Content Encoder দিয়ে ভেক্টর তৈরি করা, (২) প্রাসঙ্গিক ক্যাটাগরি বা Popularity Cohort অনুযায়ী ডিফল্ট প্রারম্ভিক স্কোর দেওয়া, অথবা (৩) দর্শকদের একটি ছোট অংশে নিয়ন্ত্রিত Exploration চালিয়ে প্রাথমিক ফিডব্যাক সংগ্রহ করা। তবে অফলাইন মূল্যায়নের সময় ভুলেও ভবিষ্যতের নতুন Item ID-কে জোর করে Fit তালিকায় ঢুকিয়ে Cold-start সমাধান হয়ে গেছে বলে দাবি করবেন না!",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch30_engineering",
+      "title": "Reproducible Artifact ও Offline বাস্তবায়ন",
+      "subtitle": "মূল ডেটা → Split → পরিসংখ্যান → Ranking → চূড়ান্ত Report",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "আমাদের Bundled Artifact-এর ভেতরে কী কী আছে?",
+          "body": "সম্পূর্ণ স্বচ্ছতা বজায় রাখতে আমাদের বান্ডেল করা `recommendation_lab.json` ফাইলে প্রয়োজনীয় সব উপাদান গুছিয়ে রাখা হয়েছে: মূল আইডিসহ Fit ও Future অংশের রেটিং, Fit ক্যাটালগের মেটাডেটা, হিসাব করা IDF ওজন, নির্বাচিত উদাহরণের ইউজার কেস, তাঁদের Neighbor তালিকা ও শীর্ষ স্কোরের রেফারেন্স, প্রতিটি ডায়াগনস্টিক ইউজারের Top 10 তালিকা এবং সামষ্টিক Scorecard। সবচেয়ে দারুণ বিষয় হলো, অ্যাপের ভেতরে আপনি যখন কোনো ইউজারকে বেছে নেন, তখন লুকানো কোনো ক্যাশ দেখানোর বদলে লোড করা ডেটা থেকেই সরাসরি মডেলের স্কোর নতুন করে হিসাব (Recompute) করা হয়, আর স্থির রেফারেন্স স্কোরগুলো ব্যবহৃত হয় গাণিতিক নিখুঁততা মিলিয়ে দেখার জন্য!"
+        },
+        {
+          "type": "text",
+          "title": "Python ও Flutter: দুটি সমান্তরাল ও অভিন্ন পথ",
+          "body": "আমাদের পুরো প্রকৌশল কাঠামোটি দুটি সমান্তরাল পথে একসূত্রে গাঁথা: প্রথমে Python ওয়ার্কফ্লো কাঁচা উৎস ফাইলগুলো পড়ে স্প্লিট, পরিসংখ্যান ও ডায়াগনস্টিক ফলাফল তৈরি করে; এরপর অ্যাপের ভেতরে Dart কোড সেই ডেটা পড়ে হুবহু একই গাণিতিক সূত্রে স্কোরিং ও র‍্যাঙ্কিং চালায়। এর পাশাপাশি স্বতন্ত্র NumPy ও সাধারণ সেটের টেস্ট দিয়ে মূল ডেটা এবং র‍্যাঙ্কিং ক্রম যাচাই করা হয়েছে। নির্দিষ্ট পরিবেশে JSON আউটপুটটির হুবহু সামঞ্জস্য পরীক্ষা করা হলেও ভবিষ্যতের ভিন্ন লাইব্রেরি সংস্করণে বিট-টু-বিট অভিন্নতার অযৌক্তিক প্রতিশ্রুতি না দিয়ে আমরা সংখ্যাগত সমতার (Numerical Parity) ওপর জোর দিয়েছি।"
+        },
+        {
+          "type": "math",
+          "title": "Reproducible Artifact-এর গাণিতিক উপাদান",
+          "body": "\\mathrm{artifact}=\\{\\mathrm{source\\ hashes},t_c,\\theta,\\mathrm{rankings},\\mathrm{metrics}\\}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Source Hash ও পদ্ধতির অখণ্ডতা যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\nspec = importlib.util.spec_from_file_location(\n    \"rec30\", Path(\"assets/datasets/movielens/recommendation_workflow.py\")\n)\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\n\nimport json, hashlib\n\nlab = json.loads((m.DATA / \"recommendation_lab.json\").read_text(encoding=\"utf-8\"))\nfor name, h in lab[\"report\"][\"source_hashes\"].items():\n    assert m.digest(m.DATA / name) == h\nassert m.METHODS == (\"popularity\", \"bayesian\", \"content\", \"user_cf\")\nprint(lab[\"report\"][\"source_hashes\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "Command-line (CLI) ব্যবহারের পরিষ্কার নিয়ম",
+          "body": "আমাদের `recommendation_workflow.py` স্ক্রিপ্টটি ডিফল্টভাবে ইমপোর্ট বা রান করলে কোনো মূল সোর্স ফাইল পরিবর্তন করে না এবং কোনো ইন্টারনেট সংযোগও চায় না। কেবল সচেতনভাবে `--write-lab` ফ্ল্যাগ দিলেই নতুন করে JSON ফাইলটি তৈরি হয়, আর `--artifact-dir` ব্যবহার করে অন্য যেকোনো ফোল্ডারে ল্যাব ফাইল ও চেকসাম এক্সপোর্ট করা যায়। যেহেতু এই অধ্যায়ের মডেলগুলো সম্পূর্ণ পরিসংখ্যান ও Neighborhood-ভিত্তিক, তাই এখানে কোনো ভারী GPU বা Optimizer State চেকপয়েন্ট সংরক্ষণের প্রয়োজনই নেই।"
+        },
+        {
+          "type": "text",
+          "title": "ক্রস-প্ল্যাটফর্ম Tie-breaking নীতি",
+          "body": "ভাসমান সংখ্যার (Floating-point) যোগফলে ভিন্ন প্রোগ্রামিং ভাষায় শেষ বিটে অতি সূক্ষ্ম যে পার্থক্য হতে পারে, তার কারণে যেন র‍্যাঙ্কিংয়ের ক্রম কখনোই নড়ে না যায় সেজন্য সর্টিংয়ের সময় স্কোরকে স্পষ্টভাবে 12 দশমিক ঘর পর্যন্ত Round করে তারপর সাংখ্যিক `movieId` দিয়ে Tie ভাঙা হয়। তবে সংরক্ষিত স্কোরগুলো পূর্ণ প্রিসিশনেই থাকে—মনে রাখবেন, সর্টিংয়ের এই Rounding কেবল স্থিতিশীল ক্রমের জন্য, কোনো Probability Calibration নয়। আর আমাদের টেস্ট স্যুট আইটেমের আইডি এবং র‍্যাঙ্কিংয়ের ক্রম দুটোই আলাদাভাবে মিলিয়ে দেখে।"
+        },
+        {
+          "type": "text",
+          "title": "অ্যাপের স্থানীয় ডেটা সংরক্ষণ (SQLite Persistence)",
+          "body": "অ্যাপে নতুন অধ্যায় যুক্ত বা আপডেট হলেও পুরোনো লেসনের আইডি কখনো বদলায় না। স্থানীয় SQLite ডেটাবেস আপনার লেখা নোট, বুকমার্ক, সম্পন্ন করা পাঠ, কুইজের প্রচেষ্টা এবং কোডের খসড়া আলাদাভাবে সংরক্ষণ করে রাখে। অন্যদিকে ল্যাবের স্লাইডার ও টগলগুলো কেবল তাৎক্ষণিক পরীক্ষা-নিরীক্ষার (Exploratory State) জন্য—সেগুলো আপনার শেখার স্থায়ী অগ্রগতির সাথে কখনোই গুলিয়ে যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "কোড প্রদর্শন ও মূল্যায়নের সীমানা",
+          "body": "একটি ব্যবহারিক বিষয় মনে রাখবেন: মোবাইল বা ডেস্কটপ অ্যাপটি আপনাকে সুন্দর Syntax-highlighted Python কোড দেখায় এবং অনুশীলনের সংখ্যাসূচক উত্তর মিলিয়ে দেখে, কিন্তু অ্যাপের ভেতরে সরাসরি যেকোনো ইচ্ছেমতো Python কোড রান (Arbitrary Code Execution) করে না। তাই সঠিক সংখ্যা ইনপুট দিলেই তা আপনার খসড়া কোডের ভেতরের গঠনগত শুদ্ধতা প্রমাণ করে না। সব উদাহরণ ও রেফারেন্স সমাধান আমাদের ডেভেলপার QA পরিবেশে চালিয়ে যাচাই করা হয়েছে, এবং নিজে কোড চালিয়ে পরীক্ষা করার জন্য আপনার কম্পিউটারের লোকাল Python পরিবেশ ব্যবহার করতে হবে।"
+        }
+      ]
+    },
+    {
+      "id": "ch30_review",
+      "title": "Interview Defense ও ব্যবহারিক প্রস্তুতির Checklist",
+      "subtitle": "গাণিতিক সূত্র, কোড, বাস্তব ফলাফল ও সীমাবদ্ধতা—সব বলুন একসাথে",
+      "duration": "40 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কঠিন শব্দ ছাড়া এক মিনিটে পুরো প্রজেক্টের সারাংশ",
+          "body": "ইন্টারভিউয়ার যদি বলেন, এক মিনিটে আপনার কাজটি বুঝিয়ে বলুন, তবে জটিল বুলি না আওড়ে সহজ ভাষায় বলুন: আমরা অতীতের MovieLens রেটিং থেকে নির্দিষ্ট সময়ের সীমানা টেনে ভবিষ্যতের অদেখা সিনেমা র‍্যাঙ্ক করেছি। শুরুতে তুলনার ভিত্তি হিসেবে নিয়েছি Popularity ও Bayesian Shrunk Mean; এরপর সিনেমার Genre দিয়ে বানিয়েছি Content Profile এবং দর্শকদের যৌথ পছন্দের মিল দিয়ে বানিয়েছি User-based CF। পূর্ণ Fit ক্যাটালগ স্কোরিং, দেখা সিনেমা বাদ দেওয়ার ফিল্টার, পূর্বনির্ধারিত স্থির প্যারামিটার এবং Warm ও Broad—এই দুই দর্শক দলের আলাদা হিসাব থাকায় আমাদের প্রতিটি সংখ্যার উৎস নিখুঁতভাবে ব্যাখ্যা করা যায়।"
+        },
+        {
+          "type": "text",
+          "title": "Whiteboard-এ যা না দেখেই লিখে দেখাতে হবে",
+          "body": "হোয়াইটবোর্ড ইন্টারভিউয়ের প্রস্তুতির জন্য খাতায় নিজে হাতে পরপর দুটি ধারা ডিরাইভ করার অভ্যাস করুন: প্রথমে Binary Cosine, তার ওপর Overlap Shrinkage এবং স্থির হরসহ Neighbor Weighted Vote; এরপর Genre IDF এবং দুবার নরম্যালাইজ করা User Profile স্কোর। এর পাশাপাশি শূন্য ভেক্টর (Zero Norm), অদেখা ঘরের অর্থ (Missingness), নিজেকে Neighbor থেকে বাদ দেওয়া, কম রেটিং পাওয়া দেখা সিনেমা ফিল্টার করা এবং সাংখ্যিক আইডি দিয়ে Tie ভাঙার কারণ মুখে স্পষ্টভাবে ব্যাখ্যা করতে পারাই প্রকৃত প্রস্তুতির পরিচয়।"
+        },
+        {
+          "type": "math",
+          "title": "একটি নিশ্ছিদ্র Interview Defense-এর ছয়টি স্তম্ভ",
+          "body": "\\mathrm{defense}=\\mathrm{task}+\\mathrm{signal}+\\mathrm{split}+\\mathrm{baseline}+\\mathrm{metric}+\\mathrm{limits}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ চূড়ান্ত Artifact ও পরবর্তী ধাপের প্রস্তুতি",
+          "body": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\n\nassert len(lab[\"samples\"]) >= 4\nfor case in lab[\"samples\"]:\n    assert all(len(case[\"top\"][method]) == 10 for method in lab[\"scorecards\"])\nprint(\n    \"Reproduce: python assets/datasets/movielens/recommendation_workflow.py --artifact-dir <output>\"\n)\nprint(\"Next: Matrix Factorization & Feature Interactions, after review.\")\n"
+        },
+        {
+          "type": "text",
+          "title": "লাইভ কোডিং প্রস্তুতির লক্ষ্য",
+          "body": "নিজে স্ক্র্যাচ থেকে Sparse ইতিহাস পড়ে Popularity, Content Profile, Nearest Neighbors এবং Top-K র‍্যাঙ্কিং লেখার অনুশীলন করুন। আর ইউনিট টেস্ট লেখার সময় কেবল সহজ উদাহরণ নয়, বরং আচরণ বদলে দেয় এমন প্রান্তিক ঘটনা (Counterexamples) দিয়ে পরীক্ষা করুন: যেমন কম রেটিং দেওয়া দেখা সিনেমা, একদম নতুন Cold User, শূন্য Variance-এর রেটিং, সমান স্কোরের Tie, ভবিষ্যতের পজিটিভ শূন্য থাকা ইউজার এবং ঠিক Cutoff মুহূর্তের সমান Timestamp!"
+        },
+        {
+          "type": "text",
+          "title": "ফলাফল নিয়ে সৎ ও পরিণত যুক্তি উপস্থাপন",
+          "body": "কখনো যদি আপনার জটিল মডেল সাধারণ বেসলাইনকে হারাতে না পারে, তবে সেই ফলাফল লুকাবেন না—সততার সাথে রিপোর্ট করুন এবং কারণ বিশ্লেষণ করুন। আর ডায়াগনস্টিক ডেটা বারবার দেখে যদি Hyperparameter টিউন করেন, তবে চূড়ান্ত দাবির জন্য অবশ্যই নতুন একটি অদেখা ডেটা উইন্ডো রাখুন। মনে রাখবেন, বেছে নেওয়া দু-একজন ইউজারের চমৎকার সুপারিশ তালিকা দেখানো ভালো উদাহরণ পরিদর্শন (Case Inspection) হতে পারে, কিন্তু সামগ্রিক সাফল্যের প্রমাণ নয়; আর কখনো না চালানো কোনো পরীক্ষার কাল্পনিক সংখ্যা বানিয়ে বলবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "অনুশীলনের সবচেয়ে কার্যকর ক্রম",
+          "body": "শেখাটা পাকা করতে এই ক্রমটি অনুসরণ করুন: প্রথমে রেফারেন্স সমাধান না দেখেই দশটি Coding Exercise নিজে সমাধান করার চেষ্টা করুন এবং শুধু চূড়ান্ত সংখ্যা নয়, মাঝখানের প্রতিটি ধাপের মান কেন তেমন হলো তা বোঝার চেষ্টা করুন। এরপর Interview প্রশ্নগুলোতে গিয়ে পাল্টা স্পষ্টীকরণ প্রশ্ন (Clarifying Questions), সূত্র, Trade-off এবং ব্যর্থতার সমাধান নিজের ভাষায় বলার চর্চা করুন—কারণ কেবল মাল্টিপল-চয়েস কুইজ মুখস্থ করে কখনোই আসল System Design ইন্টারভিউ সামলানো যায় না!"
+        },
+        {
+          "type": "text",
+          "title": "পরবর্তী অধ্যায়ে যাওয়ার প্রস্তুতি",
+          "body": "Candidate যোগ্যতা, Content ও User Similarity, Shrinkage এবং র‍্যাঙ্কিং মেট্রিকগুলোর হিসাব নিজের হাতে একবার মিলিয়ে নিন। এই ভিত্তিগুলো নিখুঁতভাবে আয়ত্তে এলেই আমরা পরের অধ্যায়ে—অর্থাৎ Book 5 · Chapter 2 (Matrix Factorization & Feature Interactions)-এ গিয়ে শিখব কীভাবে বড় ও Sparse ম্যাট্রিক্স ভেঙে গভীর Latent Factor এবং আধুনিক র‍্যাঙ্কিং অবজেক্টিভ তৈরি করতে হয়!"
+        }
+      ]
+    }
+  ],
+  "quizzes": [
+    {
+      "id": "ch30_q1",
+      "question": "একজন User কোনো একটি Movie-তে Rating দেননি—এই ঘটনার সবচেয়ে সঠিক ব্যাখ্যা কোনটি?",
+      "options": [
+        "সিনেমাটি সম্পর্কে ইউজারের প্রকৃত Preference এখনো অজানা",
+        "ইউজার নিশ্চিতভাবেই সিনেমাটি অপছন্দ করেছেন (Guaranteed Dislike)",
+        "ইউজার সিনেমাটি দেখে সরাসরি 0 Star দিয়েছেন",
+        "সিনেমাটি ইউজারের স্ক্রিনে নিশ্চিতভাবে দেখানো হয়েছিল (Confirmed Exposure)"
+      ],
+      "answer": 0,
+      "explanation": "ডেটায় কোনো রেটিং না থাকা (Missingness) মূলত Observation Process-এর ফলাফল। আলাদা কোনো Impression Log বা রেটিং না থাকলে ইউজার আদৌ সিনেমাটি দেখেছেন নাকি অপছন্দ করেছেন, তা নিশ্চিতভাবে বলা যায় না।"
+    },
+    {
+      "id": "ch30_q2",
+      "question": "আমাদের এই Workflow-তে বাইনারি Positive Signal ঠিক কীভাবে তৈরি করা হয়েছে?",
+      "options": [
+        "মূল ডেটাসেটের সরাসরি Click Log থেকে",
+        "সিনেমাটি পুরোটা দেখা শেষ করার (Watch Completion) লগ থেকে",
+        "টিকিট কেনার (Purchase Confidence) রেকর্ড থেকে",
+        "দেখা Explicit Rating-এর ওপর rating >= 4 শর্ত প্রয়োগ করে"
+      ],
+      "answer": 3,
+      "explanation": "MovieLens ডেটাসেটে মূলত দর্শকদের দেওয়া Explicit Star Rating রয়েছে; মডেলিং সহজ করার জন্য আমরা `rating >= 4` শর্ত দিয়ে সেটিকে বাইনারি পজিটিভ পছন্দে রূপান্তর করেছি—এটি সরাসরি মাপা কোনো বাস্তব Click আচরণ নয়।"
+    },
+    {
+      "id": "ch30_q3",
+      "question": "Leakage এড়াতে আমাদের Popularity Baseline কোন ডেটা থেকে গণনা করা হয়?",
+      "options": [
+        "Fit এবং Future উভয় অংশের সব পছন্দের সিনেমা মিলিয়ে",
+        "শুধুমাত্র মূল্যায়নের জন্য রাখা ভবিষ্যতের পজিটিভ টার্গেট থেকে",
+        "শুধুমাত্র Fit অংশে rating >= 4 দেওয়া স্বতন্ত্র User-দের সংখ্যা থেকে",
+        "ভবিষ্যতের সব দেখা রেটিংয়ের যোগফল থেকে"
+      ],
+      "answer": 2,
+      "explanation": "সুপারিশ তৈরির মুহূর্তে ভবিষ্যতের জনপ্রিয়তা ব্যবহার করলে সরাসরি Chronological Data Leakage ঘটে। তাই শুধু Fit অংশের পজিটিভ রেটিং গোনা হয়, এবং প্রতিটি `(user, item)` জোড়া ইউনিক হওয়ায় শর্তপূরণকারী Row সংখ্যাই স্বতন্ত্র User সংখ্যার সমান।"
+    },
+    {
+      "id": "ch30_q4",
+      "question": "একজন User অতীতে কোনো সিনেমা দেখে কম রেটিং (যেমন 2 Star) দিয়েছেন—Unseen-item সুপারিশে সিনেমাটির কী হবে?",
+      "options": [
+        "পজিটিভ প্রোফাইলে না থাকায় বারবার নতুন করে Recommend করা হবে",
+        "ইউজারের সম্পূর্ণ দেখা ইতিহাস (All Observed History) ধরে Candidate তালিকা থেকে বাদ যাবে",
+        "শুধুমাত্র 4 বা 5 Star পাওয়া সিনেমাগুলোই তালিকা থেকে বাদ যাবে",
+        "কম রেটিংকে অদেখা (Missing) ধরে নিয়ে আবার স্কোর করা হবে"
+      ],
+      "answer": 1,
+      "explanation": "পজিটিভ প্রোফাইল তৈরি এবং দেখা সিনেমা ফিল্টার করা দুটি আলাদা ধাপ। আমাদের কাজ যেহেতু নতুন অদেখা সিনেমা খুঁজে দেওয়া, তাই কম রেটিং পাওয়া দেখা সিনেমাগুলোও ইউজারের পূর্ণ Observed History দেখে বাদ দেওয়া হয়।"
+    },
+    {
+      "id": "ch30_q5",
+      "question": "Global Temporal Split করার সময় যেসব Row-এর Timestamp ঠিক Cutoff সময়ের সমান (`t == cutoff`), সেগুলো কোথায় রাখা হয়?",
+      "options": [
+        "সবগুলোই Fit অংশে রাখা হয়",
+        "লটারি করে Fit এবং Future দুই ভাগে ভাগ করা হয়",
+        "পাইপলাইন থেকে পুরোপুরি ফেলে দেওয়া হয়",
+        "User ভেদে কখনো Fit আবার কখনো Future অংশে যায়"
+      ],
+      "answer": 0,
+      "explanation": "আমাদের নিয়মে `t <= cutoff` হলে সব Row যায় Fit অংশে এবং `t > cutoff` হলে যায় Future অংশে। ফলে একই সেকেন্ডের ঘটনা দুই ভাগে ভেঙে যায় না, যদিও এতে মোট Row-এর অনুপাত ঠিক 80% থেকে সামান্য কমবেশি হতে পারে।"
+    },
+    {
+      "id": "ch30_q6",
+      "question": "Bayesian Shrinkage সূত্রে কোনো নতুন আইটেমের দেখা রেটিং সংখ্যা `n = 0` এবং Prior ওজন `m > 0` হলে তার অনুমিত গড় কত হবে?",
+      "options": [
+        "0.0 Star",
+        "5.0 Star",
+        "ভবিষ্যতের রেটিংগুলোর গড়",
+        "Fit ডেটার সার্বিক গড় (Global Mean)"
+      ],
+      "answer": 3,
+      "explanation": "`n = 0` বসালে সূত্রটি দাঁড়ায় `(0 + m * mu) / (0 + m) = mu`। অর্থাৎ কোনো রেটিং না থাকা Cold Item-এর ক্ষেত্রে মডেল ভবিষ্যতের ডেটা না পড়েই নিরাপদে Fit অংশের Global Mean-এ Fallback করে।"
+    },
+    {
+      "id": "ch30_q7",
+      "question": "Bayesian Rating মডেলে Prior ওজন `m`-এর মান যত বাড়ানো হবে, অল্প রেটিং পাওয়া সিনেমার স্কোর কোন দিকে ঝুঁকবে?",
+      "options": [
+        "সবসময় 0-এর দিকে নেমে যাবে",
+        "Popularity Count-এর সংখ্যার সমান হয়ে যাবে",
+        "Fit ডেটার Global Mean-এর দিকে আরও বেশি সরে আসবে",
+        "সবসময় সর্বোচ্চ 5.0-এর দিকে উঠে যাবে"
+      ],
+      "answer": 2,
+      "explanation": "Shrunk গড় হলো সিনেমার নিজস্ব গড় এবং Global Mean-এর একটি Convex Combination। Pseudo-count বা Prior ওজন `m` বাড়ালে নিজস্ব স্বল্প প্রমাণের চেয়ে সার্বিক গড়ের গুরুত্ব বেড়ে যায়।"
+    },
+    {
+      "id": "ch30_q8",
+      "question": "আমাদের Content-based মডেলের Genre IDF হিসাব করার সময় একটি 'Document' বলতে কী বোঝানো হয়েছে?",
+      "options": [
+        "একটি পজিটিভ Like ঘটনা",
+        "Fit Catalog-এর অন্তর্ভুক্ত একটি স্বতন্ত্র Movie",
+        "একজন স্বতন্ত্র User",
+        "ভবিষ্যতের উইন্ডোর একটি নতুন Rating"
+      ],
+      "answer": 1,
+      "explanation": "এখানে Document Frequency (`df`) মানে হলো Fit ক্যাটালগের কয়টি সিনেমার মেটাডেটায় নির্দিষ্ট একটি Genre উপস্থিত আছে। ভবিষ্যতের একক সিনেমাগুলোকে এই পরিসংখ্যানের বাইরে রাখা হয়েছে।"
+    },
+    {
+      "id": "ch30_q9",
+      "question": "প্রতিটি সিনেমার Genre-IDF ভেক্টরকে L2 Normalize করার প্রধান সুবিধা কী?",
+      "options": [
+        "বেশি সংখ্যক Genre ট্যাগ থাকার কারণে ভেক্টরের দৈর্ঘ্যজনিত বাড়তি সুবিধা (Magnitude Advantage) দূর করে",
+        "স্কোরকে সরাসরি নিখুঁত Calibrated Probability-তে রূপান্তর করে",
+        "মেটাডেটায় না থাকা নতুন Genre নিজে থেকে তৈরি করে নেয়",
+        "সিনেমার গল্প ও অভিনয়ের মান শতভাগ নিশ্চিত করে"
+      ],
+      "answer": 0,
+      "explanation": "L2 Normalization ভেক্টরের দৈর্ঘ্যকে 1-এ স্থির রেখে কেবল তার রুচির দিকটিকে (Direction) ধরে রাখে। তবে হুবহু একই Genre থাকা দুটি সিনেমার ভেক্টর এরপরও সমান হতে পারে।"
+    },
+    {
+      "id": "ch30_q10",
+      "question": "একজন দর্শকের Content Profile ভেক্টর তৈরি করতে কোন সিনেমাগুলোর ভেক্টর যোগ করা হয়?",
+      "options": [
+        "ভবিষ্যতে দর্শক পছন্দ করবেন এমন সব সিনেমা",
+        "মেটাডেটা ফাইলের সবগুলো সিনেমা",
+        "ভবিষ্যতের Impression পাওয়া সিনেমাগুলো",
+        "দর্শকের Fit ইতিহাসে rating >= 4 পাওয়া সিনেমাগুলোর নরম্যালাইজড ভেক্টর"
+      ],
+      "answer": 3,
+      "explanation": "শুধুমাত্র অতীতে পছন্দ করা (`rating >= 4`) সিনেমাগুলোর নরম্যালাইজড ভেক্টর যোগ করে আবার নরম্যালাইজ করা হয়; কম রেটিং পাওয়া সিনেমা প্রোফাইলে না ঢুকলেও Seen ফিল্টারে ঠিকই বাদ পড়ে।"
+    },
+    {
+      "id": "ch30_q11",
+      "question": "User-based Collaborative Filtering-এর Binary Cosine সূত্রের লবে (Numerator) কী থাকে?",
+      "options": [
+        "দুজন ইউজারের মোট রেটিং যোগফলের পার্থক্য",
+        "ভবিষ্যতে দুজনে একসাথে পছন্দ করবেন এমন সিনেমার সংখ্যা",
+        "Fit ইতিহাসে দুজন ইউজারের অভিন্ন পছন্দের সিনেমার সংখ্যা (Shared Liked Item Count)",
+        "দুজনের পছন্দের Genre-এর সংখ্যা"
+      ],
+      "answer": 2,
+      "explanation": "Binary User Cosine হিসাব করা হয় দুজনের পজিটিভ ইন্টারঅ্যাকশন সেটের ছেদ (Intersection) থেকে; সিনেমার Genre মেটাডেটা এখানে মোটেও ব্যবহৃত হয় না।"
+    },
+    {
+      "id": "ch30_q12",
+      "question": "দুজন ইউজারের অভিন্ন পছন্দের সংখ্যা `c = 10` এবং Shrinkage প্যারামিটার `lambda = 10` হলে Shrinkage গুণকটির মান কত হবে?",
+      "options": [
+        "0.1",
+        "0.5",
+        "1.0",
+        "10.0"
+      ],
+      "answer": 1,
+      "explanation": "সূত্র অনুযায়ী `c / (c + lambda) = 10 / (10 + 10) = 0.5`। এর ফলে কাঁচা Cosine স্কোর অর্ধেক হয়ে যায়, যা অল্প প্রমাণের অতি-আত্মবিশ্বাস কমাতে সাহায্য করে।"
+    },
+    {
+      "id": "ch30_q13",
+      "question": "আমাদের User CF ইমপ্লিমেন্টেশনে Shrinkage `lambda = 0` করে দিলেই কি মাত্র 1 টি অভিন্ন পছন্দ থাকা ইউজাররা Neighbor তালিকায় ঢুকে পড়বে?",
+      "options": [
+        "না, কারণ ন্যূনতম 2 টি অভিন্ন পছন্দের (min overlap >= 2) Hard Gate তখনো বহাল থাকে",
+        "হ্যাঁ, সব ইউজারই Neighbor হয়ে যাবে",
+        "শুধুমাত্র Target ইউজার নিজেই নিজের Neighbor হবে",
+        "সব ইউজারের মূল ID স্বয়ংক্রিয়ভাবে বদলে যাবে"
+      ],
+      "answer": 0,
+      "explanation": "নরম Shrinkage গুণক এবং কঠোর ন্যূনতম মিলের শর্ত (Hard Support Gate) দুটি আলাদা সুরক্ষা স্তর। পাশাপাশি নিজেকেও (`self`) তালিকা থেকে সবসময় বাদ রাখা হয়।"
+    },
+    {
+      "id": "ch30_q14",
+      "question": "আমাদের `user_cf` স্কোরিং সূত্রের ভগ্নাংশের হরে (Denominator) কোন মানটি ব্যবহার করা হয়?",
+      "options": [
+        "শুধুমাত্র যাঁরা ওই Candidate সিনেমাটি পছন্দ করেছেন তাঁদের Similarity-র যোগফল",
+        "Candidate সিনেমার সব Genre ওজনের যোগফল",
+        "পুরো ডেটাসেটের সব Star রেটিংয়ের যোগফল",
+        "নির্বাচিত সবকজন Neighbor-এর Shrunk Similarity-র মোট যোগফল"
+      ],
+      "answer": 3,
+      "explanation": "এটি নির্বাচিত Neighbor দলের মোট সমর্থনের আনুপাতিক ভাগ (Weighted Support Fraction) মাপে। কেবল সিনেমাটি রেট করা Neighbor-দের দিয়ে ভাগ করলে মাত্র একজনের পছন্দের বিরল সিনেমাও পূর্ণ 1.0 স্কোর পেয়ে যেত!"
+    },
+    {
+      "id": "ch30_q15",
+      "question": "কোনো সিনেমার `user_cf` স্কোর `0.8` আসা আসলে কী নির্দেশ করে?",
+      "options": [
+        "দর্শক সিনেমাটি দেখে নিশ্চিতভাবে 5 Star দিয়েছেন",
+        "সিনেমাটি দেখালে দর্শকের সন্তুষ্টি কার্যকারণভাবে (Causally) বাড়বেই",
+        "নির্বাচিত Neighbor দলের মোট ওজনের 0.8 অংশ সিনেমাটিকে সমর্থন করেছে",
+        "দর্শকের সিনেমাটি পছন্দ করার নিখুঁত Calibrated Probability হলো 80%"
+      ],
+      "answer": 2,
+      "explanation": "স্কোরটি 0 থেকে 1-এর মধ্যে সীমাবদ্ধ হলেও এর কোনো Probability Calibration করা হয়নি এবং যেসব Neighbor রেটিং দেননি তাঁদের প্রকৃত মতামতও অজানা।"
+    },
+    {
+      "id": "ch30_q16",
+      "question": "Item-based Collaborative Filtering-এ দুটি সিনেমার মধ্যকার Similarity কোথা থেকে আসে?",
+      "options": [
+        "ভবিষ্যতের র‍্যাঙ্কিং তালিকার অবস্থান থেকে",
+        "কোন কোন User দুটি সিনেমাই পছন্দ করেছেন—সেই Column-ভিত্তিক Co-preference থেকে",
+        "সিনেমা দুটির নামের (Title String) বানানের মিল থেকে",
+        "কেবলমাত্র মেটাডেটার Genre-IDF ভেক্টর থেকে"
+      ],
+      "answer": 1,
+      "explanation": "একই দর্শকদের পছন্দের তালিকায় সহ-উপস্থিতি থেকেই Item-based CF মিল খুঁজে নেয়। আমাদের অধ্যায়ে এর বাস্তব জোড়া যাচাই দেখানো হয়েছে, যদিও পূর্ণ র‍্যাঙ্কিং বেঞ্চমার্ক চালানো হয়েছে User-based CF দিয়ে।"
+    },
+    {
+      "id": "ch30_q17",
+      "question": "Explicit Pearson Residual CF মডেলটি কি এই অধ্যায়ের মূল Scorecard বেঞ্চমার্কে চালানো হয়েছে?",
+      "options": [
+        "না, এখানে এর গাণিতিক ধারণা ও Mean-centering-এর হাতে-কলমে হিসাব শেখানো হয়েছে",
+        "হ্যাঁ, আমাদের user_cf মডেলটি আসলে হুবহু সেটিই",
+        "হ্যাঁ, আমাদের Bayesian Mean মডেলটিই Pearson CF",
+        "শুধুমাত্র আলাদা GPU সার্ভারে সেটি চালানো হয়েছে"
+      ],
+      "answer": 0,
+      "explanation": "আমাদের চালানো `user_cf` হলো বাইনারি পজিটিভ ভোটের মডেল, আর `RMSE` মাপা হয়েছে Bayesian Item Mean বেসলাইনে। যে মডেল পরীক্ষায় চালানো হয়নি, তার কোনো কাল্পনিক স্কোর আমরা দাবি করি না।"
+    },
+    {
+      "id": "ch30_q18",
+      "question": "আমাদের মূল্যায়নে 'Warm Eligible Cohort'-এর সদস্য হওয়ার শর্ত কী?",
+      "options": [
+        "যাঁদের Fit অংশে কোনো ইতিহাস নেই (শুধুমাত্র Cold User)",
+        "কেবল ভবিষ্যতের নতুন Genre পছন্দ করা দর্শক",
+        "মূল ডেটাসেটের সবকজন (610 জন) দর্শক",
+        "যাঁদের Fit অংশে রেটিং ইতিহাস আছে এবং ভবিষ্যতে অন্তত 1 টি যোগ্য (Fit-catalog ও অদেখা) পজিটিভ সিনেমা আছে"
+      ],
+      "answer": 3,
+      "explanation": "প্রধান Warm Cohort-এ ইতিহাসহীন নতুন দর্শক এবং কেবল নাগালের বাইরের নতুন সিনেমা পছন্দ করা দর্শকদের বাদ রাখা হয়, আর পুরো দর্শকসমাজের চিত্র দেখতে পাশে আলাদাভাবে Broad Cohort রিপোর্ট করা হয়।"
+    },
+    {
+      "id": "ch30_q19",
+      "question": "একজন দর্শকের `Top 5` সুপারিশ তালিকায় `2`টি Hit পাওয়া গেছে এবং তাঁর মোট যোগ্য পজিটিভ লক্ষ্যমাত্রা (`Gold`) হলো `3`টি। এক্ষেত্রে `Recall@5` কত?",
+      "options": [
+        "3/5",
+        "1/3",
+        "2/3",
+        "2/5"
+      ],
+      "answer": 2,
+      "explanation": "Recall মাপে মোট সত্যিকারের পজিটিভের কত অংশ উদ্ধার করা গেল, তাই `2/3` (অন্যদিকে `2/5` হলো `Precision@5`)। রিপোর্ট করার সময় হরে কোন পজিটিভ সেট ধরা হয়েছে তাও স্পষ্ট করতে হয়।"
+    },
+    {
+      "id": "ch30_q20",
+      "question": "NDCG@K মেট্রিকে তালিকার `rank` অবস্থানে (`1, 2, ...`) পাওয়া একটি Hit-কে কী ওজন (Discount Weight) দেওয়া হয়?",
+      "options": [
+        "কেবল শেষ র‍্যাঙ্কে পূর্ণ ওজন দেওয়া হয়",
+        "1 / log2(rank + 1)",
+        "প্রতিটি অবস্থানেই সমান 5 ওজন দেওয়া হয়",
+        "rank²"
+      ],
+      "answer": 1,
+      "explanation": "উপরের স্থানকে বেশি গুরুত্ব দিতে `1 / log2(rank + 1)` দিয়ে ভাগ করা হয় (যাতে 1 নম্বর স্থানে ওজন হয় 1), এবং শেষে সম্ভাব্য সেরা সাজানোর Ideal DCG দিয়ে নরম্যালাইজ করা হয়।"
+    },
+    {
+      "id": "ch30_q21",
+      "question": "মাত্র 100 টি র‍্যান্ডম Candidate স্যাম্পল নিয়ে মাপা `Recall@10` কি পূর্ণ ক্যাটালগের `Recall@10`-এর সমান?",
+      "options": [
+        "না, Candidate বাছাইয়ের নীতি বদলে যাওয়ায় স্কোর এমনকি মডেলের ক্রমও বদলে যেতে পারে",
+        "হ্যাঁ, সবসময় হুবহু সমান হয়",
+        "শুধুমাত্র K = 10 নিলেই হুবহু সমান হয়",
+        "কেবল সমান স্কোরের Tie ভাঙার নিয়মটুকু বদলায়"
+      ],
+      "answer": 0,
+      "explanation": "ছোট Sampled পুলে প্রতিযোগিতা অনেক সহজ হয়ে যায় এবং এতে বিভিন্ন মডেলের আপেক্ষিক জয়-পরাজয়ও উল্টে যেতে পারে। এজন্য আমাদের ওয়ার্কফ্লোতে সব অদেখা Fit আইটেমকে পূর্ণভাবে র‍্যাঙ্ক করা হয়েছে।"
+    },
+    {
+      "id": "ch30_q22",
+      "question": "কোনো ইউজারের সত্যিকারের পজিটিভ তালিকা (`Gold Set`) যদি ফাঁকা হয়, তবে তাঁর ক্ষেত্রে Recall-এর মান কী হবে?",
+      "options": [
+        "সবসময় 1",
+        "সবসময় 0",
+        "-1",
+        "গাণিতিকভাবে অসংজ্ঞায়িত (Undefined); তাই সুস্পষ্ট Cohort নীতি প্রয়োজন"
+      ],
+      "answer": 3,
+      "explanation": "ভগ্নাংশের হর শূন্য হওয়ায় মানটি অসংজ্ঞায়িত থাকে। জোর করে সেখানে 0 বসিয়ে গড় কমানোর বদলে ওই ইউজারদের Macro গড়ের বাইরে রাখা হয় এবং ফাঁকা Cohort হলে স্পষ্ট `null` দেখানো হয়।"
+    },
+    {
+      "id": "ch30_q23",
+      "question": "Catalog Coverage মেট্রিকটি ঠিক কী পরিমাপ করে?",
+      "options": [
+        "প্রতিটি সিনেমার Impression Propensity",
+        "Rating RMSE-এর বিপরীত মান",
+        "সব ইউজারের Top-K সুপারিশের সম্মিলিত সেট (Union) মোট Fit ক্যাটালগের কত ভগ্নাংশ ছুঁয়েছে",
+        "পজিটিভ রেটিং দেওয়া ইউজারদের অনুপাত"
+      ],
+      "answer": 2,
+      "explanation": "এটি দেখায় সুপারিশ তালিকাগুলো ক্যাটালগের কতটা গভীরে পৌঁছাতে পারছে; তবে বেশি কভারেজ মানেই আপনাআপনি দর্শকের সন্তুষ্টি বা ডেমোগ্রাফিক ন্যায্যতা নিশ্চিত হওয়া নয়।"
+    },
+    {
+      "id": "ch30_q24",
+      "question": "অফলাইন পরীক্ষায় `Recall@10` ভালো এলেই কি প্রোডাকশনে লঞ্চ করলে নিশ্চিত ব্যবসায়িক সুফল পাওয়া যাবে?",
+      "options": [
+        "হ্যাঁ, তখন আর কোনো Cold-start Fallback-এরও দরকার নেই",
+        "না, এর পাশাপাশি অপারেশনাল প্রস্তুতি ও নিয়ন্ত্রিত অনলাইন পরীক্ষার প্রমাণ প্রয়োজন",
+        "হ্যাঁ, এটি সরাসরি Causal Uplift প্রমাণ করে",
+        "হ্যাঁ, এতে সব ধরনের Exposure Bias মিটে যায়"
+      ],
+      "answer": 1,
+      "explanation": "অতীতের দেখা রেটিংগুলো নিজেই Exposure ও Selection Bias যুক্ত। তাই প্রোডাকশনে সফল হতে ক্যাটালগের প্রাপ্যতা, সার্ভিং Latency, নতুন ইউজার কভারেজ এবং অনলাইন A/B টেস্টের বাস্তব প্রমাণ অপরিহার্য।"
+    },
+    {
+      "id": "ch30_q_seen_revision",
+      "question": "একজন দর্শকের Fit ইতিহাসে `rating = 2` পাওয়া একটি সিনেমা আছে। আমাদের Unseen-item সুপারিশ নীতিতে সিনেমাটির ক্ষেত্রে কী ঘটবে?",
+      "options": [
+        "সিনেমাটি আগে দেখা হয়েছে বলে Exclude-all-seen নীতিতে Candidate তালিকা থেকে বাদ পড়বে",
+        "কেবল পজিটিভ সিনেমা বাদ দেওয়ার নিয়মেও এটি নিশ্চিতভাবে বাদ পড়বে",
+        "ভবিষ্যতের রেটিং দেখে এটি রাখব কি না তা ঠিক করা হবে",
+        "কম রেটিং পেয়েছে বলে একে অদেখা (Unseen) ধরে নেওয়া হবে"
+      ],
+      "answer": 0,
+      "explanation": "আমাদের প্রোটোকলে Fit অংশে রেট করা যেকোনো সিনেমাই দেখা (Seen) হিসেবে গণ্য হয়। মিল খোঁজার Positive History এবং দেখানোর যোগ্যতা ঠিক করার Seen History দুটি আলাদা সেট।"
+    },
+    {
+      "id": "ch30_q_pool_revision",
+      "question": "মডেলের স্কোর হুবহু এক থাকা সত্ত্বেও Full-catalog মূল্যায়ন এবং Sampled-negative মূল্যায়নে `Recall@K` কেন আলাদা হতে পারে?",
+      "options": [
+        "Candidate তালিকায় প্রতিযোগী আইটেমের সংখ্যা ও গঠন বদলে যায় বলে",
+        "মডেলের ভেতরের শেখা ওজনগুলো আপনাআপনি বদলে যায় বলে",
+        "সত্যিকারের পজিটিভ Gold সেট সবসময় বদলে যায় বলে",
+        "Sampled মূল্যায়নে K-এর মান আর ব্যবহার করা হয় না বলে"
+      ],
+      "answer": 0,
+      "explanation": "র‍্যাঙ্কিং মেট্রিক সরাসরি নির্ভর করে কাদের সাথে তুলনা করে ক্রম সাজানো হচ্ছে তার ওপর। তাই Candidate যোগ্যতা, নেগেটিভ স্যাম্পলিং পদ্ধতি ও Cutoff এক না হলে দুটি মেট্রিক সরাসরি তুলনা করা যায় না।"
+    }
+  ],
+  "exercises": [
+    {
+      "id": "ch30_ex_popularity",
+      "title": "বাস্তব ডেটায় সর্বোচ্চ Popularity Count নির্ণয়",
+      "prompt": "`assets/datasets/movielens/recommendation_lab.json` ফাইলের `train` অংশের Row-গুলো (`[user, item, rating, timestamp]`) থেকে প্রতিটি সিনেমার জন্য `rating >= 4` দেওয়া পজিটিভ User সংখ্যা গুনুন। সর্বোচ্চ পজিটিভ সংখ্যা পাওয়া সিনেমাটি বেছে নিয়ে (সমান হলে ছোট `movieId` অগ্রাধিকার পাবে) সেই সর্বোচ্চ সংখ্যাটি নির্ণয় করে উত্তর হিসেবে লিখুন।",
+      "starter": "# Write Python locally, then enter the numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\nfrom collections import Counter\n\npositive = Counter(i for u, i, r, t in lab[\"train\"] if r >= 4)\nbest = min(positive, key=lambda i: (-positive[i], i))\nresult = positive[best]\nprint(result)\n",
+      "expected": 218.0,
+      "explanation": "Fit অংশে সবচেয়ে জনপ্রিয় সিনেমাটির পজিটিভ ইউজার সংখ্যা হলো 218। খেয়াল রাখবেন, এই হিসাবটি কেবল Cutoff-এর আগের ট্রেনিং ডেটা এবং স্বতন্ত্র `(user, item)` জোড়ার ওপর ভিত্তি করে পাওয়া।"
+    },
+    {
+      "id": "ch30_ex_shrink",
+      "title": "Bayesian Shrinkage গড় নির্ণয়",
+      "prompt": "ধরুন একটি সিনেমার দেখা রেটিং সংখ্যা `count = 2`, তার নিজস্ব গড় রেটিং `item_mean = 5.0`, পুরো Fit ডেটার সার্বিক গড় `global_mean = 3.0` এবং Prior ওজন `prior = 20`। সূত্র ব্যবহার করে সিনেমাটির Shrunk গড় রেটিং বের করে উত্তর হিসেবে লিখুন।",
+      "starter": "# Write Python locally, then enter the numeric result.\nresult = None\nprint(result)\n",
+      "solution": "count = 2\nitem_mean = 5.0\nglobal_mean = 3.0\nprior = 20\nresult = (count * item_mean + prior * global_mean) / (count + prior)\nprint(result)\n",
+      "expected": 3.1818181818181817,
+      "explanation": "সূত্র অনুযায়ী `(2 * 5.0 + 20 * 3.0) / (2 + 20) = 70 / 22 ≈ 3.1818182`। মাত্র 2 টি রেটিং থাকায় অনুমানটি 5.0 থেকে সরে এসে গ্লোবাল গড় 3.0-এর বেশ কাছাকাছি চলে এসেছে।"
+    },
+    {
+      "id": "ch30_ex_cosine",
+      "title": "বাস্তব User-Neighbor জোড়ার কাঁচা Binary Cosine",
+      "prompt": "`recommendation_lab.json` ফাইলের প্রথম উদাহরণ কেসটির (`lab[\"samples\"][0]`) ইউজার (`user`) এবং তাঁর প্রথম Neighbor (`neighbours[0][0]`)-এর জন্য `train` ডেটা থেকে `rating >= 4` পাওয়া পছন্দের সিনেমার সেট তৈরি করুন। কোনো Shrinkage ছাড়াই তাঁদের কাঁচা (Unshrunk) Binary Cosine Similarity নির্ণয় করে উত্তর হিসেবে লিখুন।",
+      "starter": "# Write Python locally, then enter the numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\nu = lab[\"samples\"][0][\"user\"]\nv = lab[\"samples\"][0][\"neighbours\"][0][0]\na = {i for uid, i, r, t in lab[\"train\"] if uid == u and r >= 4}\nb = {i for uid, i, r, t in lab[\"train\"] if uid == v and r >= 4}\nresult = len(a & b) / (len(a) * len(b)) ** 0.5\nprint(result)\n",
+      "expected": 0.0842151921066519,
+      "explanation": "দুজনের অভিন্ন পছন্দের সংখ্যাকে তাঁদের নিজ নিজ পজিটিভ ইতিহাসের আকারের গুণফলের বর্গমূল দিয়ে ভাগ করলে মানটি আসে প্রায় `0.08421519`। মনে রাখবেন, এটি সরাসরি সহ-পছন্দের মিল—Genre বা কাঁচা Star-এর সূত্র নয়।"
+    },
+    {
+      "id": "ch30_ex_support",
+      "title": "Overlap Shrinkage প্রয়োগের হিসাব",
+      "prompt": "ধরুন দুজন ইউজারের কাঁচা Cosine স্কোর `0.8`, তাঁদের অভিন্ন পছন্দের সংখ্যা `shared = 2` এবং Shrinkage প্যারামিটার `lambda = 10`। Support-shrunk Similarity কত হবে তা হিসাব করে উত্তর হিসেবে লিখুন।",
+      "starter": "# Write Python locally, then enter the numeric result.\nresult = None\nprint(result)\n",
+      "solution": "cosine = 0.8\nshared = 2\nshrink = 10\nresult = cosine * shared / (shared + shrink)\nprint(result)\n",
+      "expected": 0.13333333333333333,
+      "explanation": "সূত্র অনুযায়ী `0.8 * 2 / (2 + 10) = 1.6 / 12 ≈ 0.1333333`। কাঁচা Cosine বেশ বড় হলেও অভিন্ন পছন্দ মাত্র 2 টি হওয়ায় Shrinkage গুণক স্কোরটিকে অনেক নিচে নামিয়ে এনেছে।"
+    },
+    {
+      "id": "ch30_ex_vote",
+      "title": "বাস্তব ডেটায় Neighbor Weighted Vote স্কোর পুনর্গণনা",
+      "prompt": "`recommendation_lab.json`-এর প্রথম উদাহরণ কেসটির (`lab[\"samples\"][0]`) শীর্ষ User-CF সুপারিশকৃত সিনেমাটির (`top[\"user_cf\"][0][0]`) স্কোর সরাসরি নির্বাচিত Neighbor তালিকা (`neighbours`) এবং `train` ডেটার পজিটিভ পছন্দ (`rating >= 4`) থেকে পুনরায় হিসাব করে উত্তর হিসেবে লিখুন।",
+      "starter": "# Write Python locally, then enter the numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\ncase = lab[\"samples\"][0]\nitem = case[\"top\"][\"user_cf\"][0][0]\npositive = {(u, i) for u, i, r, t in lab[\"train\"] if r >= 4}\nden = sum(s for u, s, c in case[\"neighbours\"])\nresult = sum(s for u, s, c in case[\"neighbours\"] if (u, item) in positive) / den\nprint(result)\n",
+      "expected": 0.8973274267578603,
+      "explanation": "চূড়ান্ত স্কোর আসে প্রায় `0.8973274`। এখানে লবে যোগ হয়েছে কেবল ওই সিনেমাটি পছন্দ করা Neighbor-দের ওজন, কিন্তু হরে রয়েছে নির্বাচিত সবকজন Neighbor-এর ওজনের যোগফল।"
+    },
+    {
+      "id": "ch30_ex_eligible",
+      "title": "দেখা সিনেমা বাদ দিয়ে যোগ্য Candidate সংখ্যা নির্ণয়",
+      "prompt": "`recommendation_lab.json`-এর মোট Fit ক্যাটালগ (`lab[\"movies\"]`) থেকে প্রথম উদাহরণ কেসের (`lab[\"samples\"][0]`) ইউজারের দেখা সব সিনেমা (`history`, কম রেটিংসহ) বাদ দিলে মোট কয়টি অদেখা যোগ্য Candidate সিনেমা অবশিষ্ট থাকে, তা বের করে উত্তর হিসেবে লিখুন।",
+      "starter": "# Write Python locally, then enter the numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\ncatalog = {i for i, title, genres in lab[\"movies\"]}\nseen = {i for i, r in lab[\"samples\"][0][\"history\"]}\nresult = len(catalog - seen)\nprint(result)\n",
+      "expected": 7851.0,
+      "explanation": "মোট 7867 টি Fit সিনেমা থেকে ইউজারের দেখা 16 টি সিনেমা বাদ দিলে যোগ্য Candidate থাকে `7851` টি। খেয়াল রাখবেন, কম রেটিং দেওয়া সিনেমাও দেখা ইতিহাসের অংশ এবং ভবিষ্যতের অজানা আইডি এই ক্যাটালগে নেই।"
+    },
+    {
+      "id": "ch30_ex_recall",
+      "title": "বাস্তব র‍্যাঙ্কিং থেকে User-macro Recall@10 পুনর্গণনা",
+      "prompt": "`recommendation_lab.json`-এর `rows` তালিকা থেকে যেসব Warm ইউজারের ট্রেনিং ইতিহাস আছে (`train_count > 0`) এবং যোগ্য ভবিষ্যৎ পজিটিভ তালিকা ফাঁকা নয় (`eligible` অশূন্য), তাঁদের প্রত্যেকের `rankings[\"user_cf\"]` (Top 10) ও `eligible` সেট মিলিয়ে `Recall@10` বের করুন এবং সবার সমান ওজনে গড় (User-macro Recall@10) নির্ণয় করে উত্তর হিসেবে লিখুন।",
+      "starter": "# Write Python locally, then enter the numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\nvalues = []\nfor row in lab[\"rows\"]:\n    if row[\"train_count\"] and row[\"eligible\"]:\n        values.append(\n            len(set(row[\"rankings\"][\"user_cf\"]) & set(row[\"eligible\"]))\n            / len(row[\"eligible\"])\n        )\nresult = sum(values) / len(values)\nprint(result)\n",
+      "expected": 0.05944743481369974,
+      "explanation": "28 জন যোগ্য Warm ইউজারের গড় হিসাব করলে User-macro Recall@10 আসে প্রায় `0.05944743`। এখানে প্রতিটি যোগ্য ইউজার সমান গুরুত্ব পান, যা সব Hit একত্রে যোগ করা Micro গড় থেকে আলাদা।"
+    },
+    {
+      "id": "ch30_ex_ndcg",
+      "title": "হাতে-কলমে Binary NDCG@3 নির্ণয়",
+      "prompt": "ধরুন একটি মডেলের সাজানো শীর্ষ তালিকা হলো `[10, 20, 30]` এবং ইউজারের সত্যিকারের পজিটিভ সেট হলো `{20, 30}`। বাইনারি প্রাসঙ্গিকতা ধরে `NDCG@3`-এর মান নির্ণয় করে উত্তর হিসেবে লিখুন।",
+      "starter": "# Write Python locally, then enter the numeric result.\nresult = None\nprint(result)\n",
+      "solution": "import math\n\nranked = [10, 20, 30]\ngold = {20, 30}\ndcg = sum(1 / math.log2(j + 2) for j, i in enumerate(ranked) if i in gold)\nideal = sum(1 / math.log2(j + 2) for j in range(len(gold)))\nresult = dcg / ideal\nprint(result)\n",
+      "expected": 0.6934264036172708,
+      "explanation": "প্রদত্ত তালিকায় Hit দুটি এসেছে 2 ও 3 নম্বর স্থানে (`DCG = 1/log2(3) + 1/log2(4)`), আর আদর্শ তালিকায় সেগুলো থাকত 1 ও 2 নম্বর স্থানে (`IDCG = 1/log2(2) + 1/log2(3)`)। অনুপাত নিলে পাওয়া যায় প্রায় `0.6934264`।"
+    },
+    {
+      "id": "ch30_ex_itemcos",
+      "title": "বাস্তব দুটি সিনেমার Item-pair Binary Cosine",
+      "prompt": "`recommendation_lab.json`-এর প্রথম সংরক্ষিত সিনেমা-জোড়াটির (`lab[\"item_pairs\"][0]`-এর `a` এবং `b`) জন্য `train` ডেটা থেকে পজিটিভ রেটিংদাতা (`rating >= 4`) ইউজারদের সেট বের করুন এবং সিনেমা দুটির কাঁচা Binary Cosine Similarity হিসাব করে উত্তর হিসেবে লিখুন।",
+      "starter": "# Write Python locally, then enter the numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\npair = lab[\"item_pairs\"][0]\na = pair[\"a\"]\nb = pair[\"b\"]\nua = {u for u, i, r, t in lab[\"train\"] if i == a and r >= 4}\nub = {u for u, i, r, t in lab[\"train\"] if i == b and r >= 4}\nresult = len(ua & ub) / (len(ua) * len(ub)) ** 0.5\nprint(result)\n",
+      "expected": 0.2504351613389047,
+      "explanation": "উভয় সিনেমা পছন্দ করা ইউজারদের ছেদকে নিজ নিজ পজিটিভ ইউজার সংখ্যার জ্যামিতিক গড় দিয়ে ভাগ করলে পাওয়া যায় প্রায় `0.2504352`। এই জোড়া যাচাইটি পূর্ণাঙ্গ Item-CF র‍্যাঙ্কিং বেঞ্চমার্ক থেকে আলাদা একটি ডায়াগনস্টিক হিসাব।"
+    },
+    {
+      "id": "ch30_ex_cold",
+      "title": "বাস্তব ডেটায় Cold-positive দর্শকের সংখ্যা নির্ণয়",
+      "prompt": "`recommendation_lab.json`-এর `future` অংশে অন্তত একটি পজিটিভ রেটিং (`rating >= 4`) দিয়েছেন এমন ইউজারদের মধ্যে কতজনের `train` অংশে কোনো অতীত রেটিং ইতিহাসই নেই, তা গুনে উত্তর হিসেবে লিখুন।",
+      "starter": "# Write Python locally, then enter the numeric result.\nresult = None\nprint(result)\n",
+      "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/recommendation_lab.json\").read_text(\n        encoding=\"utf-8\"\n    )\n)\nfit_users = {u for u, i, r, t in lab[\"train\"]}\nfuture_positive_users = {u for u, i, r, t in lab[\"future\"] if r >= 4}\nresult = len(future_positive_users - fit_users)\nprint(result)\n",
+      "expected": 88.0,
+      "explanation": "ভবিষ্যতে পজিটিভ রেটিং থাকা কিন্তু Fit ইতিহাসে অনুপস্থিত এমন Cold ইউজারের সংখ্যা হলো `88`। কেবল Warm দর্শকদের র‍্যাঙ্কিং মেট্রিক দেখানোর পাশাপাশি এই বড় দর্শক দলটির আকার রিপোর্ট করা অপরিহার্য।"
+    }
+  ],
+  "interviews": [
+    {
+      "title": "নতুন Movie প্ল্যাটফর্মের জন্য প্রথম Recommendation Baseline ডিজাইন",
+      "tag": "System design",
+      "prompt": "একটি নতুন Movie প্রোডাক্টের জন্য প্রথম Offline Recommender সিস্টেম কীভাবে গড়ে তুলবেন? ব্যবসার প্রয়োজন বোঝা থেকে শুরু করে চূড়ান্ত মূল্যায়ন পর্যন্ত আপনার পুরো পরিকল্পনা যুক্তিসহ ব্যাখ্যা করুন।",
+      "answer": "শুরুতেই আমি স্টেকহোল্ডারদের কাছ থেকে স্পষ্ট করে নেব: এখানে User ও কাঙ্ক্ষিত Action কী, কোন ক্যাটালগ দেখানোর যোগ্য (Eligible Inventory), দেখা সিনেমা পুনরায় দেখানোর (Repeat Policy) নিয়ম কী, নতুনত্বের (Freshness) গুরুত্ব কতটা এবং মূল ব্যবসায়িক লক্ষ্য কী। ডেটায় Explicit Star Rating থাকলে তার স্কেল-ঝোঁক মাথায় রাখব, আর Implicit Action Log থাকলে সাথে অবশ্যই Impression Context চাইব। এরপর Leakage এড়াতে একটি Global Temporal Split টেনে শুধু Fit ডেটা থেকে Popularity এবং Bayesian Shrunk Mean বেসলাইন তৈরি করব এবং সব দেখা সিনেমা বাদ দেওয়ার (Exclude-all-seen) ফিল্টার বসাব। ঠিক একই Candidate নীতির অধীনে এরপর Content-based এবং Neighborhood CF মডেল তুলনা করব। মূল্যায়নের সময় User-macro Recall@K ও NDCG@K-এর পাশাপাশি Warm ও Cold উভয় দর্শক দলের আকার এবং Catalog Coverage রিপোর্ট করব। সবশেষে মনে করিয়ে দেব যে অফলাইন মেট্রিকের উন্নতি মানেই সরাসরি ব্যবসায়িক সাফল্য নয়—প্রোডাকশন লঞ্চের আগে সঠিক লগিং, সার্ভিং Latency পরীক্ষা এবং নিয়ন্ত্রিত অনলাইন A/B Test অপরিহার্য; আর ডেটায় Impression না থাকলে কখনোই কাল্পনিক Propensity বানিয়ে ঝোঁকমুক্ত CTR দাবি করব না।"
+    },
+    {
+      "title": "User-neighborhood Recommendation অ্যালগরিদম বাস্তবায়ন",
+      "tag": "ML coding",
+      "prompt": "আপনাকে দর্শকদের Sparse পজিটিভ পছন্দের ইতিহাস দেওয়া হয়েছে। কীভাবে একটি সম্পূর্ণ Deterministic `Top 10` User-CF অ্যালগরিদম লিখবেন এবং কোন কোন প্রান্তিক অবস্থা (Corner Cases) সামলাবেন?",
+      "answer": "প্রথমে Target ইউজারের পজিটিভ সেটের সাথে অন্য সব Fit ইউজারের ছেদ (`c`) বের করব, যেখানে নিজেকে (`self`) বাদ দিয়ে ন্যূনতম `c >= 2` শর্ত প্রয়োগ করব। এরপর Binary Cosine `c / sqrt(n_u * n_v)` বের করে তার ওপর `c / (c + 10)` Shrinkage গুণ করব এবং 12 দশমিক ঘর পর্যন্ত Round করা স্কোর ও ছোট `userId` দিয়ে Tie ভেঙে শীর্ষ 20 জন Neighbor বেছে নেব। এরপর প্রতিটি অদেখা Fit Candidate সিনেমার জন্য পজিটিভ ভোট দেওয়া Neighbor-দের Shrunk Similarity যোগ করে নির্বাচিত সব Neighbor-এর মোট Similarity যোগফল দিয়ে ভাগ করব, এবং স্কোর সমান হলে ছোট `movieId` ধরে `Top 10` সাজাব। যদি ইউজারের কোনো পজিটিভ ইতিহাস বা বৈধ Neighbor না থাকে, তবে শূন্য দিয়ে ভাগ এড়িয়ে নিরাপদে Popularity তালিকায় Fallback করব। জটিলতার দিক থেকে কয়েকশ ইউজারের জন্য এটি দ্রুত কাজ করলেও কোটি ইউজারের সিস্টেমে পূর্ণ All-pairs হিসাব অকেজো হয়ে পড়বে। ইউনিট টেস্টে আমি অবশ্যই শূন্য ইতিহাস, মাত্র 1 টি মিল, কম রেটিং দেওয়া দেখা সিনেমা, সমান স্কোরের Tie এবং শূন্য স্কোর পাওয়া Candidate-এর আচরণ পরীক্ষা করব।",
+      "prerequisiteLessons": [
+        "ch30_cf",
+        "ch30_scoring"
+      ]
+    },
+    {
+      "title": "Content Similarity বনাম Collaborative Filtering-এর পার্থক্য",
+      "tag": "Concept defense",
+      "prompt": "দুটি সিনেমার Genre হুবহু এক হলেই কি তাদের Item-CF Similarity-ও এক হবে? নতুন আসা Cold সিনেমার ক্ষেত্রে দুটি পদ্ধতি কীভাবে ভিন্ন আচরণ করে?",
+      "answer": "মোটেও এক হবে না। কারণ Content মডেল পড়ে সিনেমার মেটাডেটা বা Genre ভেক্টর, আর Item-CF পড়ে ইন্টারঅ্যাকশন ম্যাট্রিক্সের Column অর্থাৎ কোন দর্শকরা সিনেমা দুটি পছন্দ করেছেন। দুটি সিনেমার Genre হুবহু এক হওয়া সত্ত্বেও যদি কোনো দর্শক দুটিকে একসাথে পছন্দ না করে থাকেন, তবে তাদের Item-CF স্কোর হবে 0; আবার সম্পূর্ণ ভিন্ন Genre-এর দুটি সিনেমাও একই দর্শকগোষ্ঠীর প্রিয় হলে উচ্চ Item-CF মিল পেতে পারে! নতুন আসা Cold সিনেমার ক্ষেত্রে মেটাডেটা উপস্থিত থাকলে Content পদ্ধতি শুরু থেকেই স্কোর দিতে পারে, কিন্তু কোনো ইন্টারঅ্যাকশন না থাকায় খাঁটি CF সেখানে পুরোপুরি অসহায়। তবে আমাদের বর্তমান পরীক্ষায় কেবল Fit ক্যাটালগের সিনেমাই রাখা হয়েছে, তাই নতুন সিনেমার এই সক্ষমতা তাত্ত্বিক—এখানে পরীক্ষিত ফলাফল নয়। পাশাপাশি Genre না থাকলে শূন্য ভেক্টরের Guard রাখতে হবে এবং কখনোই সিনেমার Genre থেকে দর্শকের ব্যক্তিগত পরিচয় বা সংরক্ষিত বৈশিষ্ট্য অনুমান করা যাবে না।"
+    },
+    {
+      "title": "হঠাৎ দ্বিগুণ হওয়া মেট্রিক ও Chronological Leakage অডিট",
+      "tag": "Debugging",
+      "prompt": "ধরুন আপনার অফলাইন `NDCG@10` রাতারাতি দ্বিগুণ হয়ে গেছে! উল্লাস করার আগে কোন কোন Data Leakage পরীক্ষা করবেন?\n\nপাশাপাশি হিসাব করুন: `cutoff = 5`-এ ঘটনাগুলো হলো `User 1: (A, 5, t=1), (B, 2, t=2)`; `User 2: (C, 4, t=3)`; এবং ভবিষ্যতে `(D, 5, t=8)`। আমাদের নীতিতে `User 1`-এর অদেখা যোগ্য Candidate কোনটি?",
+      "answer": "হঠাৎ এমন অস্বাভাবিক উন্নতি দেখলে আমি আগে পুরো পাইপলাইন অডিট করব: সোর্স ডেটা ও স্প্লিটের Hash এবং সমান Timestamp-এর নিয়ম ঠিক আছে কি না; ভবিষ্যতের রেটিং ভুলবশত Popularity গণনা, User Profile গঠন, Neighbor Similarity কিংবা গড় রেটিংয়ে ঢুকে পড়েছে কি না; কিংবা মূল্যায়নের পজিটিভ টার্গেট দেখেই Candidate তালিকা সাজানো হয়েছে কি না। এছাড়া Per-user স্প্লিটের কারণে অন্য ইউজারের ভবিষ্যতের তথ্য চলে আসছে কি না এবং Candidate পুলের আকার, Seen ফিল্টার ও মেট্রিকের হর আগের মতোই অপরিবর্তিত আছে কি না তাও মিলিয়ে দেখব—কারণ মেটাডেটা স্ন্যাপশট ঐতিহাসিক সংস্করণযুক্ত না হওয়ার সীমাবদ্ধতা তো আছেই। প্রোটোকল শতভাগ অভিন্ন প্রমাণিত না হওয়া পর্যন্ত একে আসল উন্নতি বলব না।\n\nদ্বিতীয় অংশের হিসাবে: `cutoff = 5`-এর ভেতর দেখা যাওয়া Fit ক্যাটালগ হলো `{A, B, C}` এবং `User 1`-এর দেখা ইতিহাস হলো `{A, B}`—সুতরাং তাঁর একমাত্র অদেখা যোগ্য Candidate হলো `{C}`! কেউ যদি শুধু পজিটিভ ইতিহাস `{A}` বাদ দিতেন তবে কম রেটিং পাওয়া `B` আবার ঢুকে পড়ত, আর ভবিষ্যতের ক্যাটালগ নিলে `t = 8`-এর `D` ঢুকে Leakage ঘটাত।",
+      "prerequisiteLessons": [
+        "ch30_split"
+      ]
+    },
+    {
+      "title": "অনুপস্থিত রেটিং (Missing Ratings) ও Negative Sampling",
+      "tag": "Statistics",
+      "prompt": "ডেটাসেটের সব অদেখা `(user, item)` ঘরকে সরাসরি `0` (অপছন্দ) লেবেল দিয়ে একটি সাধারণ Binary Classifier ট্রেন করা কি যুক্তিসঙ্গত?",
+      "answer": "না, এটি একটি বড় তাত্ত্বিক ও ব্যবহারিক ভুল। কারণ ম্যাট্রিক্সে হিসাবের জন্য রাখা শূন্য মানে মোটেও দেখে অপছন্দ করা নয়—ইউজারের কাছে আইটেমটি না পৌঁছানো বা Exposure ও Selection প্রক্রিয়ার কারণেই ঘরটি ফাঁকা থাকতে পারে। সব অদেখা ঘরকে ঢালাওভাবে নেগেটিভ ধরলে মারাত্মক Class Imbalance তৈরি হবে এবং মডেল জনপ্রিয় আইটেমের প্রতি অন্ধভাবে ঝুঁকে পড়বে; তাছাড়া সরাসরি দেওয়া কম স্টার রেটিংয়ের অর্থ এর চেয়ে সম্পূর্ণ আলাদা। বড় স্কেলে ট্রেনিংয়ের সুবিধার্থে Negative Sampling করা যেতে পারে, তবে তখন স্যাম্পলিং বণ্টন ও অবজেক্টিভ স্পষ্টভাবে জানাতে হয় এবং মনে রাখতে হয় যে পূর্ণ ক্যাটালগের মূল্যায়ন আর স্যাম্পল করা ক্যান্ডিডেটের মেট্রিক এক নয়। Impression Propensity লগ ছাড়া কখনোই কার্যকারণ Debiasing দাবি করা যাবে না; পরবর্তী অধ্যায়ে (Book 5 · Chapter 2: Matrix Factorization & Feature Interactions) আমরা দেখব কীভাবে Weighted ALS এবং BPR ভিন্ন গাণিতিক অনুমানের মাধ্যমে এই সমস্যার মোকাবিলা করে।"
+    },
+    {
+      "title": "Shrinkage এবং স্বল্প প্রমাণের (Sparse Support) বিচার",
+      "tag": "Math",
+      "prompt": "একটি ইউজার-জোড়ার কাঁচা Cosine হলো `1.0` কিন্তু অভিন্ন পছন্দ মাত্র `1`টি; অন্য একটি জোড়ার কাঁচা Cosine `0.6` কিন্তু অভিন্ন পছন্দ `50`টি। Neighbor হিসেবে আপনি কাকে বেছে নেবেন এবং কেন?",
+      "answer": "নিঃসন্দেহে দ্বিতীয় জোড়াটিকে বেছে নেব, কারণ প্রমাণের আকার ছাড়া এককভাবে কাঁচা Cosine ভীষণ বিভ্রান্তিকর হতে পারে। প্রথমত, আমাদের ন্যূনতম 2 টি অভিন্ন পছন্দের (`min shared >= 2`) Hard Gate প্রথম জোড়াটিকে শুরুতেই বাদ দিয়ে দেবে। দ্বিতীয়ত, যদি গাণিতিকভাবে `lambda = 10` Shrinkage প্রয়োগ করি, তবে দ্বিতীয় জোড়াটির স্কোর দাঁড়ায় `0.6 * 50 / (50 + 10) = 0.50`; অথচ প্রথম জোড়ার জন্য গেট বন্ধ থাকলেও স্কোর নেমে আসত `1.0 * 1 / (1 + 10) ≈ 0.0909`-এ! মনে রাখতে হবে, এই Shrinkage একটি কার্যকর প্রমাণ-ভিত্তিক কৌশল হলেও আনুষ্ঠানিক পরিসংখ্যানগত Uncertainty Interval নয় এবং বেশি Overlap থাকা মানেই ডেটা ঝোঁকমুক্ত হওয়া নয়। এই প্যারামিটার টিউন করতে হলে ভবিষ্যতের টেস্ট না দেখে আলাদা Validation সেট ব্যবহার করতে হবে, এবং খেয়াল রাখতে হবে যে `lambda = 0` করলেও আমাদের ন্যূনতম মিলের Hard Gate কিন্তু বন্ধ হয়ে যায় না।",
+      "prerequisiteLessons": [
+        "ch30_shrink"
+      ]
+    },
+    {
+      "title": "Rating RMSE কমেছে, কিন্তু Top-10 সুপারিশ হতাশাজনক কেন?",
+      "tag": "Metric reasoning",
+      "prompt": "ধরুন নতুন মডেলে আপনার Rating `RMSE` বেশ কমেছে, কিন্তু ব্যবহারকারীদের কাছে `Top 10` তালিকার উপযোগিতা উল্টো কমে গেছে! এর গাণিতিক কারণ ও আপনার পরবর্তী পদক্ষেপ কী হবে?",
+      "answer": "এর মূল কারণ হলো দেখা রেটিংয়ের মান অনুমান করা আর হাজারো অদেখা আইটেম থেকে সেরা 10 টিকে সবার ওপরে সাজানো দুটি সম্পূর্ণ ভিন্ন গাণিতিক লক্ষ্য (Objective)। ইউজার ও আইটেমের গড় ঝোঁক নিখুঁতভাবে ফিট করলেই বহুল পঠিত সিনেমাগুলোর ওপর RMSE অনেক কমে যেতে পারে, কিন্তু তাতে অদেখা প্রাসঙ্গিক সিনেমাগুলোকে অপ্রাসঙ্গিক সিনেমা থেকে আলাদা করার (Candidate Discrimination) ক্ষমতা বাড়ার কোনো নিশ্চয়তা থাকে না। পরবর্তী পদক্ষেপ হিসেবে আমি ঠিক একই Temporal Split ও Seen ফিল্টারে প্রতি ইউজারের Recall@K ও NDCG@K, বিভিন্ন Cohort-এর আচরণ এবং বাস্তব উদাহরণ কেসগুলো খতিয়ে দেখব। অদেখা ঘর মানেই নিশ্চিত অপ্রাসঙ্গিকতা নয়—সেই সীমাবদ্ধতা মাথায় রেখে সরাসরি র‍্যাঙ্কিং-উপযোগী Loss বা উন্নত Retrieval আনার Hypothesis তৈরি করব, এবং চূড়ান্ত প্রোডাক্ট উপযোগিতা মাপতে Exposure লগসহ নিয়ন্ত্রিত অনলাইন পরীক্ষা চালাব।",
+      "prerequisiteLessons": [
+        "ch30_explicitcf",
+        "ch30_evaluation"
+      ]
+    },
+    {
+      "title": "নতুন User ও নতুন Movie-এর জন্য Cold-start Rollout নীতি",
+      "tag": "Serving design",
+      "prompt": "প্রোডাকশনে একদম নতুন আসা দর্শক (New Users) এবং সদ্য যুক্ত হওয়া সিনেমাগুলোর (Newly Added Movies) জন্য আপনি কী সুপারিশ দেখাবেন?",
+      "answer": "নতুন দর্শকের ক্ষেত্রে শুরুতে গ্লোবাল বা প্রাসঙ্গিক Popularity তালিকা দেখাব, অথবা দর্শকের সম্মতিতে নেওয়া সংক্ষিপ্ত Onboarding পছন্দের সাহায্য নেব—কখনোই ভুয়া ব্যক্তিগতকরণের ভান করব না। আর সদ্য যুক্ত হওয়া নতুন সিনেমার ক্ষেত্রে কোনো ইন্টারঅ্যাকশন না থাকায় খাঁটি CF কাজ করবে না, তবে নির্ভরযোগ্য Genre বা বিবরণের মতো মেটাডেটা থাকলে Content-based পদ্ধতিতে তাকে Candidate তালিকায় আনা সম্ভব। এর পাশাপাশি ক্যাটালগের প্রাপ্যতা, ডেটার বয়স এবং মডেল কত ঘন ঘন রিফ্রেশ হবে তার সুস্পষ্ট Contract লিখতে হবে। আমাদের বর্তমান ডেমোতে বাস্তব Cold ইউজারদের জন্য Popularity Fallback ব্যবহৃত হয়েছে এবং ভবিষ্যতের অজানা আইডি ক্যাটালগের বাইরে রাখা হয়েছে। তাই কেবল Warm দর্শকদের গড় স্কোর দেখে সবার জন্য লঞ্চের সিদ্ধান্ত নেওয়া যাবে না—আলাদা Cohort মনিটরিং এবং নিয়ন্ত্রিত Exploration পরীক্ষা পরিকল্পিতভাবে সাজাতে হবে।"
+    },
+    {
+      "title": "যখন জটিল CF মডেল সাধারণ Popularity-র কাছে হেরে যায়",
+      "tag": "Experiment review",
+      "prompt": "পরীক্ষায় দেখা গেল আপনার তৈরি Collaborative Filtering মডেলটি সাধারণ Popularity Baseline-কে হারাতে পারেনি। আপনি কীভাবে ফলাফল রিপোর্ট করবেন এবং এরপর কী পরিবর্তন আনবেন?",
+      "answer": "সবার আগে আমি কোনো ফলাফল আড়াল না করে একই প্রোটোকলের অধীনে সব মডেলের পূর্ণাঙ্গ তুলনামূলক মেট্রিক সততার সাথে রিপোর্ট করব। এরপর ব্যর্থতার মূল কারণ খুঁজতে ইউজারদের মধ্যে যৌথ পছন্দের Overlap কতটা কম, Cold ইউজারের অনুপাত কত, অ্যাক্টিভিটির বণ্টন কেমন, Candidate বা Seen ফিল্টারে কোনো বাগ আছে কি না এবং ফিচারগুলো অতিরিক্ত মোটা দাগের কি না তা বিশ্লেষণ করব। পূর্বনির্ধারিত স্থির প্যারামিটারের ফলাফল বৈধ ডায়াগনস্টিক হলেও তাকে টিউন করা সেরা মান দাবি করব না; আর Neighbor সংখ্যা বা Threshold বদলাতে হলে তা আলাদা Validation ডেটায় করব—দেখে ফেলা Future স্কোরকে কখনোই চূড়ান্ত Blind Test বলব না। যদি দেখা যায় আমাদের ডেটা ও লক্ষ্যের পরিধিতে সরল Popularity-ই সবচেয়ে নির্ভরযোগ্য কাজ করছে, তবে সেটিই গ্রহণ করা সুবুদ্ধির কাজ—কারণ বেছে নেওয়া দু-একজন ইউজারের সুন্দর তালিকা কখনো পুরো জনগোষ্ঠীর উন্নতির প্রমাণ নয়।"
+    },
+    {
+      "title": "ছোট ডেমো থেকে কোটি ইউজারের Scalable Recommender সিস্টেমে উত্তরণ",
+      "tag": "Architecture",
+      "prompt": "610 জন ইউজারের এই অ্যালগরিদমটিকে যদি লক্ষ-কোটি ইউজার ও আইটেমের সিস্টেমে নিয়ে যাওয়া হয়, তবে প্রধান প্রকৌশলগত বাধা (Bottleneck) কোথায় তৈরি হবে এবং তা কীভাবে সমাধান করবেন?",
+      "answer": "সবচেয়ে বড় বাধা হবে All-pairs ইউজার-ইউজার বা আইটেম-আইটেম ম্যাট্রিক্স গুণনের Quadratic মেমোরি ও সময়ের খরচ—কারণ ইনপুট ম্যাট্রিক্স যতই Sparse হোক, জনপ্রিয় আইটেমের কারণে গুণফল বেশ ঘন (Dense) হয়ে যেতে পারে। এই বাধা পেরোতে আমরা পুরো ম্যাট্রিক্স না বানিয়ে সীমিত ও আগেভাগে হিসাব করা (Precomputed) Neighborhood, Approximate Nearest Neighbor (ANN) ভিত্তিক দ্রুত Candidate Retrieval, ডেটা Partitioning, ক্যাশিং এবং Incremental Update ব্যবহার করব। পুরো আর্কিটেকচারটিকে Candidate Generation → Fine Ranking → Business Policy—এই তিনটি পরিষ্কার স্তরে ভাগ করতে হবে এবং বাস্তব হার্ডওয়্যার ও ট্রাফিকে সার্ভিং Latency মাপতে হবে, কারণ ছোট MovieLens ডেটার CPU রানটাইম কখনো প্রোডাকশন QPS-এর প্রমাণ নয়। একইসাথে Artifact ভার্সনিং, Train-serving সামঞ্জস্য, নিরাপদ Fallback, মনিটরিং ও দ্রুত Rollback ব্যবস্থা রাখব; আর বড় স্কেলের Matrix Factorization ও Deep Retrieval কৌশলগুলো আমরা পরবর্তী অধ্যায়গুলোতে (Book 5 · Chapter 2 ও Chapter 3) ধাপে ধাপে যুক্ত করব।"
+    }
+  ],
+  "book": {
+    "order": 36,
+    "part": "Book 5 · Recommender Systems",
+    "prerequisites": [
+      "chapter_05",
+      "chapter_08"
+    ],
+    "purpose": "বাস্তব User-Item Interaction ডেটা থেকে একটি পূর্ণাঙ্গ Recommendation সমস্যার কাঠামো দাঁড় করানো, Leakage-মুক্ত Global Temporal Split তৈরি করা এবং স্বচ্ছ ও ব্যাখ্যাযোগ্য Baseline Model (Popularity, Bayesian Rating, Content-based ও Neighborhood CF) গড়ে তোলা।",
+    "outcomes": [
+      "Popularity, Content-based এবং Collaborative Filtering (CF) মডেলের পাশাপাশি Cold-start Fallback ও Exposure-সচেতন Label-এর অর্থ স্পষ্টভাবে ব্যাখ্যা করতে পারবেন।",
+      "হাতে-কলমে উদাহরণ, সমীকরণ ও Python কোডের মাধ্যমে Cold Start, Exposure Bias এবং Missing-not-negative Feedback-এর বাস্তব প্রভাব বিশ্লেষণ করতে পারবেন।"
+    ],
+    "recall": [
+      "কোনো User একটি Movie-তে Rating দেননি—একে সরাসরি 'পছন্দ করেননি' (Disliked) ধরে নিলে ভেতরে ভেতরে কোন বড় Assumption-টি করে ফেলা হয়?",
+      "Training Cutoff-এর পরে নতুন আসা কোনো Item-এর জন্য যদি কোনো শেখা Embedding না থাকে, তবে তাকে Recommend করার তিনটি কার্যকর Fallback উপায় কী হতে পারে?"
+    ],
+    "bridge": "পরবর্তী অধ্যায়ে (Book 5 · Chapter 2: Matrix Factorization & Feature Interactions) আমরা Sparse Interaction থেকে Latent Factor ও Feature Interaction শেখার কৌশল দেখব। নতুন অধ্যায়ে যাওয়ার আগে এই অধ্যায়ের Quiz, Coding Exercise এবং Interview প্রশ্নগুলো নিখুঁতভাবে ঝালিয়ে নিন।",
+    "bookId": "recsys",
+    "bookChapter": 1
+  }
+}

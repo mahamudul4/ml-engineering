@@ -1,0 +1,1375 @@
+{
+  "id": "chapter_25",
+  "number": 25,
+  "title": "Fine-tuning & Efficient Adaptation",
+  "shortTitle": "Fine-tuning & Adaptation",
+  "displayTitle": "Fine-tuning & Adaptation\nFreeze. Update. Evaluate.",
+  "subtitle": "Response Masking, Full Fine-tuning, LoRA এবং Quantization-এর গাণিতিক ও ব্যবহারিক ভিত্তি—এবং Baseline দিয়ে ফলাফল যাচাইয়ের প্রকৌশল।",
+  "description": "Trace the gradients. Merge the adapter.\nCheck the task against its baseline.",
+  "difficulty": "LLM · adaptation",
+  "lab": "adaptation",
+  "lessons": [
+    {
+      "id": "ch25_contract",
+      "title": "Fine-tuning: আমরা আসলে Model-এর কোন আচরণ বদলাতে চাই?",
+      "subtitle": "Weight Update, Prompting এবং RAG—তিনটি ভিন্ন প্রকৌশলগত সিদ্ধান্তের সুস্পষ্ট সীমানা",
+      "duration": "50 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন Fine-tuning প্রয়োজন?",
+          "body": "আগের অধ্যায়ে (Book 4 · Chapter 3: RAG Systems) আমরা দেখেছি, বাইরের নথি থেকে প্রাসঙ্গিক তথ্য খুঁজে এনে Prompt-এ জুড়ে দিলে Model-এর Weight না বদলেই নতুন তথ্যের ওপর উত্তর তৈরি করা যায়। কিন্তু কখনো কখনো আমাদের লক্ষ্য নতুন তথ্য জোগানো নয়; বরং আগে থেকে শেখানো একটি Model-কে নির্দিষ্ট কোনো Task-এর ধরন, সংক্ষিপ্ত আউটপুট রীতি বা বিশেষ Response Format শেখানো। ঠিক তখনই Model-এর কিছু বা সব Parameter আপডেট করার প্রশ্ন আসে—যাকে আমরা বলি Fine-tuning। তবে একজন দক্ষ প্রকৌশলী হিসেবে শুরুতেই মনে রাখতে হবে যে Prompt-এ নির্দেশনা দেওয়া, RAG দিয়ে প্রাসঙ্গিক উৎস তুলে আনা এবং Fine-tuning করে সরাসরি Weight বদলানো—এই তিনটি সম্পূর্ণ আলাদা সিদ্ধান্ত, এবং বাস্তব সিস্টেমে প্রয়োজন অনুযায়ী এদের একাধিক পদ্ধতি একসাথেও ব্যবহার করা হতে পারে।\n\nএই অধ্যায়ে আমরা ধাপে ধাপে দেখব কীভাবে Response-only Loss তৈরি করতে হয় এবং সেখান থেকে Full Fine-tuning ও LoRA (Low-Rank Adaptation) পর্যন্ত পুরো প্রক্রিয়াটি কীভাবে কাজ করে। কোন কৌশলে ঠিক কতগুলো Parameter বদলাচ্ছে, Adapter Merge করলে কী ঘটে এবং ছোট একটি Training পরীক্ষা থেকে আমরা ঠিক কতটুকু দাবি করতে পারি—সবই আমরা সরাসরি সংখ্যা ও কোড দিয়ে যাচাই করব।"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের পরীক্ষার Base Model",
+          "body": "এই অধ্যায়ের কারিগরি খুঁটিনাটি স্বচ্ছভাবে বোঝার জন্য আমরা Book 4 · Chapter 1 (LLM Foundations)-এ তৈরি করা নির্দিষ্ট Alice-trained Byte Decoder-টিকে আমাদের Base Model হিসেবে পুনর্ব্যবহার করব, যার মোট Parameter সংখ্যা 5019। শুরুতেই খেয়াল রাখা জরুরি যে এটি কোনো বিশাল Pretrained LLM বা কথোপকথনের উপযোগী Chat Assistant নয়—বরং প্রতিটি গণনা হাতেনাতে মেলানোর মতো একটি ছোট ও নিয়ন্ত্রিত Model। এখানে 0 থেকে 255 পর্যন্ত প্রতিটি সংখ্যাই একেকটি কাঁচা Byte Token ID, পাশাপাশি বিশেষ টোকেন হিসেবে রয়েছে PAD = 256, BOS = 257 এবং EOS = 258; Model-টির Context Length হলো 32 এবং অভ্যন্তরীণ Hidden Width হলো 8। এলোমেলো কোনো নতুন Weight নিয়ে সেটিকে Pretrained ফলাফল বলে চালিয়ে দেওয়ার সুযোগ না রাখতে শুরুতেই Base Weight-গুলোর SHA-256 Hash নির্দিষ্ট (Pin) করে রাখা হয়েছে।"
+        },
+        {
+          "type": "math",
+          "title": "Supervised Adaptation-এর মূল লক্ষ্য",
+          "body": "\\theta^*=\\operatorname{argmin}_\\theta\\mathbb E_{(x,y)\\sim D}\\mathcal L(f_\\theta(x),y)"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Adaptation রিপোর্টের মূল সংখ্যা যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nroot = Path(\"assets/datasets/scifact_rag\")\nlab = json.loads((root / \"adaptation_lab.json\").read_text())\n\nr = lab[\"report\"]\nassert r[\"train_queries\"] == 505 and r[\"diagnostic_queries\"] == 188\nassert r[\"recipe\"][\"no_evidence_input\"]\nprint(r[\"majority_diagnostic_accuracy\"], r[\"runs\"][\"lora\"][\"trainable_parameters\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব Supervised Dataset ও সীমিত ইনপুট",
+          "body": "উপরের কোডে যে 505টি Train এবং 188টি Diagnostic (Dev) উদাহরণ দেখছেন, সেগুলো এসেছে মূল SciFact Dataset-এর প্রকৃত মানব-যাচাইকৃত Annotation থেকে, যেখানে প্রতিটি Claim-এর জন্য একক ও সুনির্দিষ্ট SUPPORT অথবা CONTRADICT লেবেল রয়েছে। কিন্তু আমাদের ছোট্ট Byte Decoder-এর সীমার ভেতর মেকানিক্সটি পরীক্ষা করার জন্য এখানে Prompt হিসেবে দেওয়া হচ্ছে কেবল BOS টোকেন, Claim-এর প্রথম 24টি UTF-8 Byte এবং শেষে একটি Newline—এর সাথে কোনো Evidence অনুচ্ছেদ দেওয়া হচ্ছে না! আর কাঙ্ক্ষিত Response হলো মাত্র একটি একক অক্ষর টোকেন: S (SUPPORT) অথবা C (CONTRADICT)। প্রমাণ ছাড়া কেবল বাক্যের শুরুর অংশ দেখে সত্য-মিথ্যা নির্ণয়ের এই কাজটি ইচ্ছাকৃতভাবেই বেশ দুর্বল; এর উদ্দেশ্য বৈজ্ঞানিক সত্যতা যাচাই বা Instruction Following শেখানো নয়, বরং Fine-tuning-এর ভেতরের কলকব্জা নিখুঁতভাবে পরখ করা।"
+        },
+        {
+          "type": "text",
+          "title": "ন্যায্য তুলনার নিয়ন্ত্রিত Recipe",
+          "body": "দুটি পদ্ধতির তুলনা যেন পুরোপুরি ন্যায্য হয়, সেজন্য হুবহু একই Base Model এবং একই Batch ক্রম থেকে দুটি আলাদা Training Run চালানো হয়েছে: প্রথমটিতে সব কটি অর্থাৎ 5019টি Parameter-ই আপডেট করা হয়েছে (Full Fine-tuning), আর দ্বিতীয়টিতে কেবল আউটপুট Head-এর ওপর LoRA বসিয়ে মাত্র 534টি Trainable Parameter শেখানো হয়েছে। দুটি ক্ষেত্রেই হুবহু একই Recipe ব্যবহৃত হয়েছে—নির্দিষ্ট 12টি Epoch, Learning Rate = 0.01-সহ AdamW Optimizer, Weight Decay = 0, Gradient Norm Clipping = 1.0 এবং Batch Size = 64। অনুকূল ফলাফল বেছে নেওয়ার জন্য আলাদা কোনো Seed, Rank, Learning Rate বা সেরা Epoch খোঁজা হয়নি, এবং রিপোর্টে Task Baseline-এর পাশাপাশি প্রতিটি ক্লাসের Prediction সংখ্যাও স্বচ্ছভাবে রাখা হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "ফলাফলের নির্মোহ বিশ্লেষণ",
+          "body": "পরীক্ষার ফলাফলটি আমাদের একটি অত্যন্ত মূল্যবান বাস্তব শিক্ষা দেয়: Full Fine-tuning এবং LoRA—দুটি মডেলই 188টি Diagnostic Query-এর প্রতিটির ক্ষেত্রেই একচেটিয়াভাবে SUPPORT প্রেডিক্ট করে! ফলে দুটি মডেলেরই Accuracy দাঁড়ায় 124 / 188 ≈ 0.659574, যা আসলে Train সেটের সংখ্যাগরিষ্ঠ ক্লাস (Majority Baseline) চোখ বন্ধ করে অনুমান করলেই পাওয়া যায়। খেয়াল করুন, ট্রেনিংয়ের সময় Raw Response Loss অনেকখানি কমলেও মডেল কিন্তু বাস্তবে দুটি ক্লাসের পার্থক্য (Discrimination) মোটেও শিখতে পারেনি। এই ব্যর্থ টাস্ক ফলাফলটি লুকানোর বদলে সামনে আনা জরুরি, কারণ এটি চোখে আঙুল দিয়ে দেখিয়ে দেয় যে PEFT (Parameter-Efficient Fine-Tuning)-এর গাণিতিক মেকানিক্স নিখুঁতভাবে কাজ করা আর মডেল বাস্তবে কাজের যোগ্য হয়ে ওঠা—দুটো সম্পূর্ণ আলাদা বিষয়।"
+        },
+        {
+          "type": "text",
+          "title": "পরীক্ষার পরিধি ও সতর্কতা",
+          "body": "আমাদের আলোচনার ভাষা বাংলা হলেও পরীক্ষার ভেতরের সব উদাহরণ ইংরেজি বৈজ্ঞানিক বাক্যের ওপর ভিত্তি করে তৈরি। তাছাড়া এই Dev সেটটি আমরা আগেই Book 4 · Chapter 2 (Embeddings & Retrieval) এবং Book 4 · Chapter 3 (RAG Systems)-এ পর্যবেক্ষণ করেছি, এবং বিভিন্ন Claim-এর ভেতর একই গবেষণাপত্র বা অভিন্ন শুরুর অংশ (Prefix) থাকা স্বাভাবিক। তাই এই পরীক্ষা থেকে কোনো মেডিকেল সিদ্ধান্ত, Chat বা বাংলা Instruction সক্ষমতা, কিংবা বড় স্কেলের Production Efficiency দাবি করার কোনো অবকাশ নেই।"
+        }
+      ]
+    },
+    {
+      "id": "ch25_data",
+      "title": "Data Quality, Role Boundaries এবং Formatting",
+      "subtitle": "Supervised উদাহরণ তৈরি করা মানেই মনগড়া Label বসানো নয়",
+      "duration": "50 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Source Label ও আউটপুট রীতি",
+          "body": "যেকোনো Supervised Fine-Tuning (SFT) শুরু করার আগে প্রথম প্রশ্ন হলো—আমাদের Target Label-গুলো আসছে কোথা থেকে এবং সেগুলোর আসল অর্থ কী? আমাদের এই পরীক্ষায় Supervised Label নেওয়া হয়েছে মূল SciFact Dataset-এর Claim-Evidence Annotation থেকে, যেখানে আউটপুট রীতি হিসেবে SUPPORT-কে S এবং CONTRADICT-কে C অক্ষরে প্রকাশ করা হয়েছে। যেসব Claim-এ কোনো যাচাইকৃত Evidence Annotation নেই, সেগুলোতে মনগড়া কোনো নেতিবাচক Label বসানো হয়নি; বরং সেগুলোকে ট্রেনিং থেকে বাদ রাখা হয়েছে। বাস্তব প্রজেক্টেও মূল Source Label-এর অর্থ, আপনার বেছে নেওয়া Formatting রীতি এবং অনুপস্থিত Annotation সামলানোর নীতি তিনটি আলাদাভাবে নথিবদ্ধ করা উচিত।"
+        },
+        {
+          "type": "text",
+          "title": "Label-এর সামঞ্জস্য যাচাই",
+          "body": "একই Claim-এর বিপরীতে একাধিক বাক্যে Evidence Annotation থাকতে পারে। তাই ডেটা লোড করার সময় আমরা কোডে assert করে নিশ্চিত হয়েছি যে একটি Claim-এর সব কটি Annotation একই একক Label বহন করছে। যদি কখনো পরস্পরবিরোধী Label পাওয়া যায়, তবে চুপচাপ প্রথমটি বেছে নেওয়া মারাত্মক ভুল—সেক্ষেত্রে থেমে গিয়ে পুরো Task Protocol পর্যালোচনা করতে হবে। পাশাপাশি এটিও মনে রাখা দরকার যে SciFact-এর এই Label-গুলো নির্দিষ্ট প্রামাণ্য নথির সাপেক্ষে দেওয়া হয়েছে, চিরন্তন বৈজ্ঞানিক সত্য হিসেবে নয়; ফলে ইনপুটে আসল Evidence না রেখে কেবল Claim দেখে Label অনুমান করতে বলা স্বভাবতই একটি দুর্বল ও Shortcut-প্রবণ কাজ।"
+        },
+        {
+          "type": "math",
+          "title": "Prompt-Response ডাটাসেটের গঠন",
+          "body": "D=\\{(\\mathrm{prompt}_i,\\mathrm{response}_i)\\}_{i=1}^N"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Dataset Split ও Class গণনা যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\np = Path(\"assets/datasets/scifact_rag/adaptation_workflow.py\")\ns = importlib.util.spec_from_file_location(\"chapter25_local\", p)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\n\nrows = m.load_rows()\nassert len(rows[\"train\"]) == 505 and len(rows[\"diagnostic\"]) == 188\nassert not (\n    {q[\"text\"] for q in rows[\"train\"]} & {q[\"text\"] for q in rows[\"diagnostic\"]}\n)\nassert rows[\"excluded_train_ids\"] == []\nprint(\n    {\n        label: sum(q[\"label\"] == label for q in rows[\"train\"])\n        for label in [\"SUPPORT\", \"CONTRADICT\"]\n    }\n)\n"
+        },
+        {
+          "type": "text",
+          "title": "Train ও Diagnostic সেটের সীমানা",
+          "body": "Data Leakage ঠেকাতে আমাদের পাইপলাইনে স্পষ্ট নিয়ম রাখা হয়েছে যে Diagnostic (Dev) সেটে থাকা হুবহু কোনো Claim বাক্য যেন Train সেটে না থাকে। কোডের আউটপুটে excluded_train_ids == [] থেকে দেখা যাচ্ছে, আমাদের Annotated অংশে এমন হুবহু ডুপ্লিকেট একটিও পাওয়া যায়নি (যদিও মূল ডাটাসেটের Unannotated প্রশ্নগুলোর ভেতর এপার-ওপার মিল থাকতে পারে)। তবে হুবহু বাক্য না মিললেও দুটি ভিন্ন Claim-এর প্রথম 24টি Byte এক হতেই পারে কিংবা তারা একই গবেষণাপত্র থেকে আসতে পারে—তাই এই দুটি সেট সম্পূর্ণ স্বাধীন (Independent) বলে দাবি করা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "Dataset Quality যাচাইয়ের তালিকা",
+          "body": "বাস্তবে যেকোনো Fine-tuning রান দেওয়ার আগে টেক্সটের Encoding, ফাঁকা উদাহরণ (Empty Examples), নিখোঁজ Label, পুনরাবৃত্ত Template, অনাকাঙ্ক্ষিত Truncation, তথ্যের উৎস এবং ব্যবহারের আইনি অনুমতি খতিয়ে দেখা আবশ্যক। আপনি যদি সত্যিকারের কোনো Instruction-tuned মডেল বানাতে চান, তবে ব্যবহারকারীর বৈচিত্র্যময় অনুরোধ এবং উন্নত মানের উত্তরের বিস্তৃত কভারেজ প্রয়োজন হবে; আমাদের এই এক-অক্ষরের Claim-prefix ক্লাসিফিকেশন ডাটাসেটকে ভুলেও একটি পরিপূর্ণ Curated Chat Dataset-এর সমতুল্য ভাবা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "Class Imbalance ও মূল্যায়নের শৃঙ্খলা",
+          "body": "কোডের আউটপুট লক্ষ্য করলে দেখবেন, Train সেটে SUPPORT আছে 332টি এবং CONTRADICT আছে 173টি; আবার Diagnostic সেটেও অনুপাতটি প্রায় একই—124টি বনাম 64টি। এই স্পষ্ট Class Imbalance-এর কারণেই যেকোনো মডেলের সাফল্য মাপার আগে Majority Baseline হিসাব করা অপরিহার্য, নইলে সংখ্যাগরিষ্ঠ ক্লাসের দিকে ঝুঁকে পড়া কিংবা শুরুর শব্দের বাহ্যিক মিল (Source Artifact) ধরে মডেল সহজেই ছদ্ম-সাফল্য দেখাতে পারে। ভবিষ্যতে আরও ডেটা যোগ করা বা Weighted Loss ব্যবহার করা যেতে পারে, কিন্তু ইতিমধ্যেই দেখা হয়ে যাওয়া এই Dev সেটের ফলাফল দেখে বারবার Hyperparameter বদলে সেটিকে আনকোরা Fresh Test ফলাফল হিসেবে দাবি করা চলবে না।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে বলবেন",
+          "body": "Interview-এ Data Contamination নিয়ে প্রশ্ন করা হলে কেবল হুবহু বাক্য মিলে যাওয়ার (Exact Duplicate) কথা বললে উত্তর অসম্পূর্ণ থেকে যাবে। এর পাশাপাশি ঘুরিয়ে লেখা বাক্য (Paraphrase), একই মূল নথি থেকে আসা তথ্য, Prompt Template-এর মাধ্যমে অসতর্ক Leakage, ইনপুটের ভেতরই ভুলবশত Label ঢুকে যাওয়া এবং একই উৎস-পরিবারের ওভারল্যাপ—এসব দিকও তুলে ধরুন। সবশেষে বলুন যে গবেষণার Reproducibility নিশ্চিত করতে ব্যবহৃত প্রতিটি Row, তাদের Role ID এবং ফাইলের Hash সংরক্ষণ করা জরুরি।"
+        }
+      ]
+    },
+    {
+      "id": "ch25_format",
+      "title": "Token Boundaries, Truncation এবং Response Alignment",
+      "subtitle": "কাঙ্ক্ষিত Target কি অসতর্কতায় Input-এর ভেতরেই ঢুকে পড়েছে?",
+      "duration": "50 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Byte-স্তরের ইনপুট চুক্তি (Byte Contract)",
+          "body": "আমাদের মডেল শব্দ বা সাবওয়ার্ড নয়, সরাসরি কাঁচা Byte নিয়ে কাজ করে। প্রতিটি Claim স্ট্রিংকে UTF-8-এ রূপান্তর করে তার প্রথম 24টি Byte কেটে নেওয়া হয়। এখানে একটি সূক্ষ্ম কারিগরি ব্যাপার আছে: বাংলা বা বিশেষ চিহ্নের মতো বহু-বাইট (Multi-byte) ইউনিকোড অক্ষরের মাঝখানেও এই 24-তম Byte-এর কাঁচি পড়তে পারে! আমাদের Byte Decoder নির্বিঘ্নে যেকোনো 0..255 পূর্ণসংখ্যা গ্রহণ করে, যার শুরুতে থাকে BOS (257) এবং Prompt ও Response-এর বিভাজক হিসেবে শেষে থাকে একটি Newline (10)। তাই পর্দায় টেক্সট দেখানোর সময় ভাঙা ইউনিকোড অক্ষর প্রতিস্থাপনের নিয়ম (Replacement Policy) আর মডেলের ভেতরে যাওয়া প্রকৃত Input Byte-গুলোর পরিচয় সবসময় আলাদা করে যাচাই করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "Causal Alignment ও ভবিষ্যৎ গোপন রাখা",
+          "body": "একটি Autoregressive Decoder-এ ঠিক কোন পজিশনের আউটপুট দিয়ে আমরা পরের টোকেন প্রেডিক্ট করব? আমাদের ফরম্যাটে Prefix-এর সর্বশেষ বৈধ পজিশনটি হলো Newline টোকেন, এবং ঠিক ওই পজিশনের Logits থেকেই পরের কাঙ্ক্ষিত Response Byte (S বা C) অনুমান করা হয়। খেয়াল করুন, এখানে কাঙ্ক্ষিত Target টোকেনটিকে ইনপুট সিকোয়েন্সের শেষে জোড়া লাগানো হয়নি—ফলে মডেল কখনোই উত্তরের অক্ষরটিকে ইনপুট Feature হিসেবে উঁকি মেরে দেখার সুযোগ পায় না। সাধারণ বহু-শব্দের (Multi-token) SFT-এর ক্ষেত্রে অবশ্য পুরো Prompt + Response একসাথে ইনপুটে দিয়ে এক ঘর Shift করতে হয় এবং কোন পজিশনগুলো Response তা নিখুঁতভাবে Mask করতে হয়।"
+        },
+        {
+          "type": "math",
+          "title": "Input Sequence ও Target-এর গঠন",
+          "body": "x=[BOS,b_{1:24},newline],\\quad y\\in\\{S,C\\}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Prefix, Padding ও Target Position যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\np = Path(\"assets/datasets/scifact_rag/adaptation_workflow.py\")\ns = importlib.util.spec_from_file_location(\"chapter25_local\", p)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\n\nrows = m.load_rows()\nq = rows[\"train\"][0]\nids = m.prefix(q[\"text\"])\nx, pos, target = m.batch([q])\nassert ids[0] == 257 and ids[-1] == 10 and len(ids) <= 26\nassert x.shape == (1, 26) and pos[0] == len(ids) - 1\nassert target[0] in [83, 67]\nprint(ids, pos.tolist(), target.tolist())\n"
+        },
+        {
+          "type": "text",
+          "title": "Padding এবং সঠিক পজিশন নির্বাচন",
+          "body": "একসাথে Batch আকারে প্রসেস করার সুবিধার্থে সব Prefix-এর ডান দিকে PAD (256) বসিয়ে দৈর্ঘ্য 26 করা হয়। কিন্তু কোনো ছোট Claim-এর ক্ষেত্রে যদি তার আসল দৈর্ঘ্য 26-এর কম হয়, তখন কাঙ্ক্ষিত উত্তর প্রেডিক্ট করার পজিশনটি হবে len(ids) - 1—মোটেও টেনসরের একেবারে শেষ ইনডেক্স (25) নয়! আমাদের মূল ডিকোডার নিজেই Attention-এর ভেতর PAD টোকেনগুলোকে Key Mask দিয়ে আড়াল করে রাখে। কিন্তু আপনি যদি ভুলে শেষ বৈধ পজিশনটির বদলে সর্বশেষ স্টোরেজ ইনডেক্স থেকে Logits তুলে নেন, তবে ছোট বাক্যের ক্ষেত্রে PAD পজিশনের অর্থহীন আউটপুট দিয়ে উত্তর মাপার মতো মারাত্মক বাগ তৈরি হবে।"
+        },
+        {
+          "type": "text",
+          "title": "Truncation-এর বাস্তব মাশুল",
+          "body": "একটি বৈজ্ঞানিক দাবির প্রথম 24টি Byte মানে বড়জোর কয়েকটি শব্দ—অনেক সময়েই বাক্যের মূল বিষয়বস্তু, না-বোধক শব্দ (Negation) বা দুটি ধারণার আসল সম্পর্ক ওইটুকু অংশের বাইরেই রয়ে যায়। এমনকি সম্পূর্ণ বিপরীত অর্থের দুটি লম্বা বাক্যের শুরুর 24টি Byte হুবহু এক হতে পারে! কাজেই এমন খণ্ডিত ইনপুটের ওপর Training Loss কমে যাওয়া দেখে কখনোই দাবি করা যাবে না যে মডেল পুরো বৈজ্ঞানিক বক্তব্য বুঝতে শিখেছে। পূর্ণ বাক্য এবং প্রাসঙ্গিক Evidence যোগ করা ভবিষ্যতের উন্নত টাস্ক ডিজাইনের অংশ—আমাদের এই স্থির পরীক্ষার নিয়ম মাঝপথে বদলানোর বিষয় নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Template ও সংস্করণ নির্দিষ্ট রাখা",
+          "body": "নির্ভরযোগ্য Adaptation পাইপলাইনে Tokenizer ID, বিশেষ মার্কার (BOS, EOS, PAD), Response সংকেত (S বা C, অর্থাৎ ASCII 83 বা 67), সর্বোচ্চ Context Length এবং কোনো Chat Template থাকলে তার সুনির্দিষ্ট সংস্করণ—সবকিছু কঠোরভাবে নির্দিষ্ট (Pin) করে রাখতে হয়। যদি কখনো লেবেল প্রকাশের শব্দ বা চিহ্ন (Verbalizer Mapping) বদলানো হয়, তবে Training এবং Inference Decoding—দুই জায়গাতেই একসাথে সেই পরিবর্তন আনতে হবে। আমাদের বর্তমান পরীক্ষায় কোনো জটিল Chat Template নেই; কেবল একটি সরল Newline-ই এখানে Prompt শেষ হওয়ার সংকেত দেয়।"
+        },
+        {
+          "type": "text",
+          "title": "কোডিং অনুশীলনের চেকলিস্ট",
+          "body": "নিজের হাতে এই ধরনের ডেটা ফরম্যাটিং লেখার সময় অন্তত পাঁচ ধরনের টেস্ট কেস দিয়ে কোড পরখ করে দেখুন: একটি ছোট ASCII বাক্য, একটি বাংলা বা ইউনিকোড বাক্য, ঠিক কাঁটায় কাঁটায় 24 Byte দৈর্ঘ্যের বাক্য, একটি অনেক লম্বা বাক্য এবং শুরুর 24 Byte এক কিন্তু পরের অংশ আলাদা—এমন দুটি ভিন্ন বাক্য। সেই সঙ্গে অবশ্যই অডিট করে দেখবেন যেন মূল ডাটাসেটের Label অসাবধানতাবশত Prompt টেক্সটের ভেতরেই ঢুকে পড়ে সহজ Data Leakage ঘটিয়ে না বসে!"
+        }
+      ]
+    },
+    {
+      "id": "ch25_mask",
+      "title": "Response-only Loss এবং Ignored Prompt Tokens",
+      "subtitle": "Loss-এর হরে থাকবে শুধু বৈধ Target টোকেন—Prompt বা Padding নয়",
+      "duration": "50 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন Response-only Loss ব্যবহার করা হয়?",
+          "body": "আমরা যখন একটি মডেলকে প্রশ্নের উত্তর দিতে শেখাই, তখন আমাদের মূল লক্ষ্য হলো মডেল যেন প্রদত্ত Prompt পড়ে সঠিক Response তৈরি করে—প্রশ্নটিকেই মুখস্থ করে হুবহু আওড়ানো আমাদের লক্ষ্য নয়। তাই Response-only Objective-এ Prompt-এর সব পজিশনকে Loss হিসাব থেকে বাদ দিয়ে কেবল কাঙ্ক্ষিত Response Token-গুলোর ওপর স্কোর মাপা হয়। আমাদের বর্তমান এক-টোকেনের টাস্কে প্রতিটি উদাহরণের জন্য ঠিক একটি করে Supervised Position রয়েছে, তাই পুরো Batch-এর গড় নিলে সরাসরি Mean Response NLL (Negative Log-Likelihood) পাওয়া যায়। আর উত্তর যদি একাধিক টোকেনের হয়, তবে বৈধ Response Token-গুলোর লসের যোগফলকে কেবল বৈধ টোকেনের মোট সংখ্যা দিয়েই ভাগ করতে হবে এবং Shifted Alignment নিখুঁত রাখতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "বৈধ আউটপুট Class ও Softmax-এর হর",
+          "body": "এখানে একটি অত্যন্ত সূক্ষ্ম হিসাব খেয়াল করুন। আমাদের ডিকোডারের মোট ভোকাবুলারি আকার 259। এর মধ্যে আউটপুট হিসেবে PAD (256) এবং BOS (257) তৈরি হওয়া আলাদাভাবে ব্লক (-inf) করা থাকে, কিন্তু EOS (258)-সহ বাকি 257টি টোকেনই বৈধ আউটপুট ক্লাস হিসেবে খোলা থাকে। যদিও আমাদের টাস্কের সত্যিকারের Target কেবল S অথবা C, তবুও ট্রেনিংয়ের Cross-Entropy Loss-এর হরে (Denominator) কিন্তু ওই সব কটি অর্থাৎ 257টি বৈধ ক্লাসই অংশ নেয়! শুধু S ও C-এর ভেতর যে তুলনা করা হয়, সেটি কেবল Inference বা মূল্যায়নের সময় ক্লাস বেছে নেওয়ার একটি আলাদা নিয়ম। আপনি যদি ট্রেনিং লসটিকে সাধারণ দুই-ক্লাসের (Binary) Cross-Entropy ভেবে হিসাব করেন, তবে আমাদের আসল রিপোর্টের সংখ্যার সাথে তা কখনোই মিলবে না।"
+        },
+        {
+          "type": "math",
+          "title": "Masked Response Loss-এর সমীকরণ",
+          "body": "\\mathcal L=-\\frac{\\sum_t m_t\\log p_\\theta(y_t\\mid x_{\\le t})}{\\sum_t m_t}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Uniform Logits ও Gradient Mask যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\np = Path(\"assets/datasets/scifact_rag/adaptation_workflow.py\")\ns = importlib.util.spec_from_file_location(\"chapter25_local\", p)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\n\nimport torch\n\nrows = m.load_rows()\nx, pos, target = m.batch(rows[\"train\"][:2])\nlogits = torch.zeros(2, 26, 259, dtype=torch.float64, requires_grad=True)\n# Backward accumulates into .grad; the seed or reduction sets the scale.\nloss = m.response_loss(logits, pos, target)\nloss.backward()\nassert torch.isclose(\n    loss, torch.tensor(__import__(\"math\").log(257), dtype=torch.float64)\n)\nassert logits.grad[:, :-1].abs().sum() == 0\nprint(loss.item())\n"
+        },
+        {
+          "type": "text",
+          "title": "Ignore Index কীভাবে কাজ করে?",
+          "body": "উপরের কোডে দেখুন, সব Logits শূন্য হলে আমাদের Response Loss আসে ঠিক log(257)—যা প্রমাণ করে যে 257টি বৈধ ক্লাসের ওপরই সমবণ্টন তৈরি হয়েছে। সাধারণ ফ্রেমওয়ার্কে যখন ignore_index ব্যবহার করা হয়, তখন সেটি কেবল চিহ্নিত Target Position-গুলোকে গড় Loss থেকে বাদ দেয়; ওই টোকেন আইডিটিকে আউটপুট Softmax-এর হর থেকে আপনাআপনি সরিয়ে দেয় না। বহু-টোকেনের পাইপলাইনে যদি কোনো পুরো Batch-এর সব টোকেনই Ignored হয়ে যায় (শূন্য দিয়ে ভাগের ঝুঁকি), কিংবা ভুল পজিশন বা Padding-সহ মোট দৈর্ঘ্য দিয়ে ভাগ করা হয়, তবে গুরুতর গাণিতিক ত্রুটি ঘটে। আমাদের কোডে অবশ্য নির্দিষ্ট বৈধ পজিশনগুলো সরাসরি বেছে (Gather) নেওয়া হয়েছে।"
+        },
+        {
+          "type": "adaptation_mask_lab",
+          "title": "ইন্টারেক্টিভ ল্যাব: Response Mask ও Logits তুলনা",
+          "body": "নিচের ল্যাবে Base Model এবং Full Fine-tuning-এর পর পাওয়া Logits পাশাপাশি মিলিয়ে প্রকৃত Target NLL এবং শর্তসাপেক্ষ S/C Probability পর্যবেক্ষণ করুন। পর্দায় ইনপুট আইডি এবং মূল Source Label দেখানো হচ্ছে কেবল আপনার নিরীক্ষার সুবিধার জন্য—মডেল কিন্তু Forward Pass-এর সময় ওই লেবেল দেখতে পায় না। আরেকটি গুরুত্বপূর্ণ বিষয় খেয়াল রাখুন: Prompt পজিশনগুলোকে Loss থেকে বাদ দেওয়ার মানে কিন্তু এই নয় যে মডেল ইনপুট বাক্যটিকে উপেক্ষা করছে; Causal Attention ঠিকই পুরো Prefix পড়ে তার সারমর্ম শেষ পজিশনে পৌঁছে দিচ্ছে।"
+        },
+        {
+          "type": "text",
+          "title": "Gradient প্রবাহের সূক্ষ্ম দিক",
+          "body": "কোডের শেষের assert লাইনটি আমাদের একটি চমৎকার সত্য দেখায়: সরাসরি Logits টেনসরের ওপর কেবল শেষের Supervised Position-এই অশূন্য Gradient তৈরি হয়, আর বাকি সব উপেক্ষিত (Ignored) পজিশনে সরাসরি Cross-Entropy Gradient থাকে শূন্য। কিন্তু যেহেতু ভেতরের Transformer Layer-গুলোর Parameter সব পজিশনের জন্যই অভিন্ন (Shared), তাই শেষ পজিশনের লস থেকে Backpropagation হয়ে ভেতরের Context State-গুলোর মাধ্যমেও মডেল শিখতে পারে! মনে রাখবেন, কোনো প্যারামিটারে requires_grad = False দিয়ে সেটিকে Freeze করা আর আউটপুটে Loss Mask বসানো দুটি সম্পূর্ণ আলাদা ধারণা। আপনি যদি ভুল করে Prompt অংশটিকে torch.no_grad()-এর ভেতর চালিয়ে ফেলার চেষ্টা করেন, তবে ভেতরের লেয়ারগুলোর স্বাভাবিক Training Dynamics নষ্ট হয়ে যাবে।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে বলবেন",
+          "body": "Interview-এ যদি প্রশ্ন করা হয়, 'হঠাৎ করে Fine-tuning Loss অস্বাভাবিক রকম কমে গেলে কী কী সন্দেহ করবেন?'—তবে সবার আগে Label Leakage, এক ঘর Shift করার বাগ, Response-only Mask-এর ভুল এবং ভাগফলের Denominator-এ Padding ঢুকে পড়েছে কি না তা পরীক্ষা করার কথা বলুন। পাশাপাশি স্পষ্ট করে বলুন যে এক-অক্ষরের নির্দিষ্ট উত্তরের ওপর মাপা এই Loss থেকে পাওয়া সূচককে কখনোই সাধারণ ভাষার সামগ্রিক Perplexity (PPL)-এর সাথে সরাসরি তুলনা করা চলে না; তুলনা করতে হলে একক, Mask এবং ভোকাবুলারি সব এক হতে হবে।"
+        }
+      ]
+    },
+    {
+      "id": "ch25_full",
+      "title": "Full Fine-tuning এবং Optimizer State",
+      "subtitle": "সব Weight পরিবর্তনযোগ্য হলেও আমাদের Compute ও Memory সীমিত",
+      "duration": "50 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Full Fine-tuning-এ ঠিক কী ঘটে?",
+          "body": "Full Fine-tuning-এ আমাদের Base Model-এর সব কটি অর্থাৎ 5019টি Parameter-ই শেখার জন্য উন্মুক্ত (Trainable) থাকে। ফলে আউটপুট থেকে আসা Gradient পেছনের দিকে প্রবাহিত হয়ে আউটপুট Head, Normalization, FFN, Attention এবং একেবারে শুরুর Embedding ও Bias পর্যন্ত প্রতিটি অংশকেই বদলে দিতে পারে (যদিও ইনপুটের PAD Embedding নিষ্ক্রিয় রাখার নিয়ম এবং ব্লক করা আউটপুট ক্লাসের বিধিনিষেধ আগের মতোই বহাল থাকে)। যেহেতু ভেতরের এই লেয়ারগুলো সব ধরনের কাজের জন্যই যৌথভাবে ব্যবহৃত হয়, তাই এদের Weight বদলালে তা যেমন বর্তমান টাস্কের Response Score পরিবর্তন করে, তেমনি মডেলের আগে শেখা অন্যান্য আচরণকেও প্রভাবিত করতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "Training Recipe ও আপডেটের হিসাব",
+          "body": "আমাদের নিয়ন্ত্রিত পরীক্ষায় Optimizer হিসেবে ব্যবহৃত হয়েছে AdamW (Learning Rate = 0.01, Weight Decay = 0), Batch Size = 64, Global Gradient Norm Clipping = 1.0, মোট 12টি Epoch এবং ডেটা শাফল করার জন্য নির্দিষ্ট Generator সিড 250। হিসাবটি মিলিয়ে দেখুন: 505টি ট্রেনিং উদাহরণকে 64 আকারের ব্যাচে ভাগ করলে প্রতি Epoch-এ আপডেট হয় 8 বার, অর্থাৎ 12টি Epoch-এ মোট 96টি Optimizer Step। LoRA রানের ক্ষেত্রেও আমরা হুবহু একই শুরুর মডেল এবং একই ব্যাচ ক্রম রেখেছি। তবে খেয়াল রাখবেন, একই Learning Rate ও বাজেট রাখা নিয়ন্ত্রিত তুলনার জন্য ন্যায্য হলেও, ভিন্ন ভিন্ন পদ্ধতির সর্বোচ্চ সম্ভাব্য সক্ষমতা (Method-Optimal Performance) বের করার জন্য বাস্তবে আলাদা টিউনিং প্রয়োজন হতে পারে।"
+        },
+        {
+          "type": "math",
+          "title": "Parameter Update-এর সাধারণ রূপ",
+          "body": "\\theta_{t+1}=\\theta_t-\\eta\\,\\mathrm{update}(\\nabla_\\theta\\mathcal L)"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Full Fine-tuning-এর অগ্রগতি যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nroot = Path(\"assets/datasets/scifact_rag\")\nlab = json.loads((root / \"adaptation_lab.json\").read_text())\n\nfull = lab[\"report\"][\"runs\"][\"full\"]\nassert full[\"trainable_parameters\"] == full[\"total_parameters\"] == 5019\nh = lab[\"history\"][\"full\"]\nassert len(h) == 13 and h[-1][\"epoch\"] == 12\nassert h[-1][\"train\"][\"response_nll\"] < h[0][\"train\"][\"response_nll\"]\nprint(full)\n"
+        },
+        {
+          "type": "text",
+          "title": "Optimizer Memory কেন বড় বাধা হয়ে দাঁড়ায়?",
+          "body": "বড় মডেলে Full Fine-tuning করতে গেলে কেবল মডেলের নিজস্ব Parameter-এর জায়গাটুকু গুনলেই চলে না। AdamW-এর মতো আধুনিক Optimizer প্রতিটি পরিবর্তনযোগ্য প্যারামিটারের জন্য প্রথম ও দ্বিতীয় ক্রমের মোমেন্ট (Momentum ও Variance), প্রতিটির Gradient, প্রয়োজনে উচ্চ-প্রিসিশনের কপি এবং ফরোয়ার্ড পাসের বিশাল Activation মেমোরিতে ধরে রাখে। তাই কেবল Parameter Byte গুনে কখনোই Peak Training Memory আন্দাজ করা যায় না। আমাদের এই পরীক্ষাটি যেহেতু CPU-তে float64 প্রিসিশনে অতি ক্ষুদ্র মডেলের মেকানিক্স দেখানোর জন্য চালানো হয়েছে, তাই এখান থেকে বাস্তব GPU Mixed-Precision ট্রেনিংয়ের গতি বা মেমোরি সাশ্রয় মাপা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "Training Stability ও সাধারণ ত্রুটি",
+          "body": "Global Norm Gradient Clipping হঠাৎ বড় হয়ে যাওয়া Gradient-এর ধাক্কা সামলে ট্রেনিংকে স্থিতিশীল রাখে বটে, কিন্তু ডেটায় ভুল, বেঠিক Label কিংবা ত্রুটিপূর্ণ Objective থাকলে সেটিকে কখনোই শোধরাতে পারে না। বাস্তবে অতিরিক্ত Learning Rate, Mask করার বাগ, মূল্যায়নের সময় Dropout বন্ধ (model.eval()) করতে ভুলে যাওয়া কিংবা Learning Rate Scheduler-এর ক্রম গোলমাল হওয়াই অস্থিতিশীলতার প্রধান কারণ। আমাদের এই ছোট রানটিতে কোনো Dropout, Scheduler বা সেরা Checkpoint বাছাইয়ের জটিলতা রাখা হয়নি; রিপোর্টে Epoch 0 থেকে 12 পর্যন্ত প্রতি ধাপে পুরো ট্রেনিং সেটের প্রকৃত মূল্যায়ন ফলাফল দেখানো হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "Catastrophic Forgetting-এর ঝুঁকি",
+          "body": "নতুন কোনো সংকীর্ণ টাস্কে সব Weight ঢেলে সাজাতে গেলে মডেল তার আগে শেখা সাধারণ ভাষার দক্ষতা হারিয়ে ফেলতে পারে—যাকে বলা হয় Catastrophic Forgetting। এই ক্ষয় মাপার জন্য মূল সক্ষমতার একটি আলাদা Holdout Benchmark দিয়ে ট্রেনিংয়ের আগে ও পরে তুলনা করা অপরিহার্য। আমাদের বর্তমান পরীক্ষায় এমন কোনো Forgetting Benchmark রাখা হয়নি (যেমন মূল Alice টেক্সটের ওপর NLL পুনরায় মেপে দেখা হয়নি)। কাজেই কেবল নতুন টাস্কে Full Fine-tuning-এর লস কমেছে দেখেই মডেলটি তার পুরোনো জ্ঞান অক্ষত রেখেছে বলে দাবি করা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে বলবেন",
+          "body": "Interview-এ সবসময় জোর দিয়ে বলবেন যে বেশি Trainable Parameter থাকা মানেই স্বয়ংক্রিয়ভাবে ভালো ফলাফল নয়। আমাদের পরীক্ষার উদাহরণ টেনে দেখাতে পারেন যে মডেলের সীমিত ক্ষমতা, খণ্ডিত 24-byte Prompt, প্রমাণহীন ইনপুট এবং Class Imbalance থাকলে সব কটি প্যারামিটার আপডেট করেও মডেল কেবল সংখ্যাগরিষ্ঠ ক্লাস (All-Majority Outcome) প্রেডিক্ট করতে পারে। তাই যেকোনো ফলাফল ব্যাখ্যা করার সময় ট্রেনিং লসের পাশাপাশি Prediction বণ্টন এবং Majority Baseline-এর তুলনা একসাথে উপস্থাপন করা উচিত।"
+        }
+      ]
+    },
+    {
+      "id": "ch25_lora",
+      "title": "LoRA-এর গাণিতিক ভিত্তি, Rank এবং Alpha",
+      "subtitle": "Frozen Base Weight-এর সাথে ছোট Low-Rank Update যোগ করার কৌশল",
+      "duration": "50 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Low-Rank আপডেটের মূল ধারণা",
+          "body": "পুরো মডেলের হাজার হাজার বা কোটি কোটি প্যারামিটার না বদলে আমরা যদি ধরে নিই যে নতুন টাস্কের জন্য প্রয়োজনীয় পরিবর্তনটুকু (ΔW) আসলে একটি নিম্ন-মাত্রার (Low-Rank) ম্যাট্রিক্স দিয়েই প্রকাশ করা সম্ভব, তাহলেই জন্ম নেয় LoRA (Low-Rank Adaptation)। আমাদের মডেলের আউটপুট Head-এর Weight Matrix-টির আকার 259 × 8, অর্থাৎ এতে মোট 2072টি সংখ্যা রয়েছে। এখন এর ওপর যদি আমরা Rank r = 2-এর একটি LoRA আপডেট বসাই, তবে দুটি ছোট ম্যাট্রিক্স B (আকার 259 × 2, মোট 518টি সংখ্যা) এবং A (আকার 2 × 8, মোট 16টি সংখ্যা) মিলিয়ে আমাদের ট্রেন করতে হবে মাত্র 518 + 16 = 534টি প্যারামিটার! মূল Base Weight এবং Bias সম্পূর্ণ অপরিবর্তিত (Frozen) থাকে। এই ছোট মডেলে মোট প্যারামিটারের তুলনায় পরিবর্তনযোগ্য অংশ দাঁড়াচ্ছে প্রায় 534 / 5019 ≈ 10.64%। তবে Rank বা কোন কোন লেয়ারে LoRA বসানো হচ্ছে (Target Modules) তা বদলালে সক্ষমতা ও মেমোরির হিসাব নতুন করে কষতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "Rank এবং Alpha দিয়ে Scaling নিয়ন্ত্রণ",
+          "body": "প্রচলিত LoRA সমীকরণে লব্ধ আপডেট BA-কে α / r অনুপাত দিয়ে গুণ করে স্কেল করা হয়। আমাদের পরীক্ষায় α = 2 এবং r = 2 নেওয়া হয়েছে, ফলে গুণিতকটি দাঁড়িয়েছে 2 / 2 = 1। এখানে দুটি হাইপারপ্যারামিটারের ভূমিকা আলাদা: Rank (r) নির্ধারণ করে ম্যাট্রিক্স দুটিতে কয়টি প্যারামিটার থাকবে এবং আপডেটের মাত্রাগত সক্ষমতা (Capacity) কতটুকু হবে; অন্যদিকে Alpha (α) একই Rank বজায় রেখে আপডেটের প্রাবল্য বা বিস্তৃতি (Amplitude) নিয়ন্ত্রণ করে। সাহিত্যে LoRA-এর কিছু সংস্করণে ভিন্ন স্কেলিং রীতিও দেখা যায়, তাই নিজের ব্যবহৃত সূত্রটি সবসময় স্পষ্টভাবে উল্লেখ করা ভালো। পরের ইন্টারেক্টিভ ল্যাবে Inference-এর সময় স্কেল 0 থেকে 2 পর্যন্ত ঘুরিয়ে দেখার ব্যবস্থাটি কেবল ইতিমধ্যেই শেখা Adapter-এর আচরণ বোঝার (Ablation) জন্য—সেরা মান খোঁজার কোনো ভ্যালিডেটেড কৌশল হিসেবে নয়।"
+        },
+        {
+          "type": "math",
+          "title": "LoRA-এর কার্যকর Weight সমীকরণ",
+          "body": "W_{eff}=W_0+\\frac\\alpha r BA,\\quad A\\in\\mathbb R^{r\\times d_{in}},\\ B\\in\\mathbb R^{d_{out}\\times r}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ LoRA ফ্যাক্টর ও Merged Weight যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nroot = Path(\"assets/datasets/scifact_rag\")\nlab = json.loads((root / \"adaptation_lab.json\").read_text())\n\nimport numpy as np\n\nA = np.asarray(lab[\"adapter\"][\"A\"])\nB = np.asarray(lab[\"adapter\"][\"B\"])\nbase = np.asarray(lab[\"weights\"][\"base\"][\"head.weight\"])\nmerged = np.asarray(lab[\"weights\"][\"lora\"][\"head.weight\"])\nassert A.shape == (2, 8) and B.shape == (259, 2)\nnp.testing.assert_allclose(base + B @ A, merged, atol=1e-12)\nprint(A.size + B.size)\n"
+        },
+        {
+          "type": "text",
+          "title": "শুরুর মান (Initialization) কেন অপ্রতিসম হতে হয়?",
+          "body": "LoRA শুরু করার সময় A ম্যাট্রিক্সকে ছোট র‍্যান্ডম নরমাল সংখ্যা (যেমন স্ট্যান্ডার্ড ডেভিয়েশন 0.02) দিয়ে এবং B ম্যাট্রিক্সকে পুরোপুরি শূন্য (Zeros) দিয়ে ইনিশিয়ালাইজ করা হয়। কেন? প্রথমত, শুরুতে B = 0 হওয়ায় গুণফল BA = 0 হয়—ফলে ট্রেনিংয়ের শুরুর মুহূর্তেই মডেলটি নিখুঁতভাবে মূল Base Model-এর সমান আচরণ করে, কোনো আকস্মিক গোলমাল তৈরি হয় না। দ্বিতীয়ত, চেইন রুল অনুযায়ী প্রথম ধাপে B-এর Gradient অশূন্য হয় (কারণ A ≠ 0), যদিও B = 0 থাকার কারণে প্রথম ধাপে A-এর Gradient শূন্য থাকে; পরের ধাপে B আপডেট হয়ে অশূন্য হলেই A-ও শিখতে শুরু করে! কিন্তু আপনি যদি ভুল করে A এবং B দুটোকেই শূন্য দিয়ে শুরু করেন, তবে দুটোরই Gradient চিরতরে শূন্য হয়ে একটি অচল ফাঁদে (Dead Gradient Trap) আটকে যাবে।"
+        },
+        {
+          "type": "adaptation_lora_lab",
+          "title": "ইন্টারেক্টিভ ল্যাব: LoRA Scale ও Base সামঞ্জস্যতা",
+          "body": "নিচের ল্যাবে Adapter Scale পরিবর্তন করে দেখুন: স্কেল 0 করলে মডেল অবিকল মূল Base Head-এ ফিরে যায়, আর স্কেল 1 করলে আমাদের ট্রেন করা Merged অবস্থাটি পাওয়া যায়। খেয়াল রাখবেন, একটি LoRA Adapter কখনোই একা একা পুরো জ্ঞান ধারণ করে না—এটি কেবল একটি নির্দিষ্ট Base Model-এর সাপেক্ষে শেখা পরিবর্তন (Delta)। তাই যে Base Weight Hash, Tokenizer এবং Frozen Bias-এর ওপর এটি শেখানো হয়েছে, লোড করার সময়ও ঠিক সেটিই থাকতে হবে; আকার (Shape) মিলে গেলেও ভিন্ন কোনো Base Model-এর ওপর এটি বসালে ফলাফল সম্পূর্ণ অর্থহীন হয়ে পড়বে।"
+        },
+        {
+          "type": "text",
+          "title": "Head-only LoRA-এর সীমাবদ্ধতা",
+          "body": "আমাদের এই পরীক্ষায় আমরা কেবল সর্বশেষ আউটপুট Head-এ LoRA বসিয়েছি; ফলে ভেতরের ডিকোডার লেয়ারগুলোর 8-মাত্রার Hidden Representation একচুলও বদলাতে পারেনি। যদি ভেতরের Feature-গুলোই টাস্কের জন্য যথেষ্ট তথ্যবহুল না হয়, তবে শুধু শেষের রৈখিক লেয়ার ঘুরিয়ে বড় উন্নতি পাওয়া কঠিন। বাস্তব বড় মডেলে সাধারণত Attention-এর Query/Value (Q/V) বা সব রৈখিক লেয়ার এবং FFN-এ LoRA বসানো হয়। তাই শুধু LoRA নামটুকু শুনেই সব কনফিগারেশনকে এক পাল্লায় মাপবেন না—ঠিক কোন মডিউলে এবং কত Rank-এ এটি বসানো হয়েছে তা সবসময় আলাদা করে দেখুন।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে বলবেন",
+          "body": "Interview-এ বোর্ডে LoRA ব্যাখ্যা করার সময় প্রথমেই A এবং B-এর Shape লিখে মূল d_out × d_in প্যারামিটারের সাথে r(d_out + d_in) প্যারামিটারের তুলনা করে দেখান। এরপর α / r স্কেলিং, B = 0 ইনিশিয়ালাইজেশনের যুক্তি এবং রৈখিক ধর্মের কারণে W_0 x + (α/r) B(Ax) = (W_0 + (α/r) BA) x সমীকরণ দিয়ে Merge Equivalence প্রমাণ করুন। সবশেষে স্পষ্ট করুন যে Base Weight-এ requires_grad = False থাকলেও ইনপুট Activation-এর ভেতর দিয়ে সমান্তরাল শাখায় ঠিকই Adapter-এর প্যারামিটারে Gradient পৌঁছে যায়।"
+        }
+      ]
+    },
+    {
+      "id": "ch25_gradients",
+      "title": "Frozen Gradients, Trainable Targets এবং Initialization",
+      "subtitle": "Optimizer আসলে ঠিক কার কার Parameter আপডেট করছে?",
+      "duration": "65 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Parameter Freeze করার নিরীক্ষা (Freeze Audit)",
+          "body": "আগের পাঠে আমরা LoRA-এর গাণিতিক রূপ দেখেছি; এবার দেখা যাক কোডের ভেতর Gradient প্রবাহ ঠিক কীভাবে নিয়ন্ত্রিত হয়। শুরুতেই মূল Base Model-এর সব প্যারামিটার Freeze করে কেবল Adapter-এর A এবং B ম্যাট্রিক্স দুটিকে Trainable রাখা হয়, এবং Optimizer-এর হাতেও কেবল এই পরিবর্তনযোগ্য প্যারামিটারগুলোই তুলে দেওয়া হয়। এখানে তিনটি ভিন্ন নিয়ন্ত্রণ ব্যবস্থা কখনোই গুলিয়ে ফেলা চলবে না: কোনো প্যারামিটারের requires_grad ফ্ল্যাগ, Autograd-এর তৈরি করা Computation Graph এবং মডিউলের train() বনাম eval() মোড—এই তিনটি সম্পূর্ণ আলাদা কাজ করে এবং প্রতিটিকেই আলাদাভাবে যাচাই করতে হয়। বিশেষ করে মনে রাখতে হবে, কোনো Frozen লেয়ারের মধ্য দিয়ে যাওয়ার সময়েও তার আগের (Upstream) কোনো Trainable মডিউলে সংকেত পাঠানোর জন্য ইনপুটের সাপেক্ষে Gradient হিসাব করার দরকার হতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "শুরুর ধাপের Gradient আচরণ",
+          "body": "যখন আমরা B = 0 এবং A ≠ 0 দিয়ে শুরু করি, তখন শুরুর আপডেট ΔW = 0 হলেও প্রথম ধাপেই B-এর ওপর অশূন্য Gradient তৈরি হয় এবং B শিখতে শুরু করে। অন্যদিকে B = 0 থাকার কারণে চেইন রুলের গুণফলে প্রথম ধাপে A-এর Gradient শূন্য (0) আসাটাই স্বাভাবিক—এটি কোনো কোডিং বাগ নয়! কিন্তু দুটোকেই শূন্য দিয়ে শুরু করলে কেউই আর কখনো শিখতে পারত না। আপনার অ্যানালিটিক্যাল Gradient ঠিকমতো কাজ করছে কি না তা অশূন্য অবস্থায় Finite-Difference Check দিয়ে সহজেই যাচাই করা যায়। পাশাপাশি আরেকটি গাণিতিক বৈশিষ্ট্য খেয়াল রাখুন: কম-র‍্যাঙ্কের দুটি ফ্যাক্টরের ভেতর সবসময়ই একটি Scale Ambiguity থাকে—অর্থাৎ A-কে কোনো অশূন্য সংখ্যা দিয়ে গুণ করে B-কে সেই একই সংখ্যা দিয়ে ভাগ করলে গুণফল BA হুবহু অপরিবর্তিত থাকে।"
+        },
+        {
+          "type": "math",
+          "title": "LoRA ফ্যাক্টর দুটির Gradient সম্পর্ক",
+          "body": "\\nabla_A\\mathcal L\\propto B^T\\nabla_W\\mathcal L,\\quad \\nabla_B\\mathcal L\\propto\\nabla_W\\mathcal L A^T"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ প্রথম ধাপের Frozen ও Active Gradient যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\np = Path(\"assets/datasets/scifact_rag/adaptation_workflow.py\")\ns = importlib.util.spec_from_file_location(\"chapter25_local\", p)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\n\nimport torch\nfrom torch import nn\n\nwith torch.random.fork_rng(devices=[]):\n    torch.manual_seed(25)\n    head = nn.Linear(8, 259, dtype=torch.float64)\n    adapter = m.LoRAHead(head)\n    # Backward accumulates into .grad; the seed or reduction sets the scale.\n    x = torch.ones(1, 8, dtype=torch.float64)\n    adapter(x).sum().backward()\n    assert adapter.A.grad.abs().sum() == 0 and adapter.B.grad.abs().sum() > 0\n    assert all(p.grad is None for p in adapter.base.parameters())\nprint(\"Frozen base,active B,initially zero A gradient\")\n"
+        },
+        {
+          "type": "text",
+          "title": "torch.no_grad() ব্যবহারের সূক্ষ্ম ফাঁদ",
+          "body": "অনেকেই মেমোরি বাঁচানোর আশায় পুরো Base Model-এর ফরোয়ার্ড পাসকে torch.no_grad() ব্লকের ভেতর ঢুকিয়ে দেওয়ার ভুল করেন। একটু ভেবে দেখুন: যদি আপনার LoRA Adapter-টি মডেলের শুরুর দিকের কোনো Attention লেয়ারে বসানো থাকে, তবে তার পরের Frozen লেয়ারগুলোতে no_grad() চালালে মাঝপথেই Computation Graph কেটে যাবে এবং শুরুর Adapter আর কোনো Gradient পাবে না! অর্থাৎ Frozen Weight নিজের জন্য Gradient জমা না করলেও তার ইনপুট Activation-এর ভেতর দিয়ে পেছনের দিকে পথ খোলা রাখা জরুরি। কেবল আমাদের বর্তমান পরীক্ষার মতো শুধুমাত্র শেষের Head-এ LoRA থাকলে আগের অংশটুকু স্থির ফিচারের মতো কাজ করে, কিন্তু সাধারণ বহু-লেয়ার LoRA-তে অন্ধভাবে no_grad() বসানো মোটেও নিরাপদ নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Parameter গণনার তিন রকম হিসাব",
+          "body": "প্যারামিটার গুনতে গিয়ে তিনটি সংখ্যা আলাদা করে চিনতে হবে। আমাদের LoRA মডেলে শেখার যোগ্য (Trainable) প্যারামিটার হলো 534টি; কিন্তু পাইটর্চ মডিউলে নিবন্ধিত মোট প্যারামিটার দাঁড়ায় 5019 + 534 = 5553টি, কারণ ভেতরে Frozen Base-এর 5019টি সংখ্যাও রয়ে গেছে! আবার ট্রেনিং শেষে Adapter-টিকে মূল Head-এর সাথে Merge করে এক্সপোর্ট করলে মোট প্যারামিটার সংখ্যা পুনরায় 5019-এ ফিরে আসে। যদি কোডে ভুলবশত কোনো প্যারামিটার দুবার নিবন্ধিত হয় কিংবা head.bias অসাবধানতাবশত Trainable থেকে যায়, তবেই এই নিখুঁত হিসাব গরমিল হয়ে যাবে।"
+        },
+        {
+          "type": "text",
+          "title": "নিরীক্ষার টেস্ট পরিকল্পনা (Test Plan)",
+          "body": "নিজের PEFT কোড নিশ্ছিদ্র করতে ছয়টি স্বয়ংক্রিয় পরীক্ষা রাখুন: ১) ট্রেনিংয়ের আগে ও পরে Base Weight-গুলো হুবহু অপরিবর্তিত আছে কি না, ২) কেবল A ও B পরিবর্তিত হচ্ছে কি না, ৩) শুরুর মুহূর্তে আউটপুট মূল মডেলের সমান কি না, ৪) অশূন্য অবস্থায় Finite-Difference-এর সাথে Gradient মেলে কি না, ৫) Optimizer-এর ভেতর থাকা প্যারামিটার আইডিগুলো ঠিক কি না, এবং ৬) Merge করার পর ফরোয়ার্ড পাসের আউটপুট হুবহু এক থাকে কি না। তবে মনে রাখবেন, এই মেকানিক্যাল টেস্টগুলো কিন্তু কখনোই ডেটা ও Position Mask যাচাইয়ের বিকল্প নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে বলবেন",
+          "body": "Interview-এ প্রায়ই প্রশ্ন করা হয়: 'LoRA মডেলে loss.backward() চালানোর পর Base Weight-গুলোর .grad কেন None থাকে, অথচ মডেল ঠিকই শেখে?' উত্তরে বলুন যে Base Parameter-গুলোতে requires_grad = False থাকায় পাইটর্চ সেগুলোর জন্য মেমোরিতে কোনো Gradient Buffer বরাদ্দ করে না (None রাখে), কিন্তু সমান্তরাল Adapter শাখার A ও B-তে requires_grad = True থাকায় সেখানে ঠিকই Gradient জমা হয়।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে হিসাব: প্রথম ও দ্বিতীয় ধাপে A-এর Gradient কেন বদলে যায়?",
+          "body": "আসুন একটি ছোট সংখ্যার উদাহরণ দিয়ে প্রথম দুই ধাপের আচরণটি পরিষ্কার করি। ধরা যাক, আমাদের Base Weight হলো W₀ = I₂ (2 × 2 অভেদ ম্যাট্রিক্স), Rank = 1, A = [1, −1], B = [0, 0]ᵀ এবং স্কেলিং s = α / r = 2 (α = 2)। ইনপুট ভেক্টর x = [1, 2] দিলে এবং আউটপুটের সব উপাদানের যোগফলকে Loss ধরলে আউটপুট গ্রেডিয়েন্ট হয় g = [1, 1]ᵀ। প্রথম ধাপে Ax = 1(1) + (−1)(2) = −1 হওয়ায় B-এর গ্রেডিয়েন্ট আসে dB = s · g(Ax)ᵀ = [−2, −2]ᵀ, কিন্তু B = 0 হওয়ায় A-এর গ্রেডিয়েন্ট আসে dA = [0, 0]। এবার Learning Rate = 0.1 নিয়ে একটি ধাপ আপডেট দিলেই B বদলে দাঁড়ায় [0.2, 0.2]ᵀ! ঠিক একই ইনপুটে পরের বার Backward চালালে Bᵀg = 0.4 হয়, ফলে A-এর গ্রেডিয়েন্ট হয়ে ওঠে dA = 2 × 0.4 × [1, 2] = [0.8, 1.6]। অর্থাৎ শুরুতে B = 0 থাকার কারণে শুরুর Delta শূন্য থাকে বটে, কিন্তু প্রথম আপডেটের পর থেকেই দুটি ফ্যাক্টরই শেখার সংকেত পেতে থাকে।"
+        },
+        {
+          "type": "math",
+          "title": "Rank-1 উদাহরণের Low-Rank Gradient সূত্র",
+          "body": "o=W_0x+sBAx,\\quad \\nabla_B L=s\\,g(Ax)^T,\\quad \\nabla_A L=s\\,B^Tg\\,x^T,\\quad g=\\nabla_o L"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ A/B Initialization থেকে পরপর দুটি Backward যাচাই",
+          "body": "import torch\n\ndtype = torch.float64\nbase = torch.nn.Parameter(torch.eye(2, dtype=dtype), requires_grad=False)\nfactor_a = torch.nn.Parameter(torch.tensor([[1.0, -1.0]], dtype=dtype))\nfactor_b = torch.nn.Parameter(torch.zeros(2, 1, dtype=dtype))\ninputs = torch.tensor([1.0, 2.0], dtype=dtype)\nscale = 2.0\n\n\ndef objective():\n    return (base @ inputs + scale * factor_b @ (factor_a @ inputs)).sum()\n\n\nfirst_a, first_b = torch.autograd.grad(objective(), (factor_a, factor_b))\nwith torch.no_grad():\n    factor_a -= 0.1 * first_a\n    factor_b -= 0.1 * first_b\nsecond_a, second_b = torch.autograd.grad(objective(), (factor_a, factor_b))\nassert base.grad is None\nprint(\n    *first_a.flatten().tolist(),\n    *first_b.flatten().tolist(),\n    *second_a.flatten().tolist()\n)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে হিসাব করুন",
+          "body": "এই রৈখিক LoRA Adapter-এর শুরুতে যদি A এবং B দুটি ম্যাট্রিক্সকেই শূন্য (Zero) দিয়ে ইনিশিয়ালাইজ করা হয়, তবে ট্রেনিংয়ের শুরুতে কী ঘটবে?",
+          "solution": "সমীকরণ অনুযায়ী A-এর Gradient নির্ভর করে B-এর ওপর এবং B-এর Gradient নির্ভর করে A-এর ওপর। তাই দুটিই শূন্য হলে প্রথম ধাপে দুটিরই Gradient শূন্য (0) আসবে এবং Optimizer কোনো ফ্যাক্টরকেই নড়াতে পারবে না—ফলে দুটোই চিরকাল শূন্য থেকে যাবে। এজন্যই প্রমিত Zero-Delta Initialization-এ একটি ফ্যাক্টরকে অশূন্য র‍্যান্ডম মান দিয়ে অন্যটিকে শূন্য রাখা হয়। কোড ডিবাগ করার সময় কোনো প্যারামিটারের .grad আসলেই None (ফ্রোজেন বা বিচ্ছিন্ন) নাকি সংযুক্ত থেকে গাণিতিকভাবে শূন্য (0.0) হয়েছে, তা আলাদা করে পরীক্ষা করুন।",
+          "reference": "https://arxiv.org/abs/2106.09685"
+        }
+      ]
+    },
+    {
+      "id": "ch25_merge",
+      "title": "Adapter Merge, Artifacts এবং সামঞ্জস্যতা",
+      "subtitle": "Deployment-এর সময় মূল Base Model-এর পরিচয় যেন হারিয়ে না যায়",
+      "duration": "65 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Merge করার বীজগণিত ও নির্ভুলতা",
+          "body": "ট্রেনিং শেষ হওয়ার পর LoRA-এর একটি বড় সুবিধা হলো—একই Precision-এ মূল Base Weight-এর সাথে শেখা পরিবর্তন (α / r) BA সরাসরি যোগ করে একটি একক কার্যকর ম্যাট্রিক্স (Effective Head) তৈরি করে ফেলা যায়; এতে স্থির থাকা Bias বদলায় না। খেয়াল করুন, Adapter আলাদা রাখলে প্রতিটি ফরোয়ার্ড পাসে বাড়তি দুটি ছোট ম্যাট্রিক্স গুণন করতে হয়, কিন্তু একবার Merge করে নিলে মূল মডেলের সমান খরচে মাত্র একটি রৈখিক অপারেশনেই Inference চালানো সম্ভব!\n\nখাঁটি গাণিতিক হিসাবে আলাদা রাখা এবং Merge করা—দুই পথের ফল হুবহু সমান। তবে কম্পিউটারের Floating-point Arithmetic-এ যোগ-গুণের ক্রম বদলালে অতি সামান্য রাউন্ডিং পার্থক্য হতে পারে, তাই তুলনা করার সময় সূক্ষ্ম Tolerance (যেমন 1e-12) ব্যবহার করতে হয়। আমাদের পাইথন পরীক্ষায় আউটপুটের সব কটি অর্থাৎ 259টি Logit মিলিয়ে দেখা হয়েছে এবং অ্যাপের রেফারেন্স ফলাফলও এর সাথে হুবহু যাচাই করা হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "সম্পূর্ণ Artifact চুক্তি (Artifact Contract)",
+          "body": "বাস্তব প্রোডাকশনে একটি LoRA Adapter সংরক্ষণ বা শেয়ার করতে কেবল A এবং B ম্যাট্রিক্স দুটি সেভ করলেই কাজ শেষ হয় না। এর সাথে Rank, Alpha, ঠিক কোন মডিউলে বসানো হয়েছে (Target Module নাম), মূল Base Weight-এর SHA-256 Hash, Tokenizer ID, কাঙ্ক্ষিত Response Format, ডেটা টাইপ (dtype) এবং কোডের সংস্করণ—সবই মেটাডেটা হিসেবে থাকা আবশ্যক, কারণ সঠিক Base Model ছাড়া একটি Adapter একা কোনো কাজেই আসে না।\n\nচাইলে পুরো Merged Weight একসাথে এক্সপোর্ট করা যায়, যা একক মডেলের সহজ ডিপ্লয়মেন্টে সুবিধাজনক। তবে একই Base Model মেমোরিতে রেখে গ্রাহক বা টাস্ক ভেদে একাধিক ভিন্ন Adapter অদলবদল করে চালাতে চাইলে Unmerged ফরম্যাটই বেশি সাশ্রয়ী। তাই আপনার সিস্টেমের ব্যবহারিক প্রয়োজন বুঝে এক্সপোর্ট কৌশল ঠিক করুন।"
+        },
+        {
+          "type": "math",
+          "title": "Unmerged ও Merged ফরোয়ার্ড পাসের সমতুল্যতা",
+          "body": "xW_{eff}^T=xW_0^T+\\frac\\alpha r(xA^T)B^T"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Merge সমতুল্যতা ও Base Hash যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nroot = Path(\"assets/datasets/scifact_rag\")\nlab = json.loads((root / \"adaptation_lab.json\").read_text())\n\nimport numpy as np\n\nA = np.asarray(lab[\"adapter\"][\"A\"])\nB = np.asarray(lab[\"adapter\"][\"B\"])\nW = np.asarray(lab[\"weights\"][\"base\"][\"head.weight\"])\nh = np.asarray(lab[\"samples\"][0][\"references\"][\"base\"][\"normalized\"])\nnp.testing.assert_allclose(h @ (W + B @ A).T, h @ W.T + (h @ A.T) @ B.T, atol=1e-12)\nprint(lab[\"report\"][\"base_asset_sha256\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "Quantized Base-এ Merge করার সতর্কতা",
+          "body": "মূল Base Model যদি কম বিটে সংকুচিত (Quantized) অবস্থায় থাকে, তবে সেটিকে Dequantize করে ফ্লোটিং-পয়েন্ট Adapter যোগ করা এবং পুনরায় সংকুচিত (Requantization) করার পথে নতুন রাউন্ডিং ত্রুটি যোগ হতে পারে। তাই float64 বা float32-তে পাওয়া নিখুঁত Merge Equivalence দেখেই কখনো দাবি করবেন না যে INT8 বা NF4 পথেও ফলাফল হুবহু অভিন্ন থাকবে। আমাদের এই অধ্যায়ে Quantization-কে কেবল আউটপুট Head-এর ওপর একটি আলাদা নিয়ন্ত্রিত পরীক্ষা হিসেবে দেখানো হয়েছে—এটি পূর্ণাঙ্গ QLoRA ট্রেনিং নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Inference Export বনাম Training Resume",
+          "body": "মডেল এক্সপোর্ট করার দুটি উদ্দেশ্য কখনোই এক করে দেখবেন না। কেবল চূড়ান্ত Weight সেভ করলে আপনি পরবর্তীতে সুন্দরমতো Inference চালাতে পারবেন; কিন্তু ট্রেনিং যদি মাঝপথে থেমে যায়, তবে শুধু সেই Weight দিয়ে ঠিক আগের অবস্থা থেকে হুবহু ট্রেনিং শুরু (Resume) করা সম্ভব নয়! হুবহু আগের ধারায় ফিরতে হলে Optimizer-এর দুই মোমেন্ট (Momentum ও Variance), বর্তমান Step সংখ্যা, Scheduler-এর অবস্থা, র‍্যান্ডম নাম্বার জেনারেটরের (RNG) স্টেট, ডেটা স্যাম্পলারের অবস্থান (Cursor), GradScaler এবং পুরো Training Recipe একসাথে সংরক্ষণ করতে হয়।\n\nআমাদের বর্তমান আর্টিফ্যাক্টগুলো দিয়ে Inference Reload করার নির্ভুলতা পরীক্ষা করা হয়েছে; মাঝপথ থেকে হুবহু Training Resume করার পরীক্ষা এখানে অন্তর্ভুক্ত নয়।"
+        },
+        {
+          "type": "text",
+          "title": "সংস্করণ ও নিরাপত্তা যাচাই (Version & Security Defense)",
+          "body": "সংরক্ষিত মডেল পুনরায় লোড করার সময় ইনপুট Token ID, টেনসরের Shape, Head Bias, নরমালাইজেশনের Epsilon এবং পজিশন ইনডেক্স সব মিলিয়ে দেখুন। মনে রাখবেন, দুটি ভিন্ন মডেলের ম্যাট্রিক্সের আকার (Dimension) মিলে গেলেও ভুল Base Model-এর ওপর Adapter বসালে কোনো এরর না দিয়েই নীরবে ভুল আউটপুট তৈরি হবে—তাই লোডের সময় Base Hash মেলানো অপরিহার্য।\n\nএছাড়া নিরাপত্তার খাতিরে কখনোই অপরিচিত বা অবিশ্বস্ত উৎস থেকে আসা Pickle ফাইল সরাসরি লোড করবেন না; আমাদের যাচাই প্রক্রিয়াতেও নিজেদের তৈরি পাইটর্চ ফাইলের জন্য নিরাপদ weights_only=True অপশন ব্যবহার করা হয়েছে। ফাইলের ফরম্যাট, উৎস এবং লোড করার অনুমতি—সবই নিরাপদ আর্টিফ্যাক্ট ব্যবস্থাপনার অংশ।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে বলবেন",
+          "body": "Interview-এ একটি LoRA Serving সিস্টেমের টেস্ট কেস ডিজাইন করতে বললে Scale = 0 এবং Scale = 1-এর পরিচিত Golden Output মেলানো, একবার Merge বনাম ভুলবশত দুবার Merge (Double Merge) হওয়া ধরা, dtype পরিবর্তনের প্রভাব এবং ভুল Base Model লোড করার নেতিবাচক টেস্ট কেসের কথা বলুন। সেই সঙ্গে মনে করিয়ে দিন যে একটি টাস্কে Adapter ভালো করলেই অন্য সব টাস্কে মডেল অক্ষত আছে বলে ধরে নেওয়া যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে হিসাব: Scaling-সহ একবার বনাম দুবার Merge",
+          "body": "আসুন ছোট একটি উদাহরণে Merge এবং Double Merge-এর ভুলটি হাতেনাতে দেখি। ধরুন W₀ = I₂, A = [1, −1], B = [0.25, 0.5]ᵀ, Rank = 1 এবং Alpha = 2 (অর্থাৎ স্কেল s = 2)। তাহলে কার্যকর পরিবর্তন ম্যাট্রিক্সটি হবে Delta = 2BA = [[0.5, −0.5], [1, −1]]। ইনপুট x = [1, 2] দিলে আলাদা রাখা অবস্থায় (Unmerged) এবং একবার সঠিকভাবে Merge করার পর আউটপুট আসে হুবহু [0.5, 1]। কিন্তু কেউ যদি ইতিমধ্যেই Merge করা মডেলের ওপর ভুলে আবারও একই Delta যোগ করে বসে (Double Merge), তবে আউটপুট পাল্টে [0, 0] হয়ে যায়! এজন্যই আর্টিফ্যাক্টে Base Identity, Scaling এবং মডেলটি ইতিমধ্যেই Merged কি না তা স্পষ্টভাবে লিখে রাখতে হয়। আরেকটি বীজগাণিতিক সূক্ষ্মতা খেয়াল করুন: এখানে Delta ম্যাট্রিক্সটির Rank সর্বোচ্চ 1 হলেও মূল পূর্ণ-র‍্যাঙ্কের W₀-এর সাথে যোগ হওয়ার পর W₀ + Delta ম্যাট্রিক্সটির সামগ্রিক Rank আলাদা হতেই পারে।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Unmerged, Merged ও Double-Merged আউটপুট তুলনা",
+          "body": "import torch\n\nbase = torch.eye(2, dtype=torch.float64)\nfactor_a = torch.tensor([[1.0, -1.0]], dtype=base.dtype)\nfactor_b = torch.tensor([[0.25], [0.5]], dtype=base.dtype)\ninputs = torch.tensor([1.0, 2.0], dtype=base.dtype)\nscale = 2.0\ndelta = scale * (factor_b @ factor_a)\nunmerged = base @ inputs + scale * factor_b @ (factor_a @ inputs)\nmerged = (base + delta) @ inputs\ndouble_merged = (base + 2 * delta) @ inputs\ntorch.testing.assert_close(unmerged, merged)\nassert not torch.allclose(double_merged, merged)\nprint(*merged.tolist(), *double_merged.tolist(), torch.linalg.matrix_rank(delta).item())\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে হিসাব করুন",
+          "body": "ইতিমধ্যেই Merge করে ফেলা একটি Base Model-এর ওপর যদি ভুলবশত একই সক্রিয় LoRA Adapter শাখাটি চালু রাখা হয়, তবে Inference-এর সময় কী ঘটবে?",
+          "solution": "ফরোয়ার্ড পাসের সময় কার্যকর হিসাবে Adapter-এর Delta দ্বিতীয়বার যোগ হয়ে যাবে (অর্থাৎ W₀ + 2·Delta প্রযুক্ত হবে), ফলে আউটপুট পুরোপুরি বিকৃত হয়ে পড়বে। এই বাগ এড়াতে লোড করা মডেলের Merge Status এবং সক্রিয় Adapter Routing কঠোরভাবে যাচাই করতে হয়, এবং মেটাডেটায় Inference Export ও Training-Resume আর্টিফ্যাক্টের উদ্দেশ্য স্পষ্টভাবে আলাদা রাখতে হয়।",
+          "reference": "https://arxiv.org/abs/2106.09685"
+        }
+      ]
+    },
+    {
+      "id": "ch25_quantization",
+      "title": "Quantization, QLoRA এবং বাস্তব INT8 পরীক্ষা",
+      "subtitle": "এটি স্টোরেজের গাণিতিক হিসাব—মাপা হার্ডওয়্যার গতি নয়",
+      "duration": "65 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Row-wise Symmetric INT8 কীভাবে কাজ করে?",
+          "body": "বড় মডেলের মেমোরি ফুটপ্রিন্ট কমানোর অন্যতম প্রধান কৌশল হলো Quantization—অর্থাৎ বেশি বিটের ফ্লোটিং-পয়েন্ট সংখ্যাকে কম বিটের পূর্ণসংখ্যায় সংকুচিত করা। আমাদের নিয়ন্ত্রিত পরীক্ষায় আউটপুট Head-এর প্রতিটি সারির (Row) জন্য আলাদাভাবে Symmetric INT8 Quantization প্রয়োগ করা হয়েছে, যেখানে স্কেল ধরা হয় scale = max_abs / 127 (কোনো পুরো সারি শূন্য হলে শূন্য দিয়ে ভাগ এড়াতে তার স্কেল ধরা হয় 1.0)। এরপর প্রতিটি সংখ্যাকে তার সারির স্কেল দিয়ে ভাগ করে পূর্ণসংখ্যায় Round এবং [-127, 127] সীমায় Clamp করে int8 কোড তৈরি করা হয়; আর ব্যবহারের সময় কোডগুলোকে পুনরায় স্কেল দিয়ে গুণ করে float64-এ ফিরিয়ে আনা (Reconstruct) হয়। যেহেতু ভিন্ন ভিন্ন সারির সংখ্যার বিস্তার আলাদা, তাই প্রতি সারির জন্য একটি করে আলাদা স্কেল রাখলে ত্রুটি কম হয়; তবে বাস্তব প্রোডাকশনে এর পাশাপাশি Calibration এবং হার্ডওয়্যার Kernel-এর আচরণও মূল্যায়ন করতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "স্টোরেজ বাইটের নিখুঁত পাটিগণিত",
+          "body": "আসুন হিসাব করে দেখি আসলে কত বাইট সাশ্রয় হলো। মূল float64 আউটপুট Head-এ 259 × 8 = 2072টি সংখ্যার প্রতিটিতে 8 বাইট করে মোট জায়গা লাগত 2072 × 8 = 16576 বাইট। অন্যদিকে INT8 রূপান্তরের পর 2072টি কোডের জন্য লাগে 2072 বাইট, আর 259টি সারির প্রতিটির জন্য একটি করে float64 স্কেল রাখতে লাগে 259 × 8 = 2072 বাইট—সাকুল্যে 4144 বাইট! তবে খেয়াল রাখবেন, এই হিসাবে Bias, মডেলের বাকি লেয়ারের Weight, JSON ফাইলের টেক্সট ফরম্যাট, মেটাডেটা, Activation কিংবা মেমোরি অ্যালোকেটরের বাড়তি খরচ ধরা হয়নি। তাই শুধু এই একটি ম্যাট্রিক্সের হিসাব দেখেই পুরো অ্যাপের আকার বা পিক রানটাইম মেমোরি 4 গুণ কমে গেছে বলে দাবি করা যাবে না।"
+        },
+        {
+          "type": "math",
+          "title": "Symmetric INT8 Quantization ও Reconstruction সমীকরণ",
+          "body": "q=\\operatorname{clip}(\\operatorname{round}(w/s),-127,127),\\quad \\hat w=sq"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Row-wise INT8 কোড ও স্কেল যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\np = Path(\"assets/datasets/scifact_rag/adaptation_workflow.py\")\ns = importlib.util.spec_from_file_location(\"chapter25_local\", p)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nroot = Path(\"assets/datasets/scifact_rag\")\nlab = json.loads((root / \"adaptation_lab.json\").read_text())\n\nimport numpy as np\n\nhead = lab[\"weights\"][\"lora\"][\"head.weight\"]\ncodes, scales, reconstructed = m.quantize(head)\nassert tuple(codes.shape) == (259, 8) and tuple(scales.shape) == (259, 1)\nnp.testing.assert_allclose(\n    reconstructed.numpy(), lab[\"weights\"][\"int8_head_demo\"][\"head.weight\"], atol=1e-12\n)\nprint(codes.numel(), scales.numel() * 8)\n"
+        },
+        {
+          "type": "text",
+          "title": "বর্তমান Inference পথ ও ত্রুটির মাত্রা",
+          "body": "আমাদের এই ডেমোতে সংকুচিত কোডগুলোকে আবার float64-এ ফিরিয়ে এনে (Dequantize) সাধারণ ফরোয়ার্ড পাসে পাঠানো হচ্ছে—এখানে কোনো বিশেষায়িত নেটিভ INT8 Hardware Kernel বা গতির ত্বরণ (Acceleration) ব্যবহৃত হয়নি। এই রূপান্তরে যেকোনো একটি ওয়েটের সর্বোচ্চ পরম ত্রুটি (Max Weight Error) পাওয়া গেছে প্রায় 0.005801। যদিও 188টি Diagnostic প্রশ্নে আমাদের সীমাবদ্ধ S/C প্রেডিকশন আগের মতোই সংখ্যাগরিষ্ঠ ক্লাসে স্থির রয়েছে, তবুও কেবল একটি মেট্রিক অপরিবর্তিত থাকা মানেই মডেলের ভেতরের সব সূক্ষ্ম আচরণ অবিকল এক রয়ে গেছে—এমন ভাবা ভুল।"
+        },
+        {
+          "type": "text",
+          "title": "সাধারণ INT8 বনাম প্রকৃত QLoRA",
+          "body": "অনেকেই যেকোনো Quantization-এর সাথে LoRA নামটি দেখলেই সেটিকে QLoRA বলে ফেলেন—এই পার্থক্যটি খুব পরিষ্কার রাখা দরকার। মূল QLoRA গবেষণাপত্রে বিশাল Base Model-কে 4-bit NormalFloat (NF4) ফরম্যাটে ফ্রোজেন রাখা, স্কেলগুলোকেও দ্বিতীয় দফায় সংকুচিত করা (Double Quantization) এবং মেমোরি স্পাইক সামলাতে Paged Optimizer ব্যবহার করার কথা বলা হয়েছে, যেখানে ফরোয়ার্ড ও ব্যাকওয়ার্ড পাসের সময় প্রয়োজনমতো আনপ্যাক করে কেবল উচ্চ-প্রিসিশনের LoRA Adapter-এ Gradient পাঠানো হয়। আমাদের বর্তমান Head-only INT8 রাউন্ড-ট্রিপ পরীক্ষাটি কোনোভাবেই QLoRA, NF4 বা 4-bit Training নয়; সত্যিকারের QLoRA চালাতে হলে উপযুক্ত লাইব্রেরি, হার্ডওয়্যার কার্নেল ও ভ্যালিডেটেড ডেটা টাইপের সাপোর্ট প্রয়োজন।"
+        },
+        {
+          "type": "text",
+          "title": "Storage Dtype বনাম Compute Dtype",
+          "body": "আধুনিক ডিপ লার্নিং সিস্টেমে ওয়েট মেমোরিতে কোন ফরম্যাটে জমা আছে (Storage Dtype), ম্যাট্রিক্স গুণনের সময় কোন ফরম্যাটে হিসাব হচ্ছে (Compute Dtype) এবং যোগফল কোথায় জমা হচ্ছে (Accumulation Dtype)—এই তিনটি সম্পূর্ণ আলাদা হতে পারে! যেমন তথাকথিত একটি '4-bit Model'-এও ভেতরের Activation, LayerNorm বা Optimizer State মোটেও 4-bit থাকে না; সেগুলো সাধারণত BF16, FP16 বা FP32-তেই চলে। তাই মুখের কথায় না ভুলে প্রকৃত মেমোরি ব্যবহার, ল্যাটেন্সি এবং টাস্কের মান সবই আলাদা করে মেপে দেখতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে বলবেন",
+          "body": "Interview-এ Quantization কোড পরীক্ষার কথা বললে সম্পূর্ণ শূন্য সারি (Zero Row), সীমার বাইরের মান (Saturation), .5 ভগ্নাংশের Rounding Tie, পুনর্গঠন ত্রুটি (Reconstruction Error), কোডের পাল্লা ([-127, 127]) এবং স্কেলের Shape পরীক্ষা করার কথা বলুন। পাশাপাশি স্পষ্ট করে আলাদা করুন যে স্ট্যাটিক ওয়েট Quantize/Dequantize করার ত্রুটি আর সংকুচিত মডেলের ওপর Adapter ট্রেন করার সক্ষমতা দুটি ভিন্ন প্রকৌশলগত প্রশ্ন।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে হিসাব: ছোট Weight Update যেভাবে Quantization Grid-এ হারিয়ে যায়",
+          "body": "কেন কম বিটের ওয়েটের ওপর সরাসরি ছোট গ্রেডিয়েন্ট আপডেট চালানো কঠিন, তার একটি চমৎকার সংখ্যার উদাহরণ দেখা যাক। ধরুন একটি সারির মান [0, 0.5, 1]। এখানে সর্বোচ্চ মান 1 হওয়ায় Symmetric INT8 স্কেল হবে 1 / 127। মাঝখানের 0.5 সংখ্যাটিকে স্কেল দিয়ে ভাগ করলে হয় 63.5, যা নিকটবর্তী জোড় পূর্ণসংখ্যায় রাউন্ড হয়ে কোড 64-এ যায় এবং পুনর্গঠন করলে দাঁড়ায় 64 / 127 ≈ 0.503937। এবার ধরুন একটি ছোট গ্রেডিয়েন্ট আপডেটে আসল 0.5 মানটি 0.001 বেড়ে 0.501 হলো। সংকুচিত করলে 0.501 × 127 = 63.627—যা রাউন্ড হয়ে আবারও সেই একই কোড 64-এই গিয়ে পড়ে! ফলে Dequantize করার পর আপডেটের আগের ও পরের পার্থক্য দাঁড়ায় শূন্য (0.0)—পুরো আপডেটটিই ধাপগুলোর ফাঁকে হারিয়ে গেল! ঠিক এই কারণেই স্কেল পরিবর্তন, Merge-এর পর পুনরায় সংকোচন এবং Compute Dtype চূড়ান্ত গাণিতিক সমতুল্যতাকে সরাসরি প্রভাবিত করে।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ সূক্ষ্ম Update ও Reconstructed পার্থক্যের পরীক্ষা",
+          "body": "import numpy as np\n\noriginal = np.array([0.0, 0.5, 1.0])\nupdated = original + np.array([0.0, 0.001, 0.0])\n\n\ndef quantize(row):\n    scale = np.max(np.abs(row)) / 127 if np.any(row) else 1.0\n    codes = np.rint(row / scale).clip(-127, 127).astype(np.int8)\n    return codes, codes.astype(np.float64) * scale\n\n\nbefore_codes, before = quantize(original)\nafter_codes, after = quantize(updated)\nassert np.array_equal(before_codes, after_codes)\nprint(\n    round(np.max(np.abs(before - original)), 6),\n    round(updated[1] - original[1], 6),\n    np.max(np.abs(after - before)),\n)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে হিসাব করুন",
+          "body": "Floating-point অবস্থায় Unmerged ও Merged মডেলের আউটপুট মিলে গেছে দেখেই কি নিশ্চিত হওয়া যায় যে Quantized Serving পাইপলাইনেও তারা হুবহু একই ফল দেবে?",
+          "solution": "না, তা কখনোই ধরে নেওয়া যায় না। কারণ Quantization-এর স্কেল নির্ধারণ, রাউন্ডিং, কোডবুক এবং Reconstruction পথের কারণে সূক্ষ্ম সংখ্যার পার্থক্য তৈরি হয়, যা সীমানার কাছাকাছি থাকা ক্লাসিফিকেশন সিদ্ধান্ত বা র‍্যাঙ্কিং বদলে দিতে পারে। তাই Quantized Serving-এর জন্য আলাদা Golden Output রেখে পুরো পাইপলাইনের Logits, টাস্ক মেট্রিক এবং প্রকৃত মেমোরি ও ল্যাটেন্সি মেপে দেখতে হবে।",
+          "reference": "https://www.statlearning.com/"
+        }
+      ]
+    },
+    {
+      "id": "ch25_memory",
+      "title": "Memory Accounting, Gradient Accumulation ও Checkpointing",
+      "subtitle": "শুধু Parameter গুনে কখনোই Out-of-Memory (OOM) সমস্যার সমাধান শেষ হয় না",
+      "duration": "50 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Training Memory-এর প্রতিটি খাত",
+          "body": "জিপিইউতে মডেল ট্রেন করার সময় মেমোরি ঠিক কোথায় খরচ হয়? হিসাবের শুরুতে থাকে মেমোরিতে লোড থাকা মূল Base Weight। এরপর একে একে যোগ হয় পরিবর্তনযোগ্য প্যারামিটারগুলোর Gradient, AdamW অপটিমাইজারের দুটি মোমেন্ট বাফার (Momentum ও Variance), ফরোয়ার্ড পাসে তৈরি হওয়া মধ্যবর্তী Activation, Attention-এর অস্থায়ী ওয়ার্কস্পেস এবং মিক্সড-প্রিসিশন ট্রেনিং হলে প্রয়োজনীয় FP32 Master Copy। এর বাইরে ডেটালোডার, কার্নেল ও মেমোরি অ্যালোকেটরের নিজস্ব ফ্র্যাগমেন্টেশন ওভারহেডও থাকে। তাই আমাদের ছোট্ট CPU float64 উদাহরণের তাত্ত্বিক বাইট গণনার পাশাপাশি বাস্তব প্রজেক্টে নির্দিষ্ট হার্ডওয়্যারে প্রকৃত Peak Memory মেপে আলাদাভাবে রিপোর্ট করতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Gradient Accumulation দিয়ে কার্যকর Batch বাড়ানো",
+          "body": "বড় একটি Batch একবারে মেমোরিতে না আঁটলে আমরা সেটিকে কয়েকটি ছোট Microbatch-এ ভেঙে পরপর ফরোয়ার্ড ও ব্যাকওয়ার্ড পাস চালিয়ে গ্রেডিয়েন্ট জমা (Accumulate) করতে পারি। প্রতিটি Microbatch-এ যদি বৈধ টার্গেট টোকেনের সংখ্যা সমান থাকে, তবে প্রতি ধাপের লসকে মোট Accumulation Step দিয়ে ভাগ করলেই চলে; কিন্তু একেক মাইক্রোব্যাচে বৈধ Response Token-এর সংখ্যা ভিন্ন হলে সঠিক গড় পাওয়ার জন্য মোট বৈধ টোকেন সংখ্যা অনুযায়ী ওজনযুক্ত নরমালাইজেশন (Count-weighted Normalization) করতে হবে! খেয়াল রাখবেন, Gradient Clipping, Optimizer Step, zero_grad() এবং Learning Rate Scheduler-এর ধাপ যেন কেবল পুরো অ্যাকুমুলেশন শেষ হওয়ার সীমানাতেই চলে—এবং ডেটাসেটের শেষে অসম সংখ্যক অবশিষ্ট মাইক্রোব্যাচ থাকলে সেটিও যেন স্পষ্টভাবে সামলানো হয়।"
+        },
+        {
+          "type": "math",
+          "title": "মোট Training Memory-এর প্রধান উপাদান",
+          "body": "M\\approx M_{weights}+M_{gradients}+M_{optimizer}+M_{activations}+M_{workspace}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ তাত্ত্বিক Weight ও Optimizer Moment বাইট হিসাব",
+          "body": "# Declared storage arithmetic;not measured GPU memory.\nparameters = 5019\nbytes_per_scalar = 8\nweights = parameters * bytes_per_scalar\nmoments = 2 * weights\nassert weights == 40152 and moments == 80304\nprint(weights, moments)\n"
+        },
+        {
+          "type": "text",
+          "title": "Gradient Checkpointing: মেমোরি বনাম সময়ের বিনিময়",
+          "body": "লম্বা Context Length-এ প্রায়ই দেখা যায়, প্যারামিটারের চেয়ে ফরোয়ার্ড পাসের Activation-ই বেশি মেমোরি দখল করে ফেলছে। Gradient Checkpointing (বা Activation Recomputation) কৌশলে ফরোয়ার্ড পাসের সব মধ্যবর্তী অ্যাক্টিভেশন মেমোরিতে জমা না রেখে কেবল কিছু নির্বাচিত সীমানা সংরক্ষণ করা হয়, এবং ব্যাকওয়ার্ড পাসের সময় প্রয়োজনীয় অংশটুকু পুনরায় হিসাব করে নেওয়া হয়—অর্থাৎ বাড়তি Compute-এর বিনিময়ে Peak Memory কমানো হয়। মনে রাখবেন, মাঝখানের লেয়ারের ওয়েট Frozen থাকলেও শুরুর দিকের কোনো Adapter-এ গ্রেডিয়েন্ট পৌঁছাতে হলে অ্যাক্টিভেশন গ্রাফের সংযোগ সচল রাখতে হয়। আমাদের বর্তমান ছোট পরীক্ষায় অবশ্য সরাসরি Checkpointing বা Accumulation চালানোর দরকার পড়েনি; ধারণাগত নকশা স্পষ্ট করতেই এটি আলোচিত হলো।"
+        },
+        {
+          "type": "text",
+          "title": "Mixed Precision ও Dynamic Padding",
+          "body": "বাস্তব জিপিইউতে BF16 বা FP16 ব্যবহারের সময় সংখ্যার Overflow/Underflow, Loss Scaling (FP16-এর ক্ষেত্রে), অপটিমাইজার স্টেটের প্রিসিশন এবং গ্রেডিয়েন্ট নর্ম যোগ করার প্রিসিশন আলাদাভাবে খেয়াল রাখতে হয়। আমাদের CPU float64 রেফারেন্সটি গাণিতিক হিসাব মেলানোর জন্য চমৎকার হলেও হার্ডওয়্যার থ্রুপুটের প্রতিনিধি নয়। অন্যদিকে সব উদাহরণকে সর্বোচ্চ দৈর্ঘ্যে প্যাড না করে ব্যাচ অনুযায়ী Dynamic Padding করলে অ্যাক্টিভেশন মেমোরি বাঁচে, তবে সেক্ষেত্রেও প্রতিটি বাক্যের সঠিক Response Position Alignment যেন অটুট থাকে তা নিশ্চিত করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "Sequence Packing ও ডকুমেন্ট বিচ্ছিন্নতা",
+          "body": "মেমোরি ও কম্পিউটের অপচয় কমাতে অনেক সময় ছোট ছোট একাধিক ট্রেনিং উদাহরণকে জোড়া লাগিয়ে একটি লম্বা Context-এর ভেতর প্যাক (Data Packing) করা হয়। কিন্তু স্রেফ পরপর বসিয়ে দিলে পরের উদাহরণটি Causal Attention-এর মাধ্যমে আগের উদাহরণের টেক্সট দেখে ফেলবে—ফলে মারাত্মক Cross-Example Context Leakage ঘটবে! তাই প্যাকিং করতে হলে ব্লক-ডায়াগোনাল Attention Mask, পজিশন আইডি রিসেট এবং নিখুঁত Response Mask একসাথে বদলাতে হয়। আমাদের বর্তমান পরীক্ষায় অবশ্য প্রতিটি উদাহরণ স্বাধীন ব্যাচ সারি হিসেবেই (Length 26) প্রসেস হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে বলবেন",
+          "body": "Interview-এ 'Fine-tuning করতে গিয়ে OOM এরর খেলে কীভাবে সমাধান করবেন?' প্রশ্ন করা হলে আন্দাজে উত্তর না দিয়ে প্রথমেই বলুন যে আপনি মেপে দেখবেন OOM ঠিক কোন ধাপে ঘটছে—মডেল লোড করার সময়, Forward Pass-এ, Backward Pass-এ, নাকি প্রথম Optimizer Step-এ (যখন হঠাৎ মোমেন্ট বাফার বরাদ্দ হয়)! এরপর ধাপে ধাপে Sequence Length, Microbatch Size + Accumulation, Gradient Checkpointing, Mixed Precision / Quantization এবং LoRA Target Module কমানোর প্রকৌশলগত ট্রেড-অফ ব্যাখ্যা করুন—অযথা শুরুতেই বড় জিপিইউ চাওয়ার আগে প্রতিটি মেমোরি খাত সংখ্যার হিসাবে তুলে ধরুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch25_evaluation",
+      "title": "Evaluation: Loss, Accuracy, Class Imbalance ও Forgetting",
+      "subtitle": "Majority Baseline-এর সাথে তুলনা ছাড়া যেকোনো উন্নতির দাবি অসম্পূর্ণ",
+      "duration": "50 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "পরীক্ষায় দেখা আসল ব্যর্থতা (Observed Collapse)",
+          "body": "এবার আমাদের পরীক্ষার সব কটি মডেলের ফলাফল পাশাপাশি রেখে নির্মোহভাবে বিচার করা যাক। ট্রেনিং ছাড়া শুরুর Base Model-টি 188টি Diagnostic প্রশ্নের প্রতিটিতে একচেটিয়াভাবে CONTRADICT প্রেডিক্ট করেছিল, ফলে তার Accuracy হয়েছিল 64 / 188 ≈ 0.340426। অন্যদিকে 12 ইপক ট্রেনিংয়ের পর Full Fine-tuning এবং LoRA—দুটি মডেলই উল্টে গিয়ে 188টি প্রশ্নের সব কটিতেই SUPPORT প্রেডিক্ট করেছে! এতে তাদের Accuracy বেড়ে 124 / 188 ≈ 0.659574 হয়েছে ঠিকই, কিন্তু সেটি তো ট্রেনিং সেটের সংখ্যাগরিষ্ঠ ক্লাস (Majority Baseline) চোখ বুজে বললেই পাওয়া যায়! ক্লাস-ভিত্তিক প্রেডিকশন সংখ্যা না দেখলে এই একপেশে ধস (Mode Collapse) কখনোই ধরা পড়ত না। তাই টাস্কের প্রকৃত ক্লাস-পার্থক্য (Discrimination), কাঁচা Response NLL এবং পুরোনো সক্ষমতা টিকে থাকা (Retention)—এই তিনটি দিক সবসময় আলাদা করে মূল্যায়ন করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "তাহলে Response NLL এত কমল কীভাবে?",
+          "body": "এখানে একটি দারুণ ধাঁধা তৈরি হয়: শুরুর Base Model-এ কাঁচা Response NLL ছিল প্রায় 6.657448, যা ট্রেনিংয়ের পর Full Fine-tuning-এ কমে দাঁড়িয়েছে প্রায় 0.644455 এবং LoRA-তে প্রায় 0.646060! মডেল যদি ক্লাসের পার্থক্য না-ই শেখে, তবে লস দশ গুণ কমল কীভাবে? উত্তরটি খুব সহজ কিন্তু গভীর: মূল Alice ডিকোডারটি সাধারণ ইংরেজি গদ্যের 257টি বৈধ বাইটের ওপর তার সম্ভাব্যতা ছড়িয়ে রাখত—সেখানে হঠাৎ বড় হাতের S বা C আসার সম্ভাবনা ছিল খুবই সামান্য। ট্রেনিংয়ের ফলে মডেল দ্রুত শিখে নিয়েছে যে Newline-এর পর কেবল S অথবা C অক্ষর দুটিতেই প্রায় পুরো সম্ভাব্যতা জড়ো করতে হবে (এবং তার ভেতর সংখ্যাগরিষ্ঠ S-কে একটু বেশি নম্বর দিতে হবে)! অর্থাৎ মডেল আউটপুট ফরম্যাট এবং ক্লাসের গড় অনুপাত (Prior) শিখেছে, কিন্তু ইনপুট ভেদে কোনটি S আর কোনটি C সেই আসল Discrimination শিখতে পারেনি। খেয়াল রাখবেন, 257 ক্লাসের কাঁচা লস আর কেবল {S, C}-এর ভেতর শর্তসাপেক্ষ P(S | S or C) দুটি আলাদা হিসাব।"
+        },
+        {
+          "type": "math",
+          "title": "Accuracy ও Majority Baseline-এর সূত্র",
+          "body": "\\mathrm{Accuracy}=\\frac{TP+TN}{N},\\quad \\mathrm{MajorityBaseline}=\\max_c\\frac{n_c}{N}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Majority Baseline ও Mode Collapse যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nroot = Path(\"assets/datasets/scifact_rag\")\nlab = json.loads((root / \"adaptation_lab.json\").read_text())\n\nr = lab[\"report\"]\nbaseline = r[\"majority_diagnostic_accuracy\"]\nfor name in [\"full\", \"lora\"]:\n    d = r[\"runs\"][name][\"diagnostic\"]\n    assert (\n        d[\"accuracy\"] == baseline\n        and d[\"support_predictions\"] == 188\n        and d[\"contradict_predictions\"] == 0\n    )\nassert baseline == 124 / 188\nprint(baseline)\n"
+        },
+        {
+          "type": "text",
+          "title": "অসম বণ্টনে উপযুক্ত মেট্রিক নির্বাচন",
+          "body": "উপরের কোডেই স্পষ্ট যে Class Imbalance থাকলে একক Accuracy সংখ্যাটি কতটা বিভ্রান্তিকর হতে পারে। বাস্তব প্রজেক্টে এমন টাস্কের জন্য প্রতিটি ক্লাসের আলাদা Precision ও Recall, পূর্ণাঙ্গ Confusion Matrix, Balanced Accuracy বা Macro-F1 এবং সম্ভাব্যতার Calibration মাপা উচিত। যেমন আমাদের বর্তমান ফলে সব উত্তর SUPPORT হওয়ায় CONTRADICT ক্লাসের Recall দাঁড়িয়েছে শূন্য (0), এবং এর Precision হিসাব করতে গেলে শূন্য দিয়ে ভাগের (0/0) পরিস্থিতি তৈরি হয়—তাই রিপোর্টে Zero-Division Policy স্পষ্টভাবে উল্লেখ করা ভালো। আর মনে রাখবেন, Majority Baseline নির্ধারণ করতে হবে কেবল Train সেটের ক্লাস অনুপাত থেকে, ভুলেও ডায়াগনস্টিক বা টেস্ট সেট দেখে নয়।"
+        },
+        {
+          "type": "adaptation_audit_lab",
+          "title": "ইন্টারেক্টিভ ল্যাব: সামগ্রিক Audit ও Retention ভাবনা",
+          "body": "টাস্কের নিজস্ব মেট্রিক উন্নত হলেও মডেলের মূল ভাষাগত সক্ষমতা বা নিরাপত্তা নীতি অক্ষত আছে কি না তা স্বয়ংক্রিয়ভাবে নিশ্চিত হয় না। এর জন্য আগে থেকে নির্ধারিত সাধারণ ভাষা ও টাস্কের Retention Suite, ডোমেইন পরিবর্তনের পরীক্ষা এবং ফরম্যাট ও সেফটি মূল্যায়ন প্রয়োজন। আমাদের বর্তমান ল্যাবে মূল Alice গদ্যের সক্ষমতা ধরে রাখা, সাধারণ সত্যনিষ্ঠতা (Factuality) কিংবা বাংলা চ্যাট দক্ষতা পরীক্ষা করা হয়নি—এবং আমরা এমন কোনো দাবিও করছি না যে LoRA ব্যবহার করলেই স্বয়ংক্রিয়ভাবে Forgetting পুরোপুরি বন্ধ হয়ে যায়।"
+        },
+        {
+          "type": "text",
+          "title": "Diagnostic সেটের প্রকৃত ভূমিকা",
+          "body": "আমাদের এই 188টি প্রশ্নের সেটটিকে আমরা কেন চূড়ান্ত Test Set না বলে Diagnostic Set বলছি? কারণ আগের অধ্যায়গুলোতে (Book 4 · Chapter 2 ও Chapter 3) আমরা এই সেটটি ইতিমধ্যেই পর্যবেক্ষণ করেছি, এর অনেক দাবি ট্রেনিং সেটের একই গবেষণাপত্র থেকে এসেছে এবং প্রথম 24 Byte-এ অভিন্ন শুরুর অংশ (Prefix Collision) থাকাও স্বাভাবিক। এখানে কোনো আনকোরা Held-out Test Set বা হাইপারপ্যারামিটার খোঁজার প্রক্রিয়া নেই। ভবিষ্যতে নতুন কোনো প্রজেক্ট শুরু করলে ট্রেনিংয়ের আগেই মূল গবেষণাপত্র ধরে গ্রুপিং করে Train / Validation / Test ভাগ এবং মূল্যায়ন প্রোটোকল স্থির করে নিতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "ব্যর্থতার বিশ্লেষণও প্রকৌশলী দক্ষতার অংশ",
+          "body": "ল্যাবের ড্যাশবোর্ডে Base, Full Fine-tuning, LoRA এবং INT8 কন্ট্রোলের প্রেডিকশন গণনা, কাঁচা NLL ও Majority Baseline একসাথে মিলিয়ে দেখুন। কেবল চমকপ্রদ Loss কমার গ্রাফ দেখে মুগ্ধ না হয়ে কেন মডেল টাস্কে ব্যর্থ হলো তা তথ্যপ্রমাণসহ ব্যবচ্ছেদ করতে পারাটাই একজন পরিপক্ব ML Engineer-এর আসল পরিচয়। ইন্টারভিউ বা পোর্টফোলিওতেও এমন সৎ ও সুশৃঙ্খল Negative Result বিশ্লেষণের মূল্য অনেক বেশি।"
+        }
+      ]
+    },
+    {
+      "id": "ch25_workflow",
+      "title": "সম্পূর্ণ Workflow পুনরুৎপাদন ও Inference Reload",
+      "subtitle": "অভিন্ন Base Model, নির্দিষ্ট Batch ক্রম ও অপরিবর্তিত Recipe দিয়ে ফলাফল যাচাই",
+      "duration": "50 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Reproducible Run-এর চুক্তি",
+          "body": "এই অধ্যায়ের সাথে যুক্ত adaptation_workflow.py স্ক্রিপ্টটি Book 4 · Chapter 1 (LLM Foundations)-এর ByteDecoder আর্কিটেকচার এবং মূল SciFact ডাটাসেটের প্রামাণিক Class Label ব্যবহার করে। পুরো ওয়ার্কফ্লোটি ইন্টারনেট ছাড়াই স্থানীয় ডেটা ও সংরক্ষিত Base Asset থেকে চলে। অন্য কোনো কোডের র‍্যান্ডমনেস যেন এখানে প্রভাব না ফেলে, সেজন্য মডেল তৈরির র‍্যান্ডম সিডকে fork_rng কনটেক্সটের ভেতর বিচ্ছিন্ন রাখা হয়েছে এবং রান শেষে CPU থ্রেড সংখ্যাও আগের অবস্থায় ফিরিয়ে দেওয়া হয়। স্বয়ংক্রিয় যাচাই প্রক্রিয়ায় উৎস ফাইল এবং Base Model-এর SHA-256 Hash মিলিয়ে দেখা হয়।"
+        },
+        {
+          "type": "text",
+          "title": "নিয়ন্ত্রিত Training পরিবেশ",
+          "body": "দুই পদ্ধতিতেই হুবহু একই Base Weight-এর কপি এবং ডেটা শাফল করার জন্য একই জেনারেটর সিড (250) ব্যবহার করা হয়েছে। প্রতি Epoch-এ 8টি করে আপডেট নিয়ে মোট 12টি Epoch চালানো হয়েছে। Full Fine-tuning-এ সব কটি অর্থাৎ 5019টি Parameter শেখে, আর Head-only LoRA-তে শেখে মাত্র 534টি। LoRA-এর A ম্যাট্রিক্সকে সিড 25 দিয়ে 0.02 স্কেলের র‍্যান্ডম নরমাল মানে এবং B ম্যাট্রিক্সকে শূন্য দিয়ে শুরু করা হয়েছে।\n\nপুরো প্রক্রিয়ায় AdamW অপটিমাইজার (Learning Rate = 0.01, Weight Decay = 0), Gradient Clipping = 1.0 এবং CPU float64 প্রিসিশন ব্যবহৃত হয়েছে। Epoch 0 থেকে 12 পর্যন্ত সংরক্ষিত ট্রেনিং ইতিহাসে কেবল Train ডেটার মেট্রিক রাখা হয়েছে, আর শেষে Dev ডেটার ওপর এককালীন Diagnostic Evaluation চালানো হয়েছে।"
+        },
+        {
+          "type": "math",
+          "title": "পুনরুৎপাদনযোগ্য Artifact পাইপলাইন",
+          "body": "\\mathrm{baseHash}+\\mathrm{dataRoles}+\\mathrm{recipe}\\to\\mathrm{reproducible\\ artifacts}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ সংরক্ষিত Base Weight রিলোড ও ফরোয়ার্ড যাচাই",
+          "body": "from pathlib import Path\nimport importlib.util\n\np = Path(\"assets/datasets/scifact_rag/adaptation_workflow.py\")\ns = importlib.util.spec_from_file_location(\"chapter25_local\", p)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nfrom pathlib import Path\nimport json\n\nroot = Path(\"assets/datasets/scifact_rag\")\nlab = json.loads((root / \"adaptation_lab.json\").read_text())\n\nimport torch\n\nlm = m.lm_module()\nbase = lm.ByteDecoder()\nbase.load_state_dict(\n    {k: torch.tensor(v, dtype=torch.float64) for k, v in lab[\"weights\"][\"base\"].items()}\n)\nids = torch.tensor([lab[\"samples\"][0][\"ids\"]])\nwith torch.no_grad():\n    output = base(ids)[0, -1]\nassert output.shape == (259,)\nprint(output[[83, 67]].tolist())\n"
+        },
+        {
+          "type": "text",
+          "title": "এক্সপোর্ট করা Artifact ফাইলসমূহ",
+          "body": "আর্টিফ্যাক্ট ডিরেক্টরিতে সাতটি সুনির্দিষ্ট ফাইল তৈরি হয়: model_card.json, golden.json, adapter.json, weights.json, full.pt, lora_merged.pt এবং সব ফাইলের হ্যাশসহ checksums.json। মনে রাখবেন, এগুলো কেবল Inference চালানোর উপযোগী ওয়েট এক্সপোর্ট—মাঝপথ থেকে হুবহু ট্রেনিং শুরু করার জন্য প্রয়োজনীয় Optimizer, RNG বা স্যাম্পলার স্টেটযুক্ত পূর্ণাঙ্গ Resume Checkpoint নয়। অ্যাপের ভেতরের ইন্টারেক্টিভ ল্যাব এই JSON ওয়েটগুলো পড়েই সরাসরি Full Forward Pass চালায়; অ্যাপ নিজে ডিভাইসে বসে কোনো মডেল ট্রেনিং করে না।"
+        },
+        {
+          "type": "text",
+          "title": "নিরাপদ ফাইল রাইট ও স্বয়ংক্রিয় নিরীক্ষা",
+          "body": "সাধারণভাবে স্ক্রিপ্টটি ইমপোর্ট করলে বা সাধারণ কমান্ডে চালালে অ্যাপের ভেতর বান্ডল করা মূল অ্যাসেট ফাইলগুলো স্বয়ংক্রিয়ভাবে মুছে বা ওভাররাইট হয়ে যায় না; কেবল --write-labs ফ্ল্যাগ দিলেই সচেতনভাবে ল্যাব অ্যাসেট নতুন করে তৈরি হয়। বাইরে অন্য কোনো ফোল্ডার থেকে চালালেও স্ক্রিপ্টটি নিজের অবস্থান ধরে সঠিক ইনপুট ফাইল খুঁজে নেয়। আমাদের স্বয়ংক্রিয় পরীক্ষা স্যুট প্রতিটি পাঠের উদাহরণ, অনুশীলনীর সমাধান, Gradient, Merge Reconstruction, Freeze নিয়ম, Quantization এবং ডিটারমিনিস্টিক রিফিট একসাথে যাচাই করে।"
+        },
+        {
+          "type": "text",
+          "title": "শিক্ষার্থীর অগ্রগতি সংরক্ষণ ও প্ল্যাটফর্ম সীমানা",
+          "body": "অ্যাপের ভেতরে এই অধ্যায়ের সব আইডি ch25_ নেমস্পেস দিয়ে আলাদা রাখা হয়েছে, যাতে স্থানীয় ডাটাবেসে আপনার পড়াশোনার অগ্রগতি, নোট, বুকমার্ক এবং কোড ড্রাফট সম্পূর্ণ নিরাপদ থাকে। নতুন অধ্যায় যুক্ত বা আপডেট হলেও পুরোনো অধ্যয়ন-তথ্য অক্ষত থাকে, এবং প্রতিটি প্ল্যাটফর্মের নিজস্ব বিল্ড ও ডিভাইস পরীক্ষার সীমানা স্বচ্ছভাবে অনুসরণ করা হয়।"
+        },
+        {
+          "type": "text",
+          "title": "অধ্যায়ের পরিধি ও রোডম্যাপের শৃঙ্খলা",
+          "body": "প্রকৌশলগত সততার নিয়ম অনুযায়ী, অ্যাপে কেবল সম্পূর্ণরূপে যাচাইকৃত অধ্যায় ও পরীক্ষাগুলোকেই কার্যকর হিসেবে নথিভুক্ত করা হয়—ভবিষ্যতের রোডম্যাপে থাকা বিষয়কে কখনোই বর্তমান পরীক্ষার প্রমাণিত ফলাফল হিসেবে দাবি করা হয় না। এই অধ্যায়ে আমাদের পরিধি Adaptation ও Preference Alignment-এর ভিত্তি পর্যন্ত সুনির্দিষ্ট; পরের অধ্যায়ে (Book 4 · Chapter 5: LLM Evaluation, Reliability & Serving) আমরা প্রোডাকশন মূল্যায়ন ও সার্ভিং নিয়ে বিস্তারিত কাজ করব।"
+        }
+      ]
+    },
+    {
+      "id": "ch25_experiment",
+      "title": "বাস্তব পরীক্ষার নির্মোহ মূল্যায়ন ও যুক্তিখণ্ডন",
+      "subtitle": "মেকানিক্স শতভাগ নির্ভুল হলেও কেন টাস্কের আসল Discrimination ব্যর্থ হলো?",
+      "duration": "50 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "যা যা সন্দেহাতীতভাবে প্রমাণিত হয়েছে",
+          "body": "আমাদের এই নিয়ন্ত্রিত রানে Base Weight ফ্রোজেন থাকা, শুরুতে শূন্য Delta বজায় থাকা, A ও B ফ্যাক্টরের গ্রেডিয়েন্ট আপডেট, Merge Equivalence এবং Response-only Masked Loss—প্রতিটি গাণিতিক কলকব্জা নিখুঁতভাবে যাচাই হয়েছে। আউটপুটের সব কটি অর্থাৎ 259টি Logit-এর রেফারেন্স মানও পাইথন ও অ্যাপের ফরোয়ার্ড পাসে হুবহু মিলেছে, এবং পোর্টেবল কন্ট্রোল হিসেবে Row-wise INT8 আউটপুট Head পুনর্গঠনও যাচাই করা হয়েছে। কিন্তু এই সব কারিগরি বাস্তবায়ন (Implementation Check) সফল হওয়ার পরেও আমাদের দেখতে হবে আসল টাস্কে মডেল ধ্রুবক অনুমানের (Constant-Prediction Baseline) চেয়ে ভালো করতে পারল কি না!"
+        },
+        {
+          "type": "text",
+          "title": "Parameter সাশ্রয়ের প্রকৃত হিসাব",
+          "body": "আমাদের এই নির্দিষ্ট মডেলে LoRA-তে পরিবর্তনযোগ্য প্যারামিটারের অনুপাত হলো 534 / 5019 ≈ 0.106396 (প্রায় 10.64%)। তবে খেয়াল রাখবেন, Unmerged অবস্থায় মেমোরিতে মোট প্যারামিটার থাকে 5553টি, কারণ মূল Frozen Base Weight-গুলোকেও মেমোরিতে ধরে রাখতে হয়! তাই Trainable Parameter কমে যাওয়া আর মেমোরিতে সংরক্ষিত মোট প্যারামিটার কমে যাওয়া কখনোই এক কথা নয়।\n\nএখানে Rank 2 আপডেটের ফলে শেখার সক্ষমতা ও অপটিমাইজার স্টেটের আকার বদলেছে বটে, কিন্তু আমরা হার্ডওয়্যারের প্রকৃত Peak Memory বা গতির (Throughput) কোনো বেঞ্চমার্ক মাপিনি। তাই এই ছোট্ট মডেলের অনুপাতটিকে সব বড় LoRA মডেলের সর্বজনীন সংখ্যা হিসেবে ধরে নেবেন না।"
+        },
+        {
+          "type": "math",
+          "title": "আমাদের Head-only LoRA-এর Trainable Parameter গণনা",
+          "body": "\\mathrm{LoRAtrainables}=2(8+259)=534"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Full বনাম LoRA Parameter ও Baseline সমতা যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nroot = Path(\"assets/datasets/scifact_rag\")\nlab = json.loads((root / \"adaptation_lab.json\").read_text())\n\nr = lab[\"report\"]\nassert r[\"runs\"][\"full\"][\"trainable_parameters\"] == 5019\nassert r[\"runs\"][\"lora\"][\"trainable_parameters\"] == 534\nassert r[\"runs\"][\"lora\"][\"total_parameters\"] == 5553\nassert (\n    r[\"runs\"][\"lora\"][\"diagnostic\"][\"accuracy\"] - r[\"majority_diagnostic_accuracy\"] == 0\n)\nprint(534 / 5019)\n"
+        },
+        {
+          "type": "text",
+          "title": "কেন মডেল ক্লাসের পার্থক্য শিখতে পারল না?",
+          "body": "মূল প্রামাণ্য নথি (Source Evidence) ছাড়া কেবল বৈজ্ঞানিক দাবির প্রথম 24টি Byte দিয়ে সত্য-মিথ্যা নির্ধারণ করতে চাওয়া গোড়া থেকেই একটি অত্যন্ত দুর্বল ইনপুট। এর সাথে আরও কয়েকটি সম্ভাব্য কারণ যুক্ত হয়েছে: রূপকথার গল্প (Alice) পড়ে শেখা ডিকোডারকে হঠাৎ বৈজ্ঞানিক দাবিতে লাগানো (Domain Mismatch), মাত্র 8 মাত্রার ক্ষুদ্র Hidden Width, শুধুমাত্র শেষের Head-এ LoRA বসানো, Class Imbalance এবং স্বল্প ট্রেনিং বাজেট। তবে যেহেতু আমরা প্রতিটি উপাদান আলাদা করে সরিয়ে (Causal Ablation) পরীক্ষা করিনি, তাই এই একটি ব্যর্থ ফলাফল দেখে সুনিশ্চিতভাবে বলা যাবে না যে ঠিক কোন একক কারণে মডেল সংখ্যাগরিষ্ঠ ক্লাসে আটকে গেছে।"
+        },
+        {
+          "type": "text",
+          "title": "Cherry-Picking বর্জনের বৈজ্ঞানিক শৃঙ্খলা",
+          "body": "খেয়াল করুন, Diagnostic সেটে এই ব্যর্থতা দেখার পর আমরা কিন্তু চুপিচুপি ফিরে গিয়ে Epoch সংখ্যা, র‍্যান্ডম Seed, Rank কিংবা ইনপুট টেমপ্লেট পাল্টে সুন্দর দেখায় এমন কোনো সংখ্যা বেছে নিইনি! এমনকি মাঝপথের কোনো ভালো দেখানো Checkpoint-ও বাছাই করা হয়নি; পূর্বনির্ধারিত Epoch 12-এর ফলাফলই অবিকল রিপোর্ট করা হয়েছে। ভবিষ্যতে যদি কখনো উন্নত ইনপুট বা বড় মডেল পরীক্ষা করতে হয়, তবে তার জন্য শুরু থেকেই সুস্পষ্ট ডেভেলপমেন্ট প্ল্যান এবং সম্পূর্ণ নতুন Confirmation Test Set সাজাতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "Quantization পরীক্ষার সীমাবদ্ধতা",
+          "body": "আউটপুট Head-কে INT8-এ সংকুচিত ও পুনর্গঠন করার পর Diagnostic NLL এসেছে প্রায় 0.645990, সর্বোচ্চ ওয়েট ত্রুটি 0.005801 এবং 188টি প্রেডিকশনই অপরিবর্তিত রয়েছে। কিন্তু মাত্র একটি শেষ লেয়ারের এই ছোট পরীক্ষা দিয়ে কখনোই পুরো মডেলের 4-bit গুণমান বা QLoRA-এর কার্যকারিতা প্রমাণ করা যায় না। আর বাইটের হিসাবটিও খাঁটি গাণিতিক—মোবাইল অ্যাপের JSON স্টোরেজ বা রানটাইম মেমোরি ওভারহেড এর বাইরে।"
+        },
+        {
+          "type": "text",
+          "title": "Interview ও রিভিউতে যেভাবে যুক্তি দেবেন",
+          "body": "কখনোই বলবেন না যে 'মডেলটির Accuracy 34% থেকে বেড়ে 66% হয়েছে, সুতরাং এটি লেবেল শিখতে পেরেছে!'—বরং স্পষ্ট করে বলুন যে মডেলটি কেবল Majority Baseline-এর সমান স্কোর ছুঁয়েছে। যেকোনো কারিগরি রিভিউতে ডেটার উৎস, Recipe, ক্লাস গণনা, Loss Mask, প্রেডিকশন বণ্টন, মডেলের Hash এবং ব্যর্থতার দিকগুলো খোলাখুলি তুলে ধরুন। 'আমাদের কোড বাস্তবায়ন নির্ভুল, কিন্তু প্রদত্ত সীমিত ইনপুটে টাস্কটি ব্যর্থ হয়েছে'—এই কথাটি তথ্যপ্রমাণসহ বলতে পারাই খাঁটি বৈজ্ঞানিক চর্চা।"
+        }
+      ]
+    },
+    {
+      "id": "ch25_book_preferences",
+      "title": "Preference Alignment: RLHF-এর অন্তর্দৃষ্টি ও DPO Objective",
+      "subtitle": "Supervised অনুকরণের গণ্ডি পেরিয়ে মানুষের তুলনামূলক পছন্দ থেকে মডেলকে সামঞ্জস্যপূর্ণ করার কৌশল",
+      "duration": "33 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "SFT-এর পরও কেন Preference Alignment দরকার?",
+          "body": "Supervised Fine-Tuning (SFT) মডেলকে আগে থেকে লেখা একটি আদর্শ উত্তর অনুকরণ (Imitate) করতে শেখায়। কিন্তু অনেক খোলামেলা প্রশ্নে একটিমাত্র নিখুঁত উত্তর লিখে দেওয়ার চেয়ে দুটি সম্ভাব্য উত্তরের মধ্যে কোনটি তুলনামূলক ভালো (Chosen) আর কোনটি দুর্বল বা অনাকাঙ্ক্ষিত (Rejected), তা বিচার করা মানুষের জন্য অনেক সহজ। তবে শুরুতেই মনে রাখা জরুরি যে এই তুলনামূলক পছন্দ (Pairwise Preference) মানেই কিন্তু চিরন্তন বস্তুনিষ্ঠ সত্য (Truth Label) নয়! প্রচলিত RLHF (Reinforcement Learning from Human Feedback) পদ্ধতিতে সাধারণত এই পছন্দ-অপছন্দের ডেটা দিয়ে আগে একটি আলাদা Reward Model শেখানো হয় এবং পরে রেফারেন্স মডেলের কাছাকাছি থেকে Policy Optimization চালানো হয় (Book 3 · Chapter 8: Reinforcement Learning & Bandits স্মরণ করুন)। অন্যদিকে DPO (Direct Preference Optimization) আলাদা কোনো Reward Model বা অনলাইন রোলআউট ছাড়াই স্থির Reference Policy-এর সাপেক্ষে আপেক্ষিক লগ-সম্ভাব্যতা ব্যবহার করে সরাসরি পছন্দ-অপছন্দের ব্যবধান অপটিমাইজ করে।"
+        },
+        {
+          "type": "text",
+          "title": "DPO সমীকরণটি ধাপে ধাপে বুঝি",
+          "body": "DPO-এর মূল হিসাবটি খুবই পরিচ্ছন্ন: প্রথমে পছন্দের উত্তরটির (Chosen) ক্ষেত্রে বর্তমান Policy ও Reference Policy-এর লগ-সম্ভাব্যতার অনুপাত (অর্থাৎ লগ-সম্ভাব্যতার বিয়োগফল) বের করুন, এবং সেখান থেকে অপছন্দের উত্তরটির (Rejected) একই লগ-অনুপাত বিয়োগ দিন। এই পার্থক্য বা মার্জিনকে β দিয়ে গুণ করে স্কেল করুন, এবং শেষে তার Negative Log-Sigmoid নিন—এটিই হলো DPO Loss! ট্রেনিংয়ের একেবারে শুরুতে যখন বর্তমান Policy আর Reference Policy হুবহু সমান থাকে, তখন দুটি লগ-অনুপাতই শূন্য হয়; ফলে মার্জিন হয় 0 এবং শুরুর লস দাঁড়ায় log(2)। অত্যন্ত গুরুত্বপূর্ণ একটি নিয়ম মনে রাখবেন: এখানে পুরো উত্তরের লগ-সম্ভাব্যতা মানে কেবল বৈধ Response Token-গুলোর লগ-সম্ভাব্যতার যোগফল (Sum)—মনমতো গড় (Mean) নিলে মূল গাণিতিক Objective-ই বদলে যাবে!"
+        },
+        {
+          "type": "math",
+          "title": "Direct Preference Optimization (DPO) Loss সূত্র",
+          "body": "L_{DPO}=-\\log\\sigma\\left(\\beta\\left[\\log\\frac{\\pi_\\theta(y_w\\mid x)}{\\pi_{ref}(y_w\\mid x)}-\\log\\frac{\\pi_\\theta(y_l\\mid x)}{\\pi_{ref}(y_l\\mid x)}\\right]\\right)"
+        },
+        {
+          "type": "text",
+          "title": "খাতাকলমে একটি সংখ্যার উদাহরণ",
+          "body": "আসুন ছোট একটি উদাহরণ হাতে হিসাব করি। ধরুন কোনো একটি প্রশ্নের জন্য পছন্দের উত্তরের লগ-অনুপাত chosen_log_ratio = 0.4, অপছন্দের উত্তরের লগ-অনুপাত rejected_log_ratio = −0.2 এবং স্কেলিং প্যারামিটার β = 0.5। তাহলে স্কেল করা মার্জিন হবে 0.5 × (0.4 − (−0.2)) = 0.3। ফলে DPO Loss দাঁড়াবে log(1 + exp(−0.3)) ≈ 0.554355 (যা শুরুর log(2) ≈ 0.693147-এর চেয়ে কম)। বর্তমান পলিসি যত পছন্দের উত্তরের আপেক্ষিক স্কোর বাড়াবে এবং অপছন্দের উত্তরের স্কোর কমাবে, এই লস ততই কমবে—কিন্তু মনে রাখবেন, এতে উত্তরটি তথ্যগতভাবে সত্য (Factually Correct) হয়ে উঠল কি না তার কোনো স্বয়ংক্রিয় নিশ্চয়তা নেই!"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ সংখ্যাগতভাবে স্থিতিশীল DPO Loss হিসাব",
+          "body": "import math\n\nchosen_log_ratio, rejected_log_ratio, beta = 0.4, -0.2, 0.5\nmargin = beta * (chosen_log_ratio - rejected_log_ratio)\n# Stable softplus(-margin), avoiding overflow at very negative margins.\nloss = max(-margin, 0.0) + math.log1p(math.exp(-abs(margin)))\nprint(round(margin, 6), round(loss, 6))\n"
+        },
+        {
+          "type": "text",
+          "title": "কোড চালালে ভেতরে কী ঘটছে?",
+          "body": "কোডের আউটপুটে আমরা ঠিক 0.3 এবং 0.554355 পাচ্ছি, যেখানে ঋণাত্মক বড় মার্জিনে exp ওভারফ্লো এড়াতে স্থিতিশীল সূত্র ব্যবহার করা হয়েছে। বাস্তব ইমপ্লিমেন্টেশনে মূল Reference Model-টিকে সম্পূর্ণ Frozen রাখতে হবে, Prompt Mask এবং টোকেন অ্যালাইনমেন্ট দুই মডেলের জন্যই হুবহু এক হতে হবে, এবং মূল্যায়নের সময় Train ও Validation সেটে যেন একই Prompt দুদিকেই ছড়িয়ে না থাকে (Prompt-Disjoint Evaluation) তা নিশ্চিত করতে হবে। বলাই বাহুল্য, এখানে আমরা DPO-এর গাণিতিক মেকানিক্স শিখছি—অ্যাপের ভেতর কোনো বিশাল প্রিট্রেনড LLM অ্যালাইন করার দাবি করা হচ্ছে না।"
+        },
+        {
+          "type": "text",
+          "title": "কখন এই পদ্ধতি বিভ্রান্ত হতে পারে?",
+          "body": "মানুষের পছন্দ-অপছন্দের ডেটায় অসঙ্গতি (Noisy Preferences), লম্বা ও আত্মবিশ্বাসী শোনায় এমন উত্তরের প্রতি পক্ষপাত (Length Shortcut) এবং ট্রেনিং ও বাস্তব ব্যবহারের ডিস্ট্রিবিউশন পার্থক্য Preference Optimization-কে সহজেই বিপথে নিতে পারে। তাছাড়া DPO-কে যে KL-নিয়ন্ত্রিত Reward অপটিমাইজেশনের সমতুল্য বলা হয়, তা নির্দিষ্ট কিছু তাত্ত্বিক অনুমানের অধীনেই কেবল খাটে; আর ভুলে β = 0 বসালে পুরো গ্রেডিয়েন্ট সংকেতই শূন্য হয়ে যাবে! তাই স্টাইল বা পছন্দের পাশাপাশি নিরাপত্তা (Safety) এবং তথ্যগত সত্যতার (Factuality) মূল্যায়ন সবসময় আলাদাভাবে চালাতে হবে।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে চেষ্টা করুন",
+          "body": "ট্রেনিংয়ের শুরুতে যখন বর্তমান Policy এবং Reference Policy হুবহু সমান থাকে, তখন DPO Loss কত হবে? আর রিভিউয়ারদের ব্যক্তিগত পছন্দকে ধ্রুব সত্য (Factual Truth) ধরে মডেল ট্রেন করলে কী সমস্যা হতে পারে?",
+          "solution": "দুটি Policy সমান হলে লগ-অনুপাত শূন্য হওয়ায় মার্জিন 0 হয়, ফলে DPO Loss হয় log(2) ≈ 0.693147। অন্যদিকে মানুষের পছন্দকে ধ্রুব সত্য ধরে নিলে সুন্দর ভঙ্গিতে লেখা বা আত্মবিশ্বাসী শোনায় এমন ভুল তথ্যও পুরস্কৃত হতে পারে—তাই নিরপেক্ষ সত্যতা যাচাইয়ের রুব্রিক (Grounding Rubric) এবং অ্যানোটেটরদের মতপার্থক্য নিরীক্ষা করা অপরিহার্য।",
+          "reference": "https://arxiv.org/abs/2305.18290"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে হিসাব: Response Token-এর যোগফল থেকে DPO Gradient",
+          "body": "এবার টোকেন স্তরে গ্রেডিয়েন্ট কীভাবে বণ্টিত হয় তা একটি সংখ্যার উদাহরণে দেখা যাক। ধরুন দুই টোকেনের Chosen উত্তরে বর্তমান পলিসির টোকেন লগ-সম্ভাব্যতা [−0.2, −0.3] এবং রেফারেন্স পলিসিতে [−0.4, −0.5]; সুতরাং Chosen সিকোয়েন্সের লগ-অনুপাত (−0.5) − (−0.9) = 0.4। আর এক টোকেনের Rejected উত্তরে পলিসি [−0.8] এবং রেফারেন্স [−0.6], অর্থাৎ লগ-অনুপাত −0.2। আগের মতোই β = 0.5 ধরলে মার্জিন হয় 0.3 এবং লস ≈ 0.554355। অন্তরীকরণ করলে দেখা যায়, Chosen উত্তরের প্রতিটি বৈধ টোকেনের লগ-সম্ভাব্যতার সাপেক্ষে লসের ডেরিভেটিভ আসে −β × sigmoid(−margin), অর্থাৎ প্রায় −0.212779, আর Rejected টোকেনের ডেরিভেটিভ আসে ঠিক একই মানের ধনাত্মক (+0.212779)! খেয়াল করুন, Prompt এবং Padding টোকেনগুলো এই যোগফলের সম্পূর্ণ বাইরে থাকে।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Pairwise DPO Objective ও Token Derivative যাচাই",
+          "body": "import torch\nimport torch.nn.functional as F\n\nchosen = torch.tensor([-0.2, -0.3], dtype=torch.float64, requires_grad=True)\nrejected = torch.tensor([-0.8], dtype=chosen.dtype, requires_grad=True)\nreference_chosen = torch.tensor([-0.4, -0.5], dtype=chosen.dtype)\nreference_rejected = torch.tensor([-0.6], dtype=chosen.dtype)\nbeta = 0.5\nchosen_ratio = chosen.sum() - reference_chosen.sum()\nrejected_ratio = rejected.sum() - reference_rejected.sum()\nmargin = beta * (chosen_ratio - rejected_ratio)\nloss = F.softplus(-margin)\nchosen_gradient, rejected_gradient = torch.autograd.grad(loss, (chosen, rejected))\nmagnitude = beta * torch.sigmoid(-margin.detach())\ntorch.testing.assert_close(chosen_gradient, -magnitude.expand_as(chosen))\ntorch.testing.assert_close(rejected_gradient, magnitude.expand_as(rejected))\nprint(round(margin.item(), 6), round(loss.item(), 6))\nprint(\n    *[round(value, 6) for value in chosen_gradient.tolist()],\n    *[round(value, 6) for value in rejected_gradient.tolist()]\n)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "এবার নিজে হিসাব করুন",
+          "body": "উপরের উদাহরণে Chosen উত্তরটিতে দুটি টোকেন এবং Rejected উত্তরটিতে একটি টোকেন রয়েছে। সিকোয়েন্সের টোকেনগুলোর যোগফল (Sum) নেওয়ার বদলে যদি গড় (Mean) নেওয়া হতো, তবে স্কেল করা Margin কত দাঁড়াত?",
+          "solution": "দুই টোকেনের গড় নিলে Chosen লগ-অনুপাত কমে 0.4 / 2 = 0.2 হয়ে যেত, আর এক টোকেনের Rejected লগ-অনুপাত থাকত −0.2। তখন β = 0.5 দিয়ে স্কেল করা Margin দাঁড়াত 0.5 × (0.2 − (−0.2)) = 0.2—যা যোগফল-ভিত্তিক আসল Margin (0.3) থেকে আলাদা এবং মূল তাত্ত্বিক Objective-কে বদলে দেয়! তাই উত্তরের দৈর্ঘ্য, EOS টোকেন, Prompt Mask এবং Reference Alignment-এর নিয়ম সব জায়গায় অভিন্ন রেখে সিকোয়েন্স লাইকলিহুড হিসাব করতে হয়।",
+          "reference": "https://arxiv.org/abs/2305.18290"
+        }
+      ]
+    },
+    {
+      "id": "ch25_choices",
+      "title": "Prompting, RAG, SFT নাকি PEFT—কোনটি কখন বেছে নেবেন?",
+      "subtitle": "জনপ্রিয় টুলের নামের পেছনে না ছুটে সমস্যার প্রকৃত চাহিদা থেকে কৌশল নির্বাচন",
+      "duration": "50 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "সবার আগে শক্তিশালী Prompting Baseline",
+          "body": "যেকোনো বাস্তব প্রজেক্টে শুরুতেই ওয়েট আপডেট করার ঝাঁপ দেবেন না। প্রথমে টাস্কের লক্ষ্য, কাঙ্ক্ষিত Response Format এবং কয়েকটি নির্বাচিত উদাহরণ (Few-shot Examples) স্পষ্ট করে লিখে একটি পরিচ্ছন্ন Prompting Baseline দাঁড় করান। প্রদত্ত Context Window, অনুমোদিত ল্যাটেন্সি এবং মডেলের সক্ষমতার ভেতর একটি নিরপেক্ষ Held-out সেটে এর পারফরম্যান্স মাপুন। সেই ফলাফলের ঘাটতি দেখেই কেবল সিদ্ধান্ত নেওয়া যায়—আমাদের কি বাইরের প্রামাণিক তথ্যের জন্য RAG দরকার, নাকি আচরণগত পরিবর্তনের জন্য SFT / PEFT-এর আলাদা পরীক্ষা সাজানো দরকার।"
+        },
+        {
+          "type": "text",
+          "title": "তাজা তথ্য ও উদ্ধৃতির জন্য RAG",
+          "body": "আপনার সিস্টেমকে যদি ঘনঘন পরিবর্তনশীল তথ্যভাণ্ডার, প্রতিষ্ঠানের একান্ত নিজস্ব নথি কিংবা সুনির্দিষ্ট উৎস-উদ্ধৃতি (Source Citation) ব্যবহার করে উত্তর দিতে হয়, তবে Retrieval বা RAG-ই প্রধান হাতিয়ার। অবশ্য Book 4 · Chapter 3 (RAG Systems)-এ আমরা দেখেছি যে RAG মানেই জাদুমন্ত্রে Hallucination উধাও হয়ে যাওয়া নয়—রিট্রিভাল ব্যর্থতা ও কনটেক্সট সীমার ঝুঁকি সেখানেও থাকে। কিন্তু এর বিপরীতে কেবল Fine-tuning করে মডেলের ওয়েটের ভেতর তথ্য মুখস্থ করাতে চাইলে নতুন তথ্য আপডেট করা বা উত্তরের পাশে নির্ভরযোগ্য সূত্র দেখানো স্বয়ংক্রিয়ভাবে সম্ভব হয় না।"
+        },
+        {
+          "type": "math",
+          "title": "পদ্ধতি নির্বাচনের প্রকৌশলগত ফাংশন",
+          "body": "\\mathrm{choice}=f(\\mathrm{behavior},\\mathrm{knowledge\\ freshness},\\mathrm{data},\\mathrm{compute},\\mathrm{evaluation})"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ সিস্টেম চাহিদার চেকলিস্ট যাচাই",
+          "body": "# Explicit requirements checklist,not measured model recommendations.\nrequirements = {\"fresh_sources\": True, \"stable_style\": True, \"offline\": True}\nassert requirements[\"fresh_sources\"] and requirements[\"offline\"]\nprint(\"Versioned local retrieval for sources;evaluate any adaptation separately\")\n"
+        },
+        {
+          "type": "text",
+          "title": "নির্দিষ্ট আচরণ ও রীতি শেখাতে SFT",
+          "body": "যখন আপনার মূল সমস্যা তথ্যের অভাব নয়, বরং মডেলকে একটি সুনির্দিষ্ট আউটপুট কাঠামো, ডোমেইনের নিজস্ব পরিভাষা, সংক্ষিপ্ত উত্তর দেওয়ার শৈলী বা বিশেষ টাস্কের আচরণ শেখানো—তখন উচ্চমানের উদাহরণ দিয়ে Supervised Fine-Tuning (SFT) দারুণ কার্যকর হতে পারে। তবে মনে রাখবেন, আচরণ শেখানোর মাপকাঠি আর প্রামাণ্য তথ্য যাচাইয়ের মাপকাঠি আলাদা; তাই আপনার ডাটাসেটের লেবেল, টেমপ্লেট এবং মূল্যায়ন যেন সমস্যার আসল চাহিদার সাথে মেলে, এবং সংকীর্ণ টাস্কে টিউন করা মডেলকে সর্বজ্ঞ চ্যাট সহকারী বলে ধরে না নেওয়া হয়।"
+        },
+        {
+          "type": "text",
+          "title": "SFT বনাম PEFT: ভুল দ্বৈততা এড়িয়ে চলুন",
+          "body": "নতুনদের মধ্যে প্রায়ই একটি ভুল প্রশ্ন শোনা যায়: 'আমরা কি SFT করব নাকি LoRA করব?' খেয়াল করুন, এই দুটি মোটেও পরস্পরবিরোধী বিকল্প নয়! SFT হলো আপনার ট্রেনিংয়ের Objective ও ডেটার ধরন—অর্থাৎ মডেল কী শিখবে; আর LoRA বা অন্য কোনো PEFT Adapter হলো প্যারামিটার আপডেট করার কৌশল—অর্থাৎ মডেলের কোন অংশটুকু বদলাবে। আপনি অনায়াসেই LoRA ব্যবহার করে SFT চালাতে পারেন! আর মেমোরি আরও সীমিত হলে এর সাথে QLoRA-এর স্টোরেজ ও প্রিসিশন কৌশল যুক্ত হতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব সিস্টেমে একাধিক কৌশলের সমন্বয়",
+          "body": "একটি পরিপক্ব প্রোডাকশন সিস্টেমে সংস্করণযুক্ত স্থানীয় Retrieval, যাচাইকৃত জেনারেটর Prompt এবং সুনির্দিষ্ট ফরম্যাটের জন্য যত্নশীল PEFT Adaptation—এই তিনটি একসাথেই কাজ করতে পারে। তবে একসাথে জুড়ে দেওয়ার আগে প্রতিটি অংশের নিজস্ব Baseline ও Ablation পরীক্ষা, ডেটার গোপনীয়তা, মডেলের লাইসেন্স, ডিভাইসের মেমোরি সীমা এবং গুণমান মাপার মেট্রিক আলাদাভাবে নকশা করতে হবে। অফলাইনে চালানোর জন্য তৈরি প্রোটোটাইপকে যেন অসতর্কতায় অনলাইন এপিআই-নির্ভর পাইপলাইনে বদলে ফেলা না হয়, সেদিকেও নজর রাখুন।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে বলবেন",
+          "body": "সিস্টেম ডিজাইন Interview-এ কোনো টুলের নাম বলার আগে সমস্যার মূল শিকড়টি স্পষ্ট করে নিন: এটি কি আউটপুট ফরম্যাটের সমস্যা, নাকি তাজা তথ্যের অভাব, নাকি রিট্রিভালের ব্যর্থতা? এরপর সবচেয়ে সরল ও পরিমাপযোগ্য সমাধানটি (Smallest Measured Candidate) দিয়ে শুরু করার প্রস্তাব দিন এবং মেট্রিক দেখে পরের ধাপে যাওয়ার যুক্তি দেখান। মনে রাখবেন, কোনো পদ্ধতির বাজার-জনপ্রিয়তা কখনোই ব্যবহারকারীর কাজে তার উপযোগিতার প্রমাণ নয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch25_readiness",
+      "title": "Interview প্রস্তুতি: সূত্র প্রতিপাদন, বাস্তবায়ন ও নিরীক্ষা",
+      "subtitle": "নিখুঁত গাণিতিক সমীকরণ এবং ব্যর্থ পরীক্ষার কারণ—দুটোই সাবলীলভাবে ব্যাখ্যা করার দক্ষতা",
+      "duration": "50 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "খাতাকলমে প্রতিপাদন (Derive)",
+          "body": "চূড়ান্ত প্রস্তুতির প্রথম ধাপে না দেখে খাতায় Response-only Mask, তার সঠিক হর (Denominator) এবং কাঁচা Cross-Entropy Loss-এর সমীকরণ নিজে প্রতিপাদন করুন। এরপর LoRA-এর দুটি ম্যাট্রিক্সের Shape, α / r স্কেলিং, প্যারামিটার সংখ্যা, শুরুর ধাপের Gradient এবং Merge করার বীজগণিত লিখে ফেলুন। সবশেষে Quantization-এর স্টোরেজ হিসাব, Compute Dtype-এর পার্থক্য, সম্পূর্ণ শূন্য সারির (Zero-row) নিয়ম এবং Base Model ও Tokenizer সংস্করণের সামঞ্জস্যতা মুখে মুখে ব্যাখ্যা করার অভ্যাস করুন।"
+        },
+        {
+          "type": "text",
+          "title": "নির্ভুল কোড বাস্তবায়ন (Implement)",
+          "body": "কোডিং রাউন্ডের জন্য সঠিক Prefix ও PAD পজিশন নির্ণয়, অসীম বা অসংজ্ঞায়িত মান ঠেকানোর গার্ডসহ Response Loss, কেবল পরিবর্তনযোগ্য প্যারামিটার নিয়ে Optimizer তালিকা তৈরি, Low-Rank Forward Pass, ওয়েট Merge এবং INT8 Round-trip ফাংশন নিজের হাতে লেখার চর্চা করুন। বাস্তব ডেটায় সেটের সীমানা, Base Hash এবং ফরোয়ার্ড পাসের Golden Logits মিলিয়ে দেখুন (মনে রাখবেন, অ্যাপটি সরাসরি পাইথন রানটাইম চালায় না, তাই কোডিং অনুশীলনীগুলো নির্ধারিত স্থানীয় স্কোপে যাচাই করা হয়)।"
+        },
+        {
+          "type": "math",
+          "title": "এই অধ্যায়ের সবচেয়ে বড় প্রকৌশলগত শিক্ষা",
+          "body": "\\mathrm{correct\\ implementation}\\ne\\mathrm{useful\\ adaptation}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ ছয়টি নমুনা Prefix ও চারটি মডেলের সম্পূর্ণ Logits যাচাই",
+          "body": "from pathlib import Path\nimport json\n\nroot = Path(\"assets/datasets/scifact_rag\")\nlab = json.loads((root / \"adaptation_lab.json\").read_text())\n\nfor s in lab[\"samples\"]:\n    assert len(s[\"ids\"]) <= 26 and s[\"ids\"][0] == 257 and s[\"ids\"][-1] == 10\n    assert set(s[\"references\"]) == {\"base\", \"full\", \"lora\", \"int8_head_demo\"}\nprint(\"Six source prefixes,four complete259-logit references\")\n"
+        },
+        {
+          "type": "text",
+          "title": "ফলাফল মূল্যায়ন ও ব্যবচ্ছেদ (Evaluate)",
+          "body": "যেকোনো মডেল মূল্যায়নের আলোচনায় সংখ্যাগরিষ্ঠ ক্লাসের প্রেডিকশন গণনা, লসের একক, Confusion Matrix, Class Imbalance, Calibration, পুরোনো সক্ষমতা ধরে রাখা (Retention) এবং সেটের ভেতর ডেটা ওভারল্যাপ (Role Contamination)—সবকটি দিক গুছিয়ে তুলে ধরুন। 'ট্রেনিং লস নাটকীয়ভাবে কমলেও মডেলটি Majority Baseline-কে হারাতে পারেনি'—আমাদের এই অধ্যায়ের কেন্দ্রীয় উদাহরণটি বাস্তব ইন্টারভিউতে চমৎকার একটি কেস স্টাডি হিসেবে কাজে লাগবে।"
+        },
+        {
+          "type": "text",
+          "title": "সিস্টেম ডিজাইন ভাবনা (System Design)",
+          "body": "প্রোডাকশন আর্কিটেকচার নিয়ে কথা বলার সময় একাধিক Adapter মেমোরিতে অদলবদল (Hot-swap) বনাম একক Merge, Base মডেলের হ্যাশ সামঞ্জস্যতা, ট্রেনিং Checkpoint Resume, ক্যাশ বাতিলকরণ (Invalidation), Tokenizer ও Chat Template-এর সংস্করণ, ডেটার অনুমতি ও তাজা থাকার শর্ত এবং অফলাইন কম্পিউট বাজেট নিয়ে আলোচনা করুন। কখনোই শুধু প্যারামিটার সংখ্যা গুনে মেমোরির দাবি করবেন না; সর্বদা নির্দিষ্ট প্ল্যাটফর্ম ও ওয়ার্কলোডে মেপে দেখার কথা বলুন।"
+        },
+        {
+          "type": "text",
+          "title": "চূড়ান্ত অনুশীলন পরিকল্পনা",
+          "body": "এবার কোনো নোট না দেখে এই অধ্যায়ের 26টি Quiz, 10টি Coding Exercise এবং 10টি Interview প্রশ্নের উত্তর নিজে দেওয়ার চেষ্টা করুন। আগে নিজের যুক্তি খাতায় লিখে তারপর সমাধান ও ব্যাখ্যা খুলুন। প্রতিটি ভুল অপশন কেন এখানে খাটে না এবং সমস্যার কোন পূর্বশর্ত (Assumption) বদলে দিলে উত্তরটি পাল্টে যেত—সেটি বের করতে পারলেই আপনার প্রস্তুতি পূর্ণতা পাবে।"
+        },
+        {
+          "type": "text",
+          "title": "পরবর্তী গন্তব্য",
+          "body": "সামনে এগোনোর আগে LoRA Gradient, Merge Equivalence, INT8 Quantization এবং Response Likelihood ও DPO Margin-এর হিসাবগুলো আরেকবার নিজের হাতে মিলিয়ে নিন। এরপর পরের অধ্যায়ে (Book 4 · Chapter 5: LLM Evaluation, Reliability & Serving) আমরা দেখব কীভাবে একটি LLM সিস্টেমের গুণমান, নির্ভরযোগ্যতা ও সার্ভিং চুক্তি বাস্তব প্রোডাকশনের উপযোগী করে গড়ে তুলতে হয়।"
+        }
+      ]
+    }
+  ],
+  "quizzes": [
+    {
+      "id": "ch25_q1",
+      "question": "LoRA এবং Supervised Fine-Tuning (SFT)-এর মধ্যকার প্রকৃত সম্পর্ক কী?",
+      "options": [
+        "এ দুটি পরস্পরবিরোধী টাস্ক, যা একসাথে কখনোই ব্যবহার করা যায় না",
+        "SFT হলো ট্রেনিংয়ের Objective, আর LoRA ব্যবহার করে সেই SFT Objective অপটিমাইজ করা যায়",
+        "SFT মানেই মডেলের ওয়েট কম বিটে Quantize করা",
+        "LoRA মানেই বাইরের ডকুমেন্ট থেকে তথ্য Retrieval করা"
+      ],
+      "answer": 1,
+      "explanation": "SFT নির্ধারণ করে ট্রেনিং ডেটা ও শেখার Objective কী হবে, আর LoRA নির্ধারণ করে মডেলের কোন Trainable Parameter-গুলো কীভাবে আপডেট হবে—তাই দুটি অনায়াসেই একসাথে ব্যবহার করা যায়।"
+    },
+    {
+      "id": "ch25_q2",
+      "question": "এই অধ্যায়ের পরীক্ষায় ব্যবহৃত Base Model-টিতে মোট কতগুলো Parameter রয়েছে?",
+      "options": [
+        "7 বিলিয়ন (7B)",
+        "534টি",
+        "5019টি",
+        "259টি"
+      ],
+      "answer": 2,
+      "explanation": "এখানে Book 4 · Chapter 1 (LLM Foundations)-এর 5019 প্যারামিটারের ছোট Alice Byte Decoder-টি ব্যবহৃত হয়েছে—এটি কোনো বিশাল Pretrained LLM নয়।"
+    },
+    {
+      "id": "ch25_q3",
+      "question": "এই অধ্যায়ের Adaptation পরীক্ষায় মডেলের ইনপুটে কি প্রামাণ্য Source Evidence দেওয়া হয়েছে?",
+      "options": [
+        "হ্যাঁ, গবেষণাপত্রের সম্পূর্ণ Abstract দেওয়া হয়েছে",
+        "হ্যাঁ, চিহ্নিত Gold Rationale বাক্যগুলো দেওয়া হয়েছে",
+        "হ্যাঁ, Retrieval থেকে পাওয়া শীর্ষ 10টি অনুচ্ছেদ দেওয়া হয়েছে",
+        "না, কেবল Claim-এর প্রথম 24টি UTF-8 Byte দেওয়া হয়েছে"
+      ],
+      "answer": 3,
+      "explanation": "ইনপুটে কোনো Evidence না রেখে কেবল Claim-এর শুরুর 24টি Byte দেওয়া হয়েছে; এটি Fine-tuning-এর মেকানিক্স বোঝার একটি নিয়ন্ত্রিত পরীক্ষা, বৈজ্ঞানিক সত্যতা যাচাইকারী মডেল নয়।"
+    },
+    {
+      "id": "ch25_q4",
+      "question": "মূল SciFact ডাটাসেট থেকে আমাদের পরীক্ষায় কতগুলো Annotated Train এবং Diagnostic (Dev) উদাহরণ পাওয়া গেছে?",
+      "options": [
+        "505টি Train এবং 188টি Diagnostic উদাহরণ",
+        "809টি Train এবং 300টি Diagnostic উদাহরণ",
+        "5183টি Train এবং 1109টি Diagnostic উদাহরণ",
+        "24টি Train এবং 32টি Diagnostic উদাহরণ"
+      ],
+      "answer": 0,
+      "explanation": "কেবল সুনির্দিষ্ট Evidence Annotation থাকা Claim-গুলোকেই নেওয়া হয়েছে (505টি Train ও 188টি Diagnostic); অ্যানোটেশনবিহীন সারিতে মনগড়া নেতিবাচক Label বসানো হয়নি।"
+    },
+    {
+      "id": "ch25_q5",
+      "question": "আমাদের Byte-স্তরের আউটপুট রীতিতে একক অক্ষর 'S' (SUPPORT) টোকেনের ID কত?",
+      "options": [
+        "67",
+        "83",
+        "257",
+        "256"
+      ],
+      "answer": 1,
+      "explanation": "ASCII মান অনুযায়ী 'S' হলো 83 এবং 'C' হলো 67; অন্যদিকে বিশেষ টোকেন হিসেবে PAD হলো 256 এবং BOS হলো 257।"
+    },
+    {
+      "id": "ch25_q6",
+      "question": "আমাদের মডেলের ফরোয়ার্ড পাসে ঠিক কোন পজিশনের Logits থেকে কাঙ্ক্ষিত Response প্রেডিক্ট করা হয়?",
+      "options": [
+        "সবসময় টেনসরের সর্বশেষ Padded ইনডেক্স 25 থেকে",
+        "ইনপুটে জোড়া লাগানো Target Label টোকেনটির নিজের পজিশন থেকে",
+        "Prefix-এর সর্বশেষ বৈধ (Newline) টোকেন পজিশনের Logits থেকে",
+        "Prompt-এর ভেতরের যেকোনো এলোমেলো পজিশন থেকে"
+      ],
+      "answer": 2,
+      "explanation": "Prefix-এর শেষে থাকা বিভাজক (Newline) পজিশন থেকেই পরবর্তী টোকেন প্রেডিক্ট করা হয়; ছোট বাক্যের ক্ষেত্রে ডান দিকের PAD এড়াতে প্রকৃত বৈধ দৈর্ঘ্য (len - 1) ব্যবহার করা অপরিহার্য।"
+    },
+    {
+      "id": "ch25_q7",
+      "question": "আমাদের ট্রেনিংয়ের কাঁচা Response Cross-Entropy Loss-এর হরে (Denominator) কয়টি বৈধ আউটপুট Class অংশ নেয়?",
+      "options": [
+        "মাত্র 2টি",
+        "কোনো ব্লক ছাড়াই সব কটি অর্থাৎ 259টি",
+        "505টি",
+        "257টি"
+      ],
+      "answer": 3,
+      "explanation": "মোট 259টি টোকেনের মধ্যে আউটপুট হিসেবে কেবল PAD ও BOS ব্লক করা থাকে এবং EOS বৈধ থাকে—ফলে ট্রেনিং লসে 257টি বৈধ ক্লাস থাকে, যা কেবল {S, C}-এর ভেতরকার শর্তসাপেক্ষ সম্ভাব্যতা থেকে আলাদা।"
+    },
+    {
+      "id": "ch25_q8",
+      "question": "Response-only Loss-এ Prompt পজিশনগুলোকে Ignore করার আসল অর্থ কী?",
+      "options": [
+        "ওই পজিশনগুলোর সরাসরি Cross-Entropy Loss অবদান গড় হিসাব থেকে বাদ দেওয়া হয়",
+        "মডেলের ইনপুট থেকে পুরো Prompt টেক্সট মুছে ফেলা হয়",
+        "Prefix-এর ভেতর দিয়ে সব ধরনের Autograd ও Attention পথ বন্ধ করে দেওয়া হয়",
+        "ইনপুটের ক্ষেত্রে Tokenizer ব্যবহার করা হয় না"
+      ],
+      "answer": 0,
+      "explanation": "Causal Attention ঠিকই পুরো Prompt পড়ে প্রসঙ্গ তৈরি করে; শুধু আউটপুট Loss গণনার সময় Prompt পজিশনগুলোর সরাসরি Cross-Entropy পদ বাদ দেওয়া হয়—এতে ভেতরের Autograd পথ বন্ধ হয়ে যায় না।"
+    },
+    {
+      "id": "ch25_q9",
+      "question": "আউটপুট Head-এর আকার [259, 8] এবং Rank = 2 হলে আমাদের LoRA ফ্যাক্টর A এবং B-এর Shape কী হবে?",
+      "options": [
+        "A-এর আকার [8, 259] এবং B-এর আকার [2, 2]",
+        "A-এর আকার [2, 8] এবং B-এর আকার [259, 2]",
+        "A-এর আকার [259, 8] এবং B-এর আকার [259, 8]",
+        "A-এর আকার [32, 8] এবং B-এর আকার [8, 32]"
+      ],
+      "answer": 1,
+      "explanation": "A [2, 8] এবং B [259, 2] হলে তাদের ম্যাট্রিক্স গুণফল BA-এর আকার দাঁড়ায় [259, 8], যা মূল আউটপুট Head-এর Weight ম্যাট্রিক্সের আকারের সাথে হুবহু মিলে যায়।"
+    },
+    {
+      "id": "ch25_q10",
+      "question": "আমাদের Head-only LoRA মডেলে মোট Trainable Parameter সংখ্যা কত?",
+      "options": [
+        "2072টি",
+        "5019টি",
+        "534টি",
+        "5553টি"
+      ],
+      "answer": 2,
+      "explanation": "A ম্যাট্রিক্সে 2 × 8 = 16টি এবং B ম্যাট্রিক্সে 259 × 2 = 518টি মিলিয়ে মোট Trainable Parameter হলো 534টি (আর Frozen Base-সহ নিবন্ধিত মোট প্যারামিটার 5553টি)।"
+    },
+    {
+      "id": "ch25_q11",
+      "question": "প্রচলিত LoRA সূত্রে Alpha = 2 এবং Rank = 2 হলে আপডেটের Scaling গুণিতক (α / r) কত হবে?",
+      "options": [
+        "2",
+        "4",
+        "0",
+        "1"
+      ],
+      "answer": 3,
+      "explanation": "এখানে α / r = 2 / 2 = 1; মনে রাখতে হবে যে Rank আপডেটের মাত্রা ও প্যারামিটার সংখ্যা নির্ধারণ করে, আর Alpha একই Rank-এ আপডেটের প্রাবল্য (Amplitude) নিয়ন্ত্রণ করে।"
+    },
+    {
+      "id": "ch25_q12",
+      "question": "LoRA-এর শুরুতে A-কে ছোট র‍্যান্ডম মানে এবং B-কে শূন্য (0) মানে ইনিশিয়ালাইজ করলে প্রথম ধাপে কী ঘটে?",
+      "options": [
+        "শুরুর Delta শূন্য থাকে; B-এর Gradient সক্রিয় হয় এবং প্রথম ধাপে A-এর Gradient শূন্য থাকে",
+        "A বা B কোনো ফ্যাক্টরই আর কখনো শিখতে পারে না",
+        "শুরুর মুহূর্তেই আউটপুটে বড় র‍্যান্ডম পরিবর্তন যোগ হয়",
+        "মূল Base Weight স্বয়ংক্রিয়ভাবে Unfreeze হয়ে যায়"
+      ],
+      "answer": 0,
+      "explanation": "শুরুতে B = 0 থাকায় গুণফল BA = 0 হয় এবং A-এর গ্রেডিয়েন্ট B-এর সমানুপাতিক হওয়ায় প্রথম ধাপে তা শূন্য থাকে; কিন্তু B-এর গ্রেডিয়েন্ট অশূন্য হওয়ায় প্রথম আপডেটের পরেই দুজনই শিখতে পারে।"
+    },
+    {
+      "id": "ch25_q13",
+      "question": "LoRA শুরু করার সময় যদি A এবং B দুটি ম্যাট্রিক্সকেই শূন্য (0) দিয়ে ইনিশিয়ালাইজ করা হয়, তবে কী ঝুঁকি তৈরি হবে?",
+      "options": [
+        "মডেল সবসময় সবচেয়ে দ্রুতগতিতে সর্বোত্তম মানে পৌঁছাবে",
+        "দুটোরই Gradient শূন্য হয়ে চিরস্থায়ী Dead Gradient Trap তৈরি হবে",
+        "র‍্যান্ডম A ইনিশিয়ালাইজেশনের সমানই ফল পাওয়া যাবে",
+        "অ্যাডাপ্টারের Rank স্বয়ংক্রিয়ভাবে দ্বিগুণ হয়ে যাবে"
+      ],
+      "answer": 1,
+      "explanation": "প্রতিটি ফ্যাক্টরের Gradient অপর ফ্যাক্টরের মান দিয়ে গুণ হয়; তাই দুটিই একসাথে শূন্য হলে প্রথম ধাপ থেকেই উভয়ের আপডেট চিরতরে শূন্যে আটকে যায়।"
+    },
+    {
+      "id": "ch25_q14",
+      "question": "LoRA ট্রেনিংয়ে মূল Base Model-কে Frozen রাখলে মেমোরিতে তার ওয়েট স্টোরেজ খরচ কি শূন্য হয়ে যায়?",
+      "options": [
+        "হ্যাঁ, তখন মেমোরিতে কেবল ট্রেনিং Label-গুলো রাখলেই চলে",
+        "হ্যাঁ, .grad None হলেই পাইটর্চ মূল ওয়েটগুলো মুছে ফেলে",
+        "না, ফরোয়ার্ড ও ব্যাকওয়ার্ড পাসের জন্য মূল Base Weight-গুলো তখনো মেমোরিতে রাখতে হয়",
+        "হ্যাঁ, এমনকি সব Activation মেমোরিও সম্পূর্ণ বিনামূল্যে পাওয়া যায়"
+      ],
+      "answer": 2,
+      "explanation": "Trainable Parameter কমলে অপটিমাইজার ও গ্রেডিয়েন্ট মেমোরি সাশ্রয় হয় বটে, কিন্তু ফরোয়ার্ড হিসাবের জন্য মূল Base Weight এবং Activation তখনো মেমোরিতে ধরে রাখতে হয়।"
+    },
+    {
+      "id": "ch25_q15",
+      "question": "LoRA Adapter-কে মূল আউটপুট Head-এর সাথে Merge করার পর কার্যকর Weight ম্যাট্রিক্সের সূত্র কোনটি?",
+      "options": [
+        "শুধুমাত্র B @ A",
+        "W_base − A",
+        "শুধুমাত্র নতুন করে শেখা Bias ভেক্টর",
+        "W_base + (alpha / r) * (B @ A)"
+      ],
+      "answer": 3,
+      "explanation": "সঠিক Base Model, Frozen Bias, Tokenizer ও সংস্করণ ঠিক রেখে W_base + (α / r) BA যোগ করলেই ফ্লোটিং-পয়েন্ট টলারেন্সের ভেতর Unmerged ফরোয়ার্ড পাসের সমতুল্য আউটপুট পাওয়া যায়।"
+    },
+    {
+      "id": "ch25_q16",
+      "question": "ইন্টারেক্টিভ LoRA ল্যাবে Adapter Scale স্লাইডারটি 0-তে নামিয়ে আনলে কী ঘটে?",
+      "options": [
+        "অ্যাডাপ্টারের প্রভাব শূন্য হয়ে মূল Base Model-এর ফরোয়ার্ড আউটপুট ফিরে আসে",
+        "মডেলের ওয়েটগুলো নতুন করে ট্রেন হতে শুরু করে",
+        "আউটপুটের সব কটি Logit শূন্য হয়ে যায়",
+        "ইনপুটে স্বয়ংক্রিয়ভাবে সব প্রামাণ্য Evidence যুক্ত হয়ে যায়"
+      ],
+      "answer": 0,
+      "explanation": "এটি Inference সময়ের একটি Ablation নিয়ন্ত্রণ: স্কেল 0 হলে মূল Base Model পাওয়া যায়, স্কেল 1 হলে ট্রেন করা Merged অবস্থা পাওয়া যায়, আর স্কেল 2 একটি অভ্যালিডেটেড বড় আপডেট দেখায়।"
+    },
+    {
+      "id": "ch25_q17",
+      "question": "আমাদের পরীক্ষায় ট্রেনিং শেষে Full Fine-tuning এবং LoRA—দুটি মডেলেরই Diagnostic প্রেডিকশন প্যাটার্ন কেমন ছিল?",
+      "options": [
+        "SUPPORT ও CONTRADICT উভয় ক্লাসেই সুষম ও নির্ভুল প্রেডিকশন দিয়েছে",
+        "188টি Diagnostic প্রশ্নের সব কটিতেই একচেটিয়াভাবে SUPPORT প্রেডিক্ট করেছে",
+        "সব কটি প্রশ্নেই একচেটিয়াভাবে CONTRADICT প্রেডিক্ট করেছে",
+        "বৈজ্ঞানিক প্রমাণের শতভাগ নিখুঁত যাচাই সম্পন্ন করেছে"
+      ],
+      "answer": 1,
+      "explanation": "দুটি মডেলই সব প্রশ্নে সংখ্যাগরিষ্ঠ ক্লাস SUPPORT প্রেডিক্ট করেছে, ফলে Accuracy দাঁড়িয়েছে 124 / 188—অর্থাৎ প্রকৃত ক্লাস-পার্থক্য (Discrimination) শেখা ব্যর্থ হয়েছে।"
+    },
+    {
+      "id": "ch25_q18",
+      "question": "Diagnostic সেটে আমাদের ট্রেন করা মডেলের 0.659574 Accuracy কি Majority Baseline-কে হারাতে পেরেছে?",
+      "options": [
+        "হ্যাঁ, কারণ শুরুর Base Model-এর Accuracy ছিল মাত্র 0.3404",
+        "হ্যাঁ, কারণ LoRA ব্যবহার করাটাই সাফল্যের যথেষ্ট প্রমাণ",
+        "না, এই স্কোরটি হুবহু Majority Baseline-এর সমান",
+        "এ ধরনের পরীক্ষায় কোনো Baseline হিসাব করার প্রয়োজন নেই"
+      ],
+      "answer": 2,
+      "explanation": "সব প্রশ্নে সংখ্যাগরিষ্ঠ ক্লাস অনুমান করলেও ঠিক 124 / 188 ≈ 0.659574 পাওয়া যায়; তাই লস কমলেও Baseline না পেরোনোয় কার্যকর Discrimination দাবি করা যায় না।"
+    },
+    {
+      "id": "ch25_q19",
+      "question": "এই অধ্যায়ের আউটপুট Head-এর INT8 পরীক্ষাটি কি প্রকৃত QLoRA ট্রেনিং?",
+      "options": [
+        "হ্যাঁ, এখানে পূর্ণাঙ্গ 4-bit NF4 ট্রেনিং চালানো হয়েছে",
+        "হ্যাঁ, এখানে পুরো মডেলকে 4-bit ফরম্যাটে সংকুচিত করা হয়েছে",
+        "হ্যাঁ, এখানে নেটিভ হার্ডওয়্যার INT8 কার্নেলের গতি মাপা হয়েছে",
+        "না, এটি কেবল আউটপুট Head-এ Row-wise INT8 সংকোচন ও float64 পুনর্গঠনের একটি কন্ট্রোল পরীক্ষা"
+      ],
+      "answer": 3,
+      "explanation": "প্রকৃত QLoRA-তে 4-bit NF4 ফ্রোজেন বেস, Double Quantization এবং Paged Optimizer ব্যবহৃত হয়—যা আমাদের এই সরল INT8 রাউন্ড-ট্রিপ ডেমো থেকে ধারণাগত ও কারিগরিভাবে আলাদা।"
+    },
+    {
+      "id": "ch25_q20",
+      "question": "আকার 259 × 8 বিশিষ্ট আউটপুট Head-এর INT8 কোড এবং প্রতি সারির float64 স্কেল মিলে মোট কত কাঁচা Byte জায়গা লাগে?",
+      "options": [
+        "4144 বাইট",
+        "মোট 2072 বাইট",
+        "শুধু কোডের জন্যই 16576 বাইট",
+        "0 বাইট"
+      ],
+      "answer": 0,
+      "explanation": "259 × 8 = 2072 বাইটের INT8 কোড এবং 259 × 8 = 2072 বাইটের float64 স্কেল মিলে মোট 4144 কাঁচা বাইট লাগে (অন্য লেয়ার, JSON টেক্সট ও রানটাইম ওভারহেড বাদে)।"
+    },
+    {
+      "id": "ch25_q21",
+      "question": "টেনসরের আকার (Shape) মিলে গেলেই কি ভিন্ন কোনো Base Model-এর ওপর সংরক্ষিত LoRA Adapter বসানো নিরাপদ?",
+      "options": [
+        "হ্যাঁ, ম্যাট্রিক্সের Shape মিললেই সবসময় সঠিক উত্তর পাওয়া যাবে",
+        "না, মূল Base Weight Hash, Tokenizer এবং Target সংস্করণ হুবহু মিলতে হবে",
+        "হ্যাঁ, ফাইলের এক্সটেনশন .json হলেই তা নিরাপদ",
+        "হ্যাঁ, Rank = 2 হলে যেকোনো মডেলের সাথেই তা মানিয়ে যায়"
+      ],
+      "answer": 1,
+      "explanation": "ম্যাট্রিক্সের জ্যামিতিক আকার এক হওয়া মানেই ভেতরের ফিচার ও ওয়েটের অর্থ এক হওয়া নয়; ভুল Base Model-এ অ্যাডাপ্টার বসালে নীরবে ভুল আউটপুট তৈরি হবে।"
+    },
+    {
+      "id": "ch25_q22",
+      "question": "শুধুমাত্র মডেলের চূড়ান্ত Weight ফাইল এক্সপোর্ট করলে কি মাঝপথ থেকে হুবহু আগের অবস্থায় Training Resume করা সম্ভব?",
+      "options": [
+        "হ্যাঁ, শুধু Weight থাকলেই ট্রেনিংয়ের সব স্টেট হুবহু ফিরে পাওয়া যায়",
+        "হ্যাঁ, এর সাথে কেবল Alpha সংখ্যাটি লিখে রাখলেই যথেষ্ট",
+        "না, হুবহু Resume করতে Optimizer, RNG, Scheduler ও Sampler-সহ পূর্ণ স্টেট প্রয়োজন",
+        "হ্যাঁ, কেবল ডকুমেন্টের Citation ID থাকলেই ট্রেনিং রিজিউম হয়"
+      ],
+      "answer": 2,
+      "explanation": "শুধু Weight এক্সপোর্ট দিয়ে নির্ভুলভাবে Inference চালানো যায়, কিন্তু হুবহু Training Resume করার জন্য এটি পূর্ণাঙ্গ Checkpoint নয়।"
+    },
+    {
+      "id": "ch25_q23",
+      "question": "এই অধ্যায়ের পরীক্ষায় ব্যবহৃত 188টি প্রশ্নের Dev সেটটির প্রকৃত ভূমিকা কী?",
+      "options": [
+        "সম্পূর্ণ অদেখা ও স্বাধীন চূড়ান্ত Blind Test সেট",
+        "লেবেলবিহীন কাঁচা প্রিট্রেনিং কর্পাস",
+        "চিকিৎসা-সংক্রান্ত ক্লিনিক্যাল ভ্যালিডেশন বেঞ্চমার্ক",
+        "আগের অধ্যায়গুলোতে ইতিমধ্যেই পর্যবেক্ষণ করা একটি Diagnostic সেট"
+      ],
+      "answer": 3,
+      "explanation": "এই সেটটি আগের অধ্যায়গুলোতে ব্যবহৃত হয়েছে এবং ট্রেনিং সেটের সাথে একই উৎস গবেষণাপত্র শেয়ার করতে পারে—তাই এটি কেবল Diagnostic সেট, স্বাধীন চূড়ান্ত পরীক্ষা নয়।"
+    },
+    {
+      "id": "ch25_q24",
+      "question": "শুধুমাত্র Trainable Parameter সংখ্যা কমে যাওয়া দেখেই কি প্রকৃত Peak Training Memory মাপা হয়ে যায়?",
+      "options": [
+        "না, মূল ওয়েটের পাশাপাশি Activation, Workspace এবং Optimizer মেমোরিও বাস্তবে মেপে দেখতে হয়",
+        "হ্যাঁ, প্যারামিটার কমার অনুপাত সব হার্ডওয়্যারেই সার্বজনীনভাবে সমান মেমোরি বাঁচায়",
+        "হ্যাঁ, প্যারামিটার সংখ্যা থেকেই মোবাইল APK ফাইলের আকার সরাসরি বলে দেওয়া যায়",
+        "হ্যাঁ, কারণ ট্রেনিংয়ের সময় কেবল মডেলের ওয়েট ছাড়া অন্য কোনো মেমোরি লাগে না"
+      ],
+      "answer": 0,
+      "explanation": "আমাদের পরীক্ষায় কেবল তাত্ত্বিক উপাদানগুলোর পাটিগণিত দেখানো হয়েছে; প্রকৃত GPU ল্যাটেন্সি ও Peak Memory সবসময় নির্দিষ্ট হার্ডওয়্যার ও ওয়ার্কলোডে প্রোফাইল করে মাপতে হয়।"
+    },
+    {
+      "id": "ch25_q_initial_revision",
+      "question": "প্রমিত Zero-Delta LoRA ইনিশিয়ালাইজেশনে A অশূন্য এবং B শূন্য রাখা হয়। প্রথম Backward পাসে নিচের কোন আচরণটি দেখা যায়?",
+      "options": [
+        "A-এর গ্রেডিয়েন্ট (dA) শূন্য হয় এবং B-এর গ্রেডিয়েন্ট (dB) অশূন্য হতে পারে",
+        "দুটি ফ্যাক্টরের গ্রেডিয়েন্টই আবশ্যিকভাবে None থাকে",
+        "প্রথম ধাপেই দুটি ফ্যাক্টরের গ্রেডিয়েন্ট আবশ্যিকভাবে অশূন্য হয়",
+        "ফ্রোজেন Base Weight-এর গ্রেডিয়েন্ট আবশ্যিকভাবে সক্রিয় হয়ে ওঠে"
+      ],
+      "answer": 0,
+      "explanation": "dA-এর সূত্রে B গুণ আকারে থাকে বলে শুরুতে B = 0 হওয়ায় সংযুক্ত অবস্থাতেই dA = 0 আসে; অন্যদিকে dB-এর সূত্রে অশূন্য A ও ইনপুট সংকেত থাকায় B প্রথম ধাপেই শিখতে পারে।"
+    },
+    {
+      "id": "ch25_q_merge_revision",
+      "question": "Base Weight-এর ভেতর একবার Adapter Delta মার্জ করার পরও যদি একই সক্রিয় Adapter শাখা চালু রাখা হয়, তবে কী ঘটবে?",
+      "options": [
+        "কার্যকর ফরোয়ার্ড পাসে Delta দ্বিতীয়বার যোগ হয়ে আউটপুট বিকৃত করবে",
+        "সক্রিয় Adapter শাখাটি নিজে থেকেই শূন্য হয়ে যাবে",
+        "মূল Base Hash না বদলানোয় আউটপুট হুবহু একই থাকবে",
+        "অ্যাডাপ্টারের Rank স্বয়ংক্রিয়ভাবে অর্ধেকে নেমে আসবে"
+      ],
+      "answer": 0,
+      "explanation": "মার্জ করা ওয়েট থেকে একবার এবং সক্রিয় শাখা থেকে আরেকবার মিলিয়ে মোট 2·Delta প্রযুক্ত হবে; তাই Merge Status, রাউটিং ও Golden Logits মিলিয়ে এই Double Merge বাগ প্রতিরোধ করতে হয়।"
+    }
+  ],
+  "exercises": [
+    {
+      "id": "ch25_ex_parameters",
+      "title": "Head-only LoRA-এর Trainable Parameter গণনা",
+      "prompt": "একটি রৈখিক আউটপুট লেয়ারে ইনপুট প্রস্থ (d_in) = 8, আউটপুট প্রস্থ (d_out) = 259 এবং LoRA Rank = 2 হলে A ও B ফ্যাক্টর দুটির মোট Trainable স্কেলার প্যারামিটার সংখ্যা হিসাব করে answer ভেরিয়েবলে রাখুন।",
+      "starter": "# Implement locally;assign scalar answer.\nanswer = None\n",
+      "solution": "rank = 2\nd_in = 8\nd_out = 259\nanswer = float(rank * (d_in + d_out))\n",
+      "expected": 534,
+      "explanation": "A ম্যাট্রিক্সে 2 × 8 = 16টি এবং B ম্যাট্রিক্সে 259 × 2 = 518টি প্যারামিটার থাকে; ফলে মোট Trainable Parameter হয় 16 + 518 = 534টি (মূল Base Head ও Bias এখানে Frozen থাকে)।"
+    },
+    {
+      "id": "ch25_ex_scale",
+      "title": "Rank ও Alpha থেকে LoRA Scaling নির্ণয়",
+      "prompt": "প্রমিত LoRA সূত্রে Alpha = 2 এবং Rank = 2 হলে আপডেটের কার্যকর স্কেলিং গুণিতক (alpha / rank) হিসাব করে answer ভেরিয়েবলে রাখুন।",
+      "starter": "# Implement locally;assign scalar answer.\nanswer = None\n",
+      "solution": "alpha = 2\nrank = 2\nanswer = alpha / rank\n",
+      "expected": 1,
+      "explanation": "স্কেলিং গুণিতক হলো α / r = 2 / 2 = 1.0। Unmerged ফরোয়ার্ড পাস এবং ওয়েট Merge—উভয় পথেই ঠিক একই গুণিতক প্রয়োগ করতে হয়।"
+    },
+    {
+      "id": "ch25_ex_mask",
+      "title": "সুষম Logits-এ কাঁচা Response NLL হিসাব",
+      "prompt": "আউটপুট ভোকাবুলারির সব কটি অর্থাৎ 259টি Logit শূন্য (0.0) এবং কেবল PAD ও BOS আউটপুট ক্লাস দুটি ব্লক করা থাকলে বৈধ টার্গেট 'S' (ID 83)-এর কাঁচা Cross-Entropy Loss হিসাব করে answer ভেরিয়েবলে রাখুন।",
+      "starter": "# Implement locally;assign scalar answer.\nanswer = None\n",
+      "solution": "from pathlib import Path\nimport importlib.util\n\np = Path(\"assets/datasets/scifact_rag/adaptation_workflow.py\")\ns = importlib.util.spec_from_file_location(\"chapter25_local\", p)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\n\nimport torch\n\nanswer = m.response_loss(\n    torch.zeros(1, 26, 259, dtype=torch.float64), torch.tensor([25]), torch.tensor([83])\n).item()\n",
+      "expected": 5.54907608489522,
+      "explanation": "259টির মধ্যে 2টি ক্লাস ব্লক থাকায় বৈধ আউটপুট ক্লাস থাকে 257টি, যাদের প্রতিটির সম্ভাব্যতা সমান (1 / 257)। ফলে লস আসে ln(257) ≈ 5.5490761—যা কেবল দুই ক্লাসের শর্তসাপেক্ষ স্কোরের হর থেকে আলাদা।"
+    },
+    {
+      "id": "ch25_ex_prefix",
+      "title": "প্রকৃত Claim Prefix-এর দৈর্ঘ্য যাচাই",
+      "prompt": "প্রথম প্রকৃত Training Claim-টির শুরুতে BOS টোকেন, মাঝখানে প্রথম 24টি UTF-8 Byte এবং শেষে একটি Newline যোগ করে Prefix তৈরি করুন এবং তার মোট টোকেন সংখ্যা answer ভেরিয়েবলে রাখুন।",
+      "starter": "# Implement locally;assign scalar answer.\nanswer = None\n",
+      "solution": "from pathlib import Path\nimport importlib.util\n\np = Path(\"assets/datasets/scifact_rag/adaptation_workflow.py\")\ns = importlib.util.spec_from_file_location(\"chapter25_local\", p)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\n\nrow = m.load_rows()[\"train\"][0]\nanswer = float(len(m.prefix(row[\"text\"])))\n",
+      "expected": 26,
+      "explanation": "শুরুর 1টি BOS + প্রথম 24টি UTF-8 Byte + শেষের 1টি Newline মিলে মোট 1 + 24 + 1 = 26টি Token ID তৈরি হয় (খেয়াল রাখবেন, কাঁচা Byte কাটার ফলে বহু-বাইট অক্ষরের মাঝখানেও সীমানা পড়তে পারে)।"
+    },
+    {
+      "id": "ch25_ex_delta",
+      "title": "সংরক্ষিত Merged Adapter ও Rank যাচাই",
+      "prompt": "adaptation_lab.json ফাইল থেকে সংরক্ষিত Adapter-এর A, B এবং মূল Base Head লোড করে Merged Head (W_0 + B @ A) হিসাব করুন ও সংরক্ষিত LoRA ওয়েটের সব ভুক্তির সাথে মিলিয়ে দেখুন; তারপর Adapter-টির Rank সংখ্যা answer ভেরিয়েবলে রাখুন।",
+      "starter": "# Implement locally;assign scalar answer.\nanswer = None\n",
+      "solution": "from pathlib import Path\nimport json\n\nroot = Path(\"assets/datasets/scifact_rag\")\nlab = json.loads((root / \"adaptation_lab.json\").read_text())\n\nimport numpy as np\n\nA = np.asarray(lab[\"adapter\"][\"A\"])\nB = np.asarray(lab[\"adapter\"][\"B\"])\nnp.testing.assert_allclose(\n    np.asarray(lab[\"weights\"][\"base\"][\"head.weight\"]) + B @ A,\n    lab[\"weights\"][\"lora\"][\"head.weight\"],\n    atol=1e-12,\n)\nanswer = float(A.shape[0])\n",
+      "expected": 2,
+      "explanation": "বর্তমান α / r = 1 কনফিগারেশনে কার্যকর ওয়েট হলো W_0 + BA। সংরক্ষিত সব Merged ওয়েটের সমতা যাচাইয়ের পর A.shape[0] থেকে পাওয়া অ্যাডাপ্টারের Rank হলো 2।"
+    },
+    {
+      "id": "ch25_ex_majority",
+      "title": "Diagnostic সেটের Majority Baseline নির্ণয়",
+      "prompt": "প্রকৃত Diagnostic সেটের মোট 188টি উদাহরণের মধ্যে 124টির লেবেল SUPPORT। সব প্রশ্নে একচেটিয়াভাবে SUPPORT অনুমান করলে (All-SUPPORT Majority Baseline) যে Accuracy পাওয়া যাবে তা হিসাব করে answer ভেরিয়েবলে রাখুন।",
+      "starter": "# Implement locally;assign scalar answer.\nanswer = None\n",
+      "solution": "from pathlib import Path\nimport json\n\nroot = Path(\"assets/datasets/scifact_rag\")\nlab = json.loads((root / \"adaptation_lab.json\").read_text())\n\nc = lab[\"report\"][\"class_counts\"][\"diagnostic\"]\nanswer = c[\"SUPPORT\"] / sum(c.values())\n",
+      "expected": 0.6595744680851063,
+      "explanation": "Majority Baseline Accuracy হলো 124 / 188 ≈ 0.6595745। ধ্রুবক অনুমানের (Constant Prediction) ফাঁদ ধরার জন্য সবসময় এই বেসলাইনের পাশাপাশি প্রতি ক্লাসের আচরণ পরীক্ষা করতে হয়।"
+    },
+    {
+      "id": "ch25_ex_gap",
+      "title": "Majority Baseline-এর সাপেক্ষে প্রকৃত উন্নতির ব্যবধান",
+      "prompt": "adaptation_lab.json রিপোর্টে সংরক্ষিত LoRA মডেলের Diagnostic Accuracy থেকে Majority Baseline Accuracy বিয়োগ করে প্রাপ্ত ব্যবধানটি answer ভেরিয়েবলে রাখুন।",
+      "starter": "# Implement locally;assign scalar answer.\nanswer = None\n",
+      "solution": "from pathlib import Path\nimport json\n\nroot = Path(\"assets/datasets/scifact_rag\")\nlab = json.loads((root / \"adaptation_lab.json\").read_text())\n\nr = lab[\"report\"]\nanswer = r[\"runs\"][\"lora\"][\"diagnostic\"][\"accuracy\"] - r[\"majority_diagnostic_accuracy\"]\n",
+      "expected": 0,
+      "explanation": "দুটি মানই হুবহু সমান হওয়ায় বিয়োগফল বা ব্যবধান আসে 0.0—অর্থাৎ এই নিয়ন্ত্রিত পরীক্ষায় সংখ্যাগরিষ্ঠ বেসলাইনের ওপরে কোনো বাড়তি ক্লাস Discrimination অর্জিত হয়নি।"
+    },
+    {
+      "id": "ch25_ex_storage",
+      "title": "INT8 Head কোড ও Scale-এর কাঁচা স্টোরেজ বাইট গণনা",
+      "prompt": "আকার 259 × 8 বিশিষ্ট একটি আউটপুট Head-এর int8 কোড এবং 259টি সারির প্রতিটির জন্য একটি করে float64 স্কেল সংরক্ষণ করতে মোট কত কাঁচা স্টোরেজ Byte লাগবে তা হিসাব করে answer ভেরিয়েবলে রাখুন।",
+      "starter": "# Implement locally;assign scalar answer.\nanswer = None\n",
+      "solution": "codes = 259 * 8\nscales = 259 * 8\nanswer = float(codes + scales)\n",
+      "expected": 4144,
+      "explanation": "কোডের জন্য 259 × 8 × 1 = 2072 বাইট এবং float64 স্কেলের জন্য 259 × 8 = 2072 বাইট—মিলিয়ে মোট কাঁচা স্টোরেজ দাঁড়ায় 4144 বাইট (মেটাডেটা, অন্য লেয়ার ও রানটাইম অ্যালোকেশন এর বাইরে)।"
+    },
+    {
+      "id": "ch25_ex_zero",
+      "title": "সম্পূর্ণ শূন্য সারির (Zero Row) Quantization যাচাই",
+      "prompt": "adaptation_workflow.py-এর quantize হেল্পার ফাংশনে [1, 8] আকারের একটি সম্পূর্ণ শূন্য ম্যাট্রিক্স ইনপুট দিন এবং পুনর্গঠিত (Reconstructed) ম্যাট্রিক্সের সর্বোচ্চ পরম ত্রুটি (Max Error) হিসাব করে answer ভেরিয়েবলে রাখুন।",
+      "starter": "# Implement locally;assign scalar answer.\nanswer = None\n",
+      "solution": "from pathlib import Path\nimport importlib.util\n\np = Path(\"assets/datasets/scifact_rag/adaptation_workflow.py\")\ns = importlib.util.spec_from_file_location(\"chapter25_local\", p)\nm = importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\n\nimport torch\n\ncodes, scales, reconstructed = m.quantize(torch.zeros(1, 8, dtype=torch.float64))\nassert scales.item() == 1.0\nanswer = float(reconstructed.abs().max())\n",
+      "expected": 0,
+      "explanation": "পুরো সারি শূন্য হলে শূন্য দিয়ে ভাগ এড়াতে স্কেল 1.0 ধরা হয়; ফলে কোড ও পুনর্গঠিত মান দুটোই শূন্য থাকে এবং সর্বোচ্চ পুনর্গঠন ত্রুটি হয় 0.0।"
+    },
+    {
+      "id": "ch25_ex_memory",
+      "title": "শুধুমাত্র Model Weight-এর কাঁচা Byte হিসাব",
+      "prompt": "5019টি float64 প্যারামিটার বিশিষ্ট Base Model-এর শুধুমাত্র Weight-গুলোর কাঁচা Byte সংখ্যা হিসাব করে answer ভেরিয়েবলে রাখুন।",
+      "starter": "# Implement locally;assign scalar answer.\nanswer = None\n",
+      "solution": "answer = float(5019 * 8)\n",
+      "expected": 40152,
+      "explanation": "প্রতিটি float64 সংখ্যার জন্য 8 বাইট হিসেবে 5019 × 8 = 40152 বাইট লাগে; বাস্তব ট্রেনিং মেমোরি বের করতে এর সাথে Gradient, Optimizer Moment এবং Activation-এর জায়গাও আলাদাভাবে যোগ করতে হয়।"
+    }
+  ],
+  "interviews": [
+    {
+      "title": "LoRA-এর গাণিতিক গঠন ও Merge সমতুল্যতা প্রতিপাদন",
+      "tag": "ADAPTATION · CODING / DESIGN · 40 MIN",
+      "prompt": "আমাদের মডেলের আউটপুট Head-এর উদাহরণ ধরে LoRA ফ্যাক্টরগুলোর Shape, Trainable Parameter সংখ্যা, α / r স্কেলিং এবং ওয়েট Merge করার গাণিতিক সমতুল্যতা ব্যাখ্যা করুন।",
+      "answer": "আমাদের আউটপুট Head-এর মূল ওয়েট ম্যাট্রিক্সের আকার W₀ ∈ R^{259 × 8} (মোট 2072টি ভুক্তি)। Rank r = 2 নিলে আমরা দুটি ছোট ফ্যাক্টর A ∈ R^{2 × 8} (16টি ভুক্তি) এবং B ∈ R^{259 × 2} (518টি ভুক্তি) তৈরি করি, যাদের গুণফল BA পুনরায় [259, 8] আকারের পরিবর্তন ম্যাট্রিক্স দেয়। এতে পুরো মডেলের 5019টি প্যারামিটারের বদলে মাত্র 534টি প্যারামিটার ট্রেন করতে হয়, এবং মূল Base Weight ও Bias সম্পূর্ণ Frozen থাকে। এখানে Alpha = 2 ও Rank = 2 হওয়ায় স্কেলিং অনুপাত α / r = 1। ম্যাট্রিক্স গুণের বণ্টন বিধি অনুযায়ী ফরোয়ার্ড পাসে h W₀ᵀ + (α / r)(h Aᵀ) Bᵀ এবং মার্জ করা একক ম্যাট্রিক্স h (W₀ + (α / r) BA)ᵀ একই ডেটা টাইপ ও সামঞ্জস্যপূর্ণ Base Model-এর অধীনে (ফ্লোটিং-পয়েন্ট টলারেন্সের ভেতর) হুবহু সমান আউটপুট দেয়। প্রোডাকশনে লোড করার সময় অবশ্যই Base Hash, Tokenizer ও Target সংস্করণ পিন করে রাখতে হবে এবং Scale = 0 ও Scale = 1-এর Golden Output ও ভুল Shape-এর নেতিবাচক টেস্ট চালাতে হবে।",
+      "prerequisiteLessons": [
+        "ch25_lora",
+        "ch25_merge"
+      ]
+    },
+    {
+      "title": "Response-only SFT পাইপলাইনের বাগ অনুসন্ধান",
+      "tag": "ADAPTATION · CODING / DESIGN · 40 MIN",
+      "prompt": "একটি SFT রানে দেখা যাচ্ছে Training Loss খুব দ্রুত কমে গেছে, কিন্তু আপনার সন্দেহ হচ্ছে Prompt ও Response-এর Alignment বা Loss Masking-এ কোনো সূক্ষ্ম গলদ আছে। আপনি কীভাবে ধাপে ধাপে এটি ডিবাগ করবেন?",
+      "answer": "প্রথমেই আমি পাঁচটি জায়গা পরীক্ষা করব: ১) বহু-টোকেন সিকোয়েন্সে ইনপুট ও টার্গেট সঠিকভাবে এক ঘর Shift করা হয়েছে কি না এবং টার্গেট লেবেল ইনপুটের ভেতরেই ফাঁস হয়ে গেছে কি না, ২) ছোট বাক্যের ক্ষেত্রে ডান দিকের Padding ইনডেক্সের বদলে প্রকৃত শেষ বৈধ পজিশন (যেমন আমাদের পরীক্ষায় len(ids) - 1 পজিশনের Newline) থেকে Logits নেওয়া হচ্ছে কি না, ৩) ইনপুটের Attention Key Mask এবং আউটপুটের Loss Ignore Mask দুটোকে গুলিয়ে ফেলা হয়েছে কি না, ৪) গড় লসের হরে (Denominator) কেবল বৈধ Response Token গোনা হচ্ছে নাকি ভুলে Prompt বা PAD টোকেনও ঢুকে লসকে কৃত্রিমভাবে ছোট করে দিচ্ছে, এবং ৫) আউটপুট ক্লাসের সীমানা—যেমন আমাদের ডিকোডারে PAD ও BOS ব্লক করার পর 257টি বৈধ ক্লাসের ওপর কাঁচা Cross-Entropy হিসাব হয়, যা কেবল {S, C}-এর ভেতরকার শর্তসাপেক্ষ সম্ভাব্যতা থেকে আলাদা। সবশেষে ফাঁকা ব্যাচ, সব টোকেন Ignored হওয়া, অসীম মান (NaN/Inf) এবং ছোট Prefix দিয়ে ইউনিট টেস্ট লিখে পাইপলাইনটি নিশ্চিত করব।",
+      "prerequisiteLessons": [
+        "ch25_format",
+        "ch25_mask"
+      ]
+    },
+    {
+      "title": "LoRA Initialization ও প্রথম দুই ধাপের Gradient হিসাব",
+      "tag": "ADAPTATION · CODING / DESIGN · 40 MIN",
+      "prompt": "LoRA শুরু করার সময় A-কে র‍্যান্ডম এবং B-কে শূন্য (0) ধরা হলে প্রথম ধাপে A-এর Gradient শূন্য আসে কেন?\n\nধরুন Base Weight W₀ = I₂, Rank = 1, A = [1, −1], B = [0, 0]ᵀ, Alpha = 2, ইনপুট x = [1, 2] এবং Loss হলো আউটপুটের সব উপাদানের যোগফল। প্রথম ধাপের Gradient এবং Learning Rate = 0.1 দিয়ে একটি SGD ধাপের পর দ্বিতীয় ধাপের dA হাতে হিসাব করে দেখান।",
+      "answer": "শুরুতে B = 0 রাখলে গুণফল BA = 0 হয়, ফলে ট্রেনিংয়ের শুরুর মুহূর্তে মডেল অবিকল Base Model-এর সমান আচরণ করে। যেহেতু A-এর গ্রেডিয়েন্টে B গুণ আকারে থাকে (∇_A L ∝ Bᵀ g xᵀ), তাই প্রথম ধাপে dA = 0 আসা সম্পূর্ণ প্রত্যাশিত। কিন্তু B-এর গ্রেডিয়েন্টে অশূন্য A থাকায় প্রথম ধাপেই B আপডেট হয় এবং পরের ধাপ থেকে A-ও শিখতে শুরু করে (দুটোই শূন্য নিলে চিরস্থায়ী Dead Gradient Trap তৈরি হতো)। এখানে Frozen Base-এর .grad থাকে None, আর Optimizer-এ কেবল A ও B থাকে।\n\nহাতে-কলমে হিসাব: এখানে স্কেল s = α / r = 2 / 1 = 2 এবং আউটপুট গ্রেডিয়েন্ট g = [1, 1]ᵀ। প্রথম ধাপে Ax = 1(1) + (−1)(2) = −1; তাই dA = [0, 0] এবং dB = 2 · [1, 1]ᵀ (−1) = [−2, −2]ᵀ। এবার 0.1 রেটে এক ধাপ SGD আপডেটের পর নতুন B = [0, 0]ᵀ − 0.1 × [−2, −2]ᵀ = [0.2, 0.2]ᵀ (এবং A অপরিবর্তিত [1, −1] থাকে)। ঠিক একই ইনপুটে দ্বিতীয়বার Backward চালালে Bᵀ g = 0.2 + 0.2 = 0.4 হয়, ফলে নতুন dA = 2 × 0.4 × [1, 2] = [0.8, 1.6] পাওয়া যায়! লক্ষণীয় যে শুরুর dA ছিল গ্রাফে সংযুক্ত সংখ্যাগত শূন্য, আর ফ্রোজেন Base-এর গ্রেডিয়েন্ট হলো None।",
+      "prerequisiteLessons": [
+        "ch25_gradients"
+      ]
+    },
+    {
+      "title": "ব্যর্থ Task Adaptation-এর বৈজ্ঞানিক ব্যাখ্যা ও প্রতিরক্ষা",
+      "tag": "ADAPTATION · CODING / DESIGN · 40 MIN",
+      "prompt": "আপনার ট্রেনিং রানে কাঁচা Loss দশ গুণ কমেছে এবং Base Model-এর তুলনায় Accuracy 34% থেকে বেড়ে 66% হয়েছে, অথচ রিভিউয়ার বলছেন মডেলটি কাজের কাজ কিছুই শেখেনি। আপনি কীভাবে এই ফলাফল ব্যাখ্যা করবেন?",
+      "answer": "রিভিউয়ারের পর্যবেক্ষণই সঠিক, এবং আমি নিজেই প্রেডিকশন বণ্টন দেখিয়ে তা স্পষ্ট করব: শুরুর Base Model সব প্রশ্নে CONTRADICT বলছিল (64 / 188 ≈ 0.340426), আর ট্রেনিংয়ের পর Full ও LoRA দুটি মডেলই সব কটি অর্থাৎ 188টি প্রশ্নেই একচেটিয়াভাবে SUPPORT প্রেডিক্ট করেছে—যার ফলে পাওয়া 124 / 188 ≈ 0.659574 স্কোরটি হুবহু Train সেটের Majority Baseline-এর সমান! কাঁচা Response NLL কমেছে কারণ মডেল 257টি সাধারণ বাইটের ওপর ছড়িয়ে থাকা সম্ভাব্যতা কুড়িয়ে এনে কেবল বৈধ ফরম্যাট টোকেন (S ও C) এবং সংখ্যাগরিষ্ঠ ক্লাসের গড় অনুপাতে জড়ো করতে শিখেছে, কিন্তু ইনপুট ভেদে প্রকৃত ক্লাস Discrimination শিখতে পারেনি। এর পেছনে প্রামাণ্য Evidence ছাড়া মাত্র 24-byte খণ্ডিত Claim ইনপুট, Alice গদ্যের সাথে বৈজ্ঞানিক দাবির ডোমেইন পার্থক্য, ক্ষুদ্র 8-মাত্রার প্রস্থ এবং Class Imbalance প্রধান সীমাবদ্ধতা হিসেবে কাজ করেছে। তবে আলাদা Ablation পরীক্ষা ছাড়া কোনো একক কারণকে চূড়ান্ত দায়ী বলে দাবি করব না, এবং দেখা হয়ে যাওয়া Dev সেটের ওপর বারবার টিউন করে কৃত্রিম সাফল্য দেখাব না।"
+    },
+    {
+      "title": "LoRA-এর Trainable Parameter বনাম প্রকৃত Memory হিসাব",
+      "tag": "ADAPTATION · CODING / DESIGN · 40 MIN",
+      "prompt": "আমাদের মডেলে 5019টি প্যারামিটারের বদলে মাত্র 534টি Trainable Parameter শেখানো হচ্ছে (প্রায় 10.64%)। এর মানে কি ট্রেনিংয়ের মোট মেমোরি খরচও কমে 10%-এ নেমে এসেছে?",
+      "answer": "মোটেও না! প্রথমত, ফরোয়ার্ড ও ব্যাকওয়ার্ড পাস চালানোর জন্য ফ্রোজেন Base Model-এর 5019টি ওয়েটও মেমোরিতে লোড করে রাখতে হয়—ফলে Unmerged অবস্থায় মোট নিবন্ধিত প্যারামিটার আসলে বেড়ে 5553টি হয়। দ্বিতীয়ত, শুধু 534টি প্যারামিটারের জন্য Gradient এবং AdamW Optimizer-এর মোমেন্ট বাফার ছোট হওয়ায় সেই খাতে মেমোরি বাঁচে ঠিকই, কিন্তু মোট Peak Training Memory নির্ভর করে সিকোয়েন্সের দৈর্ঘ্য, Batch Size, মধ্যবর্তী Activation, Attention Workspace এবং ডেটা টাইপের (dtype) ওপর। তাছাড়া আমাদের খাতার 8-byte হিসাবটি নিছক তাত্ত্বিক পাটিগণিত, কোনো জিপিইউ প্রোফাইলিং নয়; তাই বাস্তব প্রোডাকশনে মেমোরির দাবি করার আগে নির্দিষ্ট হার্ডওয়্যারে প্রতিটি ধাপ মেপে দেখানোর পরিকল্পনা উপস্থাপন করব।"
+    },
+    {
+      "title": "প্রকৃত QLoRA বনাম আমাদের INT8 Control পরীক্ষার পার্থক্য",
+      "tag": "ADAPTATION · CODING / DESIGN · 40 MIN",
+      "prompt": "এই অধ্যায়ের অ্যাপ ও ওয়ার্কফ্লোতে Quantization হিসেবে বাস্তবে ঠিক কতটুকু চালানো হয়েছে, এবং পূর্ণাঙ্গ QLoRA থেকে তা কোথায় আলাদা?",
+      "answer": "আমাদের ওয়ার্কফ্লোতে কেবল সর্বশেষ আউটপুট Head (আকার 259 × 8)-এর ওপর সারি-ভিত্তিক (Row-wise) Symmetric INT8 রাউন্ডিং চালিয়ে আবার float64-এ পুনর্গঠন (Dequantize) করে সাধারণ ফরোয়ার্ড পাসে পাঠানো হয়েছে। এতে কাঁচা হিসাবে 2072 বাইট কোড ও 2072 বাইট float64 স্কেল মিলে 4144 বাইট দেখানো হয়েছে (অন্যান্য লেয়ার ও JSON ওভারহেড বাদে)। এটি কোনোভাবেই প্রকৃত QLoRA নয়—কারণ QLoRA-তে পুরো Base Model-কে 4-bit NormalFloat (NF4) ফরম্যাটে রাখা, স্কেলের Double Quantization, Paged Optimizer এবং সংকুচিত বেসের ওপর উচ্চ-প্রিসিশনের Adapter ট্রেনিং জড়িত থাকে, আর আমাদের এখানে কোনো নেটিভ INT8 হার্ডওয়্যার কার্নেলও চালানো হয়নি। এছাড়া মনে রাখতে হবে, 188টি প্রশ্নে টাস্ক Accuracy অপরিবর্তিত থাকার মানে এই নয় যে মডেলের ভেতরের প্রতিটি সূক্ষ্ম Logit হুবহু অভিন্ন রয়ে গেছে।",
+      "prerequisiteLessons": [
+        "ch25_quantization"
+      ]
+    },
+    {
+      "title": "উৎস ডেটার গুণমান ও Data Leakage নিরীক্ষা",
+      "tag": "ADAPTATION · CODING / DESIGN · 40 MIN",
+      "prompt": "আমাদের 505টি Train এবং 188টি Diagnostic উদাহরণের টাস্কটির পরিধি ও সম্ভাব্য Data Contamination ঝুঁকি কীভাবে নিরীক্ষা ও ব্যাখ্যা করবেন?",
+      "answer": "এই উদাহরণগুলো মূল SciFact-এর মানব-যাচাইকৃত Evidence Annotation থেকে নেওয়া হয়েছে, যেখানে প্রতিটি নির্বাচিত দাবির একক S বা C লেবেল নিশ্চিত করা হয়েছে এবং অ্যানোটেশনহীন সারিগুলোকে নেতিবাচক লেবেল না ধরে বাদ দেওয়া হয়েছে। ইনপুটে কোনো প্রামাণ্য অনুচ্ছেদ না রেখে কেবল প্রথম 24টি UTF-8 Byte নেওয়া হয়েছে, তাই এটি সত্যতা যাচাইকারী সিস্টেম নয়। Leakage ঠেকাতে Dev সেটের হুবহু পূর্ণ বাক্য Train থেকে বাদ দেওয়ার ফিল্টার রাখা হয়েছে (যাতে 0টি সারি বাদ পড়েছে); কিন্তু তবুও দুটি সেটের দাবি একই মূল গবেষণাপত্র থেকে আসতে পারে, পরস্পর সম্পর্কিত হতে পারে কিংবা শুরুর 24টি Byte মিলে যেতে পারে (Prefix Collision)। সর্বোপরি, এই Dev সেটটি আগের অধ্যায়গুলোতেও ব্যবহৃত হয়েছে বলে এটিকে কেবল Diagnostic সেট হিসেবেই বিবেচনা করতে হবে, আনকোরা স্বাধীন Test Set হিসেবে নয়।"
+    },
+    {
+      "title": "Adapter Weight থেকে কি হুবহু Training Resume করা যায়?",
+      "tag": "ADAPTATION · CODING / DESIGN · 40 MIN",
+      "prompt": "ডিস্কে শুধু সংরক্ষিত LoRA Adapter ফাইলটি থাকলেই কি ক্র্যাশ হওয়া ট্রেনিং ঠিক আগের বিন্দু থেকে হুবহু Resume করা সম্ভব?",
+      "answer": "না, তা সম্ভব নয়। সঠিক ও সামঞ্জস্যপূর্ণ Base Model-এর সাথে Adapter ফাইলটি যোগ করলে আপনি নির্ভুলভাবে Inference চালাতে পারবেন, কিন্তু হুবহু একই গাণিতিক পথ ধরে মাঝপথ থেকে Training Resume করতে হলে আরও অনেক স্টেট দরকার: Optimizer-এর মোমেন্ট বাফার, Learning Rate Scheduler-এর ধাপ, Mixed-Precision GradScaler, র‍্যান্ডম নাম্বার জেনারেটরের (RNG) অবস্থা, ডেটা স্যাম্পলারের বর্তমান অবস্থান (Cursor), বর্তমান Step সংখ্যা এবং পুরো Training Recipe। আমাদের বর্তমান আর্টিফ্যাক্টগুলো Inference Export হিসেবে যাচাইকৃত, মাঝপথের Resume Checkpoint হিসেবে নয়। প্রোডাকশন ডিপ্লয়মেন্টে এর পাশাপাশি Double-Merge প্রতিরোধক গার্ড, Base Hash যাচাই, নিরাপদ weights_only=True লোডিং এবং দ্রুত Rollback পরিকল্পনা রাখতে হবে।"
+    },
+    {
+      "title": "Prompting, RAG এবং SFT/PEFT নির্বাচনের কৌশল",
+      "tag": "ADAPTATION · CODING / DESIGN · 40 MIN",
+      "prompt": "একটি সিস্টেমে একই সাথে নিয়মিত পরিবর্তনশীল প্রামাণ্য নথি থেকে উত্তর দেওয়া এবং নির্দিষ্ট সংক্ষিপ্ত আউটপুট শৈলী বজায় রাখা দরকার। আপনি কোন পদ্ধতি কীভাবে বেছে নেবেন?",
+      "answer": "এখানে দুটি চাহিদার প্রকৃতি আলাদা, তাই সমাধানও স্তরে স্তরে সাজাতে হবে। পরিবর্তনশীল নথি ও নির্ভরযোগ্য উদ্ধৃতির (Citation) চাহিদা মেটাতে সংস্করণযুক্ত Retrieval বা RAG অপরিহার্য, কারণ ওয়েটের ভেতর তথ্য মুখস্থ করিয়ে তাজা তথ্য বা সূত্র দেওয়া যায় না। অন্যদিকে নির্দিষ্ট আউটপুট শৈলী বা ফরম্যাটের জন্য প্রথমে স্পষ্ট নির্দেশনা ও উদাহরণ দিয়ে একটি শক্তিশালী Prompting Baseline তৈরি করে তার পারফরম্যান্স মাপব; তাতেও ঘাটতি থাকলে উচ্চমানের ডেটায় LoRA (PEFT) ব্যবহার করে SFT চালানোর পরীক্ষা করব। প্রতিটি উপাদানের আলাদা Ablation, মোট Token Budget, মডেলের লাইসেন্স, মেমোরি ও অফলাইন শর্তগুলো একসাথে যাচাই করব—এবং আমাদের এই অধ্যায়ের ক্ষুদ্র পরীক্ষাটিকে কখনোই পূর্ণাঙ্গ প্রোডাকশন সহকারী বলে দাবি করব না।"
+    },
+    {
+      "title": "Cherry-Picking ছাড়াই পরবর্তী বৈধ পরীক্ষা নকশা",
+      "tag": "ADAPTATION · CODING / DESIGN · 40 MIN",
+      "prompt": "আমাদের বর্তমান পরীক্ষার ব্যর্থতা থেকে শিক্ষা নিয়ে Cherry-Picking না করে কীভাবে পরবর্তী উন্নত পরীক্ষাটি বৈজ্ঞানিকভাবে নকশা করবেন?",
+      "answer": "নতুন কোড চালানোর আগেই আমি পুরো প্রোটোকলটি স্থির করে লিখব: প্রথমত, ইনপুটে খণ্ডিত 24 Byte-এর বদলে পূর্ণ Claim এবং প্রাসঙ্গিক Evidence দেওয়ার ব্যবস্থা করব। দ্বিতীয়ত, একই গবেষণাপত্র থেকে আসা দাবিগুলো যেন একসাথে থাকে সেভাবে Source-Grouped পদ্ধতিতে Train, Validation এবং সম্পূর্ণ নতুন একটি অদেখা Confirmation Test Set আলাদা করব। তৃতীয়ত, মডেল আর্কিটেকচার, LoRA Target Module (যেমন Attention ও FFN), Rank এবং Learning Rate বাছাইয়ের সব পরীক্ষা কেবল Validation সেটের ভেতর সীমাবদ্ধ রাখব—বর্তমানের ইতিমধ্যে দেখা Dev সেটটিকে কেবল রিগ্রেশন অডিটের জন্য রাখব। সবশেষে একক Accuracy-এর বদলে Majority Baseline, ফরম্যাট আনুগত্য, ক্লাস-ভিত্তিক Precision/Recall, Calibration এবং পুরোনো সক্ষমতা ধরে রাখার (Retention) মেট্রিক একসাথে রিপোর্ট করব।"
+    }
+  ],
+  "book": {
+    "order": 27,
+    "part": "Book 4 · LLMs, RAG & Generative AI",
+    "prerequisites": [
+      "chapter_22",
+      "chapter_24",
+      "chapter_41"
+    ],
+    "purpose": "আগের অধ্যায়গুলোর LLM Training এবং Reinforcement Learning-এর ভিত্তি কাজে লাগিয়ে বাস্তব সমস্যার প্রয়োজন অনুযায়ী সঠিক Adaptation কৌশল (যেমন SFT, LoRA বা QLoRA) এবং Preference Alignment-এর উপযুক্ত Objective বেছে নেওয়ার দক্ষতা অর্জন করা।",
+    "outcomes": [
+      "Response-only Loss Masking, Full Fine-tuning, LoRA এবং Quantization-এর কারিগরি পার্থক্য বোঝার পাশাপাশি Supervised Fine-Tuning (SFT), Reward Modeling ও DPO-এর ভূমিকা স্পষ্টভাবে আলাদা করতে পারা।",
+      "হাতে-কলমে গাণিতিক উদাহরণ, Python কোড ও স্বমূল্যায়নের মাধ্যমে LoRA Adapter-এর হিসাব এবং RLHF ও DPO Objective-এর অন্তর্নিহিত যুক্তি প্রাঞ্জলভাবে ব্যাখ্যা করতে পারা।"
+    ],
+    "recall": [
+      "LoRA Adapter-কে Base Model-এর সাথে Merge করলে Inference-এর সময় কার্যকর Weight কেমন হয়? আর Quantization ও Trainable Adapter কি একই বিষয়?",
+      "DPO-তে যখন বর্তমান Policy এবং Reference Policy হুবহু সমান হয়, তখন Loss-এর মান কত আসে? আর মানুষের নিছক Preference-কে ধ্রুব সত্য ধরে Model Train করলে কী ধরনের ঝুঁকি তৈরি হয়?"
+    ],
+    "bridge": "এর পরের অধ্যায়ে (Book 4 · Chapter 5: LLM Evaluation, Reliability & Serving) আমরা দেখব কীভাবে একটি Adapted বা Pretrained LLM-কে বাস্তব Production পরিবেশে নির্ভরযোগ্যভাবে মূল্যায়ন ও Serve করতে হয়। সেখানে যাওয়ার আগে এই অধ্যায়ের Quiz, Coding অনুশীলনী এবং Interview প্রশ্নগুলোর মাধ্যমে নিজের প্রস্তুতি যাচাই করে নিন।",
+    "bookId": "llm",
+    "bookChapter": 4
+  }
+}

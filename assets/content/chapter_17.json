@@ -1,0 +1,1665 @@
+{
+  "id": "chapter_17",
+  "number": 17,
+  "title": "Reliable Deep Learning Training",
+  "shortTitle": "Reliable DL Training",
+  "displayTitle": "Reliable Deep Learning\nTraining",
+  "subtitle": "Parameter Update বোঝা, সম্পূর্ণ Training State সংরক্ষণ করা এবং হুবহু পুনরুৎপাদনযোগ্য Experiment গড়ে তোলা।",
+  "description": "From an optimizer step to a complete recovery.\nAudit the update. Check the mode. Resume the state.",
+  "difficulty": "Deep learning engineering",
+  "lab": "reliable",
+  "lessons": [
+    {
+      "id": "ch17_contract",
+      "title": "Reliable Training: শুধু Loss কমালেই কাজ শেষ নয়",
+      "subtitle": "Data, Parameter Update ও সম্পূর্ণ Training State-এর চুক্তি",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "আগের অধ্যায়ের সূত্র ধরে",
+          "body": "আগের অধ্যায়ে (Book 3 · Chapter 2: Neural Networks & Backpropagation) আমরা একটি MLP-এর Forward Pass এবং Backpropagation কীভাবে লিখতে হয় তা শিখেছি। কিন্তু বাস্তবে একটি Deep Learning Model ট্রেনিং দেওয়ার কাজ কেবল Gradient বের করার মধ্যেই শেষ হয়ে যায় না। আমাদের আরও নিখুঁতভাবে জানতে হবে ঠিক কখন ও কীভাবে Parameter বদলাচ্ছে, Model এই মুহূর্তে train নাকি eval Mode-এ আছে, Learning Rate কোন ধাপে পরিবর্তিত হচ্ছে, এবং কোনো কারণে মাঝপথে ট্রেনিং থেমে গেলে ঠিক কোন জায়গা থেকে আবার নির্ভুলভাবে শুরু করা যাবে।\n\nকারণ শুধু Model-এর বর্তমান Weight দেখেই পরের ধাপের Update কী হবে তা বলে দেওয়া যায় না। পরবর্তী ধাপে কী ঘটবে তা একসাথে নির্ভর করে Data আসার ক্রম, Optimizer-এর ভেতরের জমানো State, Scheduler-এর অবস্থান এবং Random Number Generator (RNG)-এর বর্তমান অবস্থার ওপর। এই সবগুলো উপাদানকে সুশৃঙ্খলভাবে নিয়ন্ত্রণে এনে কীভাবে একটি নির্ভরযোগ্য Training Workflow গড়ে তোলা যায়, এই অধ্যায়ে আমরা ধাপে ধাপে সেটাই শিখব।"
+        },
+        {
+          "type": "text",
+          "title": "নির্ভরযোগ্য (Reliable) Training বলতে কী বুঝি?",
+          "body": "ইঞ্জিনিয়ারিংয়ের ভাষায় একটি Training Run তখনই নির্ভরযোগ্য বা Reliable, যখন ঘোষিত শর্ত ও সামঞ্জস্যপূর্ণ পরিবেশে সেটিকে হুবহু পুনরুৎপাদন (Reproduce) ও যাচাই করা যায়, কোনো গাণিতিক বা লজিক্যাল ত্রুটি ঘটলে তা সাথে সাথে ধরা পড়ে, এবং ফলাফল নিয়ে আমরা কেবল ততটুকুই দাবি করি যতটুকু আমাদের প্রমাণে আছে। এখানে খেয়াল রাখা দরকার, Reliability মানেই কিন্তু নতুন অদেখা ডেটায় দুর্দান্ত Accuracy, নিখুঁতভাবে Calibrated Probability কিংবা সরাসরি Production-এ নামানোর যোগ্যতা নয়। গাণিতিকভাবে নির্ভুল Training চালানো আর বাস্তব সমস্যার কার্যকর সমাধান তৈরি করা—এই দুটি লক্ষ্য একে অপরের পরিপূরক হলেও আলাদা।"
+        },
+        {
+          "type": "math",
+          "title": "পরবর্তী Parameter নির্ধারণের উপাদানসমূহ",
+          "body": "\\text{data}+\\theta_t+\\text{optimizer}_t+\\text{RNG}_t+\\text{schedule}_t\\longrightarrow\\theta_{t+1}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ একটি একক Update ধাপ যাচাই",
+          "body": "import torch\n\np = torch.nn.Parameter(\n    torch.tensor(2.0, dtype=torch.float64)\n)  # Mathematical illustration.\noptimizer = torch.optim.SGD([p], lr=0.1)\n# Gradients accumulate: clear them at the intended optimizer-step boundary.\noptimizer.zero_grad(set_to_none=True)\np.square().backward()\noptimizer.step()\nanswer = p.item()\nassert abs(answer - 1.6) < 1e-12\nprint(answer)\n"
+        },
+        {
+          "type": "text",
+          "title": "এই অধ্যায়ের তিনটি হাতে-কলমে পরীক্ষণ (Lab)",
+          "body": "উপরের ছোট কোডটিতে আমরা p = 2.0-এর বর্গের Derivative 4.0 ব্যবহার করে lr = 0.1 দিয়ে এক ধাপে 2.0 - 0.1 × 4.0 = 1.6 পেলাম; মূল গাণিতিক সূত্রটি পরিষ্কারভাবে বোঝানোর জন্যই এমন সংক্ষিপ্ত উদাহরণ রাখা হয়েছে। এর পাশাপাশি পুরো অধ্যায়জুড়ে আমরা বাস্তব ডেটার ওপর দাঁড়িয়ে তিনটি তুলনামূলক পরীক্ষণ দেখব: প্রথমত, আসল Training Row থেকে মাপা Gradient ব্যবহার করে বিভিন্ন Optimizer-এর ধাপ মেলানো; দ্বিতীয়ত, বাস্তব Hidden Preactivation-এর ওপর BatchNorm ও LayerNorm-এর আচরণ পর্যবেক্ষণ করা; এবং তৃতীয়ত, বিরতিহীন Training, সম্পূর্ণ State ফিরিয়ে এনে Resume করা এবং কেবল Weight লোড করে আবার শুরু করার মধ্যকার পার্থক্য যাচাই করা। অ্যাপের ভেতরে সরাসরি Python Engine না চালিয়ে আগে থেকে সংরক্ষিত Python ফলাফল ও Dart হিসাবের মাধ্যমে এই সংখ্যাগুলো দেখানো হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "বাস্তব Dataset ও তার সীমারেখা",
+          "body": "ধারাবাহিকতা বজায় রাখতে আমরা আগের অধ্যায়ের সেই পরিচিত Inner Split-এর 776টি Training Row এবং 190টি Diagnostic Validation Row এখানেও ব্যবহার করব। প্রতিটি Feature-এর Mean ও Scale কেবল এই Inner Training অংশের ওপরেই Fit করা হয়েছে, এবং পুরোনো Outer Decision বা Test অংশকে এখানে আর নতুন করে মূল্যায়ন করা হচ্ছে না। যেহেতু এই Dataset-টি আমরা আগেই বিভিন্ন কোণ থেকে বিশ্লেষণ করেছি, তাই এখানকার Validation ফলাফলকে ট্রেনিং প্রক্রিয়া যাচাইয়ের মাপকাঠি হিসেবে দেখাই সংগত—নতুন কোনো চূড়ান্ত প্রমাণ হিসেবে নয়। একইভাবে ডেটার ভেতরকার রাসায়নিক গ্রুপিংগুলোও যাচাইকৃত বোতল বা উৎপাদন Batch ID নয়, তাই সেই সীমাবদ্ধতাটি মাথায় রেখেই আমরা এগোব।"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের মূল Training Recipe",
+          "body": "পুরো অধ্যায়জুড়ে আমাদের মূল পরীক্ষণের সেটআপটি সুনির্দিষ্ট ও স্থির রাখা হয়েছে: CPU-তে float64 Precision, 11 → 4 → 1 আকারের ReLU নেটওয়ার্ক, Dropout = 0.2, Seed = 17, প্রতি Epoch-এ Shuffle করা Mini-batch = 64, AdamW (lr = 0.01), কেবল Matrix Weight-এর ওপর Weight Decay = 0.01 আর Bias-এ Weight Decay = 0, Gradient Clipping Norm = 1.0, প্রতি 20 Epoch অন্তর 0.5 গুণ করার StepLR এবং নির্ধারিত 40টি Epoch। এখানে সেরা ফলাফল খোঁজার জন্য আলাদা কোনো Seed, Learning Rate বা সেরা Epoch বাছাইয়ের চেষ্টা করা হয়নি; আর Normalization-সংক্রান্ত ল্যাবগুলোও আলাদাভাবে দেখানো হয়েছে—মূল মডেলটিতে BatchNorm বা LayerNorm বসিয়ে ট্রেনিং করার দাবি করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "এই অধ্যায় শেষে আপনার লক্ষ্য",
+          "body": "এই অধ্যায়টি শেষ করার সময় নিজের দক্ষতা যাচাইয়ের লক্ষ্য খুব পরিষ্কার রাখুন: অন্তত একটি Optimizer Update এবং একটি Normalization Statistic খাতায় কলমে হিসাব করে কোডের সাথে মেলাতে পারা; Epoch-এর সীমানায় সংরক্ষিত একটি Checkpoint-এর প্রতিটি Field কেন অপরিহার্য তা যুক্তিসহ বোঝানো; এবং সম্পূর্ণ State ফিরিয়ে আনলে কেন ফলাফল হুবহু মেলে অথচ শুধু Weight লোড করলে কেন পথ আলাদা হয়ে যায়, তা নিজে চালিয়ে দেখানো। পাশাপাশি যেকোনো ফলাফল উপস্থাপনের সময় Hardware, লাইব্রেরির Version এবং Checkpoint কোন সীমানায় নেওয়া হয়েছে—এই শর্তগুলোও স্পষ্টভাবে উল্লেখ করার অভ্যাস গড়ে তুলুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch17_sgd",
+      "title": "SGD ও Learning Rate-এর প্রকৃত অর্থ",
+      "subtitle": "Gradient-এর মান আর Parameter Update কেন এক জিনিস নয়",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Update-এর দিক ও ধাপের আকার",
+          "body": "আগের পাঠে আমরা দেখলাম Parameter এক ধাপ থেকে পরের ধাপে কীভাবে এগোয়; এবার এর সবচেয়ে মৌলিক নিয়ম Stochastic Gradient Descent (SGD) খতিয়ে দেখা যাক। গাণিতিকভাবে Gradient নির্দেশ করে বর্তমান বিন্দুর ঠিক আশেপাশে কোন দিকে গেলে Loss সবচেয়ে দ্রুত বাড়বে। তাই Loss কমানোর জন্য আমরা তার ঠিক বিপরীত দিকে পা বাড়াই, আর প্রতিটি স্থানাঙ্কে (Coordinate) সেই পদক্ষেপটি কত বড় হবে তা নিয়ন্ত্রণ করে Learning Rate। তবে মনে রাখা জরুরি, ঋণাত্মক Gradient কেবল অতি ক্ষুদ্র স্থানীয় (Local) পরিসরে নিচের দিকটি দেখায়; Loss Surface-এর বক্রতা (Curvature) বা Parameter-এর নিজস্ব Scale-এর তুলনায় যদি আমরা অনেক বড় ধাপ নিয়ে ফেলি, তাহলে Loss কমার বদলে উল্টো বেড়েও যেতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "Mini-batch Gradient ও ডেটার ক্রম",
+          "body": "পুরো Dataset-এর ওপর একসাথে হিসাব না করে যখন একটি ছোট Mini-batch-এর ওপর Gradient বের করা হয়, তখন নির্দিষ্ট Sampling শর্ত সাপেক্ষে সেটিকে পূর্ণ Empirical Gradient-এর একটি প্রাক্কলন (Approximation) হিসেবে দেখা যায়। এই প্রাক্কলনে কতটা ওঠানামা থাকবে তা নির্ভর করে Batch Size, ডেটায় একই ধরনের Sample-এর পুনরাবৃত্তি, Shuffling এবং ডেটা আসার ক্রমের ওপর। একটি সূক্ষ্ম বিষয় খেয়াল রাখবেন: ডেটাকে এলোমেলোভাবে সাজালেই (Random Shuffling) কিন্তু Sample-গুলোর মধ্যে পরিসংখ্যানগত স্বাধীনতা (Statistical Independence) তৈরি হয়ে যায় না। আমাদের বর্তমান CPU পরীক্ষণে প্রতি Epoch-এ একবার করে পুরো ট্রেনিং ডেটার একটি নতুন Shuffled Permutation ব্যবহার করা হয়েছে।"
+        },
+        {
+          "type": "math",
+          "title": "Mini-batch SGD-এর Update সমীকরণ",
+          "body": "\\theta_{t+1}=\\theta_t-\\eta_t g_t,\\quad g_t=\\nabla_\\theta L_{\\mathcal B_t}(\\theta_t)"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ SGD ধাপ মিলিয়ে দেখা",
+          "body": "import torch\n\np = torch.nn.Parameter(torch.tensor([2.0, -1.0], dtype=torch.float64))  # Illustration.\noptimizer = torch.optim.SGD([p], lr=0.1)\np.grad = torch.tensor([3.0, 4.0], dtype=torch.float64)\noptimizer.step()\ntorch.testing.assert_close(p, torch.tensor([1.7, -1.4], dtype=torch.float64))\nprint(p.detach().tolist())\n"
+        },
+        {
+          "type": "text",
+          "title": "Loss Reduction বদলে গেলে কী ঘটে?",
+          "body": "উপরের কোডে [2.0, -1.0] থেকে 0.1 × [3.0, 4.0] বিয়োগ হয়ে [1.7, -1.4] পাওয়া গেল। কিন্তু বাস্তবে এই Gradient আসে Loss থেকে, আর সেখানে mean বনাম sum Reduction-এর মধ্যে সরাসরি Batch Size (B) গুণ পার্থক্য থাকে! তাই কোডে একই Learning Rate রেখে আপনি যদি হঠাৎ Loss-কে গড় করার বদলে যোগফলে (sum) নিয়ে যান, তবে পুরো Training Recipe-টাই বদলে যাবে। সাধারণ SGD-তে হয়তো Learning Rate-কে B দিয়ে ভাগ করে এই প্রভাব পুষিয়ে নেওয়া যায়, কিন্তু সাথে যখন Weight Decay, Gradient Clipping বা Adam-এর মতো Adaptive Optimizer যুক্ত থাকে, তখন কেবল Learning Rate বদলে দিলেই সব আচরণ আর আগের মতো থাকে না।"
+        },
+        {
+          "type": "text",
+          "title": "Learning Rate নিয়ে সমস্যা ধরার উপায়",
+          "body": "ট্রেনিং শুরুর পর হঠাৎ যদি দেখেন Loss হু-হু করে বেড়ে যাচ্ছে বা NaN হয়ে যাচ্ছে, তাহলে শুরুতেই কেবল Learning Rate-কে দোষ না দিয়ে আগে পরীক্ষা করুন ইনপুট ডেটার সব মান সসীম (Finite) কি না, Target-এর Shape ও Scale ঠিক আছে কি না এবং Gradient Norm কেমন আচরণ করছে। আবার উল্টো দিকে Loss যদি খুব ধীরে কমে বা একই জায়গায় আটকে থাকে, তবে অন্ধভাবে Learning Rate বাড়িয়ে দেওয়ার আগে নিশ্চিত হোন যে Optimizer-এর ভেতরে আসলেই সঠিক Parameter-গুলো দেওয়া হয়েছে এবং Computation Graph কোথাও বিচ্ছিন্ন (Detached) হয়ে যায়নি।"
+        },
+        {
+          "type": "text",
+          "title": "PyTorch-এ প্রতিটি ধাপের স্পষ্ট দায়িত্ব",
+          "body": "PyTorch-এ optimizer.step() কল করলে সেটি কেবল Parameter-গুলোর ভেতরে আগে থেকে জমা থাকা .grad পড়ে নিয়ে মান আপডেট করে; সে নিজে থেকে কখনোই backward() চালায় না কিংবা পুরোনো Gradient মুছে দেয় না। তাই প্রতিটি নির্ধারিত Update সীমানার শুরুতে আমাদেরই স্পষ্টভাবে zero_grad(set_to_none=True) কল করতে হয়। এখানে একটি গুরুত্বপূর্ণ পার্থক্য মনে রাখুন: কোনো অব্যবহৃত Parameter-এর .grad মান গাণিতিক শূন্য (0.0) থাকা আর None থাকা কিন্তু এক কথা নয়—বিশেষ করে Stateful Optimizer ও Weight Decay-এর ক্ষেত্রে এই দুটির ফলে Parameter-এর ওপর ভিন্ন আচরণ দেখা দিতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "নিজে মিলিয়ে দেখার অভ্যাস",
+          "body": "উপরের কোডের প্রাথমিক Parameter [2.0, -1.0], Gradient [3.0, 4.0] এবং lr = 0.1 ব্যবহার করে খাতায় হিসাবটি একবার নিজে মিলিয়ে নিন। এবার ভাবুন, ঠিক একই Gradient রেখে যদি Learning Rate দ্বিগুণ (0.2) করে দেওয়া হয়, তাহলে এই সাধারণ SGD-তে নতুন Parameter কত হবে? এখানে উত্তরটি খুব সরল ([1.4, -1.8]); কিন্তু পরের পাঠগুলোতে আমরা দেখব কেন Momentum বা AdamW ব্যবহারের সময় কেবল বর্তমান Gradient আর Learning Rate দেখে পরের ধাপটি এভাবে বলে দেওয়া যায় না—তার জন্য অতীতের জমানো State-ও জানতে হয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch17_momentum",
+      "title": "Momentum: অতীতের Gradient-এর স্মৃতি",
+      "subtitle": "Velocity Buffer, প্রারম্ভিক মান ও দোলন নিয়ন্ত্রণ",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন শুধু বর্তমান Gradient যথেষ্ট নয়?",
+          "body": "সাধারণ SGD প্রতিটি ধাপে কেবল ওই মুহূর্তের Gradient দেখেই সিদ্ধান্ত নেয়, আগের ধাপগুলোতে সে কোন দিকে যাচ্ছিল তার কোনো স্মৃতি রাখে না। ফলে সরু উপত্যকার মতো Loss Surface-এ এটি এক দেয়াল থেকে আরেক দেয়ালে ধাক্কা খেয়ে দুলতে পারে। Momentum সাম্প্রতিক ধাপগুলোর Gradient-এর দিক একটি চলমান Velocity হিসেবে জমিয়ে রাখে। এর ফলে যেসব দিকে Gradient বারবার একই অভিমুখে থাকছে সেখানে কার্যকর অগ্রগতি দ্রুততর হয়, আর যেসব দিকে চিহ্ন বারবার উল্টে যাচ্ছে (Oscillation) সেগুলো আংশিকভাবে একে অপরকে প্রশমিত করে। অবশ্যই Momentum দিলেই বক্রতা বা Noisy Gradient-এর সব সমস্যার সমাধান হয়ে যায় না—Learning Rate এবং Momentum সহগ মিলেই পুরো Update-এর আচরণ নির্ধারণ করে।"
+        },
+        {
+          "type": "text",
+          "title": "ধাপে ধাপে খাতায় হিসাব",
+          "body": "চলুন একটি ছোট সংখ্যাগত উদাহরণ দিয়ে PyTorch-এর হিসাবটি মিলিয়ে নিই। ধরা যাক, শুরুতে একটি Scalar Parameter p = 1.0, প্রতি ধাপে Gradient g = 2.0, Learning Rate η = 0.1 এবং Momentum μ = 0.9। প্রথম ধাপে প্রারম্ভিক Velocity শূন্য থাকায় প্রথম Velocity হয় 2.0, তাই Parameter কমে দাঁড়ায় 1.0 - 0.1 × 2.0 = 0.8। কিন্তু দ্বিতীয় ধাপে একই g = 2.0 থাকা সত্ত্বেও আগের স্মৃতির কারণে নতুন Velocity হয় 0.9 × 2.0 + 2.0 = 3.8, আর Parameter এক লাফে নেমে আসে 0.8 - 0.1 × 3.8 = 0.42-এ! এখানে আমরা PyTorch-এর ডিফল্ট নিয়ম (dampening = 0 এবং সাধারণ non-Nesterov সমীকরণ) অনুসরণ করছি। অনেক পাঠ্যবইয়ে Velocity-র ভেতরেই Learning Rate গুণ করে লেখা হয়—তাই যেকোনো হিসাব মেলানোর আগে লাইব্রেরির সুনির্দিষ্ট সূত্রটি দেখে নেওয়া জরুরি।"
+        },
+        {
+          "type": "math",
+          "title": "PyTorch SGD Momentum-এর সমীকরণ",
+          "body": "v_t=\\mu v_{t-1}+g_t,\\quad\\theta_{t+1}=\\theta_t-\\eta v_t"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ দুই ধাপের Velocity ও Parameter যাচাই",
+          "body": "import torch\n\np = torch.nn.Parameter(torch.tensor(1.0, dtype=torch.float64))  # Illustration.\nopt = torch.optim.SGD([p], lr=0.1, momentum=0.9)\nfor _ in range(2):\n    p.grad = torch.tensor(2.0, dtype=torch.float64)\n    opt.step()\nassert abs(p.item() - 0.42) < 1e-12\nprint(p.item(), opt.state[p][\"momentum_buffer\"].item())\n"
+        },
+        {
+          "type": "text",
+          "title": "মাঝপথে থামলে কেন Velocity Buffer সংরক্ষণ করতে হয়?",
+          "body": "উপরের কোডের আউটপুট থেকেই স্পষ্ট বোঝা যাচ্ছে কেন কেবল Model-এর Weight সংরক্ষণ করা যথেষ্ট নয়। দ্বিতীয় ধাপের শেষে p = 0.42-এর পাশাপাশি Optimizer-এর ভেতরে momentum_buffer = 3.8 জমা হয়ে আছে। এখন আপনি যদি কেবল p = 0.42 লোড করে নতুন একটি Optimizer তৈরি করেন, তবে তার momentum_buffer আবার শূন্য থেকে শুরু হবে এবং তৃতীয় ধাপের Update সম্পূর্ণ ভিন্ন হয়ে যাবে! তাই ট্রেনিং হুবহু আগের জায়গা থেকে চালিয়ে যেতে চাইলে momentum_buffer, Optimizer-এর Hyperparameter এবং সঠিক ধাপের সীমানা একসাথে ফিরিয়ে আনতে হবে। যেহেতু প্রতিটি Parameter-এর বিপরীতে আলাদা Buffer থাকে, তাই state_dict লোড করার সময় Parameter Group-এর ক্রম (Order) ঠিক থাকাও অত্যন্ত জরুরি।"
+        },
+        {
+          "type": "text",
+          "title": "Nesterov ও Dampening-এর পার্থক্য",
+          "body": "সাধারণ Momentum-এর পাশাপাশি PyTorch-এ Nesterov ও dampening অপশনও থাকে। Nesterov Momentum এক ধাপ এগিয়ে গিয়ে (Look-ahead) সংশোধনী যোগ করে, তাই এর গাণিতিক ফলাফল সাধারণ Recurrence-এর সাথে এক হয় না। আবার dampening শূন্য না হলে কিংবা প্রথম ধাপের Buffer কীভাবে শুরু হচ্ছে সেই নিয়ম বদলে গেলেও আউটপুট বদলে যায়। আমাদের এই অধ্যায়ের মূল পরীক্ষণে AdamW ব্যবহৃত হলেও, তুলনামূলক Optimizer ল্যাবে আমরা সুনির্দিষ্টভাবে μ = 0.9 এবং dampening = 0 ব্যবহার করেই ফলাফল মিলিয়ে দেখব।"
+        },
+        {
+          "type": "text",
+          "title": "Coupled Weight Decay ও L2 সমীকরণের সতর্কতা",
+          "body": "সাধারণ SGD-র সাথে যখন weight_decay (λ) দেওয়া হয়, তখন প্রথমে মূল Gradient g-এর সাথে λp যোগ হয় এবং সেই সম্মিলিত মানটিই পরে momentum_buffer-এ প্রবেশ করে। এখানে সমীকরণের সহগ নিয়ে খুব সচেতন থাকতে হয়: আমরা যদি Objective-এ L2 Penalty হিসেবে (λ / 2) × ||p||² লিখি, তবে তার Derivative আসে λp; কিন্তু কেউ যদি 1/2 ছাড়া সরাসরি λ × ||p||² লেখেন, তবে Derivative হবে 2λp! তাই কেবল মুখের কথায় L2 Regularization না শুনে মূল Objective সমীকরণটি ঠিক কীভাবে লেখা হয়েছে তা যাচাই করে নিতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে গুছিয়ে ব্যাখ্যা করবেন",
+          "body": "ইন্টারভিউতে Momentum নিয়ে প্রশ্ন এলে প্রথমে ছোট সংখ্যা ধরে পরপর দুটি ধাপ হাতে করে দেখান, এরপর ব্যাখ্যা করুন কেন দ্বিতীয় ধাপের পর শুধু Weight লোড করে তৃতীয় ধাপ চালালে (একই Gradient পাওয়া সত্ত্বেও) পূর্ণ State-এর চেয়ে ভিন্ন Update পাওয়া যায়। পাশাপাশি এই বাস্তবসম্মত দৃষ্টিভঙ্গিটিও বজায় রাখুন যে Momentum ব্যবহার করলেই সব Dataset-এ নিশ্চিতভাবে ভালো Validation ফলাফল আসবে এমন কোনো দাবি করা যায় না—এটি মূলত Optimization-এর গতিপথ নিয়ন্ত্রণের একটি কৌশল।"
+        }
+      ]
+    },
+    {
+      "id": "ch17_adaptive",
+      "title": "Adam ও AdamW: Adaptive Moment ও Bias Correction",
+      "subtitle": "একই Gradient পেয়েও প্রতিটি স্থানাঙ্কে আলাদা Stateful Update",
+      "duration": "57 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "প্রথম ও দ্বিতীয় Moment-এর হিসাব",
+          "body": "Momentum যেখানে কেবল Gradient-এর চলমান দিকটি মনে রাখে, Adam সেখানে প্রতিটি Parameter স্থানাঙ্কের জন্য দুটি আলাদা Exponential Moving Average সংরক্ষণ করে: Gradient-এর প্রথম Moment (m) এবং বর্গকৃত Gradient-এর দ্বিতীয় Moment (v)। এখানে একটি সূক্ষ্ম গাণিতিক বিষয় খেয়াল রাখবেন: v কিন্তু গড় বিয়োগ করে বের করা পরিসংখ্যানগত Central Variance নয়, বরং সরাসরি বর্গকৃত Gradient-এর চলমান প্রাক্কলন (Uncentered Second Moment)। যেহেতু ট্রেনিংয়ের শুরুতে m ও v শূন্য দিয়ে শুরু হয়, তাই শুরুর ধাপগুলোতে মানগুলো শূন্যের দিকে ঝুঁকে (Biased) থাকে। এই ঝোঁক দূর করতেই যথাক্রমে 1 − β₁^t এবং 1 − β₂^t দিয়ে ভাগ করে Bias Correction করা হয়, আর হরের অংশটি প্রতিটি স্থানাঙ্কে আলাদাভাবে Update-এর আকার সমন্বয় করে।"
+        },
+        {
+          "type": "text",
+          "title": "Epsilon ও Step Counter-এর গুরুত্ব",
+          "body": "সমীকরণের হরে থাকা ছোট ধ্রুবক epsilon কেবল শূন্য দিয়ে ভাগ হওয়া ঠেকায় না, খুব ছোট Gradient-এর ক্ষেত্রে ধাপটি কত বড় হতে পারবে সেটিকেও প্রভাবিত করে। খেয়াল করলে দেখবেন, লব ও হর দুটোতেই Gradient-এর মাত্রা থাকায় কেবল Gradient Norm ছোট হওয়া মানেই যে Adam-এর Update ছোট হবে—এমন কোনো নিশ্চয়তা নেই! একই সাথে এখানে বর্তমান ধাপ সংখ্যা (step) অত্যন্ত গুরুত্বপূর্ণ একটি State: কোনো কারণে এই Counter হারিয়ে আবার শুরু থেকে গণনা হলে Bias Correction বদলে যাবে। তাই নির্ভুলভাবে ট্রেনিং Resume করতে হলে Model Parameter-এর পাশাপাশি m, v, step Counter, Parameter Group এবং সব Hyperparameter একসাথে ফিরিয়ে আনতে হয়।"
+        },
+        {
+          "type": "math",
+          "title": "Adam-এর Moment ও Update সমীকরণ",
+          "body": "m_t=\\beta_1m_{t-1}+(1-\\beta_1)g_t,\\quad v_t=\\beta_2v_{t-1}+(1-\\beta_2)g_t^2,\\quad\\Delta\\theta=-\\eta{\\hat m_t\\over\\sqrt{\\hat v_t}+\\epsilon}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Adam-এর প্রথম ধাপ যাচাই",
+          "body": "import torch\n\np = torch.nn.Parameter(torch.tensor(1.0, dtype=torch.float64))  # Illustration.\nopt = torch.optim.Adam([p], lr=0.01, betas=(0.9, 0.999), eps=1e-8)\np.grad = torch.tensor(2.0, dtype=torch.float64)\nopt.step()\nassert abs(p.item() - (1 - 0.01 * 2 / (2 + 1e-8))) < 1e-12\nprint(p.item(), opt.state[p][\"step\"].item())\n"
+        },
+        {
+          "type": "text",
+          "title": "Adam বনাম AdamW: আসল পার্থক্য কোথায়?",
+          "body": "সাধারণ Adam-এ যখন weight_decay দেওয়া হয়, তখন সেটি প্রথমে মূল Gradient-এর সাথে যোগ হয়ে যায় (Coupled Decay)—ফলে সেই ক্ষয়টুকুও m ও v-এর ভেতরে ঢুকে Adaptive হর দিয়ে ভাগ হয়ে যায়! এর বিপরীতে AdamW এই Parameter সংকোচনকে (Shrinkage) Adaptive Moment হিসাবের বাইরে রেখে সরাসরি Parameter-এর ওপর প্রয়োগ করে। তাই নামের মিল দেখে কখনোই ভাববেন না যে দুই Optimizer-এ একই λ বসালে একই মাত্রার Regularization পাওয়া যাবে। আমাদের মূল পরীক্ষণে আমরা AdamW ব্যবহার করছি, আর নিচের তুলনামূলক ল্যাবে সাধারণ Adam-এর ডিফল্ট Coupled আচরণও পাশাপাশি দেখানো হয়েছে।"
+        },
+        {
+          "type": "optimizer_state_lab",
+          "title": "তুলনামূলক Optimizer Replay ল্যাব",
+          "body": "আটটি বাস্তব Training Row থেকে মাপা একটি নির্দিষ্ট Gradient এবং তিনটি নির্বাচিত Parameter স্থানাঙ্ক ব্যবহার করে পরপর তিনটি Update ধাপ এখানে তুলনা করে দেখুন। SGD, Momentum, Adam এবং AdamW—চারটি Optimizer-ই হুবহু একই সংখ্যাগত ইনপুট পাচ্ছে। এখানে প্রতি ধাপে নতুন করে মডেল চালিয়ে Gradient বের করা হচ্ছে না; বরং একই ইনপুটের ওপর চারটি Update নিয়মের গাণিতিক আচরণ কীভাবে আলাদা হয়ে যায় তা স্পষ্ট করে দেখানোই এই ল্যাবের উদ্দেশ্য, চারটি পূর্ণাঙ্গ Classifier-এর তুলনা নয়।"
+        },
+        {
+          "type": "text",
+          "title": "প্রথম ধাপের সহজ যাচাই (Sanity Check)",
+          "body": "প্রথম কোড ব্লকটির দিকে তাকালে একটি দারুণ বৈশিষ্ট্য চোখে পড়বে: Weight Decay না থাকলে যেকোনো অশূন্য Scalar Gradient-এর জন্য Adam-এর একেবারে প্রথম ধাপে Bias Correction শেষে লবে থাকে মূল Gradient আর হরে থাকে তার পরম মান ও epsilon। ফলে প্রথম ধাপের আকার প্রায় সরাসরি Learning Rate-এর সমান হয় (চিহ্ন অনুযায়ী)! কিন্তু দ্বিতীয় ধাপ থেকেই অতীতের জমানো ইতিহাস কার্যকর হতে শুরু করে, তখন আর কেবল Gradient × Learning Rate দিয়ে হিসাব মেলানো সম্ভব নয়।"
+        },
+        {
+          "type": "text",
+          "title": "নিজে কোড করার লক্ষ্য",
+          "body": "বিষয়টি পুরোপুরি হাতের মুঠোয় আনতে একটি বিশুদ্ধ (Pure) Python Function লিখে নিজেই m, v ও step আপডেট করুন এবং PyTorch-এর পরপর তিনটি ধাপের সাথে float64 Tolerance-এ মিলিয়ে দেখুন। কোড লেখার সময় অকার্যকর Learning Rate, অসীম বা NaN Gradient এবং None Gradient-এর পরিস্থিতিগুলো আলাদাভাবে সামলানোর অভ্যাস করুন, আর যেকোনো পরীক্ষণের নথিতে ডিফল্ট মানের ওপর ভরসা না করে betas ও epsilon স্পষ্টভাবে লিখে রাখুন।"
+        },
+        {
+          "type": "text",
+          "title": "Adam-এর দ্বিতীয় ধাপে ইতিহাস কীভাবে কাজ করে দেখি",
+          "body": "চলুন হাতে-কলমে দুই ধাপের একটি উদাহরণ মিলিয়ে নিই। ধরা যাক, প্রারম্ভিক Scalar Parameter 1.0, পরপর দুটি ধাপের Gradient [2.0, 4.0], Learning Rate = 0.1, betas = (0.9, 0.999), eps = 1e-8 এবং weight_decay = 0। প্রথম ধাপে আমরা পাই m = 0.2 এবং v = 0.004। দ্বিতীয় ধাপে নতুন Gradient 4.0 আসার পর মান দাঁড়ায় m = 0.58 এবং v = 0.019996। খেয়াল করুন, দ্বিতীয় ধাপে Bias Correction-এর হর হবে 1 − 0.9² এবং 1 − 0.999²—ভুল করে প্রথম ধাপের হর বসালে পুরো Update ভুল হয়ে যাবে! সঠিক হিসাব শেষে দুই ধাপের পর Parameter দাঁড়াবে প্রায় 0.803482।"
+        },
+        {
+          "type": "code",
+          "title": "হাতে করা Moment হিসাব ও PyTorch State যাচাই",
+          "body": "import math\nimport torch\n\nparameter = torch.nn.Parameter(torch.tensor(1.0, dtype=torch.float64))\noptimizer = torch.optim.Adam(\n    [parameter], lr=0.1, betas=(0.9, 0.999), eps=1e-8, weight_decay=0\n)\nmanual, first_moment, second_moment = 1.0, 0.0, 0.0\nfor step, gradient in enumerate([2.0, 4.0], start=1):\n    first_moment = 0.9 * first_moment + 0.1 * gradient\n    second_moment = 0.999 * second_moment + 0.001 * gradient**2\n    corrected_first = first_moment / (1 - 0.9**step)\n    corrected_second = second_moment / (1 - 0.999**step)\n    manual -= 0.1 * corrected_first / (math.sqrt(corrected_second) + 1e-8)\n    parameter.grad = torch.tensor(gradient, dtype=parameter.dtype)\n    optimizer.step()\n    torch.testing.assert_close(\n        parameter.detach(), torch.tensor(manual, dtype=parameter.dtype)\n    )\nstate = optimizer.state[parameter]\nprint(\n    round(state[\"exp_avg\"].item(), 6),\n    round(state[\"exp_avg_sq\"].item(), 6),\n    round(parameter.item(), 6),\n    state[\"step\"].item(),\n)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজেকে যাচাই করুন",
+          "body": "ট্রেনিংয়ের মাঝপথে শুধু Parameter-এর বর্তমান মানটি লোড করে যদি একটি নতুন Adam Optimizer তৈরি করা হয়, তবে পরের ধাপের Update কি আগের অবিচ্ছিন্ন রানটির মতোই হবে?",
+          "solution": "না, একই হবে না। নতুন Optimizer তৈরি করলে তার প্রথম ও দ্বিতীয় Moment (exp_avg ও exp_avg_sq) এবং step Counter আবার শূন্য থেকে শুরু হবে। ফলে হুবহু একই Parameter ও একই নতুন Gradient পেলেও Bias Correction এবং হরের স্কেলিং বদলে যাওয়ায় ভিন্ন Update তৈরি হবে। নিখুঁতভাবে Resume করতে হলে পুরো Optimizer State এবং Parameter-group সেটিংসও একসাথে ফিরিয়ে আনতে হবে।",
+          "reference": "https://d2l.ai/"
+        }
+      ]
+    },
+    {
+      "id": "ch17_decay",
+      "title": "L2 Penalty ও Decoupled Weight Decay",
+      "subtitle": "Objective সমীকরণ এবং Parameter-group অনুযায়ী Regularization নীতি",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "L2 Penalty বনাম Decoupled Shrinkage",
+          "body": "আগের পাঠে আমরা ইঙ্গিত পেয়েছিলাম যে সাধারণ L2 Penalty আর AdamW-এর Weight Decay এক জিনিস নয়। গাণিতিকভাবে আমরা যখন মূল Loss L-এর সাথে (λ / 2) × sum(W²) যোগ করি, তখন Weight-এর সাপেক্ষে মোট Gradient দাঁড়ায় g + λW। সাধারণ SGD-তে এই অতিরিক্ত অংশটি সরাসরি Parameter সংকোচন ঘটায়। কিন্তু Adaptive Optimizer-এ এই Coupled Penalty চলে যায় Moment প্রাক্কলনের ভেতরে এবং হরের Adaptive স্কেলিং দিয়ে ভাগ হয়ে যায়—যার ফলে বিভিন্ন স্থানাঙ্কে অসম প্রভাব পড়ে। AdamW এই রূপান্তরের বাইরে সরাসরি θ ← (1 − ηλ)θ আকারে সংকোচন প্রয়োগ করে। তাই সাধারণ SGD-র সরল সমতুল্যতা কখনোই Adaptive Optimizer-এর ক্ষেত্রে ধরে নেওয়া ঠিক নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Bias ও Normalization Parameter-কে আলাদা রাখার নীতি",
+          "body": "একটি নেটওয়ার্কের কোন কোন Parameter-এর ওপর Weight Decay চলবে তা একটি সুস্পষ্ট ডিজাইন নীতি। আমাদের বর্তমান পরীক্ষণে কেবল Hidden ও Output স্তরের Matrix Weight-গুলোকে সংকুচিত করা হয়েছে, আর Bias-গুলোকে ক্ষয়ের বাইরে (decay = 0) রাখা হয়েছে। এটি ডিপ লার্নিংয়ে বহুল প্রচলিত একটি রীতি হলেও কোনো অলঙ্ঘনীয় সর্বজনীন নিয়ম নয়। তাই কোড লেখার সময় named_parameters() চেক করে প্রতিটি Parameter ঠিক কোন Group-এ গেল এবং মোট সংখ্যা মিলছে কি না তা অবশ্যই যাচাই করে নিন।"
+        },
+        {
+          "type": "math",
+          "title": "Coupled L2 Gradient ও AdamW-এর সরাসরি সংকোচন",
+          "body": "L_{\\mathrm{reg}}=L+{\\lambda\\over2}\\|W\\|^2,\\quad\\nabla_W L_{\\mathrm{reg}}=g+\\lambda W,\\quad\\theta\\leftarrow(1-\\eta\\lambda)\\theta\\;\\text{in AdamW}"
+        },
+        {
+          "type": "code",
+          "title": "শূন্য Gradient বনাম None Gradient-এ AdamW-এর আচরণ",
+          "body": "import torch\n\np = torch.nn.Parameter(torch.tensor(2.0, dtype=torch.float64))  # Illustration.\nopt = torch.optim.AdamW([p], lr=0.1, weight_decay=0.2)\np.grad = torch.zeros_like(p)\nopt.step()\nassert abs(p.item() - 1.96) < 1e-12\nq = torch.nn.Parameter(torch.tensor(2.0, dtype=torch.float64))\nother = torch.optim.AdamW([q], lr=0.1, weight_decay=0.2)\nq.grad = None\nother.step()\nassert q.item() == 2.0\nprint(p.item(), q.item())\n"
+        },
+        {
+          "type": "text",
+          "title": "শূন্য (0.0) Gradient বনাম None Gradient-এর সূক্ষ্ম পার্থক্য",
+          "body": "উপরের কোডটি একটি অত্যন্ত গুরুত্বপূর্ণ ইঞ্জিনিয়ারিং সূক্ষ্মতা তুলে ধরেছে। প্রথম ক্ষেত্রে p.grad শূন্য (0.0) থাকা সত্ত্বেও AdamW তার Decoupled সংকোচন চালিয়ে 2.0 × (1 − 0.1 × 0.2) = 1.96 করেছে এবং ভেতরের Moment State আপডেট করেছে। অথচ দ্বিতীয় ক্ষেত্রে q.grad = None থাকায় Optimizer ধরে নিয়েছে এই ধাপে Parameter-টি ব্যবহৃতই হয়নি, তাই তাকে সম্পূর্ণ এড়িয়ে গেছে (2.0-ই রয়ে গেছে)! সুতরাং অব্যবহৃত বা Frozen Parameter কিংবা zero_grad(set_to_none=True) ব্যবহারের সময় কোনো Parameter-এর Gradient শূন্য হচ্ছে নাকি None থাকছে—সেটি সরাসরি আপনার মডেলের মান বদলে দিতে পারে। পাশাপাশি খেয়াল রাখবেন, কোডের উদাহরণে আগে থেকে কোনো অশূন্য Moment জমা ছিল না; থাকলে শূন্য Gradient পেয়েও পুরোনো Moment-এর প্রভাবে বাড়তি পরিবর্তন ঘটত।"
+        },
+        {
+          "type": "text",
+          "title": "দুই জায়গায় একই সাথে Regularization দেওয়ার ঝুঁকি",
+          "body": "আরেকটি খুব চেনা ভুল হলো, কাস্টম Loss Function-এর ভেতরে হাতে লিখে L2 Penalty যোগ করা এবং একই সাথে Optimizer তৈরির সময়ও weight_decay > 0 দিয়ে রাখা! অসতর্কভাবে দুটোই চালু রাখলে দুটি প্রক্রিয়া একসাথে কাজ করে আপনার অজান্তেই পুরো Training Recipe পাল্টে দেবে। তা ছাড়া ট্রেনিংয়ের সময় যখন আপনি Scalar Loss লগ করবেন, তখন সেটি কেবল ডেটার মূল Loss নাকি Regularization Penalty-সহ মোট Loss—তা সবসময় আলাদাভাবে স্পষ্ট করে সংরক্ষণ করুন।"
+        },
+        {
+          "type": "text",
+          "title": "Learning Rate ও ধাপ সংখ্যার সাথে আন্তঃক্রিয়া",
+          "body": "সমীকরণেই দেখা যাচ্ছে, AdamW-তে প্রতি ধাপে কতটুকু সংকোচন ঘটবে তা নির্ভর করে ওই ধাপের Learning Rate ও Weight Decay সহগের (λ) গুণফলের ওপর। তাই আপনি যদি λ অপরিবর্তিত রেখে Batch Size বদলান, মোট Update সংখ্যা পরিবর্তন করেন কিংবা নতুন কোনো Learning Rate Scheduler ব্যবহার করেন, তবে একই সংখ্যক Epoch শেষেও পুঞ্জীভূত সংকোচনের (Cumulative Shrinkage) পরিমাণ বদলে যাবে। অর্থাৎ শুধু Epoch সংখ্যা দেখেই একটি মডেল কতটুকু Regularization পেয়েছে তা বোঝা যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এর প্রস্তুতি",
+          "body": "ইন্টারভিউয়ের জন্য খাতায় সাধারণ Adam (Coupled L2) এবং AdamW-এর প্রথম দুটি ধাপের পার্থক্য নিজে একবার তুলনা করে রাখুন। পাশাপাশি কোডে কীভাবে Matrix Weight আর Bias-কে আলাদা Parameter Group-এ ভাগ করে নিখুঁতভাবে যাচাই করতে হয় তা দেখানোর প্রস্তুতি নিন। আর নির্দিষ্ট একটি রেসিপিতে Validation ফলাফল ভালো আসতে দেখলেই সেই Decay নীতিকে সব সমস্যার সার্বজনীন সেরা সমাধান হিসেবে দাবি করবেন না।"
+        }
+      ]
+    },
+    {
+      "id": "ch17_dropout",
+      "title": "Dropout-এর Train ও Eval চুক্তি",
+      "subtitle": "Random Mask, Inverted Scaling ও RNG State সংরক্ষণ",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন Inverted Dropout ব্যবহার করা হয়?",
+          "body": "Weight Decay-এর পর ডিপ লার্নিংয়ের আরেকটি বহুল পরিচিত কৌশল হলো Dropout। ট্রেনিংয়ের সময় প্রতিটি Forward Pass-এ এটি p সম্ভাবনায় কিছু স্থানাঙ্ককে এলোমেলোভাবে শূন্য করে দেয়, এবং টিকে থাকা স্থানাঙ্কগুলোকে 1 / (1 − p) দিয়ে গুণ (Scale) করে বাড়িয়ে দেয়—যাকে বলা হয় Inverted Dropout। এই স্কেলিংয়ের ফলে ইনপুট সাপেক্ষে আউটপুটের শর্তাধীন গাণিতিক প্রত্যাশা (Conditional Expectation) ইনপুটের সমান থাকে, যদিও প্রতিটি একক ধাপে তৈরি হওয়া বাস্তব Mask সমান নয়। তবে পরের স্তরগুলোতে Nonlinear রূপান্তর ও Loss থাকায় ট্রেনিংয়ের গড় Stochastic Loss এবং eval মোডের স্থির (Deterministic) Loss সমান হতেই হবে—এমন কোনো বাধ্যবাধকতা নেই।"
+        },
+        {
+          "type": "text",
+          "title": "train() আর eval() বনাম no_grad()-এর পার্থক্য",
+          "body": "PyTorch-এ কাজ করার সময় সবচেয়ে বিপজ্জনক ভুলগুলোর একটি হলো model.eval() এবং torch.no_grad()-কে এক মনে করা। module.train() থাকা অবস্থায় Dropout সক্রিয় থাকে, আর eval()-এ গেলে সেটি নিষ্ক্রিয় হয়ে ইনপুটকে অবিকল পার করে দেয় (Identity)। অন্যদিকে torch.no_grad() কেবল Autograd-এর Graph রেকর্ড করা বন্ধ করে—সে কখনোই Dropout-এর train Mode বন্ধ করে না! তাই Validation করার সময় ভুল করে মডেলকে train Mode-এ রেখে দিলে প্রতিবার এলোমেলো স্কোর আসবে এবং নেটওয়ার্কে BatchNorm থাকলে তার Running Buffer-ও পরিবর্তিত হয়ে যাবে।"
+        },
+        {
+          "type": "math",
+          "title": "Inverted Dropout-এর সমীকরণ ও প্রত্যাশা",
+          "body": "\\tilde h={m\\odot h\\over1-p},\\quad m_j\\sim\\mathrm{Bernoulli}(1-p),\\quad E[\\tilde h\\mid h]=h"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Train ও Eval Mode-এ Dropout যাচাই",
+          "body": "import torch\n\nlayer = torch.nn.Dropout(p=0.2)\nx = torch.ones(8, dtype=torch.float64)  # Mathematical illustration, not a dataset.\nwith torch.random.fork_rng(devices=[]):\n    torch.manual_seed(17)\n    layer.train()\n    out = layer(x)\nassert all(v in [0.0, 1.25] for v in out.tolist())\nlayer.eval()\ntorch.testing.assert_close(layer(x), x)\nprint(out.tolist())\n"
+        },
+        {
+          "type": "text",
+          "title": "ট্রেনিং Resume করার সময় RNG State কেন জরুরি?",
+          "body": "উপরের কোডে p = 0.2 হওয়ায় টিকে থাকা মানগুলো 1 / (1 − 0.2) = 1.25 হয়েছে। CPU-তে Dropout এই এলোমেলো Mask তৈরির জন্য PyTorch-এর গ্লোবাল RNG ব্যবহার করে, অথচ ডেটা Shuffle করার Generator আলাদা থাকে। খেয়াল রাখবেন, মাঝপথে থেমে আবার শুরু করার সময় শুধু প্রাথমিক Seed (যেমন 17) বসিয়ে দিলেই কিন্তু Checkpoint নেওয়ার মুহূর্তের এলোমেলো অবস্থান ফিরে আসে না; তার জন্য Checkpoint-এ সংরক্ষিত বর্তমান RNG State হুবহু ফিরিয়ে আনতে হয়। এমনকি State ফিরিয়ে আনার আগে নতুন Model Initialization করার সময়েও কিছু Randomness খরচ হয়ে যেতে পারে, তাই লোড করার ক্রমটিও গুরুত্বপূর্ণ।"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের পরীক্ষণে দুটি ভিন্ন Training Loss কার্ভ",
+          "body": "আমাদের বর্তমান মডেলে Hidden ReLU Activation-এর ঠিক পরেই p = 0.2 মানের Dropout বসানো আছে। এখানে রিপোর্টে আমরা দুটি আলাদা হিসাব সংরক্ষণ করি: প্রথমটি হলো ট্রেনিং চলাকালীন প্রতিটি Mini-batch-এর Online Training Loss, যা পরিবর্তনশীল Parameter ও এলোমেলো Dropout Mask সহ মাপা হয়; আর দ্বিতীয়টি হলো প্রতি Epoch শেষে পুরো Training সেটের ওপর eval মোডে মাপা পূর্ণ Binary Cross-Entropy (BCE)। যেহেতু এই দুটি কার্ভ একই গাণিতিক শর্তে মাপা হচ্ছে না, তাই এদের আলাদা Field হিসেবেই পড়তে ও তুলনা করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "Dropout-এর পরিধি ও সীমাবদ্ধতা",
+          "body": "হিডেন ইউনিটগুলোর পারস্পরিক অতি-নির্ভরশীলতা (Co-adaptation) কমানোর উদ্দেশ্যেই সাধারণত Dropout ব্যবহার করা হয়, কিন্তু ছোট Dataset বা ছোট মডেলে এটি দিলেই যে সবসময় উপকার পাওয়া যাবে তার কোনো নিশ্চয়তা নেই। আমাদের বর্তমান রানে নির্দিষ্ট রেসিপিটি স্থির রাখা হয়েছে—এখানে Dropout বাদ দিয়ে বা হার বদলে আলাদা কোনো Ablation বা Tuning করা হয়নি। বাস্তবে হিডেন স্তরের প্রশস্ততা (Hidden Width), Dropout হার এবং মোট ট্রেনিং সময়ের ওপর নির্ভর করে এর প্রভাব বদলে যেতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে অনুশীলন",
+          "body": "নিজে একটি ছোট পরীক্ষা চালিয়ে দেখুন: train মোডে সংরক্ষিত RNG State ফিরিয়ে এনে হুবহু একই Dropout Mask পুনরুৎপাদন করুন। এরপর আলাদা দুটি টেস্ট লিখে যাচাই করুন যে eval() মোডের আউটপুট সবসময় স্থির থাকে, কিন্তু train() মোডে শুধু no_grad() দিলে আউটপুট এলোমেলোই থেকে যায়। পাশাপাশি মনে রাখবেন, ছোট একটি একক ভেক্টরে কয়টি উপাদান টিকে থাকল কেবল সেই অনুপাত দেখেই p সঠিকভাবে কাজ করছে না বলে সিদ্ধান্ত টেনে ফেলবেন না—অল্প Sample-এ এমন পরিসংখ্যানগত ওঠানামা খুবই স্বাভাবিক।"
+        }
+      ]
+    },
+    {
+      "id": "ch17_batchnorm",
+      "title": "BatchNorm: Batch Statistics, Running Buffer ও Mode-এর আচরণ",
+      "subtitle": "Forward Pass-এর Biased Variance, Unbiased Running Update ও Eval Mode-এর চুক্তি",
+      "duration": "57 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কোন অক্ষ বরাবর এবং কীভাবে পরিসংখ্যান নেওয়া হয়?",
+          "body": "আগের পাঠে আমরা দেখেছি কীভাবে Dropout ট্রেনিং এবং মূল্যায়ন (eval) মোডে সম্পূর্ণ ভিন্ন আচরণ করে। একইভাবে train() ও eval() মোডের ওপর প্রবলভাবে নির্ভরশীল আরেকটি গুরুত্বপূর্ণ স্তর হলো BatchNorm। একটি BatchNorm1d স্তর [B, C] আকারের ইনপুট পেলে প্রতিটি Channel-এর জন্য পুরো Batch জুড়ে গড় (Mean) ও ভেদাঙ্ক (Variance) হিসাব করে। এখানে একটি সূক্ষ্ম গাণিতিক পার্থক্য খেয়াল রাখা জরুরি: ট্রেনিংয়ের Forward Pass-এ আউটপুট Normalize করার সময় যে Variance ব্যবহার করা হয়, তার হরে থাকে B (অর্থাৎ Biased হিসাব); কিন্তু ভবিষ্যতের জন্য Running Variance হালনাগাদ করার সময় হরে B − 1 ব্যবহার করে Unbiased প্রাক্কলন নেওয়া হয়। যদি affine=True থাকে, তবে Normalize করা আউটপুটকে শেখাযোগ্য Gamma ও Beta দিয়ে পুনরায় Scale ও Shift করা হয়—যদিও মূল গাণিতিক রূপান্তরটি পরিষ্কারভাবে দেখার জন্য আমাদের সামনের ল্যাবে affine=False রাখা হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "Parameter নয়, তবুও State: Running Buffer-এর ভূমিকা",
+          "body": "BatchNorm-এর এই running_mean এবং running_var কিন্তু কোনো Optimizer Parameter নয়—এগুলো মডিউলের ভেতরে নিবন্ধিত Buffer হিসেবে থাকে এবং মডেলের state_dict-এ সংরক্ষিত হয়। মডেলকে eval() মোডে নিলে ডিফল্ট নিয়ম অনুযায়ী বর্তমান ব্যাচের পরিসংখ্যান না মেপে আগে থেকে জমা হওয়া এই Running Statistics ব্যবহার করা হয়। আগের পাঠের মতোই এখানেও মনে রাখা দরকার যে শুধুমাত্র torch.no_grad() ব্যবহার করলে এই Buffer আপডেট হওয়া থামে না! তাই Checkpoint সংরক্ষণ বা লোড করার সময় মডেল কোন Mode-এ আছে, তা আমাদের সামগ্রিক Training Contract-এরই অবিচ্ছেদ্য অংশ।"
+        },
+        {
+          "type": "math",
+          "title": "BatchNorm Normalization ও Running Buffer হালনাগাদের সমীকরণ",
+          "body": "\\hat x_{ij}={x_{ij}-\\mu_j\\over\\sqrt{v_j+\\epsilon}},\\quad r_{\\mathrm{new}}=(1-m)r_{\\mathrm{old}}+m\\,s_{\\mathrm{batch}}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Forward Normalization ও Running Variance যাচাই",
+          "body": "import torch\n\nx = torch.tensor([[1.0, 2.0], [3.0, 6.0]], dtype=torch.float64)  # Illustration.\nbn = torch.nn.BatchNorm1d(2, affine=False, momentum=0.1, dtype=torch.float64)\nout = bn(x)\ntorch.testing.assert_close(\n    out, (x - x.mean(0)) / torch.sqrt(x.var(0, correction=0) + 1e-5)\n)\ntorch.testing.assert_close(\n    bn.running_var,\n    0.9 * torch.ones(2, dtype=torch.float64) + 0.1 * x.var(0, correction=1),\n)\nbn.eval()\nprint(bn(x).tolist())\n"
+        },
+        {
+          "type": "text",
+          "title": "BatchNorm-এর Momentum বনাম Optimizer-এর Momentum",
+          "body": "উপরের কোডে momentum=0.1 দেওয়ার অর্থটি একটু আলাদাভাবে খেয়াল করুন। Optimizer-এর Momentum-এ আমরা সাধারণত পুরোনো Velocity-র বড় অংশ ধরে রাখি, কিন্তু PyTorch-এর BatchNorm-এ momentum = 0.1 মানে হলো নতুন ব্যাচের পরিসংখ্যানের ১০ শতাংশ নেওয়া এবং পুরোনো মানের ৯০ শতাংশ (1 − 0.1 = 0.9) ধরে রাখা: new = 0.9 * old + 0.1 * batch_stat। শুরুতে running_mean থাকে 0 এবং running_var থাকে 1। ফলে মাত্র একটি ছোট ব্যাচ চালানোর পর যে Running Statistics পাওয়া যায়, তা প্রারম্ভিক মানের দিকেই ঝুঁকে থাকে—একে কখনোই পুরো Dataset-এর নিখুঁত পরিসংখ্যান বলে ধরে নেওয়া যাবে না।"
+        },
+        {
+          "type": "normalization_state_lab",
+          "title": "ইন্টারেক্টিভ পরীক্ষা: Normalization Axes ও Mode তুলনা",
+          "body": "নিচের ইন্টারেক্টিভ ল্যাবে আটটি সারির হিডেন Pre-activation ([8, 4] আকারের Tensor) কীভাবে BatchNorm (train ও eval মোডে) এবং LayerNorm-এ পরিবর্তিত হয় তা সরাসরি তুলনা করে দেখুন। কোনো একটি Row পরিবর্তন করে লক্ষ্য করুন কোন পরিসংখ্যান পুরো ব্যাচের সবার মধ্যে ভাগাভাগি হচ্ছে আর কোনটি কেবল ওই নির্দিষ্ট সারির নিজস্ব। বলে রাখা ভালো, আমাদের এই অধ্যায়ের মূল ট্রেনিং মডেলে কোনো BatchNorm স্তর নেই; Normalization-এর অভ্যন্তরীণ কলকব্জা নিখুঁতভাবে যাচাই করার জন্যই এই রেফারেন্স ল্যাবটি রাখা হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "ছোট Batch-এ BatchNorm-এর সীমাবদ্ধতা",
+          "body": "ইনপুট যদি 2D হয় এবং ট্রেনিংয়ের সময় প্রতি Channel-এ মাত্র একটি করে মান থাকে (অর্থাৎ Batch Size = 1), তবে Variance হিসাব করা অসম্ভব হয়ে পড়ে এবং BatchNorm-এর ট্রেনিং Forward Pass ব্যর্থ হয়। এমনকি ব্যাচ খুব ছোট হলেও এই পরিসংখ্যান ভীষণ অস্থির হতে পারে। তাই Batch Size, স্থানিক মাত্রা (Spatial Dimensions), track_running_stats সেটিং এবং ডেটার Distribution—সবকিছু মিলিয়েই BatchNorm কাজ করে। ছোট ব্যাচে সমস্যা হলে অনেকেই চোখ বুজে LayerNorm বসিয়ে দেন; কিন্তু মনে রাখবেন, LayerNorm গাণিতিকভাবে সম্পূর্ণ ভিন্ন অক্ষ বরাবর কাজ করে—এটি কোনো স্বয়ংক্রিয় বা হুবহু বিকল্প নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে ব্যাখ্যা করবেন",
+          "body": "ইন্টারভিউতে BatchNorm নিয়ে প্রশ্ন এলে তিনটি বিষয় স্পষ্টভাবে তুলে ধরুন: প্রথমত, কোডের উদাহরণ দিয়ে দেখান কেন Forward Pass-এর Variance (correction=0) আর running_var আপডেটের Variance (correction=1)-এর হর আলাদা হয়। দ্বিতীয়ত, ভুলবশত Validation চালানোর সময় মডেল train() মোডে থেকে গেলে কীভাবে Running Buffer দূষিত হয়ে যায় তা ব্যাখ্যা করুন। তৃতীয়ত, মডেল এক্সপোর্ট করার সময় শুধু শেখাযোগ্য Weight নিয়ে যদি Running Buffer বাদ দেওয়া হয়, তবে Inference-এর ফলাফল কেন আমূল বদলে যাবে তা পরিষ্কার করে বলুন।"
+        },
+        {
+          "type": "text",
+          "title": "খাতাকলমে হিসাব: পরপর দুটি Batch-এ Running Statistics কীভাবে বদলায়?",
+          "body": "বিষয়টি হাতেনাতে বোঝার জন্য একটি একক Channel-এ পরপর দুটি ছোট ব্যাচ [1, 3] এবং [5, 7] কল্পনা করা যাক, যেখানে momentum = 0.1, affine = False এবং eps = 1e-5। প্রথম ব্যাচ [1, 3]-এর গড় 2, Forward Variance হলো ((1 − 2)^2 + (3 − 2)^2) / 2 = 1, কিন্তু Unbiased প্রাক্কলন হলো 2 / (2 − 1) = 2। একইভাবে দ্বিতীয় ব্যাচ [5, 7]-এর গড় 6 এবং Unbiased Variance হলো 2। ফলে running_mean ধাপে ধাপে 0 → 0.2 → 0.78-এ পৌঁছায় (0.9 × 0 + 0.1 × 2 = 0.2, এরপর 0.9 × 0.2 + 0.1 × 6 = 0.78), আর running_var বদলে হয় 1 → 1.1 → 1.19 (0.9 × 1 + 0.1 × 2 = 1.1, এরপর 0.9 × 1.1 + 0.1 × 2 = 1.19)। এবার মডেলকে eval() মোডে নিয়ে একক ইনপুট 3 পাঠালে তার Normalization হবে (3 − 0.78) / √(1.19 + 1e-5)। অথচ train() মোডে এই একই 3-এর আউটপুট নির্ভর করত সে কোন ব্যাচের সঙ্গীদের সাথে প্রবেশ করছে তার ওপর!"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ পরপর দুটি Batch ও Eval Query যাচাই",
+          "body": "import torch\n\nnormalization = torch.nn.BatchNorm1d(\n    1, affine=False, momentum=0.1, eps=1e-5, dtype=torch.float64\n)\nwith torch.no_grad():\n    first_output = normalization(torch.tensor([[1.0], [3.0]], dtype=torch.float64))\n    normalization(torch.tensor([[5.0], [7.0]], dtype=torch.float64))\nreference = (\n    torch.tensor([-1.0, 1.0], dtype=torch.float64) / (1 + normalization.eps) ** 0.5\n)\ntorch.testing.assert_close(first_output[:, 0], reference)\ntorch.testing.assert_close(\n    normalization.running_mean, torch.tensor([0.78], dtype=torch.float64)\n)\ntorch.testing.assert_close(\n    normalization.running_var, torch.tensor([1.19], dtype=torch.float64)\n)\nnormalization.eval()\nquery = normalization(torch.tensor([[3.0]], dtype=torch.float64))\nprint(\n    *first_output[:, 0].tolist(),\n    round(normalization.running_mean.item(), 6),\n    round(normalization.running_var.item(), 6)\n)\nprint(round(query.item(), 6), normalization.num_batches_tracked.item())\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজেকে যাচাই করুন",
+          "body": "উপরের কোডে torch.no_grad() ব্লকের ভেতরে ট্রেনিং Forward Pass চালানো সত্ত্বেও BatchNorm-এর running_mean এবং running_var কেন পরিবর্তিত হলো?",
+          "solution": "কারণ torch.no_grad() কেবল Autograd ইঞ্জিনে Derivative বা Gradient Graph রেকর্ড করা বন্ধ করে; এটি মডিউলের train বা eval মোড নিয়ন্ত্রণ করে না। মডেল যতক্ষণ train() মোডে এবং track_running_stats=True অবস্থায় থাকে, ততক্ষণ প্রতিটি Forward Pass-এই Running Buffer-গুলো ইনপুট ব্যাচ অনুযায়ী হালনাগাদ হতে থাকে।",
+          "reference": "https://docs.pytorch.org/docs/2.15/generated/torch.nn.BatchNorm1d.html"
+        }
+      ]
+    },
+    {
+      "id": "ch17_layernorm",
+      "title": "LayerNorm বনাম Feature Preprocessing",
+      "subtitle": "Feature Axis বরাবর Normalization, Affine Parameter ও Sample-এর স্বাধীনতা",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন ও কোন অক্ষ বরাবর LayerNorm কাজ করে?",
+          "body": "আগের পাঠে আমরা দেখেছি, BatchNorm প্রতিটি Channel-এ পুরো ব্যাচের সব Sample-এর ওপর গড় ও ভেদাঙ্ক হিসাব করে—যার ফলে ব্যাচ ছোট হলে বা train ও eval মোডের মধ্যে ব্যবধান তৈরি হলে জটিলতা দেখা দেয়। এর বিপরীতে LayerNorm(4) প্রতিটি Sample বা সারির শেষ মাত্রার (Last Dimension) চারটি Feature-কে নিজের ভেতরেই Normalize করে; আর একাধিক মাত্রার normalized_shape দিলে শেষের সেই নির্দিষ্ট অক্ষগুলো জুড়ে হিসাবটি চলে। সবচেয়ে বড় সুবিধা হলো, train() এবং eval()—দুই মোডেই প্রতিটি সারির পরিসংখ্যান সরাসরি বর্তমান ইনপুট থেকেই হিসাব করা হয়; এখানে ডিফল্টভাবে কোনো running_mean বা running_var সংরক্ষণ করার প্রয়োজন পড়ে না।"
+        },
+        {
+          "type": "text",
+          "title": "Affine Parameter-এর গঠন ও মাত্রা",
+          "body": "LayerNorm-এ elementwise_affine=True থাকলে শেখাযোগ্য Gamma এবং Beta-র আকার হয় ঠিক normalized_shape-এর সমান, যেখানে BatchNorm-এ এই প্যারামিটারগুলো থাকে প্রতি Channel অনুযায়ী। তাই মডেল এক্সপোর্ট বা আর্কিটেকচার ডকুমেন্ট করার সময় শেখাযোগ্য Parameter এবং Buffer-এর সংখ্যা ও Shape আলাদাভাবে নথিবদ্ধ রাখা ভালো অভ্যাস। আগের ইন্টারেক্টিভ ল্যাবে আমরা কেবল মূল Normalization পাটিগণিতটুকু স্পষ্টভাবে দেখার জন্য দুই স্তরেই Affine অংশটি বন্ধ রেখেছিলাম।"
+        },
+        {
+          "type": "math",
+          "title": "LayerNorm-এর গড়, ভেদাঙ্ক ও রূপান্তরের সমীকরণ",
+          "body": "\\mu_i={1\\over H}\\sum_jx_{ij},\\quad v_i={1\\over H}\\sum_j(x_{ij}-\\mu_i)^2,\\quad\\mathrm{LN}(x_i)={x_i-\\mu_i\\over\\sqrt{v_i+\\epsilon}}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ LayerNorm ও একক Row-এর স্বাধীনতা যাচাই",
+          "body": "import torch\n\nx = torch.tensor(\n    [[1.0, 2.0, 3.0, 4.0], [2.0, 4.0, 6.0, 8.0]], dtype=torch.float64\n)  # Illustration.\nln = torch.nn.LayerNorm(4, elementwise_affine=False, dtype=torch.float64)\nexpected = (x - x.mean(-1, keepdim=True)) / torch.sqrt(\n    x.var(-1, correction=0, keepdim=True) + 1e-5\n)\ntorch.testing.assert_close(ln(x), expected)\nln.eval()\ntorch.testing.assert_close(ln(x[:1]), ln(x)[:1])\n"
+        },
+        {
+          "type": "text",
+          "title": "Dataset Preprocessing আর LayerNorm কেন এক জিনিস নয়?",
+          "body": "অনেকের মনেই প্রশ্ন জাগে—ডেটা শুরুর StandardScaler আর নেটওয়ার্কের ভেতরের LayerNorm কি একই কাজ করে? একদমই না! StandardScaler পুরো Training Dataset-এর ওপর প্রতিটি কলামের (Feature-এর) গড় ও স্কেল একবার শিখে নেয় এবং কাঁচা ইনপুটের ওপর তা বারবার প্রয়োগ করে। অন্যদিকে LayerNorm কাজ করে একটি একক সারির ভেতরের সব হিডেন Feature জুড়ে। তাই একটির জায়গায় অন্যটি বসালে মডেলের গাণিতিক ফাংশনই বদলে যায়! যেমন উপরের কোডেই দেখুন, [1, 2, 3, 4] এবং তার দ্বিগুণ [2, 4, 6, 8]—দুটি সারি LayerNorm-এর পর হুবহু একই আউটপুট দেয়, যা কলামভিত্তিক StandardScaler-এ কখনোই হতো না। তাছাড়া StandardScaler ভুল জায়গায় fit করলে Data Leakage ঘটে, কিন্তু LayerNorm-এ অন্য সারির তথ্য মেশার সেই ঝুঁকি নেই।"
+        },
+        {
+          "type": "text",
+          "title": "অন্যান্য Sample থেকে স্বাধীনতা এবং পুরো মডেলের প্রেক্ষাপট",
+          "body": "উপরের কোডের শেষ লাইনে আমরা দেখেছি, প্রথম সারিটিকে একা (x[:1]) পাঠানো হোক বা পুরো ব্যাচের সাথে (x), LayerNorm-এর আউটপুট বিন্দুমাত্র বদলায় না। তবে এই বৈশিষ্ট্যটি কেবল ওই LayerNorm স্তরের নিজস্ব—পুরো নেটওয়ার্কের মধ্যে যদি BatchNorm, Dropout বা ব্যাচ-নির্ভর অন্য কোনো অপারেশন থেকে থাকে, তবে সামগ্রিক আউটপুট কিন্তু আর ব্যাচ-নিরপেক্ষ থাকবে না। তাই কোনো মডেলের আচরণ সম্পর্কে ঢালাও দাবি করার আগে প্রতিটি স্তরের অক্ষ ও অপারেশনের শর্ত (Axis Contract) যাচাই করে নেওয়া উচিত।"
+        },
+        {
+          "type": "text",
+          "title": "শূন্য Variance ও Numerical Stability-তে Epsilon-এর ভূমিকা",
+          "body": "কোনো সারির সবগুলো Feature-এর মান যদি হুবহু সমান হয়ে যায় (যেমন [5.0, 5.0, 5.0, 5.0]), কিংবা মাত্র একটি Feature থাকে, তখন Variance শূন্য হয়ে পড়ে। ঠিক এই জায়গায় হরের ভেতরে থাকা ক্ষুদ্র ধ্রুবক eps (1e-5) শূন্য দিয়ে ভাগ হওয়ার বিপর্যয় ঠেকিয়ে হিসাবটিকে স্থিতিশীল রাখে। তবুও বাস্তবে ইনপুটের মান অতিরিক্ত বড় হলে, কম Precision-এর Dtype (যেমন float16) ব্যবহার করলে বা Catastrophic Cancellation ঘটলে সংখ্যার সূক্ষ্মতা নষ্ট হচ্ছে কি না, তা আলাদাভাবে পরীক্ষা করা দরকার।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে অনুশীলন",
+          "body": "নিজে একটি ছোট পরীক্ষা চালিয়ে দেখুন: একই ইনপুট সারিকে একবার Batch Size = 1 এবং আরেকবার Batch Size = 8-এ রেখে LayerNorm-এর আউটপুট মিলিয়ে দেখুন, আর তার পাশেই train() মোডে BatchNorm চালিয়ে দেখুন সহযাত্রী সারিগুলো বদলালে কীভাবে আউটপুট পাল্টে যায়। মনে রাখবেন, কোন আর্কিটেকচারে BatchNorm ভালো আর কোথায় LayerNorm ভালো—তা মুখস্থ কোনো নিয়ম দিয়ে না বলে সবসময় নির্দিষ্ট টাস্ক, ব্যাচের আকার এবং পরীক্ষালব্ধ ফলাফলের ভিত্তিতে নির্ধারণ করতে হয়।"
+        }
+      ]
+    },
+    {
+      "id": "ch17_schedules",
+      "title": "Learning Rate Schedule: কোন ধাপে কোন Rate ব্যবহৃত হচ্ছে?",
+      "subtitle": "Epoch-এর সীমানা, ব্যবহৃত বনাম পরবর্তী Rate, Warmup এবং Resume করার সঠিক ক্রম",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Scheduler কখন ও কোন এককে পা ফেলে?",
+          "body": "ট্রেনিংয়ের শুরুতে বড় পদক্ষেপে এগিয়ে পরে সূক্ষ্মভাবে স্থির হওয়ার জন্য আমরা Learning Rate Schedule ব্যবহার করি। কিন্তু একটি Scheduler কি প্রতিটি Optimizer Step-এর পর আপডেট হবে, নাকি প্রতিটি Epoch শেষে, নাকি Validation Metric দেখার পর? আমাদের বর্তমান এক্সপেরিমেন্টে StepLR প্রতি Epoch শেষে—অর্থাৎ ওই Epoch-এর সবগুলো Optimizer Step সম্পন্ন হওয়ার ঠিক পরে—একবার করে কল করা হয়। PyTorch-এ opt.step()-এর আগে ভুল করে schedule.step() কল করলে প্রথম Learning Rate-টি বাদ পড়ে যেতে পারে বা পুরো সূচি এক ধাপ সরে যেতে পারে। তাই ডকুমেন্টেশন পড়ার পাশাপাশি ট্রেনিং চলাকালীন আসলেই কোন ধাপে কত Learning Rate প্রযুক্ত হলো তা লগ করে মিলিয়ে দেখা আবশ্যক।"
+        },
+        {
+          "type": "text",
+          "title": "ব্যবহৃত Rate (used_lr) বনাম পরবর্তী Rate (next_lr)",
+          "body": "লগিং ও ডিবাগিংয়ের সময় সবচেয়ে বেশি বিভ্রান্তি তৈরি হয় Epoch-এর শেষ সীমানায়। ধরা যাক, আমাদের রেসিপিতে প্রারম্ভিক Learning Rate হলো 0.01, step_size = 20 এবং gamma = 0.5। এখানে ২০তম Epoch (Epoch 20)-এর সবগুলো ব্যাচ কিন্তু 0.01 হারেই ট্রেনিং পায়; ওই Epoch শেষ হওয়ার পর যখন schedule.step() চলে, তখন পরবর্তী একুশতম Epoch-এর জন্য হার কমে 0.005 নির্ধারিত হয়। একইভাবে Epoch 40-এ ব্যবহৃত হার থাকে 0.005, আর তার শেষে Scheduler পরের সম্ভাব্য হারকে কমিয়ে 0.0025 করে রাখে—যদিও ৪০তম Epoch-এই আমাদের ট্রেনিং রান শেষ হয়ে যায়! এই সূক্ষ্ম পার্থক্যটি স্বচ্ছ রাখার জন্যই আমাদের রিপোর্টে used_lr এবং next_lr দুটি আলাদা ফিল্ডে সংরক্ষণ করা হয়।"
+        },
+        {
+          "type": "math",
+          "title": "সম্পন্ন হওয়া Epoch সংখ্যার সাপেক্ষে পরবর্তী Learning Rate-এর সূত্র",
+          "body": "\\eta_e=\\eta_0\\gamma^{\\lfloor e/s\\rfloor}\\quad\\text{for the next epoch after }e\\text{ completed epochs}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ প্রতি Epoch-এ ব্যবহৃত ও হালনাগাদ হওয়া Learning Rate যাচাই",
+          "body": "import torch\n\np = torch.nn.Parameter(torch.tensor(1.0))\nopt = torch.optim.SGD([p], lr=0.01)\nschedule = torch.optim.lr_scheduler.StepLR(opt, step_size=2, gamma=0.5)\nused = []\nfor epoch in range(3):\n    used.append(opt.param_groups[0][\"lr\"])\n    p.grad = torch.ones_like(p)\n    opt.step()\n    schedule.step()\nassert used == [0.01, 0.01, 0.005]\nprint(used, opt.param_groups[0][\"lr\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "Warmup ও Cosine Decay-এর নকশা",
+          "body": "আধুনিক বড় মডেলগুলোতে শুরুতে খুব ছোট হার থেকে ধাপে ধাপে মূল হারে ওঠার জন্য Warmup এবং পরে মসৃণভাবে কমানোর জন্য Cosine Decay খুবই জনপ্রিয়। তবে মনে রাখবেন, এগুলো আমাদের নির্ধারিত ট্রেনিং রেসিপির অংশ—এগুলো দিলেই যে যেকোনো মডেল আপনাআপনি স্থিতিশীল হয়ে যাবে, এমন কোনো জাদুকরী নিশ্চয়তা নেই। তাছাড়া Warmup কতক্ষণ চলবে এবং মোট কতগুলো আপডেটে Cosine চক্র শেষ হবে, তার একক (Step নাকি Epoch) শুরুতেই সুনির্দিষ্টভাবে বেঁধে দিতে হয়। আমাদের বর্তমান রেফারেন্স রানে কেবল StepLR ব্যবহৃত হয়েছে; এখানে আলাদা করে Cosine সূচির কোনো তুলনামূলক পরীক্ষা চালানো হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "Validation-নির্ভর সূচি: ReduceLROnPlateau",
+          "body": "কিছু ক্ষেত্রে পূর্বনির্ধারিত ঘড়ির কাঁটা মেনে হার না কমিয়ে ReduceLROnPlateau ব্যবহার করা হয়—যেখানে নির্দিষ্ট একটি Validation Metric, min বা max মোড, patience এবং threshold-এর ওপর ভিত্তি করে সিদ্ধান্ত নেওয়া হয়। খেয়াল রাখবেন, যেহেতু এখানে Validation স্কোর দেখে ট্রেনিংয়ের আচরণ বদলানো হচ্ছে, তাই এটিও একধরনের মডেল অভিযোজন বা Selection-এর অংশ। সাধারণ প্রতি-ব্যাচ Scheduler-এর মতো একে চোখ বুজে প্রতি ধাপে কল করা যায় না; ঠিক কখন Validation শেষ হচ্ছে এবং কোন Metric পাস করা হচ্ছে, তা স্পষ্টভাবে নিয়ন্ত্রণ করতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Checkpoint থেকে Resume করার সময় লোডিংয়ের ক্রম",
+          "body": "মাঝপথে থেমে যাওয়া ট্রেনিং আবার চালু করার সময় আরেকটি সূক্ষ্ম ফাঁদ হলো Optimizer ও Scheduler তৈরির ক্রম। নতুন করে Optimizer ও Scheduler ইনিশিয়ালাইজ করার পর অবশ্যই তাদের সংরক্ষিত state_dict সঠিক ক্রমে লোড করতে হবে; তা না হলে Scheduler-এর কনস্ট্রাক্টর বা অসময়ে দেওয়া কোনো অতিরিক্ত step() কল সংরক্ষিত Learning Rate-কে মুছে দিতে বা এক ধাপ সরিয়ে দিতে পারে। শুধু মডেলের Weight লোড করলে কখনোই Scheduler-এর অভ্যন্তরীণ কাউন্টার ফিরে আসে না—তাই আমাদের পূর্ণাঙ্গ Checkpoint সবসময় schedule.step() সম্পন্ন হওয়ার পরের পরিষ্কার সীমানাতেই সংরক্ষণ করা হয়।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে অনুশীলন",
+          "body": "আমাদের রেসিপির প্রারম্ভিক হার 0.01, step_size = 20 এবং gamma = 0.5 ধরে খাতায় আগেভাগে হিসাব করে বলুন Epoch 20, Epoch 21 এবং Epoch 40-এ used_lr ও next_lr কত হবে। এরপর কোডে একটি পরীক্ষা চালিয়ে দেখুন: মাঝপথে থেমে যাওয়া রানে যদি Scheduler-এর State রিসেট হয়ে যায়, তবে পরবর্তী Learning Rate ট্রেস কীভাবে বদলে যায়। মনে রাখবেন, ট্রেনিং শেষে দুটি রানের চূড়ান্ত Learning Rate কাকতালীয়ভাবে সমান দেখালেও মাঝপথে হারের ইতিহাস ভিন্ন হলে মডেলের শেখার গতিপথ (Trajectory) কখনোই এক থাকে না!"
+        }
+      ]
+    },
+    {
+      "id": "ch17_clipping",
+      "title": "Gradient Clipping ও সংখ্যার সুস্থতা যাচাই (Finite-Value Checks)",
+      "subtitle": "Global Norm Cap, Parameter Update-এর সীমা এবং Accumulation ও AMP-তে সঠিক ক্রম",
+      "duration": "57 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Global Norm Clipping কীভাবে কাজ করে?",
+          "body": "ট্রেনিং চলাকালীন কোনো একটি অস্বাভাবিক ব্যাচে হঠাৎ বিশাল Gradient তৈরি হলে মডেল এক ধাক্কায় কক্ষচ্যুত হতে পারে। এটি সামলাতে PyTorch-এর clip_grad_norm_ মডেলের সবগুলো Parameter-এর Gradient-কে একত্রে একটি সম্মিলিত ভেক্টর হিসেবে দেখে তার L2 Norm মাপে, এবং সেই মান নির্ধারিত সীমা (Cap) ছাড়িয়ে গেলে সব Gradient-কে একই অনুপাতে In-place ছোট করে দেয়। এখানে একটি জরুরি খুঁটিনাটি মনে রাখবেন: ফাংশনটি রিটার্ন ভ্যালু হিসেবে দেয় Clipping করার আগের (Pre-clip) Norm—তাই লগ করার সময় ভুল করে সেটিকে Clipping-পরবর্তী Norm বলে চালিয়ে দেবেন না! আর clip_grad_value_ প্রতিটি উপাদানকে আলাদাভাবে কেটে দেয়, যার ফলে ভেক্টরের দিকই বদলে যেতে পারে—তাই দুটি অপারেশন সম্পূর্ণ আলাদা।"
+        },
+        {
+          "type": "text",
+          "title": "Gradient Clipping যা সারাতে পারে না",
+          "body": "অনেকেই মনে করেন Gradient Clipping চালু করলেই বুঝি সব গাণিতিক বিপদ দূর হয়ে গেল। বাস্তবে ভুল Label, বেমানান Loss Shape, গোপন Data Leakage কিংবা NaN/Inf তৈরি হওয়ার মতো মূল বাগগুলো Clipping দিয়ে কখনোই ঠিক হয় না। PyTorch-এ error_if_nonfinite=True ব্যবহার করলে Gradient-এ NaN বা Inf দেখা মাত্রই প্রোগ্রাম থেমে গিয়ে আপনাকে সতর্ক করে দেবে। কোনো ধাপে অসীম বা অবৈধ মান এলে সেটিকে চাপা দিয়ে আপাতদৃষ্টিতে সুন্দর Loss Curve বানানোর চেষ্টা না করে সাথে সাথে Loss, Gradient এবং Parameter পরীক্ষা করে মূল কারণটি খুঁজে বের করুন।"
+        },
+        {
+          "type": "math",
+          "title": "Global L2 Norm Clipping-এর স্কেলিং সূত্র",
+          "body": "g\\leftarrow g\\min\\left(1,{c\\over\\|g\\|_2+\\epsilon}\\right)"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Pre-clip Norm ও Clipped Gradient যাচাই",
+          "body": "import torch\n\np = torch.nn.Parameter(torch.zeros(2, dtype=torch.float64))  # Illustration.\np.grad = torch.tensor([3.0, 4.0], dtype=torch.float64)\nbefore = torch.nn.utils.clip_grad_norm_(\n    [p], 1.0, error_if_nonfinite=True, foreach=False\n)\nassert abs(before.item() - 5) < 1e-12\nassert torch.linalg.vector_norm(p.grad) <= 1.000001\nprint(before.item(), p.grad.tolist())\n"
+        },
+        {
+          "type": "text",
+          "title": "Gradient বাঁধলেই কি মোট Parameter Update বাঁধা পড়ে?",
+          "body": "সাধারণ SGD-তে Gradient-এর Norm যদি সর্বোচ্চ c-তে বেঁধে দেওয়া হয়, তবে প্রতিটি পদক্ষেপে Parameter পরিবর্তনের আকারও সর্বোচ্চ learning_rate × c-এর মধ্যে সীমাবদ্ধ থাকে। কিন্তু Adam বা AdamW-এর মতো Adaptive Optimizer ব্যবহার করলে হিসাবটি আর এত সরল থাকে না! কারণ সেখানে বর্তমান কাঁচা Gradient বাঁধা থাকলেও পুরোনো First Moment ও Second Moment-এর অনুপাত এবং আলাদাভাবে যুক্ত হওয়া Decoupled Weight Decay মিলে প্রকৃত Parameter Update-এর মান নির্ধারণ করে। তাই পুরো আপডেটের আকার বুঝতে হলে শুধু কাঁচা Gradient নয়, Optimizer State এবং Weight Decay-এর প্রভাবও হিসাবে নিতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "আমাদের এক্সপেরিমেন্টে Pre-clip Norm লগিং",
+          "body": "আমাদের মূল ট্রেনিং রানে Global L2 Norm-এর সীমা 1.0 নির্ধারণ করা আছে এবং রিপোর্টে প্রতিটি Epoch-এর সর্বোচ্চ Pre-clip Norm সংরক্ষণ করা হয়। ট্রেনিংয়ে সত্যিই কখনো Clipping সক্রিয় হয়েছিল কি না (অর্থাৎ Norm কখনো 1.0 পেরিয়েছিল কি না), তা লগের সংখ্যার দিকে তাকালেই কেবল বোঝা যাবে। শুধু কোডে clip_grad_norm_ কনফিগার করা আছে দেখেই ট্রেনিংয়ে Exploding Gradient ঘটেছিল—এমন অনুমানভিত্তিক দাবি কখনোই করা উচিত নয়।"
+        },
+        {
+          "type": "text",
+          "title": "Mixed Precision (AMP)-এ Clipping করার সঠিক ক্রম",
+          "body": "যখন Automatic Mixed Precision (AMP) ও GradScaler ব্যবহার করে ট্রেনিং চালানো হয়, তখন Underflow এড়াতে Backward Pass-এর Gradient-গুলো একটি বড় সংখ্যা (যেমন 128 বা 65536) দিয়ে গুণ করা অবস্থায় থাকে। এই অবস্থায় ভুলেও সরাসরি clip_grad_norm_ কল করবেন না! সঠিক ক্রমটি হলো: সবার আগে scaler.unscale_(optimizer) দিয়ে Gradient-কে আসল স্কেলে ফিরিয়ে আনা, তারপর Finite Check ও Gradient Clipping চালানো, এবং সবশেষে scaler.step(optimizer) ও scaler.update() কল করা। স্কেল করা অবস্থায় Clip করলে আপনার নির্ধারিত সীমাটিও বাস্তবে শতগুণ ছোট হয়ে যাবে! উল্লেখ্য, আমাদের স্থানীয় CPU float64 ওয়ার্কফ্লোতে AMP চালানো হয় না; প্রকৃত অ্যাক্সিলারেটরে এই ক্রমটি আলাদাভাবে যাচাই করে নিতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে সূক্ষ্মতা যাচাই",
+          "body": "উপরের কোডটি খেয়াল করুন: [3, 4] ভেক্টরটির L2 Norm হলো 5, তাই সীমা 1.0 দিয়ে Clip করার পর সেটি প্রায় [0.6, 0.8] হয়েছে। হরে অত্যন্ত ক্ষুদ্র একটি Floating-point Epsilon যোগ থাকার কারণে মানটি হুবহু 0.6 ও 0.8 না হয়ে দশমিকের অনেক ঘর পরে সামান্য ছোট হয়। নিজে কোড চালিয়ে সম্পূর্ণ শূন্য Gradient ([0.0, 0.0]) এবং NaN যুক্ত Gradient-এর ক্ষেত্রে ফাংশনটি কী আচরণ করে এবং Clipping-পরবর্তী Norm কত থাকে তা পরীক্ষা করে দেখুন।"
+        },
+        {
+          "type": "text",
+          "title": "কেন অপারেশনের ক্রম গুরুত্বপূর্ণ: Accumulation ও Scaling উদাহরণ",
+          "body": "অপারেশনের ক্রম উল্টে গেলে গাণিতিক ফলাফল কীভাবে বদলে যায়, তা একটি ছোট উদাহরণ দিয়ে দেখা যাক। ধরা যাক, দুটি Microbatch থেকে পাওয়া Gradient যথাক্রমে [3, 0] এবং [0, 4], আর আমাদের Norm Cap হলো 1.0। সঠিক নিয়মে আগে দুটি Gradient যোগ করলে পাওয়া যায় [3, 4] (যার Norm = 5), এবং এরপর সেটিকে Clip করলে সঠিক দিক বজায় রেখে পাওয়া যায় [0.6, 0.8] (যার Norm = 1.0)। কিন্তু কেউ যদি প্রতিটি Microbatch আলাদাভাবে Clip করে পরে যোগ করেন, তবে [3, 0] হয়ে যাবে [1, 0] এবং [0, 4] হয়ে যাবে [0, 1]—যাদের যোগফল হবে [1, 1], যার দিকও আলাদা এবং Norm দাঁড়াবে √2 ≈ 1.414214! কারণ Clipping একটি Nonlinear অপারেশন, তাই যোগের আগে ও পরে এটি বিনিময়যোগ্য নয়। একইভাবে AMP-তে scale = 128 থাকা অবস্থায় [3, 4]-কে সীমা 1.0 দিয়ে Clip করে পরে 128 দিয়ে ভাগ করলে চূড়ান্ত Norm কমে দাঁড়াবে মাত্র 1 / 128 = 0.0078125!"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Accumulation ও AMP Scaling-এ ক্রম পরিবর্তনের প্রভাব",
+          "body": "import torch\n\nparts = [\n    torch.tensor([3.0, 0.0], dtype=torch.float64),\n    torch.tensor([0.0, 4.0], dtype=torch.float64),\n]\n\n\ndef clipped(gradient, cap=1.0):\n    norm = gradient.norm().item()\n    return gradient * min(1.0, cap / norm) if norm else gradient.clone()\n\n\naccumulated = sum(parts)\ncorrect = clipped(accumulated)\nper_part = sum(clipped(part) for part in parts)\nscale = 128.0\nclipped_while_scaled = clipped(accumulated * scale) / scale\nprint(\n    *correct.tolist(),\n    round(per_part.norm().item(), 6),\n    clipped_while_scaled.norm().item()\n)\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজেকে যাচাই করুন",
+          "body": "Gradient Accumulation চলাকালীন পুরো গ্রুপ শেষ হওয়ার আগেই যদি প্রতিটি Microbatch-এর পর optimizer.step() কল করে ফেলা হয়, তবে ট্রেনিংয়ে কী কী পরিবর্তন ঘটবে?",
+          "solution": "প্রথমত, একই গ্রুপের পরের Microbatch-টি পুরোনো Parameter-এর বদলে পরিবর্তিত নতুন Parameter দেখবে, ফলে বড় ব্যাচের সমতুল্য Gradient আর হিসাব হবে না। দ্বিতীয়ত, Momentum বা Adam-এর অভ্যন্তরীণ Moment State, AdamW-এর Weight Decay এবং Step-ভিত্তিক Learning Rate Scheduler নির্ধারিত হিসাবের চেয়ে অনেক বেশি বার আপডেট হয়ে যাবে। কাঙ্ক্ষিত Effective Batch Update পেতে হলে পুরো গ্রুপের সব Microbatch-এর Gradient জমা করার পর মাত্র একবার optimizer.step() কল করতে হবে।",
+          "reference": "https://d2l.ai/"
+        }
+      ]
+    },
+    {
+      "id": "ch17_accumulation",
+      "title": "Gradient Accumulation, Regularization ও Loss Logging",
+      "subtitle": "Effective Batch Objective বজায় রাখা এবং অন্যান্য উপাদানের সাথে এর মিথস্ক্রিয়া",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "অসমান Microbatch-এ নিখুঁত গড় Gradient পাওয়ার শর্ত",
+          "body": "আগের পাঠের শেষ প্রশ্নেই আমরা দেখেছি যে Gradient Accumulation-এর মূল উদ্দেশ্য হলো সীমিত মেমোরিতে একাধিক ছোট Microbatch চালিয়ে একটি বড় ব্যাচের সমতুল্য আপডেট তৈরি করা। যদি আমাদের Loss প্রতিটি উদাহরণের ওপর গড় হিসেবে সংজ্ঞায়িত থাকে এবং পুরো গ্রুপ চলাকালীন Parameter স্থির রাখা হয়, তবে অসমান আকারের Microbatch-এর গড় Loss-গুলোকে n_k / N (যেখানে n_k হলো ওই Microbatch-এর আকার এবং N হলো পুরো গ্রুপের মোট উদাহরণ সংখ্যা) দিয়ে ওজন করে Backward Pass চালালে হুবহু পূর্ণ ব্যাচের সমান Gradient পাওয়া যায়। কিন্তু মাঝপথে optimizer.step() কল করলে যেমন এই সমতুল্যতা ভেঙে যায়, তেমনি মডেলে BatchNorm বা ব্যাচ-নির্ভর অন্য কোনো স্তর থাকলেও পূর্ণ ব্যাচের Forward Pass-এর সাথে এর আচরণ আলাদা হয়ে যায়।"
+        },
+        {
+          "type": "text",
+          "title": "Dropout থাকলে বড় Batch বনাম Microbatch-এর পার্থক্য",
+          "body": "মডেলে Dropout সক্রিয় থাকলে আরেকটি সূক্ষ্ম বিষয় কাজ করে। গাণিতিক প্রত্যাশার (Expectation) দিক থেকে বড় ব্যাচ এবং খণ্ড খণ্ড Microbatch-এর ধারণা এক হলেও, বাস্তবে একটি বড় টেনসরের ওপর একসাথে তৈরি হওয়া র‍্যান্ডম Dropout Mask আর কয়েকটি ছোট টেনসরের ওপর ধাপে ধাপে তৈরি হওয়া Mask হুবহু অভিন্ন হবে—এমন কোনো নিশ্চয়তা নেই। এমনকি আপনি যদি শুরুর RNG State সংরক্ষণ করেও রাখেন, টেনসরের Shape ও অপারেশনের ক্রম বদলে গেলে র‍্যান্ডম নম্বর খরচের ধারাও বদলে যেতে পারে। তাই তাত্ত্বিক প্রত্যাশার মিল আর সংখ্যার হুবহু গতিপথের (Exact Trajectory) মিল—দুটিকে গুলিয়ে ফেলা যাবে না।"
+        },
+        {
+          "type": "math",
+          "title": "Microbatch-এর গড় Loss থেকে পূর্ণ ব্যাচের Gradient পুনরুদ্ধারের সূত্র",
+          "body": "\\nabla L=\\sum_k{n_k\\over N}\\nabla\\overline L_k"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ ৩ + ১ আকারের অসমান Microbatch-এ হুবহু সমান Gradient যাচাই",
+          "body": "import torch\n\nx = torch.tensor([1.0, 2.0, 3.0, 4.0], dtype=torch.float64)  # Illustration.\nw = torch.tensor(1.0, dtype=torch.float64, requires_grad=True)\nfull = torch.autograd.grad((w * x).square().mean(), w)[0]\nw.grad = None\n# Backward accumulates into .grad; the seed or reduction sets the scale.\nfor batch in [x[:3], x[3:]]:\n    ((w * batch).square().mean() * len(batch) / len(x)).backward()\ntorch.testing.assert_close(w.grad, full)\n"
+        },
+        {
+          "type": "text",
+          "title": "Zeroing, Scaling এবং Clipping-এর সুনির্দিষ্ট সীমানা",
+          "body": "আগের পাঠে আমরা যেমন দেখেছি, Gradient Clipping অবশ্যই সবগুলো Microbatch-এর Backward Pass শেষ হওয়ার পর—অর্থাৎ পূর্ণ জমানো Gradient-এর ওপর—একবারই চালাতে হবে; প্রতি Microbatch-এ আলাদাভাবে Clip করলে Nonlinear রূপান্তরের কারণে যোগফল পাল্টে যাবে। একইভাবে optimizer.zero_grad() কল করতে হবে পুরো গ্রুপ শুরুর আগে, প্রতিটি Microbatch-এর আগে নয়। অর্থাৎ Zeroing, Loss Scaling, Clipping এবং Step Frequency—এই চারটি মিলে একটি অবিচ্ছেদ্য Update Contract তৈরি করে।"
+        },
+        {
+          "type": "text",
+          "title": "Weight Decay ও Scheduler-এর ধাপ গোনার হিসাব",
+          "body": "আরেকটি প্রায়ই উপেক্ষিত দিক হলো AdamW-এর Weight Decay। মনে রাখবেন, Weight Decay কার্যকর হয় প্রতিটি optimizer.step() কলে—প্রতিটি backward() কলে নয়! আপনি যদি Accumulation Factor বাড়িয়ে প্রতি Epoch-এ মোট Optimizer Step-এর সংখ্যা কমিয়ে ফেলেন, তবে একই সংখ্যক Epoch চালালেও প্যারামিটারগুলোর ওপর মোট Weight Decay-এর প্রভাব এবং ধাপ-ভিত্তিক Learning Rate Scheduler-এর অগ্রগতি দুটোই বদলে যাবে। তাই এক্সপেরিমেন্ট ডকুমেন্ট করার সময় শুধু Effective Batch Size লিখে দিলেই রেসিপি সম্পূর্ণ হয় না; Microbatch আকার এবং মোট Optimizer Step-এর হিসাবও স্পষ্ট থাকতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Online Training Loss বনাম Epoch-শেষে Eval Loss",
+          "body": "ট্রেনিং চলাকালীন আমরা প্রতিটি ব্যাচে যে Loss দেখি, তা মাপা হয় পরিবর্তনশীল Parameter এবং সক্রিয় Dropout-এর ভেতর দিয়ে। উদাহরণের সংখ্যা দিয়ে ওজন করে (Sample-weighted Average) পুরো Epoch-এর গড় বের করলেও সেটি কিন্তু ওই Epoch শেষে স্থির মডেলের eval() মোডের প্রকৃত Loss নয়! এই দুই সংখ্যার অর্থ আলাদা বলেই আমাদের রিপোর্টে online_train_bce এবং Epoch-পরবর্তী eval মোডের train_bce দুটি স্বতন্ত্র ফিল্ডে সংরক্ষণ করা হয়।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এর প্রস্তুতি",
+          "body": "ইন্টারভিউয়ের জন্য নিজেকে প্রস্তুত করতে প্রথমে খাতায় 3 + 1 আকারের দুটি অসমান Microbatch-এর ওজনযুক্ত গড় Gradient হিসাব করে দেখান কীভাবে তা ৪টি সারির পূর্ণ ব্যাচের গড়ের সমান হয়। এরপর ব্যাখ্যা করুন কেন মডেলে BatchNorm বা Dropout যোগ হলে এই হুবহু সমতুল্যতার শর্তটি আর অটুট থাকে না। সবশেষে বলুন, যদি একান্তই Accumulation চলাকালীন মাঝপথে Checkpoint নিতে হয়, তবে আংশিক জমানো Gradient এবং বর্তমান কাউন্টার কেন সংরক্ষণ করতে হবে।"
+        }
+      ]
+    },
+    {
+      "id": "ch17_book_accumulation",
+      "title": "Gradient Accumulation: অসমান Microbatch ও নিখুঁত Scaling",
+      "subtitle": "ধারণা থেকে সূত্র, খাতাকলমের হিসাব এবং Python কোডে যাচাই",
+      "duration": "18 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "কেন এই নিখুঁত Scaling-এর হিসাবটি দরকার?",
+          "body": "বাস্তব প্রজেক্টে মেমোরির সীমাবদ্ধতার কারণে বড় ব্যাচকে ছোট ছোট Microbatch-এ ভেঙে ট্রেনিং চালানো খুবই নৈমিত্তিক একটি কাজ। কিন্তু ডেটাসেটের মোট উদাহরণ সংখ্যা সবসময় Microbatch আকার দিয়ে নিঃশেষে বিভাজ্য হয় না—ফলে শেষ Microbatch-টি প্রায়ই আকারে ছোট হয়। এখন আপনি যদি প্রতিটি Microbatch-এর গড় Loss-কে সমান ওজন দিয়ে গড় করেন, তবে শেষের ওই ছোট্ট ব্যাচটির উদাহরণগুলো অন্যায্যভাবে অনেক বেশি গুরুত্ব পেয়ে যাবে! তাই কোড লেখার আগেই কাঙ্ক্ষিত পূর্ণ-ব্যাচ Objective-এর লব ও হর খাতায় লিখে নিলে Scaling-এর নিয়মটি একদম স্বচ্ছ হয়ে যায়।"
+        },
+        {
+          "type": "text",
+          "title": "ধাপে ধাপে বাস্তবায়নের নিয়ম",
+          "body": "পুরো Accumulation Group-এ মোট উদাহরণ সংখ্যা N জানা থাকলে নিয়মটি খুব সহজ: প্রতিটি Microbatch-এ সব উদাহরণের যোগফল Loss-কে সরাসরি N দিয়ে ভাগ করে backward() কল করুন (কিংবা গড় Loss-কে n_b / N দিয়ে গুণ করুন), এবং গ্রুপের সবগুলো Microbatch শেষ হলে মাত্র একবার optimizer.step() দিন। কেবল যখন সবগুলো Microbatch-এর আকার হুবহু সমান হয়, তখনই গড় Loss-কে ধাপ সংখ্যা K দিয়ে ভাগ করা একই কথা দাঁড়ায়—কিন্তু ডেটাসেটের শেষ আংশিক গ্রুপে N আলাদা হতে পারে বলে সাধারণ সূত্রটিই সবচেয়ে নিরাপদ। মনে রাখবেন: zero_grad() হবে গ্রুপ শুরুর আগে, আর Gradient Clipping হবে সব Gradient জমা হওয়ার পরে (এবং Mixed Precision-এ অবশ্যই unscale_-এর পরে)।"
+        },
+        {
+          "type": "math",
+          "title": "অসমান Microbatch-এর ওজনযুক্ত Gradient সমীকরণ",
+          "body": "\\nabla L=\\sum_{b=1}^{B}\\frac{n_b}{N}\\nabla\\bar\\ell_b,\\quad N=\\sum_b n_b"
+        },
+        {
+          "type": "text",
+          "title": "খাতাকলমে একটি সংখ্যার উদাহরণ",
+          "body": "ধরা যাক, আমাদের একটি গ্রুপে দুটি Microbatch আছে যাদের আকার যথাক্রমে 3 ও 1 (অর্থাৎ মোট উদাহরণ N = 4), এবং তাদের গড় Gradient এসেছে যথাক্রমে 2.0 ও 8.0। তাহলে ৪টি উদাহরণের সঠিক সম্মিলিত গড় Gradient হবে (3 × 2.0 + 1 × 8.0) / 4 = 14.0 / 4 = 3.5। অথচ কেউ যদি আকারের তোয়াক্কা না করে দুটির গড়কে সমান ওজনে গড় (Mean-of-means) করেন, তবে উত্তর আসবে (2.0 + 8.0) / 2 = 5.0—যা সম্পূর্ণ ভুল! একইভাবে ভুল Loss Reduction রেখে পরে আন্দাজে Learning Rate বাড়িয়ে-কমিয়ে তা পুষিয়ে নেওয়ার চেষ্টা কখনোই করবেন না।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ সঠিক ওজনযুক্ত গড় বনাম ভুল সমান-ওজন গড়",
+          "body": "microbatch_sizes, gradient_means = [3, 1], [2.0, 8.0]\ntotal = sum(microbatch_sizes)\naccumulated = sum(n * g / total for n, g in zip(microbatch_sizes, gradient_means))\n# The optimizer steps once after the complete accumulation group.\nwrong_equal_weight = sum(gradient_means) / len(gradient_means)\nprint(accumulated, wrong_equal_weight)\n"
+        },
+        {
+          "type": "text",
+          "title": "কোডের আউটপুট ও বাস্তব PyTorch লুপের সতর্কতা",
+          "body": "কোডটি চালালে আউটপুট হিসেবে পাওয়া যায় 3.5 এবং 5.0, যা আমাদের খাতাকলমের হিসাবের পার্থক্যটি সরাসরি প্রমাণ করে। বাস্তব PyTorch ট্রেনিং লুপে এই n_b / N স্কেলিংটি সরাসরি Autograd-সংযুক্ত Loss Tensor-এর ওপরেই করবেন যেন backward() কলের সময় সঠিক অনুপাতে Gradient জমা হয়—বিচ্ছিন্ন (Detached) সংখ্যার ওপর নয়। পাশাপাশি ট্রেনিংয়ের গড় Loss লগ করার সময়েও প্রতিটি ব্যাচের উদাহরণ সংখ্যা ও যোগফল (Sufficient Statistics) ধরে হিসাব করুন, যাতে লগের সংখ্যাতেও গড়ের গড় করার ভুল না ঢোকে।"
+        },
+        {
+          "type": "text",
+          "title": "কখন এই সমতুল্যতা প্রযোজ্য নয়?",
+          "body": "এই n_b / N স্কেলিং কেবল তখনই বড় ব্যাচের হুবহু সমান ফল দেয়, যখন প্রতিটি উদাহরণের Loss অন্য উদাহরণ থেকে স্বাধীনভাবে হিসাব করা যায়। কিন্তু নেটওয়ার্কে যদি BatchNorm থাকে (যা ব্যাচের অন্য সদস্যদের পরিসংখ্যান ব্যবহার করে), কিংবা Dropout-এর র‍্যান্ডম Mask আলাদা আকারে তৈরি হয়, অথবা Contrastive Loss-এর মতো ব্যাচ-নির্ভর কোনো Objective থাকে—তবে Microbatch-এ ভেঙে চালালে আর একক বড় ব্যাচের হুবহু সমতুল্য আচরণ পাওয়া যাবে না। অর্থাৎ গড় Gradient-এর সূত্র এক হওয়া মানেই মডেলের ভেতরের সব State Update এক হওয়া নয়।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজেকে যাচাই করুন",
+          "body": "দুটি Microbatch-এর আকার 2 এবং 2 হলে প্রতিটির গড় Loss-এ কত ওজন দিতে হবে? আর কোনো কারণে যদি Accumulation গ্রুপের ঠিক মাঝপথে Checkpoint সংরক্ষণ করতে হয়, তবে অতিরিক্ত কী কী State বাঁচিয়ে রাখতে হবে?",
+          "solution": "আকার 2 ও 2 হলে মোট উদাহরণ N = 4, তাই প্রতিটির ওজন হবে 2 / 4 = 0.5 এবং 0.5। আর গ্রুপের মাঝপথে হুবহু Resume করতে চাইলে আংশিক জমানো Gradient (.grad), এ পর্যন্ত প্রক্রিয়াকৃত উদাহরণ বা ধাপের কাউন্টার এবং RNG ও Data Iterator-এর বর্তমান State সংরক্ষণ করতে হবে—সেজন্যই বাস্তব সিস্টেমে জটিলতা এড়াতে সাধারণত পূর্ণ Optimizer Step সম্পন্ন হওয়ার সীমানাতেই Checkpoint সংরক্ষণ করা হয়।",
+          "reference": "https://pytorch.org/docs/stable/notes/amp_examples.html"
+        }
+      ]
+    },
+    {
+      "id": "ch17_validation",
+      "title": "Validation Mode ও Data Leakage যাচাই",
+      "subtitle": "Running Buffer সুরক্ষা, Sample-weighted হিসাব এবং Loss ব্যবধানের সঠিক ব্যাখ্যা",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "মূল্যায়নের সময় দুটি আলাদা নির্দেশ: eval() এবং no_grad()",
+          "body": "ট্রেনিং লুপের মাঝখানে যখন আমরা Validation সেটে মডেলের মান যাচাই করতে যাই, তখন দুটি উদ্দেশ্য স্পষ্টভাবে আলাদা করে লিখতে হয়: model.eval() এবং with torch.no_grad():। আমরা আগেই দেখেছি, ডিফল্ট কনফিগারেশনে model.eval() দিলে Dropout নিষ্ক্রিয় (Identity) হয়ে যায় এবং BatchNorm বর্তমান ব্যাচের বদলে আগে থেকে জমানো Running Statistics ব্যবহার করে—শুধুমাত্র torch.no_grad() দিলে কিন্তু এই আচরণ বদলায় না! আর বলার অপেক্ষা রাখে না, Validation চলাকালীন কখনোই কোনো Optimizer Update চালানো বা Preprocessing স্কেলার নতুন করে fit করা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "Split ও Scaling-এর সীমানা এবং State দূষণ রোধ",
+          "body": "আমাদের বর্তমান এক্সপেরিমেন্টে আগের অধ্যায় থেকে পাওয়া ভেতরের 776টি Training সারি এবং 190টি Validation সারির Split হুবহু পুনর্ব্যবহার করা হয়েছে। ইনপুট Feature-গুলোর গড় ও স্কেল কেবল ওই 776টি ট্রেনিং সারির ওপরই fit করা। নেটওয়ার্কে যদি BatchNorm থাকত (আমাদের মূল মডেলে অবশ্য BatchNorm নেই), তবে তার Running Buffer-গুলোও কেবল ট্রেনিং ডেটা থেকেই হালনাগাদ হওয়া উচিত; ভুলবশত train() মোডে রেখে Validation ডেটা চালালে সেই ডেটার পরিসংখ্যান ঢুকে মডেলের অভ্যন্তরীণ State দূষিত হয়ে যেত।"
+        },
+        {
+          "type": "math",
+          "title": "Eval Mode-এ পূর্ণ Dataset-এর গড় Loss-এর সংজ্ঞা",
+          "body": "L_{\\mathrm{eval}}={1\\over N}\\sum_i\\ell(f_{\\theta,\\mathrm{eval}}(x_i),y_i)"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Eval Mode ও no_grad()-এ স্থির আউটপুট যাচাই",
+          "body": "import torch\nfrom torch import nn\n\nmodel = nn.Sequential(nn.Linear(2, 4), nn.ReLU(), nn.Dropout(0.2), nn.Linear(4, 1))\nX = torch.ones(3, 2)  # Illustration, not performance evidence.\nmodel.eval()\nwith torch.no_grad():\n    first = model(X)\n    second = model(X)\ntorch.testing.assert_close(first, second)\nassert not first.requires_grad\n"
+        },
+        {
+          "type": "text",
+          "title": "অসমান শেষ ব্যাচে সঠিকভাবে Metric গড় করা",
+          "body": "Validation ডেটা ব্যাচে ভাগ করে চালানোর সময়ও শেষ ব্যাচটি আকারে ছোট হতে পারে। তাই পুরো সেটের গড় Binary Cross-Entropy (BCE) বের করার সময় অবশ্যই প্রতিটি ব্যাচের উদাহরণ সংখ্যা দিয়ে ওজন করে (Sample-count Weighted) গড় নিতে হবে। পাশাপাশি মনে রাখবেন, নির্দিষ্ট Threshold-ভিত্তিক মেট্রিক, BCE, সম্ভাবনার Calibration এবং বাস্তব ব্যবসায়িক খরচ—একেকটি একেক ধরনের প্রমাণ দেয়। একটি নির্দিষ্ট রানের স্থির Validation BCE দেখেই অন্য কোনো রেসিপির শ্রেষ্ঠত্ব বা বাইরের ডোমেইনে সাফল্যের গ্যারান্টি দেওয়া যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "Validation Loss কি কখনো Training Loss-এর চেয়ে কম হতে পারে?",
+          "body": "লগ দেখার সময় অনেকেই চমকে যান যখন দেখেন Validation Loss ট্রেনিং লসের চেয়ে কম এসেছে—এবং সাথে সাথে ধরে নেন নির্ঘাত Data Leakage ঘটেছে! কিন্তু একটু তলিয়ে ভাবুন: ট্রেনিংয়ের সময় সক্রিয় Dropout ইচ্ছাকৃতভাবে নেটওয়ার্ককে বাধাগ্রস্ত করে এবং Parameter প্রতি ধাপে নড়তে থাকে, অথচ Validation মাপা হয় স্থির মডেলে Dropout বন্ধ রেখে। এছাড়াও শক্তিশালী Regularization বা ছোট সেটের ব্যাচ গঠনের কারণেও Validation Loss কম দেখাতে পারে। তাই ডেটা পাইপলাইন হাতে-কলমে অডিট না করে স্রেফ দুটি সংখ্যার ব্যবধান দেখেই চূড়ান্ত সিদ্ধান্তে পৌঁছানো ঠিক নয়।"
+        },
+        {
+          "type": "text",
+          "title": "একই Validation সেট বারবার ব্যবহারের সীমাবদ্ধতা",
+          "body": "একটি গুরুত্বপূর্ণ বৈজ্ঞানিক সততা এখানে স্পষ্ট রাখা দরকার: এই ডেটাসেটের ভেতরের Validation ভাগটি আমরা আগের অধ্যায়েও (Book 3 · Chapter 2: Neural Networks & Backpropagation) পর্যবেক্ষণ করেছি। বর্তমান অধ্যায়ের এক্সপেরিমেন্টের মূল উদ্দেশ্য হলো নির্ভরযোগ্য ট্রেনিং ও Checkpoint-Resume কলকব্জা নিখুঁতভাবে শেখানো—নতুন কোনো পক্ষপাতমুক্ত Model Selection Benchmark তৈরি করা নয়। একইভাবে পুরোনো প্রকাশিত Test সেটটি এখানে নতুন করে স্কোর না করা হলেও যেহেতু তার ফলাফল আগেই দেখা হয়ে গেছে, তাই সেটিকে আজ নতুন করে অস্পর্শিত চূড়ান্ত প্রমাণ বলে দাবি করা চলবে না।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে অনুশীলন",
+          "body": "একটি ছোট পরীক্ষায় Validation ফাংশন চালানোর আগে ও পরে মডেলের সব Parameter এবং (যদি থাকে) BatchNorm Buffer-এর ক্লোন মিলিয়ে দেখুন সেগুলো শতভাগ অপরিবর্তিত থাকছে কি না। এরপর ইচ্ছা করে একবার model.eval() বাদ দিয়ে এবং আরেকবার torch.no_grad() বাদ দিয়ে দেখুন প্রতিটির আলাদা প্রভাব কোথায় পড়ে। সবশেষে একই Checkpoint ও একই ইনপুটে বারবার eval চালিয়ে নিশ্চিত করুন আউটপুট প্রতিবার হুবহু অভিন্ন আসছে।"
+        }
+      ]
+    },
+    {
+      "id": "ch17_earlystop",
+      "title": "Early Stopping ও সেরা Model State সংরক্ষণের মালিকানা",
+      "subtitle": "Patience, min_delta, Deep Copy এবং Model Selection Bias",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "থামার নিয়ম আগেভাগেই সুনির্দিষ্ট করে নিন",
+          "body": "ট্রেনিং চলাকালীন Validation Loss বাড়তে শুরু করলে সময়ের আগেই ট্রেনিং থামিয়ে দেওয়াকে বলা হয় Early Stopping। তবে যদি আমাদের লক্ষ্য হয় BCE কমানো, তবে ঠিক কতটুকু কমলে সেটিকে প্রকৃত উন্নতি ধরা হবে (min_delta), পরপর কতবার উন্নতি না হলে থামা হবে (patience), এবং কত ঘন ঘন মূল্যায়ন চালানো হবে—এই সবগুলো নিয়ম কোড লেখার আগেই সুস্পষ্ট থাকতে হবে। খেয়াল রাখবেন, patience = 2 মানে হলো পরপর দুটি মূল্যায়ন পর্বে (Validation Event) উন্নতি না হওয়া—মূল্যায়নের বিরতি ভিন্ন হলে তার অর্থ সবসময় দুই Epoch নয়! এছাড়া প্রথমবারের স্কোর ধরা, সমান স্কোর (Tie) এবং হঠাৎ NaN আসার ক্ষেত্রেও সুনির্দিষ্ট নীতি থাকতে হয়।"
+        },
+        {
+          "type": "text",
+          "title": "রেফারেন্সের ফাঁদ: সেরা Weight সংরক্ষণে কেন Deep Copy জরুরি?",
+          "body": "PyTorch-এ নতুনদের একটি অতি পরিচিত কিন্তু মারাত্মক বাগ হলো সরাসরি model.state_dict() কোনো ভেরিয়েবলে রেখে দেওয়া! মনে রাখবেন, state_dict()-এর ভেতরের টেনসরগুলো মডেলের আসল প্যারামিটার মেমোরিরই রেফারেন্স ধরে রাখতে পারে। আপনি যদি সেগুলোকে আলাদা করে .detach().clone() বা copy.deepcopy() করে স্বাধীন কপি না বানান, তবে পরের Epoch-গুলোতে ট্রেনিং চলার সাথে সাথে আপনার সযত্নে রাখা সেরা State-টিও নীরবে বদলে যাবে! তাছাড়া মনে রাখবেন, Inference-এর জন্য সেরা মডেলের স্ন্যাপশট আর মাঝপথে থেমে যাওয়া ট্রেনিং চালিয়ে নেওয়ার সর্বশেষ Resumable Checkpoint—এই দুটি সম্পূর্ণ আলাদা ডেলিভারেবল।"
+        },
+        {
+          "type": "math",
+          "title": "min_delta (δ) সাপেক্ষে প্রকৃত উন্নতির গাণিতিক শর্ত",
+          "body": "\\text{improved}_t:\\quad L_t<L_{\\mathrm{best}}-\\delta"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ স্বাধীন State Clone এবং Patience ও min_delta নীতি যাচাই",
+          "body": "import copy, torch\n\nmodel = torch.nn.Linear(1, 1)\nbest = {k: v.detach().clone() for k, v in model.state_dict().items()}\nold = best[\"weight\"].clone()\nwith torch.no_grad():\n    model.weight.add_(1)\ntorch.testing.assert_close(best[\"weight\"], old)\nmetrics = [0.7, 0.6, 0.61, 0.62]  # Explicit mathematical policy illustration.\nbest_loss = float(\"inf\")\nbad = 0\nstop = None\nfor epoch, value in enumerate(metrics, 1):\n    if value < best_loss - 0.001:\n        best_loss = value\n        bad = 0\n    else:\n        bad += 1\n    if bad >= 2:\n        stop = epoch\n        break\nassert stop == 4\n"
+        },
+        {
+          "type": "text",
+          "title": "Early Stopping মানেই একধরনের Model Selection",
+          "body": "প্রতি Epoch-এ Validation স্কোর দেখে সেরা মুহূর্তটি বেছে নেওয়া কিন্তু বিনা মূল্যে পাওয়া যায় না—এটি সরাসরি Model Selection-এরই একটি রূপ। ফলে বহুবার মাপার মধ্যে সবচেয়ে কম যে স্কোরটি আপনি বেছে নিচ্ছেন, তাতে পরিসংখ্যানগত অনিশ্চয়তা ও Selection Bias মিশে থাকে। সম্পূর্ণ অস্পর্শিত আরেকটি আলাদা মূল্যায়ন নকশা ছাড়া কেবল Early Stopping-এর সেরা স্কোরটিকে মডেলের চূড়ান্ত Generalization প্রমাণ বলে দাবি করা যায় না। আমাদের মূল রেফারেন্স অডিটে নির্দিষ্ট 40টি Epoch পর্যন্ত পূর্ণ ট্রেনিং চালানো হয়েছে; সেখানে Early Stopping প্রয়োগ করা হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "ট্রেনিং Resume করতে হলে Early Stopping-এর নিজস্ব State-ও লাগে",
+          "body": "আপনার ট্রেনিং পাইপলাইনে যদি সত্যিই Early Stopping চালু থাকে এবং মাঝপথে বাধা পাওয়ার পর হুবহু আগের জায়গা থেকে শুরু করতে চান, তবে শুধু বর্তমান মডেল লোড করলেই চলবে না। তখন পর্যন্ত পাওয়া best_metric, পরপর কয়বার উন্নতি হয়নি তার কাউন্টার (bad_count), min/max মোড, min_delta এবং কপি করে রাখা সেরা মডেলের স্ন্যাপশট—সবকিছুই Checkpoint-এর সাথে সংরক্ষণ ও পুনরুদ্ধার করতে হবে; নইলে ভবিষ্যতের থামার সিদ্ধান্ত বদলে যেতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "সর্বশেষ Checkpoint বনাম সেরা Inference Model",
+          "body": "বাস্তব প্রোডাকশন পাইপলাইনে সাধারণত দুটি আলাদা ফাইল রাখা হয়: একটি হলো সর্বশেষ সম্পন্ন হওয়া ধাপের পূর্ণাঙ্গ Checkpoint (যাতে বাধা পেলে ট্রেনিং অবিকল চালিয়ে নেওয়া যায়), আর অন্যটি হলো এ পর্যন্ত পাওয়া সেরা Validation স্কোরের Best-state Artifact (যা শেষে Inference-এর প্রার্থী হবে)। কখনোই ২০তম Epoch-এর সেরা Weight-এর সাথে ৩০তম Epoch-এর সর্বশেষ Optimizer State জোড়াতালি দিয়ে হুবহু ট্রেনিং Resume করার দাবি করবেন না—কারণ প্যারামিটার আর মোমেন্টাম বাফারের ইতিহাস তখন দুটি ভিন্ন সময়ের!"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে অনুশীলন",
+          "body": "উপরের ছোট্ট লুপটিতে হুবহু সমান স্কোর (Tie), min_delta-র চেয়ে সামান্য কম উন্নতি এবং হঠাৎ আসা NaN ভ্যালু বসিয়ে আপনার Early Stopping লজিক পরীক্ষা করুন। আর ড্যাশবোর্ডে পুরো ট্রেনিং কার্ভ দেখার পর নির্দিষ্ট মেয়াদে শেষ হওয়া রানকে নীরবে সেরা Epoch বলে চালিয়ে দেবেন না—কোন নীতিতে মডেল বেছে নেওয়া হয়েছে তা সবসময় স্পষ্টভাবে উল্লেখ করুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch17_checkpoint",
+      "title": "Checkpoint Schema: একটি নির্ভরযোগ্য ফাইলে কী কী সংরক্ষণ করবেন?",
+      "subtitle": "Inference বনাম Continuation, Data Identity যাচাই এবং Atomic Write কৌশল",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "উদ্দেশ্য ভেদে বিষয়বস্তু: Inference বনাম Training Continuation",
+          "body": "একটি Checkpoint ফাইলে আসলে কী কী থাকা উচিত? উত্তরটি নির্ভর করে আপনি ফাইলটি দিয়ে কী করতে চান তার ওপর। কেবল Inference চালানোর জন্য মডেলের আর্কিটেকচার, শেখা Parameter ও Buffer, ইনপুট Preprocessing প্যারামিটার এবং ফিচারের Schema থাকলেই যথেষ্ট। কিন্তু মাঝপথে থেমে যাওয়া ট্রেনিংকে যদি বিন্দুমাত্র বিচ্যুতি ছাড়া আগের ধারায় চালিয়ে নিতে (Training Continuation) চান, তবে এর পাশাপাশি Optimizer-এর সব Moment ও ধাপ কাউন্টার, Scheduler State, সবগুলো RNG State, ডেটার ক্রম, বর্তমান Epoch/Step এবং পলিসি স্টেটও সংরক্ষণ করতে হবে। একটি সংক্ষিপ্ত ফাইল দিয়ে সব প্রেক্ষাপটের কাজ চলে না।"
+        },
+        {
+          "type": "text",
+          "title": "কখন সেভ করছেন: Epoch সীমানা বনাম Mid-epoch জটিলতা",
+          "body": "আমাদের বর্তমান এক্সপেরিমেন্টে Checkpoint সংরক্ষণ করা হয়েছে ঠিক Epoch 20-এর সবগুলো ব্যাচ এবং ওই Epoch-এর Scheduler Step সম্পূর্ণ শেষ হওয়ার পরিষ্কার সীমানায়। পরের Epoch শুরু হলে প্রথমেই zero_grad() কল হয়, তাই এই সীমানায় কোনো অসমাপ্ত বা জমে থাকা Accumulated Gradient নেই। কিন্তু বিশাল রানে যদি Epoch-এর মাঝপথে (Mid-epoch) সেভ করতে হয়, তবে ডেটা শাফলিংয়ের বর্তমান অবস্থান (Cursor/Permutation), জমে থাকা আংশিক Gradient, ওয়ার্কার কিউ এবং Accumulation অবস্থানও স্কিমায় যুক্ত করতে হয়—যা আমাদের এই সংক্ষিপ্ত স্থানীয় পাইপলাইনে রাখা হয়নি।"
+        },
+        {
+          "type": "math",
+          "title": "Epoch e শেষে পূর্ণাঙ্গ Checkpoint-এর উপাদানসমূহ",
+          "body": "C_e=\\{\\theta,\\mathrm{buffers},\\mathrm{opt},\\mathrm{sched},\\mathrm{RNG},e,\\mathrm{schema},\\mathrm{split},\\mu,s\\}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ নিরাপদ সিরিয়ালাইজেশন ও weights_only=True সহ লোড যাচাই",
+          "body": "import io, torch\n\nmodel = torch.nn.Linear(2, 1, dtype=torch.float64)\noptimizer = torch.optim.AdamW(model.parameters(), lr=0.01)\nstate = {\n    \"format\": 1,\n    \"epoch\": 0,\n    \"model\": {k: v.detach().clone() for k, v in model.state_dict().items()},\n    \"optimizer\": optimizer.state_dict(),\n    \"torch_rng\": torch.get_rng_state().clone(),\n}\nbuffer = io.BytesIO()\ntorch.save(state, buffer)\nbuffer.seek(0)\nloaded = torch.load(\n    buffer, map_location=\"cpu\", weights_only=True\n)  # Own generated checkpoint.\nassert loaded[\"format\"] == 1\n"
+        },
+        {
+          "type": "text",
+          "title": "শুধু Shape মিললেই চলে না: Data ও Recipe Identity যাচাই",
+          "body": "ধরুন, কেউ দুটি ইনপুট কলামের জায়গা অদলবদল করে দিল অথবা ট্রেনিং-ভ্যালিডেশন Split বদলে ফেলল—কিন্তু মোট Feature সংখ্যা একই রইল। শুধু টেনসরের Shape মিলিয়ে Checkpoint লোড করলে PyTorch কোনো এরর দেবে না, অথচ পুরো ট্রেনিং নীরবে ভুল পথে চলে যাবে! এজন্যই আমাদের স্কিমায় ফিচারের ক্রম, মূল ডেটা ফাইলের হ্যাশ (Source Hash), ট্রেন ও ভ্যালিডেশন সারির পরিচয়, স্কেলারের গড় ও মানদণ্ড, ট্রেনিং রেসিপি এবং ফরম্যাট সংস্করণ মিলিয়ে দেখা হয়; অমিল পেলে সাথে সাথে রিস্টোর বাতিল করা উচিত। মনে রাখবেন, হ্যাশ মেলার অর্থ কেবল এটুকুই যে আমরা একই ডেটা ফাইল ব্যবহার করছি—এটি পরিসংখ্যানগত স্বাধীনতার প্রমাণ নয়।"
+        },
+        {
+          "type": "text",
+          "title": "অর্ধলিখিত ফাইল থেকে সুরক্ষা: Atomic Write কৌশল",
+          "body": "ডিস্কে সরাসরি মূল ফাইলের ওপর লিখতে গিয়ে যদি ঠিক মাঝপথে প্রোগ্রাম ক্র্যাশ করে, তবে পুরোনো ভালো ফাইলটিও নষ্ট হয়ে একটি অকেজো অর্ধলিখিত ফাইল পড়ে থাকবে। এটি এড়াতে আমরা একই ডিরেক্টরিতে আগে একটি অস্থায়ী (Temporary) ফাইলে পুরো ডেটা লিখে নিই এবং লেখা সম্পূর্ণ হলে এক ধাপে মূল ফাইলটিকে প্রতিস্থাপন (Atomic Replace) করি—যাতে অর্ধসমাপ্ত লেখা কখনোই বৈধ সর্বশেষ Checkpoint সেজে বসতে না পারে। অবশ্য প্রোডাকশনে পূর্ণাঙ্গ পাওয়ার-লস সুরক্ষা, ব্যাকআপ ও সংস্করণ ব্যবস্থাপনা আলাদাভাবে গড়ে তুলতে হয়; আর স্থানীয় ফাইলের দুর্ঘটনাজনিত পরিবর্তন ধরতে আমরা Checksum ব্যবহার করি।"
+        },
+        {
+          "type": "text",
+          "title": "নিরাপদ লোডিং: weights_only=True এবং বিশ্বস্ত উৎস",
+          "body": "Python-এর সাধারণ সিরিয়ালাইজেশনে অজানা বা অবিশ্বস্ত উৎস থেকে পাওয়া ফাইল লোড করলে ক্ষতিকর কোড চলার ঝুঁকি থাকে। তাই এখানে আমরা কেবল নিজেদের তৈরি বিশ্বস্ত Checkpoint ফাইল weights_only=True এবং নির্দিষ্ট map_location=\"cpu\" দিয়ে সামঞ্জস্যপূর্ণ পরিবেশে লোড করি। বাইরে থেকে পাওয়া অচেনা সিরিয়ালাইজড আর্টিফ্যাক্ট কখনোই যাচাই ছাড়া লোড করবেন না; আর ফরম্যাট ভ্যালিডেশন, লাইব্রেরি সংস্করণ ও আর্কিটেকচারের সামঞ্জস্য নিশ্চিত না করে রিস্টোর সফল হয়েছে বলে ধরে নেবেন না।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে অনুশীলন",
+          "body": "ইচ্ছা করে রেসিপির একটি মান বা একটি Feature-এর নাম পাল্টে দিয়ে দেখুন আপনার Checkpoint ভ্যালিডেশন সঠিকভাবে লোড আটকে দিচ্ছে কি না। এরপর সেভ ও লোডের আগে-পরে Optimizer-এর অভ্যন্তরীণ ধাপ কাউন্টার এবং Learning Rate ট্রেস মিলিয়ে দেখুন। মনে রাখবেন, ফাইলের Checksum মেলা আর লোড করার পর পরবর্তী ট্রেনিং ধাপ হুবহু এক হওয়া—দুটি সম্পূর্ণ আলাদা পরীক্ষা!"
+        }
+      ]
+    },
+    {
+      "id": "ch17_resume",
+      "title": "Resume Audit: একই State মানেই হুবহু একই পরবর্তী ধাপ",
+      "subtitle": "অবিরাম রান বনাম পূর্ণাঙ্গ Restore বনাম শুধু Weight নিয়ে Warm Restart",
+      "duration": "57 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "State ফিরিয়ে আনার সঠিক ক্রম কেন এত গুরুত্বপূর্ণ?",
+          "body": "আগের পাঠে আমরা সব প্রয়োজনীয় তথ্য সংরক্ষণ করেছি; এবার দেখার পালা সেগুলো ঠিক কোন ক্রমে লোড করলে ট্রেনিং বিন্দুমাত্র না টলে আগের ধারায় চলতে শুরু করবে। প্রথমে সামঞ্জস্যপূর্ণ আর্কিটেকচারের নতুন মডেল, Optimizer এবং Scheduler তৈরি করে মডেলের state_dict লোড করা হয়। এরপর Optimizer ও Scheduler-এর সংরক্ষিত স্টেট ফিরিয়ে আনা হয়, এবং সবার শেষে ডেটা শাফলিংয়ের Generator ও গ্লোবাল Dropout RNG State রিস্টোর করা হয়। কেন RNG সবার শেষে? কারণ নতুন মডেল তৈরি করার সময় তার র‍্যান্ডম ইনিশিয়ালাইজেশন বেশ কিছু র‍্যান্ডম নম্বর খরচ করে ফেলে—শুরুতেই RNG বসালে মডেল তৈরির সময়েই সেই অবস্থান নষ্ট হয়ে যেত!"
+        },
+        {
+          "type": "text",
+          "title": "নিয়ন্ত্রিত পরীক্ষা: তিনটি শাখার তুলনা",
+          "body": "বিষয়টি প্রমাণের জন্য আমরা একটি নিয়ন্ত্রিত পরীক্ষা চালিয়েছি। প্রথম শাখায় মডেল টানা 40টি Epoch কোনো বিরতি ছাড়া চলেছে (Continuous Run)। দ্বিতীয় শাখায় Epoch 20 শেষে পূর্ণাঙ্গ Checkpoint ডিস্কে লিখে, নতুন করে সব লোড করে Epoch 21 থেকে 40 পর্যন্ত চালানো হয়েছে (Full Resume)—এবং দেখা গেছে এর প্রতিটি লগ ও চূড়ান্ত টেনসর অবিরাম রানের সাথে শতভাগ মিলে গেছে! তৃতীয় শাখায় (Weights-only Restart) Epoch 20-এর মডেল Weight এবং একই RNG ও ডেটার ক্রম ফিরিয়ে আনা হয়েছে ঠিকই, কিন্তু Optimizer ও Scheduler নতুন করে শূন্য থেকে শুরু হয়েছে—যাতে শুধুমাত্র Optimizer ও Scheduler State হারানোর প্রভাবটুকু পরিষ্কারভাবে আলাদা করে ধরা পড়ে।"
+        },
+        {
+          "type": "math",
+          "title": "স্থানীয় অডিটে অবিরাম রান ও পূর্ণাঙ্গ Resume-এর সর্বোচ্চ পার্থক্য শূন্য",
+          "body": "\\max_k\\|\\theta^{\\mathrm{continuous}}_k-\\theta^{\\mathrm{resumed}}_k\\|_\\infty=0\\quad\\text{in this local audit}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ সংরক্ষিত অডিট রিপোর্ট থেকে তিনটি শাখার ফলাফল যাচাই",
+          "body": "from pathlib import Path\nimport json\n\na = json.loads(Path(\"assets/datasets/wine_quality/reliable_lab.json\").read_text())\nassert a[\"continuous_history\"] == a[\"resumed_history\"]\nassert a[\"resume_parameter_max_abs\"] == 0\nassert a[\"weights_only_parameter_max_abs\"] > 0\nprint(a[\"continuous_history\"][-1], a[\"weights_only_history\"][-1])\n"
+        },
+        {
+          "type": "text",
+          "title": "সংখ্যার প্রমাণ এবং ফলাফলের সঠিক ব্যাখ্যা",
+          "body": "আমাদের পরীক্ষার প্রকৃত সংখ্যাগুলো দেখুন: পূর্ণাঙ্গ Resume শাখার চূড়ান্ত প্যারামিটারের সাথে অবিরাম রানের সর্বোচ্চ পরম পার্থক্য ঠিক 0! অন্যদিকে শুধু Weight নিয়ে শুরু করা শাখায় ৪০তম Epoch শেষে প্যারামিটারের সর্বোচ্চ পার্থক্য দাঁড়িয়েছে প্রায় 0.186364। মজার ব্যাপার হলো, দুটির চূড়ান্ত Validation BCE কাছাকাছি দেখালেও (এমনকি রিস্টার্ট শাখায় সংখ্যাটি সামান্য কম হলেও) তাদের শেখার গতিপথ মোটেও এক নয়। এই একটি রানের সংখ্যা দেখে রিস্টার্ট করলেই ভালো ফল মেলে—এমন দাবি করা ভুল হবে, কারণ এটি কোনো Optimizer র‍্যাঙ্কিং পরীক্ষা নয়, বরং State সংরক্ষণের যথার্থতা যাচাইয়ের পরীক্ষা।"
+        },
+        {
+          "type": "resume_state_lab",
+          "title": "ইন্টারেক্টিভ অডিট: Full Restore বনাম Weights-only Restart",
+          "body": "নিচের ইন্টারেক্টিভ ল্যাবে Epoch 0, 20, 21 এবং 40 বেছে নিয়ে দেখুন পূর্ণাঙ্গ রিস্টোর এবং শুধু Weight নিয়ে রিস্টার্ট করা শাখায় কীভাবে Learning Rate ও Loss আলাদা হয়ে যাচ্ছে। খেয়াল রাখবেন, নিচে দেখানো প্যারামিটার দূরত্বের সংখ্যাটি সবসময় ৪০তম Epoch-এর চূড়ান্ত তুলনা নির্দেশ করে, আপনার বেছে নেওয়া মধ্যবর্তী Epoch-এর দূরত্ব নয়; আর ২০তম Epoch-এ ভাগ হওয়ার আগের অংশটুকু দুটি শাখাতেই হুবহু এক।"
+        },
+        {
+          "type": "text",
+          "title": "হুবহু অভিন্নতার গণ্ডি ও বাস্তব হার্ডওয়্যার সীমাবদ্ধতা",
+          "body": "এখানে প্যারামিটারের বিট-পর্যায়ের অভিন্নতা অর্জিত হয়েছে একই CPU float64 পরিবেশ, অভিন্ন লাইব্রেরি সংস্করণ, নির্দিষ্ট থ্রেড বাজেট এবং পরিষ্কার Epoch সীমানার ভেতরে। কিন্তু বাস্তবে CUDA বা MPS জিপিইউ, AMP, একাধিক ডেটা লোডার ওয়ার্কার কিংবা ভিন্ন সফটওয়্যার রিলিজের মধ্যে স্থানান্তর করলে অ্যাসিনক্রোনাস ফ্লোটিং-পয়েন্ট হিসাবের কারণে সর্বত্র হুবহু শূন্য পার্থক্যের গ্যারান্টি দেওয়া যায় না—এবং কঠোর Determinism সেটিং চালু করলে অনেক সময় গতি বা সক্ষমতার সাথে আপস করতে হতে পারে।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এ যেভাবে যুক্তি সাজাবেন",
+          "body": "ইন্টারভিউতে প্রশ্ন করা হলে ধাপে ধাপে বলুন কেন শুধু মডেলের Weight লোড করা ট্রেনিং চালিয়ে নেওয়ার জন্য যথেষ্ট নয় এবং ঠিক একুশতম Epoch-এর প্রথম ধাপেই কোথায় প্রথম বিচ্যুতি ঘটে (Momentum/Adam বাফার শূন্য হয়ে যাওয়া ও Scheduler প্রথম হারে ফিরে যাওয়া)। পাশাপাশি বলুন RNG State না ফেরালে কীভাবে Dropout Mask ও ডেটা শাফলিংয়ের ক্রম বদলে যায়, এবং মডেলে BatchNorm থাকলে কেন তার Running Buffer-গুলোও state_dict-এর অপরিহার্য অংশ।"
+        },
+        {
+          "type": "text",
+          "title": "খাতাকলম ও কোডে প্রমাণ: একটি একক Stochastic Step হুবহু পুনরুৎপাদন",
+          "body": "পুরো ৪০ Epoch-এর বদলে মাত্র একটি ধাপ দিয়েই বিষয়টি হাতেনাতে প্রমাণ করা যাক। নিচের ছোট মডেলে Dropout(0.25) এবং Momentum SGD (momentum = 0.9) রাখা হয়েছে। প্রথম ধাপ সম্পন্ন হওয়ার পর আমরা মডেলের state_dict, Optimizer-এর state_dict এবং CPU RNG State-এর স্বাধীন কপি তুলে রাখব। এরপর দেখব, অবিরাম রানের দ্বিতীয় ধাপ আর সবগুলো স্টেট ফিরিয়ে আনা রানের দ্বিতীয় ধাপ একই ডেটা ও মোড পেলে হুবহু একই প্যারামিটার ও একই momentum_buffer দেয়; কিন্তু শুধু মডেলের Weight ও RNG বসিয়ে নতুন Optimizer নিলে পুরোনো Momentum ইতিহাস হারিয়ে যাওয়ায় ফলাফল সাথে সাথেই আলাদা হয়ে যায়!"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Model, Optimizer ও RNG একত্রে Restore করে নিখুঁত যাচাই",
+          "body": "import copy\nimport torch\nfrom torch import nn\n\n\ndef create_model():\n    return nn.Sequential(\n        nn.Linear(2, 2, dtype=torch.float64),\n        nn.Dropout(0.25),\n        nn.Linear(2, 1, dtype=torch.float64),\n    )\n\n\nfeatures = torch.tensor([[1.0, 2.0], [2.0, 1.0]], dtype=torch.float64)\ntarget = torch.tensor([[1.0], [0.0]], dtype=torch.float64)\n\n\ndef train_step(model, optimizer):\n    model.train()\n    optimizer.zero_grad(set_to_none=True)\n    (model(features) - target).square().mean().backward()\n    optimizer.step()\n\n\nwith torch.random.fork_rng(devices=[]):\n    torch.manual_seed(17)\n    model = create_model()\n    optimizer = torch.optim.SGD(model.parameters(), lr=0.01, momentum=0.9)\n    train_step(model, optimizer)\n    saved_model = copy.deepcopy(model.state_dict())\n    saved_optimizer = copy.deepcopy(optimizer.state_dict())\n    saved_rng = torch.get_rng_state().clone()\n    train_step(model, optimizer)\n    expected = copy.deepcopy(model.state_dict())\n    expected_optimizer = copy.deepcopy(optimizer.state_dict())\n\n    restored = create_model()\n    resumed_optimizer = torch.optim.SGD(restored.parameters(), lr=0.01, momentum=0.9)\n    restored.load_state_dict(saved_model)\n    resumed_optimizer.load_state_dict(saved_optimizer)\n    torch.set_rng_state(saved_rng)\n    train_step(restored, resumed_optimizer)\n    for name, value in restored.state_dict().items():\n        torch.testing.assert_close(value, expected[name], atol=0, rtol=0)\n\n    for parameter_id, state in resumed_optimizer.state_dict()[\"state\"].items():\n        torch.testing.assert_close(\n            state[\"momentum_buffer\"],\n            expected_optimizer[\"state\"][parameter_id][\"momentum_buffer\"],\n            atol=0,\n            rtol=0,\n        )\n\n    weights_only = create_model()\n    weights_only.load_state_dict(saved_model)\n    fresh_optimizer = torch.optim.SGD(weights_only.parameters(), lr=0.01, momentum=0.9)\n    torch.set_rng_state(saved_rng)\n    train_step(weights_only, fresh_optimizer)\n    differs = any(\n        not torch.equal(value, expected[name])\n        for name, value in weights_only.state_dict().items()\n    )\n    print(1, int(differs))\n"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজেকে যাচাই করুন",
+          "body": "এই ছোট উদাহরণের বাইরে যদি আপনি Epoch-এর মাঝপথে (Mid-epoch) অথবা GPU-তে চলা বড় ট্রেনিং Resume করতে যান, তবে অতিরিক্ত আর কী কী State সংরক্ষণ করতে হতে পারে?",
+          "solution": "তখন DataLoader বা Sampler-এর বর্তমান অবস্থান, ডেটা শাফলিংয়ের আলাদা Generator State, Learning Rate Scheduler State, Mixed Precision-এর AMP GradScaler State, প্রতিটি GPU ডিভাইসের নিজস্ব CUDA RNG State এবং Early Stopping চালু থাকলে তার কাউন্টার ও সেরা মেট্রিক সংরক্ষণ করতে হবে। আর যদি Gradient Accumulation-এর মাঝপথে থামা হয়, তবে আংশিক জমানো Gradient ও প্রক্রিয়াকৃত উদাহরণের হরও লাগবে। তাই কাজের শুরুতেই Resume-এর সীমানা ও গ্রহণযোগ্য সংখ্যার সহনশীলতা (Tolerance) ঠিক করে নেওয়া জরুরি।",
+          "reference": "https://d2l.ai/"
+        }
+      ]
+    },
+    {
+      "id": "ch17_reproducibility",
+      "title": "Reproducibility: শুধু একটি Seed দিলেই কেন সব মেলে না?",
+      "subtitle": "পৃথক RNG Stream, পরিবেশের নথি, Deterministic নিয়ন্ত্রণ ও পার্শ্বপ্রতিক্রিয়ামুক্ত কোড",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "একাধিক র‍্যান্ডম প্রবাহ (Separate Random Streams)",
+          "body": "অনেকেই কোডের শুরুতে একটি মাত্র Seed লিখেই ভাবেন পুরো প্রজেক্ট বুঝি শতভাগ Reproducible হয়ে গেল! কিন্তু বাস্তবে একটি পাইপলাইনে একাধিক স্বাধীন র‍্যান্ডম প্রবাহ একসাথে কাজ করতে পারে। যেমন আমাদের ওয়ার্কফ্লোতে মডেল ইনিশিয়ালাইজেশন এবং Dropout ব্যবহার করে CPU-র গ্লোবাল Torch RNG, অথচ প্রতি Epoch-এ ট্রেনিং সারি শাফল করার কাজটি করে একটি আলাদাভাবে তৈরি করা torch.Generator। আবার অন্য কোনো প্রজেক্টে যদি Python-এর বিল্ট-ইন random, NumPy RNG, ওয়ার্কার লাইব্রেরি কিংবা CUDA RNG ব্যবহৃত হয়, তবে প্রেক্ষাপট অনুযায়ী তাদের প্রতিটির নিজস্ব স্টেটও সামলাতে হয়। আমাদের বর্তমান পাইপলাইনে অবশ্য NumPy র‍্যান্ডম স্যাম্পলিং নেই এবং ডেটা Split একটি স্থির scikit-learn সিড দিয়ে নির্ধারিত।"
+        },
+        {
+          "type": "text",
+          "title": "সফটওয়্যার ও হার্ডওয়্যার পরিবেশের পূর্ণাঙ্গ নথি",
+          "body": "র‍্যান্ডম সিড এক থাকলেও সফটওয়্যার বা হার্ডওয়্যার বদলালে গাণিতিক অপারেশনের সূক্ষ্ম ফলাফল বদলে যেতে পারে। এজন্য আমাদের অডিট রিপোর্টে Python 3.12.10, PyTorch 2.15.0+cpu, NumPy সংস্করণ, ব্যবহৃত Dtype, ডিভাইস এবং CPU থ্রেড নীতি স্পষ্টভাবে লিপিবদ্ধ রাখা হয়। প্যাকেজের সংস্করণ পিন (Dependency Pinning) করে রাখলে একই পরিবেশ পুনর্গঠন করা সহজ হয় বটে, তবে ভিন্ন কম্পাইলার, ভিন্ন হার্ডওয়্যার বা লাইব্রেরি পরিবর্তনের সব পার্থক্য তা দিয়ে আপনাআপনি দূর হয় না।"
+        },
+        {
+          "type": "math",
+          "title": "একই Seed মানেই সব পরিবেশে অভিন্ন গতিপথ নয়",
+          "body": "\\mathrm{same\\ seed}\\not\\Rightarrow\\mathrm{same\\ trajectory\\ across\\ all\\ environments}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ fork_rng দিয়ে সুরক্ষা এবং স্বতন্ত্র Generator State পুনরুদ্ধার",
+          "body": "import torch\n\nbefore = torch.get_rng_state().clone()\nwith torch.random.fork_rng(devices=[]):\n    torch.manual_seed(17)\n    first = torch.rand(4)\ntorch.testing.assert_close(before, torch.get_rng_state())\ng = torch.Generator().manual_seed(170)\nstate = g.get_state().clone()\norder = torch.randperm(8, generator=g)\ng.set_state(state)\nassert torch.equal(order, torch.randperm(8, generator=g))\n"
+        },
+        {
+          "type": "text",
+          "title": "Deterministic Algorithm নিয়ন্ত্রণের বাস্তব বিনিময়মূল্য",
+          "body": "PyTorch-এ কঠোরভাবে Deterministic অ্যালগরিদম ব্যবহারের নির্দেশ দেওয়া যায়, কিন্তু তার কিছু বাস্তব বিনিময়মূল্যও আছে: কিছু অপারেশনের নির্ধারিত Deterministic রূপ না থাকায় কোড সরাসরি এরর দিতে পারে, অথবা দ্রুততর কার্নেলের বদলে ধীরগতির পথ বেছে নিতে পারে। GPU-তে কাজ করার সময় cuDNN Benchmarking, CUDA Kernel এবং মাল্টি-ওয়ার্কার ডেটা পাইপলাইন আলাদাভাবে বিবেচনা করতে হয়। তাই আমাদের এই স্থানীয় CPU ওয়ার্কফ্লোর নিখুঁত সমতাকে সব হার্ডওয়্যারের সার্বজনীন গ্যারান্টি হিসেবে ধরে নেওয়া যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "ভালো ইঞ্জিনিয়ারিং শিষ্টাচার: Caller Isolation ও পার্শ্বপ্রতিক্রিয়ামুক্ত কোড",
+          "body": "নির্ভরযোগ্য কোড শুধু নিজের কাজটুকু ঠিকভাবে করে না—সে আশপাশের অন্য কোডের পরিবেশও নষ্ট করে না! যেমন আমাদের run_analysis ফাংশনটি কাজ শেষে CPU থ্রেড সংখ্যা আগের অবস্থায় ফিরিয়ে দেয়, এবং fork_rng ব্যবহার করার ফলে বাইরের কলার কোডের গ্লোবাল Torch RNG State সুরক্ষিত থাকে। একইভাবে মডিউলটি শুধু import করলেই ট্রেনিং শুরু হয়ে যায় না, এবং সাধারণ CLI কমান্ড চালালে বান্ডেল করা মূল অ্যাসেট ফাইলগুলো নিজে থেকে নতুন করে লেখা হয় না। পুনর্ব্যবহারযোগ্য স্ক্রিপ্টে এ ধরনের গোপন পার্শ্বপ্রতিক্রিয়া (Hidden Side Effects) কমানো নির্ভরযোগ্যতারই অংশ।"
+        },
+        {
+          "type": "text",
+          "title": "কীভাবে বুঝবেন সিস্টেম আসলেই Reproducible?",
+          "body": "কোডের মাথায় একটি সিড নম্বর লেখা আছে, দুটি রানের Loss Curve দেখতে মোটামুটি বিশ্বাসযোগ্য লাগছে, কিংবা টার্মিনালের একটি স্ক্রিনশট আছে—এগুলোর কোনোটিই প্রকৃত Reproducibility-র প্রমাণ নয়! প্রকৃত অডিটে আমরা স্বয়ংক্রিয় টেস্ট লিখে মূল ফাইলের হ্যাশ, Split করা সারির তালিকা, স্কিমা, কপি করা স্ন্যাপশট, পূর্ণ Resume-পরবর্তী টেনসর সমতা এবং রিপোর্টের অভিন্নতা সরাসরি পরীক্ষা করি—যাতে প্রতিটি State Transition হাতে-কলমে যাচাইকৃত থাকে।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে অনুশীলন",
+          "body": "উপরের কোডের আদলে একটি Generator দিয়ে প্রথমে একটি পারমুটেশন তৈরি করুন, তারপর তার State কপি করে পরের পারমুটেশনটি মেলান। এরপর দেখুন মাঝপথে State রিস্টোর না করে কেবল শুরুর Seed আবার বসালে কেন Checkpoint-এর পরের সিকোয়েন্সটি বদলে যায়! মনে রাখবেন, পরিবেশের পূর্ণ বিবরণ ও সীমানার শর্ত উল্লেখ না করে কখনোই নিখুঁত অভিন্নতার দাবি করবেন না।"
+        }
+      ]
+    },
+    {
+      "id": "ch17_workflow",
+      "title": "স্থানীয় নির্ভরযোগ্য ট্রেনিং ওয়ার্কফ্লো (Local Reliable-Training Workflow)",
+      "subtitle": "ডেটা Split পুনর্ব্যবহার থেকে শুরু করে পূর্ণাঙ্গ Epoch State ও Atomic Checkpoint পর্যন্ত",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "পরিবেশ প্রস্তুত ও স্ক্রিপ্ট চালানোর নিয়ম",
+          "body": "এতক্ষণ আমরা আলাদা আলাদা পাঠে যে নিয়মগুলো শিখেছি, এবার সেগুলোকে একটি সুসংহত স্থানীয় স্ক্রিপ্টে একত্র করার পালা। প্রথমে python -m pip install -r tool/requirements-pytorch-qa.txt চালিয়ে যাচাইকৃত CPU পরিবেশের নির্ভরশীল প্যাকেজগুলো ইনস্টল করে নিন। এরপর চালান: python assets/datasets/wine_quality/reliable_workflow.py --output build/chapter-17-workflow-report.json --artifact-dir build/chapter-17-artifacts। আপনি যদি macOS বা অ্যাক্সিলারেটর যুক্ত মেশিনে কাজ করেন, তবে আপনার হার্ডওয়্যারের উপযোগী অফিশিয়াল প্যাকেজ ব্যবহার করতে হবে।"
+        },
+        {
+          "type": "text",
+          "title": "পূর্ববর্তী Split পুনর্ব্যবহার এবং মূল্যায়নের গণ্ডি",
+          "body": "এই স্ক্রিপ্টটি আগের অধ্যায়ের (Book 3 · Chapter 2: Neural Networks & Backpropagation) ইমপোর্ট-নিরাপদ prepare হেল্পার ফাংশন কল করে মূল ফাইলের হ্যাশ যাচাই করে এবং ভেতরের 776টি ট্রেনিং সারি (মোট 652টি গ্রুপ) ও 190টি ভ্যালিডেশন সারি (163টি গ্রুপ) হুবহু পুনরুৎপাদন করে। ইনপুট স্কেলার কেবল ওই 776টি ট্রেনিং সারির ওপরই fit করা হয়। পুরোনো বাইরের Test সেটের কোনো প্রেডিকশন বা মেট্রিক এখানে লোড বা রান করা হয় না—কারণ এই ওয়ার্কফ্লোর উদ্দেশ্য ট্রেনিংয়ের নির্ভরযোগ্যতা ও State ব্যবস্থাপনা পরীক্ষা করা, নতুন কোনো চূড়ান্ত মডেল মূল্যায়ন নয়।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ ডেটা লোডিং, মডেল আর্কিটেকচার ও Parameter-group সেটআপ",
+          "body": "from pathlib import Path\nimport argparse, copy, hashlib, importlib.util, io, json, platform, sys\nimport numpy as np\nimport torch\nfrom torch import nn\nimport torch.nn.functional as F\n\nDATA = Path(\"assets/datasets/wine_quality\").resolve()\nCONFIG = {\n    \"seed\": 17,\n    \"batch_size\": 64,\n    \"epochs\": 40,\n    \"resume_epoch\": 20,\n    \"learning_rate\": 0.01,\n    \"weight_decay\": 0.01,\n    \"dropout\": 0.2,\n    \"clip_norm\": 1.0,\n    \"step_size\": 20,\n    \"gamma\": 0.5,\n}\n\n\ndef source(path):\n    spec = importlib.util.spec_from_file_location(\n        \"ch17_neural_source\", path.with_name(\"neural_workflow.py\")\n    )\n    module = importlib.util.module_from_spec(spec)\n    sys.modules[spec.name] = module\n    spec.loader.exec_module(module)\n    prepared = module.prepare(path)\n    frame, raw, y, groups, fit, train, val, mean, scale = prepared\n    X = torch.tensor((raw[train] - mean) / scale, dtype=torch.float64)\n    Y = torch.tensor(y[train], dtype=torch.float64)\n    V = torch.tensor((raw[val] - mean) / scale, dtype=torch.float64)\n    vY = torch.tensor(y[val], dtype=torch.float64)\n    return module, prepared, X, Y, V, vY\n\n\nclass ReliableMLP(nn.Module):\n    def __init__(self):\n        super().__init__()\n        self.hidden = nn.Linear(11, 4, dtype=torch.float64)\n        self.dropout = nn.Dropout(0.2)\n        self.output = nn.Linear(4, 1, dtype=torch.float64)\n\n    def forward(self, X):\n        return self.output(self.dropout(torch.relu(self.hidden(X)))).squeeze(-1)\n\n\ndef setup(module):\n    model = ReliableMLP()\n    module.initialize(model)\n    # Explicit policy: only matrix weights decay; biases do not.\n    opt = torch.optim.AdamW(\n        [\n            {\n                \"params\": [model.hidden.weight, model.output.weight],\n                \"weight_decay\": 0.01,\n            },\n            {\"params\": [model.hidden.bias, model.output.bias], \"weight_decay\": 0.0},\n        ],\n        lr=0.01,\n        foreach=False,\n    )\n    scheduler = torch.optim.lr_scheduler.StepLR(opt, step_size=20, gamma=0.5)\n    generator = torch.Generator().manual_seed(170)\n    return model, opt, scheduler, generator\n"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ ট্রেনিং অগ্রগতি, Checkpoint ভ্যালিডেশন ও Atomic সংরক্ষণ হেল্পার",
+          "body": "def record(model, X, y, V, vy, epoch, opt):\n    model.eval()\n    with torch.no_grad():\n        return {\n            \"epoch\": epoch,\n            \"train_bce\": F.binary_cross_entropy_with_logits(model(X), y).item(),\n            \"validation_bce\": F.binary_cross_entropy_with_logits(model(V), vy).item(),\n            \"next_lr\": opt.param_groups[0][\"lr\"],\n        }\n\n\ndef advance(model, opt, scheduler, generator, X, y, V, vy, start, end):\n    rows = []\n    for epoch in range(start, end):\n        model.train()\n        order = torch.randperm(len(X), generator=generator)\n        weighted_loss = 0.0\n        norms = []\n        used_lr = opt.param_groups[0][\"lr\"]\n        for batch in order.split(64):\n            opt.zero_grad(set_to_none=True)\n            logits = model(X[batch])\n            loss = F.binary_cross_entropy_with_logits(logits, y[batch])\n            if not torch.isfinite(loss):\n                raise ValueError(\"Finite loss required\")\n            loss.backward()\n            norm = nn.utils.clip_grad_norm_(\n                model.parameters(), 1.0, error_if_nonfinite=True, foreach=False\n            )\n            norms.append(norm.item())\n            opt.step()\n            weighted_loss += loss.detach().item() * len(batch)\n        scheduler.step()  # Once per completed epoch, after optimizer updates.\n        rows.append(\n            {\n                **record(model, X, y, V, vy, epoch + 1, opt),\n                \"used_lr\": used_lr,\n                \"online_train_bce\": weighted_loss / len(X),\n                \"max_preclip_norm\": max(norms),\n                \"updates\": len(order.split(64)),\n            }\n        )\n    return rows\n\n\ndef checkpoint(model, opt, scheduler, generator, epoch, prepared, history):\n    _, _, _, _, _, train, val, mean, scale = prepared\n    return {\n        \"format\": 1,\n        \"config\": dict(CONFIG),\n        \"epoch\": epoch,\n        \"model\": copy.deepcopy(model.state_dict()),\n        \"optimizer\": copy.deepcopy(opt.state_dict()),\n        \"scheduler\": copy.deepcopy(scheduler.state_dict()),\n        \"torch_rng\": torch.get_rng_state().clone(),\n        \"shuffle_rng\": generator.get_state().clone(),\n        \"feature_names\": list(source_features()),\n        \"mean\": mean.tolist(),\n        \"scale\": scale.tolist(),\n        \"train_source_rows\": (train + 1).tolist(),\n        \"validation_source_rows\": (val + 1).tolist(),\n        \"history\": copy.deepcopy(history),\n        \"source_sha256\": \"4a402cf041b025d4566d954c3b9ba8635a3a8a01e039005d97d6a710278cf05e\",\n    }\n\n\ndef source_features():\n    return [\n        \"fixed acidity\",\n        \"volatile acidity\",\n        \"citric acid\",\n        \"residual sugar\",\n        \"chlorides\",\n        \"free sulfur dioxide\",\n        \"total sulfur dioxide\",\n        \"density\",\n        \"pH\",\n        \"sulphates\",\n        \"alcohol\",\n    ]\n\n\ndef validate_checkpoint(state, prepared):\n    _, _, _, _, _, train, val, mean, scale = prepared\n    if (\n        state[\"format\"] != 1\n        or state[\"config\"] != CONFIG\n        or state[\"epoch\"] != 20\n        or state[\"feature_names\"] != source_features()\n    ):\n        raise ValueError(\"Checkpoint recipe/schema mismatch\")\n    if (\n        state[\"train_source_rows\"] != (train + 1).tolist()\n        or state[\"validation_source_rows\"] != (val + 1).tolist()\n        or state[\"mean\"] != mean.tolist()\n        or state[\"scale\"] != scale.tolist()\n    ):\n        raise ValueError(\"Checkpoint data/transform mismatch\")\n    if (\n        state[\"source_sha256\"]\n        != \"4a402cf041b025d4566d954c3b9ba8635a3a8a01e039005d97d6a710278cf05e\"\n    ):\n        raise ValueError(\"Checkpoint source hash mismatch\")\n\n\ndef restore(module, state, prepared, weights_only=False):\n    validate_checkpoint(state, prepared)\n    model, opt, scheduler, generator = setup(\n        module\n    )  # Construct scheduler before loading optimizer.\n    model.load_state_dict(state[\"model\"])\n    if not weights_only:\n        scheduler.load_state_dict(state[\"scheduler\"])\n        opt.load_state_dict(state[\"optimizer\"])\n    # Both branches get identical next sample order/dropout masks to isolate state loss.\n    generator.set_state(state[\"shuffle_rng\"])\n    torch.set_rng_state(state[\"torch_rng\"])\n    return model, opt, scheduler, generator\n\n\ndef atomic_checkpoint(path, state):\n    path = Path(path)\n    path.parent.mkdir(parents=True, exist_ok=True)\n    temp = path.with_name(path.name + \".tmp\")\n    torch.save(state, temp)\n    temp.replace(path)\n"
+        },
+        {
+          "type": "text",
+          "title": "Mini-batch ও Optimizer Update-এর নিখুঁত হিসাব",
+          "body": "কোডের advance ফাংশনটির দিকে তাকালে প্রতি Epoch-এর হিসাবটি একদম পরিষ্কার হয়ে যায়: শাফল করা 776টি সারিকে 64 আকারের ব্যাচে ভাগ করলে 12টি পূর্ণ ব্যাচ (12 × 64 = 768) এবং শেষে 8টি সারির একটি ছোট ব্যাচ তৈরি হয়—অর্থাৎ প্রতি Epoch-এ মোট 13টি করে Optimizer Update ঘটে (drop_last ব্যবহার করা হয়নি)। ট্রেনিং চলাকালীন online_train_bce প্রতিটি ব্যাচের আকার দিয়ে ওজন করে গড় করা হয়, আর Epoch শেষে eval() মোডে পুরো সেটের train_bce ও validation_bce আলাদাভাবে মাপা হয়। 40টি Epoch-এ মোট 40 × 13 = 520টি আপডেট—এই সংখ্যাটিও আমাদের ট্রেনিং রেসিপির অবিচ্ছেদ্য অংশ।"
+        },
+        {
+          "type": "text",
+          "title": "Checkpoint ভ্যালিডেশন ও Restore হেল্পার কীভাবে কাজ করে?",
+          "body": "উপরের দ্বিতীয় কোড ব্লকটি ট্রেনিং চালানো, পূর্ণাঙ্গ Checkpoint ডিকশনারি তৈরি করা, স্কিমা ও ডেটা যাচাই করা এবং পুনরায় সব ফিরিয়ে আনার কাজগুলো একই স্কোপের ভেতরে সম্পন্ন করে। অন্য কোনো প্রজেক্টে এই কোড ব্যবহার করার সময় শুধু load_state_dict লাইনটুকু কপি না করে মূল ফাইলের হ্যাশ, ফিচারের তালিকা, সারির পরিচয় যাচাই এবং স্বাধীনভাবে Optimizer ও Scheduler তৈরির ক্রমটিও বুঝে নিয়ে প্রয়োগ করবেন।"
+        },
+        {
+          "type": "text",
+          "title": "নির্ধারিত রেসিপির পরিধি",
+          "body": "আমাদের এই মূল ট্রেনিং রানে রেসিপিটি সুনির্দিষ্ট ও স্থির রাখা হয়েছে: 40টি Epoch, ওয়েট ও বায়াসের আলাদা AdamW প্যারামিটার গ্রুপ, 1.0 সীমার Gradient Clipping এবং প্রতি Epoch শেষে StepLR। মূল মডেলে কোনো Early Stopping, BatchNorm/LayerNorm, AMP বা Hyperparameter Search চালানো হয়নি—ওই ধারণাগুলোর জন্য আমরা যে সংক্ষিপ্ত কোড উদাহরণগুলো দেখেছি, সেগুলোকে আলাদা শিক্ষামূলক পরীক্ষা হিসেবেই চিহ্নিত রাখা হয়েছে।"
+        },
+        {
+          "type": "text",
+          "title": "স্থানীয় ডেভেলপমেন্ট আর্টিফ্যাক্ট ও অ্যাপের অফলাইন নকশা",
+          "body": "--artifact-dir দিয়ে স্ক্রিপ্ট চালালে ডিস্কে যে epoch-20.pt, recipe.json এবং checksums.json তৈরি হয়, সেগুলো আপনার কম্পিউটারে হাতে-কলমে যাচাই করার স্থানীয় আর্টিফ্যাক্ট। অ্যাপের ভেতরে সরাসরি Python-এর .pt ফাইল লোড করা হয় না; অ্যাপটি বান্ডেল করা JSON ল্যাব রিপোর্টের গাণিতিক প্রমাণ ও ইতিহাস দেখায় যাতে পুরো অভিজ্ঞতা অফলাইনে নিরাপদ থাকে।"
+        }
+      ]
+    },
+    {
+      "id": "ch17_experiment",
+      "title": "পূর্ণাঙ্গ অডিট রান: Train, Interrupt, Reload এবং Verify",
+      "subtitle": "স্বয়ংসম্পূর্ণ এক্সিকিউটেবল স্ক্রিপ্ট, সংখ্যার প্রমাণ ও ফলাফলের সীমা",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "এক নজরে স্বয়ংসম্পূর্ণ অডিট স্ক্রিপ্ট",
+          "body": "নিচের কোড ব্লকটি পুরো অধ্যায়ের সবগুলো অংশকে এক সুতোয় গেঁথেছে—এটি ডেটা প্রস্তুত করে, Optimizer Replay ও Normalization রেফারেন্স হিসাব করে এবং অবিরাম রান, পূর্ণাঙ্গ Resume ও Weights-only Restart—এই তিনটি ট্রেনিং শাখা চালিয়ে ফলাফল যাচাই করে। স্ক্রিপ্টটি এমনভাবে লেখা হয়েছে যাতে অন্য যেকোনো ওয়ার্কিং ডিরেক্টরি থেকে চালালেও এটি নিজের ডেটা খুঁজে পায়, শুধু ইমপোর্ট করলে নীরবে কিছু রান না করে এবং ফাইল লেখার কাজগুলো সুস্পষ্ট কমান্ডের অধীনে রাখে।"
+        },
+        {
+          "type": "text",
+          "title": "৪০তম Epoch শেষে প্রাপ্ত প্রকৃত সংখ্যা ও তার অর্থ",
+          "body": "স্ক্রিপ্টটি চালালে ৪০তম Epoch শেষে অবিরাম (Continuous) শাখায় train_bce পাওয়া যায় প্রায় 0.454652 এবং ডায়াগনস্টিক validation_bce আসে প্রায় 0.591283—আর পূর্ণাঙ্গ Resume শাখাতেও হুবহু একই ফল আসে! অন্যদিকে ২০তম Epoch-এ Optimizer ও Scheduler রিসেট করা (Weights-only) শাখায় চূড়ান্ত train_bce হয় প্রায় 0.449054 এবং validation_bce হয় প্রায় 0.588622। এই সামান্য পার্থক্য দেখে কোনো পদ্ধতির শ্রেষ্ঠত্ব দাবি করবেন না—তৃতীয় শাখাটি কেবল এই সত্যটুকুই দেখানোর জন্য রাখা হয়েছে যে অভ্যন্তরীণ State ও Learning Rate-এর পথ বদলে গেলে মডেল ভিন্ন এক গতিপথে চলে যায়।"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ পূর্ণাঙ্গ অডিট, তিন শাখার ট্রেনিং ও ল্যাব এভিডেন্স তৈরি",
+          "body": "from pathlib import Path\nimport argparse, copy, hashlib, importlib.util, io, json, platform, sys\nimport numpy as np\nimport torch\nfrom torch import nn\nimport torch.nn.functional as F\n\nDATA = Path(\"assets/datasets/wine_quality\").resolve()\nCONFIG = {\n    \"seed\": 17,\n    \"batch_size\": 64,\n    \"epochs\": 40,\n    \"resume_epoch\": 20,\n    \"learning_rate\": 0.01,\n    \"weight_decay\": 0.01,\n    \"dropout\": 0.2,\n    \"clip_norm\": 1.0,\n    \"step_size\": 20,\n    \"gamma\": 0.5,\n}\n\n\ndef source(path):\n    spec = importlib.util.spec_from_file_location(\n        \"ch17_neural_source\", path.with_name(\"neural_workflow.py\")\n    )\n    module = importlib.util.module_from_spec(spec)\n    sys.modules[spec.name] = module\n    spec.loader.exec_module(module)\n    prepared = module.prepare(path)\n    frame, raw, y, groups, fit, train, val, mean, scale = prepared\n    X = torch.tensor((raw[train] - mean) / scale, dtype=torch.float64)\n    Y = torch.tensor(y[train], dtype=torch.float64)\n    V = torch.tensor((raw[val] - mean) / scale, dtype=torch.float64)\n    vY = torch.tensor(y[val], dtype=torch.float64)\n    return module, prepared, X, Y, V, vY\n\n\nclass ReliableMLP(nn.Module):\n    def __init__(self):\n        super().__init__()\n        self.hidden = nn.Linear(11, 4, dtype=torch.float64)\n        self.dropout = nn.Dropout(0.2)\n        self.output = nn.Linear(4, 1, dtype=torch.float64)\n\n    def forward(self, X):\n        return self.output(self.dropout(torch.relu(self.hidden(X)))).squeeze(-1)\n\n\ndef setup(module):\n    model = ReliableMLP()\n    module.initialize(model)\n    # Explicit policy: only matrix weights decay; biases do not.\n    opt = torch.optim.AdamW(\n        [\n            {\n                \"params\": [model.hidden.weight, model.output.weight],\n                \"weight_decay\": 0.01,\n            },\n            {\"params\": [model.hidden.bias, model.output.bias], \"weight_decay\": 0.0},\n        ],\n        lr=0.01,\n        foreach=False,\n    )\n    scheduler = torch.optim.lr_scheduler.StepLR(opt, step_size=20, gamma=0.5)\n    generator = torch.Generator().manual_seed(170)\n    return model, opt, scheduler, generator\n\n\ndef record(model, X, y, V, vy, epoch, opt):\n    model.eval()\n    with torch.no_grad():\n        return {\n            \"epoch\": epoch,\n            \"train_bce\": F.binary_cross_entropy_with_logits(model(X), y).item(),\n            \"validation_bce\": F.binary_cross_entropy_with_logits(model(V), vy).item(),\n            \"next_lr\": opt.param_groups[0][\"lr\"],\n        }\n\n\ndef advance(model, opt, scheduler, generator, X, y, V, vy, start, end):\n    rows = []\n    for epoch in range(start, end):\n        model.train()\n        order = torch.randperm(len(X), generator=generator)\n        weighted_loss = 0.0\n        norms = []\n        used_lr = opt.param_groups[0][\"lr\"]\n        for batch in order.split(64):\n            opt.zero_grad(set_to_none=True)\n            logits = model(X[batch])\n            loss = F.binary_cross_entropy_with_logits(logits, y[batch])\n            if not torch.isfinite(loss):\n                raise ValueError(\"Finite loss required\")\n            loss.backward()\n            norm = nn.utils.clip_grad_norm_(\n                model.parameters(), 1.0, error_if_nonfinite=True, foreach=False\n            )\n            norms.append(norm.item())\n            opt.step()\n            weighted_loss += loss.detach().item() * len(batch)\n        scheduler.step()  # Once per completed epoch, after optimizer updates.\n        rows.append(\n            {\n                **record(model, X, y, V, vy, epoch + 1, opt),\n                \"used_lr\": used_lr,\n                \"online_train_bce\": weighted_loss / len(X),\n                \"max_preclip_norm\": max(norms),\n                \"updates\": len(order.split(64)),\n            }\n        )\n    return rows\n\n\ndef checkpoint(model, opt, scheduler, generator, epoch, prepared, history):\n    _, _, _, _, _, train, val, mean, scale = prepared\n    return {\n        \"format\": 1,\n        \"config\": dict(CONFIG),\n        \"epoch\": epoch,\n        \"model\": copy.deepcopy(model.state_dict()),\n        \"optimizer\": copy.deepcopy(opt.state_dict()),\n        \"scheduler\": copy.deepcopy(scheduler.state_dict()),\n        \"torch_rng\": torch.get_rng_state().clone(),\n        \"shuffle_rng\": generator.get_state().clone(),\n        \"feature_names\": list(source_features()),\n        \"mean\": mean.tolist(),\n        \"scale\": scale.tolist(),\n        \"train_source_rows\": (train + 1).tolist(),\n        \"validation_source_rows\": (val + 1).tolist(),\n        \"history\": copy.deepcopy(history),\n        \"source_sha256\": \"4a402cf041b025d4566d954c3b9ba8635a3a8a01e039005d97d6a710278cf05e\",\n    }\n\n\ndef source_features():\n    return [\n        \"fixed acidity\",\n        \"volatile acidity\",\n        \"citric acid\",\n        \"residual sugar\",\n        \"chlorides\",\n        \"free sulfur dioxide\",\n        \"total sulfur dioxide\",\n        \"density\",\n        \"pH\",\n        \"sulphates\",\n        \"alcohol\",\n    ]\n\n\ndef validate_checkpoint(state, prepared):\n    _, _, _, _, _, train, val, mean, scale = prepared\n    if (\n        state[\"format\"] != 1\n        or state[\"config\"] != CONFIG\n        or state[\"epoch\"] != 20\n        or state[\"feature_names\"] != source_features()\n    ):\n        raise ValueError(\"Checkpoint recipe/schema mismatch\")\n    if (\n        state[\"train_source_rows\"] != (train + 1).tolist()\n        or state[\"validation_source_rows\"] != (val + 1).tolist()\n        or state[\"mean\"] != mean.tolist()\n        or state[\"scale\"] != scale.tolist()\n    ):\n        raise ValueError(\"Checkpoint data/transform mismatch\")\n    if (\n        state[\"source_sha256\"]\n        != \"4a402cf041b025d4566d954c3b9ba8635a3a8a01e039005d97d6a710278cf05e\"\n    ):\n        raise ValueError(\"Checkpoint source hash mismatch\")\n\n\ndef restore(module, state, prepared, weights_only=False):\n    validate_checkpoint(state, prepared)\n    model, opt, scheduler, generator = setup(\n        module\n    )  # Construct scheduler before loading optimizer.\n    model.load_state_dict(state[\"model\"])\n    if not weights_only:\n        scheduler.load_state_dict(state[\"scheduler\"])\n        opt.load_state_dict(state[\"optimizer\"])\n    # Both branches get identical next sample order/dropout masks to isolate state loss.\n    generator.set_state(state[\"shuffle_rng\"])\n    torch.set_rng_state(state[\"torch_rng\"])\n    return model, opt, scheduler, generator\n\n\ndef atomic_checkpoint(path, state):\n    path = Path(path)\n    path.parent.mkdir(parents=True, exist_ok=True)\n    temp = path.with_name(path.name + \".tmp\")\n    torch.save(state, temp)\n    temp.replace(path)\n\n\ndef lab_evidence(module, X, y, model):\n    model.eval()\n    model.zero_grad(set_to_none=True)\n    F.binary_cross_entropy_with_logits(model(X[:8]), y[:8]).backward()\n    initial = [\n        model.hidden.weight[0, 0].item(),\n        model.hidden.weight[1, 1].item(),\n        model.output.bias[0].item(),\n    ]\n    gradient = [\n        model.hidden.weight.grad[0, 0].item(),\n        model.hidden.weight.grad[1, 1].item(),\n        model.output.bias.grad[0].item(),\n    ]\n    replay = []\n    # Repeated fixed gradient is an optimizer-mechanics counterfactual, not retraining.\n    for kind in [\"sgd\", \"momentum\", \"adam\", \"adamw\"]:\n        p = nn.Parameter(torch.tensor(initial, dtype=torch.float64))\n        kwargs = {\"lr\": 0.01, \"weight_decay\": 0.1}\n        if kind in [\"sgd\", \"momentum\"]:\n            opt = torch.optim.SGD(\n                [p], momentum=0.9 if kind == \"momentum\" else 0, **kwargs\n            )\n        elif kind == \"adam\":\n            opt = torch.optim.Adam(\n                [p], betas=(0.9, 0.999), eps=1e-8, foreach=False, **kwargs\n            )\n        else:\n            opt = torch.optim.AdamW(\n                [p], betas=(0.9, 0.999), eps=1e-8, foreach=False, **kwargs\n            )\n        values = [p.detach().tolist()]\n        for _ in range(3):\n            p.grad = torch.tensor(gradient, dtype=torch.float64)\n            opt.step()\n            values.append(p.detach().tolist())\n        replay.append({\"kind\": kind, \"values\": values})\n    with torch.no_grad():\n        z = model.hidden(X[:8]).detach()\n    bn = nn.BatchNorm1d(4, affine=False, momentum=0.1, eps=1e-5, dtype=torch.float64)\n    train = bn(z)\n    bn.eval()\n    evaluation = bn(z)\n    ln = nn.LayerNorm(4, elementwise_affine=False, eps=1e-5, dtype=torch.float64)\n    norms = {\n        \"input\": z.tolist(),\n        \"bn_train\": train.tolist(),\n        \"bn_eval\": evaluation.tolist(),\n        \"layer_norm\": ln(z).tolist(),\n        \"running_mean\": bn.running_mean.tolist(),\n        \"running_var\": bn.running_var.tolist(),\n        \"batch_mean\": z.mean(0).tolist(),\n        \"batch_var_biased\": z.var(0, correction=0).tolist(),\n        \"batch_var_unbiased\": z.var(0, correction=1).tolist(),\n        \"eps\": 1e-5,\n        \"momentum\": 0.1,\n    }\n    return {\n        \"initial\": initial,\n        \"gradient\": gradient,\n        \"lr\": 0.01,\n        \"decay\": 0.1,\n        \"beta1\": 0.9,\n        \"beta2\": 0.999,\n        \"eps\": 1e-8,\n        \"replay\": replay,\n    }, norms\n\n\ndef analyse_source(path, artifact_dir=None):\n    module, prepared, X, y, V, vy = source(path)\n    with torch.random.fork_rng(devices=[]):\n        torch.manual_seed(17)\n        model, opt, scheduler, generator = setup(module)\n        optimizers, normalization = lab_evidence(module, X, y, model)\n        initial = record(model, X, y, V, vy, 0, opt)\n        first = advance(model, opt, scheduler, generator, X, y, V, vy, 0, 20)\n        saved = checkpoint(\n            model, opt, scheduler, generator, 20, prepared, [initial] + first\n        )\n        # Serialize/load even without --artifact-dir: audit actual checkpoint format.\n        stream = io.BytesIO()\n        torch.save(saved, stream)\n        stream.seek(0)\n        loaded = torch.load(stream, map_location=\"cpu\", weights_only=True)\n        tail = advance(model, opt, scheduler, generator, X, y, V, vy, 20, 40)\n        resumed, ro, rs, rg = restore(module, loaded, prepared)\n        resumed_tail = advance(resumed, ro, rs, rg, X, y, V, vy, 20, 40)\n        assert tail == resumed_tail\n        for key, v in model.state_dict().items():\n            assert torch.equal(v, resumed.state_dict()[key]), key\n        warm, wo, ws, wg = restore(module, loaded, prepared, weights_only=True)\n        warm_tail = advance(warm, wo, ws, wg, X, y, V, vy, 20, 40)\n        mismatch = max(\n            (v - warm.state_dict()[k]).abs().max().item()\n            for k, v in model.state_dict().items()\n        )\n        frame, raw, labels, groups, fit, train, val, mean, scale = prepared\n        provenance = {\n            \"source\": \"UCI Wine Quality, Cortez et al. (2009), CC BY 4.0\",\n            \"sha256\": loaded[\"source_sha256\"],\n        }\n        roles = {\n            \"inner_train_rows\": len(train),\n            \"inner_validation_rows\": len(val),\n            \"inner_train_groups\": len(set(groups[train])),\n            \"inner_validation_groups\": len(set(groups[val])),\n        }\n        report = {\n            **provenance,\n            **roles,\n            \"versions\": {\n                \"python\": platform.python_version(),\n                \"torch\": torch.__version__,\n                \"numpy\": np.__version__,\n            },\n            \"config\": CONFIG,\n            \"initial\": initial,\n            \"continuous_final\": tail[-1],\n            \"resumed_final\": resumed_tail[-1],\n            \"weights_only_final\": warm_tail[-1],\n            \"exact_resume\": True,\n            \"resume_parameter_max_abs\": 0.0,\n            \"weights_only_parameter_max_abs\": mismatch,\n            \"optimizer_updates\": 40 * 13,\n            \"assumptions\": [\n                \"Existing inner split reused:776 training/190 diagnostic validation; scaler only on inner training.\",\n                \"CPU float64, one fixed recipe; no hyperparameter/seed/early-stopping model selection or outer decision/test scoring.\",\n                \"Epoch-boundary checkpoint at20 after scheduler step, no pending gradients; mid-epoch cursor/workers not covered.\",\n                \"Exact resume is local same-version CPU evidence, not a cross-platform deterministic guarantee.\",\n                \"Weights-only branch restores RNG/order but resets optimizer/scheduler, isolating state loss; this is not a fair candidate ranking.\",\n                \"Optimizer replay repeats a measured8-row gradient on3 selected scalars; no model retraining/performance claim.\",\n                \"BN/LN lab uses actual initial preactivations; neither normalization layer is trained in the main model.\",\n            ],\n        }\n        asset = {\n            **provenance,\n            **roles,\n            \"config\": CONFIG,\n            \"feature_names\": source_features(),\n            \"mean\": mean.tolist(),\n            \"scale\": scale.tolist(),\n            \"source_rows_1based\": (train[:8] + 1).tolist(),\n            \"optimizers\": optimizers,\n            \"normalization\": normalization,\n            \"continuous_history\": [initial] + first + tail,\n            \"resumed_history\": [initial] + first + resumed_tail,\n            \"weights_only_history\": [initial] + first + warm_tail,\n            \"resume_parameter_max_abs\": 0.0,\n            \"weights_only_parameter_max_abs\": mismatch,\n            \"torch_version\": torch.__version__,\n        }\n        if artifact_dir:\n            folder = Path(artifact_dir)\n            atomic_checkpoint(folder / \"epoch-20.pt\", saved)\n            folder.joinpath(\"recipe.json\").write_text(\n                json.dumps(\n                    {\n                        \"config\": CONFIG,\n                        \"feature_names\": source_features(),\n                        \"mean\": mean.tolist(),\n                        \"scale\": scale.tolist(),\n                        \"source_sha256\": loaded[\"source_sha256\"],\n                    },\n                    indent=2,\n                )\n                + \"\\n\"\n            )\n            folder.joinpath(\"checksums.json\").write_text(\n                json.dumps(\n                    {\n                        name: hashlib.sha256((folder / name).read_bytes()).hexdigest()\n                        for name in [\"epoch-20.pt\", \"recipe.json\"]\n                    },\n                    indent=2,\n                )\n                + \"\\n\"\n            )\n    return report, asset\n\n\ndef run_analysis(path, artifact_dir=None):\n    previous = torch.get_num_threads()\n    try:\n        torch.set_num_threads(1)\n        return analyse_source(path, artifact_dir)\n    finally:\n        torch.set_num_threads(previous)\n\n\nreport, asset = run_analysis(DATA / \"winequality-red.csv\")\nprint(report)\n"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ চূড়ান্ত অডিট শর্ত ও মোট ৫২০টি আপডেট যাচাই",
+          "body": "assert report[\"exact_resume\"] and report[\"resume_parameter_max_abs\"] == 0\nassert report[\"optimizer_updates\"] == 520\nprint(report[\"continuous_final\"], report[\"weights_only_final\"])\n"
+        },
+        {
+          "type": "text",
+          "title": "ইন্টারেক্টিভ ল্যাবের সংখ্যার উৎস",
+          "body": "খেয়াল করুন কীভাবে lab_evidence ফাংশনটি প্রথম ৮টি সারির ওপর বাস্তব Backward Pass চালিয়ে ৩টি নির্বাচিত প্যারামিটার ও তাদের Gradient তুলে নিচ্ছে, এবং একই স্থির Gradient পরপর তিন ধাপ চালিয়ে চার ধরনের Optimizer-এর আচরণের তুলনামূলক চিত্র তৈরি করছে। পাশাপাশি হিডেন স্তরের প্রকৃত Pre-activation-এর ওপর BatchNorm ও LayerNorm-এর ফলাফল ও বাফার আপডেটও JSON-এ সংরক্ষিত হচ্ছে। অ্যাপের উইজেট স্বাধীনভাবে এই পাটিগণিত করে, আর আমাদের PyTorch স্ক্রিপ্ট তার নির্ভুল রেফারেন্স দেয়। মনে রাখবেন, একই স্থির Gradient বারবার চালানো কেবল সূত্র বোঝার একটি কৌশল—এটি পূর্ণ মডেল ট্রেনিংয়ের বিকল্প নয়।"
+        },
+        {
+          "type": "text",
+          "title": "ফাইল লেখার স্পষ্ট নিয়ম ও নিরাপত্তা",
+          "body": "সাধারণভাবে CLI কমান্ডটি কেবল রিপোর্ট প্রিন্ট করে বা নির্ধারিত ফাইলে সেভ করে; কেবল সুস্পষ্টভাবে --write-labs ফ্ল্যাগ দিলেই অ্যাপের reliable_lab.json নতুন করে তৈরি হয়, আর --artifact-dir দিলে স্থানীয় Checkpoint, রেসিপি ও Checksum ফাইল লেখা হয়। মূল CSV ডেটাসেট কখনোই পরিবর্তিত হয় না, এবং রিপোর্ট লেখার সময়েও অস্থায়ী ফাইল প্রতিস্থাপন করে অর্ধলিখিত ফাইলের ঝুঁকি কমানো হয়।"
+        },
+        {
+          "type": "text",
+          "title": "সবগুলো দাবি একসাথে মিলিয়ে দেখার তালিকা",
+          "body": "কোনো ট্রেনিং রানকে নির্ভরযোগ্য বলে ছাড়পত্র দেওয়ার আগে এক নজরে সবগুলো প্রমাণ মিলিয়ে নিন: মূল ফাইলের SHA-256 হ্যাশ, ট্রেন ও ভ্যালিডেশন সারির সংখ্যা, লাইব্রেরি সংস্করণ ও Dtype, প্রতি Epoch-এর used_lr ও next_lr, মোট 520টি Optimizer Step, সিরিয়ালাইজড Checkpoint থেকে রিস্টোর করার পর টেনসরের শূন্য পার্থক্য এবং স্থানীয় RNG State পুনরুদ্ধার। আর যেহেতু মূল মডেলে BatchNorm বা LayerNorm ট্রেন করা হয়নি, তাই নরমালাইজেশন ল্যাবের পরিসংখ্যান দিয়ে মডেলের Generalization সম্পর্কে কোনো দাবি করা যাবে না।"
+        },
+        {
+          "type": "text",
+          "title": "পরবর্তী ধাপে যাওয়ার আগে চূড়ান্ত যাচাই",
+          "body": "নিজের মেশিনে পুরো স্ক্রিপ্ট ও টেস্ট স্যুটটি একবার চালিয়ে দেখুন। সংরক্ষিত Checkpoint-এর একটি কপিতে কোনো একটি ভ্যালিডেশন মেটাডেটা ইচ্ছা করে বদলে দিয়ে নিশ্চিত হন যে লোডার সেটিকে প্রত্যাখ্যান করছে। অ্যাপে আপনার লেখা ড্রাফট ও সংখ্যার উত্তর সংরক্ষিত থাকবে। এই ভিত্তিগুলো পাকা হয়ে গেলে পরের অধ্যায়ে (Book 3 · Chapter 4: CNNs, Computer Vision & Transfer Learning) কনভোলিউশন, ট্রান্সফার লার্নিং ও ভিশন মডেলের আচরণ সম্পর্কে পড়ুন।"
+        }
+      ]
+    },
+    {
+      "id": "ch17_amp",
+      "title": "Mixed Precision (AMP), Profiling ও হার্ডওয়্যারের সীমানা",
+      "subtitle": "কখন Unscale করবেন, কীভাবে গতি মাপবেন এবং কোথায় অতি-দাবি এড়িয়ে চলবেন",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "Mixed Precision কেন ব্যবহার করা হয়?",
+          "body": "বড় নিউরাল নেটওয়ার্কে অ্যাক্সিলারেটরের মেমোরি বাঁচাতে এবং হিসাবের গতি (Throughput) বাড়াতে float16 বা bfloat16-এর মতো কম বিটের ফরম্যাট মিশিয়ে ট্রেনিং চালানো হয়—যাকে বলা হয় Automatic Mixed Precision (AMP)। তবে কম বিটে সংখ্যার পাল্লা ছোট হতে পারে বলে সমর্থিত কার্নেল, Loss Scaling এবং সংখ্যার সংবেদনশীলতা বোঝা অত্যন্ত জরুরি। মনে রাখবেন, আমাদের স্থানীয় CPU float64 রানের নির্ভুলতা দেখিয়ে কখনোই CUDA বা AMP-তে কতগুণ গতি বাড়বে বা অ্যাকুরেসি হুবহু এক থাকবে—এমন দাবি করা যায় না।"
+        },
+        {
+          "type": "text",
+          "title": "Scaled Training-এ প্রতিটি ধাপের অপরিবর্তনীয় ক্রম",
+          "body": "যখন ডাইনামিক GradScaler ব্যবহার করা হয়, তখন প্রতিটি ধাপের ক্রমটি হতে হয় সুশৃঙ্খল: প্রথমে Loss-কে স্কেল করে backward() চালানো, এরপর scaler.unscale_(optimizer) কল করে Gradient-কে আসল স্কেলে ফিরিয়ে আনা, ঠিক তার পরেই Gradient Clipping বা Finite Check করা, এবং শেষে scaler.step(optimizer) ও scaler.update() কল করা। কোনো ব্যাচে Overflow দেখা দিলে scaler.step() ওই ধাপের Optimizer Update বাদ দিতে পারে—তাই ধাপ-ভিত্তিক Scheduler এগোনোর নিয়মটিও প্রকৃত আপডেটের সাথে সামঞ্জস্যপূর্ণ হতে হয়। প্রকৃত হার্ডওয়্যারে এটি বাস্তবায়নের সময় অফিশিয়াল API ও ডিভাইস টেস্ট ব্যবহার করা আবশ্যক।"
+        },
+        {
+          "type": "math",
+          "title": "Loss Scaling এবং Gradient Unscaling-এর মূল সম্পর্ক",
+          "body": "\\mathrm{scaled\\ loss}=sL,\\quad g_{\\mathrm{unscaled}}={g_{\\mathrm{scaled}}\\over s}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ Unscale করার পর সঠিক Norm Clipping-এর গাণিতিক চিত্রণ",
+          "body": "import torch\n\ng = torch.tensor([3.0, 4.0], dtype=torch.float64)  # Mathematical scaling illustration.\nscale = 128.0\nscaled = g * scale\nunscaled = scaled / scale\ntorch.testing.assert_close(unscaled, g)\nclipped = unscaled * min(1.0, 1.0 / (torch.linalg.vector_norm(unscaled).item() + 1e-6))\nassert torch.linalg.vector_norm(clipped) <= 1.000001\nprint(clipped.tolist())\n"
+        },
+        {
+          "type": "text",
+          "title": "AMP ও অ্যাক্সিলারেটরে Checkpoint-এর অতিরিক্ত উপাদান",
+          "body": "ডাইনামিক GradScaler সময়ের সাথে নিজের স্কেল ফ্যাক্টর ও অভ্যন্তরীণ কাউন্টার বদলাতে থাকে। তাই অ্যাক্সিলারেটরে AMP ট্রেনিং মাঝপথে থামিয়ে হুবহু Resume করতে হলে Checkpoint-এ মডেলের ওয়েট ও অপটিমাইজারের পাশাপাশি scaler.state_dict(), প্রতিটি ডিভাইসের CUDA RNG State, ডিভাইস ম্যাপিং এবং ডিস্ট্রিবিউটেড স্যাম্পলারের স্টেটও প্রেক্ষাপট অনুযায়ী সংরক্ষণ করতে হয়। আমাদের CPU-ভিত্তিক স্থানীয় Checkpoint এসব অনুপস্থিত ডিভাইস স্টেট কভার করার দাবি করে না।"
+        },
+        {
+          "type": "text",
+          "title": "GPU-তে গতি ও মেমোরি মাপার সঠিক নিয়ম",
+          "body": "অ্যাক্সিলারেটরের অপারেশনগুলো সাধারণত অ্যাসিনক্রোনাসভাবে চলে—অর্থাৎ হোস্ট CPU পরের লাইনে চলে যাওয়া মানেই GPU-র কার্নেল শেষ হওয়া নয়! তাই প্রোফাইলিং করার সময় শুরুর Warmup ধাপ বাদ না দিলে এবং ডিভাইস Synchronize না করলে সাধারণ ঘড়ির সময় প্রকৃত কার্নেলের সময় দেয় না। পাশাপাশি মেমোরি অ্যালোকেশন, ডেটা লোডারের গতি এবং প্রোফাইলারের নিজস্ব ওভারহেড আলাদাভাবে নথিবদ্ধ করতে হয়। বাস্তব হার্ডওয়্যার পরীক্ষা ছাড়া এই অধ্যায়ে কোনো কাল্পনিক গতির সংখ্যা দেওয়া হয়নি।"
+        },
+        {
+          "type": "text",
+          "title": "NaN দেখা দিলেই কি দোষ শুধু Precision-এর?",
+          "body": "ট্রেনিংয়ে হঠাৎ NaN এলে অনেকেই চোখ বন্ধ করে শুধু Precision-কে দোষ দেন। কিন্তু বাস্তবে দূষিত ডেটা, ভুল Loss ফাংশন, অতিরিক্ত বড় Learning Rate বা অসীম ইনপুটের কারণেও NaN আসতে পারে। এমন সমস্যায় পড়লে প্রথমে পূর্ণ float64 বা float32 রেফারেন্সে সমস্যাটি পুনরুৎপাদন করে মূল কারণ ধরুন—কারণ লজিক্যাল বা সিমান্টিক বাগ কখনোই Mixed Precision দিয়ে ঠিক হয় না।"
+        },
+        {
+          "type": "text",
+          "title": "হাতে-কলমে অনুশীলন",
+          "body": "খাতায় একটি সংখ্যার উদাহরণ লিখে দেখান কেন স্কেল করা Gradient-কে Clip করার আগে unscale_ করতে ভুলে গেলে কাঙ্ক্ষিত Clipping সীমা বদলে যায়। আমাদের CPU উদাহরণ থেকে অপারেশনের সঠিক ক্রমটি বুঝে নিন, এবং প্রকৃত ডিভাইসে আচরণ যাচাই না করে কোনো প্রোডাকশন ডিপ্লয়মেন্ট সুপারিশ দেবেন না।"
+        }
+      ]
+    },
+    {
+      "id": "ch17_distributed_round",
+      "title": "Distributed Training: DDP, FSDP ও মেমোরি বাজেটের হিসাব",
+      "subtitle": "কোন মেমোরি প্রতি GPU-তে ডুপ্লিকেট থাকে আর কোথায় কমিউনিকেশন বাড়ে—খাতাকলমে হিসাব",
+      "duration": "32 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "প্রথমে DDP (DistributedDataParallel)-এর কলকব্জা বুঝুন",
+          "body": "একাধিক GPU-তে ট্রেনিং ছড়িয়ে দেওয়ার সবচেয়ে প্রচলিত পদ্ধতি হলো DDP। এখানে প্রতিটি Rank-এ পুরো মডেলের একটি করে পূর্ণ প্রতিলিপি (Replica) থাকে। প্রতিটি র‍্যাঙ্ক ডেটার আলাদা অংশ (Shard) থেকে Gradient বের করে এবং Backward চলাকালীন বাকেট ধরে সবার Gradient একত্রে গড় (All-Reduce) করা হয়। প্রতিটি র‍্যাঙ্কে সমান আকারের ব্যাচ ও স্থানীয় গড় Loss থাকলে সব র‍্যাঙ্কের গড় Gradient আপনাআপনি বৈশ্বিক গড়ের সমান হয়। কিন্তু র‍্যাঙ্কভেদে উদাহরণের সংখ্যা অসমান হলে র‍্যাঙ্ক-গড় আর উদাহরণ-গড় আলাদা হয়ে যায়! তখন মোট উদাহরণ সংখ্যা N জানা থাকলে প্রতিটি র‍্যাঙ্কের স্থানীয় যোগফল Loss-কে world_size / N দিয়ে গুণ করে নিলে DDP-র গড় রিডাকশনের পর ঠিক বৈশ্বিক গড় Gradient পাওয়া যায়।"
+        },
+        {
+          "type": "text",
+          "title": "মডেল যখন এক GPU-তে ধরে না: FSDP কীভাবে মেমোরি বাঁচায়?",
+          "body": "মডেল খুব বড় হয়ে গেলে প্রতি র‍্যাঙ্কে পুরো মডেল ও Optimizer State-এর কপি রাখা কঠিন হয়ে পড়ে। তখন FSDP (Fully Sharded Data Parallel) ব্যবহার করে Parameter, Gradient এবং Optimizer State সব র‍্যাঙ্কের মধ্যে ভাগ (Shard) করে দেওয়া যায়। কোনো মডিউলের হিসাবের সময় দরকারি প্যারামিটার টুকরোগুলো All-Gather করে আনা হয় এবং Backward-এ Gradient হিসাব শেষে Reduce-Scatter করা হয়। কাজ শেষে Reshard করলে স্থায়ী (Persistent) মেমোরি অনেক কমে, তবে মনে রাখবেন—All-Gather করা পূর্ণ ওয়েট, প্রিফেচ, Activation এবং অস্থায়ী বাফার মিলেই সর্বোচ্চ (Peak) মেমোরি নির্ধারণ করে। শর্ডেড Checkpoint থেকে Resume করার ক্ষেত্রে World Size এবং Optimizer State ফরম্যাট আগে থেকেই ঠিক করে নিতে হয়।"
+        },
+        {
+          "type": "math",
+          "title": "DDP-র স্থায়ী স্টেট মেমোরি ও Ring All-Reduce কমিউনিকেশনের আদর্শ সূত্র",
+          "body": "M_{\\mathrm{DDP}}=P(b_w+b_g+b_o),\\qquad V_{\\mathrm{ring}}=2\\frac{R-1}{R}Pb_g"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ ১ বিলিয়ন প্যারামিটারের মডেলের মেমোরি ও কমিউনিকেশন হিসাব (Decimal GB)",
+          "body": "parameters = 1_000_000_000\nranks = 4\nweight_bytes, gradient_bytes, moment_bytes = 2, 2, 8\n# Declared state only: no FP32 master weight, activation or workspace.\npersistent = parameters * (weight_bytes + gradient_bytes + moment_bytes)\nring_send = 2 * (ranks - 1) / ranks * parameters * gradient_bytes\nprint(persistent / 1e9, persistent / ranks / 1e9, ring_send / 1e9)"
+        },
+        {
+          "type": "text",
+          "title": "সংখ্যার বিশ্লেষণ ও প্রোফাইলিংয়ের বাস্তবতা",
+          "body": "উপরের কোডের অনুমান অনুযায়ী, 1B প্যারামিটারের মডেলে ওয়েট (2 বাইট), গ্র্যাডিয়েন্ট (2 বাইট) ও অপটিমাইজার মোমেন্ট (8 বাইট) মিলিয়ে DDP-তে প্রতি র‍্যাঙ্কে স্থায়ী স্টেট মেমোরি লাগে 12.0 GB; নিখুঁত শার্ডিংয়ে ৪টি র‍্যাঙ্কে এই স্থায়ী মেমোরি কমে প্রতি র‍্যাঙ্কে 3.0 GB হয়—তবে এটি Peak মেমোরি নয়। আদর্শ Ring All-Reduce-এ প্রতি ধাপে প্রতিটি র‍্যাঙ্ক 3.0 GB ডেটা পাঠায় এবং একই পরিমাণ গ্রহণ করে (টপোলজি, ওভারল্যাপ ও বাস্তবায়ন ভেদে প্রকৃত চিত্র ভিন্ন হতে পারে)। অতিরিক্ত কম্পিউটের বিনিময়ে Activation মেমোরি বাঁচাতে Activation Checkpointing ব্যবহার করা হয়। বাস্তব GPU ক্লাস্টারে প্রোফাইলার দিয়ে মেমোরির চূড়া, কালেক্টিভ কলের সময়, Straggler এবং tokens/s একসাথে মাপতে হয়; এই পাঠটি কোনো হার্ডওয়্যার বেঞ্চমার্ক চালায় না।"
+        },
+        {
+          "type": "text",
+          "title": "খাতাকলমে যাচাই: দুই Rank-এ অসমান ব্যাচের স্কেলিং",
+          "body": "অসমান ব্যাচের হিসাবটি ছোট সংখ্যা দিয়ে যাচাই করে নিই। ধরা যাক, প্রথম র‍্যাঙ্কে ২টি উদাহরণের স্কেলার গ্র্যাডিয়েন্ট এসেছে 1 ও 3 (গড় 2, যোগফল 4), আর দ্বিতীয় র‍্যাঙ্কে ১টি উদাহরণের গ্র্যাডিয়েন্ট এসেছে 8 (গড় 8, যোগফল 8)। তিনটি উদাহরণের প্রকৃত বৈশ্বিক গড় হলো (1 + 3 + 8) / 3 = 4। অথচ র‍্যাঙ্ক দুটির গড় (2 ও 8) সরাসরি গড় করলে পাওয়া যেত 5—যা ভুল! এখন স্থানীয় যোগফল 4 ও 8-কে world_size / N = 2 / 3 দিয়ে গুণ করে (8/3 ও 16/3) দুই র‍্যাঙ্কের গড় নিলে ঠিক 4 ফিরে আসে। আর সিকোয়েন্স মডেলে প্যাক করা টোকেন থাকলে উদাহরণ সংখ্যার বদলে বৈধ টোকেনের সংখ্যাকে (Valid-token Denominator) হর হিসেবে ব্যবহার করুন।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-তে ডিস্ট্রিবিউটেড ডিবাগিংয়ের প্রশ্ন",
+          "body": "ইন্টারভিউতে ফলো-আপ প্রশ্ন এলে মনে রাখবেন: CPU ইনপুট পাইপলাইন ধীর হলে GPU অলস বসে থাকবে, আর গ্র্যাডিয়েন্ট কালেক্টিভ দেরিতে পৌঁছালে ট্রেসে র‍্যাঙ্কভেদে ধাপের সময় ওঠানামা করবে। ডিবাগ করার সময় আগে একটি পরিষ্কার Baseline Trace নিন, প্রতিবার কেবল একটি সেটিং (Knob) বদলান, এবং একই Effective Batch ও Optimizer Step বজায় রেখে Throughput ও Validation ফলাফল মিলিয়ে দেখুন।"
+        },
+        {
+          "type": "checkpoint",
+          "title": "নিজেকে যাচাই করুন",
+          "body": "হিসাব করে দেখলেন FSDP-র স্থায়ী (Persistent) শর্ডেড স্টেট GPU মেমোরির ভেতরে সহজেই এঁটে যাচ্ছে—তবুও Forward Pass চালাতে গিয়ে কেন Out-of-Memory (OOM) এরর আসতে পারে?",
+          "solution": "কারণ স্থায়ী শর্ডেড স্টেটের বাইরেও Forward Pass চলাকালীন All-Gather করে আনা পূর্ণ ওয়েট, ইন্টারমিডিয়েট Activation এবং অস্থায়ী বাফারগুলো একসাথে যোগ হয়ে Peak মেমোরি অনেক বাড়িয়ে দিতে পারে। এটি সামলাতে FSDP-র Wrap Unit পরিবর্তন করা, Activation Checkpointing ব্যবহার করা, ব্যাচের আকার কমানো এবং মেমোরি টাইমলাইন প্রোফাইল করে পরীক্ষা করা প্রয়োজন।",
+          "reference": "https://docs.pytorch.org/docs/stable/distributed.fsdp.fully_shard.html"
+        }
+      ]
+    },
+    {
+      "id": "ch17_readiness",
+      "title": "Reliable Training: কোডিং ও Interview প্রস্তুতির চূড়ান্ত যাচাই",
+      "subtitle": "একক Parameter Update থেকে পূর্ণাঙ্গ Recovery Contract পর্যন্ত নিজের দক্ষতা ঝালিয়ে নিন",
+      "duration": "42 min",
+      "icon": "code",
+      "blocks": [
+        {
+          "type": "text",
+          "title": "গাণিতিক কলকব্জা নিজের হাতে প্রতিপাদন করুন",
+          "body": "এই অধ্যায় শেষ করার প্রাক্কালে নিশ্চিত করুন যে আপনি না দেখে খাতায় SGD, Momentum, Adam-এর Bias Correction এবং AdamW-এর Decoupled Weight Decay-এর সমীকরণ লিখে প্রতিটি পদের ভূমিকা ব্যাখ্যা করতে পারছেন। শূন্য (0.0) গ্র্যাডিয়েন্ট বনাম None গ্র্যাডিয়েন্টের পার্থক্য, ওয়েট ও বায়াসের আলাদা Parameter Group, অসমান ব্যাচের Loss Scaling এবং Gradient Clipping-এর প্রকৃত সীমা স্পষ্টভাবে তুলে ধরার অভ্যাস করুন—এবং সংখ্যার ট্রেস দিয়ে দেখান কেন একই Gradient পেয়েও ভিন্ন ভিন্ন Optimizer ভিন্ন আপডেট দেয়।"
+        },
+        {
+          "type": "text",
+          "title": "মডেল ও পাইপলাইনের প্রতিটি State আলাদা করে চিনুন",
+          "body": "কোন স্তর কখন কীভাবে আচরণ করে তা যেন নখদর্পণে থাকে: Dropout-এর train() বনাম eval() মোড, BatchNorm-এর Running Buffer, LayerNorm-এর অক্ষ এবং বর্তমান RNG State। পাশাপাশি স্পষ্টভাবে লিখতে পারা চাই—মডেলের ওয়েট, বাফার, অপটিমাইজার মোমেন্ট, শিডিউলার কাউন্টার, ডেটার ক্রম ও পলিসি স্টেটের কোনটি পুনরুদ্ধারের (Recovery) কোন প্রেক্ষাপটে অপরিহার্য।"
+        },
+        {
+          "type": "math",
+          "title": "নির্ভরযোগ্য ডিপ লার্নিং ট্রেনিংয়ের মূলমন্ত্র",
+          "body": "\\mathrm{reliability}=\\mathrm{explicit\\ contract}+\\mathrm{independent\\ checks}+\\mathrm{honest\\ scope}"
+        },
+        {
+          "type": "code",
+          "title": "Python-এ সংরক্ষিত ল্যাব আর্টিফ্যাক্টের মূল শর্তগুলোর দ্রুত যাচাই",
+          "body": "from pathlib import Path\nimport json\n\na = json.loads(Path(\"assets/datasets/wine_quality/reliable_lab.json\").read_text())\nassert len(a[\"continuous_history\"]) == 41\nassert a[\"continuous_history\"] == a[\"resumed_history\"]\nassert a[\"config\"][\"resume_epoch\"] == 20\nprint(\"Defend optimizer, normalization, data scope and checkpoint boundary.\")\n"
+        },
+        {
+          "type": "text",
+          "title": "কোডিং অনুশীলনী ও এজ-কেস পরীক্ষা",
+          "body": "এই অধ্যায়ের ১০টি কোডিং অনুশীলনী কোনো রেফারেন্স না দেখে স্থানীয় Python পরিবেশে নিজে লেখার চেষ্টা করুন। কেবল সাধারণ ইনপুটে সঠিক স্কেলার আউটপুট আসাই যথেষ্ট নয়—বেমানান Shape, NaN/Inf মান, আংশিক ব্যাচ, বেমানান Checkpoint এবং রিসেট হওয়া Scheduler-এর মতো প্রান্তিক পরিস্থিতিগুলোও পরীক্ষা করে ট্রেনিং স্টেট ও Resume আচরণ যাচাই করুন।"
+        },
+        {
+          "type": "text",
+          "title": "Interview-এর বাস্তবধর্মী প্রশ্ন মোকাবিলা",
+          "body": "পরের অংশের দশটি মৌলিক FAANG-ধাঁচের প্রশ্ন সাজানো হয়েছে বাস্তব প্রোডাকশন ডিবাগিং, ট্রেনিং নকশা এবং Resume সংক্রান্ত সূক্ষ্ম বিনিময়মূল্য শেখানোর জন্য (এগুলো কোনো নির্দিষ্ট কোম্পানির ফাঁস হওয়া প্রশ্ন নয়)। উত্তর দেওয়ার সময় কেবল দু-চারটি Optimizer-এর নাম না বলে অন্তর্নিহিত অনুমান, টেনসরের Shape, আপডেটের সময়ক্রম এবং প্রমাণের সীমানা সুস্পষ্টভাবে তুলে ধরুন।"
+        },
+        {
+          "type": "text",
+          "title": "মূল ডকুমেন্টেশন ও রেফারেন্স",
+          "body": "আরও গভীরে পড়ার জন্য PyTorch-এর অফিশিয়াল ডকুমেন্টেশনগুলো দেখতে পারেন—AdamW: https://docs.pytorch.org/docs/2.15/generated/torch.optim.AdamW.html , BatchNorm/LayerNorm/Dropout: https://docs.pytorch.org/docs/2.15/nn.html , StepLR Scheduler: https://docs.pytorch.org/docs/2.15/generated/torch.optim.lr_scheduler.StepLR.html , Reproducibility নির্দেশিকা: https://docs.pytorch.org/docs/2.15/notes/randomness.html এবং Checkpoints টিউটোরিয়াল: https://docs.pytorch.org/tutorials/beginner/saving_loading_models.html । অবশ্য এই অধ্যায়ের সব আবশ্যিক পাঠ অ্যাপের ভেতরেই সম্পূর্ণ অফলাইনে সংযুক্ত আছে।"
+        },
+        {
+          "type": "text",
+          "title": "পরবর্তী অধ্যায়ের প্রস্তুতি",
+          "body": "পরের অধ্যায়ে যাওয়ার আগে একবার নিজে নিজে মিলিয়ে নিন—Optimizer ও RNG State-সহ নিখুঁত Resume, বিভিন্ন Normalization মোডের আচরণ এবং দূষণমুক্ত Validation প্রোটোকল আপনি সাবলীলভাবে ব্যাখ্যা করতে পারছেন কি না। এরপর Book 3 · Chapter 4 (CNNs, Computer Vision & Transfer Learning)-এ গিয়ে ইমেজ ডেটার স্থানিক গঠন, Channel চুক্তি ও ট্রান্সফার লার্নিংয়ের কৌশল শিখুন।"
+        }
+      ]
+    }
+  ],
+  "quizzes": [
+    {
+      "id": "ch17_q1",
+      "question": "মাঝপথে থেমে যাওয়া ট্রেনিংয়ের পরবর্তী Parameter Update-টি হুবহু কী হবে, তা কোন উপাদানগুলো একত্রে নির্ধারণ করে?",
+      "options": [
+        "শুধুমাত্র মডেলের আর্কিটেকচারের নাম",
+        "মডেলের Weight ও Buffer-এর পাশাপাশি Optimizer State, বর্তমান RNG State, ডেটার ক্রম এবং Learning Rate Schedule",
+        "কেবলমাত্র ট্রেনিং শুরুর প্রারম্ভিক Seed",
+        "শুধুমাত্র চূড়ান্ত Validation Accuracy"
+      ],
+      "answer": 1,
+      "explanation": "Stateful Optimizer-এর পূর্ববর্তী মোমেন্ট এবং Stochastic অপারেশনগুলোর বর্তমান RNG অবস্থান ছাড়া পরবর্তী ধাপ নির্ধারণ করা যায় না; শুধু শুরুর Seed কখনোই মাঝপথের Checkpoint অবস্থান নির্দেশ করে না।"
+    },
+    {
+      "id": "ch17_q2",
+      "question": "PyTorch SGD-তে momentum = 0.9, dampening = 0 এবং প্রতি ধাপে ধ্রুবক Gradient g = 2 হলে (শুরুতে কোনো Velocity Buffer না থাকা অবস্থায়) দ্বিতীয় ধাপে Velocity Buffer-এর মান কত হবে?",
+      "options": [
+        "2.0",
+        "1.8",
+        "3.8",
+        "0.2"
+      ],
+      "answer": 2,
+      "explanation": "PyTorch-এর ডিফল্ট নিয়মে প্রথম ধাপে Velocity Buffer সরাসরি প্রথম Gradient-এর সমান অর্থাৎ 2.0 হয়, এবং দ্বিতীয় ধাপে 0.9 × 2.0 + 2.0 = 3.8 হয়।"
+    },
+    {
+      "id": "ch17_q3",
+      "question": "Adam ও AdamW Optimizer-এর অভ্যন্তরীণ ভেরিয়েবল v আসলে কিসের প্রাক্কলন (Estimate) রাখে?",
+      "options": [
+        "সবসময় গড় বিয়োগ করা Central Variance-এর",
+        "মডেলের সবগুলো Weight-এর যোগফলের",
+        "Validation Loss-এর চলমান গড়ের",
+        "উপাদানভিত্তিক Gradient-এর বর্গের চলমান গড়ের (Second Raw Moment)"
+      ],
+      "answer": 3,
+      "explanation": "Adam-এ v হলো Gradient-এর বর্গের Exponential Moving Average বা Second Raw Moment—এটি গড় বিয়োগ করা Central Variance নয়, এবং এর Bias Correction ধাপ সংখ্যার ওপর নির্ভর করে।"
+    },
+    {
+      "id": "ch17_q4",
+      "question": "সাধারণ Adam-এ যুক্ত L2 Penalty-র তুলনায় AdamW-এর Weight Decay-এর মূল পার্থক্য কী?",
+      "options": [
+        "এটি Adaptive Moment ও হরের Preconditioner থেকে আলাদা রেখে সরাসরি Parameter সংকুচিত (Shrink) করে",
+        "এটি সবসময় সাধারণ Adam-এর L2 Penalty-র হুবহু অভিন্ন আপডেট দেয়",
+        "এটি অভ্যন্তরীণ কোনো Moment State সংরক্ষণ করে না",
+        "এটি Backward Pass-এ কোনো Gradient হিসাব হতে দেয় না"
+      ],
+      "answer": 0,
+      "explanation": "সাধারণ Adam-এ Coupled L2 পদটি Gradient-এর সাথে মিশে গিয়ে m ও v-এর মাধ্যমে স্কেল হয়ে যায়, কিন্তু AdamW এই সংকোচনকে Adaptive অনুপাত থেকে সম্পূর্ণ আলাদা (Decoupled) রাখে।"
+    },
+    {
+      "id": "ch17_q5",
+      "question": "কোনো Parameter-এর Gradient সংখ্যাসূচক শূন্য (0.0) হওয়া বনাম None থাকা অবস্থায় AdamW কীভাবে আচরণ করে?",
+      "options": [
+        "দুই ক্ষেত্রেই সবসময় হুবহু একই আচরণ করে",
+        "শূন্য (0.0) হলে Weight Decay ও পুরোনো Moment অনুযায়ী আপডেট হতে পারে, কিন্তু None হলে ওই Parameter ধাপটিতে সম্পূর্ণ বাদ (Skip) পড়ে",
+        "None থাকলে সবসময় NaN তৈরি হয়",
+        "শূন্য (0.0) হলে Parameter সবসময় স্থির (Frozen) থেকে যায়"
+      ],
+      "answer": 1,
+      "explanation": "grad = None থাকলে Optimizer ধরে নেয় Parameter-টি ওই ধাপে অংশ নেয়নি; কিন্তু grad = 0.0 একটি বৈধ সংখ্যাসূচক Gradient হওয়ায় সেখানে Decoupled Weight Decay ও পূর্ববর্তী Moment State কার্যকর হয়।"
+    },
+    {
+      "id": "ch17_q6",
+      "question": "আমাদের মূল ট্রেনিং ওয়ার্কফ্লোর রেসিপিতে Weight Decay-এর নীতিটি কী?",
+      "options": [
+        "সবগুলো Parameter-এর জন্যই 0.1",
+        "শুধুমাত্র Bias ভেক্টরের ওপর প্রযোজ্য",
+        "ম্যাট্রিক্স Weight-গুলোর জন্য 0.01 এবং Bias-গুলোর জন্য 0.0",
+        "Loss ফাংশনে আলাদা করে অতিরিক্ত L2 পেনাল্টি যোগ করা"
+      ],
+      "answer": 2,
+      "explanation": "মূল ট্রেনিং রেসিপিতে কেবল Linear স্তরের ম্যাট্রিক্স Weight-এ 0.01 Decay দেওয়া হয়েছে এবং Bias-এ 0.0 রাখা হয়েছে (অন্যদিকে সংক্ষিপ্ত Optimizer Replay ল্যাবটিতে কেবল গাণিতিক তুলনার জন্য ৩টি স্থানাঙ্কেই 0.1 ব্যবহার করা হয়েছিল)।"
+    },
+    {
+      "id": "ch17_q7",
+      "question": "Dropout-এ p = 0.2 থাকলে ট্রেনিং চলাকালীন টিকে থাকা (Retained) উপাদানগুলোকে কত গুণক দিয়ে Scale করা হয়?",
+      "options": [
+        "0.2",
+        "0.8",
+        "5.0",
+        "1.25"
+      ],
+      "answer": 3,
+      "explanation": "Inverted Dropout ট্রেনিংয়ের সময় টিকে থাকা মানগুলোকে 1 / (1 − p) = 1 / 0.8 = 1.25 দিয়ে গুণ করে যাতে শর্তাধীন গাণিতিক প্রত্যাশা অক্ষুণ্ণ থাকে, আর eval() মোডে এটি সরাসরি ইনপুট ফিরিয়ে দেয়।"
+    },
+    {
+      "id": "ch17_q8",
+      "question": "শুধুমাত্র torch.no_grad() ব্লক ব্যবহার করলেই কি মডেলের ভেতরের Dropout বন্ধ হয়ে যায়?",
+      "options": [
+        "না, মডিউলের train/eval মোড আলাদাভাবে নিয়ন্ত্রণ করতে হয়",
+        "হ্যাঁ, স্বয়ংক্রিয়ভাবে বন্ধ হয়ে যায়",
+        "শুধুমাত্র CPU-তে বন্ধ হয়",
+        "শুধুমাত্র float64 টেনসরে বন্ধ হয়"
+      ],
+      "answer": 0,
+      "explanation": "torch.no_grad() কেবল Autograd গ্রাফ রেকর্ড করা বন্ধ করে; মডেল train() মোডে থাকলে no_grad()-এর ভেতরেও Dropout এলোমেলোভাবে মান শূন্য করতে থাকে।"
+    },
+    {
+      "id": "ch17_q9",
+      "question": "N আকারের ব্যাচে BatchNorm-এর ট্রেনিং Forward Pass-এ ব্যবহৃত Variance-এর হর (Denominator) কোনটি?",
+      "options": [
+        "সবসময় N − 1",
+        "N (অর্থাৎ Biased প্রাক্কলন)",
+        "সবসময় স্থির 1",
+        "এখানে কোনো Variance ব্যবহৃত হয় না"
+      ],
+      "answer": 1,
+      "explanation": "ট্রেনিং Forward Pass-এ আউটপুট Normalize করতে ব্যবহৃত হয় হর N (Biased Variance), অথচ running_var হালনাগাদ করার সময় ব্যবহৃত হয় হর N − 1 (Unbiased প্রাক্কলন)।"
+    },
+    {
+      "id": "ch17_q10",
+      "question": "PyTorch-এর BatchNorm স্তরে momentum = 0.1 দেওয়ার প্রকৃত গাণিতিক অর্থ কী?",
+      "options": [
+        "new = 0.1 * old + 0.9 * batch_stat",
+        "Optimizer-এর Momentum Velocity সমীকরণের হুবহু সমান",
+        "new = 0.9 * old + 0.1 * batch_stat",
+        "প্রতি ধাপে গড় মান শূন্যে রিসেট করা"
+      ],
+      "answer": 2,
+      "explanation": "BatchNorm-এর চলমান গড়ের নিয়মে momentum হলো নতুন ব্যাচের পরিসংখ্যানের ওজন (0.1), আর পুরোনো বাফারের ওজন থাকে (1 − momentum) = 0.9—যা Optimizer-এর প্রচলিত রীতি থেকে আলাদা।"
+    },
+    {
+      "id": "ch17_q11",
+      "question": "[B, 4] আকারের ইনপুট টেনসরে LayerNorm(4) কোন অক্ষ বরাবর গড় ও ভেদাঙ্ক হিসাব করে?",
+      "options": [
+        "প্রতিটি Channel-এ পুরো Batch জুড়ে",
+        "কেবল প্রথম Feature কলামের ওপর",
+        "পুরো Training Dataset-এর সব সারির ওপর",
+        "প্রতিটি সারির (Row-এর) শেষ ৪টি Feature জুড়ে"
+      ],
+      "answer": 3,
+      "explanation": "LayerNorm(4) প্রতিটি উদাহরণের শেষ মাত্রার ৪টি Feature-কে নিজের ভেতরেই Normalize করে—train() ও eval() দুই মোডেই বর্তমান ইনপুট থেকে এই হিসাব হয় এবং ডিফল্টভাবে কোনো Running Buffer থাকে না।"
+    },
+    {
+      "id": "ch17_q12",
+      "question": "ডিফল্ট কনফিগারেশনে BatchNorm স্তরকে eval() মোডে নিলে সেটি Normalization-এর জন্য কোন পরিসংখ্যান ব্যবহার করে?",
+      "options": [
+        "আগে থেকে সংরক্ষিত Running Mean ও Running Variance বাফার",
+        "সবসময় বর্তমান ইনপুট ব্যাচের গড় ও ভেদাঙ্ক",
+        "Validation সেটের Target Label",
+        "Optimizer-এর প্রথম ও দ্বিতীয় Moment"
+      ],
+      "answer": 0,
+      "explanation": "track_running_stats=True (ডিফল্ট) থাকলে eval() মোডে BatchNorm ট্রেনিং চলাকালীন জমা হওয়া running_mean এবং running_var ব্যবহার করে যাতে একক উদাহরণেও স্থির Inference পাওয়া যায়।"
+    },
+    {
+      "id": "ch17_q13",
+      "question": "আমাদের রেফারেন্স ট্রেনিং স্ক্রিপ্টে StepLR শিডিউলারটি ঠিক কখন কল করা হয়?",
+      "options": [
+        "প্রতিটি backward() কলের ঠিক আগে",
+        "প্রতিটি সম্পন্ন হওয়া Epoch শেষে ওই Epoch-এর সবগুলো Optimizer Update শেষ হওয়ার পর",
+        "Validation সেটের প্রতিটি উদাহরণের পর",
+        "কেবল মডেল ইনিশিয়ালাইজেশনের সময় একবার"
+      ],
+      "answer": 1,
+      "explanation": "প্রতি Epoch শেষে সবগুলো ব্যাচের আপডেট সম্পন্ন হওয়ার পর একবার scheduler.step() চলে; ফলে ২০তম Epoch পুরোটা 0.01 হারে চলে এবং তার শেষে পরবর্তী হার কমে 0.005 হয়।"
+    },
+    {
+      "id": "ch17_q14",
+      "question": "প্রারম্ভিক হার 0.01, step_size = 20 এবং gamma = 0.5 হলে আমাদের রানের ৪০তম Epoch-এ ব্যবহৃত হার (used_lr) এবং তার শেষে পরবর্তী হার (next_lr) যথাক্রমে কত?",
+      "options": [
+        "0.0025 এবং 0.005",
+        "0.01 এবং 0.01",
+        "0.005 এবং 0.0025",
+        "0.0 এবং 0.0"
+      ],
+      "answer": 2,
+      "explanation": "একুশতম থেকে চল্লিশতম Epoch পর্যন্ত ব্যবহৃত হার থাকে 0.005, এবং ৪০তম Epoch শেষে scheduler.step() চলার পর পরবর্তী সম্ভাব্য হার আপডেট হয়ে 0.0025 হয়।"
+    },
+    {
+      "id": "ch17_q15",
+      "question": "PyTorch-এর torch.nn.utils.clip_grad_norm_ ফাংশনটি রিটার্ন ভ্যালু হিসেবে কোন সংখ্যাটি ফিরিয়ে দেয়?",
+      "options": [
+        "Clipping করার পরের পরিবর্তিত Loss",
+        "বর্তমান Learning Rate",
+        "মডেলের মোট Parameter সংখ্যা",
+        "Clipping করার আগের (Pre-clip) সম্মিলিত Gradient Norm"
+      ],
+      "answer": 3,
+      "explanation": "ফাংশনটি টেনসরগুলোর ভেতরের Gradient-কে In-place ছোট করে দেয় ঠিকই, কিন্তু লগিং ও পর্যবেক্ষণের সুবিধার্থে রিটার্ন করে Clipping-পূর্ববর্তী মোট Norm।"
+    },
+    {
+      "id": "ch17_q16",
+      "question": "কাঁচা Gradient-এর Norm একটি নির্দিষ্ট সীমায় Clip করলেই কি AdamW-তে মোট Parameter Update-এর আকারও সেই একই সীমায় বাঁধা পড়ে?",
+      "options": [
+        "না, কাঁচা Gradient Clipping একাই মোট আপডেটের সীমা নিশ্চিত করে না",
+        "হ্যাঁ, সবসময় হুবহু learning_rate × cap-এর সমান বা কম হয়",
+        "আপডেট সবসময় শূন্য হয়ে যায়",
+        "তখন আর কোনো Optimizer State ব্যবহৃত হয় না"
+      ],
+      "answer": 0,
+      "explanation": "AdamW-তে পূর্ববর্তী Moment-গুলোর অনুপাত, হরের ক্ষুদ্র Epsilon এবং আলাদাভাবে যুক্ত Decoupled Weight Decay মিলে চূড়ান্ত Parameter পরিবর্তনের আকার নির্ধারণ করে।"
+    },
+    {
+      "id": "ch17_q17",
+      "question": "অসমান আকারের কয়েকটি Microbatch-এর গড় Loss জমা করে N আকারের পূর্ণ ব্যাচের সমান গড় Gradient পেতে k-তম Microbatch-এর গড় Loss-কে কত ওজন দিয়ে গুণ করতে হবে?",
+      "options": [
+        "সবসময় সমান 1 / K দিয়ে",
+        "n_k / N দিয়ে (যেখানে n_k হলো ওই Microbatch-এর উদাহরণ সংখ্যা)",
+        "প্রতিবার মোট সংখ্যা N দিয়ে",
+        "কোনো ওজন বা স্কেলিংয়ের প্রয়োজন নেই"
+      ],
+      "answer": 1,
+      "explanation": "উদাহরণভিত্তিক যোগফলযোগ্য Objective-এ স্থির প্যারামিটারে নিখুঁত গড় পেতে প্রতিটি Microbatch-এর গড় Loss-কে n_k / N দিয়ে ওজন করতে হয় (তবে BatchNorm বা Dropout থাকলে ফরোয়ার্ড আচরণের শর্ত আলাদা)।"
+    },
+    {
+      "id": "ch17_q18",
+      "question": "ট্রেনিং চলাকালীন হিসাব করা Online Training Loss এবং Epoch শেষে মাপা Eval Training Loss সম্পর্কে কোনটি সঠিক?",
+      "options": [
+        "দুটি সংখ্যা সবসময় দশমিকের শেষ ঘর পর্যন্ত অভিন্ন হতে বাধ্য",
+        "দুটিই আসলে বাইরের Test সেটের ফলাফল",
+        "ভিন্ন Mode এবং পরিবর্তনশীল বনাম স্থির Parameter-এ মাপা হওয়ায় সংখ্যা দুটি আলাদা হতে পারে",
+        "দুটিই কেবল সম্ভাবনার Calibration মাপে"
+      ],
+      "answer": 2,
+      "explanation": "Online Loss মাপা হয় সক্রিয় Dropout এবং প্রতি ব্যাচে বদলাতে থাকা Parameter-এর ওপর; আর Epoch-শেষে Eval Loss মাপা হয় চূড়ান্ত স্থির প্যারামিটারে eval() মোডে পুরো ট্রেনিং সেটের ওপর।"
+    },
+    {
+      "id": "ch17_q19",
+      "question": "ট্রেনিং চলাকালীন এ পর্যন্ত পাওয়া সেরা মডেলের স্ন্যাপশট (Best-state Snapshot) অবিকৃতভাবে সংরক্ষণ করতে কী করা প্রয়োজন?",
+      "options": [
+        "সরাসরি state_dict()-এর মিউটেবল রেফারেন্স রেখে দেওয়াই সবসময় যথেষ্ট",
+        "কেবল একবার model.eval() কল করা",
+        "শুধুমাত্র শুরুর র‍্যান্ডম Seed লিখে রাখা",
+        "প্যারামিটার ও বাফার টেনসরগুলোর স্বাধীন কপি (clone / deepcopy) তৈরি করে রাখা"
+      ],
+      "answer": 3,
+      "explanation": "model.state_dict() মূল টেনসর মেমোরির রেফারেন্স ধরে রাখতে পারে; আলাদা কপি না করলে পরবর্তী Epoch-এর আপডেটে সংরক্ষিত সেরা স্টেটও নীরবে বদলে যাবে।"
+    },
+    {
+      "id": "ch17_q20",
+      "question": "আমাদের স্থানীয় অডিট ওয়ার্কফ্লোতে Checkpoint সংরক্ষণের সুনির্দিষ্ট সীমানা (Boundary) কোনটি?",
+      "options": [
+        "Epoch 20-এর সবগুলো ব্যাচ আপডেট এবং ওই Epoch-এর Scheduler Step সম্পূর্ণ শেষ হওয়ার পর",
+        "ডেটা লোডার ওয়ার্কার কিউয়ের যেকোনো এলোমেলো মাঝখানে",
+        "Backward Pass চলাকালীন অর্ধেক পথে",
+        "বাইরের চূড়ান্ত Test সেট মূল্যায়নের পরে"
+      ],
+      "answer": 0,
+      "explanation": "Epoch 20 ও তার Scheduler Step শেষ হওয়ার পরিষ্কার সীমানায় কোনো অসমাপ্ত Accumulated Gradient থাকে না; Mid-epoch রিকভারির জন্য অতিরিক্ত কার্সর, ওয়ার্কার ও আংশিক গ্র্যাডিয়েন্ট স্টেট লাগত।"
+    },
+    {
+      "id": "ch17_q21",
+      "question": "আমাদের পরীক্ষণে পূর্ণাঙ্গ Checkpoint Restore যে শতভাগ নিখুঁতভাবে কাজ করেছে, তা কীভাবে প্রমাণ করা হয়েছে?",
+      "options": [
+        "চূড়ান্ত Accuracy মোটামুটি কাছাকাছি দেখে",
+        "অবিরাম রান ও রিস্টোর করা রানের সম্পূর্ণ লগ ইতিহাস এবং চূড়ান্ত Parameter Tensor-এর হুবহু সমতা মিলিয়ে",
+        "টার্মিনালের একটি স্ক্রিনশট দেখে",
+        "কেবল একই প্রারম্ভিক Seed ব্যবহার করা হয়েছে দেখে"
+      ],
+      "answer": 1,
+      "explanation": "একই সংস্করণের স্থানীয় CPU পরিবেশে প্রতিটি Epoch-এর লগ এবং চূড়ান্ত প্যারামিটারের সর্বোচ্চ পরম পার্থক্য শূন্য (0.0) প্রমাণ করে রিস্টোর যাচাই করা হয়েছে।"
+    },
+    {
+      "id": "ch17_q22",
+      "question": "তিন শাখার নিয়ন্ত্রিত পরীক্ষায় শুধুমাত্র ওয়েট নিয়ে শুরু করা (Weights-only) শাখায় ঠিক কোন অংশটি রিসেট করা হয়েছিল?",
+      "options": [
+        "ডেটাসেটের সব Target Label বদলে দেওয়া হয়েছিল",
+        "মূল CSV ডেটাসেট পাল্টে ফেলা হয়েছিল",
+        "Optimizer ও Scheduler রিসেট করা হয়েছিল, কিন্তু একই RNG ও ডেটার ক্রম ফিরিয়ে আনা হয়েছিল",
+        "শুধুমাত্র BatchNorm-এর বাফার মুছে ফেলা হয়েছিল"
+      ],
+      "answer": 2,
+      "explanation": "শুধুমাত্র Optimizer ও Scheduler State হারানোর প্রভাবটুকু আলাদা করে ধরার জন্য ওই শাখাতেও পরবর্তী ডেটার ক্রম এবং Dropout RNG অভিন্ন রাখা হয়েছিল।"
+    },
+    {
+      "id": "ch17_q23",
+      "question": "আমাদের মূল Wine Quality ট্রেনিং মডেলে কি BatchNorm বা LayerNorm স্তর ট্রেন করা হয়েছে?",
+      "options": [
+        "হ্যাঁ, হিডেন স্তরে দুটিই একসাথে ট্রেন করা হয়েছে",
+        "শুধুমাত্র Test সেটের ওপর fit করা হয়েছে",
+        "BatchNorm কেবল Validation সেটে ট্রেন করা হয়েছে",
+        "না, মূল মডেলে কেবল ReLU ও Dropout আছে; প্রকৃত প্রারম্ভিক Pre-activation দিয়ে আলাদা রেফারেন্স ল্যাবে ওগুলোর গণিত দেখানো হয়েছে"
+      ],
+      "answer": 3,
+      "explanation": "নরমালাইজেশন ল্যাবটি স্থির প্রারম্ভিক Pre-activation ব্যবহার করে BatchNorm ও LayerNorm-এর অক্ষ ও বাফারের পাটিগণিত দেখায়; মূল ট্রেনিং নেটওয়ার্কে এই স্তর দুটি নেই।"
+    },
+    {
+      "id": "ch17_q24",
+      "question": "এই অধ্যায়ের এক্সপেরিমেন্টে ব্যবহৃত Validation সেটটির ভূমিকা ও পরিধি কী?",
+      "options": [
+        "আগের অধ্যায়ে ব্যবহৃত ভেতরের Split-টির ডায়াগনস্টিক পুনর্ব্যবহার (কোনো নতুন মডেল নির্বাচন নয়)",
+        "সম্পূর্ণ নতুন ও আগে কখনো না দেখা চূড়ান্ত প্রমাণ",
+        "বাইরের Test সেটের ওপর নতুন Hyperparameter Search",
+        "মাল্টি-জিপিইউ CUDA গতির বেঞ্চমার্ক"
+      ],
+      "answer": 0,
+      "explanation": "এখানে আগের অধ্যায়ের পরিচিত ভেতরের Split-টি কেবল ট্রেনিং স্টেট ও রিকভারি অডিটের জন্য পুনর্ব্যবহৃত হয়েছে; বাইরের Test সেট নতুন করে স্কোর করা হয়নি এবং কোনো মডেল র‍্যাঙ্কিং দাবি করা হয়নি।"
+    },
+    {
+      "id": "ch17_q_checkpoint_revision",
+      "question": "Dropout এবং Momentum SGD যুক্ত একটি মডেলের পরবর্তী একক CPU ট্রেনিং ধাপ হুবহু পুনরুৎপাদন করতে কোন তথ্যের সেটটি আবশ্যক?",
+      "options": [
+        "শুধুমাত্র মডেলের বর্তমান Weight",
+        "শুধুমাত্র প্রোগ্রামের শুরুর Seed",
+        "মডেলের state_dict, Optimizer-এর state_dict, বর্তমান RNG State এবং একই পরবর্তী ব্যাচ ও ট্রেনিং Mode",
+        "শুধুমাত্র আগের ধাপগুলোর Loss-এর তালিকা"
+      ],
+      "answer": 2,
+      "explanation": "মডেল স্টেট বর্তমান প্যারামিটার দেয়, Optimizer স্টেট পুরোনো Velocity দেয় এবং বর্তমান RNG পরবর্তী অভিন্ন Dropout Mask নিশ্চিত করে; পাশাপাশি একই ইনপুট ব্যাচ ও train() মোড থাকা জরুরি।"
+    },
+    {
+      "id": "ch17_q_clip_order_revision",
+      "question": "দুটি Microbatch থেকে প্রাপ্ত Gradient যথাক্রমে [3, 0] এবং [0, 4], এবং গ্লোবাল Norm Cap হলো 1.0। সঠিক নিয়মে আগে যোগ করে তারপর Clip করলে চূড়ান্ত Gradient কত হবে?",
+      "options": [
+        "[1, 1]",
+        "[0.6, 0.8]",
+        "[3, 4]",
+        "[0, 0]"
+      ],
+      "answer": 1,
+      "explanation": "আগে যোগ করলে সম্মিলিত ভেক্টর হয় [3, 4], যার L2 Norm = 5; একে সীমা 1.0 দিয়ে স্কেল করলে 1/5 গুণ হয়ে [0.6, 0.8] পাওয়া যায়। আগে আলাদাভাবে Clip করে যোগ করলে ভুল উত্তর [1, 1] আসত, যার Norm সীমা ছাড়িয়ে √2 হয়ে যেত।"
+    }
+  ],
+  "exercises": [
+    {
+      "id": "ch17_ex_momentum",
+      "title": "দুই ধাপের Momentum SGD আপডেট",
+      "prompt": "একটি স্কেলার Parameter-এর প্রারম্ভিক মান 1.0। প্রতিটি ধাপে Gradient হলো 2.0, Learning Rate 0.1, momentum = 0.9 এবং dampening = 0 (PyTorch-এর ডিফল্ট নিয়ম অনুযায়ী প্রথম ধাপে Velocity Buffer সরাসরি Gradient দিয়ে শুরু হয়)। পরপর দুটি SGD ধাপের পর Parameter-টির মান কত হবে তা হিসাব করে answer ভেরিয়েবলে রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "import torch\n\np = torch.nn.Parameter(torch.tensor(1.0, dtype=torch.float64))\nopt = torch.optim.SGD([p], lr=0.1, momentum=0.9)\nfor _ in range(2):\n    p.grad = torch.tensor(2.0, dtype=torch.float64)\n    opt.step()\nanswer = p.item()\n",
+      "expected": 0.42,
+      "explanation": "প্রথম ধাপে Velocity Buffer হয় 2.0 এবং Parameter কমে হয় 1.0 − 0.1 × 2.0 = 0.8। দ্বিতীয় ধাপে Velocity Buffer হয় 0.9 × 2.0 + 2.0 = 3.8, ফলে Parameter দাঁড়ায় 0.8 − 0.1 × 3.8 = 0.42।"
+    },
+    {
+      "id": "ch17_ex_decay",
+      "title": "শূন্য Gradient-এ AdamW-এর Decoupled সংকোচন",
+      "prompt": "একটি স্কেলার Parameter-এর মান 2.0, AdamW-এর Learning Rate 0.1 এবং weight_decay = 0.2। শুরুতে Moment বাফারগুলো খালি এবং বর্তমান ধাপে সংখ্যাসূচক Gradient শূন্য (0.0)। একটি ধাপের পর Parameter-টির মান কত হবে তা answer ভেরিয়েবলে রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "import torch\n\np = torch.nn.Parameter(torch.tensor(2.0, dtype=torch.float64))\nopt = torch.optim.AdamW([p], lr=0.1, weight_decay=0.2)\np.grad = torch.zeros_like(p)\nopt.step()\nanswer = p.item()\n",
+      "expected": 1.96,
+      "explanation": "Gradient শূন্য এবং পূর্ববর্তী Moment খালি থাকায় Adaptive অংশ শূন্য হয়, কিন্তু Decoupled Weight Decay গুণক (1 − 0.1 × 0.2) = 0.98 প্রযুক্ত হয়ে Parameter-টির মান 2.0 × 0.98 = 1.96 হয়। খেয়াল রাখবেন, সংখ্যাসূচক শূন্য (0.0) আর None গ্র্যাডিয়েন্টের আচরণ এক নয়।"
+    },
+    {
+      "id": "ch17_ex_dropout",
+      "title": "Inverted Dropout স্কেলিং",
+      "prompt": "Dropout-এর সম্ভাবনা p = 0.2। ট্রেনিং মোডের Mask-এ টিকে থাকা (Retained) একটি Activation-এর মূল মান 2.0 হলে Inverted Dropout স্কেলিংয়ের পর এর আউটপুট কত হবে তা answer ভেরিয়েবলে রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "p = 0.2\nactivation = 2.0\nanswer = activation / (1 - p)\n",
+      "expected": 2.5,
+      "explanation": "টিকে থাকা উপাদানের স্কেলড আউটপুট হয় 2.0 / (1 − 0.2) = 2.0 / 0.8 = 2.5। এই স্কেলিং গাণিতিক প্রত্যাশা অক্ষুণ্ণ রাখে, যদিও প্রতিটি একক ধাপের র‍্যান্ডম আউটপুট এক থাকে না।"
+    },
+    {
+      "id": "ch17_ex_variance",
+      "title": "BatchNorm-এর Forward Pass Variance",
+      "prompt": "একটি একক Channel-এর ইনপুট ব্যাচ হলো [1.0, 3.0]। ট্রেনিং মোডে BatchNorm তার Forward Pass-এ আউটপুট Normalize করতে যে Variance (Biased) ব্যবহার করে, তার মান answer ভেরিয়েবলে রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "import torch\n\nx = torch.tensor([1.0, 3.0], dtype=torch.float64)\nanswer = x.var(correction=0).item()\n",
+      "expected": 1,
+      "explanation": "ব্যাচটির গড় হলো 2.0 এবং গড় থেকে ব্যবধানের বর্গ হলো [1.0, 1.0]। হর 2 (correction=0) দিয়ে ভাগ করলে Forward Variance আসে 1.0 (অন্যদিকে running_var আপডেটের Unbiased প্রাক্কলন এখানে হতো 2.0)।"
+    },
+    {
+      "id": "ch17_ex_running",
+      "title": "Running Variance বাফার হালনাগাদ",
+      "prompt": "BatchNorm-এর পুরোনো running_var হলো 1.0, বর্তমান ব্যাচের Unbiased Variance হলো 2.0 এবং BatchNorm-এর momentum = 0.1। হালনাগাদ হওয়ার পর নতুন running_var কত হবে তা answer ভেরিয়েবলে রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "answer = 0.9 * 1.0 + 0.1 * 2.0\n",
+      "expected": 1.1,
+      "explanation": "নতুন মান হবে (1 − 0.1) × 1.0 + 0.1 × 2.0 = 0.9 + 0.2 = 1.1। মনে রাখবেন, BatchNorm-এ momentum হলো নতুন ব্যাচের পরিসংখ্যানের সহগ।"
+    },
+    {
+      "id": "ch17_ex_schedule",
+      "title": "দুই Epoch শেষে পরবর্তী Learning Rate",
+      "prompt": "StepLR শিডিউলারের প্রারম্ভিক Learning Rate 0.01, step_size = 2 এবং gamma = 0.5। প্রতিটি সম্পন্ন হওয়া Epoch-এর শেষে optimizer.step()-এর পর একবার করে scheduler.step() কল করা হলে, দুই Epoch শেষ হওয়ার পর পরবর্তী (next) Learning Rate কত থাকবে তা answer ভেরিয়েবলে রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "import torch\n\np = torch.nn.Parameter(torch.tensor(1.0))\nopt = torch.optim.SGD([p], lr=0.01)\ns = torch.optim.lr_scheduler.StepLR(opt, step_size=2, gamma=0.5)\nfor _ in range(2):\n    p.grad = torch.ones_like(p)\n    opt.step()\n    s.step()\nanswer = opt.param_groups[0][\"lr\"]\n",
+      "expected": 0.005,
+      "explanation": "প্রথম দুটি Epoch 0.01 হার ব্যবহার করে। দ্বিতীয় Epoch শেষের সীমানায় scheduler.step() চলার পর পরবর্তী হার কমে 0.01 × 0.5 = 0.005 নির্ধারিত হয়। লগিংয়ের সময় ব্যবহৃত হার ও পরবর্তী হার আলাদা রাখাই উত্তম।"
+    },
+    {
+      "id": "ch17_ex_clip",
+      "title": "clip_grad_norm_-এর রিটার্ন মান",
+      "prompt": "একটি প্যারামিটারের Gradient ভেক্টর হলো [3.0, 4.0] এবং গ্লোবাল Norm Cap হলো 1.0। এই অবস্থায় torch.nn.utils.clip_grad_norm_ কল করলে ফাংশনটি যে স্কেলার মান রিটার্ন করে, তা answer ভেরিয়েবলে রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "import torch\n\np = torch.nn.Parameter(torch.zeros(2, dtype=torch.float64))\np.grad = torch.tensor([3.0, 4.0], dtype=torch.float64)\nanswer = torch.nn.utils.clip_grad_norm_([p], 1.0, foreach=False).item()\n",
+      "expected": 5,
+      "explanation": "ফাংশনটি রিটার্ন করে Clipping করার আগের মোট L2 Norm, যা √(3^2 + 4^2) = 5.0। কলের পরে ভেতরের Gradient কমে প্রায় [0.6, 0.8] হয়ে যায়—তাই রিটার্ন করা সংখ্যাটিকে কখনোই Clipping-পরবর্তী Norm মনে করবেন না।"
+    },
+    {
+      "id": "ch17_ex_none",
+      "title": "grad = None থাকলে প্যারামিটার অপরিবর্তিত থাকে",
+      "prompt": "AdamW-এর অধীনে থাকা একটি স্কেলার Parameter-এর মান 2.0, Learning Rate 0.1, weight_decay = 0.2 এবং বর্তমানে parameter.grad = None। একটি optimizer.step() কলের পর Parameter-টির মান কত থাকবে তা answer ভেরিয়েবলে রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "import torch\n\np = torch.nn.Parameter(torch.tensor(2.0, dtype=torch.float64))\nopt = torch.optim.AdamW([p], lr=0.1, weight_decay=0.2)\np.grad = None\nopt.step()\nanswer = p.item()\n",
+      "expected": 2,
+      "explanation": "grad = None থাকলে Optimizer ওই প্যারামিটারটিকে ধাপটিতে সম্পূর্ণ এড়িয়ে যায় (Skip করে), তাই Weight Decay প্রযুক্ত না হয়ে মানটি 2.0-ই থেকে যায়—যদিও সংখ্যাসূচক শূন্য (0.0) গ্র্যাডিয়েন্টের ক্ষেত্রে ঠিকই Decay হয়ে 1.96 হয়েছিল।"
+    },
+    {
+      "id": "ch17_ex_rng",
+      "title": "Generator State ফিরিয়ে এনে হুবহু একই শাফল ক্রম পাওয়া",
+      "prompt": "একটি সিডযুক্ত নিজস্ব torch.Generator তৈরি করে তার বর্তমান State সংরক্ষণ করুন। এরপর এটি দিয়ে একটি torch.randperm(8) চালান, সংরক্ষিত State পুনরায় ফিরিয়ে আনুন (set_state), এবং আবার torch.randperm(8) চালান। দুটি ক্রম হুবহু মিলে গেলে answer ভেরিয়েবলে 1 (বা 1.0) রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "import torch\n\ng = torch.Generator().manual_seed(170)\nstate = g.get_state().clone()\nfirst = torch.randperm(8, generator=g)\ng.set_state(state)\nsecond = torch.randperm(8, generator=g)\nanswer = float(torch.equal(first, second))\n",
+      "expected": 1,
+      "explanation": "Generator-এর ঠিক ওই মুহূর্তের বর্তমান State ফিরিয়ে আনলে পরবর্তী র‍্যান্ডম পারমুটেশন হুবহু মিলে যায় (তাই উত্তর 1)। মাঝপথে শুধু শুরুর Seed বসালে কখনোই চলমান অবস্থান ফিরে পাওয়া যায় না।"
+    },
+    {
+      "id": "ch17_ex_updates",
+      "title": "আংশিক ব্যাচসহ মোট Optimizer Update সংখ্যা গণনা",
+      "prompt": "মোট Training সারি 776টি, batch_size = 64, drop_last = False এবং মোট Epoch সংখ্যা 40। প্রতিটি ব্যাচে একবার করে optimizer.step() চললে পুরো ট্রেনিংয়ে মোট কতগুলো আপডেট ঘটবে তা answer ভেরিয়েবলে রাখুন।",
+      "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
+      "solution": "import math\n\nanswer = float(math.ceil(776 / 64) * 40)\n",
+      "expected": 520,
+      "explanation": "776টি সারিকে 64 আকারে ভাগ করলে প্রতি Epoch-এ 12টি পূর্ণ ব্যাচ (768টি সারি) এবং শেষে 8টি সারির একটি আংশিক ব্যাচসহ মোট ceil(776 / 64) = 13টি আপডেট হয়। তাই 40টি Epoch-এ মোট আপডেট সংখ্যা 40 × 13 = 520।"
+    }
+  ],
+  "interviews": [
+    {
+      "title": "শুধু Weight লোড করার পর Resume রান কেন আলাদা হয়ে যায়?",
+      "tag": "TRAINING DEBUGGING · 30 MIN",
+      "prompt": "মডেলের Weight হুবহু এক লোড করা হয়েছে, তবুও মাঝপথ থেকে Resume করা রানের ফলাফল অবিরাম রানের চেয়ে আলাদা আসছে—আপনি কী কী অডিট করবেন?\n\nপাশাপাশি বলুন, একটি একক Stochastic Optimizer Step অবিরাম রান ও রিস্টোর করা রানে হুবহু মিলিয়ে দেখতে কোন কোন State এবং কী ধরনের তুলনা প্রয়োজন?",
+      "answer": "প্রথমেই আমি Checkpoint নেওয়ার সুনির্দিষ্ট সীমানা (Epoch-boundary নাকি Mid-epoch) যাচাই করব। এরপর একে একে দেখব মডেলের নন-প্যারামিটার Buffer (যেমন BatchNorm-এর running stats), Optimizer-এর Moment বাফার ও ধাপ কাউন্টার এবং Parameter Group, Learning Rate Scheduler-এর অভ্যন্তরীণ কাউন্টার, গ্লোবাল ও ডিভাইস RNG Stream, ডেটা শাফলিংয়ের আলাদা Generator State এবং কোনো অসমাপ্ত Accumulated Gradient বাদ পড়েছে কি না। বিশেষভাবে খেয়াল করব নতুন মডেল ইনিশিয়ালাইজেশনের র‍্যান্ডম নম্বর খরচ শেষ হওয়ার পরেই RNG State রিস্টোর করা হচ্ছে কি না, এবং ডেটা ফাইলের হ্যাশ, ফিচারের ক্রম, Split ও স্কেলার প্যারামিটার অভিন্ন আছে কি না। শুধু চূড়ান্ত স্কোর কাছাকাছি দেখালেই চলবে না—একই সংস্করণের পরিবেশে পরবর্তী ব্যাচগুলোর ইনপুট, Loss এবং প্যারামিটার টেনসর সরাসরি তুলনা করতে হবে।\n\nএকটি একক Stochastic ধাপ হুবহু মেলাতে হলে পূর্ববর্তী সম্পন্ন ধাপের সীমানায় মডেলের state_dict ও Optimizer-এর state_dict-এর স্বাধীন কপি (deepcopy), CPU/GPU RNG State এবং প্রাসঙ্গিক ডেটা লোডার, শিডিউলার বা AMP Scaler স্টেট সংরক্ষণ করতে হবে। এরপর হুবহু একই পরবর্তী ব্যাচ ও train() মোড দিয়ে ধাপটি চালিয়ে Loss, প্যারামিটার, বাফার এবং আপডেট হওয়া Optimizer বাফার (যেমন momentum_buffer) শূন্য সহনশীলতায় মিলিয়ে দেখতে হবে—শুধু Weight লোড করলে পুরোনো Momentum ইতিহাস হারিয়ে প্রথম ধাপেই বিচ্যুতি ঘটবে।",
+      "prerequisiteLessons": [
+        "ch17_resume"
+      ]
+    },
+    {
+      "title": "Adam বনাম AdamW: একই সহগেও কেন ভিন্ন আপডেট আসে?",
+      "tag": "TRAINING DEBUGGING · 30 MIN",
+      "prompt": "হুবহু একই Gradient এবং একই Weight Decay সহগ দেওয়া সত্ত্বেও সাধারণ Adam এবং AdamW-এর Parameter Update কেন আলাদা হয়?",
+      "answer": "সাধারণ Adam-এ Coupled L2 Regularization পদটি (λθ) সরাসরি কাঁচা Gradient-এর সাথে যোগ হয়ে যায়; ফলে সেটি প্রথম মোমেন্ট (m) এবং দ্বিতীয় মোমেন্ট (v)-এর চলমান গড়ের ভেতরে ঢুকে পড়ে এবং হরের √v̂ + ε দ্বারা ভাগ (Preconditioned) হয়ে যায়—যার মানে যেসব প্যারামিটারের ঐতিহাসিক গ্র্যাডিয়েন্ট বড়, সেগুলোর ওপর Weight Decay কম কাজ করে। এর বিপরীতে AdamW প্যারামিটার সংকোচনের কাজটিকে Adaptive অনুপাত থেকে সম্পূর্ণ আলাদা (Decoupled) রেখে সরাসরি প্যারামিটার থেকে ηλθ বিয়োগ করে। উত্তর দেওয়ার সময় আমি ধাপ সংখ্যা অনুযায়ী Bias Correction, ε এবং Learning Rate-এর ট্রেস লিখে দেখাব, এবং স্পষ্ট করব যে সাধারণ SGD-তে L2 Penalty ও Weight Decay সমতুল্য হলেও Adaptive Optimizer-এ তা কখনোই এক নয়। পাশাপাশি মনে করিয়ে দেব যে স্থির গ্র্যাডিয়েন্টের গাণিতিক রিপ্লে কেবল সূত্রের পার্থক্য দেখায়—কোনটি ভালো মডেল দেবে তা টাস্কভেদে টিউনিং সাপেক্ষ।"
+    },
+    {
+      "title": "torch.no_grad() থাকা সত্ত্বেও Validation কেন মডেল বদলে দিচ্ছে?",
+      "tag": "TRAINING DEBUGGING · 30 MIN",
+      "prompt": "Validation লুপটি সঠিকভাবে torch.no_grad() ব্লকের ভেতরে রাখা হয়েছে, তবুও প্রতিবার Validation চালানোর পর মডেলের আচরণ বদলে যাচ্ছে—কারণ ও সমাধান কী?",
+      "answer": "মূল কারণ হলো torch.no_grad() কেবল Autograd ইঞ্জিনে গ্র্যাডিয়েন্ট গ্রাফ তৈরি ও মেমোরি বরাদ্দ বন্ধ করে—এটি মডিউলের train() বা eval() মোড পরিবর্তন করে না! মডেল যদি train() মোডে থেকে যায়, তবে Validation ডেটা দিয়ে Forward Pass চলার সময়ও BatchNorm স্তরের running_mean ও running_var বাফারগুলো ভ্যালিডেশন ডেটার পরিসংখ্যান দিয়ে হালনাগাদ হতে থাকবে (যদি track_running_stats=True থাকে), এবং Dropout প্রতিবার এলোমেলো Mask তৈরি করবে। এটি ঠিক করতে মূল্যায়নের শুরুতে স্পষ্টভাবে model.eval() কল করতে হবে, ভ্যালিডেশন ডেটায় কোনো স্কেলার fit বা প্যারামিটার আপডেট বন্ধ রাখতে হবে এবং ভ্যালিডেশন চালানোর আগে ও পরে প্যারামিটার ও বাফারের ক্লোন মিলিয়ে অপরিবর্তনীয়তা যাচাই করতে হবে।",
+      "prerequisiteLessons": [
+        "ch17_batchnorm"
+      ]
+    },
+    {
+      "title": "BatchNorm বনাম LayerNorm: অক্ষ ও Inference চুক্তির তুলনা",
+      "tag": "TRAINING DEBUGGING · 30 MIN",
+      "prompt": "[B, H] আকারের ইনপুট টেনসরের ওপর BatchNorm1d(H) এবং LayerNorm(H)-এর Normalization অক্ষ, অভ্যন্তরীণ State এবং Inference আচরণের তুলনা করুন।",
+      "answer": "BatchNorm1d(H) প্রতিটি ফিচার বা Channel-এর জন্য পুরো ব্যাচের B-টি উদাহরণ জুড়ে গড় ও ভেদাঙ্ক মাপে: ট্রেনিং Forward Pass-এ এটি হর B (Biased Variance) ব্যবহার করে, কিন্তু চলমান বাফার আপডেটে হর B − 1 (Unbiased Estimate) ও EMA ব্যবহার করে এবং ডিফল্ট eval() মোডে সেই সংরক্ষিত বাফার দিয়েই কাজ চালায়। অন্যদিকে LayerNorm(H) প্রতিটি উদাহরণ বা সারির নিজস্ব H-টি ফিচার জুড়ে গড় ও ভেদাঙ্ক হিসাব করে—train() এবং eval() দুই মোডেই বর্তমান ইনপুট থেকে সরাসরি এই হিসাব হয় এবং কোনো Running Buffer লাগে না। এছাড়া দুটির শেখাযোগ্য Affine প্যারামিটারের সংজ্ঞা এবং ছোট ব্যাচ (যেমন B = 1), সিকোয়েন্স বা স্পেশিয়াল ডাইমেনশনে আচরণ সম্পূর্ণ ভিন্ন। তবে নিছক যান্ত্রিক পার্থক্যের ওপর ভিত্তি করে কোনো টাস্কে একটিকে অন্যটির স্বয়ংক্রিয় সেরা বিকল্প বলে দাবি না করে আর্কিটেকচার ও ডেটা অনুযায়ী পরীক্ষা করা উচিত।"
+    },
+    {
+      "title": "Resume করার পর Learning Rate এক ধাপ সরে যাওয়া (Off-by-one) ডিবাগিং",
+      "tag": "TRAINING DEBUGGING · 30 MIN",
+      "prompt": "Checkpoint থেকে ট্রেনিং Resume করার পর দেখা গেল পরবর্তী Epoch-এ ভুল Learning Rate ব্যবহৃত হচ্ছে—সমস্যাটি কীভাবে খুঁজে বের করবেন?",
+      "answer": "আমি প্রথমেই তিনটি জিনিস মিলিয়ে দেখব: Scheduler-টি কোন এককে (প্রতি Optimizer Step নাকি প্রতি Epoch) পা ফেলে, ট্রেনিং লুপে optimizer.step()-এর পরেই scheduler.step() কল হচ্ছে কি না, এবং লগে প্রতি Epoch-এ প্রকৃত ব্যবহৃত হার (used_lr) ও পরবর্তী হার (next_lr) আলাদাভাবে রেকর্ড হচ্ছে কি না। যেমন আমাদের রেসিপিতে Epoch 20-এ ব্যবহৃত হার 0.01 এবং শেষে পরবর্তী হার 0.005 হয়; আর Epoch 40-এ ব্যবহৃত হার 0.005 এবং শেষে পরবর্তী হার 0.0025 হয়। এরপর রিস্টোর কোডে পরীক্ষা করব Scheduler ও Optimizer তৈরির এবং তাদের load_state_dict কল করার ক্রম ঠিক আছে কি না, কিংবা লোড করার পর ভুলবশত অতিরিক্ত আরেকবার scheduler.step() কল হয়ে last_epoch কাউন্টার এক ধাপ এগিয়ে যাচ্ছে কি না। মনে রাখতে হবে, চূড়ান্ত হার মিলে গেলেও মাঝপথের হার সরে গেলে পুরো ট্রেনিং গতিপথই বদলে যায়।"
+    },
+    {
+      "title": "Gradient Clipping থাকা সত্ত্বেও বড় Parameter Update কেন ঘটল?",
+      "tag": "TRAINING DEBUGGING · 30 MIN",
+      "prompt": "কাঁচা Gradient-এর গ্লোবাল L2 Norm সর্বোচ্চ 1.0-এ বেঁধে দেওয়া হয়েছে, তবুও AdamW-তে কোনো কোনো ধাপে বেশ বড় Parameter পরিবর্তন দেখা যাচ্ছে—এর কারণ কী হতে পারে?",
+      "answer": "কারণ কাঁচা Gradient-এর Norm 1.0-এ সীমাবদ্ধ রাখলেও AdamW-এর মোট Parameter Update কিন্তু স্রেফ learning_rate × 1.0-এ বাঁধা থাকে না! সেখানে পুরোনো First Moment (m) ও Second Moment (v)-এর অনুপাত, খুব ছোট ঐতিহাসিক গ্র্যাডিয়েন্টের কারণে ছোট হয়ে থাকা হর (√v̂ + ε), এবং গ্র্যাডিয়েন্ট থেকে স্বাধীন Decoupled Weight Decay (ηλθ)—সব মিলে বড় পরিবর্তন তৈরি করতে পারে। ডিবাগ করার সময় আমি দেখব লগে ভুল করে clip_grad_norm_-এর রিটার্ন করা Pre-clip Norm-কে Post-clip Norm ভাবা হচ্ছে কি না, এবং Mixed Precision (AMP) চালু থাকলে Clipping করার আগে সঠিকভাবে scaler.unscale_(optimizer) কল করা হয়েছে কি না। পাশাপাশি ইনপুট, Loss ও গ্র্যাডিয়েন্টে কোনো NaN/Inf বা ডেটা ত্রুটি আছে কি না তা পরীক্ষা করব, কারণ সিমান্টিক বাগ কখনোই Clipping দিয়ে ঢেকে রাখা যায় না।",
+      "prerequisiteLessons": [
+        "ch17_clipping"
+      ]
+    },
+    {
+      "title": "Gradient Accumulation কেন ট্রেনিংয়ের গতিপথ বদলে দিল?",
+      "tag": "TRAINING DEBUGGING · 30 MIN",
+      "prompt": "Effective Batch Size হুবহু এক রাখা সত্ত্বেও একক বড় ব্যাচের ট্রেনিং এবং Gradient Accumulation দিয়ে চালানো ট্রেনিংয়ের ফলাফল আলাদা আসছে—কী কী পরীক্ষা করবেন?",
+      "answer": "আমি ধাপে ধাপে পুরো Update Contract অডিট করব: প্রথমত, অসমান আকারের বা শেষের আংশিক Microbatch-গুলোতে গড় Loss-কে সঠিকভাবে n_k / N দিয়ে ওজন করা হয়েছে কি না (সমান 1/K দিয়ে ভাগ করলে ছোট ব্যাচ বেশি ওজন পায়)। দ্বিতীয়ত, গ্রুপের শুরুতে একবারই zero_grad() এবং সবগুলো Microbatch শেষে একবারই Gradient Clipping ও optimizer.step() কল হচ্ছে কি না—মাঝপথে step দিলে প্যারামিটার বদলে যায় এবং প্রতি Microbatch আলাদাভাবে Clip করলে ফলাফল পাল্টে যায়। তৃতীয়ত, মোট Optimizer Step বদলে যাওয়ার কারণে Step-ভিত্তিক Scheduler এবং AdamW-এর Weight Decay প্রয়োগের হার বদলে গেছে কি না। চতুর্থত, নেটওয়ার্কে BatchNorm থাকলে ক্ষুদ্র Microbatch-এর পরিসংখ্যান এবং Dropout থাকলে আলাদা আকারের র‍্যান্ডম Mask তৈরির কারণেও একক বড় ব্যাচের সাথে হুবহু সংখ্যার সমতা ভেঙে যেতে পারে।",
+      "prerequisiteLessons": [
+        "ch17_accumulation",
+        "ch17_book_accumulation"
+      ]
+    },
+    {
+      "title": "সংরক্ষিত সেরা মডেল কীভাবে নীরবে শেষ Epoch-এর মডেলে পরিণত হলো?",
+      "tag": "TRAINING DEBUGGING · 30 MIN",
+      "prompt": "Early Stopping লুপে সেরা Validation স্কোরের সময় মডেলের state_dict সংরক্ষণ করে রেখেছিলেন, কিন্তু ট্রেনিং শেষে দেখা গেল সেটি শেষ Epoch-এর ওয়েটে বদলে গেছে—কেন এমন হলো?",
+      "answer": "এটি PyTorch-এর অত্যন্ত পরিচিত মিউটেবল রেফারেন্স বাগ: best = model.state_dict() লিখলে ডিকশনারির টেনসরগুলো মডেলের জীবন্ত প্যারামিটার মেমোরিরই রেফারেন্স ধরে রাখে, ফলে পরবর্তী Epoch-গুলোতে Optimizer ইন-প্লেস আপডেট চালালে সংরক্ষিত ডিকশনারির মানও নীরবে বদলে যায়! সমাধান হলো প্রতিটি টেনসরকে .detach().clone() বা copy.deepcopy() করে স্বাধীন কপি হিসেবে রাখা অথবা ডিস্কে আলাদা ফাইলে সিরিয়ালাইজ করা। পাশাপাশি আর্কিটেকচারগতভাবে দুটি জিনিস আলাদা রাখতে হবে: সেরা Inference প্রার্থীর স্ন্যাপশট এবং বাধা পেলে ট্রেনিং চালিয়ে নেওয়ার সর্বশেষ পূর্ণাঙ্গ Checkpoint। সেরা ওয়েটের সাথে শেষ Epoch-এর Optimizer State মিশিয়ে কখনোই নিখুঁত Resume দাবি করা যায় না; আর সত্যিকারের Early Stopping রিজিউম করতে হলে best_metric, bad_count এবং min_delta পলিসি স্টেটও সংরক্ষণ করতে হয়।"
+    },
+    {
+      "title": "নির্ভরযোগ্য Training Recovery Artifact-এর স্কিমা নকশা",
+      "tag": "TRAINING DEBUGGING · 30 MIN",
+      "prompt": "মাঝপথে ক্র্যাশ করা ট্রেনিং নিরাপদে ও নির্ভুলভাবে ফিরিয়ে আনার জন্য একটি পূর্ণাঙ্গ Checkpoint স্কিমা ও সংরক্ষণ প্রক্রিয়া নকশা করুন।",
+      "answer": "একটি নির্ভরযোগ্য রিকভারি আর্টিফ্যাক্টে আমি রাখব: ফরম্যাট সংস্করণ, মডেল আর্কিটেকচার ও রেসিপি কনফিগারেশন, ফিচারের তালিকা ও ক্রম, মূল ডেটা ফাইলের SHA-256 হ্যাশ, ট্রেন ও ভ্যালিডেশন Split-এর পরিচয়, স্কেলারের গড় ও মানদণ্ড, স্বাধীনভাবে কপি করা মডেলের প্যারামিটার ও বাফার, Optimizer ও Scheduler-এর পূর্ণ state_dict, সম্পন্ন হওয়া Epoch ও Step কাউন্টার, সবগুলো সক্রিয় RNG Stream (CPU, CUDA এবং ডেটা শাফলিং Generator), প্রযোজ্য ক্ষেত্রে AMP GradScaler এবং Early Stopping পলিসি স্টেট। যদি Epoch-এর মাঝপথে সেভ করতে হয়, তবে ডেটা ইটারেটরের কার্সর ও আংশিক Accumulated Gradient-ও লাগবে—তাই সম্ভব হলে সম্পন্ন ধাপ বা Epoch সীমানায় সেভ করাই শ্রেয়। সংরক্ষণের সময় একই ডিরেক্টরিতে অস্থায়ী ফাইলে লিখে Atomic Replace করব যাতে ক্র্যাশের কারণে অর্ধলিখিত ফাইল না তৈরি হয়, Checksum মিলিয়ে দেখব এবং লোডের সময় বিশ্বস্ত ফাইল যাচাই ও মেটাডেটা ভ্যালিডেশন নিশ্চিত করব।"
+    },
+    {
+      "title": "আমাদের পরীক্ষণে Weights-only শাখার কম Validation Loss-এর ব্যাখ্যা",
+      "tag": "TRAINING DEBUGGING · 30 MIN",
+      "prompt": "আমাদের নিয়ন্ত্রিত পরীক্ষায় দেখা গেছে ২০তম Epoch-এ Optimizer ও Scheduler রিসেট করা (Weights-only) শাখার চূড়ান্ত Validation BCE অবিরাম রানের চেয়ে সামান্য কম এসেছে। আপনি কি একে সেরা পদ্ধতি বলে ঘোষণা করবেন?",
+      "answer": "একদমই না! ওই শাখাটি কোনো নতুন ট্রেনিং কৌশলের প্রতিযোগিতা নয়, বরং State হারানোর প্রভাব আলাদা করে দেখানোর একটি নিয়ন্ত্রিত পরীক্ষা: সেখানে ২০তম Epoch-এর ওয়েট ও একই ভবিষ্যৎ RNG/ডেটা ক্রম রাখা হয়েছিল, কিন্তু Optimizer-এর মোমেন্ট শূন্য হয়ে যাওয়ায় এবং StepLR আবার শুরুর বড় হার 0.01-এ ফিরে যাওয়ায় মডেলটি সম্পূর্ণ ভিন্ন একটি গতিপথে গেছে। এটি পূর্বপরিচিত ভেতরের Split-এর ওপর একটি মাত্র নির্দিষ্ট সিডের ডায়াগনস্টিক রান—এখানে একাধিক সিড বা ন্যায্য Hyperparameter টিউনিং নেই এবং বাইরের অস্পর্শিত Test সেটে কোনো মূল্যায়ন করা হয়নি। এই পরীক্ষার আসল সাফল্য হলো পূর্ণাঙ্গ রিস্টোর শাখায় প্যারামিটারের শূন্য পার্থক্য (0.0) প্রমাণ করা, সামান্য কম ডায়াগনস্টিক BCE দেখে জয়ী ঘোষণা করা নয়।"
+    }
+  ],
+  "book": {
+    "order": 17,
+    "part": "Book 3 · Deep Learning & RL",
+    "prerequisites": [
+      "chapter_16",
+      "chapter_05"
+    ],
+    "purpose": "Optimizer State, Normalization, Numerical Stability এবং পূর্ণাঙ্গ Checkpoint-Resume কৌশল আয়ত্ত করে এমন নির্ভরযোগ্য Deep Learning Training চালানো শেখা, যা যেকোনো সময়ে যাচাই ও হুবহু পুনরুৎপাদন করা যায়।",
+    "outcomes": [
+      "SGD, Momentum, Adam ও AdamW-এর প্রতিটি Parameter Update এবং তাদের অভ্যন্তরীণ State খাতায় ও কোডে নিখুঁতভাবে হিসাব করতে পারা।",
+      "অসমান আকারের Microbatch-এর ক্ষেত্রেও সঠিক ওজনযুক্ত Gradient Accumulation বাস্তবায়ন করা এবং মাঝপথে থেমে যাওয়া Training হুবহু আগের অবস্থা থেকে Resume করার পূর্ণাঙ্গ Checkpoint তৈরি করতে পারা।",
+      "Dropout, BatchNorm, LayerNorm, Learning Rate Scheduler, Gradient Clipping এবং Mixed Precision ও Distributed Training-এর আচরণ ও সীমাবদ্ধতা স্পষ্টভাবে ব্যাখ্যা করতে পারা।"
+    ],
+    "recall": [
+      "Adam-এ যুক্ত L2 Penalty আর AdamW-এর Decoupled Weight Decay কেন হুবহু একই Parameter Update দেয় না?",
+      "দুটি Microbatch-এর আকার 2 ও 2 হলে (কিংবা অসমান আকারের হলে) তাদের Loss-এ কী ওজন দিতে হয়, আর Accumulation চলাকালীন মাঝপথে Checkpoint সংরক্ষণ করতে গেলে অতিরিক্ত কোন State রাখা জরুরি?"
+    ],
+    "bridge": "পরের অধ্যায়: Book 3 · Chapter 4 (CNNs, Computer Vision & Transfer Learning)। ইমেজ ও ভিশন মডেলের গভীরে যাওয়ার আগে এই অধ্যায়ের Quiz, Coding Exercise এবং না দেখে বলার মতো Interview ব্যাখ্যাগুলো একবার যাচাই করে নিন।",
+    "bookId": "deep_learning",
+    "bookChapter": 3
+  }
+}
