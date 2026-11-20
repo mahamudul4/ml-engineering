@@ -1,5 +1,22 @@
 # Curriculum ও app audit
 
+## 100% App-Wide Plain Natural Bangla, English Technical Terms & Full Native LaTeX (`2.5.0+55`)
+
+পুরো অ্যাপের সব ৫০টি অধ্যায় (Lessons, Subtitles, Block Titles, Lab Intros, Checkpoints, Quizzes, Coding Exercises, Chapter Interviews), **১২০টি Coding Arena প্রবলেম** এবং **৩২০টি FAANG Viva Hot Questions** একযোগে অডিট ও সম্পূর্ণ আপগ্রেড করা হয়েছে:
+
+- **সর্বত্র `RichProse` + Native LaTeX (`selectable: false` বাটন-সাপোর্টসহ):**
+  - `RichProse` এখন `LessonPage` (subtitles, block titles, lab intros, checkpoints, prose), `LearningShell` (lesson list subtitles), `QuizPage` ও `PracticePage` (quiz questions, revision deck questions, exercise prompts/feedback/explanations, feature blurbs), `CodingArenaPage` (card summaries) এবং `CodingProblemPage` (problemStatement, worked examples, Think-First questions/options/explanations, hints, solution gate, walkthrough, complexity analysis, edge cases)—অ্যাপের প্রতিটি রিডিং স্ক্রিনে native inline (`$...$`) ও display (`$$...$$`) LaTeX রেন্ডার করে।
+- **৫০টি অধ্যায়ে পূর্ণ ক্লিনআপ (`0` Raw ASCII Math · `0` Awkward Transliteration):**
+  - সব ৫০টি অধ্যায় থেকে **`6,138`** টি বাংলা অক্ষরে লেখা ইংরেজি Technical Term (`মডেল`, `ফিচার`, `ভেক্টর`, `টোকেন`, `স্কোর`, `ইনপুট`, `আউটপুট`, `ডেটা`, `ট্রেনিং`, `রিকল`, `মেট্রিক`, `মেমরি`, `ক্যাশ`, `পাইপলাইন` ইত্যাদি) পরিষ্কার ইংরেজি Technical Term-এ রূপান্তর ও `35` টি ডলার মুদ্রা নিরাপদে backtick-escape করা হয়েছে।
+  - ৫০টি অধ্যায়ের বাকি সব **`450`** টি math আইটেম (`64` checkpoint solutions, `25` checkpoint bodies, `73` quiz questions, `45` exercise prompts, `159` exercise explanations, `27` block titles, `28` interview prompts/answers, `29` prose/lab blocks) + `9`টি math lesson subtitle native LaTeX-এ রূপান্তর করা হয়েছে।
+- **১২০টি Coding Arena প্রবলেম সম্পূর্ণ আপগ্রেড (`8,285+` Native LaTeX · `0` Raw ASCII · `0` Transliteration):**
+  - ৮টি প্যাকের সব ১২০টি প্রবলেমের `summary`, `problemStatement`, `examples`, `thinkQuestions`, `hints`, `walkthrough`, `complexity` এবং `edgeCases` সহজ স্বাভাবিক বাংলা, ইংরেজি Technical Term ও native LaTeX-এ আপগ্রেড করা হয়েছে; **`120 / 120` প্রবলেমের সব `solutionCode` Python `assert` টেস্ট পাস** করেছে।
+- **৩২০টি FAANG Viva Hot Questions ফাইনাল ক্লিনআপ:** `366`টি ফিল্ডের বাকি transliteration পরিষ্কার করে `0` strict transliteration ও `0` raw ASCII math নিশ্চিত করা হয়েছে।
+- **পূর্ণাঙ্গ স্বয়ংক্রিয় যাচাই (`2.5.0+55`):**
+  - **`52,978 / 52,978` LaTeX equations** `flutter_math_fork`-এ **`0` parse error** সহ পাস (`build/editorial-math-check.json`)।
+  - `flutter analyze` (`0` issues), **`813 / 813` Flutter টেস্ট পাস** (যার মধ্যে সব ৫০টি অধ্যায়, সব ১২০টি Coding Arena প্রবলেমের Problem ও Solution উভয় ট্যাব এবং সব ৩২০টি Viva প্রশ্ন `390x844` মোবাইল স্ক্রিনে light/dark মোডে `0` exception-এ রেন্ডার হয়েছে)।
+  - `python tool/check_book_revision.py --fonts --package` পাস (`passed: true`, `0` missing font glyphs, `INTERNET` permission নেই)।
+
 ## 320 FAANG Viva Questions: Plain Natural Bangla & Full Native LaTeX Rewrite (`2.4.0+54`)
 
 ব্যবহারকারীর সরাসরি ফিডব্যাকের ভিত্তিতে ১৬টি প্যাকের **সব ৩২০টি FAANG Viva Hot Questions (`1,920`টি prose field)** সম্পূর্ণ নতুন করে সহজ, স্বাভাবিক, intuition-first বাংলায় এবং ১০০% native LaTeX সমীকরণে পুনর্লিখন করা হয়েছে:

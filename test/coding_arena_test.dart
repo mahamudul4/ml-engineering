@@ -263,5 +263,41 @@ void main() {
       }
     },
   );
+
+  testWidgets(
+    'every one of the 120 Coding Arena problems renders cleanly on mobile width across both Problem and Solution tabs',
+    (tester) async {
+      if (c.codingProblems.isEmpty) return;
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      for (var i = 0; i < c.codingProblems.length; i++) {
+        final p = c.codingProblems[i];
+        await tester.runAsync(() => c.toggleCodingSolved(p.id));
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: appTheme(i.isEven ? Brightness.light : Brightness.dark),
+            home: CodingProblemPage(controller: c, problem: p),
+          ),
+        );
+        await tester.pump();
+        expect(
+          tester.takeException(),
+          isNull,
+          reason: 'Problem tab render exception on ${p.id}',
+        );
+        await tester.tap(find.byKey(const ValueKey('tab-solution-fragment')));
+        await tester.pumpAndSettle();
+        expect(
+          tester.takeException(),
+          isNull,
+          reason: 'Solution tab render exception on ${p.id}',
+        );
+      }
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
 }
 

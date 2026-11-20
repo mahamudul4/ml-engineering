@@ -37,6 +37,10 @@ void main() {
     for (final asset in catalog['chapters']) {
       final chapter = jsonDecode(await rootBundle.loadString(asset as String));
       for (final lesson in chapter['lessons']) {
+        checkProse(lesson['subtitle'] as String?, {
+          'lesson': lesson['id'],
+          'field': 'subtitle',
+        });
         final blocks = lesson['blocks'] as List;
         for (var index = 0; index < blocks.length; index++) {
           final block = blocks[index];
@@ -46,9 +50,12 @@ void main() {
               'lesson': lesson['id'],
               'block': index,
             });
-          } else if (btype == 'text' ||
-              btype == 'callout' ||
-              btype == 'checkpoint') {
+          } else if (btype != 'code') {
+            checkProse(block['title'] as String?, {
+              'lesson': lesson['id'],
+              'block': index,
+              'field': 'title',
+            });
             checkProse(block['body'] as String?, {
               'lesson': lesson['id'],
               'block': index,
@@ -63,6 +70,29 @@ void main() {
             }
           }
         }
+      }
+      final quizzes = (chapter['quizzes'] as List?) ?? const [];
+      for (var i = 0; i < quizzes.length; i++) {
+        final q = quizzes[i] as Map<String, dynamic>;
+        checkProse(q['question'] as String?, {
+          'chapter': chapter['id'],
+          'quiz': q['id'],
+          'field': 'question',
+        });
+      }
+      final exercises = (chapter['exercises'] as List?) ?? const [];
+      for (var i = 0; i < exercises.length; i++) {
+        final ex = exercises[i] as Map<String, dynamic>;
+        checkProse(ex['prompt'] as String?, {
+          'chapter': chapter['id'],
+          'exercise': ex['id'],
+          'field': 'prompt',
+        });
+        checkProse(ex['explanation'] as String?, {
+          'chapter': chapter['id'],
+          'exercise': ex['id'],
+          'field': 'explanation',
+        });
       }
       final interviews = (chapter['interviews'] as List?) ?? const [];
       for (var i = 0; i < interviews.length; i++) {
@@ -89,6 +119,10 @@ void main() {
         if (formula.isNotEmpty) {
           checkFormula(formula, {'problem': problem['id']});
         }
+        checkProse(problem['summary'] as String?, {
+          'problem': problem['id'],
+          'field': 'summary',
+        });
         checkProse(problem['problemStatement'] as String?, {
           'problem': problem['id'],
           'field': 'problemStatement',
@@ -97,6 +131,49 @@ void main() {
           'problem': problem['id'],
           'field': 'walkthrough',
         });
+        for (final ex in (problem['examples'] as List? ?? const [])) {
+          checkProse((ex as Map<String, dynamic>)['explanation'] as String?, {
+            'problem': problem['id'],
+            'field': 'example.explanation',
+          });
+        }
+        for (final tq in (problem['thinkQuestions'] as List? ?? const [])) {
+          final m = tq as Map<String, dynamic>;
+          checkProse(m['question'] as String?, {
+            'problem': problem['id'],
+            'field': 'thinkQuestion.question',
+          });
+          for (final opt in (m['options'] as List? ?? const [])) {
+            checkProse(opt as String?, {
+              'problem': problem['id'],
+              'field': 'thinkQuestion.option',
+            });
+          }
+          checkProse(m['explanation'] as String?, {
+            'problem': problem['id'],
+            'field': 'thinkQuestion.explanation',
+          });
+        }
+        for (final h in (problem['hints'] as List? ?? const [])) {
+          checkProse(h as String?, {'problem': problem['id'], 'field': 'hint'});
+        }
+        final comp = problem['complexity'] as Map<String, dynamic>?;
+        if (comp != null) {
+          checkProse(comp['time'] as String?, {
+            'problem': problem['id'],
+            'field': 'complexity.time',
+          });
+          checkProse(comp['space'] as String?, {
+            'problem': problem['id'],
+            'field': 'complexity.space',
+          });
+        }
+        for (final edge in (problem['edgeCases'] as List? ?? const [])) {
+          checkProse(edge as String?, {
+            'problem': problem['id'],
+            'field': 'edgeCase',
+          });
+        }
       }
     }
     final vivaCatalog = jsonDecode(

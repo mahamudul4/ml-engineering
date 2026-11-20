@@ -88,8 +88,9 @@ class _PracticePageState extends State<PracticePage> {
                     ),
                   ),
                   const SizedBox(height: 6),
-                  const Text(
-                    'Decision Tree, Attention, KV Cache, LoRA, DCN-v2 সহ পূর্ণাঙ্গ কোডবেসের `# TODO` ফাংশন নিয়ে আগে ভাবুন—তারপর আলাদা Solution ট্যাবে সমাধান মিলিয়ে নিন।',
+                  const RichProse(
+                    'Decision Tree, Attention, KV Cache, LoRA, DCN-v2 সহ পূর্ণাঙ্গ Codebase-এর `# TODO` ফাংশন নিয়ে আগে ভাবুন—তারপর আলাদা Solution ট্যাবে সমাধান মিলিয়ে নিন।',
+                    selectable: false,
                     style: TextStyle(
                       fontFamilyFallback: ['NotoSansBengali'],
                       fontSize: 12,
@@ -153,8 +154,9 @@ class _PracticePageState extends State<PracticePage> {
                     ),
                   ),
                   const SizedBox(height: 6),
-                  const Text(
-                    'Attention √d_k, Bias-Variance, L1 vs L2, XGBoost, Activations, LLM Interpretability সহ সবচেয়ে বেশি আসা প্রশ্নগুলোর পয়েন্ট-বাই-পয়েন্ট উত্তর ও Flashcard Drill।',
+                  const RichProse(
+                    r'Attention $\sqrt{d_k}$, Bias-Variance, L1 vs L2, XGBoost, Activations, LLM Interpretability সহ সবচেয়ে বেশি আসা প্রশ্নগুলোর পয়েন্ট-বাই-পয়েন্ট উত্তর ও Flashcard Drill।',
+                    selectable: false,
                     style: TextStyle(
                       fontFamilyFallback: ['NotoSansBengali'],
                       fontSize: 12,
@@ -476,8 +478,9 @@ class _PracticePageState extends State<PracticePage> {
                       color: const Color(0xFF9C7139),
                     ),
                     const SizedBox(height: 14),
-                    Text(
+                    RichProse(
                       entry.$2.question,
+                      selectable: false,
                       style: const TextStyle(
                         fontFamilyFallback: ['NotoSansBengali'],
                         fontSize: 15,
@@ -701,10 +704,11 @@ class _ExerciseCardState extends State<ExerciseCard> {
           ],
         ),
         const SizedBox(height: 15),
-        Text(
+        RichProse(
           widget.exercise.prompt,
           style: const TextStyle(
             fontFamily: 'NotoSansBengali',
+            fontFamilyFallback: ['Manrope', 'NotoSansMath', 'NotoSans'],
             fontSize: 13,
             height: 2,
           ),
@@ -777,7 +781,7 @@ class _ExerciseCardState extends State<ExerciseCard> {
         if (feedback != null)
           Padding(
             padding: const EdgeInsets.only(top: 16),
-            child: Text(
+            child: RichProse(
               feedback!,
               style: const TextStyle(
                 fontFamilyFallback: ['NotoSansBengali'],
@@ -796,10 +800,11 @@ class _ExerciseCardState extends State<ExerciseCard> {
           children: [
             CodeBlock(code: widget.exercise.solution),
             const SizedBox(height: 14),
-            Text(
+            RichProse(
               widget.exercise.explanation,
               style: const TextStyle(
                 fontFamily: 'NotoSansBengali',
+                fontFamilyFallback: ['Manrope', 'NotoSansMath', 'NotoSans'],
                 height: 2,
                 fontSize: 12,
               ),

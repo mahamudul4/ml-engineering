@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../state/learning_controller.dart';
 import '../models/book_part.dart';
 import '../models/curriculum.dart';
+import 'rich_prose.dart';
 import '../features/lessons/lesson_page.dart';
 import '../features/book/book_page.dart';
 import '../features/coding/coding_arena_page.dart';
@@ -2534,11 +2535,17 @@ class _LearningShellState extends State<LearningShell> {
                       ),
                     ),
                     const SizedBox(height: 5),
-                    Text(
+                    RichProse(
                       lesson.subtitle,
+                      selectable: false,
                       style: TextStyle(
                         fontSize: 10,
                         fontFamily: 'NotoSansBengali',
+                        fontFamilyFallback: const [
+                          'Manrope',
+                          'NotoSansMath',
+                          'NotoSans',
+                        ],
                         height: 1.8,
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),

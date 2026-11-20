@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../models/coding_problem.dart';
 import '../../state/learning_controller.dart';
+import '../../ui/rich_prose.dart';
 import '../../ui/theme.dart';
 import 'coding_problem_page.dart';
 
@@ -116,8 +117,9 @@ class _CodingArenaPageState extends State<CodingArenaPage> {
                           ),
                         ),
                         const SizedBox(height: 10),
-                        const Text(
-                          'প্রতিটি সমস্যার পূর্ণাঙ্গ ML কোডবেস পড়ে `# TODO` ফাংশনটি নিয়ে Think-First প্রশ্নের উত্তর দিন—এবং সম্পূর্ণ আলাদা Solution Fragment-এ গিয়ে যাচাইকৃত সমাধান ও ব্যাখ্যা দেখুন।',
+                        const RichProse(
+                          'প্রতিটি সমস্যার পূর্ণাঙ্গ ML Codebase পড়ে `# TODO` ফাংশনটি নিয়ে Think-First প্রশ্নের উত্তর দিন—এবং সম্পূর্ণ আলাদা Solution Fragment-এ গিয়ে যাচাইকৃত সমাধান ও ব্যাখ্যা দেখুন।',
+                          selectable: false,
                           style: TextStyle(
                             fontFamilyFallback: ['NotoSansBengali'],
                             fontSize: 12.5,
@@ -330,8 +332,9 @@ class _CodingArenaPageState extends State<CodingArenaPage> {
                         ),
                       ),
                       const SizedBox(height: 6),
-                      Text(
+                      RichProse(
                         p.summary,
+                        selectable: false,
                         style: TextStyle(
                           fontFamilyFallback: const ['NotoSansBengali'],
                           fontSize: 11.5,

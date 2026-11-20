@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../state/learning_controller.dart';
+import '../../ui/rich_prose.dart';
 import '../../ui/theme.dart';
 
 class QuizPage extends StatefulWidget {
@@ -81,11 +82,17 @@ class _QuizPageState extends State<QuizPage> {
                         borderRadius: BorderRadius.circular(3),
                       ),
                       const SizedBox(height: 30),
-                      Text(
+                      RichProse(
                         q.question,
+                        selectable: false,
                         style: const TextStyle(
                           fontFamily: 'NotoSansBengali',
-                          fontSize: 22,
+                          fontFamilyFallback: [
+                            'Manrope',
+                            'NotoSansMath',
+                            'NotoSans',
+                          ],
+                          fontSize: 21,
                           height: 1.9,
                           fontWeight: FontWeight.w700,
                         ),

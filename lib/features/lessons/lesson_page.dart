@@ -134,10 +134,16 @@ class _LessonPageState extends State<LessonPage> {
                     ),
                   ),
                   const SizedBox(height: 15),
-                  Text(
+                  RichProse(
                     l.subtitle,
+                    selectable: false,
                     style: TextStyle(
                       fontFamily: 'NotoSansBengali',
+                      fontFamilyFallback: const [
+                        'Manrope',
+                        'NotoSansMath',
+                        'NotoSans',
+                      ],
                       fontSize: 16,
                       height: 2,
                       color: Theme.of(context).colorScheme.primary,
@@ -286,7 +292,16 @@ class _LessonPageState extends State<LessonPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(b.title, style: const TextStyle(fontWeight: FontWeight.w800)),
+            RichProse(
+              b.title,
+              selectable: false,
+              style: const TextStyle(
+                fontFamily: 'NotoSansBengali',
+                fontFamilyFallback: ['Manrope', 'NotoSansMath', 'NotoSans'],
+                fontWeight: FontWeight.w800,
+                height: 1.7,
+              ),
+            ),
             const SizedBox(height: 12),
             RichProse(b.body, style: const TextStyle(height: 1.9)),
             ExpansionTile(
@@ -424,10 +439,11 @@ class _LessonPageState extends State<LessonPage> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
+          RichProse(
             b.body,
             style: const TextStyle(
               fontFamily: 'NotoSansBengali',
+              fontFamilyFallback: ['Manrope', 'NotoSansMath', 'NotoSans'],
               height: 2,
               fontSize: 14,
             ),
@@ -549,10 +565,11 @@ class _LessonPageState extends State<LessonPage> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
+          RichProse(
             b.body,
             style: const TextStyle(
               fontFamily: 'NotoSansBengali',
+              fontFamilyFallback: ['Manrope', 'NotoSansMath', 'NotoSans'],
               height: 2,
               fontSize: 14,
             ),
@@ -568,10 +585,11 @@ class _LessonPageState extends State<LessonPage> {
     if (b.type == 'lab') {
       return Column(
         children: [
-          Text(
+          RichProse(
             b.body,
             style: const TextStyle(
               fontFamily: 'NotoSansBengali',
+              fontFamilyFallback: ['Manrope', 'NotoSansMath', 'NotoSans'],
               height: 2,
               fontSize: 14,
             ),
@@ -606,10 +624,12 @@ class _LessonPageState extends State<LessonPage> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (b.title.isNotEmpty) ...[
-          Text(
+          RichProse(
             b.title,
+            selectable: false,
             style: const TextStyle(
               fontFamily: 'NotoSansBengali',
+              fontFamilyFallback: ['Manrope', 'NotoSansMath', 'NotoSans'],
               fontSize: 18,
               fontWeight: FontWeight.w700,
               height: 1.8,

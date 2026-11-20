@@ -18,12 +18,14 @@ class RichProse extends StatelessWidget {
   final String text;
   final TextStyle? style;
   final double paragraphSpacing;
+  final bool selectable;
 
   const RichProse(
     this.text, {
     super.key,
     this.style,
     this.paragraphSpacing = 12,
+    this.selectable = true,
   });
 
   static final _inlinePattern = RegExp(
@@ -120,7 +122,9 @@ class RichProse extends StatelessWidget {
         );
 
     if (!_hasRichStructureStatic(text)) {
-      return SelectableText(text, style: baseStyle);
+      return selectable
+          ? SelectableText(text, style: baseStyle)
+          : Text(text, style: baseStyle);
     }
 
     final blocks = _parseBlocksStatic(text);
@@ -129,18 +133,17 @@ class RichProse extends StatelessWidget {
         final availWidth = constraints.maxWidth.isFinite
             ? constraints.maxWidth
             : 320.0;
-        return SelectionArea(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              for (var i = 0; i < blocks.length; i++) ...[
-                if (i > 0)
-                  SizedBox(height: blocks[i].topSpacing(paragraphSpacing)),
-                _buildBlock(context, blocks[i], baseStyle, availWidth),
-              ],
+        final column = Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (var i = 0; i < blocks.length; i++) ...[
+              if (i > 0)
+                SizedBox(height: blocks[i].topSpacing(paragraphSpacing)),
+              _buildBlock(context, blocks[i], baseStyle, availWidth),
             ],
-          ),
+          ],
         );
+        return selectable ? SelectionArea(child: column) : column;
       },
     );
   }

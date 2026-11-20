@@ -249,8 +249,9 @@ class _CodingProblemPageState extends State<CodingProblemPage>
               const SizedBox(height: 24),
               const Eyebrow('FULL CODEBASE CONTEXT · IMPLEMENT TARGET FUNCTION'),
               const SizedBox(height: 8),
-              const Text(
-                'আশেপাশের পুরো কোডবেসটি বুঝে নিন এবং `# TODO` চিহ্নিত ফাংশনটি কীভাবে ইমপ্লিমেন্ট করবেন তা আগে নিজে চিন্তা করুন।',
+              const RichProse(
+                'আশেপাশের পুরো Codebase-টি বুঝে নিন এবং `# TODO` চিহ্নিত ফাংশনটি কীভাবে ইমপ্লিমেন্ট করবেন তা আগে নিজে চিন্তা করুন।',
+                selectable: false,
                 style: TextStyle(
                   fontFamilyFallback: ['NotoSansBengali'],
                   fontSize: 12,
@@ -294,7 +295,7 @@ class _CodingProblemPageState extends State<CodingProblemPage>
                           ),
                         ),
                         const SizedBox(height: 8),
-                        Text(
+                        RichProse(
                           p.examples[i].explanation,
                           style: const TextStyle(
                             fontFamilyFallback: ['NotoSansBengali'],
@@ -347,7 +348,7 @@ class _CodingProblemPageState extends State<CodingProblemPage>
                             padding: const EdgeInsets.only(bottom: 12),
                             child: Align(
                               alignment: Alignment.centerLeft,
-                              child: Text(
+                              child: RichProse(
                                 p.hints[hi],
                                 style: const TextStyle(
                                   fontFamilyFallback: ['NotoSansBengali'],
@@ -448,8 +449,9 @@ class _CodingProblemPageState extends State<CodingProblemPage>
           children: [
             Tag('Think Question ${qi + 1} / ${p.thinkQuestions.length}'),
             const SizedBox(height: 12),
-            Text(
+            RichProse(
               q.question,
+              selectable: false,
               style: const TextStyle(
                 fontFamilyFallback: ['NotoSansBengali'],
                 fontSize: 14,
@@ -482,8 +484,9 @@ class _CodingProblemPageState extends State<CodingProblemPage>
                     ),
                     onPressed: () =>
                         setState(() => _selectedAnswers[qi] = opt),
-                    child: Text(
+                    child: RichProse(
                       '${String.fromCharCode(65 + opt)}.  ${q.options[opt]}',
+                      selectable: false,
                       style: TextStyle(
                         fontFamilyFallback: const ['NotoSansBengali'],
                         fontSize: 12,
@@ -519,7 +522,7 @@ class _CodingProblemPageState extends State<CodingProblemPage>
                       ),
                     ),
                     const SizedBox(height: 6),
-                    Text(
+                    RichProse(
                       q.explanation,
                       style: const TextStyle(
                         fontFamilyFallback: ['NotoSansBengali'],
@@ -566,8 +569,9 @@ class _CodingProblemPageState extends State<CodingProblemPage>
                     ),
                   ),
                   const SizedBox(height: 10),
-                  Text(
+                  RichProse(
                     'Solution-টি ইচ্ছাকৃতভাবে আলাদা Fragment-এ রাখা হয়েছে যাতে `${p.targetFunction}` ফাংশনটি নিয়ে আগে নিজে চিন্তা করতে পারেন। আপনি এখন পর্যন্ত ${_selectedAnswers.length} / ${p.thinkQuestions.length}টি Think-First প্রশ্নের উত্তর দিয়েছেন।',
+                    selectable: false,
                     style: const TextStyle(
                       fontFamilyFallback: ['NotoSansBengali'],
                       fontSize: 13,
@@ -648,22 +652,22 @@ class _CodingProblemPageState extends State<CodingProblemPage>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'Time Complexity: ${p.complexity.time}',
+                    RichProse(
+                      '**Time Complexity:** ${p.complexity.time}',
+                      selectable: false,
                       style: const TextStyle(
                         fontFamilyFallback: ['NotoSansBengali'],
                         fontSize: 13,
-                        fontWeight: FontWeight.w700,
                         height: 1.8,
                       ),
                     ),
                     const SizedBox(height: 8),
-                    Text(
-                      'Space Complexity: ${p.complexity.space}',
+                    RichProse(
+                      '**Space Complexity:** ${p.complexity.space}',
+                      selectable: false,
                       style: const TextStyle(
                         fontFamilyFallback: ['NotoSansBengali'],
                         fontSize: 13,
-                        fontWeight: FontWeight.w700,
                         height: 1.8,
                       ),
                     ),
@@ -694,7 +698,7 @@ class _CodingProblemPageState extends State<CodingProblemPage>
                             ),
                             const SizedBox(width: 10),
                             Expanded(
-                              child: Text(
+                              child: RichProse(
                                 edge,
                                 style: const TextStyle(
                                   fontFamilyFallback: ['NotoSansBengali'],
