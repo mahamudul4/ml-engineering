@@ -1,5 +1,18 @@
 # Curriculum ও app audit
 
+## All 6 Books Full Scannable + Native LaTeX Equations Upgrade (`2.3.0+53`)
+
+Milestone B-তে পুরো লাইব্রেরির সব ৬টি বই (Books 1–6 · ৫০টি Chapter) এবং `RichProse` ইঞ্জিনে দুটি বড় আপগ্রেড সম্পন্ন ও যাচাই করা হয়েছে:
+
+1. **Native Inline & Display LaTeX in `RichProse` (`lib/ui/rich_prose.dart`):**
+   - `RichProse`-এ `flutter_math_fork` যুক্ত করে গদ্য, বুলেট, কলআউট ও টেবিলের ভেতরে সরাসরি inline (`$...$`) এবং display (`$$...$$`) LaTeX equation রেন্ডারিং যোগ করা হয়েছে — narrow width (`320px`) ও `2.0x` text scale-এ `LayoutBuilder` + `FittedBox(BoxFit.scaleDown)` + `HorizontalReadingView` দিয়ে zero-overflow সুরক্ষাসহ।
+   - `test/content_math_presentation_test.dart` এখন dedicated `math` block-এর পাশাপাশি প্রতিটি prose block, callout, checkpoint, interview, coding problem এবং viva question-এর সব `$...$` ও `$$...$$` LaTeX সমীকরণ পার্স করে যাচাই করে।
+2. **All 6 Books (50/50 Chapters) Scannable + LaTeX + Natural Bangla Editorial Upgrade:**
+   - **Book 1 (5 chapters)**-এর সব basic/ASCII equation LaTeX-এ রূপান্তর এবং **Books 2–6 (45 chapters)**-এর পূর্ণ Scannable + LaTeX + সহজবোধ্য, প্রাকৃতিক বাংলা (English technical terms সহ) সংস্কার সম্পন্ন হয়েছে:
+     - **৫,১৫৭ / ৫,১৫৭ (১০০%)** prose/callout block structured (`5,150` bold, **`0` unbroken walls of text**)
+     - **২,০১১টি** concrete `> **উদাহরণ:**` example block, **৬৫৬টি** comparison table, **৬৯৬টি** live-executed inline short Python snippet এবং **৪৫৩টি** upgraded chapter interview answer
+     - **২৭,১৪২ / ২৭,১৪২ (১০০%)** LaTeX equation (`flutter_math_fork`) `0` parse error-এ পাস, `check_book_revision.py --fonts` পাস (`0` missing glyphs, `760` legacy walkthrough ASTs ও `368` exercise solution ASTs অপরিবর্তিত)।
+
 ## Scannable Reader Engine, Book 1 Upgrade ও 320 FAANG Viva Hot Questions (`2.2.0+52`)
 
 মোবাইলে বই পড়ার অভিজ্ঞতাকে আরও ঝরঝরে (`Scannable`) এবং FAANG ভাইভা প্রস্তুতিকে রিপিটেবল করতে এই রিলিজে চারটি বড় আপগ্রেড যুক্ত হয়েছে:

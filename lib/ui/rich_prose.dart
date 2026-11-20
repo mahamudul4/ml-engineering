@@ -553,12 +553,16 @@ class RichProse extends StatelessWidget {
         );
       } else if (mathText != null && _isLikelyInlineLatex(mathText)) {
         final tex = mathText.trim();
+        final mathFontSize = ((baseStyle.fontSize ?? 14) + 0.5).clamp(13.5, 28.0);
+        // flutter_math_fork 0.7.4 throws RenderShiftBaseline constraint errors
+        // when \binom / \choose renders inside \frac under MathStyle.text.
+        final useDisplayStyle =
+            tex.contains(r'\binom') || tex.contains(r'\choose');
         final mathWidget = Math.tex(
           tex,
-          mathStyle: MathStyle.text,
-          textStyle: baseStyle.copyWith(
-            fontSize: (baseStyle.fontSize ?? 14) + 0.5,
-            height: 1.2,
+          mathStyle: useDisplayStyle ? MathStyle.display : MathStyle.text,
+          textStyle: TextStyle(
+            fontSize: mathFontSize,
             color: boldColor,
           ),
         );

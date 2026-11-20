@@ -125,7 +125,7 @@ $$
 \mathrm{MSE}(\hat{f}) = \mathrm{Bias}(\hat{f})^2 + \mathrm{Var}(\hat{f}) + \sigma^2
 $$
 
-- **High Bias:** `underfitting` ঘটে, train ও validation উভয় loss বেশি ($\hat{y} = f_\theta(x)$)।
+- **High Bias:** `underfitting` ঘটে, train ও validation উভয় loss বেশি ($\hat{y} = f_\theta(x)$), এবং $\mathrm{pass@}2 = 1 - \frac{\binom{3}{2}}{\binom{5}{2}} = 0.7$।
 - **High Variance:** `overfitting` ঘটে, খরচ `$100` থেকে `$200` বাড়ে না কিন্তু test loss বাড়ে।
 1. প্রথমে baseline model বানান।
 2. তারপর learning curve দেখে সিদ্ধান্ত নিন।
