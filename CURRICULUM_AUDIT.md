@@ -1,5 +1,13 @@
 # Curriculum ও app audit
 
+## 320 FAANG Viva Questions: Plain Natural Bangla & Full Native LaTeX Rewrite (`2.4.0+54`)
+
+ব্যবহারকারীর সরাসরি ফিডব্যাকের ভিত্তিতে ১৬টি প্যাকের **সব ৩২০টি FAANG Viva Hot Questions (`1,920`টি prose field)** সম্পূর্ণ নতুন করে সহজ, স্বাভাবিক, intuition-first বাংলায় এবং ১০০% native LaTeX সমীকরণে পুনর্লিখন করা হয়েছে:
+
+- **সহজ ও স্বাভাবিক বাংলা ব্যাখ্যা (Zero Banglish Jargon Overload):** প্রতিটি প্রশ্নে সাধারণ ইংরেজি শব্দ বাদ দিয়ে সহজ দৈনন্দিন বাংলায় মূল ধারণাটা আগে পরিষ্কার করা হয়েছে, শুধুমাত্র আসল ML/CS technical terms ইংরেজিতে রেখে (কঠিন term-এর সহজ বাংলা অর্থ পাশে দিয়ে)। ৩২০টি প্রশ্নের প্রতিটিতে Bangla-to-English readability ratio `2.7–5.0` থেকে বেড়ে **`16.5–45.9`** (সর্বনিম্ন `11.72`) হয়েছে — যা Books 1–6-এর সমমানের বা আরও সহজবোধ্য।
+- **১০০% Native LaTeX Equations (`0` Raw ASCII Math):** আগের `596`টি ASCII math (`sqrt(d_k)`, `sigma^2`, `||w||_1`, `sum_{...}`) পুরোপুরি সরিয়ে ৩২০টি Viva প্রশ্নের গদ্য, উদাহরণ ও টেবিলে **১৫,৯১২+ inline ও display LaTeX equation** যোগ করা হয়েছে।
+- **পূর্ণাঙ্গ স্বয়ংক্রিয় যাচাই:** পুরো অ্যাপ জুড়ে **`43,391 / 43,391` LaTeX equation** `flutter_math_fork`-এ `0` parse error-এ পাস করেছে, এবং নতুন widget regression test দিয়ে সব ৩২০টি Viva প্রশ্নই mobile width (`390x844`, light ও dark mode)-এ `0` render exception সহ যাচাই করা হয়েছে।
+
 ## All 6 Books Full Scannable + Native LaTeX Equations Upgrade (`2.3.0+53`)
 
 Milestone B-তে পুরো লাইব্রেরির সব ৬টি বই (Books 1–6 · ৫০টি Chapter) এবং `RichProse` ইঞ্জিনে দুটি বড় আপগ্রেড সম্পন্ন ও যাচাই করা হয়েছে:

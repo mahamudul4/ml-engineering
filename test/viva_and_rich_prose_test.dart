@@ -347,4 +347,36 @@ print(round(bias_sq + var + noise, 2))
       expect(snippetCount, greaterThanOrEqualTo(224));
     },
   );
+
+  testWidgets(
+    'every one of the 320 FAANG Viva questions renders cleanly with LaTeX and tables on mobile width',
+    (tester) async {
+      if (c.hotQuestions.isEmpty) return;
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      for (var i = 0; i < c.hotQuestions.length; i++) {
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: appTheme(i.isEven ? Brightness.light : Brightness.dark),
+            home: HotQuestionDetailPage(
+              controller: c,
+              deck: c.hotQuestions,
+              initialIndex: i,
+              startHidden: false,
+            ),
+          ),
+        );
+        await tester.pump();
+        expect(
+          tester.takeException(),
+          isNull,
+          reason: 'Render exception on ${c.hotQuestions[i].id}',
+        );
+      }
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
 }
