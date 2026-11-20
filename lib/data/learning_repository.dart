@@ -6,6 +6,7 @@ import 'package:sqflite/sqflite.dart';
 
 import '../models/coding_problem.dart';
 import '../models/curriculum.dart';
+import '../models/hot_question.dart';
 
 /// All curriculum and learner data live in SQLite after first launch.
 class LearningRepository {
@@ -79,6 +80,23 @@ class LearningRepository {
               as Map<String, dynamic>;
       for (final item in (pack['problems'] as List? ?? const [])) {
         list.add(CodingProblem.fromJson(item as Map<String, dynamic>));
+      }
+    }
+    list.sort((a, b) => a.number.compareTo(b.number));
+    return list;
+  }
+
+  Future<List<HotQuestion>> hotQuestions() async {
+    final catalog =
+        jsonDecode(await rootBundle.loadString('assets/viva/catalog.json'))
+            as Map<String, dynamic>;
+    final list = <HotQuestion>[];
+    for (final asset in (catalog['packs'] as List? ?? const [])) {
+      final pack =
+          jsonDecode(await rootBundle.loadString(asset as String))
+              as Map<String, dynamic>;
+      for (final item in (pack['questions'] as List? ?? const [])) {
+        list.add(HotQuestion.fromJson(item as Map<String, dynamic>));
       }
     }
     list.sort((a, b) => a.number.compareTo(b.number));

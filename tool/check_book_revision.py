@@ -223,9 +223,12 @@ def check_fonts():
             covered.update(font.getBestCmap())
     paths = list((ROOT / "assets/content").glob("*.json"))
     paths += list((ROOT / "assets/coding").glob("*.json"))
+    paths += list((ROOT / "assets/viva").glob("*.json"))
     paths += list((ROOT / "lib/features/book").glob("*.dart"))
     paths += list((ROOT / "lib/features/coding").glob("*.dart"))
+    paths += list((ROOT / "lib/features/viva").glob("*.dart"))
     paths += list((ROOT / "lib/features/reinforcement").glob("*.dart"))
+    paths += [ROOT / "lib/ui/rich_prose.dart"]
     chars = {
         ord(char)
         for path in paths
@@ -265,12 +268,15 @@ def check_package():
     )
     catalog = read(ROOT / "assets/content/catalog.json")
     coding_catalog = read(ROOT / "assets/coding/catalog.json")
+    viva_catalog = read(ROOT / "assets/viva/catalog.json")
     data = read(ROOT / "tool/book_revision_compatibility.json")["assets"]
     paths = [
         "assets/content/catalog.json",
         *catalog["chapters"],
         "assets/coding/catalog.json",
         *coding_catalog.get("packs", []),
+        "assets/viva/catalog.json",
+        *viva_catalog.get("packs", []),
         *data.keys(),
     ]
     with zipfile.ZipFile(apk) as package:

@@ -1,12 +1,12 @@
-# ML Path
+# ML Path — FAANG ML Engineering Offline Companion
 
-**পড়া শুরু করুন:** [ROADMAP.md](ROADMAP.md#পূর্ণ-reading-path)-এর **1.1 → 1.5** দিয়ে শুরু করুন। Interview practice-এর জন্য [role অনুযায়ী reading path](ROADMAP.md#interview-practice-এর-পথ) দেখুন। বর্তমান source-এ **৪৩টি chapter, ৮২০টি lesson, ১,০১০টি quiz, ৩৯৪টি coding exercise ও ৪০৫টি interview case** আছে। নতুন **5.6** LLM benchmark design এবং **5.7** Mechanistic Interpretability।
+**সর্বশেষ সংস্করণ: `2.2.0+52` (Multi-Book + Deep-ML Coding Arena + 320 FAANG Viva Hot Questions + Scannable RichProse Reader)।**
 
-**সর্বশেষ Android beta · `1.43.0+46` · 18 November 2026।** ৫.৬ ও ৫.৭, নতুন coding ও mock rounds এবং দুই interactive LLM lab এই APK-তে আছে। আগের notes, bookmarks ও quiz answers একই IDs-তে থাকে। নিচে beginner Python setup আছে।
-
-বাংলায় ব্যাখ্যা ও English technical terms ব্যবহার করে তৈরি Android/iOS-এর offline-first Flutter learning app। Authentication, API, backend বা runtime network প্রয়োজন নেই। Android release-এ INTERNET permission নেই।
-
-[Android APK ডাউনলোড](build/releases/ml-path-1.43.0-46.apk) · 99,276,669 bytes (প্রায় 99.3 MB)। এটি release-mode build, বিদ্যমান Android debug key দিয়ে signed personal beta। Store distribution-এর জন্য production signing প্রয়োজন।
+- **৬টি স্বতন্ত্র বই (Books 1–6 · ৫০টি Chapter · ৮৮০টি Lesson):** প্রতিটি বই নিজস্ব `Chapter 1` থেকে শুরু হয় — ML Foundations, Classical ML, Deep Learning & RL, LLMs/RAG/GenAI/Interpretability, Recommender Systems & Ads Ranking, এবং ML Systems/MLOps/Interviews। বিস্তারিত রোডম্যাপ: [ROADMAP.md](ROADMAP.md) ও অডিট: [CURRICULUM_AUDIT.md](CURRICULUM_AUDIT.md)।
+- **320 High-Frequency FAANG Viva Hot Questions (`Hot Qs` + Flashcard Drill Mode):** Classical ML (60), Deep Learning (60), Transformers & Attention (40), LLMs / Post-Training / RAG / Interpretability (60), Math/Stats (20), Metrics/A-B/Causality (20), GenAI/VLMs/GNNs (20), RecSys/Ads (20), GPU Systems/MLOps/SysDesign (20) — প্রতিটি প্রশ্নে ৩০-সেকেন্ডের উত্তর, Bold Breakdown, Concrete Example, LaTeX Equation, Verified Python Snippet (320/320 passed), Comparison Table এবং Follow-up Trap।
+- **120 Deep-ML Style Full-Codebase Coding Problems (`Coding Arena`):** ৮টি ডোমেইন × ১৫টি সমস্যা, ৩৬০টি Think-First প্রশ্ন, আলাদা `Problem & Think` বনাম gated `Solution` Fragment, ৯৯০টি verified Python `assert` tests (মোবাইলে zero Python runtime)।
+- **Scannable `RichProse` Reader + Natural Bangla:** Bold key points, inline code pills, `> **উদাহরণ:**` callouts, inline short Python snippets ও comparison tables সহ প্রাকৃতিক বাংলায় লেখা ও সমস্ত Technical Terms ইংরেজিতে রাখা।
+- **100% Offline-First Android/Desktop Flutter App:** Authentication, backend বা network লাগে না; Release APK-তে `INTERNET` permission নেই। All-Books Notebook, Mistake/Interview Revision Deck এবং One-Click JSON Backup/Restore সমর্থিত।
 
 **Content ও presentation-এর verdict: public production release-এর জন্য এখনও প্রস্তুত নয়।** নিজের পড়াশোনা ও সীমিত beta ব্যবহারের জন্য ব্যবহারযোগ্য। সব chapter-এর opening ও নির্বাচিত ব্যাখ্যা সম্পাদনা করা হয়েছে; পুরো বইয়ের natural Bangla copy edit, lesson/assessment-এর পূর্ণ review, সাধারণ learner-এর coding setup এবং native iOS review এখনও বাকি। নির্দিষ্ট findings ও প্রকাশের শর্ত [CURRICULUM_AUDIT.md](CURRICULUM_AUDIT.md)-এ আছে।
 

@@ -1,5 +1,20 @@
 # Curriculum ও app audit
 
+## Scannable Reader Engine, Book 1 Upgrade ও 320 FAANG Viva Hot Questions (`2.2.0+52`)
+
+মোবাইলে বই পড়ার অভিজ্ঞতাকে আরও ঝরঝরে (`Scannable`) এবং FAANG ভাইভা প্রস্তুতিকে রিপিটেবল করতে এই রিলিজে চারটি বড় আপগ্রেড যুক্ত হয়েছে:
+
+1. **Native Rich Scannable Reader (`lib/ui/rich_prose.dart`):**
+   - `LessonPage`, `PracticePage` এবং `CodingProblemPage`-এ `**bold**` key points, `` `inline code` `` pills, indented bullet/numbered lists, `> **উদাহরণ:**` callout cards, inline syntax-highlighted ` ```python ... ``` ` short code snippets এবং scrollable markdown comparison tables যুক্ত হয়েছে — কোনো legacy `block_index` বা AST hash না বদলেই।
+2. **320 High-Frequency FAANG Viva & Hot Questions Bank (`assets/viva/01..16_*.json`):**
+   - সবচেয়ে বেশি আসা ৪টি হট ডোমেইনেই ২২০টি প্রশ্ন: **Classical ML (60)**, **Deep Learning (60)**, **Transformers & Attention (40)** এবং **LLMs, Post-Training, RAG & Mechanistic Interpretability (60)**; পাশাপাশি **Math, Prob & Stats (20)**, **Metrics, A/B & Causality (20)**, **GenAI, VLMs & GNNs (20)**, **RecSys, Search & Ads (20)** এবং **GPU Systems, MLOps & FAANG Loop (20)**।
+   - ৩২০/৩২০টি প্রশ্নেই (`100%`) রয়েছে ৩০-সেকেন্ডের `Elevator Answer`, Bold Bullet `Core Breakdown`, `Concrete Example`, `LaTeX` সমীকরণ, লাইভ-এক্সিকিউটেড **Runnable Python Snippet (320/320 passed)**, `Comparison Table` এবং `FAANG Follow-up Trap`।
+   - ডেডিকেটেড `Hot Qs` স্ক্রিনে Topic/Priority/Status filter, instant search, **Viva Flashcard Drill Mode** (আগে উত্তর লুকিয়ে মুখে অনুশীলন -> Reveal -> `Confident` / `Review Again` / `Star`) এবং `ml_path_backup_v1` JSON Backup/Restore সমর্থন যুক্ত হয়েছে।
+3. **Book 1 Full Scannable Editorial Upgrade (Milestone A):**
+   - `Book 1 · ML Foundations`-এর সব ৫টি অধ্যায়ের (`chapter_01`, `chapter_06`, `chapter_07`, `chapter_08`, `chapter_04`) **৪৪২/৪৪২টি prose block** এবং **৩৭টি interview answer** bold lead-in points, `> **উদাহরণ:**` callout card, comparison table ও live-executed short Python snippet-এ রূপান্তরিত হয়েছে।
+4. **Natural Bangla + English Technical Terms Normalization:**
+   - Books 2–6 (৪৫টি অধ্যায়)-এর ৩,১৪২টি field, Book 1-এর ৩৮টি metadata/quiz field এবং Coding Arena (১২০ প্রবলেম)-এর ৭০১টি field থেকে অপ্রয়োজনীয় বাংলা transliteration সরিয়ে সব Technical Terms ইংরেজিতে এবং মূল লেখা স্বাভাবিক বাংলায় রাখা হয়েছে।
+
 ## Deep-ML Style ML Coding Arena (`2.1.0+51`)
 
 অফলাইন মোবাইল পাঠকদের জন্য Python রানটাইম ব্লোট ছাড়াই কোডবেস-ভিত্তিক গভীর অনুশীলনের জন্য **ML Coding Arena** (`assets/coding/01..08_*.json`) যুক্ত হয়েছে:

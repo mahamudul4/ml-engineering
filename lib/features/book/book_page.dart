@@ -5,6 +5,7 @@ import '../../models/curriculum.dart';
 import '../../state/learning_controller.dart';
 import '../../ui/theme.dart';
 import '../coding/coding_arena_page.dart';
+import '../viva/hot_questions_page.dart';
 
 /// Offline multi-book library, book-scoped reading paths and full-text search.
 class BookDestination {
@@ -140,6 +141,22 @@ class _BookPageState extends State<BookPage> {
                         MaterialPageRoute<void>(
                           builder: (_) =>
                               CodingArenaPage(controller: widget.controller),
+                        ),
+                      ),
+                    ),
+                    ActionChip(
+                      key: const ValueKey('book-open-hot-questions'),
+                      avatar: const Icon(
+                        Icons.local_fire_department_outlined,
+                        size: 16,
+                      ),
+                      label: Text(
+                        'FAANG Hot Qs (${widget.controller.hotQuestions.length})',
+                      ),
+                      onPressed: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) =>
+                              HotQuestionsPage(controller: widget.controller),
                         ),
                       ),
                     ),

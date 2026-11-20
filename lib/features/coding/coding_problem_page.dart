@@ -4,6 +4,7 @@ import 'package:flutter_math_fork/flutter_math.dart';
 import '../../models/coding_problem.dart';
 import '../../models/curriculum.dart';
 import '../../state/learning_controller.dart';
+import '../../ui/rich_prose.dart';
 import '../../ui/theme.dart';
 import '../lessons/horizontal_reading_view.dart';
 import '../lessons/lesson_page.dart';
@@ -211,7 +212,7 @@ class _CodingProblemPageState extends State<CodingProblemPage>
                 ),
               ),
               const SizedBox(height: 12),
-              Text(
+              RichProse(
                 p.problemStatement,
                 style: const TextStyle(
                   fontFamilyFallback: ['NotoSansBengali'],
@@ -630,7 +631,7 @@ class _CodingProblemPageState extends State<CodingProblemPage>
               const SizedBox(height: 10),
               Panel(
                 padding: const EdgeInsets.all(20),
-                child: SelectableText(
+                child: RichProse(
                   p.walkthrough,
                   style: const TextStyle(
                     fontFamilyFallback: ['NotoSansBengali'],

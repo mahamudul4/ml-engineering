@@ -7,6 +7,7 @@ import '../models/curriculum.dart';
 import '../features/lessons/lesson_page.dart';
 import '../features/book/book_page.dart';
 import '../features/coding/coding_arena_page.dart';
+import '../features/viva/hot_questions_page.dart';
 import '../features/reinforcement/bellman_lab.dart';
 import '../features/practice/practice_page.dart';
 import '../features/regression/regression_lab.dart';
@@ -145,6 +146,12 @@ class _LearningShellState extends State<LearningShell> {
     );
   }
 
+  void openHotQuestions() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => HotQuestionsPage(controller: c)),
+    );
+  }
+
   Widget _mobileBookSelector() => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
@@ -172,6 +179,16 @@ class _LearningShellState extends State<LearningShell> {
             onPressed: openCodingArena,
             icon: const Icon(Icons.terminal_rounded, size: 15),
             label: const Text('Coding Arena', style: TextStyle(fontSize: 11)),
+          ),
+          TextButton.icon(
+            key: const ValueKey('open-hot-questions'),
+            style: TextButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            ),
+            onPressed: openHotQuestions,
+            icon: const Icon(Icons.local_fire_department_outlined, size: 15),
+            label: const Text('Hot Qs', style: TextStyle(fontSize: 11)),
           ),
         ],
       ),
@@ -550,6 +567,43 @@ class _LearningShellState extends State<LearningShell> {
                     Expanded(
                       child: Text(
                         'Coding Arena (${c.codingProblems.length})',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(bottom: 5),
+          child: Material(
+            color: Colors.transparent,
+            borderRadius: BorderRadius.circular(9),
+            child: InkWell(
+              key: const ValueKey('sidebar-hot-questions'),
+              borderRadius: BorderRadius.circular(9),
+              onTap: openHotQuestions,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 12,
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.local_fire_department_outlined,
+                      size: 19,
+                      color: Color(0xFFB44C3B),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'FAANG Hot Qs (${c.hotQuestions.length})',
                         style: const TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w700,

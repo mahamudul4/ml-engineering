@@ -52,6 +52,25 @@ void main() {
         }
       }
     }
+    final vivaCatalog = jsonDecode(
+      await rootBundle.loadString('assets/viva/catalog.json'),
+    );
+    for (final packAsset in (vivaCatalog['packs'] as List? ?? const [])) {
+      final pack = jsonDecode(await rootBundle.loadString(packAsset as String));
+      for (final q in (pack['questions'] as List? ?? const [])) {
+        final formula = (q['mathFormula'] as String?) ?? '';
+        if (formula.isEmpty) continue;
+        final equation = Math.tex(formula);
+        checked++;
+        if (equation.parseError != null) {
+          failures.add({
+            'viva': q['id'],
+            'formula': formula,
+            'error': equation.parseError.toString(),
+          });
+        }
+      }
+    }
     await File('build/editorial-math-check.json').writeAsString(
       const JsonEncoder.withIndent('  ')
           .convert({'checked': checked, 'failures': failures}),

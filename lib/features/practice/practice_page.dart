@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 
 import '../../state/learning_controller.dart';
+import '../../ui/rich_prose.dart';
 import '../../ui/theme.dart';
 import '../../models/curriculum.dart';
 import '../coding/coding_arena_page.dart';
 import '../lessons/lesson_page.dart';
+import '../viva/hot_questions_page.dart';
 import 'quiz_page.dart';
 
 class PracticePage extends StatefulWidget {
@@ -137,6 +139,47 @@ class _PracticePageState extends State<PracticePage> {
               ),
           ],
           if (tab == 2) ...[
+            Panel(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Eyebrow('HIGH-FREQUENCY FAANG VIVA BANK'),
+                  const SizedBox(height: 8),
+                  Text(
+                    'FAANG Viva Hot Questions (${widget.controller.hotQuestions.length} Questions)',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'Attention √d_k, Bias-Variance, L1 vs L2, XGBoost, Activations, LLM Interpretability সহ সবচেয়ে বেশি আসা প্রশ্নগুলোর পয়েন্ট-বাই-পয়েন্ট উত্তর ও Flashcard Drill।',
+                    style: TextStyle(
+                      fontFamilyFallback: ['NotoSansBengali'],
+                      fontSize: 12,
+                      height: 1.9,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  FilledButton.icon(
+                    key: const ValueKey('practice-open-hot-questions'),
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) =>
+                            HotQuestionsPage(controller: widget.controller),
+                      ),
+                    ),
+                    icon: const Icon(
+                      Icons.local_fire_department_outlined,
+                      size: 17,
+                    ),
+                    label: const Text('Open FAANG Hot Qs'),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
             const Text(
               'Think first. Then compare your approach.',
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
@@ -272,10 +315,11 @@ class _PracticePageState extends State<PracticePage> {
             style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 14),
-          Text(
+          RichProse(
             q.prompt,
             style: const TextStyle(
               fontFamily: 'NotoSansBengali',
+              fontFamilyFallback: ['Manrope', 'NotoSansMath', 'NotoSans'],
               fontSize: 13,
               height: 2,
             ),
@@ -304,12 +348,16 @@ class _PracticePageState extends State<PracticePage> {
               style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
             ),
             children: [
-              SelectableText(
-                q.answer,
-                style: const TextStyle(
-                  fontFamily: 'NotoSansBengali',
-                  fontSize: 13,
-                  height: 2.1,
+              Align(
+                alignment: Alignment.centerLeft,
+                child: RichProse(
+                  q.answer,
+                  style: const TextStyle(
+                    fontFamily: 'NotoSansBengali',
+                    fontFamilyFallback: ['Manrope', 'NotoSansMath', 'NotoSans'],
+                    fontSize: 13,
+                    height: 2.0,
+                  ),
                 ),
               ),
             ],

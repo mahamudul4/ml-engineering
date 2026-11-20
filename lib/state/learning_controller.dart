@@ -6,18 +6,23 @@ import '../data/learning_repository.dart';
 import '../models/book_part.dart';
 import '../models/coding_problem.dart';
 import '../models/curriculum.dart';
+import '../models/hot_question.dart';
 
 class LearningController extends ChangeNotifier {
   final LearningRepository repository;
   late Curriculum chapter;
   late List<Curriculum> chapters;
   List<CodingProblem> codingProblems = [];
+  List<HotQuestion> hotQuestions = [];
   Map<String, Map<String, Object?>> records = {};
   Map<String, int> _allAnswers = {};
   Set<String> starredInterviews = {};
   Set<String> solvedCoding = {};
   Set<String> starredCoding = {};
   Map<String, String> _codingNotes = {};
+  Set<String> vivaConfident = {};
+  Set<String> vivaReview = {};
+  Set<String> vivaStarred = {};
   Map<String, int> get answers => {
     for (final q in chapter.quizzes)
       if (_allAnswers.containsKey(q.id)) q.id: _allAnswers[q.id]!,
@@ -207,6 +212,68 @@ class LearningController extends ChangeNotifier {
     }
   }
 
+  bool isVivaConfident(String id) => vivaConfident.contains(id);
+
+  bool isVivaReview(String id) => vivaReview.contains(id);
+
+  bool isVivaStarred(String id) => vivaStarred.contains(id);
+
+  int get confidentVivaCount =>
+      hotQuestions.where((q) => vivaConfident.contains(q.id)).length;
+
+  Future<void> toggleVivaConfident(String id) async {
+    final nextConf = {...vivaConfident};
+    final nextRev = {...vivaReview};
+    if (!nextConf.remove(id)) {
+      nextConf.add(id);
+      nextRev.remove(id);
+    }
+    await repository.setSetting(
+      'viva_confident',
+      jsonEncode(nextConf.toList()..sort()),
+    );
+    await repository.setSetting(
+      'viva_review',
+      jsonEncode(nextRev.toList()..sort()),
+    );
+    vivaConfident = nextConf;
+    vivaReview = nextRev;
+    notifyListeners();
+  }
+
+  Future<void> toggleVivaReview(String id) async {
+    final nextRev = {...vivaReview};
+    final nextConf = {...vivaConfident};
+    if (!nextRev.remove(id)) {
+      nextRev.add(id);
+      nextConf.remove(id);
+    }
+    await repository.setSetting(
+      'viva_review',
+      jsonEncode(nextRev.toList()..sort()),
+    );
+    await repository.setSetting(
+      'viva_confident',
+      jsonEncode(nextConf.toList()..sort()),
+    );
+    vivaReview = nextRev;
+    vivaConfident = nextConf;
+    notifyListeners();
+  }
+
+  Future<void> toggleVivaStar(String id) async {
+    final next = {...vivaStarred};
+    if (!next.remove(id)) {
+      next.add(id);
+    }
+    await repository.setSetting(
+      'viva_starred',
+      jsonEncode(next.toList()..sort()),
+    );
+    vivaStarred = next;
+    notifyListeners();
+  }
+
   Future<String> exportBackup() => repository.exportBackup();
 
   Future<Map<String, int>> importBackup(String rawJson) async {
@@ -218,6 +285,7 @@ class LearningController extends ChangeNotifier {
   Future<void> load() async {
     chapters = await repository.chapters();
     codingProblems = await repository.codingProblems();
+    hotQuestions = await repository.hotQuestions();
     final selected = await repository.setting('selected_chapter');
     chapter = chapters.firstWhere(
       (c) => c.id == selected,
@@ -235,6 +303,11 @@ class LearningController extends ChangeNotifier {
       await repository.setting('coding_starred'),
     );
     _codingNotes = _decodeStringMap(await repository.setting('coding_notes'));
+    vivaConfident = _decodeStringSet(
+      await repository.setting('viva_confident'),
+    );
+    vivaReview = _decodeStringSet(await repository.setting('viva_review'));
+    vivaStarred = _decodeStringSet(await repository.setting('viva_starred'));
     await refresh();
     themeMode = await repository.setting('theme') == 'dark'
         ? ThemeMode.dark

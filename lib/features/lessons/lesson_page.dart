@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:flutter_highlight/flutter_highlight.dart';
-import 'package:flutter_highlight/themes/atom-one-dark.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
 
 import '../../models/curriculum.dart';
 import '../../state/learning_controller.dart';
+import '../../ui/code_block.dart';
+import '../../ui/rich_prose.dart';
 import '../../ui/theme.dart';
+
+export '../../ui/code_block.dart';
 import '../regression/regression_lab.dart';
 import '../regression/advanced_regression_labs.dart';
 import '../regression/polynomial_lab.dart';
@@ -287,14 +288,17 @@ class _LessonPageState extends State<LessonPage> {
           children: [
             Text(b.title, style: const TextStyle(fontWeight: FontWeight.w800)),
             const SizedBox(height: 12),
-            SelectableText(b.body, style: const TextStyle(height: 1.9)),
+            RichProse(b.body, style: const TextStyle(height: 1.9)),
             ExpansionTile(
               tilePadding: EdgeInsets.zero,
               title: const Text('চেষ্টা শেষে উত্তর দেখুন'),
               children: [
-                SelectableText(
-                  b.solution ?? '',
-                  style: const TextStyle(height: 1.9),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: RichProse(
+                    b.solution ?? '',
+                    style: const TextStyle(height: 1.9),
+                  ),
                 ),
                 const SizedBox(height: 12),
                 if (b.reference != null)
@@ -613,14 +617,15 @@ class _LessonPageState extends State<LessonPage> {
           ),
           const SizedBox(height: 12),
         ],
-        SelectableText(
+        RichProse(
           b.body,
           style: TextStyle(
             fontFamily: 'NotoSansBengali',
+            fontFamilyFallback: const ['Manrope', 'NotoSansMath', 'NotoSans'],
             fontSize: 14,
-            height: 2.2,
+            height: 2.1,
             color: Theme.of(context).colorScheme.onSurface
-                .withValues(alpha: .88),
+                .withValues(alpha: .90),
           ),
         ),
       ],
@@ -725,80 +730,5 @@ class _NoteDialogState extends State<NoteDialog> {
         child: Text(saving ? 'Saving…' : 'Save note'),
       ),
     ],
-  );
-}
-
-class CodeBlock extends StatelessWidget {
-  final String code, title;
-  const CodeBlock({super.key, required this.code, this.title = 'Python'});
-  @override
-  Widget build(BuildContext context) => Container(
-    clipBehavior: Clip.antiAlias,
-    decoration: BoxDecoration(
-      color: const Color(0xFF222B28),
-      borderRadius: BorderRadius.circular(14),
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(18, 8, 8, 8),
-          child: Row(
-            children: [
-              const Icon(Icons.code, size: 16, color: lime),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  title,
-                  style: const TextStyle(
-                    fontFamilyFallback: ['NotoSansBengali'],
-                    color: Color(0xFFC3D2C8),
-                    fontSize: 11,
-                    height: 1.7,
-                  ),
-                ),
-              ),
-              IconButton(
-                tooltip: 'Copy Python code',
-                onPressed: () async {
-                  await Clipboard.setData(ClipboardData(text: code));
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Python code copied')),
-                    );
-                  }
-                },
-                icon: const Icon(
-                  Icons.copy_outlined,
-                  color: Color(0xFFC3D2C8),
-                  size: 16,
-                ),
-              ),
-            ],
-          ),
-        ),
-        HorizontalReadingView(
-          hint: 'Code-এর বাকি অংশ দেখতে ডানে-বাঁয়ে সরান।',
-          hintColor: const Color(0xFFC3D2C8),
-          child: HighlightView(
-            code,
-            language: 'python',
-            theme: {
-              ...atomOneDarkTheme,
-              'root': const TextStyle(
-                color: Color(0xFFD9E4DA),
-                backgroundColor: Color(0xFF222B28),
-              ),
-            },
-            padding: const EdgeInsets.fromLTRB(18, 8, 24, 24),
-            textStyle: const TextStyle(
-              fontFamily: 'monospace',
-              fontSize: 12,
-              height: 1.9,
-            ),
-          ),
-        ),
-      ],
-    ),
   );
 }
