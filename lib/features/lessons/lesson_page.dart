@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_math_fork/flutter_math.dart';
 
 import '../../models/curriculum.dart';
 import '../../state/learning_controller.dart';
 import '../../ui/code_block.dart';
 import '../../ui/rich_prose.dart';
 import '../../ui/theme.dart';
+import '../../ui/tutorial_blocks.dart';
+import '../ensembles/xgboost_sandbox_lab.dart';
 
 export '../../ui/code_block.dart';
 import '../regression/regression_lab.dart';
@@ -50,7 +51,6 @@ import '../system_design/design_labs.dart';
 import '../interview_practice/practice_labs.dart';
 import '../final_capstone/portfolio_labs.dart';
 import '../reinforcement/bellman_lab.dart';
-import 'horizontal_reading_view.dart';
 
 class LessonPage extends StatefulWidget {
   final LearningController controller;
@@ -287,6 +287,97 @@ class _LessonPageState extends State<LessonPage> {
   );
   Widget _block(LessonBlock b) {
     if (b.type == 'bellman_lab') return const BellmanLab();
+    if (b.type == 'xgboost_sandbox') return const XgboostSandboxLab();
+    if (b.type == 'lesson_header') {
+      return LessonHeaderCard(
+        goal: (b.meta['goal'] as String?) ?? b.body,
+        prerequisites: [
+          for (final item in (b.meta['prerequisites'] as List? ?? const []))
+            item.toString(),
+        ],
+        outcomes: [
+          for (final item in (b.meta['outcomes'] as List? ?? const []))
+            item.toString(),
+        ],
+      );
+    }
+    if (b.type == 'flow_diagram') {
+      final rawSteps = (b.meta['steps'] as List? ?? const []);
+      return FlowDiagramCard(
+        title: b.title,
+        steps: [
+          for (final s in rawSteps)
+            {
+              'label': ((s as Map)['label'] ?? '').toString(),
+              'detail': (s['detail'] ?? '').toString(),
+            },
+        ],
+        caption: (b.meta['caption'] as String?) ?? b.body,
+      );
+    }
+    if (b.type == 'line_chart') {
+      final rawSeries = (b.meta['series'] as List? ?? const []);
+      final palette = [
+        forest,
+        const Color(0xFFB46744),
+        const Color(0xFF2D6A8E),
+      ];
+      return LineChartCard(
+        title: b.title,
+        xLabel: (b.meta['xLabel'] as String?) ?? '',
+        yLabel: (b.meta['yLabel'] as String?) ?? '',
+        series: [
+          for (var i = 0; i < rawSeries.length; i++)
+            ChartSeriesData(
+              name: ((rawSeries[i] as Map)['name'] ?? '').toString(),
+              color: palette[i % palette.length],
+              points: [
+                for (final pt in ((rawSeries[i] as Map)['points'] as List? ??
+                    const []))
+                  (((pt as List)[0] as num).toDouble(), (pt[1] as num).toDouble()),
+              ],
+            ),
+        ],
+        metrics: [
+          for (final m in (b.meta['metrics'] as List? ?? const []))
+            {
+              'label': ((m as Map)['label'] ?? '').toString(),
+              'value': (m['value'] ?? '').toString(),
+            },
+        ],
+        provenance: (b.meta['provenance'] as String?) ?? b.body,
+      );
+    }
+    if (b.type == 'concept_check') {
+      return ConceptCheckCard(
+        title: b.title,
+        question: (b.meta['question'] as String?) ?? b.body,
+        options: [
+          for (final opt in (b.meta['options'] as List? ?? const []))
+            opt.toString(),
+        ],
+        answer: (b.meta['answer'] as num?)?.toInt() ?? 0,
+        explanation: (b.meta['explanation'] as String?) ?? (b.solution ?? ''),
+        predictMode: (b.meta['predictMode'] as bool?) ?? false,
+      );
+    }
+    if (b.type == 'interview_qa') {
+      final rawItems = (b.meta['items'] as List? ?? const []);
+      return InterviewQuestionsCard(
+        title: b.title,
+        intro: (b.meta['intro'] as String?) ?? b.body,
+        items: [
+          for (final item in rawItems)
+            {
+              'concept': ((item as Map)['concept'] ?? '').toString(),
+              'level': (item['level'] ?? 'Core').toString(),
+              'question': (item['question'] ?? '').toString(),
+              'answer': (item['answer'] ?? '').toString(),
+              'followUp': (item['followUp'] ?? '').toString(),
+            },
+        ],
+      );
+    }
     if (b.type == 'checkpoint') {
       return Panel(
         child: Column(
@@ -601,23 +692,20 @@ class _LessonPageState extends State<LessonPage> {
     }
     if (b.type == 'code') return CodeBlock(code: b.body, title: b.title);
     if (b.type == 'math') {
-      return Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(24),
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.primary.withValues(alpha: .05),
-          borderRadius: BorderRadius.circular(14),
-        ),
-        child: HorizontalReadingView(
-          hint: 'পুরো সমীকরণ দেখতে ডানে-বাঁয়ে সরান।',
-          child: Math.tex(
-            b.body,
-            textStyle: TextStyle(
-              fontSize: 19,
-              color: Theme.of(context).colorScheme.onSurface,
-            ),
-          ),
-        ),
+      final rawSymbols = (b.meta['symbols'] as List? ?? const []);
+      return AnnotatedMathCard(
+        title: b.title,
+        formula: b.body,
+        lead: (b.meta['lead'] as String?) ?? '',
+        symbols: [
+          for (final s in rawSymbols)
+            {
+              'symbol': ((s as Map)['symbol'] ?? '').toString(),
+              'meaning': (s['meaning'] ?? '').toString(),
+              'example': (s['example'] ?? '').toString(),
+            },
+        ],
+        note: (b.meta['note'] as String?) ?? '',
       );
     }
     final copy = Column(

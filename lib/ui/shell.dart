@@ -2901,7 +2901,7 @@ class _LearningShellState extends State<LearningShell> {
                     payload,
                     key: const ValueKey('backup-export-text'),
                     style: const TextStyle(
-                      fontFamily: 'monospace',
+                      fontFamily: 'JetBrainsMono',
                       fontSize: 11,
                       height: 1.6,
                     ),
@@ -2970,7 +2970,7 @@ class _LearningShellState extends State<LearningShell> {
                       minLines: 6,
                       maxLines: 12,
                       style: const TextStyle(
-                        fontFamily: 'monospace',
+                        fontFamily: 'JetBrainsMono',
                         fontSize: 11,
                         height: 1.6,
                       ),

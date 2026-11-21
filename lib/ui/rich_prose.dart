@@ -31,6 +31,7 @@ class RichProse extends StatelessWidget {
   static final _inlinePattern = RegExp(
     r'\*\*(.+?)\*\*|`([^`]+)`|\$(?!\s)([^\$\n\u0980-\u09FF]+?)(?<!\s)\$',
   );
+  static final _headingPattern = RegExp(r'^(#{2,3})\s+(.*)$');
   static final _bulletPattern = RegExp(r'^\s*(?:[-•*])\s+(.*)$');
   static final _numberedPattern = RegExp(r'^\s*([0-9০-৯]+[.)])\s+(.*)$');
   static final _tableSepPattern = RegExp(
@@ -73,6 +74,8 @@ class RichProse extends StatelessWidget {
     for (final b in blocks) {
       if (b is _MathBlock) {
         found.add(b.tex);
+      } else if (b is _HeadingBlock) {
+        collectInline(b.body);
       } else if (b is _ParagraphBlock) {
         collectInline(b.body);
       } else if (b is _ListItemBlock) {
@@ -99,6 +102,10 @@ class RichProse extends StatelessWidget {
       raw.contains('```') ||
       raw.contains(r'$$') ||
       _inlinePattern.hasMatch(raw) ||
+      raw.contains('\n## ') ||
+      raw.contains('\n### ') ||
+      raw.startsWith('## ') ||
+      raw.startsWith('### ') ||
       raw.contains('\n- ') ||
       raw.contains('\n• ') ||
       raw.contains('\n> ') ||
@@ -226,7 +233,20 @@ class RichProse extends StatelessWidget {
         continue;
       }
 
-      // 4. Blockquote callout (> ...)
+      // 4. Markdown subheading (## / ###)
+      final headingMatch = _headingPattern.firstMatch(trimmed);
+      if (headingMatch != null) {
+        out.add(
+          _HeadingBlock(
+            level: headingMatch.group(1)!.length,
+            body: headingMatch.group(2)!.trim(),
+          ),
+        );
+        i++;
+        continue;
+      }
+
+      // 5. Blockquote callout (> ...)
       if (trimmed.startsWith('>')) {
         final quoteLines = <String>[];
         while (i < lines.length && lines[i].trim().startsWith('>')) {
@@ -238,7 +258,7 @@ class RichProse extends StatelessWidget {
         continue;
       }
 
-      // 5. Bullet point (- / •)
+      // 6. Bullet point (- / •)
       final bulletMatch = _bulletPattern.firstMatch(line);
       if (bulletMatch != null) {
         out.add(_ListItemBlock(marker: '•', body: bulletMatch.group(1)!.trim()));
@@ -246,7 +266,7 @@ class RichProse extends StatelessWidget {
         continue;
       }
 
-      // 6. Numbered point (1. / ১.)
+      // 7. Numbered point (1. / ১.)
       final numMatch = _numberedPattern.firstMatch(line);
       if (numMatch != null) {
         out.add(
@@ -260,7 +280,7 @@ class RichProse extends StatelessWidget {
         continue;
       }
 
-      // 7. Regular paragraph lines until next blank or special block
+      // 8. Regular paragraph lines until next blank or special block
       final para = <String>[trimmed];
       i++;
       while (i < lines.length) {
@@ -271,6 +291,7 @@ class RichProse extends StatelessWidget {
             nextTrim.startsWith(r'$$') ||
             nextTrim.startsWith('>') ||
             nextTrim.startsWith('|') ||
+            _headingPattern.hasMatch(nextTrim) ||
             _bulletPattern.hasMatch(next) ||
             _numberedPattern.hasMatch(next)) {
           break;
@@ -355,7 +376,7 @@ class RichProse extends StatelessWidget {
               ? mathWidget
               : SelectableText(
                   block.tex,
-                  style: baseStyle.copyWith(fontFamily: 'monospace'),
+                  style: baseStyle.copyWith(fontFamily: 'JetBrainsMono'),
                 ),
         ),
       );
@@ -407,6 +428,20 @@ class RichProse extends StatelessWidget {
             ),
           ],
         ),
+      );
+    }
+    if (block is _HeadingBlock) {
+      final headingStyle = baseStyle.copyWith(
+        fontSize: block.level == 2 ? 16.5 : 15,
+        fontWeight: FontWeight.w800,
+        height: 1.6,
+        color: Theme.of(context).colorScheme.onSurface,
+      );
+      return _richText(
+        context,
+        block.body,
+        headingStyle,
+        maxInlineWidth: (availWidth - 4).clamp(60.0, 2000.0),
       );
     }
     if (block is _TableBlock) {
@@ -580,8 +615,8 @@ class RichProse extends StatelessWidget {
           TextSpan(
             text: ' $codeText ',
             style: baseStyle.copyWith(
-              fontFamily: 'monospace',
-              fontFamilyFallback: const ['Manrope', 'NotoSansBengali'],
+              fontFamily: 'JetBrainsMono',
+              fontFamilyFallback: const ['NotoSansBengali', 'Manrope', 'NotoSans'],
               fontSize: (baseStyle.fontSize ?? 14) - 1.5,
               fontWeight: FontWeight.w700,
               color: codeFg,
@@ -688,4 +723,13 @@ class _TableBlock extends _ProseBlock {
   final List<String> headers;
   final List<List<String>> rows;
   _TableBlock({required this.headers, required this.rows});
+}
+
+class _HeadingBlock extends _ProseBlock {
+  final int level;
+  final String body;
+  _HeadingBlock({required this.level, required this.body});
+
+  @override
+  double topSpacing(double base) => base * 1.45;
 }

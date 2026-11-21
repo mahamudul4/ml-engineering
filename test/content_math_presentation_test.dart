@@ -50,6 +50,108 @@ void main() {
               'lesson': lesson['id'],
               'block': index,
             });
+            checkProse(block['lead'] as String?, {
+              'lesson': lesson['id'],
+              'block': index,
+              'field': 'lead',
+            });
+            checkProse(block['note'] as String?, {
+              'lesson': lesson['id'],
+              'block': index,
+              'field': 'note',
+            });
+            for (final s in (block['symbols'] as List? ?? const [])) {
+              final m = s as Map<String, dynamic>;
+              checkProse(m['symbol'] as String?, {
+                'lesson': lesson['id'],
+                'block': index,
+                'field': 'symbol',
+              });
+              checkProse(m['meaning'] as String?, {
+                'lesson': lesson['id'],
+                'block': index,
+                'field': 'meaning',
+              });
+              checkProse(m['example'] as String?, {
+                'lesson': lesson['id'],
+                'block': index,
+                'field': 'example',
+              });
+            }
+          } else if (btype == 'lesson_header') {
+            checkProse(block['goal'] as String?, {
+              'lesson': lesson['id'],
+              'block': index,
+              'field': 'goal',
+            });
+            for (final o in (block['outcomes'] as List? ?? const [])) {
+              checkProse(o as String?, {
+                'lesson': lesson['id'],
+                'block': index,
+                'field': 'outcome',
+              });
+            }
+          } else if (btype == 'flow_diagram') {
+            checkProse(block['caption'] as String?, {
+              'lesson': lesson['id'],
+              'block': index,
+              'field': 'caption',
+            });
+            for (final s in (block['steps'] as List? ?? const [])) {
+              final m = s as Map<String, dynamic>;
+              checkProse(m['label'] as String?, {
+                'lesson': lesson['id'],
+                'block': index,
+                'field': 'step.label',
+              });
+              checkProse(m['detail'] as String?, {
+                'lesson': lesson['id'],
+                'block': index,
+                'field': 'step.detail',
+              });
+            }
+          } else if (btype == 'concept_check') {
+            checkProse(block['question'] as String?, {
+              'lesson': lesson['id'],
+              'block': index,
+              'field': 'question',
+            });
+            for (final o in (block['options'] as List? ?? const [])) {
+              checkProse(o as String?, {
+                'lesson': lesson['id'],
+                'block': index,
+                'field': 'option',
+              });
+            }
+            checkProse(block['explanation'] as String?, {
+              'lesson': lesson['id'],
+              'block': index,
+              'field': 'explanation',
+            });
+          } else if (btype == 'interview_qa') {
+            checkProse(block['intro'] as String?, {
+              'lesson': lesson['id'],
+              'block': index,
+              'field': 'intro',
+            });
+            for (final item in (block['items'] as List? ?? const [])) {
+              final m = item as Map<String, dynamic>;
+              checkProse(m['question'] as String?, {
+                'lesson': lesson['id'],
+                'block': index,
+                'field': 'interview_qa.question',
+              });
+              checkProse(m['answer'] as String?, {
+                'lesson': lesson['id'],
+                'block': index,
+                'field': 'interview_qa.answer',
+              });
+              checkProse(m['followUp'] as String?, {
+                'lesson': lesson['id'],
+                'block': index,
+                'field': 'interview_qa.followUp',
+              });
+            }
           } else if (btype != 'code') {
             checkProse(block['title'] as String?, {
               'lesson': lesson['id'],

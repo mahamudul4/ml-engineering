@@ -17,12 +17,14 @@ class Lesson {
 class LessonBlock {
   final String type, title, body;
   final String? solution, reference;
+  final Map<String, dynamic> meta;
   LessonBlock.fromJson(Map<String, dynamic> j)
     : type = j['type'] ?? 'text',
       title = j['title'] ?? '',
-      body = j['body'],
+      body = j['body'] ?? '',
       solution = j['solution'],
-      reference = j['reference'];
+      reference = j['reference'],
+      meta = Map<String, dynamic>.from(j);
 }
 
 class QuizQuestion {

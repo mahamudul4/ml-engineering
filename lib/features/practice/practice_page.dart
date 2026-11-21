@@ -728,7 +728,8 @@ class _ExerciseCardState extends State<ExerciseCard> {
             minLines: 7,
             maxLines: 16,
             style: const TextStyle(
-              fontFamily: 'monospace',
+              fontFamily: 'JetBrainsMono',
+              fontFamilyFallback: ['NotoSansBengali'],
               fontSize: 12,
               height: 1.8,
             ),

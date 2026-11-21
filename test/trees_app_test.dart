@@ -27,6 +27,10 @@ void main() {
         family,
       )..addFont(rootBundle.load('assets/fonts/$family.ttf'))).load();
     }
+    await (FontLoader('JetBrainsMono')
+          ..addFont(rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf'))
+          ..addFont(rootBundle.load('assets/fonts/JetBrainsMono-Bold.ttf')))
+        .load();
   });
   setUp(() async {
     final repo = await LearningRepository.open(

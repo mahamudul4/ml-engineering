@@ -6,10 +6,12 @@ import 'package:ml_path/main.dart';
 import 'package:ml_path/state/learning_controller.dart';
 import 'package:ml_path/features/ensembles/ensemble_labs.dart';
 import 'package:ml_path/features/ensembles/ensemble_model.dart';
+import 'package:ml_path/features/ensembles/xgboost_sandbox_lab.dart';
 import 'package:ml_path/features/lessons/lesson_page.dart';
 import 'package:ml_path/features/practice/quiz_page.dart';
 import 'package:ml_path/features/practice/practice_page.dart';
 import 'package:ml_path/ui/theme.dart';
+import 'package:ml_path/ui/tutorial_blocks.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 void main() {
@@ -27,6 +29,10 @@ void main() {
         family,
       )..addFont(rootBundle.load('assets/fonts/$family.ttf'))).load();
     }
+    await (FontLoader('JetBrainsMono')
+          ..addFont(rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf'))
+          ..addFont(rootBundle.load('assets/fonts/JetBrainsMono-Bold.ttf')))
+        .load();
   });
   setUp(() async {
     final repo = await LearningRepository.open(
@@ -301,6 +307,96 @@ void main() {
         expect(tester.takeException(), isNull, reason: lesson.id);
         await tester.pumpWidget(const SizedBox());
       }
+    },
+  );
+  testWidgets(
+    'ch10_xgboost pilot lesson renders guided blocks, concept checks and live sandbox',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.runAsync(() => c.selectChapter('chapter_10'));
+      final xgb = c.chapter.lessons.firstWhere((l) => l.id == 'ch10_xgboost');
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: appTheme(Brightness.light),
+          home: LessonPage(controller: c, lesson: xgb),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(LessonHeaderCard), findsOneWidget);
+      expect(find.byType(FlowDiagramCard), findsOneWidget);
+      expect(find.byType(AnnotatedMathCard), findsNWidgets(2));
+      expect(find.byType(LineChartCard), findsAtLeastNWidgets(1));
+      expect(find.byType(ConceptCheckCard), findsNWidgets(2));
+      expect(find.byType(InterviewQuestionsCard), findsOneWidget);
+      expect(find.byType(XgboostSandboxLab), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+
+      // Verify ch10_gradient upgraded lesson renders cleanly + Interview Q&A expands.
+      final gb = c.chapter.lessons.firstWhere((l) => l.id == 'ch10_gradient');
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: appTheme(Brightness.light),
+          home: LessonPage(controller: c, lesson: gb),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(LessonHeaderCard), findsOneWidget);
+      expect(find.byType(FlowDiagramCard), findsOneWidget);
+      expect(find.byType(AnnotatedMathCard), findsOneWidget);
+      expect(find.byType(LineChartCard), findsOneWidget);
+      expect(find.byType(ConceptCheckCard), findsNWidgets(2));
+      expect(find.byType(InterviewQuestionsCard), findsOneWidget);
+      await tester.ensureVisible(find.text('সব উত্তর দেখুন'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('সব উত্তর দেখুন'));
+      await tester.pumpAndSettle();
+      expect(find.text('সব লুকান'), findsOneWidget);
+      expect(find.text('MODEL ANSWER · যেভাবে বলবেন'), findsWidgets);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+
+      // Verify XgboostSandboxLab live recomputation and gamma pruning.
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: appTheme(Brightness.light),
+          home: const Scaffold(
+            body: SingleChildScrollView(child: XgboostSandboxLab()),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('Round 1 Root Split Approved: x ≤ 3.5'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('w_L* = -4.7500'), findsOneWidget);
+      // Slide gamma to maximum (110) -> Split must prune!
+      final gammaSlider = find.byKey(const ValueKey('xgb-gamma'));
+      await tester.ensureVisible(gammaSlider);
+      await tester.pumpAndSettle();
+      final sliderBox = tester.getRect(gammaSlider);
+      await tester.tapAt(Offset(sliderBox.right - 6, sliderBox.center.dy));
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('Round 1 Root Split Pruned by γ!'),
+        findsOneWidget,
+      );
+      // Reset defaults restores approved split.
+      final resetBtn = find.byKey(const ValueKey('xgb-reset'));
+      await tester.ensureVisible(resetBtn);
+      await tester.pumpAndSettle();
+      await tester.tap(resetBtn);
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('Round 1 Root Split Approved: x ≤ 3.5'),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
     },
   );
 }

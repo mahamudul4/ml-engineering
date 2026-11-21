@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
@@ -8,18 +9,32 @@ import '../models/coding_problem.dart';
 import '../models/curriculum.dart';
 import '../models/hot_question.dart';
 
-/// All curriculum and learner data live in SQLite after first launch.
+/// All curriculum and learner data live in SQLite on mobile/desktop,
+/// with an automatic in-memory fallback on Flutter Web for live browser preview.
 class LearningRepository {
-  final Database db;
-  LearningRepository(this.db);
+  final Database? _db;
+  final Map<String, Map<String, dynamic>>? _webChapters;
+  final Map<String, Map<String, Object?>> _webProgress = {};
+  final Map<String, int> _webAnswers = {};
+  final Map<String, Map<String, Object?>> _webExercises = {};
+  final Map<String, String> _webSettings = {};
+
+  LearningRepository(Database db) : _db = db, _webChapters = null;
+
+  LearningRepository._web(Map<String, Map<String, dynamic>> chapters)
+    : _db = null,
+      _webChapters = chapters;
+
+  bool get _isWebStore => _db == null;
+  Database get db => _db!;
+
   static Future<LearningRepository> open({
     DatabaseFactory? factory,
     String? path,
   }) async {
-    final f = factory ?? databaseFactory;
-    final catalog = jsonDecode(
-      await rootBundle.loadString('assets/content/catalog.json'),
-    ) as Map<String, dynamic>;
+    final catalog =
+        jsonDecode(await rootBundle.loadString('assets/content/catalog.json'))
+            as Map<String, dynamic>;
     final contents = <Map<String, dynamic>>[];
     for (final asset in catalog['chapters'] as List) {
       contents.add(
@@ -27,6 +42,12 @@ class LearningRepository {
             as Map<String, dynamic>,
       );
     }
+    if (kIsWeb && factory == null) {
+      return LearningRepository._web({
+        for (final content in contents) content['id'] as String: content,
+      });
+    }
+    final f = factory ?? databaseFactory;
     final location = path ?? p.join(await f.getDatabasesPath(), 'ml_path.db');
     final db = await f.openDatabase(
       location,
@@ -64,10 +85,15 @@ class LearningRepository {
     return LearningRepository(db);
   }
 
-  Future<List<Curriculum>> chapters() async =>
-      (await db.query('chapters', orderBy: 'id'))
-          .map((r) => Curriculum.fromJson(jsonDecode(r['content'] as String)))
-          .toList();
+  Future<List<Curriculum>> chapters() async {
+    if (_isWebStore) {
+      final ids = _webChapters!.keys.toList()..sort();
+      return ids.map((id) => Curriculum.fromJson(_webChapters[id]!)).toList();
+    }
+    return (await _db!.query('chapters', orderBy: 'id'))
+        .map((r) => Curriculum.fromJson(jsonDecode(r['content'] as String)))
+        .toList();
+  }
 
   Future<List<CodingProblem>> codingProblems() async {
     final catalog =
@@ -103,29 +129,56 @@ class LearningRepository {
     return list;
   }
 
-  Future<Curriculum> curriculum({String id = 'chapter_01'}) async =>
-      Curriculum.fromJson(
-        jsonDecode(
-          (await db.query(
-                'chapters',
-                where: 'id = ?',
-                whereArgs: [id],
-              )).single['content']
-              as String,
-        ),
-      );
-  Future<List<Map<String, Object?>>> progress() => db.query('progress');
-  Future<Map<String, int>> answers() async => {
-    for (final r in await db.query('quiz_answers'))
-      r['question_id'] as String: r['choice'] as int,
-  };
+  Future<Curriculum> curriculum({String id = 'chapter_01'}) async {
+    if (_isWebStore) {
+      return Curriculum.fromJson(_webChapters![id]!);
+    }
+    return Curriculum.fromJson(
+      jsonDecode(
+        (await _db!.query(
+              'chapters',
+              where: 'id = ?',
+              whereArgs: [id],
+            )).single['content']
+            as String,
+      ),
+    );
+  }
+
+  Future<List<Map<String, Object?>>> progress() async {
+    if (_isWebStore) {
+      return _webProgress.values.map((r) => Map<String, Object?>.from(r)).toList();
+    }
+    return _db!.query('progress');
+  }
+
+  Future<Map<String, int>> answers() async {
+    if (_isWebStore) {
+      return Map<String, int>.from(_webAnswers);
+    }
+    return {
+      for (final r in await _db!.query('quiz_answers'))
+        r['question_id'] as String: r['choice'] as int,
+    };
+  }
+
   Future<void> updateLesson(
     String id, {
     bool? completed,
     bool? bookmarked,
     String? note,
   }) async {
-    await db.transaction((txn) async {
+    if (_isWebStore) {
+      final row = _webProgress.putIfAbsent(
+        id,
+        () => {'lesson_id': id, 'completed': 0, 'bookmarked': 0, 'note': ''},
+      );
+      if (completed != null) row['completed'] = completed ? 1 : 0;
+      if (bookmarked != null) row['bookmarked'] = bookmarked ? 1 : 0;
+      if (note != null) row['note'] = note;
+      return;
+    }
+    await _db!.transaction((txn) async {
       await txn.insert('progress', {
         'lesson_id': id,
       }, conflictAlgorithm: ConflictAlgorithm.ignore);
@@ -143,14 +196,24 @@ class LearningRepository {
   }
 
   Future<void> answer(String id, int choice) async {
-    await db.insert('quiz_answers', {
+    if (_isWebStore) {
+      _webAnswers[id] = choice;
+      return;
+    }
+    await _db!.insert('quiz_answers', {
       'question_id': id,
       'choice': choice,
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   Future<void> resetQuiz(Iterable<String> questionIds) async {
-    await db.transaction((txn) async {
+    if (_isWebStore) {
+      for (final id in questionIds) {
+        _webAnswers.remove(id);
+      }
+      return;
+    }
+    await _db!.transaction((txn) async {
       for (final id in questionIds) {
         await txn.delete(
           'quiz_answers',
@@ -162,19 +225,28 @@ class LearningRepository {
   }
 
   Future<String?> setting(String key) async {
-    final rows = await db.query('settings', where: 'key = ?', whereArgs: [key]);
+    if (_isWebStore) return _webSettings[key];
+    final rows = await _db!.query('settings', where: 'key = ?', whereArgs: [key]);
     return rows.isEmpty ? null : rows.single['value'] as String;
   }
 
   Future<void> setSetting(String key, String value) async {
-    await db.insert('settings', {
+    if (_isWebStore) {
+      _webSettings[key] = value;
+      return;
+    }
+    await _db!.insert('settings', {
       'key': key,
       'value': value,
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   Future<void> saveExercise(String id, String draft, bool solved) async {
-    await db.insert('exercises', {
+    if (_isWebStore) {
+      _webExercises[id] = {'id': id, 'draft': draft, 'solved': solved ? 1 : 0};
+      return;
+    }
+    await _db!.insert('exercises', {
       'id': id,
       'draft': draft,
       'solved': solved ? 1 : 0,
@@ -182,15 +254,40 @@ class LearningRepository {
   }
 
   Future<Map<String, Object?>?> exercise(String id) async {
-    final rows = await db.query('exercises', where: 'id = ?', whereArgs: [id]);
+    if (_isWebStore) {
+      final row = _webExercises[id];
+      return row == null ? null : Map<String, Object?>.from(row);
+    }
+    final rows = await _db!.query('exercises', where: 'id = ?', whereArgs: [id]);
     return rows.isEmpty ? null : rows.single;
   }
 
   Future<String> exportBackup() async {
-    final progressRows = await db.query('progress', orderBy: 'lesson_id');
-    final answerRows = await db.query('quiz_answers', orderBy: 'question_id');
-    final exerciseRows = await db.query('exercises', orderBy: 'id');
-    final settingRows = await db.query('settings', orderBy: 'key');
+    if (_isWebStore) {
+      final progressRows = _webProgress.values.toList()
+        ..sort((a, b) => (a['lesson_id'] as String).compareTo(b['lesson_id'] as String));
+      final answerRows = [
+        for (final k in _webAnswers.keys.toList()..sort())
+          {'question_id': k, 'choice': _webAnswers[k]},
+      ];
+      final exerciseRows = _webExercises.values.toList()
+        ..sort((a, b) => (a['id'] as String).compareTo(b['id'] as String));
+      final settingRows = [
+        for (final k in _webSettings.keys.toList()..sort())
+          {'key': k, 'value': _webSettings[k]},
+      ];
+      return const JsonEncoder.withIndent('  ').convert({
+        'format': 'ml_path_backup_v1',
+        'progress': progressRows,
+        'quiz_answers': answerRows,
+        'exercises': exerciseRows,
+        'settings': settingRows,
+      });
+    }
+    final progressRows = await _db!.query('progress', orderBy: 'lesson_id');
+    final answerRows = await _db.query('quiz_answers', orderBy: 'question_id');
+    final exerciseRows = await _db.query('exercises', orderBy: 'id');
+    final settingRows = await _db.query('settings', orderBy: 'key');
     return const JsonEncoder.withIndent('  ').convert({
       'format': 'ml_path_backup_v1',
       'progress': progressRows,
@@ -226,7 +323,39 @@ class LearningRepository {
         (e) => Map<String, dynamic>.from(e as Map),
       ),
     );
-    await db.transaction((txn) async {
+    if (_isWebStore) {
+      for (final row in progressList) {
+        if (row['lesson_id'] is! String) continue;
+        _webProgress[row['lesson_id'] as String] = {
+          'lesson_id': row['lesson_id'],
+          'completed': (row['completed'] as num?)?.toInt() ?? 0,
+          'bookmarked': (row['bookmarked'] as num?)?.toInt() ?? 0,
+          'note': row['note']?.toString() ?? '',
+        };
+      }
+      for (final row in answerList) {
+        if (row['question_id'] is! String || row['choice'] is! num) continue;
+        _webAnswers[row['question_id'] as String] = (row['choice'] as num).toInt();
+      }
+      for (final row in exerciseList) {
+        if (row['id'] is! String) continue;
+        _webExercises[row['id'] as String] = {
+          'id': row['id'],
+          'draft': row['draft']?.toString() ?? '',
+          'solved': (row['solved'] as num?)?.toInt() ?? 0,
+        };
+      }
+      for (final row in settingList) {
+        if (row['key'] is! String || row['value'] == null) continue;
+        _webSettings[row['key'] as String] = row['value'].toString();
+      }
+      return {
+        'progress': progressList.length,
+        'quiz_answers': answerList.length,
+        'exercises': exerciseList.length,
+      };
+    }
+    await _db!.transaction((txn) async {
       for (final row in progressList) {
         if (row['lesson_id'] is! String) continue;
         await txn.insert('progress', {
@@ -266,5 +395,7 @@ class LearningRepository {
     };
   }
 
-  Future<void> close() => db.close();
+  Future<void> close() async {
+    if (!_isWebStore) await _db!.close();
+  }
 }

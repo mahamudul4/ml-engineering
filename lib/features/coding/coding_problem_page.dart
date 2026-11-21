@@ -279,7 +279,8 @@ class _CodingProblemPageState extends State<CodingProblemPage>
                         SelectableText(
                           'Input: ${p.examples[i].input}',
                           style: const TextStyle(
-                            fontFamily: 'monospace',
+                            fontFamily: 'JetBrainsMono',
+                            fontFamilyFallback: ['NotoSansBengali'],
                             fontSize: 12,
                             height: 1.7,
                           ),
@@ -288,7 +289,8 @@ class _CodingProblemPageState extends State<CodingProblemPage>
                         SelectableText(
                           'Output: ${p.examples[i].output}',
                           style: const TextStyle(
-                            fontFamily: 'monospace',
+                            fontFamily: 'JetBrainsMono',
+                            fontFamilyFallback: ['NotoSansBengali'],
                             fontSize: 12,
                             fontWeight: FontWeight.w700,
                             height: 1.7,
@@ -377,7 +379,7 @@ class _CodingProblemPageState extends State<CodingProblemPage>
                       minLines: 4,
                       maxLines: 10,
                       style: const TextStyle(
-                        fontFamily: 'monospace',
+                        fontFamily: 'JetBrainsMono',
                         fontFamilyFallback: ['NotoSansBengali'],
                         fontSize: 12,
                         height: 1.7,

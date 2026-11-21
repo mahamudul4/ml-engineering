@@ -8,6 +8,7 @@ import 'package:ml_path/features/practice/practice_page.dart';
 import 'package:ml_path/features/reinforcement/bellman_lab.dart';
 import 'package:ml_path/main.dart';
 import 'package:ml_path/state/learning_controller.dart';
+import 'package:ml_path/ui/rich_prose.dart';
 import 'package:ml_path/ui/theme.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -54,11 +55,14 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text(answer), findsNothing);
+      final answerFinder = find.byWidgetPredicate(
+        (w) => w is RichProse && w.text == answer,
+      );
+      expect(answerFinder, findsNothing);
       await tester.ensureVisible(find.text('চেষ্টা শেষে উত্তর দেখুন'));
       await tester.tap(find.text('চেষ্টা শেষে উত্তর দেখুন'));
       await tester.pumpAndSettle();
-      expect(find.text(answer), findsOneWidget);
+      expect(answerFinder, findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );

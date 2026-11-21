@@ -274,7 +274,8 @@ class _SqlInterviewLabState extends State<SqlInterviewLab> {
             theme: atomOneDarkTheme,
             padding: const EdgeInsets.all(16),
             textStyle: const TextStyle(
-              fontFamily: 'monospace',
+              fontFamily: 'JetBrainsMono',
+              fontFamilyFallback: ['NotoSansBengali'],
               fontSize: 12,
               height: 1.6,
             ),
@@ -449,7 +450,8 @@ class _MetricDebugLabState extends State<MetricDebugLab> {
               theme: atomOneDarkTheme,
               padding: const EdgeInsets.all(16),
               textStyle: const TextStyle(
-                fontFamily: 'monospace',
+                fontFamily: 'JetBrainsMono',
+                fontFamilyFallback: ['NotoSansBengali'],
                 fontSize: 12,
                 height: 1.6,
               ),
@@ -457,7 +459,7 @@ class _MetricDebugLabState extends State<MetricDebugLab> {
           ),
           _gap,
           const Text(
-            'At probability .5, equivalent logit threshold0—not .5। BCE fixed scores/labels-এর loss, তাই decision threshold বা reporting bug বদলালেও BCE বদলায় না। Cost proxy=FP×weight+FN; no calibration/current-domain utility claim। Failing fixture explain করা practice, automated interview grade নয়।',
+            'At probability 0.5, equivalent logit threshold = 0 — not 0.5। BCE fixed scores/labels-এর loss, তাই decision threshold বা reporting bug বদলালেও BCE বদলায় না। Cost proxy = FP × weight + FN; no calibration/current-domain utility claim। Failing fixture explain করা practice, automated interview grade নয়।',
             style: _body,
           ),
           _gap,

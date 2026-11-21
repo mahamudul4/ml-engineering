@@ -313,14 +313,14 @@ print(round(bias_sq + var + noise, 2))
   );
 
   test(
-    'full 320-question FAANG Viva Bank catalog is complete, unique and hot-topic heavy when wired',
+    'full 323-question FAANG Viva Bank catalog is complete, unique and hot-topic heavy when wired',
     () async {
       if (c.hotQuestions.isEmpty) return;
-      expect(c.hotQuestions.length, 320);
-      expect(c.hotQuestions.map((q) => q.id).toSet().length, 320);
+      expect(c.hotQuestions.length, 323);
+      expect(c.hotQuestions.map((q) => q.id).toSet().length, 323);
       expect(
         c.hotQuestions.map((q) => q.number).toList(),
-        List.generate(320, (i) => i + 1),
+        List.generate(323, (i) => i + 1),
       );
       final chapterIds = c.chapters.map((ch) => ch.id).toSet();
       var snippetCount = 0;
@@ -349,7 +349,7 @@ print(round(bias_sq + var + noise, 2))
   );
 
   testWidgets(
-    'every one of the 320 FAANG Viva questions renders cleanly with LaTeX and tables on mobile width',
+    'every one of the 323 FAANG Viva questions renders cleanly with LaTeX and tables on mobile width',
     (tester) async {
       if (c.hotQuestions.isEmpty) return;
       tester.view.physicalSize = const Size(390, 844);
