@@ -90,7 +90,7 @@
         {
           "type": "text",
           "title": "Backward Recomputation এবং সার্ভিংয়ে FlashDecoding",
-          "body": "কোডের ফলাফল প্রমাণ করে যে Tiled FlashAttention মাত্র রৈখিক $\\mathcal{O}(Td)$ HBM Memory ব্যবহার করেই Standard Attention-এর সাথে $10^{-15}$-এর নিচে নিখুঁত ফলাফল দেয়।\n\n64 দৈর্ঘ্যের Sequence-কে 16 আকারের Tile-এ ভেঙে (মোট 16টি Tile-এর মধ্যে ভবিষ্যতের 6টি Tile সম্পূর্ণ এড়িয়ে) আমরা যা পেয়েছি, তা Floating-Point Rounding-এর সীমানায় 100% অভিন্ন। Standard Attention যেখানে $\\mathcal{O}(T^2)$ Bytes HBM Read/Write করত, FlashAttention সেখানে HBM Memory নামিয়ে আনে $\\mathcal{O}(Td)$-তে এবং HBM ট্রাফিক কমিয়ে আনে:\n\n$$\n\\mathrm{HBM\\ I/O} = \\mathcal{O}\\!\\left(\\frac{T^2 d^2}{M_{\\mathrm{SRAM}}}\\right)\n$$\n\nProduction-এ আরও দুটি দারুণ কৌশল সবসময় কাজে লাগে:\n\n1. **Backward Pass Recomputation:** Training-এর Backward পাসে Gradient বের করতে $P$ দরকার হয়। FlashAttention বিশাল $P$ Matrix HBM-এ না রেখে শুধু ছোট্ট একটি LogSumExp Vector $L_i = m_i + \\log \\ell_i$ সেভ করে রাখে। Backward পাসে $Q, K$ Block SRAM-এ এনে মুহূর্তের মধ্যে $P$ আবার হিসাব করে নেয়—সামান্য বাড়তি $\\mathrm{FLOPs}$ লাগলেও HBM ট্রাফিক অনেক কমে যাওয়ায় পুরো Training উল্টো কয়েক গুণ দ্রুত হয়!\n2. **Inference-এ FlashDecoding:** Autoregressive Decode ধাপে Query দৈর্ঘ্য থাকে মাত্র $T_q = 1$। তখন Query Block-এর ওপর Parallel করলে ছোট Batch-এ GPU-এর অধিকাংশ SM অলস বসে থাকে। তাই **FlashDecoding** লম্বা KV Cache Sequence-টিকে একাধিক SM-এ ভাগ করে দেয়—প্রতিটি SM নিজ নিজ অংশের $(\\tilde{O}, m, \\ell)$ বের করে এবং শেষে একই Online Softmax সূত্র দিয়ে সবাইকে Reduce করে একত্র করে।\n\n> **উদাহরণ:** H100-এ 132টি SM আছে; $B = 2$ ও 128K Context Decode-এ FlashDecoding না থাকলে বেশিরভাগ SM খালি বসে থাকে, কিন্তু KV Sequence-কে 64 খণ্ডে ভাগ করে দিলে পুরো GPU-এর HBM Bandwidth কাজে লাগে।"
+          "body": "কোডের ফলাফল প্রমাণ করে যে Tiled FlashAttention মাত্র Linear $\\mathcal{O}(Td)$ HBM Memory ব্যবহার করেই Standard Attention-এর সাথে $10^{-15}$-এর নিচে নিখুঁত ফলাফল দেয়।\n\n64 দৈর্ঘ্যের Sequence-কে 16 আকারের Tile-এ ভেঙে (মোট 16টি Tile-এর মধ্যে ভবিষ্যতের 6টি Tile সম্পূর্ণ এড়িয়ে) আমরা যা পেয়েছি, তা Floating-Point Rounding-এর সীমানায় 100% অভিন্ন। Standard Attention যেখানে $\\mathcal{O}(T^2)$ Bytes HBM Read/Write করত, FlashAttention সেখানে HBM Memory নামিয়ে আনে $\\mathcal{O}(Td)$-তে এবং HBM ট্রাফিক কমিয়ে আনে:\n\n$$\n\\mathrm{HBM\\ I/O} = \\mathcal{O}\\!\\left(\\frac{T^2 d^2}{M_{\\mathrm{SRAM}}}\\right)\n$$\n\nProduction-এ আরও দুটি দারুণ কৌশল সবসময় কাজে লাগে:\n\n1. **Backward Pass Recomputation:** Training-এর Backward পাসে Gradient বের করতে $P$ দরকার হয়। FlashAttention বিশাল $P$ Matrix HBM-এ না রেখে শুধু ছোট্ট একটি LogSumExp Vector $L_i = m_i + \\log \\ell_i$ সেভ করে রাখে। Backward পাসে $Q, K$ Block SRAM-এ এনে মুহূর্তের মধ্যে $P$ আবার হিসাব করে নেয়—সামান্য বাড়তি $\\mathrm{FLOPs}$ লাগলেও HBM ট্রাফিক অনেক কমে যাওয়ায় পুরো Training উল্টো কয়েক গুণ দ্রুত হয়!\n2. **Inference-এ FlashDecoding:** Autoregressive Decode ধাপে Query দৈর্ঘ্য থাকে মাত্র $T_q = 1$। তখন Query Block-এর ওপর Parallel করলে ছোট Batch-এ GPU-এর অধিকাংশ SM অলস বসে থাকে। তাই **FlashDecoding** লম্বা KV Cache Sequence-টিকে একাধিক SM-এ ভাগ করে দেয়—প্রতিটি SM নিজ নিজ অংশের $(\\tilde{O}, m, \\ell)$ বের করে এবং শেষে একই Online Softmax সূত্র দিয়ে সবাইকে Reduce করে একত্র করে।\n\n> **উদাহরণ:** H100-এ 132টি SM আছে; $B = 2$ ও 128K Context Decode-এ FlashDecoding না থাকলে বেশিরভাগ SM খালি বসে থাকে, কিন্তু KV Sequence-কে 64 খণ্ডে ভাগ করে দিলে পুরো GPU-এর HBM Bandwidth কাজে লাগে।"
         },
         {
           "type": "checkpoint",
@@ -172,7 +172,7 @@
         {
           "type": "text",
           "title": "ZeRO-1, ZeRO-2 ও ZeRO-3 / FSDP এবং তাদের কমিউনিকেশন খরচ",
-          "body": "**DeepSpeed ZeRO** এবং **PyTorch FSDP** অযথা ডুপ্লিকেশন মুছে ফেলে $N_d$ টি Data-Parallel GPU-এর মধ্যে Model State ভাগ (Shard) করে দেয়—যেখানে ZeRO-1 ও ZeRO-2-তে কোনো বাড়তি Network খরচই লাগে না!\n\nপ্রতিটি ধাপের Memory এবং Collective Communication (প্রতি ধাপে BF16 উপাদান সংখ্যা) তুলনা করুন:\n\n| পদ্ধতি | প্রতি GPU Static Memory | Communication ভলিউম | মূল বৈশিষ্ট্য |\n| --- | --- | --- | --- |\n| **DDP** | $16\\Psi$ | $2\\Psi$ | পুরো State সব GPU-তে কপি; 1টি Gradient AllReduce |\n| **ZeRO-1** | $4\\Psi + \\frac{12\\Psi}{N_d}$ | $2\\Psi$ ($1.0\\times$) | কেবল $12\\Psi$ Optimizer State Shard হয় |\n| **ZeRO-2** (`SHARD_GRAD_OP`) | $2\\Psi + \\frac{14\\Psi}{N_d}$ | $2\\Psi$ ($1.0\\times$) | Optimizer + Gradient উভয়ই Shard হয়; বাড়তি Network খরচ শূন্য! |\n| **ZeRO-3 / FSDP** (`FULL_SHARD`) | $\\frac{16\\Psi}{N_d}$ | $3\\Psi$ ($1.5\\times$) | Weight-সহ পুরো $16\\Psi$ Shard হয় |\n\n- **ZeRO-1 ও ZeRO-2-এ Communication কেন বাড়ে না?** DDP-তে একটি Ring AllReduce আসলে ভেতরে ভেতরে 1টি **ReduceScatter** ($\\Psi$ উপাদান) + 1টি **AllGather** ($\\Psi$ উপাদান) $= 2\\Psi$ পাঠায়। ZeRO-1/2-ও প্রথমে Gradient ReduceScatter ($\\Psi$) করে নিজ নিজ অংশের Adam Update সেরে নেয়, আর শেষে আপডেট হওয়া BF16 Weight-গুলো AllGather ($\\Psi$) করে—মোট সেই একই $2\\Psi$!\n- **ZeRO-3-এ কেন $1.5\\times$ Communication লাগে?** কোনো GPU-তেই পূর্ণ Layer Weight না থাকায় Forward-এ প্রতি Layer-এর আগে Weight AllGather ($\\Psi$), Backward-এ আবার Weight AllGather ($\\Psi$) এবং শেষে Gradient ReduceScatter ($\\Psi$) করতে হয়—মোট $3\\Psi$ উপাদান!\n\n> **উদাহরণ:** 70B Model-এ $N_d = 64$ GPU নিয়ে ZeRO-3 চালালে প্রতি GPU-তে Static Memory 1,120 GB থেকে নেমে মাত্র 17.5 GB হয়ে যায়!\n\n```python\ndef zero_mem_gb(params_b, n_d):\n    return {\n        \"DDP\": 16 * params_b,\n        \"ZeRO-1\": (4 + 12 / n_d) * params_b,\n        \"ZeRO-2\": (2 + 14 / n_d) * params_b,\n        \"ZeRO-3\": (16 / n_d) * params_b,\n    }\n\nprint(\"7B on 8 GPUs (GB):\", {k: round(v, 2) for k, v in zero_mem_gb(7, 8).items()})\nprint(\"70B on 64 GPUs (GB):\", {k: round(v, 2) for k, v in zero_mem_gb(70, 64).items()})\n```"
+          "body": "**DeepSpeed ZeRO** এবং **PyTorch FSDP** অযথা ডুপ্লিকেশন মুছে ফেলে $N_d$ টি Data-Parallel GPU-এর মধ্যে Model State ভাগ (Shard) করে দেয়—যেখানে ZeRO-1 ও ZeRO-2-তে কোনো বাড়তি Network খরচই লাগে না!\n\nপ্রতিটি ধাপের Memory এবং Collective Communication (প্রতি ধাপে BF16 উপাদান সংখ্যা) তুলনা করুন:\n\n| পদ্ধতি | প্রতি GPU Static Memory | Communication ভলিউম | কীভাবে কাজ করে |\n| --- | --- | --- | --- |\n| **DDP** | $16\\Psi$ | $2\\Psi$ | পুরো State সব GPU-তে কপি; 1টি Gradient AllReduce |\n| **ZeRO-1** | $4\\Psi + \\frac{12\\Psi}{N_d}$ | $2\\Psi$ ($1.0\\times$) | কেবল $12\\Psi$ Optimizer State Shard হয় |\n| **ZeRO-2** (`SHARD_GRAD_OP`) | $2\\Psi + \\frac{14\\Psi}{N_d}$ | $2\\Psi$ ($1.0\\times$) | Optimizer + Gradient উভয়ই Shard হয়; বাড়তি Network খরচ শূন্য! |\n| **ZeRO-3 / FSDP** (`FULL_SHARD`) | $\\frac{16\\Psi}{N_d}$ | $3\\Psi$ ($1.5\\times$) | Weight-সহ পুরো $16\\Psi$ Shard হয় |\n\n- **ZeRO-1 ও ZeRO-2-এ Communication কেন বাড়ে না?** DDP-তে একটি Ring AllReduce আসলে ভেতরে ভেতরে 1টি **ReduceScatter** ($\\Psi$ উপাদান) + 1টি **AllGather** ($\\Psi$ উপাদান) $= 2\\Psi$ পাঠায়। ZeRO-1/2-ও প্রথমে Gradient ReduceScatter ($\\Psi$) করে নিজ নিজ অংশের Adam Update সেরে নেয়, আর শেষে আপডেট হওয়া BF16 Weight-গুলো AllGather ($\\Psi$) করে—মোট সেই একই $2\\Psi$!\n- **ZeRO-3-এ কেন $1.5\\times$ Communication লাগে?** কোনো GPU-তেই পূর্ণ Layer Weight না থাকায় Forward-এ প্রতি Layer-এর আগে Weight AllGather ($\\Psi$), Backward-এ আবার Weight AllGather ($\\Psi$) এবং শেষে Gradient ReduceScatter ($\\Psi$) করতে হয়—মোট $3\\Psi$ উপাদান!\n\n> **উদাহরণ:** 70B Model-এ $N_d = 64$ GPU নিয়ে ZeRO-3 চালালে প্রতি GPU-তে Static Memory 1,120 GB থেকে নেমে মাত্র 17.5 GB হয়ে যায়!\n\n```python\ndef zero_mem_gb(params_b, n_d):\n    return {\n        \"DDP\": 16 * params_b,\n        \"ZeRO-1\": (4 + 12 / n_d) * params_b,\n        \"ZeRO-2\": (2 + 14 / n_d) * params_b,\n        \"ZeRO-3\": (16 / n_d) * params_b,\n    }\n\nprint(\"7B on 8 GPUs (GB):\", {k: round(v, 2) for k, v in zero_mem_gb(7, 8).items()})\nprint(\"70B on 64 GPUs (GB):\", {k: round(v, 2) for k, v in zero_mem_gb(70, 64).items()})\n```"
         },
         {
           "type": "code",
@@ -326,7 +326,7 @@
           "type": "checkpoint",
           "title": "নিজে যাচাই করুন: কোডিং বনাম সৃজনশীল কবিতায় Speculative Decoding",
           "body": "একই Draft ও Target Model জোড়া ব্যবহার করে দেখা গেল Python কোড জেনারেশনে ২.৭x Speedup পাওয়া যাচ্ছে, কিন্তু উচ্চ Temperature-এ সৃজনশীল গল্প লেখার সময় Speedup নেমে আসছে ১.২x-এ। চূড়ান্ত Output-এর গুণমান কি সৃজনশীল গল্পে খারাপ হয়ে গেছে, নাকি শুধু গতি কমেছে—এবং কেন?",
-          "solution": "Output-এর গুণমান বা সম্ভাব্যতা বণ্টন একটুও খারাপ হয়নি—Lossless Rejection Sampling যেকোনো Temperature-এই নিখুঁত Target বণ্টন বজায় রাখে। কেবল গতি কমেছে! কারণ Python কোডের সিনট্যাক্স ও ব্র্যাকেট-ইনডেন্টেশন অত্যন্ত নিয়মতান্ত্রিক হওয়ায় ছোট Draft Model-এর Acceptance Rate (alpha) অনেক উঁচু থাকে; কিন্তু উচ্চ Temperature-এর সৃজনশীল লেখায় Entropy বেশি হওয়ায় p(x) ও q(x)-এর ব্যবধান বাড়ে, alpha কমে যায় এবং (1 - alpha^(K+1)) / (1 - alpha) সূত্র অনুযায়ী প্রতি চক্রে গৃহীত গড় Token সংখ্যা কমে গিয়ে Draft Model-এর নিজস্ব ওভারহেড প্রকট হয়ে ওঠে।",
+          "solution": "Output-এর গুণমান বা Probability Distribution একটুও খারাপ হয়নি—Lossless Rejection Sampling যেকোনো Temperature-এই নিখুঁত Target Distribution বজায় রাখে। কেবল গতি কমেছে! কারণ Python কোডের সিনট্যাক্স ও ব্র্যাকেট-ইনডেন্টেশন অত্যন্ত নিয়মতান্ত্রিক হওয়ায় ছোট Draft Model-এর Acceptance Rate (alpha) অনেক উঁচু থাকে; কিন্তু উচ্চ Temperature-এর সৃজনশীল লেখায় Entropy বেশি হওয়ায় p(x) ও q(x)-এর ব্যবধান বাড়ে, alpha কমে যায় এবং (1 - alpha^(K+1)) / (1 - alpha) সূত্র অনুযায়ী প্রতি চক্রে গৃহীত গড় Token সংখ্যা কমে গিয়ে Draft Model-এর নিজস্ব ওভারহেড প্রকট হয়ে ওঠে।",
           "reference": "https://arxiv.org/abs/2211.17192"
         }
       ]
@@ -441,7 +441,7 @@
       "id": "ch44_q_2",
       "question": "স্ট্যান্ডার্ড Attention-এর তুলনায় FlashAttention মূলত কোন Hardware কৌশলটির মাধ্যমে লম্বা সিকোয়েন্সে বিশাল গতিবৃদ্ধি অর্জন করে?",
       "options": [
-        "Softmax ফাংশনকে রৈখিক আসন্ন মান (Linear Approximation) দিয়ে প্রতিস্থাপন করে মোট FLOPs অর্ধেক কমিয়ে দেয়",
+        "Softmax ফাংশনকে Linear Approximation দিয়ে প্রতিস্থাপন করে মোট FLOPs অর্ধেক কমিয়ে দেয়",
         "T × T আকারের মধ্যবর্তী Score ও Softmax Matrix কখনোই ধীরগতির HBM-এ না লিখে দ্রুতগতির On-Chip SRAM-এ Tiling ও Online Softmax চালায়",
         "সবগুলো Attention Head মুছে মাত্র ১টি শেয়ারড Key-Value Vector রেখে Model Parameter কমায়",
         "Forward পাসে সব মধ্যবর্তী মান CPU RAM-এ পাঠিয়ে কেবল Backward পাসে GPU ব্যবহার করে"
@@ -535,10 +535,10 @@
     },
     {
       "id": "ch44_q_10",
-      "question": "Speculative Decoding-এ কোনো খসড়া Token প্রত্যাখ্যাত (Rejected) হলে কেন সরাসরি শুধু Target বণ্টন p(x) থেকে না নিয়ে সংশোধিত p'(x) ∝ max(0, p(x) - q(x)) থেকে স্যাম্পল করা হয়?",
+      "question": "Speculative Decoding-এ কোনো Draft Token Rejected হলে কেন সরাসরি শুধু Target Distribution p(x) থেকে না নিয়ে সংশোধিত p'(x) ∝ max(0, p(x) - q(x)) থেকে Sample করা হয়?",
       "options": [
-        "যাতে ছোট Model-টি যে Token-গুলোতে অতিরিক্ত সম্ভাবনা দিয়েছিল সেগুলোর পক্ষপাত কেটে গিয়ে গৃহীত ও প্রত্যাখ্যাত উভয় পথ মিলিয়ে চূড়ান্ত বণ্টন হুবহু p(x) থাকে",
-        "কারণ Target Model-এর আসল Softmax বণ্টন p(x) তখন আমাদের হাতে উপলব্ধ থাকে না",
+        "যাতে ছোট Model-টি যে Token-গুলোতে অতিরিক্ত Probability দিয়েছিল সেগুলোর Bias কেটে গিয়ে Accepted ও Rejected উভয় পথ মিলিয়ে চূড়ান্ত Distribution হুবহু p(x) থাকে",
+        "কারণ Target Model-এর আসল Softmax Distribution p(x) তখন আমাদের হাতে থাকে না",
         "কেবলমাত্র Temperature = 0 হলে এই সূত্রটি কাজ করে",
         "যাতে পরবর্তী ধাপে KV Cache পুরোপুরি মুছে ফেলা যায়"
       ],
@@ -582,16 +582,16 @@
     },
     {
       "id": "ch44_ex_2",
-      "title": "GQA মডেলের পূর্ণাঙ্গ KV Cache মেমোরি (GiB এককে)",
-      "prompt": "একটি 70B GQA Model-এ layers = 80, kv_heads = 8, head_dim = 128 এবং প্রতিটি উপাদান BF16 (2 bytes) ফরম্যাটে সংরক্ষিত। যদি batch = 10 এবং প্রতিটি রিকোয়েস্টের seq_len = 12288 হয়, তবে মোট KV Cache-এর আকার কত বাইনারি GiB (1 GiB = 2**30 bytes) হবে তা হিসাব করে প্রিন্ট করুন।",
+      "title": "GQA Model-এর পূর্ণাঙ্গ KV Cache Memory (GiB এককে)",
+      "prompt": "একটি 70B GQA Model-এ `layers = 80`, `kv_heads = 8`, `head_dim = 128` এবং প্রতিটি উপাদান BF16 ($2$ bytes) ফরম্যাটে সংরক্ষিত। যদি `batch = 10` এবং প্রতিটি Request-এর `seq_len = 12288` হয়, তবে মোট KV Cache-এর আকার কত binary GiB ($1\\ \\mathrm{GiB} = 2^{30}$ bytes) হবে তা হিসাব করে প্রিন্ট করুন।",
       "starter": "layers, kv_heads, head_dim, elem_bytes = 80, 8, 128, 2\nbatch, seq_len = 10, 12288\n# Print total KV cache size in GiB\n",
       "solution": "layers, kv_heads, head_dim, elem_bytes = 80, 8, 128, 2\nbatch, seq_len = 10, 12288\ntotal_bytes = 2 * layers * kv_heads * head_dim * elem_bytes * seq_len * batch\nprint(total_bytes / (2 ** 30))",
       "expected": 37.5,
-      "explanation": "Key ও Value দুটো মিলিয়ে প্রতি Token-এ লাগে 2 * 80 * 8 * 128 * 2 = 327,680 বাইট। মোট 10 * 12288 = 122,880-টি Token-এর জন্য 40,265,318,400 বাইট লাগে, যাকে 2**30 (1,073,741,824) দিয়ে ভাগ করলে নিখুঁত 37.5 GiB পাওয়া যায়।"
+      "explanation": "Key ও Value দুটো মিলিয়ে প্রতি Token-এ লাগে $2 \\times 80 \\times 8 \\times 128 \\times 2 = 327{,}680$ bytes। মোট $10 \\times 12{,}288 = 122{,}880$-টি Token-এর জন্য $40{,}265{,}318{,}400$ bytes লাগে, যাকে $2^{30} = 1{,}073{,}741{,}824$ দিয়ে ভাগ করলে ঠিক $37.5\\ \\mathrm{GiB}$ পাওয়া যায়।"
     },
     {
       "id": "ch44_ex_3",
-      "title": "ZeRO-2 শার্ডিংয়ে প্রতি GPU-তে স্ট্যাটিক মেমোরি (GB এককে)",
+      "title": "ZeRO-2 Sharding-এ প্রতি GPU-তে Static Memory (GB এককে)",
       "prompt": "Mixed-Precision Adam Training-এ (২ বাইট BF16 Weight + ২ বাইট BF16 Gradient + ১২ বাইট FP32 Master Weights ও Adam States) একটি 13B (13e9 Parameter) Model N_d = 8-টি Data-প্যারালাল GPU-তে ZeRO-2 দিয়ে ট্রেন করা হচ্ছে। প্রতি GPU-তে স্ট্যাটিক Model State Memory কত দশমিক GB (1e9 bytes) লাগবে তা প্রিন্ট করুন।",
       "starter": "psi = 13e9\nn_d = 8\n# Print per-GPU static model-state memory in decimal GB (1e9 bytes)\n",
       "solution": "psi = 13e9\nn_d = 8\nbytes_per_gpu = (2 + 14 / n_d) * psi\nprint(bytes_per_gpu / 1e9)",
@@ -610,11 +610,11 @@
     {
       "id": "ch44_ex_5",
       "title": "Speculative Decoding-এর প্রত্যাশিত Token ও নিট Speedup",
-      "prompt": "একটি Speculative Decoding সিস্টেমে ছোট Draft Model প্রতি চক্রে K = 5-টি Token প্রস্তাব করে, যার গড় Acceptance Rate alpha = 0.75। যদি Draft Model-এর একটি একক ধাপের সময় Target Model-এর একটি ভেরিফিকেশন পাসের তুলনায় c = 0.06 গুণ হয় (অর্থাৎ এক চক্রের মোট আপেক্ষিক সময় 1 + K * c), তবে সাধারণ Autoregressive Decode-এর তুলনায় নিট তাত্ত্বিক Speedup কত গুণ হবে তা প্রিন্ট করুন।",
+      "prompt": "একটি Speculative Decoding সিস্টেমে ছোট Draft Model প্রতি চক্রে $K = 5$-টি Token প্রস্তাব করে, যার গড় Acceptance Rate $\\alpha = 0.75$। যদি Draft Model-এর একটি একক ধাপের সময় Target Model-এর একটি Verification Pass-এর তুলনায় $c = 0.06$ গুণ হয় (অর্থাৎ এক চক্রের মোট আপেক্ষিক সময় $1 + K \\cdot c$), তবে সাধারণ Autoregressive Decode-এর তুলনায় নিট তাত্ত্বিক Speedup কত গুণ হবে তা প্রিন্ট করুন।",
       "starter": "K, alpha, c = 5, 0.75, 0.06\n# Print net theoretical speedup\n",
       "solution": "K, alpha, c = 5, 0.75, 0.06\nexpected_tokens = (1 - alpha ** (K + 1)) / (1 - alpha)\nspeedup = expected_tokens / (1 + K * c)\nprint(speedup)",
       "expected": 2.529296875,
-      "explanation": "প্রতি চক্রে বোনাস Token-সহ প্রত্যাশিত Token সংখ্যা (1 - 0.75**6) / (1 - 0.75) = 3.2880859375। আর এক চক্রের আপেক্ষিক সময় খরচ 1 + 5 * 0.06 = 1.30। সুতরাং নিট Speedup = 3.2880859375 / 1.30 = 2.529296875 গুণ।"
+      "explanation": "প্রতি চক্রে বোনাস Token-সহ প্রত্যাশিত Token সংখ্যা $\\frac{1 - 0.75^6}{1 - 0.75} = 3.2880859375$। আর এক চক্রের আপেক্ষিক সময় খরচ $1 + 5 \\times 0.06 = 1.30$। সুতরাং নিট Speedup $= \\frac{3.2880859375}{1.30} = 2.529296875$ গুণ।"
     },
     {
       "id": "ch44_ex_6",

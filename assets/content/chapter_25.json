@@ -24,7 +24,7 @@
         {
           "type": "text",
           "title": "আমাদের পরীক্ষার Base Model",
-          "body": "প্রতিটি গণনা হাতে-কলমে মিলিয়ে দেখার জন্য আমরা Book 4 · Chapter 1-এর নির্দিষ্ট Alice-trained `ByteDecoder`-কে **Base Model** হিসেবে পুনর্ব্যবহার করছি।\n\nএটি কোনো বিশাল Pretrained LLM বা Chat Assistant নয়; বরং ছোট ও সম্পূর্ণ নিয়ন্ত্রিত একটি Model, যাতে ভেতরের প্রতিটি সংখ্যা স্বচ্ছভাবে যাচাই করা যায়।\n\n| বৈশিষ্ট্য | মান | ব্যাখ্যা |\n| --- | --- | --- |\n| মোট Parameter | $5019$ | পুরো `ByteDecoder`-এর সব Weight ও Bias |\n| Raw Byte Tokens | $0 \\dots 255$ | সরাসরি কাঁচা UTF-8 Byte ID |\n| Special Tokens | `PAD=256`, `BOS=257`, `EOS=258` | মোট Vocabulary আকার $259$ |\n| Context Length | $32$ | সর্বোচ্চ Sequence দৈর্ঘ্য |\n| Hidden Width | $8$ | প্রতিটি Layer-এর অভ্যন্তরীণ মাত্রা |\n\n- **SHA-256 Pinning:** এলোমেলো কোনো নতুন Weight-কে যেন Pretrained বলে চালানো না যায়, তাই শুরুতেই Base Weight-গুলোর **SHA-256 Hash** নির্দিষ্ট (Pin) করে রাখা হয়েছে।"
+          "body": "প্রতিটি গণনা হাতে-কলমে মিলিয়ে দেখার জন্য আমরা Book 4 · Chapter 1-এর নির্দিষ্ট Alice-trained `ByteDecoder`-কে **Base Model** হিসেবে পুনর্ব্যবহার করছি।\n\nএটি কোনো বিশাল Pretrained LLM বা Chat Assistant নয়; বরং ছোট ও সম্পূর্ণ নিয়ন্ত্রিত একটি Model, যাতে ভেতরের প্রতিটি সংখ্যা স্বচ্ছভাবে যাচাই করা যায়।\n\n| Property | মান | ব্যাখ্যা |\n| --- | --- | --- |\n| মোট Parameter | $5019$ | পুরো `ByteDecoder`-এর সব Weight ও Bias |\n| Raw Byte Tokens | $0 \\dots 255$ | সরাসরি কাঁচা UTF-8 Byte ID |\n| Special Tokens | `PAD=256`, `BOS=257`, `EOS=258` | মোট Vocabulary আকার $259$ |\n| Context Length | $32$ | সর্বোচ্চ Sequence দৈর্ঘ্য |\n| Hidden Width | $8$ | প্রতিটি Layer-এর অভ্যন্তরীণ মাত্রা |\n\n- **SHA-256 Pinning:** এলোমেলো কোনো নতুন Weight-কে যেন Pretrained বলে চালানো না যায়, তাই শুরুতেই Base Weight-গুলোর **SHA-256 Hash** নির্দিষ্ট (Pin) করে রাখা হয়েছে।"
         },
         {
           "type": "math",
@@ -186,7 +186,7 @@
         {
           "type": "text",
           "title": "Ignore Index কীভাবে কাজ করে?",
-          "body": "`ignore_index` কেবল উপেক্ষিত পজিশনগুলোকে গড় Loss থেকে বাদ দেয়—কিন্তু Output Softmax-এর হর (Denominator) থেকে সেই Token আইডি আপনাআপনি সরিয়ে দেয় না।\n\n- **Uniform Logits যাচাই:** উপরের কোডে সব বৈধ Logits $0$ রাখলে Response Loss আসে হুবহু $\\log(257) \\approx 5.549076$, যা প্রমাণ করে $257$টি বৈধ ক্লাসের ওপর সমবণ্টন কাজ করছে।\n- **Multi-token Pipeline-এর ঝুঁকি:** কোনো Batch-এর সব Token-ই Ignored হয়ে গেলে $0/0$ (Division by Zero) ঘটতে পারে; আবার ভুল করে Padding-সহ মোট দৈর্ঘ্য দিয়ে ভাগ করলে Loss কৃত্রিমভাবে ছোট দেখাবে।\n- **আমাদের পদ্ধতি:** আমাদের কোডে প্রতিটি উদাহরণের নির্দিষ্ট বৈধ Target Position-গুলো সরাসরি Gather করে নেওয়া হয়েছে।\n\n```python\nimport math\nimport numpy as np\n\nlogits = np.zeros(259, dtype=np.float64)\nlogits[[256, 257]] = -np.inf  # PAD ও BOS ব্লক\nprobs = np.exp(logits - np.max(logits[np.isfinite(logits)]))\nprobs = probs / np.sum(probs)\nnll_S = -math.log(probs[ord(\"S\")])\nprint(f\"Valid classes={int(np.isfinite(logits).sum())}, NLL={nll_S:.6f}, log(257)={math.log(257):.6f}\")\n```"
+          "body": "`ignore_index` কেবল উপেক্ষিত পজিশনগুলোকে গড় Loss থেকে বাদ দেয়—কিন্তু Output Softmax-এর হর (Denominator) থেকে সেই Token ID Automatically সরিয়ে দেয় না।\n\n- **Uniform Logits যাচাই:** উপরের কোডে সব বৈধ Logits $0$ রাখলে Response Loss আসে হুবহু $\\log(257) \\approx 5.549076$, যা প্রমাণ করে $257$টি বৈধ Class-এর ওপর Uniform Distribution কাজ করছে।\n- **Multi-token Pipeline-এর ঝুঁকি:** কোনো Batch-এর সব Token-ই Ignored হয়ে গেলে $0/0$ (Division by Zero) ঘটতে পারে; আবার ভুল করে Padding-সহ মোট দৈর্ঘ্য দিয়ে ভাগ করলে Loss কৃত্রিমভাবে ছোট দেখাবে।\n- **আমাদের পদ্ধতি:** আমাদের কোডে প্রতিটি উদাহরণের নির্দিষ্ট বৈধ Target Position-গুলো সরাসরি Gather করে নেওয়া হয়েছে।\n\n```python\nimport math\nimport numpy as np\n\nlogits = np.zeros(259, dtype=np.float64)\nlogits[[256, 257]] = -np.inf  # PAD ও BOS ব্লক\nprobs = np.exp(logits - np.max(logits[np.isfinite(logits)]))\nprobs = probs / np.sum(probs)\nnll_S = -math.log(probs[ord(\"S\")])\nprint(f\"Valid classes={int(np.isfinite(logits).sum())}, NLL={nll_S:.6f}, log(257)={math.log(257):.6f}\")\n```"
         },
         {
           "type": "adaptation_mask_lab",
@@ -299,7 +299,7 @@
         {
           "type": "text",
           "title": "Interview-এ যেভাবে বলবেন",
-          "body": "Interview-এ হোয়াইটবোর্ডে LoRA ব্যাখ্যা করার সময় এই চারটি ধাপ পরপর লিখলে উত্তরটি একদম নিখুঁত শোনাবে:\n\n1. **Shape ও Parameter তুলনা:** $W_0 \\in \\mathbb{R}^{d_{\\mathrm{out}} \\times d_{\\mathrm{in}}}$-এর $d_{\\mathrm{out}} d_{\\mathrm{in}}$ সংখ্যক Parameter-এর সাথে $A \\in \\mathbb{R}^{r \\times d_{\\mathrm{in}}}$, $B \\in \\mathbb{R}^{d_{\\mathrm{out}} \\times r}$-এর মোট $r(d_{\\mathrm{out}} + d_{\\mathrm{in}})$ Parameter তুলনা করুন।\n2. **Scaling ও Asymmetric Init:** $\\frac{\\alpha}{r}$ স্কেলিং এবং $B = 0, A \\sim \\mathcal{N}(0, \\sigma^2)$ রাখার গাণিতিক যুক্তি দিন।\n3. **Merge Equivalence প্রমাণ:** রৈখিক ধর্ম দেখিয়ে লিখুন:\n$$\nW_0 x + \\frac{\\alpha}{r} B(Ax) = \\left(W_0 + \\frac{\\alpha}{r} BA\\right)x\n$$\n4. **Gradient Flow স্পষ্ট করুন:** Base Weight-এ `requires_grad = False` থাকলেও Input Activation-এর ভেতর দিয়ে সমান্তরাল Adapter শাখায় ঠিকই Gradient পৌঁছে যায়।"
+          "body": "Interview-এ হোয়াইটবোর্ডে LoRA ব্যাখ্যা করার সময় এই চারটি ধাপ পরপর লিখলে উত্তরটি একদম নিখুঁত শোনাবে:\n\n1. **Shape ও Parameter তুলনা:** $W_0 \\in \\mathbb{R}^{d_{\\mathrm{out}} \\times d_{\\mathrm{in}}}$-এর $d_{\\mathrm{out}} d_{\\mathrm{in}}$ সংখ্যক Parameter-এর সাথে $A \\in \\mathbb{R}^{r \\times d_{\\mathrm{in}}}$, $B \\in \\mathbb{R}^{d_{\\mathrm{out}} \\times r}$-এর মোট $r(d_{\\mathrm{out}} + d_{\\mathrm{in}})$ Parameter তুলনা করুন।\n2. **Scaling ও Asymmetric Init:** $\\frac{\\alpha}{r}$ স্কেলিং এবং $B = 0, A \\sim \\mathcal{N}(0, \\sigma^2)$ রাখার গাণিতিক যুক্তি দিন।\n3. **Merge Equivalence প্রমাণ:** Linearity Property দেখিয়ে লিখুন:\n$$\nW_0 x + \\frac{\\alpha}{r} B(Ax) = \\left(W_0 + \\frac{\\alpha}{r} BA\\right)x\n$$\n4. **Gradient Flow স্পষ্ট করুন:** Base Weight-এ `requires_grad = False` থাকলেও Input Activation-এর ভেতর দিয়ে সমান্তরাল Adapter শাখায় ঠিকই Gradient পৌঁছে যায়।"
         }
       ]
     },
@@ -368,7 +368,7 @@
         {
           "type": "checkpoint",
           "title": "এবার নিজে হিসাব করুন",
-          "body": "এই রৈখিক LoRA Adapter-এর শুরুতে যদি A এবং B দুটি ম্যাট্রিক্সকেই শূন্য (Zero) দিয়ে ইনিশিয়ালাইজ করা হয়, তবে Training-এর শুরুতে কী ঘটবে?",
+          "body": "এই Linear LoRA Adapter-এর শুরুতে যদি A এবং B দুটি Matrix-কেই শূন্য (Zero) দিয়ে Initialize করা হয়, তবে Training-এর শুরুতে কী ঘটবে?",
           "solution": "সমীকরণ অনুযায়ী A-এর Gradient নির্ভর করে B-এর ওপর এবং B-এর Gradient নির্ভর করে A-এর ওপর। তাই দুটিই শূন্য হলে প্রথম ধাপে দুটিরই Gradient শূন্য (0) আসবে এবং Optimizer কোনো ফ্যাক্টরকেই নড়াতে পারবে না—ফলে দুটোই চিরকাল শূন্য থেকে যাবে। এজন্যই প্রমিত Zero-Delta Initialization-এ একটি ফ্যাক্টরকে অশূন্য Random মান দিয়ে অন্যটিকে শূন্য রাখা হয়। কোড ডিবাগ করার সময় কোনো Parameter-এর .grad আসলেই None (ফ্রোজেন বা বিচ্ছিন্ন) নাকি সংযুক্ত থেকে গাণিতিকভাবে শূন্য (0.0) হয়েছে, তা আলাদা করে পরীক্ষা করুন।",
           "reference": "https://arxiv.org/abs/2106.09685"
         }
@@ -475,7 +475,7 @@
         {
           "type": "text",
           "title": "সাধারণ INT8 বনাম প্রকৃত QLoRA",
-          "body": "যেকোনো Quantization-এর পাশে LoRA দেখলেই সেটিকে **QLoRA** বলে ফেলা একটি খুব সাধারণ ভুল—দুটির প্রকৌশলগত পার্থক্য স্পষ্ট রাখা জরুরি।\n\n| বৈশিষ্ট্য | আমাদের INT8 Control | প্রকৃত QLoRA |\n| --- | --- | --- |\n| Base Weight ফরম্যাট | শুধু Output Head-এ Row-wise INT8 | পুরো Base Model **4-bit NormalFloat (NF4)** |\n| Scale সংকোচন | `float64` Scale অপরিবর্তিত | **Double Quantization** (Scale-ও সংকুচিত) |\n| Optimizer Memory | সাধারণ CPU `AdamW` | Memory Spike সামলাতে **Paged Optimizer** |\n| Training মেকানিক্স | Training-পরবর্তী Round-trip টেস্ট | অন-দ্য-ফ্লাই Dequantize করে High-Precision LoRA Training |\n\n- **সতর্কতা:** আমাদের Head-only INT8 পরীক্ষাটি কোনোভাবেই QLoRA, NF4 বা 4-bit Training নয়; সত্যিকারের QLoRA-র জন্য উপযুক্ত লাইব্রেরি, GPU Kernel এবং ভ্যালিডেটেড Dtype সাপোর্ট দরকার।"
+          "body": "যেকোনো Quantization-এর পাশে LoRA দেখলেই সেটিকে **QLoRA** বলে ফেলা একটি খুব সাধারণ ভুল—দুটির প্রকৌশলগত পার্থক্য স্পষ্ট রাখা জরুরি।\n\n| Property | আমাদের INT8 Control | প্রকৃত QLoRA |\n| --- | --- | --- |\n| Base Weight ফরম্যাট | শুধু Output Head-এ Row-wise INT8 | পুরো Base Model **4-bit NormalFloat (NF4)** |\n| Scale সংকোচন | `float64` Scale অপরিবর্তিত | **Double Quantization** (Scale-ও সংকুচিত) |\n| Optimizer Memory | সাধারণ CPU `AdamW` | Memory Spike সামলাতে **Paged Optimizer** |\n| Training মেকানিক্স | Training-পরবর্তী Round-trip টেস্ট | অন-দ্য-ফ্লাই Dequantize করে High-Precision LoRA Training |\n\n- **সতর্কতা:** আমাদের Head-only INT8 পরীক্ষাটি কোনোভাবেই QLoRA, NF4 বা 4-bit Training নয়; সত্যিকারের QLoRA-র জন্য উপযুক্ত লাইব্রেরি, GPU Kernel এবং Validated Dtype সাপোর্ট দরকার।"
         },
         {
           "type": "text",
@@ -584,7 +584,7 @@
         },
         {
           "type": "text",
-          "title": "অসম বণ্টনে উপযুক্ত Metric নির্বাচন",
+          "title": "Imbalanced Distribution-এ উপযুক্ত Metric নির্বাচন",
           "body": "**Class Imbalance** থাকলে একক Accuracy সংখ্যাটি মারাত্মকভাবে বিভ্রান্ত করে—তাই উপরের কোডের মতোই পূর্ণাঙ্গ ক্লাস-ভিত্তিক Metric ব্যবহার করা জরুরি।\n\n- **কোন Metric-গুলো দেখবেন:** প্রতিটি ক্লাসের আলাদা **Precision** ও **Recall**, পূর্ণাঙ্গ **Confusion Matrix**, **Balanced Accuracy**, **Macro-F1** এবং সম্ভাব্যতার **Calibration**।\n- **Zero-Division নীতি:** আমাদের ফলে সব উত্তর `SUPPORT` হওয়ায় `CONTRADICT` ক্লাসের Recall দাঁড়ায় $0$, আর Precision হিসাব করতে গেলে $0/0$ অবস্থা তৈরি হয়—তাই রিপোর্টে Zero-Division Policy (যেমন `0.0` বা `N/A`) স্পষ্ট করে উল্লেখ করুন।\n- **Majority Baseline-এর উৎস:** Majority ক্লাস সবসময় ঠিক করতে হবে কেবল **Train** সেটের অনুপাত দেখে—কখনোই Dev বা Test সেট দেখে নয়!\n\n```python\ntp_s, fp_s, fn_s, tn_s = 124, 64, 0, 0  # সব 188টিই SUPPORT প্রেডিক্ট করায়\nrec_s = tp_s / (tp_s + fn_s)\nrec_c = tn_s / (tn_s + fp_s)  # CONTRADICT Recall = 0\nbal_acc = 0.5 * (rec_s + rec_c)\nprec_s = tp_s / (tp_s + fp_s)\nf1_s = 2 * prec_s * rec_s / (prec_s + rec_s)\nmacro_f1 = 0.5 * (f1_s + 0.0)  # CONTRADICT F1 = 0 (zero-division policy)\nprint(f\"Acc={prec_s:.4f}, BalancedAcc={bal_acc:.4f}, Recall_C={rec_c:.4f}, MacroF1={macro_f1:.4f}\")\n```"
         },
         {
@@ -828,7 +828,7 @@
       "blocks": [
         {
           "type": "text",
-          "title": "খাতাকলমে প্রতিপাদন (Derive)",
+          "title": "খাতাকলমে Derivation",
           "body": "Interview-এর প্রথম প্রস্তুতি হলো—কোনো নোট না দেখেই খাতাকলমে এই অধ্যায়ের মূল সূত্রগুলো নিজে **Derive** করা।\n\n1. **Response-only Mask ও Loss:** Ignored পজিশন, সঠিক Denominator এবং $257$ বৈধ ক্লাসের কাঁচা Cross-Entropy সমীকরণ।\n2. **LoRA গণিত:** $A, B$-এর Shape, $\\frac{\\alpha}{r}$ স্কেলিং, $r(d_{\\mathrm{out}}+d_{\\mathrm{in}})$ Parameter সংখ্যা, Step $1$ বনাম Step $2$-এর Gradient এবং Merge Equivalence।\n3. **Quantization ও Contract:** INT8 বাইট হিসাব, Storage বনাম Compute Dtype পার্থক্য, Zero-row নিয়ম (`scale = 1.0`) এবং Base Hash ও Tokenizer সামঞ্জস্যতা।"
         },
         {
@@ -1187,7 +1187,7 @@
     {
       "id": "ch25_ex_parameters",
       "title": "Head-only LoRA-এর Trainable Parameter গণনা",
-      "prompt": "একটি রৈখিক Output Layer-এ Input প্রস্থ (d_in) = 8, Output প্রস্থ (d_out) = 259 এবং LoRA Rank = 2 হলে A ও B ফ্যাক্টর দুটির মোট Trainable স্কেলার Parameter সংখ্যা হিসাব করে answer ভেরিয়েবলে রাখুন।",
+      "prompt": "একটি Linear Output Layer-এ Input প্রস্থ (d_in) = 8, Output প্রস্থ (d_out) = 259 এবং LoRA Rank = 2 হলে A ও B Factor দুটির মোট Trainable Scalar Parameter সংখ্যা হিসাব করে answer Variable-এ রাখুন।",
       "starter": "# Implement locally;assign scalar answer.\nanswer = None\n",
       "solution": "rank = 2\nd_in = 8\nd_out = 259\nanswer = float(rank * (d_in + d_out))\n",
       "expected": 534,
@@ -1280,7 +1280,7 @@
       "title": "LoRA-এর গাণিতিক গঠন ও Merge সমতুল্যতা প্রতিপাদন",
       "tag": "ADAPTATION · CODING / DESIGN · 40 MIN",
       "prompt": "আমাদের Model-এর Output Head-এর উদাহরণ ধরে LoRA Factor-গুলোর Shape, Trainable Parameter সংখ্যা, $\\frac{\\alpha}{r}$ Scaling এবং Weight Merge করার গাণিতিক সমতুল্যতা ব্যাখ্যা করুন।",
-      "answer": "আমাদের Output Head-এর মূল Weight Matrix $W_0 \\in \\mathbb{R}^{259 \\times 8}$ (মোট $2072$টি ভুক্তি)। **Rank $r = 2$** বসালে পুরো Model-এর $5019$টি Parameter-এর বদলে মাত্র **$534$টি** Parameter ট্রেন করতে হয়।\n\n- **Factor Shape ও Parameter গণনা:**\n  - $A \\in \\mathbb{R}^{2 \\times 8}$ ($16$টি Parameter) এবং $B \\in \\mathbb{R}^{259 \\times 2}$ ($518$টি Parameter)।\n  - মোট Trainable Parameter $= r(d_{\\mathrm{out}} + d_{\\mathrm{in}}) = 2(259 + 8) = 534$, আর মূল Base Weight ও Bias সম্পূর্ণ Frozen থাকে।\n- **Scaling ও Merge Equivalence:** এখানে $\\alpha = 2, r = 2$ হওয়ায় স্কেলিং $\\frac{\\alpha}{r} = 1$। Matrix গুণের বণ্টন বিধি অনুযায়ী একই `dtype` ও Base Model-এ (Floating-point Tolerance-এর ভেতর):\n\n$$\nh W_0^T + \\frac{\\alpha}{r}(h A^T) B^T = h \\left(W_0 + \\frac{\\alpha}{r} BA\\right)^T\n$$\n\n- **Production Guardrails:** লোড করার সময় **Base SHA-256 Hash**, `Tokenizer ID` ও Target Module সংস্করণ Pin করতে হবে; পাশাপাশি $\\mathrm{Scale} = 0$ ও $\\mathrm{Scale} = 1$-এর Golden Output এবং ভুল Shape-এর Negative Test চালাতে হবে।",
+      "answer": "আমাদের Output Head-এর মূল Weight Matrix $W_0 \\in \\mathbb{R}^{259 \\times 8}$ (মোট $2072$টি ভুক্তি)। **Rank $r = 2$** বসালে পুরো Model-এর $5019$টি Parameter-এর বদলে মাত্র **$534$টি** Parameter ট্রেন করতে হয়।\n\n- **Factor Shape ও Parameter গণনা:**\n  - $A \\in \\mathbb{R}^{2 \\times 8}$ ($16$টি Parameter) এবং $B \\in \\mathbb{R}^{259 \\times 2}$ ($518$টি Parameter)।\n  - মোট Trainable Parameter $= r(d_{\\mathrm{out}} + d_{\\mathrm{in}}) = 2(259 + 8) = 534$, আর মূল Base Weight ও Bias সম্পূর্ণ Frozen থাকে।\n- **Scaling ও Merge Equivalence:** এখানে $\\alpha = 2, r = 2$ হওয়ায় স্কেলিং $\\frac{\\alpha}{r} = 1$। Matrix Multiplication-এর Distributive Law অনুযায়ী একই `dtype` ও Base Model-এ (Floating-point Tolerance-এর ভেতর):\n\n$$\nh W_0^T + \\frac{\\alpha}{r}(h A^T) B^T = h \\left(W_0 + \\frac{\\alpha}{r} BA\\right)^T\n$$\n\n- **Production Guardrails:** লোড করার সময় **Base SHA-256 Hash**, `Tokenizer ID` ও Target Module সংস্করণ Pin করতে হবে; পাশাপাশি $\\mathrm{Scale} = 0$ ও $\\mathrm{Scale} = 1$-এর Golden Output এবং ভুল Shape-এর Negative Test চালাতে হবে।",
       "prerequisiteLessons": [
         "ch25_lora",
         "ch25_merge"

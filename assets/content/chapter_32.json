@@ -73,7 +73,7 @@
         {
           "type": "text",
           "title": "SHA256 দিয়ে Deterministic Inner Split",
-          "body": "ভেতরের এই বিভাজনটি (Inner Split) শতভাগ পুনরুৎপাদনযোগ্য রাখতে `SHA256` Hash ব্যবহার করা হয়েছে।\n\n- **Hash নির্ণয়:** Cutoff-এর আগের প্রতিটি `(userId, movieId)` Key-এর ওপর `SHA256` চালিয়ে প্রথম $8$ bytes-কে Big-Endian Unsigned Integer ($h$) হিসেবে পড়া হয় এবং $h \\bmod 5$ নেওয়া হয়।\n- **দুই ভাগের আকার:** $h \\bmod 5 = 0$ এমন $16{,}257$টি Row রাখা হয়েছে **Ranker Labels** হিসেবে, আর বাকি $64{,}411$টি Row গেছে **Retrieval Labels**-এ (মোট $80{,}668$টি pre-cutoff Row)।\n- **কেন Python `hash()` নয়:** Python-এর সাধারণ `hash()` প্রতি সেশনে বদলে যায় (Randomized Hash); কিন্তু `SHA256` মূল Pair ID-র ওপর চিরস্থায়ী গ্রুপিং নিশ্চিত করে।\n\n```python\nimport hashlib\n\ndef assign_role(user_id: int, movie_id: int) -> str:\n    key = f\"{user_id}:{movie_id}\".encode(\"utf-8\")\n    val = int.from_bytes(hashlib.sha256(key).digest()[:8], \"big\")\n    return \"ranker\" if (val % 5 == 0) else \"retrieval\"\n\nsamples = [(1, 101), (1, 102), (1, 103), (2, 101), (2, 105)]\nprint({pair: assign_role(*pair) for pair in samples})\n```\n\nখেয়াল রাখুন, এই Inner Split কালানুক্রমিক (Chronological) না হলেও এর দুটি অংশই মূল Outer Temporal Cutoff-এর আগের Data থেকে নেওয়া।"
+          "body": "ভেতরের এই বিভাজনটি (Inner Split) শতভাগ `Reproducible` রাখতে `SHA256` Hash ব্যবহার করা হয়েছে।\n\n- **Hash নির্ণয়:** Cutoff-এর আগের প্রতিটি `(userId, movieId)` Key-এর ওপর `SHA256` চালিয়ে প্রথম $8$ bytes-কে Big-Endian Unsigned Integer ($h$) হিসেবে পড়া হয় এবং $h \\bmod 5$ নেওয়া হয়।\n- **দুই ভাগের আকার:** $h \\bmod 5 = 0$ এমন $16{,}257$টি Row রাখা হয়েছে **Ranker Labels** হিসেবে, আর বাকি $64{,}411$টি Row গেছে **Retrieval Labels**-এ (মোট $80{,}668$টি pre-cutoff Row)।\n- **কেন Python `hash()` নয়:** Python-এর সাধারণ `hash()` প্রতি সেশনে বদলে যায় (Randomized Hash); কিন্তু `SHA256` মূল Pair ID-র ওপর চিরস্থায়ী গ্রুপিং নিশ্চিত করে।\n\n```python\nimport hashlib\n\ndef assign_role(user_id: int, movie_id: int) -> str:\n    key = f\"{user_id}:{movie_id}\".encode(\"utf-8\")\n    val = int.from_bytes(hashlib.sha256(key).digest()[:8], \"big\")\n    return \"ranker\" if (val % 5 == 0) else \"retrieval\"\n\nsamples = [(1, 101), (1, 102), (1, 103), (2, 101), (2, 105)]\nprint({pair: assign_role(*pair) for pair in samples})\n```\n\nখেয়াল রাখুন, এই Inner Split কালানুক্রমিক (Chronological) না হলেও এর দুটি অংশই মূল Outer Temporal Cutoff-এর আগের Data থেকে নেওয়া।"
         },
         {
           "type": "math",
@@ -330,7 +330,7 @@
         {
           "type": "text",
           "title": "Cross-Entropy থেকে Logit ও Query Gradient",
-          "body": "Multi-Positive Cross-Entropy-তে Softmax বণ্টন $\\pi$ এবং লক্ষ্য বণ্টন $y$ হলে Logit-এর সাপেক্ষে Derivative হয় অত্যন্ত মার্জিত: $\\pi - y$।\n\n$$\n\\frac{\\partial \\mathcal{L}_u}{\\partial z_{u,j}} = \\pi_{u,j} - y_{u,j}, \\qquad \\frac{\\partial \\mathcal{L}_u}{\\partial q_u} = \\frac{1}{\\tau} \\sum_{j} (\\pi_{u,j} - y_{u,j}) v_j\n$$\n\n- **Multi-Positive Target $y$:** একাধিক জানা পজিটিভ থাকলে $y$ সাধারণ One-Hot Vector নয়, বরং পজিটিভ কলামগুলোতে $\\frac{1}{|P_u|}$ করে সমানভাবে বণ্টিত Vector।\n- **জ্যামিতিক টান ও ধাক্কা:** Gradient Descent-এ Query Vector $q_u$ পজিটিভ Item-গুলোর দিকে আকৃষ্ট হয় এবং অতিরিক্ত Probability পাওয়া Negative Item-গুলো থেকে দূরে সরে যায়।\n- **Batch Mean:** পুরো Batch-এর (আকার $B$) গড় নিলে প্রতিটি সারির Gradient $\\frac{1}{B}$ দিয়ে গুণ হয়ে যায়।"
+          "body": "Multi-Positive Cross-Entropy-তে Softmax Distribution $\\pi$ এবং Target Distribution $y$ হলে Logit-এর সাপেক্ষে Derivative হয় অত্যন্ত মার্জিত: $\\pi - y$।\n\n$$\n\\frac{\\partial \\mathcal{L}_u}{\\partial z_{u,j}} = \\pi_{u,j} - y_{u,j}, \\qquad \\frac{\\partial \\mathcal{L}_u}{\\partial q_u} = \\frac{1}{\\tau} \\sum_{j} (\\pi_{u,j} - y_{u,j}) v_j\n$$\n\n- **Multi-Positive Target $y$:** একাধিক জানা পজিটিভ থাকলে $y$ সাধারণ One-Hot Vector নয়, বরং পজিটিভ কলামগুলোতে $\\frac{1}{|P_u|}$ করে সমানভাবে ভাগ করা Vector।\n- **জ্যামিতিক টান ও ধাক্কা:** Gradient Descent-এ Query Vector $q_u$ পজিটিভ Item-গুলোর দিকে আকৃষ্ট হয় এবং অতিরিক্ত Probability পাওয়া Negative Item-গুলো থেকে দূরে সরে যায়।\n- **Batch Mean:** পুরো Batch-এর (আকার $B$) গড় নিলে প্রতিটি সারির Gradient $\\frac{1}{B}$ দিয়ে গুণ হয়ে যায়।"
         },
         {
           "type": "text",
@@ -355,7 +355,7 @@
         {
           "type": "text",
           "title": "Finite-Difference পরীক্ষার পরিধি",
-          "body": "উপরের কোডের Finite-Difference পরীক্ষাটি আমাদের সংরক্ষিত Normalized Vector $q$-এর ওপর **Local Derivative** যাচাই করে।\n\n- **কোন সীমানা মাপা হচ্ছে:** ক্ষুদ্র বিচ্যুতি ($\\epsilon$) যোগ করার পর এখানে $q$-কে নতুন করে Renormalize করা হয়নি, তাই এটি সুনির্দিষ্টভাবে Normalized স্থানাঙ্কের Gradient-ই পরীক্ষা করছে।\n- **End-to-End যাচাই:** কাঁচা Encoder Output $a$ থেকে শেষ পর্যন্ত Gradient যাচাই করতে হলে Normalization-সহ সম্পূর্ণ Computation Graph-এর ওপর টেস্ট চালাতে হয়।\n- **সঠিক Gradient $\\neq$ সেরা Ranking:** Gradient গাণিতিকভাবে নির্ভুল হওয়া মানে কোডে বাগ নেই—তার মানে এই নয় যে Model বাস্তবে সেরা Ranking দেবেই!"
+          "body": "উপরের কোডের Finite-Difference পরীক্ষাটি আমাদের সংরক্ষিত Normalized Vector $q$-এর ওপর **Local Derivative** যাচাই করে।\n\n- **কোন সীমানা মাপা হচ্ছে:** ক্ষুদ্র Perturbation ($\\epsilon$) যোগ করার পর এখানে $q$-কে নতুন করে Renormalize করা হয়নি, তাই এটি সুনির্দিষ্টভাবে Normalized Coordinate-এর Gradient-ই পরীক্ষা করছে।\n- **End-to-End যাচাই:** কাঁচা Encoder Output $a$ থেকে শেষ পর্যন্ত Gradient যাচাই করতে হলে Normalization-সহ সম্পূর্ণ Computation Graph-এর ওপর টেস্ট চালাতে হয়।\n- **সঠিক Gradient $\\neq$ সেরা Ranking:** Gradient গাণিতিকভাবে নির্ভুল হওয়া মানে কোডে বাগ নেই—তার মানে এই নয় যে Model বাস্তবে সেরা Ranking দেবেই!"
         },
         {
           "type": "text",
@@ -421,7 +421,7 @@
         {
           "type": "text",
           "title": "LogQ Correction-এর মূল ধারণা ও বাস্তব জটিলতা",
-          "body": "স্বাধীন Proposal Distribution $Q(i)$ থেকে Sample নিলে অনেক Sampled Softmax Model-এ জনপ্রিয় Item-এর অতিরিক্ত শাস্তি পুষিয়ে দিতে Logit থেকে $\\log Q(i)$ বিয়োগ করা হয় (**LogQ Correction**)।\n\n$$\n\\tilde{z}_{u,i} = \\frac{q_u^\\top v_i}{\\tau} - \\log Q(i)\n$$\n\n- **কেন বাস্তব Batch-এ এটা জটিল:** আমাদের Batch-এ Without-Replacement পজিটিভ Shuffling, $64$টি Random Draw-এর মিশ্রণ, Deduplication এবং User-ভিত্তিক Multi-Positive Mask একসাথে কাজ করছে—তাই কোনো Item-এর প্রকৃত Inclusion Probability নিছক তার কাঁচা জনপ্রিয়তার অনুপাত নয়!\n\n```python\nimport numpy as np\n\n# How LogQ shifts logits for a popular vs rare item at identical cosine score\ncosine = 0.60\ntau = 0.2\nfor name, q_prob in [(\"Popular item\", 0.05), (\"Rare item\", 0.0005)]:\n    raw_logit = cosine / tau\n    corr_logit = raw_logit - np.log(q_prob)\n    print(f\"{name:12s} | raw={raw_logit:.2f} | -log(Q)={-np.log(q_prob):.2f} | adjusted={corr_logit:.2f}\")\n```\n\n> **উদাহরণ:** একই Cosine Score $0.60$ থাকলেও $Q = 0.05$ বনাম $Q = 0.0005$ হলে $-\\log Q(i)$ সংশোধনীটি Rare Item-এর Logit প্রায় $4.61$ বেশি বাড়িয়ে দেয়—তাই ভুল $Q(i)$ বসালে Score উল্টো বিকৃত হয়ে যাবে।"
+          "body": "স্বাধীন Proposal Distribution $Q(i)$ থেকে Sample নিলে অনেক Sampled Softmax Model-এ জনপ্রিয় Item-এর অতিরিক্ত Penalty পুষিয়ে দিতে Logit থেকে $\\log Q(i)$ বিয়োগ করা হয় (**LogQ Correction**)।\n\n$$\n\\tilde{z}_{u,i} = \\frac{q_u^\\top v_i}{\\tau} - \\log Q(i)\n$$\n\n- **কেন বাস্তব Batch-এ এটা জটিল:** আমাদের Batch-এ Without-Replacement পজিটিভ Shuffling, $64$টি Random Draw-এর মিশ্রণ, Deduplication এবং User-ভিত্তিক Multi-Positive Mask একসাথে কাজ করছে—তাই কোনো Item-এর প্রকৃত Inclusion Probability নিছক তার কাঁচা জনপ্রিয়তার অনুপাত নয়!\n\n```python\nimport numpy as np\n\n# How LogQ shifts logits for a popular vs rare item at identical cosine score\ncosine = 0.60\ntau = 0.2\nfor name, q_prob in [(\"Popular item\", 0.05), (\"Rare item\", 0.0005)]:\n    raw_logit = cosine / tau\n    corr_logit = raw_logit - np.log(q_prob)\n    print(f\"{name:12s} | raw={raw_logit:.2f} | -log(Q)={-np.log(q_prob):.2f} | adjusted={corr_logit:.2f}\")\n```\n\n> **উদাহরণ:** একই Cosine Score $0.60$ থাকলেও $Q = 0.05$ বনাম $Q = 0.0005$ হলে $-\\log Q(i)$ সংশোধনীটি Rare Item-এর Logit প্রায় $4.61$ বেশি বাড়িয়ে দেয়—তাই ভুল $Q(i)$ বসালে Score উল্টো বিকৃত হয়ে যাবে।"
         },
         {
           "type": "text",
@@ -450,7 +450,7 @@
         {
           "type": "text",
           "title": "Hard Negative-এর স্বজ্ঞা ও লুকানো ঝুঁকি",
-          "body": "Model যেসব না-দেখা (Unobserved) Item-কে উচ্চ Score দিচ্ছে, সেগুলোকে চোখ বুজে **Hard Negative** বানিয়ে শাস্তি দিলে Recommender সিস্টেমে উল্টো বড় ক্ষতি হতে পারে।\n\n- **স্বজ্ঞা (Intuition):** Training এগোলে সহজ Random Negative-গুলো Model দ্রুত চিনে ফেলে, তাই কঠিন Candidate-এর বিপরীতে শেখালে সূক্ষ্ম পার্থক্য ধরা সহজ হওয়ার কথা।\n- **লুকানো ফাঁদ (False Negative):** User একটি সিনেমা দেখেননি মানেই তিনি সেটি অপছন্দ করেন না! হতে পারে সিনেমাটি তাঁর রুচির সাথে দারুণ মেলে এবং ভবিষ্যতে দেখলে তিনি $5$ স্টার দেবেন।\n- **মূল নীতি:** Model-এর চোখে কঠিন হওয়া (**Hardness**) আর বাস্তবে নির্ভরযোগ্য নেগেটিভ হওয়া—দুটি সম্পূর্ণ আলাদা বিষয়।"
+          "body": "Model যেসব না-দেখা (Unobserved) Item-কে উচ্চ Score দিচ্ছে, সেগুলোকে চোখ বুজে **Hard Negative** বানিয়ে Penalize করলে Recommender সিস্টেমে উল্টো বড় ক্ষতি হতে পারে।\n\n- **স্বজ্ঞা (Intuition):** Training এগোলে সহজ Random Negative-গুলো Model দ্রুত চিনে ফেলে, তাই কঠিন Candidate-এর বিপরীতে শেখালে সূক্ষ্ম পার্থক্য ধরা সহজ হওয়ার কথা।\n- **লুকানো ফাঁদ (False Negative):** User একটি সিনেমা দেখেননি মানেই তিনি সেটি অপছন্দ করেন না! হতে পারে সিনেমাটি তাঁর রুচির সাথে দারুণ মেলে এবং ভবিষ্যতে দেখলে তিনি $5$ স্টার দেবেন।\n- **মূল নীতি:** Model-এর চোখে কঠিন হওয়া (**Hardness**) আর বাস্তবে নির্ভরযোগ্য নেগেটিভ হওয়া—দুটি সম্পূর্ণ আলাদা বিষয়।"
         },
         {
           "type": "text",
@@ -499,7 +499,7 @@
         {
           "type": "text",
           "title": "কেন এই গাণিতিক ধারণাটি দরকার?",
-          "body": "লক্ষ লক্ষ Item-এর Catalog-এ প্রতিটি Step-এ পূর্ণ Softmax-এর Partition Function ($\\sum_{i=1}^{N} e^{s_i}$) হিসাব করা অসম্ভব ব্যয়বহুল, তাই **Sampled Softmax** বা **In-Batch Negatives** ব্যবহার করা হয়।\n\n- **অসম স্যাম্পলিংয়ের সমস্যা:** নেগেটিভগুলো যদি সমসম্ভাবনায় (Uniform) না আসে, তবে ঘনঘন আসা জনপ্রিয় Item-গুলো Training Objective-এ অতিরিক্ত শাস্তি পেতে থাকে।\n- **Serving Score-এর সতর্কতা:** Proposal Distribution ও তার সংশোধনী না বুঝে শেখা Dot Product-কে কখনোই শর্তহীন ক্লিক-সম্ভাব্যতা (Unconditional Click Probability) দাবি করা যাবে না।"
+          "body": "লক্ষ লক্ষ Item-এর Catalog-এ প্রতিটি Step-এ পূর্ণ Softmax-এর Partition Function ($\\sum_{i=1}^{N} e^{s_i}$) হিসাব করা অসম্ভব ব্যয়বহুল, তাই **Sampled Softmax** বা **In-Batch Negatives** ব্যবহার করা হয়।\n\n- **অসম স্যাম্পলিংয়ের সমস্যা:** নেগেটিভগুলো যদি সমসম্ভাবনায় (Uniform) না আসে, তবে ঘনঘন আসা জনপ্রিয় Item-গুলো Training Objective-এ অতিরিক্ত Penalty পেতে থাকে।\n- **Serving Score-এর সতর্কতা:** Proposal Distribution ও তার সংশোধনী না বুঝে শেখা Dot Product-কে কখনোই শর্তহীন ক্লিক-সম্ভাব্যতা (Unconditional Click Probability) দাবি করা যাবে না।"
         },
         {
           "type": "text",
@@ -744,7 +744,7 @@
         {
           "type": "text",
           "title": "Gradient দেখেই Feature Importance দাবি করার ঝুঁকি",
-          "body": "কোনো একটি উদাহরণে Input Feature-এর Gradient বড় হওয়া মানেই যে পুরো সিস্টেমে ওই Feature-টি সবচেয়ে গুরুত্বপূর্ণ (**Causal Feature Importance**)—তা মোটেও সত্য নয়!\n\n- **Local Sensitivity বনাম Global Causality:** Gradient কেবল ওই নির্দিষ্ট বিন্দুতে স্থির Model-এর তাৎক্ষণিক ঢাল মাপে; Mean Neutralization-ও Feature-গুলোর স্বাভাবিক সহসম্পর্ক ভেঙে দিতে পারে।\n- **প্রমাণের তিন স্তর:** (১) Local Sensitivity / Gradient $\\to$ (২) Feature বাদ দিয়ে নতুন করে Train করা (**Retrained Ablation**) $\\to$ (৩) অনলাইন A/B Test। প্রতিটির অর্থ আলাদাভাবে চিনতে হবে।"
+          "body": "কোনো একটি উদাহরণে Input Feature-এর Gradient বড় হওয়া মানেই যে পুরো সিস্টেমে ওই Feature-টি সবচেয়ে গুরুত্বপূর্ণ (**Causal Feature Importance**)—তা মোটেও সত্য নয়!\n\n- **Local Sensitivity বনাম Global Causality:** Gradient কেবল ওই নির্দিষ্ট বিন্দুতে স্থির Model-এর তাৎক্ষণিক Slope মাপে; Mean Neutralization-ও Feature-গুলোর স্বাভাবিক Correlation ভেঙে দিতে পারে।\n- **প্রমাণের তিন স্তর:** (১) Local Sensitivity / Gradient $\\to$ (২) Feature বাদ দিয়ে নতুন করে Train করা (**Retrained Ablation**) $\\to$ (৩) অনলাইন A/B Test। প্রতিটির অর্থ আলাদাভাবে চিনতে হবে।"
         },
         {
           "type": "text",
@@ -957,7 +957,7 @@
         {
           "type": "text",
           "title": "Popularity Baseline-এর সাথে তথ্যের ন্যায্য তুলনা",
-          "body": "যেকোনো নিখুঁত মূল্যায়ন রিপোর্টে Baseline ও Neural Model-এর অভ্যন্তরীণ তথ্যের চুক্তি স্পষ্ট উল্লেখ থাকা উচিত।\n\n- **তথ্যের বণ্টন পার্থক্য:** আমাদের Popularity Baseline ও Fallback সময়ের সীমানার আগের **সম্পূর্ণ** Data-র পজিটিভ সংখ্যা গোনে, অথচ Neural Tower ও Ranker-এর পরিসংখ্যান কেবল **Retrieval Role** থেকে নেওয়া।\n- **কেন Baseline বৈধ:** Cutoff-এর আগের সব রেটিংই Serving মুহূর্তে বৈধভাবে জানা থাকে, তাই Baseline-টি সম্পূর্ণ বৈধ; তবে এই অভ্যন্তরীণ বণ্টন পার্থক্যটি মাথায় রেখে ফলাফল বিচার করতে হবে।"
+          "body": "যেকোনো নিখুঁত মূল্যায়ন রিপোর্টে Baseline ও Neural Model-এর অভ্যন্তরীণ তথ্যের চুক্তি স্পষ্ট উল্লেখ থাকা উচিত।\n\n- **Data Split-এর পার্থক্য:** আমাদের Popularity Baseline ও Fallback সময়ের সীমানার আগের **সম্পূর্ণ** Data-র পজিটিভ সংখ্যা গোনে, অথচ Neural Tower ও Ranker-এর পরিসংখ্যান কেবল **Retrieval Role** থেকে নেওয়া।\n- **কেন Baseline বৈধ:** Cutoff-এর আগের সব রেটিংই Serving মুহূর্তে বৈধভাবে জানা থাকে, তাই Baseline-টি সম্পূর্ণ বৈধ; তবে এই অভ্যন্তরীণ Data Split-এর পার্থক্যটি মাথায় রেখে ফলাফল বিচার করতে হবে।"
         },
         {
           "type": "text",
@@ -995,7 +995,7 @@
         },
         {
           "type": "text",
-          "title": "Feature Skew: একই নামের আড়ালে ভিন্ন বণ্টন",
+          "title": "Feature Skew: একই নামের আড়ালে ভিন্ন Distribution",
           "body": "Feature-এর নাম একই রেখে তার পেছনের হিসাব বা Data স্লাইস বদলে গেলেই ঘটে মারাত্মক **Feature Skew**!\n\n> **উদাহরণ:** ধরুন Ranker Training-এ `log1p(user count)` হিসাব হয়েছে কেবল Retrieval Role ($80\\%$ রো) থেকে, কিন্তু Serving-এ ভুলে Full Outer-Fit History ($100\\%$ রো) বসিয়ে দেওয়া হলো। একই নামের Feature হলেও তার Distribution বদলে গিয়ে Ranker-এর Standardized মান $z$ এবং Logit নীরবে সরে যাবে!\n\n```python\nimport numpy as np\n\n# Feature Skew: scaler fit on Retrieval-Role counts vs Full-History count at serving\nmu_log_cnt, std_log_cnt = 3.20, 0.85\nretrieval_cnt, full_cnt = 40, 50   # ~80% retrieval vs 100% full outer-fit\n\nz_consistent = (np.log1p(retrieval_cnt) - mu_log_cnt) / std_log_cnt\nz_skewed = (np.log1p(full_cnt) - mu_log_cnt) / std_log_cnt\nprint(f\"Consistent z={z_consistent:.4f} vs Skewed z={z_skewed:.4f} (shift={z_skewed - z_consistent:+.4f})\")\n```\n\nএই ভুল ঠেকাতে আমাদের অ্যাপের Dart কোড সরাসরি সংরক্ষিত Retrieval Indices থেকেই পরিসংখ্যান হুবহু পুনর্গঠন করে এবং Ranker-Role Scaler ঠিক একবার প্রয়োগ করে।"
         },
         {
@@ -1078,7 +1078,7 @@
         },
         {
           "type": "text",
-          "title": "RNG Seed ও পরিবেশের পুনরুৎপাদনযোগ্যতা (Reproducibility)",
+          "title": "RNG Seed ও Environment Reproducibility",
           "body": "ফলাফল যাতে বারবার নিখুঁতভাবে পুনরুৎপাদন (**Reproduce**) করা যায়, সেজন্য প্রতিটি Random উৎস সুনির্দিষ্ট Seed দিয়ে বেঁধে দেওয়া হয়েছে।\n\n- **নির্ধারিত Seeds:** NumPy Generators (`3200`, `3201`, `3202`) এবং PyTorch Seeds (`32` ও `3202`)।\n- **পরিষ্কার State ব্যবস্থাপনা:** Training Script কাজ শেষে কলারের মূল PyTorch RNG State এবং Thread সংখ্যা আগের অবস্থায় ফিরিয়ে দেয়।\n- **বাস্তব সীমা:** একটি নির্দিষ্ট CPU `float64` পরিবেশে পুরো এক্সপোর্ট হুবহু পুনরুৎপাদন করে যাচাই করা হয়েছে—তবে ভিন্ন OS বা Hardware-এ শেষ বিট পর্যন্ত অভিন্নতার (Bit-for-Bit Identity) অন্ধ প্রতিশ্রুতি দেওয়া হয় না।\n\n```python\nimport numpy as np\n\n# Independent deterministic streams matching our chapter's generator convention\ndef draw_first_batch_ids(n_rows: int = 1000, n_items: int = 500) -> tuple[list[int], list[int]]:\n    g_shuffle = np.random.default_rng(3200)\n    g_uniform = np.random.default_rng(3201)\n    anchors = g_shuffle.permutation(n_rows)[:4].tolist()\n    uniforms = g_uniform.integers(0, n_items, size=4).tolist()\n    return anchors, uniforms\n\nprint(\"Run 1:\", draw_first_batch_ids())\nprint(\"Run 2:\", draw_first_batch_ids())\n```"
         },
         {
@@ -1335,7 +1335,7 @@
         "সবসময় ধ্রুবক −1"
       ],
       "answer": 2,
-      "explanation": "Cross-Entropy Loss-এর লগিট ডেরিভেটিভ হলো Model-এর Softmax সম্ভাব্যতা π বিয়োগ লক্ষ্য বণ্টন y (যেখানে মাল্টি-পজিটিভ ক্ষেত্রে y সাধারণ One-Hot নয়)। এরপর Query Vector-এর Gradient পেতে প্রার্থী Vector ও 1/τ গুণক যুক্ত হয়।"
+      "explanation": "Cross-Entropy Loss-এর Logit Derivative হলো Model-এর Softmax Probability π বিয়োগ Target Distribution y (যেখানে Multi-Positive ক্ষেত্রে y সাধারণ One-Hot নয়)। এরপর Query Vector-এর Gradient পেতে Candidate Vector ও 1/τ গুণক যুক্ত হয়।"
     },
     {
       "id": "ch32_q12",
@@ -1387,7 +1387,7 @@
     },
     {
       "id": "ch32_q16",
-      "question": "Ranker-এর পাঁচটি Feature স্ট্যান্ডার্ডাইজ করার জন্য Scaler-এর গড় ও আদর্শ বিচ্যুতি (Mean/Std) কোথায় ফিট করা হয়েছে?",
+      "question": "Ranker-এর পাঁচটি Feature Standardize করার জন্য Scaler-এর Mean ও Standard Deviation (Mean/Std) কোথায় ফিট করা হয়েছে?",
       "options": [
         "কেবল পর্দায় দেখানো কয়েকটি প্রার্থীর ওপর",
         "শুধুমাত্র Ranker Role-এর Training Feature সারিগুলোর ওপর",
@@ -1395,7 +1395,7 @@
         "বেছে নেওয়া একটি মাত্র উদাহরণ কেসের ওপর"
       ],
       "answer": 1,
-      "explanation": "Data লিকেজ এড়াতে পপুলেশন আদর্শ বিচ্যুতি (ddof = 0) ও গড় কেবল Ranker Role-এর Training Feature-গুলোর ওপর ফিট করা হয়েছে, এবং Inference-এর সময় একই ক্রমে ঠিক একবার প্রয়োগ করা হয়।"
+      "explanation": "Data Leakage এড়াতে Population Standard Deviation (ddof = 0) ও Mean কেবল Ranker Role-এর Training Feature-গুলোর ওপর ফিট করা হয়েছে, এবং Inference-এর সময় একই ক্রমে ঠিক একবার প্রয়োগ করা হয়।"
     },
     {
       "id": "ch32_q17",
@@ -1419,7 +1419,7 @@
         "না, সামঞ্জস্য বজায় রাখতে সেটিকে স্থির (Frozen) রাখা হয়েছে"
       ],
       "answer": 3,
-      "explanation": "Ranker-এর Feature তৈরির আগেই ট্রেন হওয়া Retriever-কে স্থির (Freeze) করে দেওয়া হয়েছে। পরে আবার ফিট করলে Score-এর বণ্টন, Cache করা Vector এবং স্কেলারের সামঞ্জস্য নষ্ট হয়ে যেত।"
+      "explanation": "Ranker-এর Feature তৈরির আগেই Train হওয়া Retriever-কে Freeze করে দেওয়া হয়েছে। পরে আবার ফিট করলে Score-এর Distribution, Cache করা Vector এবং Scaler-এর সামঞ্জস্য নষ্ট হয়ে যেত।"
     },
     {
       "id": "ch32_q19",
@@ -1498,12 +1498,12 @@
       "question": "ধরুন একটি Importance Estimator-এর প্রত্যাশিত মান নিখুঁত, অর্থাৎ $\\mathbb{E}[\\hat{Z}] = Z$। এখান থেকে কি স্বয়ংক্রিয়ভাবে নিশ্চিত হয় যে $\\mathbb{E}[\\log(\\hat{Z})] = \\log(Z)$ হবে?",
       "options": [
         "হ্যাঁ, সবসময়ই দুটি সমান হবে",
-        "না, লগারিদমের অরৈখিকতার (Nonlinearity) কারণে লগ-অনুমানে আলাদা Bias থাকতে পারে",
+        "না, Logarithm-এর Non-linearity-এর কারণে Log-estimate-এ আলাদা Bias থাকতে পারে",
         "কেবল Temperature = 0 হলে সমান হবে",
         "হ্যাঁ, কারণ Z-এর মান সবসময় 1 হয়"
       ],
       "answer": 1,
-      "explanation": "লগারিদম একটি অবতল অরৈখিক ফাংশন হওয়ায় প্রত্যাশা (Expectation) এবং log-এর ক্রম অদলবদল করলে মান বদলে যায় (Jensen's Inequality)। তাই হরের অনুমান Unbiased হলেও সসীম স্যাম্পলের লগ-Loss-এ নিচের দিকে পক্ষপাত থাকে।"
+      "explanation": "Logarithm একটি Concave Non-linear Function হওয়ায় Expectation এবং log-এর ক্রম অদলবদল করলে মান বদলে যায় (Jensen's Inequality)। তাই হরের অনুমান Unbiased হলেও finite sample-এর log-Loss-এ নিচের দিকে Bias থাকে।"
     },
     {
       "id": "ch32_q_oracle_revision",
@@ -1549,11 +1549,11 @@
     {
       "id": "ch32_ex_standardize",
       "title": "বাস্তব Feature Standardization হিসাব",
-      "prompt": "প্রথম সংরক্ষিত কেসের প্রথম প্রার্থীর কাঁচা Tower-Dot Feature, সংরক্ষিত গড় (Mean) ও আদর্শ বিচ্যুতি (Scale/Std) নিন এবং Standardized Feature মানটি হিসাব করে লিখুন।",
+      "prompt": "প্রথম সংরক্ষিত কেসের প্রথম Candidate-এর কাঁচা Tower-Dot Feature, সংরক্ষিত Mean ও Standard Deviation (Scale/Std) নিন এবং Standardized Feature মানটি হিসাব করে লিখুন।",
       "starter": "# Run Python locally, then enter result.\nresult = None\nprint(result)\n",
       "solution": "from pathlib import Path\nimport json\n\nlab = json.loads(\n    Path(\"assets/datasets/movielens/deep_recommendation_lab.json\").read_text()\n)\nx = lab[\"samples\"][0][\"scores\"][0][\"features\"][0]\nresult = (x - lab[\"ranker_settings\"][\"feature_mean\"][0]) / lab[\"ranker_settings\"][\n    \"feature_std\"\n][0]\nprint(result)\n",
       "expected": 2.136474308697922,
-      "explanation": "স্ট্যান্ডার্ডাইজড মানটি প্রায় 2.1364743। মনে রাখবেন, এই Scaler-টি শুধুমাত্র Ranker Role-এর Training Feature সারিগুলোর ওপর ফিট করা হয়েছে। সঠিক Feature ইনডেক্স (এখানে ইনডেক্স 0) মিলিয়ে গড় বিয়োগ ও বিচ্যুতি দিয়ে ভাগ করতে হবে।"
+      "explanation": "Standardized মানটি প্রায় 2.1364743। মনে রাখবেন, এই Scaler-টি শুধুমাত্র Ranker Role-এর Training Feature সারিগুলোর ওপর ফিট করা হয়েছে। সঠিক Feature Index (এখানে Index 0) মিলিয়ে Mean বিয়োগ করে Standard Deviation দিয়ে ভাগ করতে হবে।"
     },
     {
       "id": "ch32_ex_logit",
@@ -1630,7 +1630,7 @@
       "title": "Contrastive Loss-এর Gradient ও Normalization ডেরিভেশন",
       "tag": "Math",
       "prompt": "Multi-Positive Cross-Entropy Loss-এর ক্ষেত্রে Query Vector-এর Gradient ডিরাইভ করুন এবং দেখান Temperature ও L2 Normalization ঠিক কোথায় কাজ করে।",
-      "answer": "Multi-Positive Cross-Entropy-তে Softmax বণ্টন $\\pi$ এবং সমানভাবে বণ্টিত পজিটিভ লক্ষ্যমাত্রা $y$ (যেখানে $y_j = \\frac{1}{|P_u|}$ যদি $j \\in P_u$, অন্যথায় $0$) হলে ধাপে ধাপে Gradient হয়:\n\n- **Logit Gradient:** প্রতিটি কলামের Logit $z_j = \\frac{q^\\top v_j}{\\tau}$-এর সাপেক্ষে $\\frac{\\partial \\mathcal{L}_u}{\\partial z_j} = \\pi_j - y_j$।\n- **Normalized Query Vector $q$-এর Gradient:** Chain Rule প্রয়োগ করে পাই (Batch Mean নিলে $\\frac{1}{B}$ গুণ হয়):\n\n$$\n\\frac{\\partial \\mathcal{L}_u}{\\partial q} = \\frac{1}{\\tau}\\sum_{j} (\\pi_j - y_j) v_j, \\qquad \\frac{\\partial \\mathcal{L}_{\\mathrm{batch}}}{\\partial q_u} = \\frac{1}{B \\tau}\\sum_{j} (\\pi_{u,j} - y_{u,j}) v_j\n$$\n\n- **$L_2$ Normalization-এর Jacobian:** Encoder-এর কাঁচা Output $a$ থেকে $q = \\frac{a}{\\|a\\|_2}$ তৈরি হওয়ায় অশূন্য নর্ম অঞ্চলে $\\frac{\\partial q}{\\partial a} = \\frac{I - q q^\\top}{\\|a\\|_2}$ গুণ হয়—যা Gradient-কে Unit Sphere-এর **Tangent** বরাবর ঘুরিয়ে দেয়।\n- **Candidate Gradient ও বাস্তব সতর্কতা:** প্রতিটি Candidate Vector $v_j$-এ পুরো Batch-এর সব Query সারি থেকে আসা Gradient একত্রে Accumulate হয়। কোডে স্থিতিশীল `log_softmax`, $|P_u| \\ge 1$ Guard এবং Deduplication নিশ্চিত করব; আর মনে রাখব স্থির Vector-এ $\\tau > 0$ Ranking Order না বদলালেও Training-এ Gradient স্কেল বদলে ভিন্ন Weights শেখাতে পারে।",
+      "answer": "Multi-Positive Cross-Entropy-তে Softmax Distribution $\\pi$ এবং সমানভাবে ভাগ করা পজিটিভ Target Distribution $y$ (যেখানে $y_j = \\frac{1}{|P_u|}$ যদি $j \\in P_u$, অন্যথায় $0$) হলে ধাপে ধাপে Gradient হয়:\n\n- **Logit Gradient:** প্রতিটি কলামের Logit $z_j = \\frac{q^\\top v_j}{\\tau}$-এর সাপেক্ষে $\\frac{\\partial \\mathcal{L}_u}{\\partial z_j} = \\pi_j - y_j$।\n- **Normalized Query Vector $q$-এর Gradient:** Chain Rule প্রয়োগ করে পাই (Batch Mean নিলে $\\frac{1}{B}$ গুণ হয়):\n\n$$\n\\frac{\\partial \\mathcal{L}_u}{\\partial q} = \\frac{1}{\\tau}\\sum_{j} (\\pi_j - y_j) v_j, \\qquad \\frac{\\partial \\mathcal{L}_{\\mathrm{batch}}}{\\partial q_u} = \\frac{1}{B \\tau}\\sum_{j} (\\pi_{u,j} - y_{u,j}) v_j\n$$\n\n- **$L_2$ Normalization-এর Jacobian:** Encoder-এর কাঁচা Output $a$ থেকে $q = \\frac{a}{\\|a\\|_2}$ তৈরি হওয়ায় অশূন্য নর্ম অঞ্চলে $\\frac{\\partial q}{\\partial a} = \\frac{I - q q^\\top}{\\|a\\|_2}$ গুণ হয়—যা Gradient-কে Unit Sphere-এর **Tangent** বরাবর ঘুরিয়ে দেয়।\n- **Candidate Gradient ও বাস্তব সতর্কতা:** প্রতিটি Candidate Vector $v_j$-এ পুরো Batch-এর সব Query সারি থেকে আসা Gradient একত্রে Accumulate হয়। কোডে স্থিতিশীল `log_softmax`, $|P_u| \\ge 1$ Guard এবং Deduplication নিশ্চিত করব; আর মনে রাখব স্থির Vector-এ $\\tau > 0$ Ranking Order না বদলালেও Training-এ Gradient স্কেল বদলে ভিন্ন Weights শেখাতে পারে।",
       "prerequisiteLessons": [
         "ch32_gradients"
       ]
@@ -1663,7 +1663,7 @@
       "title": "কেন Ranker-এর Sigmoid আউটপুট সরাসরি CTR নয়?",
       "tag": "Statistics",
       "prompt": "ইউজারের দেওয়া তারকা রেটিংয়ের ওপর ট্রেন করা BCE Ranker কোনো সিনেমার জন্য Sigmoid Score 0.80 দিল। প্রোডাক্ট টিম যদি এটিকে '80% ক্লিক করার সম্ভাবনা' ধরে নেয়, তবে আপনি তাদের কী বোঝাবেন?",
-      "answer": "আমি প্রোডাক্ট টিমকে স্পষ্টভাবে বুঝিয়ে বলব যে Sigmoid Score $0.80$ মানে কোনোভাবেই **\"Serving-এ ৮০% ক্লিক রেট (CTR)\"** নয়—এটি কেবল ইউজারের দেখা ও রেট করা সিনেমাগুলোর মধ্যে $\\mathrm{stars} \\ge 4$ হওয়ার একটি **Uncalibrated Score**।\n\n- **কোনো Impression Denominator নেই:** আমাদের MovieLens Dataset-এ User কী কী স্ক্রিনে দেখে ক্লিক করেননি, সেই Impression ও Click লগ অনুপস্থিত।\n- **Sample Selection Bias ও Distribution Shift:** ইউজারের স্বেচ্ছায় রেট করা সিনেমার বণ্টন আর Retriever-এর তুলে আনা না-দেখা প্রার্থীদের বণ্টন সম্পূর্ণ আলাদা।\n- **সঠিক CTR পাওয়ার শর্ত:** প্রকৃত সম্ভাব্যতা চাইলে সঠিক Impression Log-এ Training, আলাদা Calibration পরীক্ষা (Reliability Diagram বা Platt/Isotonic Calibration) এবং অনলাইন A/B Test প্রয়োজন—পাশাপাশি Pointwise BCE কমা মানেই Top-$10$ ব্যবসায়িক Utility সেরা হওয়া নয়।"
+      "answer": "আমি প্রোডাক্ট টিমকে স্পষ্টভাবে বুঝিয়ে বলব যে Sigmoid Score $0.80$ মানে কোনোভাবেই **\"Serving-এ ৮০% ক্লিক রেট (CTR)\"** নয়—এটি কেবল ইউজারের দেখা ও রেট করা সিনেমাগুলোর মধ্যে $\\mathrm{stars} \\ge 4$ হওয়ার একটি **Uncalibrated Score**।\n\n- **কোনো Impression Denominator নেই:** আমাদের MovieLens Dataset-এ User কী কী স্ক্রিনে দেখে ক্লিক করেননি, সেই Impression ও Click লগ অনুপস্থিত।\n- **Sample Selection Bias ও Distribution Shift:** ইউজারের স্বেচ্ছায় রেট করা সিনেমার Distribution আর Retriever-এর তুলে আনা না-দেখা Candidate-গুলোর Distribution সম্পূর্ণ আলাদা।\n- **সঠিক CTR পাওয়ার শর্ত:** প্রকৃত সম্ভাব্যতা চাইলে সঠিক Impression Log-এ Training, আলাদা Calibration পরীক্ষা (Reliability Diagram বা Platt/Isotonic Calibration) এবং অনলাইন A/B Test প্রয়োজন—পাশাপাশি Pointwise BCE কমা মানেই Top-$10$ ব্যবসায়িক Utility সেরা হওয়া নয়।"
     },
     {
       "title": "একাধিক Candidate উৎসের Union ও ন্যায্য খরচের তুলনা",

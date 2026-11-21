@@ -1,5 +1,21 @@
 # Curriculum ও app audit
 
+## Natural Bangladeshi CS Instructor Style & RichProse Math-Safe Table Fix (`2.6.0+56`)
+
+আগের `v2.5.0+55` ভার্সনের পর পুরো কোডবেস ও কনটেন্ট গভীরভাবে অডিট করে দুটি গুরুত্বপূর্ণ সমস্যা চিহ্নিত ও সম্পূর্ণ সমাধান করা হয়েছে:
+
+1. **গুরুত্বপূর্ণ `RichProse` Table-Pipe রেন্ডারিং বাগ ফিক্স (`38`টি টেবিল ঠিক হয়েছে):**
+   - `lib/ui/rich_prose.dart`-এর `_splitTableRow()` আগে সরল `clean.split('|')` ব্যবহার করায় যেসব Markdown টেবিল সেলে LaTeX norm বা absolute value ছিল (যেমন `$\lambda \|w\|_1$`, `$\frac{\lambda}{2}\|w\|_2^2$`, `$|A_\tau|$`, `$|y - F|$`), সেগুলো মাঝখান থেকে ভেঙে যেত। এখন math/code-aware parser ও LaTeX-aware column width estimation (`_visibleCellLength`) যোগ করে সব ৩৮টি টেবিল নিখুঁত করা হয়েছে এবং `test/viva_and_rich_prose_test.dart`-এ regression test যুক্ত হয়েছে।
+   - পাশাপাশি `chapter_44`-এর ৩টি exercise-এ raw `2**30` / `0.75**6` (যা unbalanced bold সতর্কতা দিত) পরিষ্কার LaTeX (`$2^{30}$`, `$0.75^6$`) করা হয়েছে।
+2. **Literal English-to-Bangla Calques অপসারণ ও Natural Bangladeshi CS Instructor Tone:**
+   - **320 FAANG Viva Hot Questions (১৬টি প্যাক):** আগের **`1,122`টি** literal calque (`Weight-এর ওপর জরিমানা/শাস্তি`, `জ্যামিতিক ব্যাখ্যা`, `ঢাল বা অন্তরজ`, `সম্ভাবনার দৃষ্টিভঙ্গি`, `মিলযুক্ত Feature`, `পূর্ব অনুমান`, `মাপ সমান করা`, `আপনাআপনি Feature বাছাই`, `অদরকারি Feature`, `এলোমেলো শব্দ`, `গাছ/গাছের`, `সারণি`, `ছড়ানো ভাব`, `বণ্টন`, `রৈখিক`, `প্রশিক্ষণ` ইত্যাদি) সম্পূর্ণ বদলে একজন দক্ষ বাংলাদেশি CS/ML instructor-এর মতো স্বাভাবিক বাংলা + স্ট্যান্ডার্ড ইংরেজি Technical Terms-এ পুনর্লিখন করা হয়েছে (`1,122` → **`0` literal calques**)।
+   - **50 Chapters (Books 1–6 · `921`টি আইটেম):** সব ৫০টি অধ্যায়ের prose, block titles, subtitles, checkpoints, interviews, quizzes ও exercises থেকে **`1,013`টি** literal calque (`রৈখিক`, `বৈশিষ্ট্য`, `স্থানাঙ্ক`, `বণ্টন`, `আপনাআপনি`, `প্রতিপাদন`, `শাস্তি`, `জরিমানা`, `বিচ্যুতি`, `ঢাল`, `অন্তরজ`, `পুনরুৎপাদনযোগ্য`, `প্রশিক্ষণ`, `যাচাইকরণ`, `প্রান্তিক মান`, `সারণি`, `পরিমাপক`, `শ্রেণিবিন্যাস`, `উল্টানো`) প্রাকৃতিক বাংলা + ইংরেজি Technical Term-এ রূপান্তর করা হয়েছে (`1,013` → **`0`**)।
+   - **120 Coding Arena প্রবলেম + Dart UI:** বাকি `23`টি calque ও UI হেডার (`কোডবেস` → `Codebase`) পরিষ্কার করে পুরো Coding Arena-তে **`0` literal calques** নিশ্চিত করা হয়েছে।
+3. **পূর্ণাঙ্গ স্বয়ংক্রিয় যাচাই (`2.6.0+56`):**
+   - **`53,041 / 53,041` LaTeX equations** `flutter_math_fork`-এ **`0` parse error** সহ পাস (`build/editorial-math-check.json`)।
+   - `flutter analyze` (`0` issues), **`813 / 813` Flutter টেস্ট পাস** (সব ৫০টি অধ্যায়, সব ১২০টি Coding Arena প্রবলেম, সব ৩২০টি Viva প্রশ্ন `390x844` মোবাইল স্ক্রিনে `0` exception-এ রেন্ডার)।
+   - `python tool/check_book_revision.py --fonts --package` পাস (`passed: true`, `0` missing font glyphs, `INTERNET` permission নেই)।
+
 ## 100% App-Wide Plain Natural Bangla, English Technical Terms & Full Native LaTeX (`2.5.0+55`)
 
 পুরো অ্যাপের সব ৫০টি অধ্যায় (Lessons, Subtitles, Block Titles, Lab Intros, Checkpoints, Quizzes, Coding Exercises, Chapter Interviews), **১২০টি Coding Arena প্রবলেম** এবং **৩২০টি FAANG Viva Hot Questions** একযোগে অডিট ও সম্পূর্ণ আপগ্রেড করা হয়েছে:

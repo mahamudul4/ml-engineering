@@ -108,7 +108,7 @@ class _CodingArenaPageState extends State<CodingArenaPage> {
                         ),
                         const SizedBox(height: 10),
                         const Text(
-                          'কোডবেস বুঝুন। আগে নিজে ভাবুন। তারপর সমাধান মিলিয়ে নিন।',
+                          'Codebase বুঝুন। আগে নিজে ভাবুন। তারপর সমাধান মিলিয়ে নিন।',
                           style: TextStyle(
                             fontFamilyFallback: ['NotoSansBengali'],
                             fontSize: 22,

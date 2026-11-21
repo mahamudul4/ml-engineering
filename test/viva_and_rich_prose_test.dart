@@ -140,7 +140,7 @@ print(round(bias_sq + var + noise, 2))
 | Symptom | Formula | Fix |
 | --- | --- | --- |
 | High Train Error | $\mathrm{Bias}^2 \gg 0$ | Bigger model / more features |
-| Train-Val Gap | $\mathrm{Var}(\hat{f}) \gg 0$ | Regularization / more data |''';
+| Train-Val Gap | $\lambda \|w\|_1 + \frac{\lambda}{2}\|w\|_2^2$ | Regularization / $|A_\tau|$ |''';
 
       for (final width in [320.0, 390.0]) {
         for (final scale in [1.0, 1.6, 2.0]) {

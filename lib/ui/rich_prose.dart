@@ -287,7 +287,41 @@ class RichProse extends StatelessWidget {
     var clean = line.trim();
     if (clean.startsWith('|')) clean = clean.substring(1);
     if (clean.endsWith('|')) clean = clean.substring(0, clean.length - 1);
-    return clean.split('|').map((cell) => cell.trim()).toList();
+    final cells = <String>[];
+    final buf = StringBuffer();
+    var inCode = false;
+    var inMath = false;
+    for (var i = 0; i < clean.length; i++) {
+      final ch = clean[i];
+      if (ch == '`' && !inMath) {
+        inCode = !inCode;
+        buf.write(ch);
+      } else if (ch == r'$' && !inCode) {
+        if (i == 0 || clean[i - 1] != r'\') {
+          inMath = !inMath;
+        }
+        buf.write(ch);
+      } else if (ch == '|' && !inCode && !inMath) {
+        if (i > 0 && clean[i - 1] == r'\') {
+          buf.write(ch);
+        } else {
+          cells.add(buf.toString().trim());
+          buf.clear();
+        }
+      } else {
+        buf.write(ch);
+      }
+    }
+    cells.add(buf.toString().trim());
+    return cells;
+  }
+
+  static int _visibleCellLength(String cell) {
+    // Strip LaTeX command names so column width estimates match rendered width.
+    final stripped = cell
+        .replaceAll(RegExp(r'\\[a-zA-Z]+'), 'x')
+        .replaceAll(RegExp(r'[${}`*]'), '');
+    return stripped.length;
   }
 
   Widget _buildBlock(
@@ -417,13 +451,14 @@ class RichProse extends StatelessWidget {
     final cellStyle = baseStyle.copyWith(fontSize: 12, height: 1.7);
     final colWidths = <int, TableColumnWidth>{};
     for (var c = 0; c < colCount; c++) {
-      var maxLen = table.headers[c].length;
+      var maxLen = _visibleCellLength(table.headers[c]);
       for (final row in table.rows) {
-        if (c < row.length && row[c].length > maxLen) {
-          maxLen = row[c].length;
+        if (c < row.length) {
+          final len = _visibleCellLength(row[c]);
+          if (len > maxLen) maxLen = len;
         }
       }
-      final w = (maxLen * 7.5 + 36).clamp(112.0, 250.0);
+      final w = (maxLen * 7.8 + 40).clamp(112.0, 260.0);
       colWidths[c] = FixedColumnWidth(w);
     }
 
