@@ -77,7 +77,7 @@ class _RecurrentLabState extends State<RecurrentLab> {
           const Text('Read one step. Carry the right state.', style: _title),
           _gap,
           const Text(
-            'Actual14-day count sequence, hidden size3। RNN/LSTM ও initial GRU seed-defined untrained references; trained GRU main forecasting model। Step বেছে hidden/cell state ও gates অনুসরণ করুন। প্রতিটি window zero state থেকে শুরু; cells-এর values model-quality ranking নয়।',
+            'বাস্তব 14 দিনের Count Sequence, Hidden Size 3। RNN/LSTM ও initial GRU seed-defined untrained references; trained GRU main forecasting model। একটি Step বেছে Hidden State, Cell State আর Gate-গুলোর মান দেখুন। প্রতিটি Window শূন্য State থেকে শুরু হয়। Cell-এর মান দেখে Model-এর মানের Ranking করা যায় না।',
             style: _bn,
           ),
           _gap,
@@ -219,7 +219,7 @@ class _PaddingLabState extends State<PaddingLab> {
           const Text('Padding is storage, not an observation.', style: _title),
           _gap,
           const Text(
-            'তিন actual history windows-এর declared prefix lengths5/14/9; source missing data নয়। Right pad standardized0 দিয়ে common length14। Zero input-ও recurrent biases/hidden transitions চালায়। PyTorch packed final state valid prefix-এর সঙ্গে মেলে; dense padded last state আলাদা হতে পারে।',
+            'তিনটি বাস্তব History Window-এর Prefix Length যথাক্রমে 5/14/9 ধরে নেওয়া হয়েছে। উৎসের Data-তে কোনো মান Missing থাকার কারণে এই দৈর্ঘ্য নেওয়া হয়নি। Right pad standardized0 দিয়ে common length14। Zero input-ও recurrent biases/hidden transitions চালায়। PyTorch packed final state valid prefix-এর সঙ্গে মেলে; dense padded last state আলাদা হতে পারে।',
             style: _bn,
           ),
           _gap,
@@ -357,7 +357,7 @@ class _SequenceForecastLabState extends State<SequenceForecastLab> {
           const Text('Fix the origin. Separate the protocols.', style: _title),
           _gap,
           const Text(
-            'Forecast origin-এর আগের14 actual daily counts input। One-step prediction বা fixed-origin recursive7 days দেখুন। Recursive next inputs-এ নিজের predictions আসে; origin-এর পরে observed future counts model-কে দেওয়া হয় না। Actual outcomes শুধু historical error inspection-এর জন্য।',
+            'Forecast origin-এর আগের14 actual daily counts input। One-step prediction বা fixed-origin recursive7 days দেখুন। Recursive Forecast-এ Model-এর নিজের Prediction পরের Input হয়। Forecast Origin-এর পরের Observed Count Model-কে দেওয়া হয় না। বাস্তব Outcome শুধু আগের Prediction-এর Error দেখতে ব্যবহার করা হয়।',
             style: _bn,
           ),
           _gap,

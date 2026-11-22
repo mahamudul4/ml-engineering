@@ -190,7 +190,7 @@ class _ConvolutionLabState extends State<ConvolutionLab> {
           ),
           _gap,
           const Text(
-            'Actual 8×8 digit pixels /16। Sobel/average mathematical kernels দিয়ে cross-correlation; PyTorch Conv2d kernel flip করে না। Input-এর orange cells selected output window; padded positions zero। এই filters learned CNN weights নয়। Output cell tap করে হিসাব বদলান।',
+            'বাস্তব 8×8 Digit Image-এর Pixel মান 16 দিয়ে ভাগ করা হয়েছে। Sobel/average mathematical kernels দিয়ে cross-correlation; PyTorch Conv2d kernel flip করে না। Input-এ কমলা রঙে বাছাই করা Output Window দেখা যায়। Padding-এর জায়গাগুলোর মান শূন্য। এই filters learned CNN weights নয়। Output cell tap করে হিসাব বদলান।',
             style: _bn,
           ),
           _gap,
@@ -321,7 +321,7 @@ class _PoolingLabState extends State<PoolingLab> {
           ),
           _gap,
           const Text(
-            'Actual image-এ 2×2 window, stride2 দিয়ে max/average pooling। এক pixel right shift zero-fill করে; torch.roll-এর মতো wrap নয়। Pooling output পরিবর্তন হতে পারে—exact translation invariance নয়। Transformation label-preserving কি না task-specific; main training-এ augmentation নেই।',
+            'Actual image-এ 2×2 window, stride2 দিয়ে max/average pooling। এক Pixel ডানে সরালে ফাঁকা জায়গায় 0 বসে। torch.roll-এর মতো অন্য পাশ থেকে Pixel ফিরে আসে না। Pooling output পরিবর্তন হতে পারে—exact translation invariance নয়। Transformation label-preserving কি না task-specific; main training-এ augmentation নেই।',
             style: _bn,
           ),
           _gap,
@@ -420,7 +420,7 @@ class _TransferLabState extends State<TransferLab> {
           const Text('Reuse the features. Verify what changed.', style: _title),
           _gap,
           const Text(
-            'Source task digits0–4, target task digits5–9। Local source-pretrained CNN backbone ও same fresh target head থেকে frozen/fine-tune branches শুরু। এটি ImageNet weights নয়। CNN forward Dart-এ recompute হয়; app model train করে না। তিনটি displayed images target training rows, unseen predictions নয়।',
+            'Source Task-এ Digit 0–4, আর Target Task-এ Digit 5–9। Local source-pretrained CNN backbone ও same fresh target head থেকে frozen/fine-tune branches শুরু। এটি ImageNet weights নয়। CNN forward Dart-এ recompute হয়; app model train করে না। এখানে দেখানো তিনটি ছবি Target Training Data থেকে নেওয়া। এগুলো Unseen Data-র Prediction নয়।',
             style: _bn,
           ),
           _gap,
@@ -504,7 +504,7 @@ class _TransferLabState extends State<TransferLab> {
           ),
           _gap,
           const Text(
-            'requires_grad=False ও optimizer group exclusion দুটো audit করা হয়েছে। Frozen branch-এ backbone values unchanged; fine-tune-এ বদলেছে। BN থাকলে buffers/mode আলাদা policy চাই। Same-source diagnostic validation থেকে universal transfer benefit বা production OCR দাবি নয়।',
+            'requires_grad=False ও optimizer group exclusion দুটো audit করা হয়েছে। Frozen branch-এ backbone values unchanged; fine-tune-এ বদলেছে। BN থাকলে Buffer আর Mode কীভাবে সামলাবেন, সেটাও আলাদাভাবে ঠিক করতে হবে। Same-source diagnostic validation থেকে universal transfer benefit বা production OCR দাবি নয়।',
             style: _bn,
           ),
           _gap,

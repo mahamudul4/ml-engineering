@@ -26,7 +26,7 @@ Widget _asset(Future<NeuralAssets> f, Widget Function(NeuralAssets) build) =>
       },
     );
 Widget _source(NeuralAssets a) => Text(
-  'UCI Wine Quality · Cortez et al. (2009) · CC BY 4.0. Existing 966 fit rows → inner train ${a.trainRows} / validation ${a.validationRows}; group-disjoint, scaler inner training-এ fit। Dart calculations PyTorch CPU float64 references-এর সঙ্গে যাচাইকৃত। App-এ Python training engine নেই; Chapter 14 decision/test পুনরায় evaluate হয়নি।',
+  'UCI Wine Quality · Cortez et al. (2009) · CC BY 4.0. Existing 966 fit rows → inner train ${a.trainRows} / validation ${a.validationRows}; group-disjoint, scaler inner training-এ fit। Dart-এর হিসাব PyTorch CPU float64 Reference-এর সঙ্গে মিলিয়ে দেখা হয়েছে। App-এ Python training engine নেই; Chapter 14 decision/test পুনরায় evaluate হয়নি।',
   style: _bn,
 );
 Widget _graph() => Wrap(
@@ -77,7 +77,7 @@ class _ForwardLabState extends State<ForwardLab> {
           const Text('Follow one row through the network.', style: _title),
           _gap,
           const Text(
-            '11টি standardized chemistry features → 4টি hidden units → একটি logit। একটি actual inner-training row বেছে প্রতিটি weighted sum ও activation অনুসরণ করুন। Tanh toggle একই weights-এর what-if; নতুন trained model নয়।',
+            '11টি standardized chemistry features → 4টি hidden units → একটি logit। Inner Training Data থেকে একটি Row বেছে প্রতিটি Weighted Sum আর Activation-এর হিসাব দেখুন। Tanh toggle একই weights-এর what-if; নতুন trained model নয়।',
             style: _bn,
           ),
           _gap,
@@ -237,7 +237,7 @@ class _BackpropLabState extends State<BackpropLab> {
           ),
           _gap,
           const Text(
-            'প্রথম 8 actual inner-training rows ও initial weights-এ analytical backprop। Mean/sum বদলালে সব gradients-এর scale বদলায়। Hidden detach করলে forward values ও output-layer gradients একই থাকে, কিন্তু first-layer .grad হয় None; সেটিকে zero derivative বলা ঠিক নয়।',
+            'প্রথম 8 actual inner-training rows ও initial weights-এ analytical backprop। Mean-এর বদলে Sum নিলে সব Gradient-এর Scale বদলায়। Hidden detach করলে forward values ও output-layer gradients একই থাকে, কিন্তু first-layer .grad হয় None; সেটিকে zero derivative বলা ঠিক নয়।',
             style: _bn,
           ),
           _gap,
@@ -321,7 +321,7 @@ class _BackpropLabState extends State<BackpropLab> {
           ),
           _gap,
           const Text(
-            'একটি row-এর negative preactivation-এ ReLU gate 0 হলে সেই row থেকে gradient 0 আসে। অন্য rows সক্রিয় থাকলে batch gradient nonzero হতে পারে। Dead unit, disconnected graph ও mean/sum scaling আলাদা diagnosis।',
+            'কোনো Row-এর Preactivation ঋণাত্মক হলে ReLU Gate 0 হয়। সেই Row থেকে Gradient-ও 0 আসে। অন্য rows সক্রিয় থাকলে batch gradient nonzero হতে পারে। Dead unit, disconnected graph ও mean/sum scaling আলাদা diagnosis।',
             style: _bn,
           ),
           _gap,
@@ -430,7 +430,7 @@ class _TrainingLabState extends State<TrainingLab> {
           ),
           _gap,
           const Text(
-            'Train ও validation BCE একসঙ্গে পড়ুন; ছোট gap একা correctness বা নতুন-domain generalization প্রমাণ নয়। এই reused source আগে দেখা হয়েছে। Validation দেখে recipe বদলালে সেটিও selection; নতুন confirmatory evidence প্রয়োজন। Epoch 120 পূর্বনির্ধারিত endpoint, curve দেখে বেছে নেওয়া winner নয়।',
+            'Train ও Validation BCE একসঙ্গে দেখুন। Gap ছোট হলেই Model ঠিক আছে বা নতুন Domain-এ Generalize করবে বলে ধরে নেওয়া যায় না। এই reused source আগে দেখা হয়েছে। Validation দেখে recipe বদলালে সেটিও selection; নতুন confirmatory evidence প্রয়োজন। Epoch 120 পূর্বনির্ধারিত endpoint, curve দেখে বেছে নেওয়া winner নয়।',
             style: _bn,
           ),
           _gap,

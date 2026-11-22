@@ -84,7 +84,7 @@ class _AttentionLabState extends State<AttentionLab> {
           const Text('Project. Compare. Mix the values.', style: _title),
           _gap,
           const Text(
-            'Actual count→4 features, pre-norm থেকে learned Q/K/V। দুই head-এর প্রতিটির dimension2। Query row ও key cell বেছে scaled dot-product, causal mask এবং weighted value দেখুন। Attention weight নিজে causal explanation বা feature importance নয়।',
+            'Actual count→4 features, pre-norm থেকে learned Q/K/V। দুই head-এর প্রতিটির dimension2। একটি Query Row ও Key Cell বেছে Scaled Dot Product, Causal Mask আর Weighted Value দেখুন। Attention weight নিজে causal explanation বা feature importance নয়।',
             style: _bn,
           ),
           _gap,
@@ -135,7 +135,7 @@ class _AttentionLabState extends State<AttentionLab> {
           ),
           _gap,
           const Text(
-            'Allowed scores থেকে maximum বাদ দিয়ে exp/row-sum করি। Masked keys-এর weight ঠিক0; valid row sum1, কারণ এখানে dropout0। Head outputs concatenate করার পরে learned output projection ও residual আছে—heatmap পুরো model explanation নয়।',
+            'ব্যবহার করা যায় এমন Score-গুলো থেকে সর্বোচ্চ Score বিয়োগ করি। তারপর প্রতিটির exp বের করি। যে Row-এর Score, সেই Row-এর সব exp-এর যোগফল দিয়ে ভাগ করি। Masked Key-গুলোর Weight ঠিক 0। Valid Row-এর Weight যোগ করলে 1 হয়, কারণ এখানে Dropout 0। Head outputs concatenate করার পরে learned output projection ও residual আছে—heatmap পুরো model explanation নয়।',
             style: _bn,
           ),
           _gap,
@@ -285,7 +285,7 @@ class _AttentionMaskLabState extends State<AttentionMaskLab> {
           const Text('Block the key. Preserve the prefix.', style: _title),
           _gap,
           const Text(
-            'Query position6 ধরে দুই mask combine করি: causal blocks later keys; key-padding blocks positions≥valid length। Valid10 একটি declared history-prefix truncation, source missing data নয়। Padding mask শুধু keys বাদ দেয়; padded query outputs বা loss নিজে বাদ যায় না।',
+            'Query position6 ধরে দুই mask combine করি: causal blocks later keys; key-padding blocks positions≥valid length। Valid Length 10 ধরে History Prefix ছোট করা হয়েছে। উৎসের Data-তে কোনো মান Missing থাকার কারণে এটা করা হয়নি। Padding mask শুধু keys বাদ দেয়; padded query outputs বা loss নিজে বাদ যায় না।',
             style: _bn,
           ),
           _gap,
@@ -351,7 +351,7 @@ class _AttentionMaskLabState extends State<AttentionMaskLab> {
           ),
           _gap,
           const Text(
-            'Counterfactual audit: query6-এর পরে valid suffix-এর একই actual values reverse করি; prefix values ও positions অপরিবর্তিত। এটি নতুন real observation নয়। Causal block current state বদলাতে দেয় না; full attention later context নিতে পারে। Forecast origin-এ পুরো14-day history জানা থাকলে full past-window attention নিজে target leakage নয়; per-position online prediction-এর availability আলাদা।',
+            'Counterfactual audit: Query 6-এর পরের Valid Suffix-এ একই বাস্তব মানগুলোর ক্রম উল্টে দিই। Prefix-এর মান আর Position একই থাকে। এটি নতুন real observation নয়। Causal block current state বদলাতে দেয় না; full attention later context নিতে পারে। Forecast origin-এ পুরো14-day history জানা থাকলে full past-window attention নিজে target leakage নয়; per-position online prediction-এর availability আলাদা।',
             style: _bn,
           ),
           _gap,
@@ -477,7 +477,7 @@ class _TransformerBlockLabState extends State<TransformerBlockLab> {
           ),
           _gap,
           const Text(
-            'Position off হলো একই trained weights-এর inference intervention; separately trained no-position baseline নয়। Causal mask নিজেও order structure দেয়, তাই positional encoding সরালেই model পুরো permutation-invariant হয় না। Sinusoidal offsets প্রতি14-day window-এ reset; calendar seasonality বা long-context extrapolation guarantee নয়। Outcome শুধু retrospective inspection, model input নয়।',
+            'Position off হলো একই trained weights-এর inference intervention; separately trained no-position baseline নয়। Causal mask নিজেও order structure দেয়, তাই positional encoding সরালেই model পুরো permutation-invariant হয় না। প্রতিটি 14 দিনের Window-এ Sinusoidal Offset নতুন করে শুরু হয়। এতে Calendar Seasonality ধরা পড়বে বা দীর্ঘ Context-এ Extrapolation কাজ করবে, এমন নিশ্চয়তা নেই। Outcome শুধু retrospective inspection, model input নয়।',
             style: _bn,
           ),
           _gap,

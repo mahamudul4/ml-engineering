@@ -47,7 +47,7 @@ class _BellmanLabState extends State<BellmanLab> {
           'Start-এ safe নিলে reward 1 পেয়ে থামে। Advance নিলে reward 0 পেয়ে Middle-এ যায়।\n\n'
           'Middle-এ safe নিলে reward 1 পেয়ে থামে। Try সফল হলে reward 4 পেয়ে শেষ হয়। '
           'ব্যর্থ হলে reward −1 পেয়ে Start-এ ফেরে। Terminal value 0।\n\n'
-          'এই mathematical environment-এর পরিচিত transitions দিয়ে planning করুন।',
+          'এই Environment-এর জানা Transition-গুলো ব্যবহার করে Planning করুন।',
           style: TextStyle(height: 1.9),
         ),
         const SizedBox(height: 18),
@@ -124,10 +124,10 @@ class _BellmanLabState extends State<BellmanLab> {
         const SizedBox(height: 16),
         Text(
           sweeps == 0
-              ? 'প্রথম sweep-এর আগে values শূন্য। প্রতিটি নতুন sweep আগের frozen vector পড়ে।'
-              : 'শেষ change = ${delta.toStringAsExponential(3)}। '
+              ? 'প্রথম Sweep-এর আগে সব Value শূন্য। প্রতিটি নতুন Sweep আগের Sweep-এর স্থির Vector ব্যবহার করে।'
+              : 'শেষ ধাপে পরিবর্তন = ${delta.toStringAsExponential(3)}। '
                     'exact-MDP error bound ≤ ${model.errorBound(delta).toStringAsExponential(3)}। '
-                    'এই bound নির্দিষ্ট transition model-এর numerical convergence মাপে।',
+                    'এই Bound দিয়ে নির্দিষ্ট Transition Model-এ হিসাব কতটা Converge করেছে, তা বোঝা যায়।',
           style: const TextStyle(height: 1.9),
         ),
         const SizedBox(height: 12),

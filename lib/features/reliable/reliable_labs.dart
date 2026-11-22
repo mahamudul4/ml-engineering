@@ -56,7 +56,7 @@ class _OptimizerLabState extends State<OptimizerLab> {
           const Text('The gradient is only part of the update.', style: _title),
           _gap,
           const Text(
-            'Actual 8-row mean-BCE gradient-এর তিনটি selected coordinates বারবার প্রয়োগ করে optimizer state তুলনা করি। এখানে fixed gradient replay; পরিবর্তিত model-এ gradient recompute বা retraining হচ্ছে না। সব তিন coordinates-এ illustrative decay .1, main recipe-এর parameter-group policy আলাদা।',
+            'বাস্তব Data-র 8টি Row থেকে হিসাব করা Mean BCE Gradient-এর তিনটি নির্দিষ্ট Coordinate বারবার প্রয়োগ করে Optimizer State তুলনা করি। এখানে fixed gradient replay; পরিবর্তিত model-এ gradient recompute বা retraining হচ্ছে না। সব তিন coordinates-এ illustrative decay .1, main recipe-এর parameter-group policy আলাদা।',
             style: _bn,
           ),
           _gap,
@@ -114,7 +114,7 @@ class _OptimizerLabState extends State<OptimizerLab> {
             ),
           _gap,
           const Text(
-            'SGD/momentum/Adam-এ এখানে decay gradient-এ যোগ হয়। AdamW parameter shrinkage adaptive moment update থেকে আলাদা। Adam-এর bias correction ও epsilon-ও update নির্ধারণ করে; একই gradient মানেই একই parameter step নয়।',
+            'SGD/momentum/Adam-এ এখানে decay gradient-এ যোগ হয়। AdamW-তে Parameter Shrinkage, Adaptive Moment Update থেকে আলাদাভাবে হয়। Adam-এর bias correction ও epsilon-ও update নির্ধারণ করে; একই gradient মানেই একই parameter step নয়।',
             style: _bn,
           ),
           _gap,
@@ -182,7 +182,7 @@ class _NormalizationLabState extends State<NormalizationLab> {
           const Text('Choose the axes. Check the mode.', style: _title),
           _gap,
           const Text(
-            'প্রথম আটটি actual inner-training rows-এর initial hidden preactivations [8,4]। BatchNorm training-এ প্রতি channel batch statistics, eval-এ running statistics; LayerNorm প্রতি row-এর চার features normalize করে। Affine=False, epsilon1e−5। এটি layer mechanics audit; main trained model-এ BN/LN যোগ করা হয়নি।',
+            'প্রথম আটটি actual inner-training rows-এর initial hidden preactivations [8,4]। BatchNorm training-এ প্রতি channel batch statistics, eval-এ running statistics; LayerNorm প্রতি Row-তে চারটি Feature Normalize করে। Affine=False, epsilon1e−5। এটি layer mechanics audit; main trained model-এ BN/LN যোগ করা হয়নি।',
             style: _bn,
           ),
           _gap,
@@ -259,7 +259,7 @@ class _NormalizationLabState extends State<NormalizationLab> {
           ),
           _gap,
           const Text(
-            'BatchNorm forward train variance denominator N; running variance update-এ unbiased N−1 estimate। Momentum .1: new=.9×old+.1×batch_stat। এক batch-এর running statistics calibrated population estimate নয়। no_grad() একা train-mode BN-এর running updates বন্ধ করে না।',
+            'BatchNorm forward train variance denominator N; running variance update-এ unbiased N−1 estimate। Momentum .1: new=.9×old+.1×batch_stat। একটি Batch-এর Running Statistics-কে Population-এর Calibrated Estimate হিসেবে ধরা যায় না। no_grad() একা train-mode BN-এর running updates বন্ধ করে না।',
             style: _bn,
           ),
           _gap,
@@ -369,7 +369,7 @@ class _ResumeLabState extends State<ResumeLab> {
           ),
           _gap,
           const Text(
-            'Endpoint parameter difference epoch40-এর stored audit; selected epoch-এর parameter distance নয়। Exact match এই same-version CPU environment ও epoch boundary-এর evidence। Mid-epoch cursor, multi-worker queues, CUDA/MPS/AMP বা cross-version identity এখানে যাচাই হয়নি।',
+            'Endpoint-এ Parameter-এর পার্থক্য Epoch 40-এর সংরক্ষিত Audit থেকে এসেছে। Selected Epoch-এর Parameter Distance এখানে দেখানো হয়নি। Exact match এই same-version CPU environment ও epoch boundary-এর evidence। Mid-epoch cursor, multi-worker queues, CUDA/MPS/AMP বা cross-version identity এখানে যাচাই হয়নি।',
             style: _bn,
           ),
           _gap,

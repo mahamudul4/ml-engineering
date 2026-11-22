@@ -62,7 +62,7 @@ class _DeepExperimentLabState extends State<DeepExperimentLab> {
           ),
           _gap,
           const Text(
-            'Prior, Logistic ও MLP তিনটি fixed candidate-এর fit-only grouped CV mean AP দিয়ে model lock হয়। Decision validation বা test দেখে candidate বদলায় না। No-scale MLP একই initialization/budget-এর separately trained diagnostic ablation; selection candidate নয়।',
+            'Prior, Logistic আর MLP এই তিনটি নির্ধারিত Candidate-এর Fit-only Grouped CV-তে Mean AP দেখে Model চূড়ান্ত করা হয়। Decision validation বা test দেখে candidate বদলায় না। No-scale MLP একই initialization/budget-এর separately trained diagnostic ablation; selection candidate নয়।',
             style: _bn,
           ),
           _gap,
@@ -166,7 +166,7 @@ class _DeepExperimentLabState extends State<DeepExperimentLab> {
           ),
           _gap,
           const Text(
-            'Curve হলো actual stored training evidence; slider replay করে, app training চালায় না। Same seed21,105 parameters,AdamW.01/decay.001,80 full-batch updates,clip1। Scaling বদলালে optimization path ও effective feature units বদলায়। এক seed/recipe থেকে universal scaling বা neural superiority দাবি নয়।',
+            'Curve-এ Training-এর সংরক্ষিত ফল দেখা যায়। Slider দিয়ে সেই ফলের বিভিন্ন ধাপ দেখা যায়। Training আবার চালানো হয় না। একই Seed 21, 105টি Parameter, AdamW .01 ও Decay .001, 80টি Full-batch Update আর Clip 1। Scaling বদলালে optimization path ও effective feature units বদলায়। এক seed/recipe থেকে universal scaling বা neural superiority দাবি নয়।',
             style: _bn,
           ),
           _gap,
@@ -271,7 +271,7 @@ class _DeepPolicyLabState extends State<DeepPolicyLab> {
           ),
           _gap,
           const Text(
-            'Model fit/CV-এর পরে decision validation threshold বেছে নেয়। FP1/FN4 illustrative costs; বাস্তব business costs নয়। Slider ও cost control what-if inspection, recorded final-test policy বদলায় না। AP ranking metric; threshold বদলালে confusion/cost বদলায়, fixed probability ranking নয়।',
+            'Model fit/CV-এর পরে decision validation threshold বেছে নেয়। FP1/FN4 illustrative costs; বাস্তব business costs নয়। Slider আর Cost Control দিয়ে মান বদলালে কী হয়, তা দেখা যায়। সংরক্ষিত Final Test Policy একই থাকে। AP ranking metric; threshold বদলালে confusion/cost বদলায়, fixed probability ranking নয়।',
             style: _bn,
           ),
           _gap,
@@ -361,7 +361,7 @@ class _DeepPolicyLabState extends State<DeepPolicyLab> {
           ),
           _gap,
           const Text(
-            'Prediction rule p≥threshold। Lowest mean cost wins; grid ties-এ highest threshold। Threshold0 সব rows positive, threshold1 সাধারণত none—but p=1 হলে inclusive rule positive রাখে। Undefined precision/recall denominatorকে fake0 বানাই না। Final-test rows এই lab-এ দেওয়া হয়নি।',
+            'Prediction rule p≥threshold। Mean Cost সবচেয়ে কম যে Threshold-এ, সেটি বেছে নেওয়া হয়। Grid-এ একাধিক Threshold-এর Mean Cost সমান হলে সবচেয়ে বড় Threshold নেওয়া হয়। Threshold0 সব rows positive, threshold1 সাধারণত none—but p=1 হলে inclusive rule positive রাখে। Denominator-এর কারণে Precision বা Recall Undefined হলে মানটাকে জোর করে 0 ধরা হয় না। Final-test rows এই lab-এ দেওয়া হয়নি।',
             style: _bn,
           ),
           _gap,
@@ -434,7 +434,7 @@ class _DeepArtifactLabState extends State<DeepArtifactLab> {
           ),
           _gap,
           const Text(
-            'First3 decision rows in source order—correct predictions দেখে বাছা নয়। Numeric MLP weights, fit-only scaler, ordered feature names ও sigmoid মিলে complete inference pipeline। Same dimension11 থাকলেও wrong column order reject হয়। Main selected model ও diagnostic MLP pipeline identity ledger-এ আলাদা।',
+            'First3 decision rows in source order—correct predictions দেখে বাছা নয়। Numeric MLP weights, fit-only scaler, ordered feature names ও sigmoid মিলে complete inference pipeline। Dimension 11 হলেও Column-এর ক্রম ভুল থাকলে Input গ্রহণ করা হয় না। Main selected model ও diagnostic MLP pipeline identity ledger-এ আলাদা।',
             style: _bn,
           ),
           _gap,

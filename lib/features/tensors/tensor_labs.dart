@@ -61,7 +61,7 @@ class _TensorLayoutLabState extends State<TensorLayoutLab> {
           const Text('Shape is a view of storage.', style: _title),
           _gap,
           const Text(
-            'চারটি actual training row-এর alcohol / volatile acidity / sulphates দিয়ে 4×3 matrix। View বদলে shape, stride ও element offset অনুসরণ করুন। Storage indices এখানে conceptual element offsets; device memory addresses নয়। Expanded view-এ একই value একাধিক coordinates-এ দেখা যায়।',
+            'Training Data-র চারটি Row থেকে alcohol, volatile acidity আর sulphates নিয়ে এই 4×3 Matrix বানানো হয়েছে। View বদলে দেখুন Shape, Stride আর Element Offset কীভাবে বদলায়। Storage indices এখানে conceptual element offsets; device memory addresses নয়। Expanded View-তে একই মান একাধিক Coordinate-এ দেখা যায়।',
             style: _bn,
           ),
           _gap,
@@ -278,7 +278,7 @@ class _BroadcastLabState extends State<BroadcastLab> {
           const Text('A valid broadcast can be a bug.', style: _title),
           _gap,
           const Text(
-            'Actual fit-row probabilities fixed Chapter14 logistic reference থেকে। [B] prediction থেকে [B,1] target subtract করলে [B,B] pairwise errors হয়। এই MSE shape-debugging example, নতুন classifier objective নয়। BCEWithLogitsLoss exact input/target shape চায় এবং এই mismatch reject করে।',
+            'Actual fit-row probabilities fixed Chapter14 logistic reference থেকে। [B] Shape-এর Prediction থেকে [B,1] Shape-এর Target বিয়োগ করলে [B,B] Shape-এর Pairwise Error তৈরি হয়। এই MSE shape-debugging example, নতুন classifier objective নয়। BCEWithLogitsLoss exact input/target shape চায় এবং এই mismatch reject করে।',
             style: _bn,
           ),
           _gap,
@@ -366,7 +366,7 @@ class _BroadcastLabState extends State<BroadcastLab> {
           ),
           _gap,
           const Text(
-            'B=1-এ ভুল shape হয়েও numeric MSE একই হতে পারে। শুধু loss scalar দেখে correctness নিশ্চিত করবেন না। Broadcast-backward replicated axes-এর contributions sum করে; accidental pairwise loss target association বদলে দেয়।',
+            'B=1-এ ভুল shape হয়েও numeric MSE একই হতে পারে। শুধু Scalar Loss দেখে হিসাব ঠিক কি না বোঝা যায় না। Broadcast-backward replicated axes-এর contributions sum করে; accidental pairwise loss target association বদলে দেয়।',
             style: _bn,
           ),
           _gap,
@@ -442,7 +442,7 @@ class _AutogradLabState extends State<AutogradLab> {
           const Text('Follow the graph. Check the gradient.', style: _title),
           _gap,
           const Text(
-            'প্রথম 16 actual fit rows-এর standardized alcohol ও volatile acidity দিয়ে দুই-feature mean BCE microscope। Parameters zero থেকে শুরু; এটি selected/fitted classifier নয়। অন্য features নেই। Dart analytical gradient locally executed PyTorch autograd references-এর সঙ্গে যাচাই করা হয়েছে।',
+            'প্রথম 16 actual fit rows-এর standardized alcohol ও volatile acidity দিয়ে দুই-feature mean BCE microscope। Parameter-গুলোর শুরুর মান শূন্য। এটি selected/fitted classifier নয়। অন্য features নেই। Dart analytical gradient locally executed PyTorch autograd references-এর সঙ্গে যাচাই করা হয়েছে।',
             style: _bn,
           ),
           _gap,
@@ -564,7 +564,7 @@ class _AutogradLabState extends State<AutogradLab> {
           ),
           _gap,
           const Text(
-            'দুই fresh graphs-এ একই parameters দিয়ে backward করলে .grad দ্বিগুণ জমে; loss scalar দ্বিগুণ হয় না। এই control সেই calculation mirror করে। Step-এর পরে count1-এ ফিরে আসে। Actual PyTorch graph, grad buffers ও no_grad update local code-এ execute করতে হবে।',
+            'একই Parameter দিয়ে দুটো নতুন Graph-এ Backward চালালে .grad-এ দ্বিগুণ মান জমে। Scalar Loss একই থাকে। এই Control-এ সেই হিসাবটাই দেখা যায়। Step-এর পরে Count আবার 1 হয়। Actual PyTorch graph, grad buffers ও no_grad update local code-এ execute করতে হবে।',
             style: _bn,
           ),
           _gap,
