@@ -342,6 +342,63 @@ void main() {
     },
   );
 
+  testWidgets(
+    'Quick Navigator switches books/chapters/lessons in 2 taps and LessonPage switcher + prev/next work cleanly',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(LearningApp(controller: c));
+      await tester.pumpAndSettle();
+      // Open universal Quick Navigator from persistent sticky topbar breadcrumb
+      await tester.tap(find.byKey(const ValueKey('topbar-quick-nav')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('quick-nav-search')), findsOneWidget);
+      // Preview Book 4 (LLMs) and jump straight to chapter_22
+      final llmBook = find.byKey(const ValueKey('qnav-book-llm'));
+      await tester.ensureVisible(llmBook);
+      await tester.tap(llmBook);
+      await tester.pumpAndSettle();
+      final openCh22 = find.byKey(const ValueKey('qnav-open-chapter_22'));
+      await tester.ensureVisible(openCh22);
+      await tester.tap(openCh22);
+      for (var i = 0; i < 100 && c.chapter.id != 'chapter_22'; i++) {
+        await tester.runAsync(
+          () async => Future<void>.delayed(const Duration(milliseconds: 10)),
+        );
+        await tester.pump();
+      }
+      await tester.pumpAndSettle();
+      expect(c.chapter.id, 'chapter_22');
+      expect(tester.takeException(), isNull);
+
+      // Open last lesson of chapter_22, verify Previous lesson button and AppBar lesson switcher sheet
+      final lastLesson = c.chapter.lessons.last;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: appTheme(Brightness.light),
+          home: LessonPage(controller: c, lesson: lastLesson),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('prev-lesson-btn')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('lesson-switcher-trigger')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(ValueKey('chapter-sheet-lesson-${c.chapter.lessons.first.id}')),
+        findsOneWidget,
+      );
+      await tester.tap(
+        find.byKey(ValueKey('chapter-sheet-lesson-${c.chapter.lessons.first.id}')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text(c.chapter.lessons.first.title), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   for (final range in [(1, 14), (15, 29), (30, 50)]) {
     testWidgets(
       'expanded foundations and new book content render chapters ${range.$1}–${range.$2}',

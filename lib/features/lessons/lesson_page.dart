@@ -3,10 +3,14 @@ import 'package:flutter/material.dart';
 import '../../models/curriculum.dart';
 import '../../state/learning_controller.dart';
 import '../../ui/code_block.dart';
+import '../../ui/quick_navigator.dart';
 import '../../ui/rich_prose.dart';
 import '../../ui/theme.dart';
 import '../../ui/tutorial_blocks.dart';
+import '../book/book_page.dart';
+import '../coding/coding_arena_page.dart';
 import '../ensembles/xgboost_sandbox_lab.dart';
+import '../viva/hot_questions_page.dart';
 
 export '../../ui/code_block.dart';
 import '../regression/regression_lab.dart';
@@ -131,6 +135,200 @@ class _LessonPageState extends State<LessonPage> {
     }
     return targets;
   }
+  void _openAdjacentLesson(Lesson target) {
+    c.visit(target.id).catchError((Object e) {
+      if (mounted) showFailure(context, e);
+    });
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute<void>(
+        builder: (_) => LessonPage(controller: c, lesson: target),
+      ),
+    );
+  }
+
+  Future<void> _openInLessonNavigator() async {
+    final result = await showQuickNavigatorSheet(context, controller: c);
+    if (result == null || !mounted) return;
+    switch (result) {
+      case QuickNavChapter(:final chapterId, :final lessonId):
+        await c.selectChapter(chapterId);
+        if (!mounted) return;
+        if (lessonId != null) {
+          final target = c.chapter.lessons.where((x) => x.id == lessonId);
+          if (target.isNotEmpty) {
+            _openAdjacentLesson(target.first);
+            return;
+          }
+        }
+        Navigator.pop(context);
+      case QuickNavSection():
+        Navigator.pop(context);
+      case QuickNavHub(:final target):
+        if (target == 'library') {
+          final dest = await Navigator.of(context).push<BookDestination>(
+            MaterialPageRoute(builder: (_) => BookPage(controller: c)),
+          );
+          if (dest != null && mounted) {
+            await c.selectChapter(dest.chapterId);
+            if (!mounted) return;
+            if (dest.lessonId != null) {
+              final hit = c.chapter.lessons.where((x) => x.id == dest.lessonId);
+              if (hit.isNotEmpty) {
+                _openAdjacentLesson(hit.first);
+                return;
+              }
+            }
+            Navigator.pop(context);
+          }
+        } else if (target == 'coding') {
+          Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => CodingArenaPage(controller: c),
+            ),
+          );
+        } else if (target == 'viva') {
+          Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => HotQuestionsPage(controller: c),
+            ),
+          );
+        }
+    }
+  }
+
+  Future<void> _openChapterLessonsSheet(Curriculum chapter, int currentIdx) async {
+    final chosen = await showModalBottomSheet<Object?>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (ctx) {
+        final primary = Theme.of(ctx).colorScheme.primary;
+        final muted = Theme.of(ctx).colorScheme.onSurfaceVariant;
+        final divider = Theme.of(ctx).dividerColor;
+        return FractionallySizedBox(
+          heightFactor: 0.78,
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 6, 16, 12),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${chapter.fullLabel} · ${chapter.shortTitle}',
+                            style: const TextStyle(
+                              fontFamilyFallback: ['NotoSansBengali'],
+                              fontSize: 15,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          Text(
+                            '${chapter.lessons.length}টি Lesson-এর মধ্যে যেকোনোটিতে ট্যাপ করে যান',
+                            style: TextStyle(
+                              fontFamilyFallback: const ['NotoSansBengali'],
+                              fontSize: 11.5,
+                              color: muted,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    OutlinedButton.icon(
+                      key: const ValueKey('lesson-sheet-switch-book'),
+                      onPressed: () => Navigator.pop(ctx, 'switch_book'),
+                      style: OutlinedButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                      ),
+                      icon: const Icon(Icons.explore_outlined, size: 16),
+                      label: const Text('All Books', style: TextStyle(fontSize: 11.5)),
+                    ),
+                  ],
+                ),
+              ),
+              Divider(height: 1, color: divider),
+              Expanded(
+                child: ListView.builder(
+                  padding: const EdgeInsets.fromLTRB(14, 10, 14, 24),
+                  itemCount: chapter.lessons.length,
+                  itemBuilder: (_, i) {
+                    final item = chapter.lessons[i];
+                    final isCurrent = i == currentIdx;
+                    final done = c.completed(item.id);
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Material(
+                        color: isCurrent
+                            ? forest.withValues(alpha: .12)
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(11),
+                        child: ListTile(
+                          key: ValueKey('chapter-sheet-lesson-${item.id}'),
+                          dense: true,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(11),
+                            side: BorderSide(
+                              color: isCurrent
+                                  ? forest.withValues(alpha: .5)
+                                  : divider,
+                            ),
+                          ),
+                          leading: Icon(
+                            done
+                                ? Icons.check_circle_rounded
+                                : Icons.circle_outlined,
+                            size: 18,
+                            color: done ? forest : muted,
+                          ),
+                          title: Text(
+                            '${i + 1}. ${item.title}',
+                            style: TextStyle(
+                              fontFamilyFallback: const ['NotoSansBengali'],
+                              fontSize: 13,
+                              fontWeight: isCurrent
+                                  ? FontWeight.w800
+                                  : FontWeight.w600,
+                              color: isCurrent ? primary : null,
+                            ),
+                          ),
+                          trailing: isCurrent
+                              ? Tag('Current')
+                              : Icon(
+                                  Icons.chevron_right_rounded,
+                                  size: 18,
+                                  color: muted,
+                                ),
+                          onTap: () => Navigator.pop(ctx, item),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    if (!mounted || chosen == null) return;
+    if (chosen == 'switch_book') {
+      await _openInLessonNavigator();
+    } else if (chosen is Lesson && chosen.id != l.id) {
+      _openAdjacentLesson(chosen);
+    }
+  }
+
   @override
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: c,
@@ -146,14 +344,54 @@ class _LessonPageState extends State<LessonPage> {
       final nextChapter = position >= 0 && position + 1 < path.length
           ? path[position + 1]
           : null;
+      final wideAppBar = MediaQuery.sizeOf(context).width >= 600;
       return Scaffold(
         appBar: AppBar(
-          title: Text(
-            '${chapter.fullLabel} · Lesson ${index + 1} of ${chapter.lessons.length}',
-            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+          title: InkWell(
+            key: const ValueKey('lesson-switcher-trigger'),
+            borderRadius: BorderRadius.circular(10),
+            onTap: () => _openChapterLessonsSheet(chapter, index),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Flexible(
+                    child: Text(
+                      '${chapter.fullLabel} · Lesson ${index + 1} of ${chapter.lessons.length}',
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  const Icon(Icons.keyboard_arrow_down_rounded, size: 18),
+                ],
+              ),
+            ),
           ),
           centerTitle: false,
           actions: [
+            if (wideAppBar && index > 0)
+              IconButton(
+                tooltip: 'Previous lesson',
+                onPressed: () => _openAdjacentLesson(chapter.lessons[index - 1]),
+                icon: const Icon(Icons.chevron_left_rounded),
+              ),
+            if (wideAppBar && index < chapter.lessons.length - 1)
+              IconButton(
+                tooltip: 'Next lesson',
+                onPressed: () => _openAdjacentLesson(chapter.lessons[index + 1]),
+                icon: const Icon(Icons.chevron_right_rounded),
+              ),
+            IconButton(
+              tooltip: 'Quick Navigate (Books & Chapters)',
+              onPressed: _openInLessonNavigator,
+              icon: const Icon(Icons.explore_outlined, size: 20),
+            ),
             IconButton(
               tooltip: c.bookmarked(l.id)
                   ? 'Remove bookmark'
@@ -170,7 +408,7 @@ class _LessonPageState extends State<LessonPage> {
               onPressed: _note,
               icon: const Icon(Icons.edit_note_rounded),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 8),
           ],
         ),
         body: SingleChildScrollView(
@@ -313,20 +551,18 @@ class _LessonPageState extends State<LessonPage> {
                               : 'Mark lesson complete',
                         ),
                       ),
+                      if (index > 0)
+                        OutlinedButton.icon(
+                          key: const ValueKey('prev-lesson-btn'),
+                          onPressed: () =>
+                              _openAdjacentLesson(chapter.lessons[index - 1]),
+                          icon: const Icon(Icons.arrow_back, size: 17),
+                          label: const Text('Previous lesson'),
+                        ),
                       if (index < chapter.lessons.length - 1)
                         OutlinedButton.icon(
-                          onPressed: () {
-                            final next = chapter.lessons[index + 1];
-                            c.visit(next.id).catchError((Object e) {
-                              if (context.mounted) showFailure(context, e);
-                            });
-                            Navigator.of(context).pushReplacement(
-                              MaterialPageRoute<void>(
-                                builder: (_) =>
-                                    LessonPage(controller: c, lesson: next),
-                              ),
-                            );
-                          },
+                          onPressed: () =>
+                              _openAdjacentLesson(chapter.lessons[index + 1]),
                           icon: const Icon(Icons.arrow_forward, size: 17),
                           label: const Text('Next lesson'),
                           iconAlignment: IconAlignment.end,

@@ -53,6 +53,7 @@ import '../features/experimentation/experiment_labs.dart';
 import '../features/system_design/design_labs.dart';
 import '../features/interview_practice/practice_labs.dart';
 import '../features/final_capstone/portfolio_labs.dart';
+import 'quick_navigator.dart';
 import 'theme.dart';
 
 class LearningShell extends StatefulWidget {
@@ -153,136 +154,263 @@ class _LearningShellState extends State<LearningShell> {
     );
   }
 
-  Widget _mobileBookSelector() => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Wrap(
-        spacing: 8,
-        runSpacing: 4,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          const Eyebrow('বই নির্বাচন করুন'),
-          TextButton.icon(
-            style: TextButton.styleFrom(
-              visualDensity: VisualDensity.compact,
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+  Future<void> openQuickNavigator() async {
+    final result = await showQuickNavigatorSheet(
+      context,
+      controller: c,
+      activeSection: section,
+    );
+    if (result == null || !mounted) return;
+    switch (result) {
+      case QuickNavChapter(:final chapterId, :final lessonId):
+        await switchChapter(chapterId);
+        if (mounted && c.chapter.id == chapterId && lessonId != null) {
+          final match = c.chapter.lessons.where((l) => l.id == lessonId);
+          if (match.isNotEmpty) openLesson(match.first);
+        }
+      case QuickNavSection(:final section):
+        navigate(section);
+      case QuickNavHub(:final target):
+        if (target == 'library') {
+          await openBook();
+        } else if (target == 'coding') {
+          openCodingArena();
+        } else if (target == 'viva') {
+          openHotQuestions();
+        }
+    }
+  }
+
+  Widget _mobileHubChip({
+    Key? key,
+    required IconData icon,
+    required String label,
+    required Color accent,
+    required VoidCallback onTap,
+  }) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Material(
+      key: key,
+      color: accent.withValues(alpha: isDark ? .18 : .09),
+      borderRadius: BorderRadius.circular(9),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(9),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(9),
+            border: Border.all(
+              color: accent.withValues(alpha: isDark ? .38 : .24),
             ),
-            onPressed: openBook,
-            icon: const Icon(Icons.library_books_outlined, size: 15),
-            label: const Text('সব বই', style: TextStyle(fontSize: 11)),
           ),
-          TextButton.icon(
-            key: const ValueKey('open-coding-arena'),
-            style: TextButton.styleFrom(
-              visualDensity: VisualDensity.compact,
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            ),
-            onPressed: openCodingArena,
-            icon: const Icon(Icons.terminal_rounded, size: 15),
-            label: const Text('Coding Arena', style: TextStyle(fontSize: 11)),
-          ),
-          TextButton.icon(
-            key: const ValueKey('open-hot-questions'),
-            style: TextButton.styleFrom(
-              visualDensity: VisualDensity.compact,
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            ),
-            onPressed: openHotQuestions,
-            icon: const Icon(Icons.local_fire_department_outlined, size: 15),
-            label: const Text('Hot Qs', style: TextStyle(fontSize: 11)),
-          ),
-        ],
-      ),
-      const SizedBox(height: 6),
-      SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
-            for (final book in BookPart.values)
-              Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: ChoiceChip(
-                  key: ValueKey('book-chip-${book.id}'),
-                  label: Text(
-                    '${book.number}. ${book.shortTitle}',
-                    style: const TextStyle(fontSize: 11),
-                  ),
-                  selected: c.currentBook == book,
-                  onSelected: switching ? null : (_) => switchBook(book),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 14, color: accent),
+              const SizedBox(width: 5),
+              Text(
+                label,
+                style: TextStyle(
+                  fontFamilyFallback: const ['NotoSansBengali'],
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: Theme.of(context).colorScheme.onSurface,
                 ),
               ),
-          ],
+            ],
+          ),
         ),
       ),
-    ],
+    );
+  }
+
+  Widget _mobileBookSelector() => Panel(
+    padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 7,
+          runSpacing: 7,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            _mobileHubChip(
+              key: const ValueKey('mobile-quick-nav'),
+              icon: Icons.explore_outlined,
+              label: 'Quick Nav',
+              accent: forest,
+              onTap: openQuickNavigator,
+            ),
+            _mobileHubChip(
+              icon: Icons.library_books_outlined,
+              label: 'সব বই',
+              accent: forest,
+              onTap: openBook,
+            ),
+            _mobileHubChip(
+              key: const ValueKey('open-coding-arena'),
+              icon: Icons.terminal_rounded,
+              label: 'Coding Arena',
+              accent: const Color(0xFF2D6A8E),
+              onTap: openCodingArena,
+            ),
+            _mobileHubChip(
+              key: const ValueKey('open-hot-questions'),
+              icon: Icons.local_fire_department_outlined,
+              label: 'Hot Qs',
+              accent: const Color(0xFFB44C3B),
+              onTap: openHotQuestions,
+            ),
+            _mobileHubChip(
+              icon: Icons.bookmark_border_rounded,
+              label: 'Bookmarks',
+              accent: const Color(0xFF9C7139),
+              onTap: () => navigate(4),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        const Eyebrow('বই নির্বাচন করুন (৬টি বই)'),
+        const SizedBox(height: 6),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              for (final book in BookPart.values)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ChoiceChip(
+                    key: ValueKey('book-chip-${book.id}'),
+                    label: Text(
+                      '${book.number}. ${book.shortTitle}',
+                      style: const TextStyle(fontSize: 11),
+                    ),
+                    selected: c.currentBook == book,
+                    onSelected: switching ? null : (_) => switchBook(book),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 10),
+        _chapterPicker(),
+      ],
+    ),
   );
 
-  Widget _chapterPicker() => DropdownButtonFormField<String>(
-    key: ValueKey('chapter-picker-${c.currentBook.id}-${c.chapter.id}'),
-    initialValue: c.chapter.id,
-    isExpanded: true,
-    decoration: InputDecoration(
-      labelText: '${c.currentBook.shortTitle} · অধ্যায় বেছে নিন',
-      prefixIcon: const Icon(Icons.auto_stories_outlined),
-    ),
-    selectedItemBuilder: (context) => [
-      for (final ch in c.currentBookChapters)
-        Align(
-          alignment: AlignmentDirectional.centerStart,
-          child: Text(
-            '${ch.bookChapterNumber.toString().padLeft(2, '0')} · ${ch.shortTitle}',
-            semanticsLabel: '${ch.fullLabel}: ${ch.title}',
-            style: const TextStyle(fontSize: 12),
+  Widget _chapterPicker() {
+    final prev = c.previousChapter;
+    final next = c.nextChapter;
+    return Row(
+      children: [
+        IconButton(
+          key: const ValueKey('prev-chapter-btn'),
+          tooltip: prev == null ? null : 'Previous: ${prev.shortTitle}',
+          visualDensity: VisualDensity.compact,
+          onPressed: switching || prev == null
+              ? null
+              : () => switchChapter(prev.id),
+          icon: const Icon(Icons.chevron_left_rounded, size: 22),
+        ),
+        Expanded(
+          child: DropdownButtonFormField<String>(
+            key: ValueKey('chapter-picker-${c.currentBook.id}-${c.chapter.id}'),
+            initialValue: c.chapter.id,
+            isExpanded: true,
+            decoration: InputDecoration(
+              labelText: '${c.currentBook.shortTitle} · অধ্যায় বেছে নিন',
+              prefixIcon: const Icon(Icons.auto_stories_outlined),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 10,
+              ),
+            ),
+            selectedItemBuilder: (context) => [
+              for (final ch in c.currentBookChapters)
+                Align(
+                  alignment: AlignmentDirectional.centerStart,
+                  child: Text(
+                    '${ch.bookChapterNumber.toString().padLeft(2, '0')} · ${ch.shortTitle}',
+                    semanticsLabel: '${ch.fullLabel}: ${ch.title}',
+                    style: const TextStyle(fontSize: 12),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+            ],
+            items: [
+              for (final ch in c.currentBookChapters)
+                DropdownMenuItem(
+                  value: ch.id,
+                  child: Text(
+                    '${ch.bookChapterNumber.toString().padLeft(2, '0')} · ${ch.title}',
+                    style: const TextStyle(fontSize: 12),
+                    maxLines: 2,
+                  ),
+                ),
+            ],
+            onChanged: switching
+                ? null
+                : (id) {
+                    if (id != null) switchChapter(id);
+                  },
+          ),
+        ),
+        IconButton(
+          key: const ValueKey('next-chapter-btn'),
+          tooltip: next == null ? null : 'Next: ${next.shortTitle}',
+          visualDensity: VisualDensity.compact,
+          onPressed: switching || next == null
+              ? null
+              : () => switchChapter(next.id),
+          icon: const Icon(Icons.chevron_right_rounded, size: 22),
+        ),
+      ],
+    );
+  }
+
+  Widget _chapterLink(Curriculum ch) {
+    final done = ch.lessons.where((l) => c.completed(l.id)).length;
+    final active = ch.id == c.chapter.id;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 5),
+      child: Material(
+        color: active ? forest.withValues(alpha: .11) : Colors.transparent,
+        borderRadius: BorderRadius.circular(10),
+        child: ListTile(
+          dense: true,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+          enabled: !switching,
+          onTap: () => switchChapter(ch.id),
+          leading: Text(
+            ch.bookChapterNumber.toString().padLeft(2, '0'),
+            style: TextStyle(
+              fontFamily: 'JetBrainsMono',
+              fontSize: 11.5,
+              fontWeight: FontWeight.w800,
+              color: active
+                  ? Theme.of(context).colorScheme.primary
+                  : Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+          title: Text(
+            ch.shortTitle,
+            style: TextStyle(
+              fontSize: 11.5,
+              fontWeight: active ? FontWeight.w800 : FontWeight.w600,
+            ),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
-        ),
-    ],
-    items: [
-      for (final ch in c.currentBookChapters)
-        DropdownMenuItem(
-          value: ch.id,
-          child: Text(
-            '${ch.bookChapterNumber.toString().padLeft(2, '0')} · ${ch.title}',
-            style: const TextStyle(fontSize: 12),
-            maxLines: 2,
+          subtitle: Text(
+            '$done/${ch.lessons.length} lessons · ${ch.label}',
+            style: const TextStyle(fontSize: 9.5),
           ),
         ),
-    ],
-    onChanged: switching
-        ? null
-        : (id) {
-            if (id != null) switchChapter(id);
-          },
-  );
-
-  Widget _chapterLink(Curriculum ch) => Padding(
-    padding: const EdgeInsets.only(bottom: 5),
-    child: Material(
-      color: ch.id == c.chapter.id
-          ? forest.withValues(alpha: .08)
-          : Colors.transparent,
-      borderRadius: BorderRadius.circular(10),
-      child: ListTile(
-        dense: true,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12),
-        enabled: !switching,
-        onTap: () => switchChapter(ch.id),
-        leading: Text(
-          ch.bookChapterNumber.toString().padLeft(2, '0'),
-          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
-        ),
-        title: Text(
-          ch.shortTitle,
-          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
-        ),
-        subtitle: Text(
-          '${ch.lessons.length} lessons · ${ch.label}',
-          style: const TextStyle(fontSize: 9),
-        ),
       ),
-    ),
-  );
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -342,9 +470,7 @@ class _LearningShellState extends State<LearningShell> {
                             children: [
                               if (!wide) ...[
                                 _mobileBookSelector(),
-                                const SizedBox(height: 14),
-                                _chapterPicker(),
-                                const SizedBox(height: 24),
+                                const SizedBox(height: 20),
                               ],
                               _body(wide),
                             ],
@@ -362,82 +488,149 @@ class _LearningShellState extends State<LearningShell> {
     );
   }
 
-  Widget _topbar(bool wide) => Container(
-    padding: EdgeInsets.symmetric(horizontal: wide ? 38 : 20, vertical: 16),
-    decoration: BoxDecoration(
-      color: Theme.of(context).colorScheme.surface,
-      border: Border(bottom: BorderSide(color: Theme.of(context).dividerColor)),
-    ),
-    child: Row(
-      children: [
-        if (!wide) ...[
-          const Icon(Icons.hub_rounded, color: forest, size: 25),
-          const SizedBox(width: 10),
-        ],
-        Text(
-          wide ? 'Your learning space' : 'ML Path',
-          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
-        ),
-        const Spacer(),
-        if (wide)
-          SizedBox(
-            width: 245,
-            height: 39,
-            child: TextField(
-              controller: search,
-              onChanged: (v) => setState(() {
-                query = v;
-                section = 0;
-              }),
-              decoration: const InputDecoration(
-                hintText: 'Find a lesson…',
-                hintStyle: TextStyle(fontSize: 12),
-                prefixIcon: Icon(Icons.search, size: 18),
-                contentPadding: EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
+  Widget _topbar(bool wide) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final primary = Theme.of(context).colorScheme.primary;
+    final prev = c.previousChapter;
+    final next = c.nextChapter;
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: wide ? 28 : 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        border: Border(bottom: BorderSide(color: Theme.of(context).dividerColor)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Row(
+              children: [
+                if (!wide) ...[
+                  const Icon(Icons.hub_rounded, color: forest, size: 22),
+                  const SizedBox(width: 8),
+                ],
+                Flexible(
+                  child: Material(
+                    key: const ValueKey('topbar-quick-nav'),
+                    color: forest.withValues(alpha: isDark ? .20 : .08),
+                    borderRadius: BorderRadius.circular(11),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(11),
+                      onTap: openQuickNavigator,
+                      child: Container(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: wide ? 12 : 10,
+                          vertical: 7,
+                        ),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(11),
+                          border: Border.all(
+                            color: forest.withValues(alpha: isDark ? .42 : .24),
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.explore_outlined, size: 16, color: primary),
+                            const SizedBox(width: 7),
+                            Flexible(
+                              child: Text(
+                                wide
+                                    ? 'Book ${c.currentBook.number} · ${c.currentBook.shortTitle}  ›  Ch ${c.chapter.bookChapterNumber} · ${c.chapter.shortTitle}'
+                                    : 'B${c.currentBook.number} · Ch ${c.chapter.bookChapterNumber} · ${c.chapter.shortTitle}',
+                                style: const TextStyle(
+                                  fontFamilyFallback: ['NotoSansBengali'],
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Icon(
+                              Icons.keyboard_arrow_down_rounded,
+                              size: 18,
+                              color: primary,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                if (wide) ...[
+                  const SizedBox(width: 4),
+                  IconButton(
+                    tooltip: prev == null ? null : 'Previous: ${prev.shortTitle}',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: switching || prev == null
+                        ? null
+                        : () => switchChapter(prev.id),
+                    icon: const Icon(Icons.chevron_left_rounded, size: 20),
+                  ),
+                  IconButton(
+                    tooltip: next == null ? null : 'Next: ${next.shortTitle}',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: switching || next == null
+                        ? null
+                        : () => switchChapter(next.id),
+                    icon: const Icon(Icons.chevron_right_rounded, size: 20),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          if (wide) ...[
+            SizedBox(
+              width: 225,
+              height: 38,
+              child: TextField(
+                controller: search,
+                onChanged: (v) => setState(() {
+                  query = v;
+                  section = 0;
+                }),
+                decoration: const InputDecoration(
+                  hintText: 'Find a lesson…',
+                  hintStyle: TextStyle(fontSize: 12),
+                  prefixIcon: Icon(Icons.search, size: 18),
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
                 ),
               ),
             ),
+            const SizedBox(width: 10),
+          ],
+          IconButton(
+            key: const ValueKey('topbar-global-search'),
+            tooltip: 'Search all 6 books, 880 lessons & 5,017 Q&As',
+            visualDensity: VisualDensity.compact,
+            onPressed: openBook,
+            icon: const Icon(Icons.manage_search_rounded, size: 21),
           ),
-        const SizedBox(width: 16),
-        if (wide) ...[
-          const Tag('Saved on this device', icon: Icons.cloud_off_outlined),
-          const SizedBox(width: 16),
+          IconButton(
+            tooltip: 'Toggle light / dark mode',
+            visualDensity: VisualDensity.compact,
+            onPressed: () => c.toggleTheme().catchError((Object e) {
+              if (mounted) showFailure(context, e);
+            }),
+            icon: Icon(
+              c.themeMode == ThemeMode.dark
+                  ? Icons.light_mode_outlined
+                  : Icons.dark_mode_outlined,
+              size: 20,
+            ),
+          ),
         ],
-        IconButton(
-          tooltip: 'Toggle light / dark mode',
-          onPressed: () => c.toggleTheme().catchError((Object e) {
-            if (mounted) showFailure(context, e);
-          }),
-          icon: Icon(
-            c.themeMode == ThemeMode.dark
-                ? Icons.light_mode_outlined
-                : Icons.dark_mode_outlined,
-            size: 20,
-          ),
-        ),
-        const SizedBox(width: 8),
-        Container(
-          width: 34,
-          height: 34,
-          decoration: BoxDecoration(
-            color: lime.withValues(alpha: .65),
-            borderRadius: BorderRadius.circular(11),
-          ),
-          alignment: Alignment.center,
-          child: const Icon(
-            Icons.person_outline_rounded,
-            size: 19,
-            color: forest,
-          ),
-        ),
-      ],
-    ),
-  );
+      ),
+    );
+  }
 
   Widget _sidebar() => Container(
-    width: 224,
+    width: 264,
     decoration: BoxDecoration(
       color: Theme.of(context).colorScheme.surface,
       border: Border(right: BorderSide(color: Theme.of(context).dividerColor)),

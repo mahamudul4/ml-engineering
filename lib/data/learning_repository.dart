@@ -25,7 +25,7 @@ class LearningRepository {
     : _db = null,
       _webChapters = chapters;
 
-  static const _contentSeedVersion = '3.0.1+58';
+  static const _contentSeedVersion = '3.1.0+59';
   static const _seedSigKey = 'content_seed_sig';
 
   bool get _isWebStore => _db == null;
