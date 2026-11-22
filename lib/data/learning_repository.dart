@@ -8,10 +8,12 @@ import 'package:sqflite/sqflite.dart';
 import '../models/coding_problem.dart';
 import '../models/curriculum.dart';
 import '../models/hot_question.dart';
+import 'web_kv_store.dart';
 
 /// All curriculum and learner data live in SQLite on mobile/desktop,
-/// with an automatic in-memory fallback on Flutter Web for live browser preview.
+/// with automatic browser `localStorage` persistence on Flutter Web.
 class LearningRepository {
+  static const _webStorageKey = 'ml_path_web_state_v1';
   final Database? _db;
   final Map<String, Map<String, dynamic>>? _webChapters;
   final Map<String, Map<String, Object?>> _webProgress = {};
@@ -23,7 +25,76 @@ class LearningRepository {
 
   LearningRepository._web(Map<String, Map<String, dynamic>> chapters)
     : _db = null,
-      _webChapters = chapters;
+      _webChapters = chapters {
+    _hydrateWebState();
+  }
+
+  void _hydrateWebState() {
+    final raw = readWebStore(_webStorageKey);
+    if (raw == null || raw.isEmpty) return;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) return;
+      final prog = decoded['progress'];
+      if (prog is Map) {
+        for (final entry in prog.entries) {
+          if (entry.key is String && entry.value is Map) {
+            final m = Map<String, dynamic>.from(entry.value as Map);
+            _webProgress[entry.key as String] = {
+              'lesson_id': entry.key as String,
+              'completed': (m['completed'] as num?)?.toInt() ?? 0,
+              'bookmarked': (m['bookmarked'] as num?)?.toInt() ?? 0,
+              'note': m['note']?.toString() ?? '',
+            };
+          }
+        }
+      }
+      final ans = decoded['answers'];
+      if (ans is Map) {
+        for (final entry in ans.entries) {
+          if (entry.key is String && entry.value is num) {
+            _webAnswers[entry.key as String] = (entry.value as num).toInt();
+          }
+        }
+      }
+      final ex = decoded['exercises'];
+      if (ex is Map) {
+        for (final entry in ex.entries) {
+          if (entry.key is String && entry.value is Map) {
+            final m = Map<String, dynamic>.from(entry.value as Map);
+            _webExercises[entry.key as String] = {
+              'id': entry.key as String,
+              'draft': m['draft']?.toString() ?? '',
+              'solved': (m['solved'] as num?)?.toInt() ?? 0,
+            };
+          }
+        }
+      }
+      final sets = decoded['settings'];
+      if (sets is Map) {
+        for (final entry in sets.entries) {
+          if (entry.key is String && entry.value != null) {
+            _webSettings[entry.key as String] = entry.value.toString();
+          }
+        }
+      }
+    } catch (_) {
+      // Ignore corrupt localStorage payload and start fresh cleanly.
+    }
+  }
+
+  void _persistWebState() {
+    if (!_isWebStore) return;
+    writeWebStore(
+      _webStorageKey,
+      jsonEncode({
+        'progress': _webProgress,
+        'answers': _webAnswers,
+        'exercises': _webExercises,
+        'settings': _webSettings,
+      }),
+    );
+  }
 
   static const _contentSeedVersion = '3.1.0+59';
   static const _seedSigKey = 'content_seed_sig';
@@ -201,6 +272,7 @@ class LearningRepository {
       if (completed != null) row['completed'] = completed ? 1 : 0;
       if (bookmarked != null) row['bookmarked'] = bookmarked ? 1 : 0;
       if (note != null) row['note'] = note;
+      _persistWebState();
       return;
     }
     await _db!.transaction((txn) async {
@@ -223,6 +295,7 @@ class LearningRepository {
   Future<void> answer(String id, int choice) async {
     if (_isWebStore) {
       _webAnswers[id] = choice;
+      _persistWebState();
       return;
     }
     await _db!.insert('quiz_answers', {
@@ -236,6 +309,7 @@ class LearningRepository {
       for (final id in questionIds) {
         _webAnswers.remove(id);
       }
+      _persistWebState();
       return;
     }
     await _db!.transaction((txn) async {
@@ -258,6 +332,7 @@ class LearningRepository {
   Future<void> setSetting(String key, String value) async {
     if (_isWebStore) {
       _webSettings[key] = value;
+      _persistWebState();
       return;
     }
     await _db!.insert('settings', {
@@ -269,6 +344,7 @@ class LearningRepository {
   Future<void> saveExercise(String id, String draft, bool solved) async {
     if (_isWebStore) {
       _webExercises[id] = {'id': id, 'draft': draft, 'solved': solved ? 1 : 0};
+      _persistWebState();
       return;
     }
     await _db!.insert('exercises', {
@@ -379,6 +455,7 @@ class LearningRepository {
         if (row['key'] is! String || row['value'] == null) continue;
         _webSettings[row['key'] as String] = row['value'].toString();
       }
+      _persistWebState();
       return {
         'progress': progressList.length,
         'quiz_answers': answerList.length,
