@@ -44,9 +44,9 @@ class _BellmanLabState extends State<BellmanLab> {
         ),
         const SizedBox(height: 10),
         const Text(
-          'Start-এ safe নিলে reward 1 পেয়ে থামে। Advance নিলে reward 0 পেয়ে Middle-এ যায়।\n\n'
-          'Middle-এ safe নিলে reward 1 পেয়ে থামে। Try সফল হলে reward 4 পেয়ে শেষ হয়। '
-          'ব্যর্থ হলে reward −1 পেয়ে Start-এ ফেরে। Terminal value 0।\n\n'
+          'Start-এ Safe বেছে নিলে Reward 1 পেয়ে Episode শেষ হয়। Advance বেছে নিলে Reward 0 পেয়ে Middle-এ যায়।\n\n'
+          'Middle-এ Safe বেছে নিলে Reward 1 পেয়ে Episode শেষ হয়। Try সফল হলে Reward 4 পেয়ে শেষ হয়। '
+          'Try ব্যর্থ হলে Reward −1 পেয়ে Start-এ ফেরে। Terminal Value 0।\n\n'
           'এই Environment-এর জানা Transition-গুলো ব্যবহার করে Planning করুন।',
           style: TextStyle(height: 1.9),
         ),

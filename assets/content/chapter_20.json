@@ -11,8 +11,8 @@
   "lessons": [
     {
       "id": "ch20_contract",
-      "title": "Attention: একটিমাত্র State থেকে প্রয়োজনমাফিক Context বাছাই",
-      "subtitle": "কোন Position-এ কখন কোন তথ্য ব্যবহার করা যাবে — RNN-এর সীমাবদ্ধতা থেকে Scaled Dot-Product Attention-এর মূল চুক্তি",
+      "title": "Attention: একটি Hidden State-এর সীমা ও দরকারি Context বাছাই",
+      "subtitle": "RNN-এর সীমাবদ্ধতা থেকে Scaled Dot-Product Attention। কোন Position কখন কোন তথ্য ব্যবহার করতে পারবে?",
       "duration": "45 min",
       "icon": "code",
       "blocks": [
@@ -20,7 +20,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "আজ আমরা **Attention Mechanism**-এর মূল গাণিতিক চুক্তি (Contract) একদম গোড়া থেকে শিখব—কেন একটিমাত্র Fixed-size RNN Hidden State-এ আগের সব তথ্য ধরে রাখতে গেলে বহু ধাপ আগের তথ্য কেন অস্পষ্ট হয়ে যায়, কীভাবে **Query ($Q$), Key ($K$) ও Value ($V$)** সরাসরি প্রয়োজনমাফিক Context বাছাই করে, এবং বাস্তব **UCI Bike Sharing Dataset**-এ সময়ের সীমানা ও Information Timing কীভাবে রক্ষা করতে হয়।",
+          "goal": "এই পাঠে আমরা **Attention Mechanism**-এর গণিতের ভিত্তি দেখব। একটি Fixed-size RNN Hidden State-এ আগের সব তথ্য ধরে রাখতে গেলে কেন বহু ধাপ আগের তথ্য ঝাপসা হয়ে যায়, সেটা দিয়ে শুরু করব। তারপর দেখব **Query ($Q$), Key ($K$) ও Value ($V$)** দিয়ে কীভাবে দরকারি Context বেছে নেওয়া যায়। শেষে **UCI Bike Sharing Dataset**-এ Forecast করার সময় কোন তথ্য কখন পাওয়া যায়, সেই নিয়ম কীভাবে মানতে হয়, তা দেখব।",
           "prerequisites": [
             "Dot-Product ও Matrix Multiplication-এর ধারণা",
             "Softmax Probability Distribution",
@@ -28,151 +28,151 @@
             "Python list, math ও for loop"
           ],
           "outcomes": [
-            "কেন RNN-এর Fixed-size State Bottleneck ভাঙতে **Direct Pairwise Attention** দরকার তা সহজ উপমায় ব্যাখ্যা করতে পারবেন।",
-            "**Self-Attention** বনাম **Cross-Attention**-এ $Q, K, V$-এর উৎস এবং Readout-এর পার্থক্য নির্ভুলভাবে বলতে পারবেন।",
-            "ছোট $d_k = 2$ উদাহরণে Scaled Dot-Product Attention-এর প্রতিটি ধাপ হাতে-কলমে কষে **Pure Python** ও **PyTorch**-এ যাচাই করতে পারবেন।",
-            "কেন কেবল **Attention Weight** বেশি হওয়া মানেই **Causal Feature Importance** বা স্বয়ংক্রিয় Leakage নিরাপত্তা নয় তা যুক্তি দিয়ে ব্যাখ্যা করতে পারবেন।"
+            "RNN-এর Fixed-size State Bottleneck কাটাতে কেন **Direct Pairwise Attention** দরকার, তা সহজ উদাহরণ দিয়ে বোঝাতে পারবেন।",
+            "**Self-Attention** আর **Cross-Attention**-এ $Q, K, V$ কোথা থেকে আসে এবং Readout কীভাবে আলাদা হয়, তা বলতে পারবেন।",
+            "$d_k = 2$-এর ছোট উদাহরণে Scaled Dot-Product Attention-এর প্রতিটি ধাপ হাতে হিসাব করে **Pure Python** ও **PyTorch**-এর ফলের সঙ্গে মেলাতে পারবেন।",
+            "**Attention Weight** বেশি হলেই কেন **Causal Feature Importance** বোঝা যায় না বা Data Leakage ঠেকেছে ধরে নেওয়া যায় না, তা ব্যাখ্যা করতে পারবেন।"
           ]
         },
         {
           "type": "text",
-          "title": "১. কেন আমাদের Attention প্রয়োজন? RNN Bottleneck ও হাতে-কলমে উদাহরণ",
-          "body": "ধরুন, আপনি $100$ শব্দের একটি লম্বা অনুচ্ছেদ পড়ছেন এবং শেষ বাক্যে গিয়ে পেলেন: *\"সেটি তখনই হঠাৎ বন্ধ হয়ে গেল।\"* এখানে *\"সেটি\"* বলতে কী বোঝানো হয়েছে তা বুঝতে হলে আপনাকে সরাসরি $100$ শব্দ আগের মূল বিষয়বস্তুটির দিকে তাকাতে হবে!\n\nআগের অধ্যায়ে (**Book 3 · Chapter 5: Sequence Models**) আমরা দেখেছি, সাধারণ RNN বা GRU পুরো অতীত ইতিহাসকে একটিমাত্র নির্দিষ্ট আকারের Hidden State ($h_t$)-এর ভেতরে গাদাগাদি করে চেপে রাখে। Sequence লম্বা হলে সেই একটিমাত্র Vector-এ শুরুর দিকের সূক্ষ্ম তথ্য সহজেই ঝাপসা হয়ে যায়।\n\nমূল কথা হলো, **পুরো অতীতকে একটিমাত্র বাক্সে চেপে না রেখে, বর্তমান Query ($Q$) অনুযায়ী সরাসরি দরকারি আগের Position-গুলোর দিকে তাকিয়ে তাদের Value ($V$) আনুপাতিক হারে মিশিয়ে নেওয়াই হলো Attention!**\n\n### টাস্কের চুক্তি: Self-Attention বনাম Cross-Attention\nএক লাইন কোড লেখার আগেই স্পষ্ট করতে হবে **$Q, K, V$ কোথা থেকে আসছে** এবং **চূড়ান্ত Output দিয়ে আমরা ঠিক কী কাজ করছি**:\n\n| ধরন | $Q$ কোথা থেকে আসে? | $K, V$ কোথা থেকে আসে? | সাধারণ ব্যবহার |\n| --- | --- | --- | --- |\n| **Self-Attention** | একই Sequence | একই Sequence | একক Sequence-এর ভেতরের সম্পর্ক ধরা |\n| **Cross-Attention** | Target / Decoder Sequence | Source / Encoder Context | অনুবাদ বা বাইরের Context থেকে তথ্য টানা |\n\n> **সতর্কতা:** নামের আগে \"Transformer\" থাকলেই **Information Timing** আপনা-আপনি নিরাপদ হয়ে যায় না! কোন Position কার দিকে তাকাতে পারবে, তা আমাদেরই স্পষ্ট নিয়ম (**Mask $M$**) দিয়ে বেঁধে দিতে হয়।\n\n### ছোট হাতে-কলমে সংখ্যাগত উদাহরণ ($d_k = 2$)\nসহজভাবে বললে, ধরুন, আমাদের হাতে $1$-টি Query Vector এবং $2$-টি Key-Value জোড়া আছে:\n- **Query:** $q = [1.0,\\; 0.0]$\n- **Keys:** $k_0 = [1.0,\\; 0.0]$ (Query-এর সঙ্গে হুবহু মিলে গেছে!), $k_1 = [0.0,\\; 1.0]$ (লম্ব, কোনো মিল নেই)\n- **Values:** $v_0 = [2.0]$, $v_1 = [6.0]$\n\nচলুন ধাপে ধাপে হিসাব করি:\n1. **কাঁচা Dot-Product:** $q^\\top k_0 = 1.0$, $q^\\top k_1 = 0.0$।\n2. **$\\sqrt{d_k} = \\sqrt{2} \\approx 1.4142$ দিয়ে ভাগ (Scaling):** $s_0 = \\frac{1.0}{\\sqrt{2}} \\approx 0.7071$, $s_1 = 0.0$।\n3. **Softmax Weight:** $a_0 = \\frac{e^{0.7071}}{e^{0.7071} + e^0} \\approx \\mathbf{0.6698}$, $a_1 \\approx \\mathbf{0.3302}$ (যোগফল ঠিক $1.0$!)।\n4. **Weighted Value Sum:** $\\mathrm{Output} = 0.6698 \\times 2.0 + 0.3302 \\times 6.0 \\approx \\mathbf{3.3209}$।\n\nদেখুন, $k_0$-এর সঙ্গে Query বেশি মেলায় Output-টি $6.0$-এর চেয়ে $2.0$-এর দিকে বেশি ঝুঁকে পড়েছে! চলুন এবার মূল সমীকরণের প্রতিটি Symbol পরিষ্কার করে দেখে নিই।"
+          "title": "১. Attention কেন দরকার? RNN Bottleneck ও হাতে-কলমে উদাহরণ",
+          "body": "ধরুন, আপনি $100$ শব্দের একটা অনুচ্ছেদ পড়ছেন। শেষ বাক্যে লেখা, *\"সেটি তখনই হঠাৎ বন্ধ হয়ে গেল।\"* এখানে *\"সেটি\"* বলতে কী বোঝানো হয়েছে, তা বুঝতে আপনাকে $100$ শব্দ আগের কথাটা দেখতে হবে।\n\nআগের অধ্যায়ে (**Book 3 · Chapter 5: Sequence Models**) আমরা দেখেছি, সাধারণ RNN বা GRU আগের সব তথ্যের সারাংশ একটিমাত্র Fixed-size Hidden State ($h_t$)-এ ধরে রাখে। Sequence লম্বা হলে সেই Vector-এ শুরুর দিকের কিছু তথ্য হারিয়ে যেতে পারে।\n\n**Attention-এ বর্তমান Query ($Q$) থেকে আগের দরকারি Position-গুলোর সঙ্গে সরাসরি মিল দেখা যায়। সেই মিল অনুযায়ী Weight দিয়ে প্রতিটি Position-এর Value ($V$) গুণ করে যোগ করা হয়।**\n\n### Task Contract: Self-Attention ও Cross-Attention\nকোড লেখার আগে দুটো বিষয় ঠিক করুন। **$Q, K, V$ কোথা থেকে আসবে** এবং **Output কী কাজে লাগবে**।\n\n| ধরন | $Q$ কোথা থেকে আসে? | $K, V$ কোথা থেকে আসে? | সাধারণ ব্যবহার |\n| --- | --- | --- | --- |\n| **Self-Attention** | একই Sequence | একই Sequence | একই Sequence-এর ভেতরের সম্পর্ক ধরা |\n| **Cross-Attention** | Target / Decoder Sequence | Source / Encoder Context | অনুবাদ বা বাইরের Context থেকে তথ্য নেওয়া |\n\n> **সতর্কতা:** Transformer ব্যবহার করলেও **Information Timing** মেনে চলতে হয়। কোন Position অন্য কোন Position-এর তথ্য ব্যবহার করতে পারবে, তা **Mask $M$** দিয়ে ঠিক করুন।\n\n### ছোট একটি হাতে-কলমে উদাহরণ ($d_k = 2$)\nধরুন, আমাদের কাছে $1$টি Query Vector আর $2$টি Key–Value জোড়া আছে।\n- **Query:** $q = [1.0,\\; 0.0]$\n- **Keys:** $k_0 = [1.0,\\; 0.0]$ (Query-এর সঙ্গে হুবহু মেলে), $k_1 = [0.0,\\; 1.0]$ (Query-এর সঙ্গে Orthogonal, তাই মিল শূন্য)\n- **Values:** $v_0 = [2.0]$, $v_1 = [6.0]$\n\nচলুন ধাপে ধাপে হিসাব করি:\n1. **Scaling-এর আগের Dot Product** $q^\\top k_0 = 1.0$, $q^\\top k_1 = 0.0$।\n2. **$\\sqrt{d_k} = \\sqrt{2} \\approx 1.4142$ দিয়ে ভাগ (Scaling):** $s_0 = \\frac{1.0}{\\sqrt{2}} \\approx 0.7071$, $s_1 = 0.0$।\n3. **Softmax Weight:** $a_0 = \\frac{e^{0.7071}}{e^{0.7071} + e^0} \\approx \\mathbf{0.6698}$, $a_1 \\approx \\mathbf{0.3302}$ (যোগফল ঠিক $1.0$)।\n4. **Weighted Value Sum:** $\\mathrm{Output} = 0.6698 \\times 2.0 + 0.3302 \\times 6.0 \\approx \\mathbf{3.3209}$।\n\nদেখুন, Query-এর সঙ্গে $k_0$ বেশি মেলে। তাই Output $6.0$-এর চেয়ে $2.0$-এর কাছাকাছি। এবার সমীকরণের প্রতিটি Symbol কী বোঝায়, তা দেখি।"
         },
         {
           "type": "math",
           "title": "২. Scaled Dot-Product Attention-এর মূল সমীকরণ",
-          "lead": "কোনো Query Matrix $Q$, Key Matrix $K$, Value Matrix $V$ এবং দৃশ্যমানতা নিয়ন্ত্রণকারী Additive Mask $M$ দেওয়া থাকলে Scaled Dot-Product Attention-এর পূর্ণ গাণিতিক রূপ হলো:",
+          "lead": "Query Matrix $Q$, Key Matrix $K$, Value Matrix $V$ আর কোন Position-এর তথ্য ব্যবহার করা যাবে তা ঠিক করার জন্য Additive Mask $M$ দেওয়া আছে। এগুলো দিয়ে Scaled Dot-Product Attention-এর হিসাব করা হয়।",
           "body": "\\mathrm{Attention}(Q,K,V) = \\mathrm{softmax}\\!\\left(\\frac{Q K^\\top}{\\sqrt{d_k}} + M\\right) V",
           "symbols": [
             {
               "symbol": "$Q \\in \\mathbb{R}^{T_q \\times d_k}$",
-              "meaning": "Query Matrix — প্রতিটি বর্তমান অবস্থান ঠিক কী ধরনের তথ্য খুঁজছে তার গাণিতিক রূপ।",
+              "meaning": "Query Matrix বলে, প্রতিটি Position কী ধরনের তথ্য খুঁজছে।",
               "example": "আমাদের উদাহরণে $T_q = 1, d_k = 2$, অর্থাৎ $q = [1.0, 0.0]$।"
             },
             {
               "symbol": "$K \\in \\mathbb{R}^{T_k \\times d_k}$",
-              "meaning": "Key Matrix — প্রতিটি উৎস অবস্থানের পরিচয়পত্র, যার সাথে $Q$-এর Dot-Product করে মিল মাপা হয়।",
+              "meaning": "Key Matrix-এ প্রতিটি Source Position-এর Key থাকে। $Q$-এর সঙ্গে Dot Product করে দেখা হয়, Key-টি Query-এর সঙ্গে কতটা মেলে।",
               "example": "$k_0 = [1.0, 0.0]$ এবং $k_1 = [0.0, 1.0]$; তাই $Q K^\\top = [1.0, 0.0]$।"
             },
             {
               "symbol": "$\\sqrt{d_k}$",
-              "meaning": "প্রতিটি Head-এর নিজস্ব Key Dimension-এর বর্গমূল — বড় মাত্রায় Dot-Product-এর Variance নিয়ন্ত্রণে রাখে।",
+              "meaning": "প্রতি Head-এর Key Dimension-এর বর্গমূল। Dimension বাড়লে Dot Product-এর Variance যেন বেশি না হয়, সে জন্য এটি দিয়ে ভাগ করা হয়।",
               "example": "$d_k = 2$ হলে $\\sqrt{2} \\approx 1.4142$ দিয়ে ভাগ করে Score দাঁড়ায় $[0.7071, 0.0]$।"
             },
             {
               "symbol": "$M \\in \\{0, -\\infty\\}^{T_q \\times T_k}$",
-              "meaning": "Additive Mask — অনুমোদিত ঘরে $0$ এবং নিষিদ্ধ (ভবিষ্যৎ বা Padding) ঘরে $-\\infty$ বসায় যাতে Softmax-এর পর ওজন ঠিক $0$ হয়।",
-              "example": "সব Key অনুমোদিত হলে $M = [0, 0]$; Key 1 ব্লক করতে চাইলে $M = [0, -\\infty]$।"
+              "meaning": "Additive Mask-এ ব্যবহার করা যাবে এমন Position-এ $0$ বসে। ভবিষ্যৎ বা Padding-এর মতো বাদ দেওয়া Position-এ $-\\infty$ বসে, যাতে Softmax-এর পর তাদের Weight ঠিক $0$ হয়।",
+              "example": "সব Key ব্যবহার করা গেলে $M = [0, 0]$। Key 1 বাদ দিতে চাইলে $M = [0, -\\infty]$।"
             },
             {
               "symbol": "$V \\in \\mathbb{R}^{T_k \\times d_v}$",
-              "meaning": "Value Matrix — Attention Weight দিয়ে আনুপাতিক হারে যে আসল তথ্যগুলো মিশিয়ে চূড়ান্ত Output তৈরি হয়।",
+              "meaning": "Value Matrix-এর প্রতিটি Value-কে তার Attention Weight দিয়ে গুণ করে যোগ করলেই Output পাওয়া যায়।",
               "example": "$v_0 = [2.0], v_1 = [6.0] \\implies 0.6698 \\times 2 + 0.3302 \\times 6 = 3.3209$।"
             }
           ],
-          "note": "**মূল সারমর্ম:** $Q K^\\top / \\sqrt{d_k} + M$ তৈরি করে কাঁচা সামঞ্জস্যের Score (Logit), `softmax` সেগুলোকে যোগফল $1$ বিশিষ্ট Probability Weight-এ রূপান্তর করে, আর শেষে $V$ দিয়ে গুণ করে প্রাসঙ্গিক Context মিশিয়ে নেওয়া হয়!"
+          "note": "**সংক্ষেপে**, $Q K^\\top / \\sqrt{d_k} + M$ দিয়ে মিলের Score বা Logit বের হয়। `softmax` সেগুলো থেকে Weight বের করে, যাদের যোগফল $1$। শেষে সেই Weight দিয়ে $V$-এর Value-গুলো গুণ করে যোগ করা হয়।"
         },
         {
           "type": "code",
-          "title": "৩. Option A — সহজ Pure Python কোডে Scaled Dot-Product Attention যাচাই",
+          "title": "৩. Option A · Pure Python-এ Scaled Dot-Product Attention যাচাই",
           "body": "import math\n\n# ১) আমাদের হাতে-কলমে উদাহরণের Q, K, V (d_k = 2, কোনো numpy/pandas ছাড়াই!)\nquery = [1.0, 0.0]\nkeys = [\n    [1.0, 0.0],  # Key 0: Query-এর সাথে পূর্ণ মিল\n    [0.0, 1.0],  # Key 1: Query-এর সাথে লম্ব\n]\nvalues = [2.0, 6.0]\nd_k = len(query)\nscale = math.sqrt(d_k)\n\n# ২) Scaled Dot-Product Score হিসাব\nscores = []\nfor k in keys:\n    dot = 0.0\n    for i in range(d_k):\n        dot += query[i] * k[i]\n    scores.append(dot / scale)\n\n# ৩) সংখ্যাগতভাবে স্থিতিশীল Softmax (সর্বোচ্চ মান বিয়োগ করে)\nmax_score = max(scores)\nexp_scores = []\ntotal_exp = 0.0\nfor s in scores:\n    e_val = math.exp(s - max_score)\n    exp_scores.append(e_val)\n    total_exp += e_val\n\nweights = []\nfor e_val in exp_scores:\n    weights.append(e_val / total_exp)\n\n# ৪) Attention Weight দিয়ে Value-এর Weighted Sum\noutput = 0.0\nfor i in range(len(values)):\n    output += weights[i] * values[i]\n\nweight_sum = 0.0\nfor w in weights:\n    weight_sum += w\n\nassert abs(weight_sum - 1.0) < 1e-12\nprint(\"Scaled scores:\", [round(scores[0], 6), round(scores[1], 6)])\nprint(\"Attention weights:\", [round(weights[0], 6), round(weights[1], 6)])\nprint(\"Weight sum:\", round(weight_sum, 6), \"| Output:\", round(output, 6))\n"
         },
         {
           "type": "flow_diagram",
-          "title": "Scaled Dot-Product Attention-এর চার ধাপের প্রবাহ",
+          "title": "Scaled Dot-Product Attention কীভাবে চার ধাপে হিসাব করবেন",
           "body": "",
           "steps": [
             {
               "label": "ধাপ ১ · Query, Key ও Value প্রস্তুত করা",
-              "detail": "Self-Attention-এ একই Sequence থেকে এবং Cross-Attention-এ ভিন্ন Source থেকে $Q, K, V$ তৈরি হয়।"
+              "detail": "Self-Attention-এ $Q, K, V$ একই Sequence থেকে আসে। Cross-Attention-এ Query এক Sequence থেকে আসে, আর Key ও Value অন্য Source থেকে আসে।"
             },
             {
-              "label": "ধাপ ২ · সামঞ্জস্য মাপা ও $\\sqrt{d_k}$ স্কেলিং",
-              "detail": "প্রতিটি Query-এর সঙ্গে প্রতিটি Key-এর Dot-Product বের করে $\\sqrt{d_k}$ দিয়ে ভাগ করা হয়।"
+              "label": "ধাপ ২ · Dot Product বের করে $\\sqrt{d_k}$ দিয়ে ভাগ",
+              "detail": "প্রতিটি Query–Key জোড়ার Dot Product বের করুন। তারপর $\\sqrt{d_k}$ দিয়ে ভাগ করুন।"
             },
             {
               "label": "ধাপ ৩ · Additive Mask ও Stable Softmax",
-              "detail": "নিষিদ্ধ অবস্থানে $-\\infty$ বসিয়ে Softmax চালিয়ে যোগফল $1.0$ বিশিষ্ট Weight তৈরি করা হয়।"
+              "detail": "যেসব Position ব্যবহার করা যাবে না, সেখানে $-\\infty$ বসান। তারপর Softmax চালালে যে Weight-গুলো পাবেন, তাদের যোগফল $1.0$।"
             },
             {
-              "label": "ধাপ ৪ · Value মিশিয়ে Context Output গঠন",
-              "detail": "প্রাপ্ত Weight দিয়ে প্রতিটি অবস্থানের Value গুণ করে যোগ করলেই চূড়ান্ত প্রাসঙ্গিক Output তৈরি হয়।"
+              "label": "ধাপ ৪ · Value-গুলোর Weighted Sum বের করা",
+              "detail": "প্রতিটি Value-কে তার Weight দিয়ে গুণ করে যোগ করলে Context Output পাওয়া যায়।"
             }
           ],
-          "caption": "সহজভাবে বললে: Attention দূরের দুটি অবস্থানের মধ্যেও ঠিক ১ ধাপে সরাসরি সেতু গড়ে দেয়—RNN-এর মতো শত ধাপ ঘুরে আসতে হয় না!"
+          "caption": "Attention-এ Sequence-এর অনেক দূরের দুটি Position-ও ১ ধাপে সরাসরি যুক্ত হতে পারে। RNN-এ সেই তথ্য মাঝের সব ধাপ পেরিয়ে আসে।"
         },
         {
           "type": "text",
-          "title": "৪. যাচাই করা Output, Option B (PyTorch) ও বাস্তব Dataset-এর কাঠামো",
-          "body": "### Pure Python (Option A) যাচাই করা Output\n```text\nScaled scores: [0.707107, 0.0]\nAttention weights: [0.669762, 0.330238]\nWeight sum: 1.0 | Output: 3.320954\n```\nএকদম আমাদের খাতার হিসাবের সাথে দশমিকের শেষ ঘর পর্যন্ত মিলে গেছে!\n\n### Option B — PyTorch-এ একই Scaled Dot-Product Attention\nবাস্তব Deep Learning প্রজেক্টে এই একই হিসাব PyTorch-এ মাত্র কয়েক লাইনেই লেখা হয় (ফলাফল হুবহু একই: `[0.669762, 0.330238]` এবং Output `3.320954`):\n\n```python\nimport math\nimport torch\n\nQ = torch.tensor([[1.0, 0.0]], dtype=torch.float64)\nK = torch.tensor([[1.0, 0.0], [0.0, 1.0]], dtype=torch.float64)\nV = torch.tensor([[2.0], [6.0]], dtype=torch.float64)\n\nscores = (Q @ K.T) / math.sqrt(Q.shape[-1])\nweights = torch.softmax(scores, dim=-1)\noutput = (weights @ V).item()\nassert torch.allclose(weights.sum(dim=-1), torch.ones(1, dtype=torch.float64))\nprint(weights.tolist(), round(output, 6))\n```\n\n### বাস্তব Dataset-এ আমাদের কাজের কাঠামো ও ৩টি Interactive Lab\nওপরের উদাহরণটি ছিল কেবল সমীকরণ বোঝার ছোট গাণিতিক চর্চা। বাস্তব Data-য় আচরণ বুঝতে এই পুরো অধ্যায়ে আমরা **UCI Bike Sharing Dataset**-এ বিগত $14$ দিনের সাইকেল ভাড়ার সংখ্যা দেখে পরের দিনের চাহিদা Forecast করব:\n\n| অংশ | সময়কাল | ভূমিকা |\n| --- | --- | --- |\n| **Training (Fit)** | $2011$ সাল ($365$ দিন → $351$ Window) | Model ও Scaler Fit করার একমাত্র অংশ |\n| **Diagnostic Development** | জানুয়ারি–জুন $2012$ ($182$ দিন) | আচরণ ও ত্রুটি বিশ্লেষণ (আগের অধ্যায়েও ব্যবহৃত, নতুন Test নয়) |\n| **সংরক্ষিত (Untouched)** | জুলাই–ডিসেম্বর $2012$ ($184$ দিন) | Score বা এক্সপোর্ট—কোথাও ছোঁয়া হয়নি |\n\n- **তথ্যের সময়কালের শর্ত:** কোনো দিনের মোট সাইকেল সংখ্যা কেবল সেই দিন শেষ হওয়ার পরেই জানা যায়। যেমন $15$ জানুয়ারি দিন শেষে $1$–$14$ জানুয়ারির চূড়ান্ত সংখ্যা হাতে থাকে, তা দিয়েই $16$ জানুয়ারির Forecast করা হয়।\n- **স্বচ্ছ Cutaway Tiny Transformer:** প্রতিটি সংখ্যা হাতে মেলানোর জন্য আমরা খুব ছোট একটি **Tiny Transformer** ($d_{\\mathrm{model}} = 4, H = 2, D_{\\mathrm{ff}} = 8$, মোট $185$ Trainable Parameter) এবং **৩টি Interactive Lab** (Attention Weights Heatmap, Prefix Mask Audit, Full Transformer Block) রেখেছি।\n- **পরিধি ও সততা:** এটি কোনো বিশাল Pretrained LLM বা Tokenizer Training নয় (তা আসছে **Book 4 · Chapter 1: LLM Foundations**-এ)। আর মনে রাখবেন—**Attention Weight $\\neq$ Causal Feature Importance**!"
+          "title": "৪. Pure Python ও PyTorch-এর ফল এবং বাস্তব Dataset",
+          "body": "### Pure Python (Option A) চালালে যে Output পাওয়া যায়\n```text\nScaled scores: [0.707107, 0.0]\nAttention weights: [0.669762, 0.330238]\nWeight sum: 1.0 | Output: 3.320954\n```\nফলটি আমাদের হাতে করা হিসাবের সঙ্গে মেলে।\n\n### Option B — PyTorch-এ একই Scaled Dot-Product Attention\nDeep Learning Project-এ একই হিসাব PyTorch-এ কয়েক লাইনেই লেখা যায়। এখানেও একই Weight `[0.669762, 0.330238]` আর Output `3.320954` পাওয়া যায়।\n\n```python\nimport math\nimport torch\n\nQ = torch.tensor([[1.0, 0.0]], dtype=torch.float64)\nK = torch.tensor([[1.0, 0.0], [0.0, 1.0]], dtype=torch.float64)\nV = torch.tensor([[2.0], [6.0]], dtype=torch.float64)\n\nscores = (Q @ K.T) / math.sqrt(Q.shape[-1])\nweights = torch.softmax(scores, dim=-1)\noutput = (weights @ V).item()\nassert torch.allclose(weights.sum(dim=-1), torch.ones(1, dtype=torch.float64))\nprint(weights.tolist(), round(output, 6))\n```\n\n### বাস্তব Dataset-এ আমাদের কাজের কাঠামো ও ৩টি Interactive Lab\nওপরের ছোট উদাহরণে সমীকরণটা দেখেছি। এবার বাস্তব Data-তে Model কীভাবে কাজ করে, সেটা দেখতে **UCI Bike Sharing Dataset** ব্যবহার করব। আগের $14$ দিনের সাইকেল ভাড়ার সংখ্যা থেকে পরের দিনের চাহিদা Forecast করব।\n\n| অংশ | সময়কাল | ভূমিকা |\n| --- | --- | --- |\n| **Training (Fit)** | $2011$ সাল ($365$ দিন → $351$ Window) | শুধু এই অংশে Model ও Scaler Fit করা হয় |\n| **Diagnostic Development** | জানুয়ারি–জুন $2012$ ($182$ দিন) | Model-এর আচরণ ও ভুল বিশ্লেষণ। এই অংশ আগের অধ্যায়েও ব্যবহার হয়েছে, তাই এটি নতুন Test নয়। |\n| **সংরক্ষিত (Untouched)** | জুলাই–ডিসেম্বর $2012$ ($184$ দিন) | এই অংশের Outcome Score বা Export করা হয়নি |\n\n- **Information Timing** অনুযায়ী দিনের মোট সাইকেল ভাড়ার সংখ্যা জানা যায় দিন শেষ হওয়ার পর। যেমন, $15$ জানুয়ারি দিন শেষে $1$–$14$ জানুয়ারির চূড়ান্ত সংখ্যা জানা থাকে। উদাহরণে ওই সংখ্যাই $16$ জানুয়ারির Forecast-এর Input।\n- প্রতিটি হিসাব হাতে মিলিয়ে দেখার জন্য আমরা ছোট একটি **Cutaway Tiny Transformer** নিয়েছি ($d_{\\mathrm{model}} = 4, H = 2, D_{\\mathrm{ff}} = 8$, মোট $185$ Trainable Parameter)। এই অধ্যায়ে **৩টি Interactive Lab** আছে (Attention Weights Heatmap, Prefix Mask Audit, Full Transformer Block)।\n- এখানে আমরা ছোট Transformer-এর হিসাব দেখছি। বড় Pretrained LLM ও Tokenizer Training নিয়ে আলোচনা আছে **Book 4 · Chapter 1: LLM Foundations**-এ। মনে রাখবেন, **Attention Weight $\\neq$ Causal Feature Importance**।"
         },
         {
           "type": "concept_check",
-          "title": "চুক্তি যাচাই: আগে নিজে ভেবে উত্তর দিন",
+          "title": "নিজে যাচাই করুন · Attention ও Data Leakage",
           "predictMode": true,
-          "question": "ধরুন, আপনি একটি Time-Series Forecasting সমস্যায় সাধারণ RNN বাদ দিয়ে Transformer ব্যবহার করলেন। এর ফলে কি ভবিষ্যতের তথ্য (Future Information) ঢুকে পড়া বা Data Leakage স্বয়ংক্রিয়ভাবে বন্ধ হয়ে যাবে?",
+          "question": "ধরুন, একটি Time-Series Forecasting সমস্যায় RNN-এর বদলে Transformer ব্যবহার করলেন। এতেই কি ভবিষ্যতের তথ্য ঢুকে পড়া, অর্থাৎ Data Leakage, নিজে থেকেই বন্ধ হবে?",
           "options": [
-            "হ্যাঁ, Transformer আর্কিটেকচার নিজে থেকেই সব ধরনের Data Leakage আটকে দেয়",
-            "না! কোন Position কাকে দেখতে পারবে তা স্পষ্ট Mask দিয়ে বেঁধে দিতে হয়, এবং Input তৈরির সময় Information Timing আলাদাভাবে অডিট করতে হয়",
-            "শুধু Self-Attention ব্যবহার করলেই Leakage শূন্য হয়ে যায়",
-            "শুধু d_k বাড়িয়ে দিলেই ভবিষ্যতের তথ্য ব্লক হয়ে যায়"
+            "হ্যাঁ, Transformer Architecture নিজেই সব ধরনের Data Leakage ঠেকায়",
+            "না। কোন Position কোন তথ্য ব্যবহার করতে পারবে, তা Mask দিয়ে ঠিক করতে হবে। Input তৈরির সময় Information Timing-ও আলাদা করে যাচাই করতে হবে",
+            "Self-Attention ব্যবহার করলেই Data Leakage পুরোপুরি বন্ধ হয়",
+            "শুধু d_k বাড়ালেই ভবিষ্যতের তথ্য ব্যবহার বন্ধ হয়"
           ],
           "answer": 1,
-          "explanation": "একদম ঠিক! Transformer কেবল একটি গণিতের কাঠামো। ভেতরে সঠিক Causal Mask দেওয়া এবং বাইরে Dataset তৈরির সময় Forecast Issue Time মেনে চলা—দুটোই আমাদের স্পষ্ট চুক্তি হিসেবে নিশ্চিত করতে হয়!"
+          "explanation": "Transformer ব্যবহার করলেই সময়ের নিয়ম মানা হয় না। Model-এর ভেতরে সঠিক Causal Mask দিতে হবে। আর Dataset বানানোর সময় Forecast Issue Time-এ যেসব তথ্য জানা ছিল, সেগুলোই Input-এ রাখতে হবে।"
         },
         {
           "type": "interview_qa",
-          "title": "Attention-এর মূল চুক্তি — সম্ভাব্য Interview প্রশ্ন ও উত্তর",
-          "intro": "এই পাঠের ধারণাগুলো থেকে ইন্টারভিউতে আসা ৫টি গুরুত্বপূর্ণ প্রশ্ন আগে নিজে ভেবে দেখুন, তারপর উত্তর মিলিয়ে নিন।",
+          "title": "Attention নিয়ে সম্ভাব্য Interview প্রশ্ন ও উত্তর",
+          "intro": "নিচের ৫টি Interview প্রশ্নের উত্তর আগে নিজে ভাবুন। তারপর দেওয়া উত্তরের সঙ্গে মিলিয়ে দেখুন।",
           "items": [
             {
               "concept": "RNN Bottleneck vs Attention",
               "level": "Core",
-              "question": "লম্বা Sequence-এ সাধারণ RNN বা GRU-এর তুলনায় Attention-এর মূল গাণিতিক সুবিধা কী?",
-              "answer": "RNN পুরো অতীতকে একটিমাত্র Fixed-size Hidden State-এ ধাপে ধাপে সংকুচিত করে, ফলে দূরের তথ্য ও Gradient ক্ষীণ হয়ে যায়। Attention বর্তমান Query-এর সঙ্গে আগের যেকোনো অবস্থানের Key-এর **সরাসরি (O(1) path length)** সংযোগ তৈরি করে, ফলে দূরের প্রাসঙ্গিক তথ্য সরাসরি টেনে আনা যায়।",
-              "followUp": "এই সরাসরি সংযোগের বিনিময়ে কী বাড়তি খরচ দিতে হয়? $T$ দৈর্ঘ্যের Sequence-এ প্রতিটি জোড়ার তুলনা করতে $\\mathcal{O}(T^2)$ Score হিসাব ও Memory লাগে!"
+              "question": "লম্বা Sequence-এ সাধারণ RNN বা GRU-এর চেয়ে Attention-এর প্রধান গাণিতিক সুবিধা কী?",
+              "answer": "RNN আগের সব তথ্য ধাপে ধাপে একটি Fixed-size Hidden State-এ ধরে রাখে। এতে বহু ধাপ আগের তথ্য ও Gradient দুর্বল হয়ে যেতে পারে। Attention-এ বর্তমান Query আগের যেকোনো Position-এর Key-এর সঙ্গে সরাসরি যুক্ত হতে পারে। **Path Length O(1)** হওয়ায় দূরের দরকারি তথ্যও সরাসরি নেওয়া যায়।",
+              "followUp": "এই সরাসরি সংযোগের জন্য বাড়তি খরচ কী? $T$ দৈর্ঘ্যের Sequence-এ সব জোড়ার Score হিসাব করতে এবং রাখতে $\\mathcal{O}(T^2)$ হিসাব ও Memory লাগে।"
             },
             {
               "concept": "Self vs Cross-Attention",
               "level": "Core",
-              "question": "Self-Attention এবং Cross-Attention-এর মূল পার্থক্য কী? তাদের Output-এর দৈর্ঘ্য কার ওপর নির্ভর করে?",
-              "answer": "**Self-Attention**-এ $Q, K, V$ তিনটিই একই Input Sequence থেকে আসে; আর **Cross-Attention**-এ $Q$ আসে এক Sequence (যেমন Decoder) থেকে এবং $K, V$ আসে অন্য উৎস (যেমন Encoder Context) থেকে। উভয় ক্ষেত্রেই চূড়ান্ত Output-এর দৈর্ঘ্য সবসময় **Query-এর দৈর্ঘ্য ($T_q$)**-এর সমান হয়!",
-              "followUp": "Cross-Attention-এ কি $K$ ও $V$-এর দৈর্ঘ্য আলাদা হতে পারে? কখনোই না—$K$ ও $V$ একই উৎস অবস্থানের জোড়া হওয়ায় তাদের দৈর্ঘ্য সবসময় সমান ($T_k$) হতে হয়।"
+              "question": "Self-Attention আর Cross-Attention-এর মূল পার্থক্য কী? দুই ক্ষেত্রেই Output-এর দৈর্ঘ্য কীভাবে ঠিক হয়?",
+              "answer": "**Self-Attention**-এ $Q, K, V$ একই Input Sequence থেকে আসে। **Cross-Attention**-এ $Q$ আসে এক Sequence থেকে (যেমন Decoder), আর $K, V$ আসে অন্য উৎস থেকে (যেমন Encoder Context)। দুই ক্ষেত্রেই Output-এর দৈর্ঘ্য **Query-এর দৈর্ঘ্য ($T_q$)**-এর সমান।",
+              "followUp": "Cross-Attention-এ কি $K$ ও $V$-এর দৈর্ঘ্য আলাদা হতে পারে? দুটোতেই একই Source Position-গুলোর জন্য একটি করে Entry থাকে। তাই $K$ ও $V$-এর দৈর্ঘ্য সমান ($T_k$)।"
             },
             {
               "concept": "Attention != Causality",
               "level": "Intermediate",
-              "question": "কোনো দিনের ওপর Attention Weight 0.70 পড়লে কি বলা যায় ওই দিনটিই চূড়ান্ত Prediction-এর প্রধান কার্যকারণ চালক?",
-              "answer": "**না!** Attention Weight কেবল Value Vector মেশানোর সহগ (**Mixing Coefficients**)। যদি ওই দিনের Value Vector ক্ষুদ্র হয়, বা পরের Output Projection ($W_O$), Residual পথ ও FFN সেটিকে বদলে দেয়, তবে চূড়ান্ত Prediction-এ তার বাস্তব প্রভাব খুব কমও হতে পারে।",
-              "followUp": "তাহলে Model সত্যিই কোনো Input-এর ওপর কতটা সংবেদনশীল তা দেখার প্রাথমিক উপায় কী? Controlled Intervention, Gradient/Perturbation অডিট বা আলাদাভাবে ট্রেন করা Ablation Study।"
+              "question": "কোনো দিনের Attention Weight 0.70 হলে কি বলা যায়, ওই দিনের তথ্যই চূড়ান্ত Prediction-এর সবচেয়ে বড় Causal Driver?",
+              "answer": "শুধু Weight দেখে সেটা বলা যায় না। Attention Weight বলে, Value Vector-গুলো কী অনুপাতে যোগ হবে (**Mixing Coefficients**)। ওই দিনের Value Vector ছোট হলে, অথবা পরে Output Projection ($W_O$), Residual Path বা FFN-এর কারণে তার প্রভাব বদলে গেলে, চূড়ান্ত Prediction-এ তার প্রভাব খুব কমও হতে পারে।",
+              "followUp": "তাহলে কোনো Input বদলালে Model-এর Prediction কতটা বদলায়, তা কীভাবে বুঝবেন? শুরুতে Controlled Intervention, Gradient বা Perturbation যাচাই, কিংবা আলাদাভাবে Model Train করে Ablation Study করতে পারেন।"
             },
             {
               "concept": "Information Timing Contract",
               "level": "Intermediate",
-              "question": "আমাদের Bike Sharing Forecast-এ 2011 Train, Jan–Jun 2012 Dev এবং শেষ 184 দিন সংরক্ষিত রাখা হয়েছে কেন?",
-              "answer": "সময়ভিত্তিক Data-য় ভবিষ্যতের তথ্য যেন Scaler বা Training-এ চুইয়ে না ঢোকে তাই কঠোর Chronological Split দরকার। এছাড়া জানু–জুন 2012 আগের অধ্যায়গুলোতেও বিশ্লেষিত হওয়ায় তাকে সৎভাবে Diagnostic Development বলা হয়, আর শেষ 184 দিন একদম ছোঁয়া হয়নি।",
-              "followUp": "একই Development সেট বারবার দেখে আর্কিটেকচার বাছাই করলে কী সমস্যা হয়? Development সেটেই গোপন Overfitting হয়ে যায়—তখন নতুন অদেখা Confirmation ডেটা ছাড়া চূড়ান্ত দাবি করা যায় না।"
+              "question": "Bike Sharing Forecast-এ 2011-এর Data Training-এ, Jan–Jun 2012-এর Data Development-এ আর শেষ 184 দিন আলাদা করে রাখা হয়েছে কেন?",
+              "answer": "ভবিষ্যতের Data যেন Scaler বা Training-এ ঢুকে না পড়ে, তাই Chronological Split করা হয়েছে। জানুয়ারি–জুন 2012-এর Data আগের অধ্যায়েও বিশ্লেষণ করা হয়েছে বলে এই অংশকে Diagnostic Development বলা হয়েছে। শেষ 184 দিনের Outcome ব্যবহার করা হয়নি।",
+              "followUp": "একই Development Set বারবার দেখে Architecture বেছে নিলে কী সমস্যা হয়? পছন্দটা ওই Set-এর ওপর Overfit করতে পারে। তখন নিশ্চিত হতে আগে ব্যবহার করা হয়নি এমন Confirmation Data লাগবে।"
             },
             {
               "concept": "Readout Contract",
               "level": "Senior",
-              "question": "একই Self-Attention Block কীভাবে Many-to-One Regression, Per-Token Classification এবং Autoregressive Generation—তিনটি ভিন্ন কাজে ব্যবহৃত হয়?",
-              "answer": "Attention Block সবসময় প্রতি Query Position-এ একটি করে Context Vector ($[B, T, D]$) দেয়। এরপর **Readout Head** ও **Mask** বদলে কাজ ঠিক হয়: Many-to-One-এ শেষ বৈধ Position থেকে Scalar Head, Per-Token-এ প্রতিটি Position-এ Classifier, আর Autoregressive-এ Causal Mask + Shifted Target Vocabulary Head।",
-              "followUp": "ভুল করে Many-to-One টাস্কে Padding ঘরের Index থেকে Readout নিলে কী হবে? Padded ঘরগুলো অশূন্য আবর্জনা মান বহন করে বলে চূড়ান্ত Forecast নীরবে নষ্ট হয়ে যাবে!"
+              "question": "একই Self-Attention Block কীভাবে Many-to-One Regression, Per-Token Classification আর Autoregressive Generation-এ ব্যবহার করা যায়?",
+              "answer": "Attention Block প্রতিটি Query Position-এর জন্য একটি Context Vector দেয় ($[B, T, D]$)। এরপর Task অনুযায়ী **Readout Head** আর **Mask** বদলায়। Many-to-One-এ শেষ Valid Position-এর জন্য Scalar Head, Per-Token-এ প্রতিটি Position-এর জন্য Classifier, আর Autoregressive Generation-এ Causal Mask ও Shifted Target Vocabulary Head ব্যবহার করা হয়।",
+              "followUp": "ভুল করে Many-to-One Task-এ Padding Position-এর Index থেকে Readout নিলে কী হবে? ওই Position-এ শূন্য ছাড়া অন্য মান থাকতে পারে। তা থেকে Readout নিলে কোনো Error না দেখিয়েও Forecast ভুল হতে পারে।"
             }
           ]
         },
         {
           "type": "text",
-          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
-          "body": "### যে ৩টি ভুল শুরুতেই এড়িয়ে চলবেন\n1. **Attention মানেই স্বয়ংক্রিয় Causal নিরাপত্তা ভাবা:** Mask এবং Data Pipeline-এর সময়ের সীমানা দুটোই আলাদাভাবে যাচাই করতে হয়।\n2. **Heatmap দেখেই Causal Importance দাবি করা:** Attention Weight হলো Mixing Coefficient মাত্র, কার্যকারণের প্রমাণ নয়।\n3. **ছোট শিক্ষণীয় Model-কে LLM-এর সঙ্গে গুলিয়ে ফেলা:** $d_{\\mathrm{model}} = 4$ প্রস্থের Cutaway Model-টি প্রতিটি সংখ্যা হাতে যাচাই করার জন্য—কোনো Pretrained Language Benchmark নয়।\n\n### Cheat Sheet\n- **Core Formula:** $\\mathrm{Attention}(Q,K,V) = \\mathrm{softmax}\\!\\left(\\frac{QK^\\top}{\\sqrt{d_k}} + M\\right) V$\n- **Self-Attention:** $Q, K, V$ একই Sequence থেকে | **Cross-Attention:** $Q$ Target থেকে, $K, V$ Source থেকে।\n- **Row Sum Contract (Dropout = 0):** প্রতিটি বৈধ Query Row-এর Weight যোগফল $= 1.0$।\n\n**পরের পাঠে কী শিখব?** এই পাঠে আমরা তৈরি $Q, K, V$ ধরে নিয়ে হিসাব করেছি। কিন্তু একটি কাঁচা Input Sequence $X$ থেকে এই তিনটি আলাদা ভূমিকা—**Query, Key ও Value**—ঠিক কীভাবে শেখা Linear Projection এবং প্যাক করা `in_proj_weight` দিয়ে তৈরি হয়? চলুন পরের পাঠে সেটি হাতে-কলমে দেখি!"
+          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
+          "body": "### যে ৩টি ভুল শুরুতেই এড়িয়ে চলবেন\n1. **Attention থাকলেই ভবিষ্যতের তথ্য আটকাবে ধরে নেওয়া।** Mask কী আটকাচ্ছে আর Data Pipeline কোন সময়ের তথ্য নিচ্ছে, দুটো আলাদা করে যাচাই করুন।\n2. **Heatmap দেখে Causal Importance ধরে নেওয়া।** Attention Weight থেকে বোঝা যায় কোন Value কতটা Weight পেয়েছে। Prediction-এ কোনটির কতটা Causal প্রভাব, তা বোঝার জন্য আলাদা প্রমাণ লাগে।\n3. **ছোট Model-এর ফলকে LLM-এর ফল ধরে নেওয়া।** $d_{\\mathrm{model}} = 4$ হওয়ায় Cutaway Model-টির প্রতিটি হিসাব হাতে মিলিয়ে দেখা যায়। Pretrained Language Benchmark হিসেবে এটি ব্যবহার করা হয়নি।\n\n### Cheat Sheet\n- **Core Formula:** $\\mathrm{Attention}(Q,K,V) = \\mathrm{softmax}\\!\\left(\\frac{QK^\\top}{\\sqrt{d_k}} + M\\right) V$\n- **Self-Attention:** $Q, K, V$ একই Sequence থেকে | **Cross-Attention:** $Q$ Target থেকে, $K, V$ Source থেকে।\n- **Row Sum Contract (Dropout = 0):** প্রতিটি বৈধ Query Row-এর Weight যোগফল $= 1.0$।\n\n**পরের পাঠে** $Q, K, V$ কীভাবে তৈরি হয়, তা দেখব। একটি Input Sequence $X$ থেকে শেখা Linear Projection আর একসঙ্গে রাখা `in_proj_weight` দিয়ে **Query, Key ও Value** বের করব।"
         },
         {
           "type": "checkpoint",
-          "title": "চূড়ান্ত যাচাই: আগে নিজে ভেবে দেখুন",
-          "body": "ধরুন, কোনো Query-এর জন্য দুটি বৈধ Key-এর Softmax Attention Weight বের হলো `[0.75, 0.25]` এবং তাদের Value হলো `[10.0, 30.0]`। খাতায় হিসাব করে বলুন চূড়ান্ত Attention Output কত হবে? আর যদি দ্বিতীয় Key-টিকে Mask করে ব্লক করে দেওয়া হয়, তবে Output কত হবে?",
-          "solution": "দুটি Key খোলা থাকলে Output = 0.75 × 10.0 + 0.25 × 30.0 = 7.5 + 7.5 = 15.0। আর দ্বিতীয় Key-টিকে Softmax-এর আগে −∞ দিয়ে ব্লক করে দিলে একমাত্র বৈধ প্রথম Key-এর Weight হয়ে যাবে ঠিক 1.0, ফলে Output হবে 1.0 × 10.0 = 10.0!",
+          "title": "নিজে হিসাব করে দেখুন",
+          "body": "ধরুন, একটি Query-এর জন্য দুটি Valid Key-এর Softmax Attention Weight `[0.75, 0.25]` আর তাদের Value `[10.0, 30.0]`। হাতে হিসাব করে বলুন, Attention Output কত হবে? দ্বিতীয় Key-টি Mask দিয়ে বাদ দিলে Output কত হবে?",
+          "solution": "দুটি Key-ই ব্যবহার করা গেলে Output = 0.75 × 10.0 + 0.25 × 30.0 = 7.5 + 7.5 = 15.0। দ্বিতীয় Key-তে Softmax-এর আগে −∞ বসালে শুধু প্রথম Key-টি Valid থাকে। তাই তার Weight হয় 1.0, আর Output হয় 1.0 × 10.0 = 10.0।",
           "reference": "https://arxiv.org/abs/1706.03762"
         }
       ]
@@ -188,7 +188,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "আজ আমরা বুঝব একটিই Input Sequence $X$ থেকে কেন তিনটি আলাদা শেখা Projection Matrix ($W_Q, W_K, W_V$) দিয়ে **Query, Key ও Value** তৈরি করা হয়, PyTorch-এ কীভাবে এগুলোকে একটিমাত্র **Packed Matrix (`in_proj_weight`)**-এ সাজানো হয়, এবং সংখ্যার Time Series ও Cross-Attention-এ এই Projection-এর আকার কীভাবে কাজ করে।",
+          "goal": "আজ আমরা বুঝব একই Input Sequence $X$ থেকে কেন শেখা তিনটি আলাদা Projection Matrix ($W_Q, W_K, W_V$) দিয়ে **Query, Key ও Value** তৈরি করা হয়, PyTorch-এ কীভাবে এগুলোকে একটিমাত্র **Packed Matrix (`in_proj_weight`)**-এ সাজানো হয়, এবং সংখ্যার Time Series ও Cross-Attention-এ এই Projection-এর আকার কীভাবে কাজ করে।",
           "prerequisites": [
             "আগের পাঠ: Scaled Dot-Product Attention",
             "Linear Layer: $y = x W^\\top + b$",
@@ -257,7 +257,7 @@
               "detail": "একটিমাত্র Matrix গুণ করে `[T, 12]` থেকে সমান ৩ ভাগে কেটে বের হয় $Q, K, V$ (প্রতিটি `[T, 4]`)।"
             }
           ],
-          "caption": "ডিবাগিং অভ্যাস: **Raw Count**, **Standardized Scalar**, এবং **Projected Internal Feature**—এই তিন স্তর কখনোই একসঙ্গে গুলিয়ে ফেলবেন না!"
+          "caption": "Debugging অভ্যাস: **Raw Count**, **Standardized Scalar**, এবং **Projected Internal Feature**—এই তিন স্তর কখনোই একসঙ্গে গুলিয়ে ফেলবেন না!"
         },
         {
           "type": "text",
@@ -288,7 +288,7 @@
               "level": "Core",
               "question": "Self-Attention-এ তিনটি আলাদা Matrix ($W_Q, W_K, W_V$) না রেখে সরাসরি $X X^\\top$ করলে সমস্যা কী হতো?",
               "answer": "$X X^\\top$ সবসময় একটি **প্রতিসম (Symmetric)** Matrix তৈরি করে—অর্থাৎ Token $A$ যদি $B$-কে দেখে তবে $B$-ও ঠিক একই মাত্রায় $A$-কে দেখবে, এবং প্রতিটি Token নিজের সাথেই সবচেয়ে বেশি মিল দেখাবে ($x_i^\\top x_i$ বড়)। আলাদা $W_Q, W_K$ অপ্রতিসম (Asymmetric) সম্পর্ক শেখার ক্ষমতা দেয়, আর $W_V$ ঠিক করে ঠিক কোন তথ্যটুকু সামনে যাবে।",
-              "followUp": "তাহলে কি কখনো $W_Q = W_K$ বা Parameter sharing করা হয়? কিছু হালকা বা বিশেষ আর্কিটেকচারে করা যায়, তবে সাধারণ Transformer-এ আলাদা $W_Q, W_K, W_V$ বেশি প্রকাশক্ষমতা দেয়।"
+              "followUp": "তাহলে কি কখনো $W_Q = W_K$ বা Parameter sharing করা হয়? কিছু হালকা বা বিশেষ Architecture-এ করা যায়, তবে সাধারণ Transformer-এ আলাদা $W_Q, W_K, W_V$ বেশি প্রকাশক্ষমতা দেয়।"
             },
             {
               "concept": "Packed in_proj_weight",
@@ -309,7 +309,7 @@
               "level": "Intermediate",
               "question": "ভাষার Token-এর বদলে সংখ্যার Time Series ডেটায় Transformer-এর Input কীভাবে তৈরি করা হয়?",
               "answer": "সংখ্যার ডেটায় কোনো Discrete Vocabulary বা `nn.Embedding` টেবিল থাকে না। প্রথমে Training সেটের পরিসংখ্যান দিয়ে সংখ্যাকে Standardize করা হয়, তারপর `Linear(C_in, D)` (আমাদের ক্ষেত্রে `Linear(1, 4)`) দিয়ে $D$-মাত্রার Vector Space-এ প্রজেক্ট করে তার সাথে Positional Encoding যোগ করা হয়।",
-              "followUp": "কাঁচা সাইকেল সংখ্যার সাথেই কি সরাসরি Positional Encoding যোগ করা যেত? না—কাঁচা সংখ্যা হাজারের ঘরে (যেমন 4500), তার পাশে $[-1, 1]$ স্কেলের Sine/Cosine যোগ করলে Position সংকেত পুরোপুরি চাপা পড়ে যেত!"
+              "followUp": "কাঁচা সাইকেল সংখ্যার সাথেই কি সরাসরি Positional Encoding যোগ করা যেত? না—কাঁচা সংখ্যা হাজারের ঘরে (যেমন 4500), তার পাশে $[-1, 1]$ স্কেলের Sine/Cosine যোগ করলে Position-এর তথ্য পুরোপুরি চাপা পড়ে যেত!"
             },
             {
               "concept": "High Weight vs Small Value",
@@ -322,7 +322,7 @@
         },
         {
           "type": "text",
-          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **Transpose ভুলে যাওয়া:** PyTorch-এর `nn.Linear` Weight থাকে `[out, in]` আকারে—তাই Row-Vector Input-এ সবসময় $X W^\\top + b$।\n2. **Cross-Attention-এ Output দৈর্ঘ্য গুলিয়ে ফেলা:** Output-এর দৈর্ঘ্য সবসময় **Query দৈর্ঘ্য $T_q$**, কখনোই Source দৈর্ঘ্য $T_k$ নয়!\n3. **Raw Count আর Projected Feature এক মনে করা:** `Linear(1 -> 4)` পার হওয়ার পর প্রতিটি সংখ্যা Model-এর নিজস্ব Internal Coordinate।\n\n### Cheat Sheet\n- **Projection:** $Q = X W_Q^\\top + b_Q$, $K = X W_K^\\top + b_K$, $V = X W_V^\\top + b_V$\n- **Packed Shape:** `in_proj_weight` = $[3D, D]$, `in_proj_bias` = $[3D]$\n- **Cross-Attention:** $Q: [T_q, d_k],\\; K: [T_k, d_k],\\; V: [T_k, d_v] \\implies \\mathrm{Output}: [T_q, d_v]$\n\n**পরের পাঠে কী শিখব?** $Q$ আর $K$ তো তৈরি হলো—এবার তাদের Dot-Product ($q_i^\\top k_j$) করলে Dimension $d_k$ বড় হওয়ার সঙ্গে সঙ্গে ভয়ানক Variance বিস্ফোরণ ঘটে! পরের পাঠে আমরা হাতে-কলমে দেখব কেন **$\\sqrt{d_k}$ দিয়ে ভাগ করতে হয়**, এবং একক Head-এর **সম্পূর্ণ Backward Pass Gradient** কীভাবে বের হয়!"
         },
         {
@@ -345,7 +345,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "আজ আমরা Scaled Dot-Product Attention-এর হৃদপিণ্ড বুঝব—কেন $d_k$ বড় হলে না-ভাগ করা Dot-Product-এর Variance $d_k$ গুণ বেড়ে Softmax-কে অবশ (Saturate) করে দেয়, কেন ভাগ করতে হয় **প্রতি-Head প্রস্থ $\\sqrt{d_k}$** দিয়ে (মোট $\\sqrt{D}$ বা $\\sqrt{T}$ দিয়ে নয়!), এবং একটি $1\\text{D}$ উদাহরণে **সম্পূর্ণ Backward Pass Gradient** কীভাবে হাতে বের করা হয়।",
+          "goal": "Scaled Dot-Product Attention-এ $d_k$ বাড়লে ভাগ করার আগের Dot Product-এর Variance $d_k$ গুণ বেড়ে Softmax Saturate করতে পারে। তাই প্রতি Head-এর $\\sqrt{d_k}$ দিয়ে ভাগ করি। $\\sqrt{D}$ বা $\\sqrt{T}$ দিয়ে ভাগ করলে কেন ওই হিসাব মেলে না, তা দেখব। শেষে একটি $1\\text{D}$ উদাহরণে Backward Pass-এর পুরো Gradient হাতে হিসাব করব।",
           "prerequisites": [
             "আগের পাঠ: Queries, Keys ও Values",
             "স্বাধীন চলকের Mean ও Variance নিয়ম",
@@ -353,9 +353,9 @@
           ],
           "outcomes": [
             "Dot-Product বনাম Cosine Similarity-র পার্থক্য (কোণ + Vector দৈর্ঘ্য) উদাহরণসহ ব্যাখ্যা করতে পারবেন।",
-            "কেন $\\mathrm{Var}(q^\\top k) = d_k$ হয় এবং $\\frac{1}{\\sqrt{d_k}}$ স্কেলিং কীভাবে Softmax Saturation ঠেকায় তা প্রমাণ করতে পারবেন।",
+            "কেন $\\mathrm{Var}(q^\\top k) = d_k$ হয় এবং $\\frac{1}{\\sqrt{d_k}}$ Scaling কীভাবে Softmax Saturation ঠেকায় তা প্রমাণ করতে পারবেন।",
             "Multi-Head Attention-এ $\\sqrt{d_k}$ বনাম $\\sqrt{D}$ এবং `.reshape(B,T,H,d_k).transpose(1,2)` নিয়মটি নির্ভুলভাবে প্রয়োগ করতে পারবেন।",
-            "একক Head-এর Backward Pass সমীকরণ $\\frac{\\partial L}{\\partial s_j} = p_j(v_j - o)$ হাতে কষে Finite-Difference দিয়ে যাচাই করতে পারবেন।"
+            "একক Head-এর Backward Pass সমীকরণ $\\frac{\\partial L}{\\partial s_j} = p_j(v_j - o)$ হাতে হিসাব করে Finite-Difference দিয়ে যাচাই করতে পারবেন।"
           ]
         },
         {
@@ -381,7 +381,7 @@
             },
             {
               "symbol": "$\\mathrm{Var}(q^\\top k)$",
-              "meaning": "না-ভাগ করা Dot-Product-এর Variance, যা $d_k$-এর সমানুপাতিক হারে বাড়ে।",
+              "meaning": "Scaling-এর আগের Dot Product-এর Variance, যা $d_k$-এর সমানুপাতিক হারে বাড়ে।",
               "example": "$d_k = 64$ হলে Raw Variance $\\approx 64$; $\\sqrt{64} = 8$ দিয়ে ভাগ করলে Variance আবার $\\approx 1$ হয়।"
             }
           ],
@@ -394,7 +394,7 @@
         },
         {
           "type": "flow_diagram",
-          "title": "কেন প্রতি-Head স্কেলিং Gradient প্রবাহকে বাঁচিয়ে রাখে",
+          "title": "কেন প্রতি-Head Scaling Gradient প্রবাহকে বাঁচিয়ে রাখে",
           "body": "",
           "steps": [
             {
@@ -414,7 +414,7 @@
               "detail": "যার Value গড় Output $o$-এর চেয়ে বড়, Gradient তার Score বাড়ায়; ছোট হলে কমায়!"
             }
           ],
-          "caption": "সোনালি নিয়ম: Softmax যদি একক ঘরে `1.0` হয়ে অবশ (Saturate) হয়ে যায়, তবে $p_j = 0$ বা $v_j - o = 0$ হয়ে পুরো Gradient-ই থমকে দাঁড়ায়!"
+          "caption": "মনে রাখার নিয়ম: Softmax যদি একক ঘরে `1.0` হয়ে অবশ (Saturate) হয়ে যায়, তবে $p_j = 0$ বা $v_j - o = 0$ হয়ে পুরো Gradient-ই থমকে দাঁড়ায়!"
         },
         {
           "type": "line_chart",
@@ -532,7 +532,7 @@
               "example": "$-0.393224 + 0.393224 = 0.0$।"
             }
           ],
-          "note": "**ডিবাগিংয়ের সেরা অস্ত্র:** নিজের লেখা Attention কোডে কোনো গোপন Transpose বা Mask বাগ লুকিয়ে আছে কি না, তা ধরার সবচেয়ে নির্ভরযোগ্য উপায় হলো ছোট Input-এ Finite-Difference Check-এর সঙ্গে Autograd মেলানো!"
+          "note": "**Debugging-এর সেরা অস্ত্র:** নিজের লেখা Attention কোডে কোনো গোপন Transpose বা Mask বাগ লুকিয়ে আছে কি না, তা ধরার সবচেয়ে নির্ভরযোগ্য উপায় হলো ছোট Input-এ Finite-Difference Check-এর সঙ্গে Autograd মেলানো!"
         },
         {
           "type": "text",
@@ -604,7 +604,7 @@
         },
         {
           "type": "text",
-          "title": "৭. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৭. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **$\\sqrt{d_k}$-এর বদলে $\\sqrt{D}$ বা $d_k$ দিয়ে ভাগ করা:** সবসময় প্রতি-Head Key Dimension-এর বর্গমূল $\\sqrt{D/H}$ দিয়ে ভাগ করতে হবে।\n2. **`.view(B, H, T, d_k)` শর্টকাট বাগ:** সবসময় দুই ধাপে `.reshape(B, T, H, d_k).transpose(1, 2)` করতে হবে।\n3. **Training-এ নিখুঁত Unit Variance আশা করা:** শেখা Weight-এর জন্য $\\frac{1}{\\sqrt{d_k}}$ একটি শক্তিশালী Stabilization, একা সব সামলায় না—এর সাথে LayerNorm ও ভালো Optimizer-ও দরকার।\n\n### Cheat Sheet\n- **Scaled Score:** $s_{ij} = \\frac{q_i^\\top k_j}{\\sqrt{d_k}}$ যেখানে $d_k = D / H$\n- **Variance Identity:** $\\mathrm{Var}(q^\\top k) = d_k \\implies \\mathrm{Var}(q^\\top k / \\sqrt{d_k}) = 1$\n- **1D Backward Pass ($L=o$):** $\\frac{\\partial L}{\\partial v_j} = p_j$, $\\frac{\\partial L}{\\partial s_j} = p_j (v_j - o)$, $\\sum_j \\frac{\\partial L}{\\partial s_j} = 0$\n\n**পরের পাঠে কী শিখব?** Scaled Score তো হাতে এল—কিন্তু Score-গুলো যদি `[1000.0, 1000.0, 999.0]` হয় কিংবা কোনো Row-এর সবগুলো Key ব্লক হয়ে যায়, তবে সাধারণ Softmax মুহূর্তেই `inf` বা `NaN` হয়ে ভেঙে পড়ে! পরের পাঠে আমরা শিখব **Stable Masked Softmax** ও প্রান্তিক Edge Case সামলানোর নিরাপদ চুক্তি!"
         },
         {
@@ -627,7 +627,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "আজ আমরা শিখব কীভাবে বড় Score-এ `exp()`-এর **Overflow (`inf`)** ঠেকিয়ে **Stable Masked Softmax** লিখতে হয়, কেন Mask সবসময় **Softmax-এর আগে** ($-\\infty$) বসাতে হয়, কোনো Row-এর সব Key Block করা হলে কেন `NaN` আসে, এবং Attention Dropout ও `float64` বনাম GPU Precision-এর বাস্তব পার্থক্য কী।",
+          "goal": "বড় Score-এ `exp()` চালালে **Overflow (`inf`)** হতে পারে। এবার দেখব কীভাবে সেটা ঠেকিয়ে **Stable Masked Softmax** লিখবেন। Mask কেন Softmax-এর আগে ($-\\infty$) বসে আর Row-এর সব Key বাদ পড়লে কেন `NaN` আসে, তা বুঝব। শেষে Attention Dropout-এর প্রভাব আর `float64` ও GPU Precision-এর পার্থক্য দেখব।",
           "prerequisites": [
             "আগের পাঠ: Scaled Dot-Product Attention",
             "সূচক ফাংশন $e^x$ ও Floating-Point সীমা (`float64` max $\\approx e^{709}$)",
@@ -761,7 +761,7 @@
         },
         {
           "type": "text",
-          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **ভুল Axis-এ Softmax চালানো:** Key Axis (`dim=-1`)-এর বদলে Query Axis (`dim=-2`) নিলে Shape এক থাকে কিন্তু প্রতিটি Row-এর Probability অর্থ ভেঙে যায়!\n2. **All-Blocked Row-এ লাইব্রেরির ওপর অন্ধ ভরসা:** ব্যাকএন্ডভেদে কেউ `NaN`, কেউ `0` দেয়—নিজে স্পষ্ট Guard লিখুন।\n3. **শূন্য Input বা শূন্য Score-এ শূন্য Weight আশা করা:** $\\exp(0) = 1$, শূন্য Weight-এর জন্য চাই $-\\infty$।\n\n### Cheat Sheet\n- **Stable Masked Softmax:** $m_i = \\max_{k \\in \\mathcal{A}_i} s_{ik}$, $a_{ij} = \\frac{\\exp(s_{ij}-m_i)}{\\sum_{k \\in \\mathcal{A}_i}\\exp(s_{ik}-m_i)}$\n- **Softmax Jacobian:** $\\frac{\\partial a}{\\partial s} = \\mathrm{diag}(a) - a a^\\top$\n- **Verification:** CPU `float64` + `dropout = 0` + `allowed.any(-1).all()`\n\n**পরের পাঠে কী শিখব?** একটিমাত্র Attention Head প্রতি Position-এ কেবল একটিই দৃষ্টিভঙ্গি (Weight তালিকা) তৈরি করতে পারে। কিন্তু একই সময়ে যদি একাধিক সম্পর্ক ধরতে চাই? পরের পাঠে আমরা শিখব **Multi-Head Attention** এবং আমাদের ১ম **Interactive Attention Weights Lab** হাতে-কলমে ঘুরে দেখব!"
         },
         {
@@ -775,7 +775,7 @@
     },
     {
       "id": "ch20_multihead",
-      "title": "Multi-Head Attention: ভাগ করা, মেশানো ও জোড়া লাগানো",
+      "title": "Multi-Head Attention: Head-এ ভাগ করা ও ফল জোড়া লাগানো",
       "subtitle": "একাধিক সমান্তরাল Subspace, নিখুঁত Tensor Shape যাত্রা, স্থির Parameter বাজেট ও Interactive Weights Lab",
       "duration": "45 min",
       "icon": "code",
@@ -833,7 +833,7 @@
         },
         {
           "type": "flow_diagram",
-          "title": "Multi-Head Attention-এর ৫ ধাপের Shape পাইপলাইন",
+          "title": "Multi-Head Attention-এর ৫ ধাপের Shape Pipeline",
           "body": "",
           "steps": [
             {
@@ -927,7 +927,7 @@
         },
         {
           "type": "text",
-          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **সরাসরি `.view(B, H, T, d)` লেখা:** সবসময় আগে `.reshape(B, T, H, d)` তারপর `.transpose(1, 2)`।\n2. **বেশি Head মানেই বেশি Parameter ভাবা:** $D$ স্থির থাকলে মোট Projection Parameter $4D^2 + 4D$ একদমই বদলায় না।\n3. **`average_attn_weights=False` ভুলে যাওয়া:** প্রতি-Head অডিট করতে এই ফ্ল্যাগটি অপরিহার্য।\n\n### Cheat Sheet\n- **Head Split:** `[B, T, D] -> .reshape(B, T, H, d) -> .transpose(1, 2) -> [B, H, T, d]`\n- **Merge:** `[B, H, T, d] -> .transpose(1, 2) -> .reshape(B, T, D) -> W_O`\n- **Total MHA Params (with bias):** $4D^2 + 4D$ (আমাদের $D=4$ Model-এ ঠিক **$80$**)\n\n**পরের পাঠে কী শিখব?** একাধিক Head মিলে এখন সব Position-এর সঙ্গে কথা বলছে—কিন্তু আমাদের যদি ভবিষ্যতের তথ্য লুকাতে হয়? পরের পাঠে আমরা শিখব **Causal Visibility**, PyTorch-এর দুটি API-তে **বিপরীত Boolean Mask Polarity ফাঁদ**, এবং **Interactive Prefix Audit Lab**!"
         },
         {
@@ -941,7 +941,7 @@
     },
     {
       "id": "ch20_causal",
-      "title": "Causal Visibility ও তথ্যের সময়কাল",
+      "title": "Causal Visibility ও কোন তথ্য কখন পাওয়া যায়",
       "subtitle": "Prefix নিয়ম, PyTorch-এর বিপরীত Mask Polarity ফাঁদ, Prefix Perturbation টেস্ট ও Interactive Mask Lab",
       "duration": "60 min",
       "icon": "code",
@@ -950,7 +950,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "আজ আমরা **Causal Self-Attention**-এর দৃশ্যমানতা নিয়ম ($j \\le i$) একদম গভীরভাবে বুঝব—কেন PyTorch-এর দুটি জনপ্রিয় API (`nn.MultiheadAttention` বনাম `sdpa`)-তে Boolean Mask-এর অর্থ একদম উল্টো, কীভাবে **Counterfactual Future Perturbation Test** দিয়ে ভবিষ্যতের তথ্য ফাঁস হচ্ছে কি না তা হাতে-কলমে প্রমাণ করা যায়, এবং Window Many-to-One বনাম Multi-Layer অনলাইন টাস্কে Leakage-এর সূক্ষ্ম পার্থক্য কী।",
+          "goal": "এই পাঠে **Causal Self-Attention**-এ কোন Position কোন তথ্য ব্যবহার করতে পারে, তার নিয়ম ($j \\le i$) বুঝব। দেখব কেন PyTorch-এর দুটি জনপ্রিয় API (`nn.MultiheadAttention` বনাম `sdpa`)-তে Boolean Mask-এর অর্থ একদম উল্টো, কীভাবে **Counterfactual Future Perturbation Test** দিয়ে ভবিষ্যতের তথ্য ফাঁস হচ্ছে কি না তা হাতে-কলমে প্রমাণ করা যায়, এবং Window Many-to-One বনাম Multi-Layer অনলাইন Task-এ Leakage-এর সূক্ষ্ম পার্থক্য কী।",
           "prerequisites": [
             "আগের পাঠ: Stable Masked Softmax ও Multi-Head Attention",
             "Lower-triangular বনাম Upper-triangular Matrix",
@@ -1096,14 +1096,14 @@
         },
         {
           "type": "text",
-          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
-          "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **`nn.MultiheadAttention`-এর Boolean Mask সরাসরি `sdpa`-তে দেওয়া:** Polarity পুরোপুরি উল্টে যায়!\n2. **Strict Lower Triangle ($j < i$) দেওয়া:** Row $0$ পুরোপুরি ব্লক হয়ে `NaN` তৈরি করে।\n3. **কেবল Causal Mask দেখেই Leakage-মুক্ত দাবি করা:** Dataloader ও Feature তৈরির সময়কাল আলাদাভাবে অডিট করতেই হবে।\n\n### Cheat Sheet\n- **Causal Set:** $\\mathcal{A}_i = \\{j : 0 \\le j \\le i\\}$ (Diagonal খোলা!)\n- **Polarity:** `MHA` (`True` = Blocked) | `SDPA` (`True` = Allowed) | Float (`0.0` = Allowed, $-\\infty$ = Blocked)\n- **Gold Test:** Future Perturbation Invariance (`diff == 0.0` for $t \\le p$)\n\n**পরের পাঠে কী শিখব?** একটি Batch-এ সব Sequence-এর দৈর্ঘ্য তো সমান থাকে না! ছোট Sequence-এর শেষে বাড়তি `PAD` বসালে কেবল **`key_padding_mask`** দিলেই কি সব সমাধান হয়ে যায়, নাকি Padded Query ও Loss-এ গোপন ফাঁদ রয়ে যায়? চলুন পরের পাঠে দেখে নিই!"
+          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
+          "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **`nn.MultiheadAttention`-এর Boolean Mask সরাসরি `sdpa`-তে দেওয়া:** Polarity পুরোপুরি উল্টে যায়!\n2. **Strict Lower Triangle ($j < i$) দেওয়া:** Row $0$ পুরোপুরি ব্লক হয়ে `NaN` তৈরি করে।\n3. **কেবল Causal Mask দেখেই Leakage-মুক্ত দাবি করা:** Dataloader ও Feature তৈরির সময়কাল আলাদাভাবে অডিট করতেই হবে।\n\n### Cheat Sheet\n- **Causal Set:** $\\mathcal{A}_i = \\{j : 0 \\le j \\le i\\}$ (Diagonal খোলা!)\n- **Polarity:** `MHA` (`True` = Blocked) | `SDPA` (`True` = Allowed) | Float (`0.0` = Allowed, $-\\infty$ = Blocked)\n- **Gold Test:** Future Perturbation Invariance (`diff == 0.0` for $t \\le p$)\n\n**পরের পাঠে কী শিখব?** একটি Batch-এ সব Sequence-এর দৈর্ঘ্য তো সমান থাকে না! ছোট Sequence-এর শেষে বাড়তি `PAD` বসালে কেবল **`key_padding_mask`** দিলেই কি সব সমাধান হয়ে যায়, নাকি Padded Query ও Loss-এ সহজে চোখে পড়ে না এমন ভুল রয়ে যায়? চলুন পরের পাঠে দেখে নিই!"
         },
         {
           "type": "checkpoint",
           "title": "চূড়ান্ত যাচাই: আগে নিজে ভেবে দেখুন",
           "body": "কোনো একটি Row-এর সবগুলো Key যদি ব্লক করা থাকে, তবে আমাদের Causal Visibility টেস্টটিকে আপনি কীভাবে আরও সমৃদ্ধ করবেন?",
-          "solution": "কোডে প্রথমেই শনাক্ত করতে হবে কোন কোন Row-তে বৈধ Key-এর সংখ্যা শূন্য, এবং আমাদের টাস্কের পূর্বনির্ধারিত নীতি অনুযায়ী সেগুলো বাদ দেওয়া (Skip), Error তোলা, নাকি নির্দিষ্ট কোনো নিরাপদ Fallback মান বসানোর কথা তা পরীক্ষা করতে হবে। কারণ সবগুলো -inf-এর ওপর সাধারণ Softmax চালালে তা গাণিতিকভাবে অসংজ্ঞায়িত (NaN) হয়ে যায়। কোনো Fused API হয়তো বাহ্যিকভাবে শূন্য ফেরত দিতে পারে, কিন্তু তা দেখে ধরে নেওয়া যাবে না যে পুরো Loss ও Gradient সঠিক আছে।",
+          "solution": "কোডে প্রথমেই শনাক্ত করতে হবে কোন কোন Row-তে বৈধ Key-এর সংখ্যা শূন্য, এবং আমাদের Task-এর পূর্বনির্ধারিত নীতি অনুযায়ী সেগুলো বাদ দেওয়া (Skip), Error তোলা, নাকি নির্দিষ্ট কোনো নিরাপদ Fallback মান বসানোর কথা তা পরীক্ষা করতে হবে। কারণ সবগুলো -inf-এর ওপর সাধারণ Softmax চালালে তা গাণিতিকভাবে অসংজ্ঞায়িত (NaN) হয়ে যায়। কোনো Fused API হয়তো বাহ্যিকভাবে শূন্য ফেরত দিতে পারে, কিন্তু তা দেখে ধরে নেওয়া যাবে না যে পুরো Loss ও Gradient সঠিক আছে।",
           "reference": "https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html"
         }
       ]
@@ -1119,7 +1119,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "আজ আমরা Batched Sequence-এর সবচেয়ে সূক্ষ্ম ভুলগুলোর একটি সমাধান করব—কেন `key_padding_mask` কেবল Padded **Key** আটকায় কিন্তু Padded **Query Row** মুছে দেয় না, কীভাবে Causal ও Padding Mask একত্রে মেশাতে হয়, কীভাবে কেবল বৈধ Token দিয়ে **Loss Normalize** করতে হয়, এবং কেন Standardized সংখ্যার Data-য় `0.0` মানেই কখনো `PAD` নয়!",
+          "goal": "Batched Sequence-এ `key_padding_mask` দিয়ে Padded **Key** বাদ যায়। Padded **Query Row** তখনও থাকে। এই পাঠে Causal Mask আর Padding Mask একসঙ্গে কীভাবে ব্যবহার করবেন, তা দেখব। Loss Normalize করার সময় শুধু বৈধ Token কীভাবে ধরবেন এবং Standardized Data-তে `0.0` দেখেই কেন `PAD` ধরে নেওয়া যায় না, সেটাও বুঝব।",
           "prerequisites": [
             "আগের পাঠ: Causal Visibility ও Masking",
             "সেট তত্ত্ব: Intersection ($\\cap$) ও Union ($\\cup$)",
@@ -1155,7 +1155,7 @@
             },
             {
               "symbol": "$\\mathrm{state}[\\ell - 1]$",
-              "meaning": "Many-to-One টাস্কে সঠিক শেষ বৈধ Readout Index (0-based Indexing-এ)।",
+              "meaning": "Many-to-One Task-এ সঠিক শেষ বৈধ Readout Index (0-based Indexing-এ)।",
               "example": "$14$-ঘরের উইন্ডোতে `valid = 10` হলে সঠিক Readout Index হলো `9`, কখনোই শেষ ঘর `13` নয়!"
             }
           ],
@@ -1253,7 +1253,7 @@
         },
         {
           "type": "text",
-          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **`key_padding_mask` দিয়েই নিশ্চিন্ত হয়ে `state[-1]` বা সাধারণ `mean` নেওয়া:** Padded Query Row-গুলো তখনো অশূন্য থাকে!\n2. **মোট $B \\times T$ দিয়ে Loss ভাগ করা:** সবসময় কেবল বৈধ Token সংখ্যা $\\sum m_{b,t}$ দিয়ে ভাগ করুন।\n3. **Standardized সংখ্যার Data-য় `0.0`-কে `PAD` ভাবা:** `0.0` মানে Mean, Padding নয়।\n\n### Cheat Sheet\n- **Allowed Combine:** `allowed = (j < valid) & (j <= i)` | **Blocked Combine:** `blocked = (j >= valid) | (j > i)`\n- **Many-to-One Readout:** `state[valid - 1]`\n- **Valid Loss:** $\\mathcal{L}_{\\mathrm{valid}} = \\frac{\\sum m_{b,t}\\ell_{b,t}}{\\sum m_{b,t}}$\n\n**পরের পাঠে কী শিখব?** এখন আমরা Mask দিয়ে দৃশ্যমানতা নিয়ন্ত্রণ করতে জানি। কিন্তু একটি বিস্ময়কর প্রশ্ন: কোনো Mask না থাকলে Self-Attention কিন্তু *\"সোম, মঙ্গল, বুধ\"* আর *\"বুধ, সোম, মঙ্গল\"*-এর মধ্যে কোনো পার্থক্যই করতে পারে না! Transformer-এর ভেতরে সময়ের ক্রম (**Order**) ঠিক কোথা থেকে আসে? চলুন পরের পাঠে **Sinusoidal Positional Encoding ও RoPE** হাতে-কলমে শিখি!"
         },
         {
@@ -1276,7 +1276,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "আজ আমরা দেখব কেন কোনো Position সংকেত বা Causal Mask না থাকলে Transformer পুরোপুরি **ক্রমহীন (Permutation Equivariant)** হয়ে পড়ে, কীভাবে **Sinusoidal Positional Encoding** ভিন্ন ভিন্ন কম্পাঙ্কের Sine/Cosine তরঙ্গ দিয়ে প্রতিটি অবস্থানের স্বতন্ত্র পরিচয় বানায়, আধুনিক LLM-এ ব্যবহৃত **Rotary Position Embedding (RoPE)** কীভাবে কেবল আপেক্ষিক ব্যবধান $(n - m)$-এর ওপর নির্ভর করে, এবং Lab-এ `Position Off` চাপার প্রকৃত বৈজ্ঞানিক অর্থ কী।",
+          "goal": "আজ আমরা দেখব কেন কোনো Position-এর তথ্য বা Causal Mask না থাকলে Transformer পুরোপুরি **ক্রমহীন (Permutation Equivariant)** হয়ে পড়ে, কীভাবে **Sinusoidal Positional Encoding** ভিন্ন ভিন্ন কম্পাঙ্কের Sine/Cosine তরঙ্গ দিয়ে প্রতিটি অবস্থানের স্বতন্ত্র পরিচয় বানায়, আধুনিক LLM-এ ব্যবহৃত **Rotary Position Embedding (RoPE)** কীভাবে কেবল আপেক্ষিক ব্যবধান $(n - m)$-এর ওপর নির্ভর করে, এবং Lab-এ `Position Off` চাপার প্রকৃত বৈজ্ঞানিক অর্থ কী।",
           "prerequisites": [
             "আগের পাঠ: Causal Visibility ও Multi-Head Attention",
             "ত্রিকোণমিতি: $\\sin\\theta, \\cos\\theta$ ও $2\\text{D}$ Rotation Matrix",
@@ -1284,7 +1284,7 @@
           ],
           "outcomes": [
             "কেন Unmasked Self-Attention Permutation Equivariant ($f(\\pi(X)) = \\pi(f(X))$) এবং কেন **Causal Mask** নিজেও ক্রমের প্রতিসাম্য ভেঙে দেয় তা ব্যাখ্যা করতে পারবেন।",
-            "$D = 4$ প্রস্থের জন্য Sinusoidal কম্পাঙ্ক $\\omega_0 = 1, \\omega_1 = 0.01$ এবং প্রথম অবস্থান $\\mathrm{PE}_0 = [0, 1, 0, 1]$ হাতে কষে দেখাতে পারবেন।",
+            "$D = 4$ প্রস্থের জন্য Sinusoidal কম্পাঙ্ক $\\omega_0 = 1, \\omega_1 = 0.01$ এবং প্রথম অবস্থান $\\mathrm{PE}_0 = [0, 1, 0, 1]$ হাতে হিসাব করে দেখাতে পারবেন।",
             "2D Rotation-এ **RoPE-এর আপেক্ষিক অভেদ** $(R(m)q)^\\top R(n)k = q^\\top R(n-m)k$ ও Norm সংরক্ষণ Pure Python-এ প্রমাণ করতে পারবেন।",
             "Sinusoidal, Learned Absolute, Relative Bias এবং RoPE-এর পার্থক্য ও Length Extrapolation-এর বাস্তব সীমা বলতে পারবেন।"
           ]
@@ -1320,7 +1320,7 @@
         },
         {
           "type": "code",
-          "title": "৩. Option A — সহজ Pure Python কোডে Sinusoidal PE ও RoPE 2D Rotation অভেদ যাচাই",
+          "title": "৩. Option A — সহজ Pure Python কোডে Sinusoidal PE ও RoPE 2D Rotation একই ফল আসে কি না যাচাই",
           "body": "import math\n\n# ১) D = 4, T = 14-এর জন্য Sinusoidal Positional Encoding তৈরি\nT, D = 14, 4\nfreqs = []\nfor i in range(0, D, 2):\n    freqs.append(math.exp(i * (-math.log(10000.0) / D)))\n\npe = []\nfor p in range(T):\n    row = []\n    for f in freqs:\n        angle = p * f\n        row.append(math.sin(angle))\n        row.append(math.cos(angle))\n    pe.append(row)\n\nassert pe[0] == [0.0, 1.0, 0.0, 1.0]\nprint(\"Frequencies:\", [round(freqs[0], 4), round(freqs[1], 4)])\nfor p in range(3):\n    rounded = []\n    for val in pe[p]:\n        rounded.append(round(val, 4))\n    print(f\"PE[{p}]:\", rounded)\n\n# ২) আধুনিক LLM-এর RoPE (2D Rotation) আপেক্ষিক দূরত্ব অভেদ যাচাই!\ndef rot2d(vec, theta):\n    c = math.cos(theta)\n    s = math.sin(theta)\n    return [c * vec[0] - s * vec[1], s * vec[0] + c * vec[1]]\n\ndef dot2d(a, b):\n    return a[0] * b[0] + a[1] * b[1]\n\nq = [1.0, 2.0]\nk = [3.0, 4.0]\nrq = rot2d(q, 0.2)\nrk = rot2d(k, 0.7)\n\nlhs = dot2d(rq, rk)                       # (R(0.2)q)^T (R(0.7)k)\nrhs = dot2d(q, rot2d(k, 0.7 - 0.2))       # q^T R(0.5) k\nshifted = dot2d(rot2d(q, 1.2), rot2d(k, 1.7))  # উভয়ে +1.0 যোগ করলেও ব্যবধান 0.5!\n\nnorm_q_before = math.sqrt(dot2d(q, q))\nnorm_q_after = math.sqrt(dot2d(rq, rq))\n\nassert abs(lhs - rhs) < 1e-12\nassert abs(lhs - shifted) < 1e-12\nassert abs(norm_q_before - norm_q_after) < 1e-12\nprint(\"RoPE relative dot (m=0.2, n=0.7):\", round(lhs, 6))\nprint(\"Shift invariance diff (m=1.2, n=1.7):\", round(abs(lhs - shifted), 12))\nprint(\"Norm preserved:\", round(norm_q_before, 6), \"->\", round(norm_q_after, 6))\n"
         },
         {
@@ -1586,7 +1586,7 @@
         },
         {
           "type": "text",
-          "title": "৭. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৭. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **কাঁচা সংখ্যার সাথে PE যোগ করা:** সবসময় Input Projection (`Linear(1 -> D)`) করার পরেই PE যোগ করতে হয়।\n2. **Causal Attention-কে Position ছাড়া ক্রমহীন ভাবা:** Causal Mask নিজেই অসম দৃশ্যমানতা দিয়ে ক্রম তৈরি করে।\n3. **Inference-এ `Position Off` চাপাকে Ablation Study দাবি করা:** এটি Sensitivity পরীক্ষা মাত্র, নতুন Training নয়।\n\n### Cheat Sheet\n- **Sinusoidal ($D=4$):** $\\omega_0 = 1.0, \\omega_1 = 0.01 \\implies \\mathrm{PE}_0 = [0, 1, 0, 1]$ (Fixed Buffer: $56$ মান)\n- **RoPE Identity:** $(R(m)q)^\\top R(n)k = q^\\top R(n - m)k$, $\\|R(\\theta)x\\|_2 = \\|x\\|_2$\n\n**পরের পাঠে কী শিখব?** আমাদের হাতে এখন Input Projection, Positional Encoding, Multi-Head Attention ও Mask—সব উপাদান তৈরি! এবার চলুন এই সবকিছুকে দুটি **Residual মহাসড়ক** ও **Pre-Norm** প্রবাহ দিয়ে জুড়ে বানাই একটি পূর্ণাঙ্গ **Transformer Block**, এবং আমাদের ৩য় **Interactive Block Lab** হাতে-কলমে চালাই!"
         },
         {
@@ -1600,8 +1600,8 @@
     },
     {
       "id": "ch20_residual",
-      "title": "Transformer Block: দুটি Residual Path আর Pre-Norm-এ কোন ধাপের পর কোনটি আসে",
-      "subtitle": "Identity মহাসড়ক, Pre-Norm বনাম Post-Norm পার্থক্য, Interactive Block Lab ও ডিবাগিং কৌশল",
+      "title": "Transformer Block: দুটি Residual Path আর Pre-Norm-এ ধাপগুলোর ক্রম",
+      "subtitle": "Identity মহাসড়ক, Pre-Norm বনাম Post-Norm পার্থক্য, Interactive Block Lab ও Debugging কৌশল",
       "duration": "45 min",
       "icon": "code",
       "blocks": [
@@ -1609,7 +1609,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "আজ আমরা পুরো **Transformer Block**-এর মেরুদণ্ড শিখব—কীভাবে দুটি **Residual (Skip) Connection** একটি পরিষ্কার Gradient মহাসড়ক তৈরি করে, আমাদের **Pre-Norm** রেসিপি ক্লাসিক ২০১৭ **Post-Norm** থেকে গাণিতিকভাবে কতটা আলাদা, পুরো Block জুড়ে প্রস্থ $D = 4$ কীভাবে অক্ষত থাকে, এবং আমাদের **Interactive Transformer Block Lab**-এ প্রতিটি মধ্যবর্তী Tensor কীভাবে হাতে-কলমে যাচাই করা যায়।",
+          "goal": "আজ আমরা পুরো **Transformer Block** কীভাবে কাজ করে, তা বুঝব—কীভাবে দুটি **Residual (Skip) Connection** Gradient-এর জন্য সরাসরি পথ তৈরি করে, আমাদের **Pre-Norm** রেসিপি ক্লাসিক ২০১৭ **Post-Norm** থেকে গাণিতিকভাবে কতটা আলাদা, পুরো Block জুড়ে প্রস্থ $D = 4$ কীভাবে অক্ষত থাকে, এবং আমাদের **Interactive Transformer Block Lab**-এ প্রতিটি মধ্যবর্তী Tensor কীভাবে হাতে-কলমে যাচাই করা যায়।",
           "prerequisites": [
             "আগের পাঠ: Multi-Head Attention ও Positional Encoding",
             "Residual Connection ($y = x + f(x)$) ও Backpropagation",
@@ -1745,14 +1745,14 @@
               "concept": "Single-Block Readout Scope",
               "level": "Senior",
               "question": "আমাদের Interactive Block Lab-এ Causal Self-Attention প্রতিটি ১৪টি দিনের জন্য Vector তৈরি করে, কিন্তু শেষ Prediction-এ কেবল Step 14 ব্যবহার করা হয় কেন?",
-              "answer": "আমাদের টাস্কটি হলো **Many-to-One Next-Day Count Regression**: গত ১৪ দিনের ইতিহাস পড়ে কেবল আগামীকালের একটিমাত্র সংখ্যা অনুমান করা। Causal নিয়মে শেষ বৈধ অবস্থানটিই (`valid - 1`) পুরো বৈধ অতীত Prefix দেখতে পায়, তাই সেই অবস্থানের State-এর ওপর একটি `Linear(4 -> 1)` Scalar Readout বসানো হয়েছে।",
+              "answer": "আমাদের Taskটি হলো **Many-to-One Next-Day Count Regression**: গত ১৪ দিনের ইতিহাস পড়ে কেবল আগামীকালের একটিমাত্র সংখ্যা অনুমান করা। Causal নিয়মে শেষ বৈধ অবস্থানটিই (`valid - 1`) পুরো বৈধ অতীত Prefix দেখতে পায়, তাই সেই অবস্থানের State-এর ওপর একটি `Linear(4 -> 1)` Scalar Readout বসানো হয়েছে।",
               "followUp": "একই Architecture-কে Per-Token Autoregressive Language Model বানাতে হলে Readout-এ কী বদলাতে হতো? প্রতিটি অবস্থানের ওপর `Linear(D -> VocabSize)` চালিয়ে এক ঘর সরানো Shifted Token-এর সঙ্গে Cross-Entropy Loss নিতে হতো!"
             }
           ]
         },
         {
           "type": "text",
-          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **Pre-Norm ও Post-Norm Checkpoint গুলিয়ে ফেলা:** Shape মিললেও সমীকরণ সম্পূর্ণ ভিন্ন!\n2. **শুধু চূড়ান্ত Output দেখে ডিবাগ করা:** সবসময় Earliest Diverging Intermediate পদ্ধতিতে স্তর ধরে অমিল খুঁজুন।\n3. **কেবল Residual-কে স্থিতিশীলতার একমাত্র সমাধান ভাবা:** Normalization, সঠিক Initialization ও Gradient Clipping একসঙ্গে কাজ করে।\n\n### Cheat Sheet\n- **Pre-Norm Block:** $U = X + \\mathrm{MHA}(\\mathrm{LN}_1(X))$, $Y = U + \\mathrm{FFN}(\\mathrm{LN}_2(U))$\n- **Residual Gradient:** $\\frac{\\partial (x + f(x))}{\\partial x} = I + \\frac{\\partial f}{\\partial x}$\n- **Width Flow (Tiny Model):** `1 -> 4 -> [MHA: 2×2 -> 4] -> 4 -> [FFN: 4->8->4] -> 4 -> 1`\n\n**পরের পাঠে কী শিখব?** এই Block-এর প্রতিটি শাখার ঠিক মুখে বসে আছে **`LayerNorm`**! কিন্তু নিজের হাতে `LayerNorm` লেখার সময় ঠিক কোন দুটি সূক্ষ্ম ভুলেই (Population Variance বনাম Sample Variance, আর $\\epsilon$-এর অবস্থান) PyTorch-এর সঙ্গে সংখ্যা একদমই মেলে না? চলুন পরের পাঠে দেখে নিই!"
         },
         {
@@ -1766,7 +1766,7 @@
     },
     {
       "id": "ch20_norm",
-      "title": "LayerNorm: Feature Axis, Epsilon ও Affine স্কেলিং",
+      "title": "LayerNorm: Feature Axis, Epsilon ও Affine Scaling",
       "subtitle": "প্রতি-Token Feature Axis, Population Variance (1/D), বর্গমূলের ভেতরে Epsilon ও LayerNorm বনাম BatchNorm/RMSNorm",
       "duration": "45 min",
       "icon": "code",
@@ -1775,7 +1775,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "আজ আমরা `LayerNorm`-এর ভেতরের প্রতিটি সংখ্যাগত সূক্ষ্মতা আয়ত্ত করব—কেন এটি Batch-এর অন্য Sample বা Sequence-এর অন্য Token-কে না ছুঁয়ে কেবল **নিজের শেষ Feature Axis** বরাবর কাজ করে, কেন নিজের হাতে কোড লেখার সময় **Population Variance ($\\frac{1}{D}$)** ও **বর্গমূলের ভেতরে $\\epsilon$** না দিলে PyTorch-এর সঙ্গে উত্তর মেলে না, এবং `BatchNorm` ও `RMSNorm`-এর সঙ্গে এর স্পষ্ট পার্থক্য কী।",
+          "goal": "`LayerNorm` একটি Position-এর শেষ Feature Axis বরাবর হিসাব করে। Batch-এর অন্য Sample বা Sequence-এর অন্য Token-এর মান লাগে না। নিজের কোডে Population Variance ($\\frac{1}{D}$) আর বর্গমূলের ভেতরে $\\epsilon$ ব্যবহার করে PyTorch-এর ফলের সঙ্গে মিলিয়ে দেখব। শেষে `BatchNorm` আর `RMSNorm` থেকে কীভাবে আলাদা, তা দেখব।",
           "prerequisites": [
             "আগের পাঠ: Pre-Norm Transformer Block",
             "Mean, Population Variance ($1/D$) বনাম Sample Variance ($1/(D-1)$)",
@@ -1916,7 +1916,7 @@
         },
         {
           "type": "text",
-          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **Sample Variance (`D - 1`) দিয়ে ভাগ করা:** PyTorch `LayerNorm` সবসময় Population Variance (`1 / D`) ব্যবহার করে।\n2. **বর্গমূলের বাইরে $\\epsilon$ লেখা:** সবসময় $\\sqrt{\\sigma^2 + \\epsilon}$, কখনোই $\\sqrt{\\sigma^2} + \\epsilon$ নয়।\n3. **Time Axis বরাবর Normalize করে ফেলা:** এতে Sequence-এর ভবিষ্যতের Token থেকে Mean/Var চুইয়ে অতীতে Leakage ঘটে যাবে!\n\n### Cheat Sheet\n- **Formula:** $\\mathrm{LN}(x)_j = \\gamma_j \\frac{x_j - \\mu}{\\sqrt{\\sigma^2 + \\epsilon}} + \\beta_j$, যেখানে $\\sigma^2 = \\frac{1}{D}\\sum(x_j - \\mu)^2$\n- **Params per LayerNorm:** $2D$ (আমাদের ২টি স্তর মিলিয়ে $16$ Parameter)\n- **RMSNorm Difference:** Mean বিয়োগ নেই, $\\beta$ নেই।\n\n**পরের পাঠে কী শিখব?** Transformer Block-এর প্রথম শাখা (Attention) তো সব Position-এর তথ্য মিশিয়ে দিল—এবার দ্বিতীয় শাখা **Position-wise FFN** কীভাবে প্রতিটি Position-এ Nonlinear রূপান্তর ঘটায় এবং আমাদের পুরো Model-এর **ঠিক ১৮৫টি Trainable Parameter** কোথা থেকে আসে? চলুন পরের পাঠে দেখে নিই!"
         },
         {
@@ -1930,7 +1930,7 @@
     },
     {
       "id": "ch20_ffn",
-      "title": "Position-wise FFN ও পূর্ণাঙ্গ Parameter হিসাব",
+      "title": "Position-wise FFN ও মোট Parameter-এর হিসাব",
       "subtitle": "Attention-এর পর প্রতিটি Position-এ স্বাধীন Nonlinear রূপান্তর ও আমাদের পুরো ১৮৫টি Parameter-এর অডিট",
       "duration": "45 min",
       "icon": "code",
@@ -2013,7 +2013,7 @@
         {
           "type": "text",
           "title": "৪. যাচাই করা Output, Option B (PyTorch), Hardware চাপ ও `nn.ModuleList` ফাঁদ",
-          "body": "### Pure Python (Option A) যাচাই করা Output\n```text\nToken 0: active ReLUs=4/8 | FFN out=[0.227, -0.189, 0.22, 0.261]\nToken 1: active ReLUs=3/8 | FFN out=[-0.176, 0.507, 0.247, -0.215]\nParameter audit: {'input_proj (1->4)': 8, 'mha_qkv_and_wo': 80, 'two_layernorms': 16, 'ffn (4->8->4)': 76, 'readout_head (4->1)': 5}\nTotal trainable: 185 | Fixed PE buffer (excluded): 56\n```\nএকদম নিখুঁত: FFN ঠিক `76` এবং পুরো `CountTransformer` ঠিক **`185`** Trainable Parameter (৫৬টি স্থির PE মান বাদে)!\n\n### Option B — PyTorch-এ FFN ও ১৮৫টি Parameter যাচাই\n```python\nimport torch\n\nffn = torch.nn.Sequential(\n    torch.nn.Linear(4, 8, dtype=torch.float64),\n    torch.nn.ReLU(),\n    torch.nn.Linear(8, 4, dtype=torch.float64),\n)\nassert sum(p.numel() for p in ffn.parameters()) == (4 * 8 + 8) + (8 * 4 + 4) == 76\nassert 8 + 80 + 16 + 76 + 5 == 185\nprint(\"FFN params:\", sum(p.numel() for p in ffn.parameters()), \"| Full model trainable:\", 185)\n```\n\n### তিনটি জরুরি ইঞ্জিনিয়ারিং শিক্ষা\n1. **Shared Weight Gradient ও BPTT-মুক্ত প্রবাহ:** একই FFN Weight সব $14$-টি অবস্থানে ব্যবহৃত হওয়ায় Backpropagation-এ প্রতিটি সক্রিয় পথের Gradient এসে ওই একই Parameter-এ যোগ (Accumulate) হয়। Many-to-One টাস্কে কেবল শেষ ধাপে Loss মাপা হলেও Attention-এর সরাসরি সংযোগ বেয়ে শুরুর দিনগুলোতেও Gradient পৌঁছে যায়—RNN-এর মতো দীর্ঘ BPTT লাগে না!\n2. **$D_{\\mathrm{ff}}$ বনাম $T$-এর ভিন্ন Hardware চাপ:** $D_{\\mathrm{ff}}$ বাড়ালে Parameter ও FFN FLOPs বাড়ে কিন্তু $[T, T]$ Attention Map Memory এক বিন্দুও বাড়ে না; উল্টো $T$ বাড়ালে Attention Map Memory বাড়ে $T^2$ হারে কিন্তু FFN Parameter একটুও বাড়ে না! তাই Profiling না করে কখনো Bottleneck অনুমান করবেন না।\n3. **PyTorch `list` বনাম `nn.ModuleList` ফাঁদ:** একাধিক Transformer Block বা Layer সাধারণ Python `list`/`dict`-এ রাখলে `model.parameters()` সেগুলোকে দেখতেই পায় না—ফলে Optimizer সেগুলো ট্রেনই করে না! সবসময় `nn.ModuleList` বা `nn.ModuleDict` ব্যবহার করুন এবং শেষে `model.parameters()` লুপ চালিয়ে Parameter সংখ্যা মিলিয়ে নিন।"
+          "body": "### Pure Python (Option A) যাচাই করা Output\n```text\nToken 0: active ReLUs=4/8 | FFN out=[0.227, -0.189, 0.22, 0.261]\nToken 1: active ReLUs=3/8 | FFN out=[-0.176, 0.507, 0.247, -0.215]\nParameter audit: {'input_proj (1->4)': 8, 'mha_qkv_and_wo': 80, 'two_layernorms': 16, 'ffn (4->8->4)': 76, 'readout_head (4->1)': 5}\nTotal trainable: 185 | Fixed PE buffer (excluded): 56\n```\nএকদম নিখুঁত: FFN ঠিক `76` এবং পুরো `CountTransformer` ঠিক **`185`** Trainable Parameter (৫৬টি স্থির PE মান বাদে)!\n\n### Option B — PyTorch-এ FFN ও ১৮৫টি Parameter যাচাই\n```python\nimport torch\n\nffn = torch.nn.Sequential(\n    torch.nn.Linear(4, 8, dtype=torch.float64),\n    torch.nn.ReLU(),\n    torch.nn.Linear(8, 4, dtype=torch.float64),\n)\nassert sum(p.numel() for p in ffn.parameters()) == (4 * 8 + 8) + (8 * 4 + 4) == 76\nassert 8 + 80 + 16 + 76 + 5 == 185\nprint(\"FFN params:\", sum(p.numel() for p in ffn.parameters()), \"| Full model trainable:\", 185)\n```\n\n### তিনটি জরুরি ইঞ্জিনিয়ারিং শিক্ষা\n1. **Shared Weight Gradient ও BPTT-মুক্ত প্রবাহ:** একই FFN Weight সব $14$-টি অবস্থানে ব্যবহৃত হওয়ায় Backpropagation-এ প্রতিটি সক্রিয় পথের Gradient এসে ওই একই Parameter-এ যোগ (Accumulate) হয়। Many-to-One Task-এ কেবল শেষ ধাপে Loss মাপা হলেও Attention-এর সরাসরি সংযোগ বেয়ে শুরুর দিনগুলোতেও Gradient পৌঁছে যায়—RNN-এর মতো দীর্ঘ BPTT লাগে না!\n2. **$D_{\\mathrm{ff}}$ বনাম $T$-এর ভিন্ন Hardware চাপ:** $D_{\\mathrm{ff}}$ বাড়ালে Parameter ও FFN FLOPs বাড়ে কিন্তু $[T, T]$ Attention Map Memory এক বিন্দুও বাড়ে না; উল্টো $T$ বাড়ালে Attention Map Memory বাড়ে $T^2$ হারে কিন্তু FFN Parameter একটুও বাড়ে না! তাই Profiling না করে কখনো Bottleneck অনুমান করবেন না।\n3. **PyTorch `list` বনাম `nn.ModuleList` ফাঁদ:** একাধিক Transformer Block বা Layer সাধারণ Python `list`/`dict`-এ রাখলে `model.parameters()` সেগুলোকে দেখতেই পায় না—ফলে Optimizer সেগুলো ট্রেনই করে না! সবসময় `nn.ModuleList` বা `nn.ModuleDict` ব্যবহার করুন এবং শেষে `model.parameters()` লুপ চালিয়ে Parameter সংখ্যা মিলিয়ে নিন।"
         },
         {
           "type": "concept_check",
@@ -2073,8 +2073,8 @@
         },
         {
           "type": "text",
-          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
-          "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **স্থির Positional Buffer-কে Trainable Parameter গুনে ফেলা:** আমাদের Model-এ Trainable ঠিক $185$, Buffer $56$।\n2. **Submodule-কে সাধারণ Python `list`-এ রাখা:** সবসময় `nn.ModuleList` ব্যবহার করুন।\n3. **Profiling ছাড়া Bottleneck অনুমান করা:** ছোট $T$-তে FFN/Linear, আর বড় $T$-তে Attention Scores প্রধান সময় খায়।\n\n### Cheat Sheet\n- **FFN:** $\\mathrm{FFN}(x) = \\max(0, x W_1^\\top + b_1) W_2^\\top + b_2$\n- **Our 185 Trainable Params:** Input (`8`) + MHA (`80`) + 2×LN (`16`) + FFN (`76`) + Head (`5`) = **`185`**\n- **Standard Big Block ($D_{\\mathrm{ff}}=4D$):** MHA $\\approx 4D^2$, FFN $\\approx 8D^2$, মোট $\\approx 12D^2$\n\n**পরের পাঠে কী শিখব?** একটি পূর্ণাঙ্গ Transformer Block তো শিখে ফেললাম! এখন এই একই বিল্ডিং ব্লক দিয়ে কীভাবে **Encoder-only**, **Decoder-only** এবং **Encoder-Decoder (Cross-Attention)**—এই তিনটি জগৎ তৈরি হয়, এবং কোন টাস্কে কোনটি বাছাই করতে হয়? চলুন পরের পাঠে দেখে নিই!"
+          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
+          "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **স্থির Positional Buffer-কে Trainable Parameter গুনে ফেলা:** আমাদের Model-এ Trainable ঠিক $185$, Buffer $56$।\n2. **Submodule-কে সাধারণ Python `list`-এ রাখা:** সবসময় `nn.ModuleList` ব্যবহার করুন।\n3. **Profiling ছাড়া Bottleneck অনুমান করা:** ছোট $T$-তে FFN/Linear, আর বড় $T$-তে Attention Scores প্রধান সময় খায়।\n\n### Cheat Sheet\n- **FFN:** $\\mathrm{FFN}(x) = \\max(0, x W_1^\\top + b_1) W_2^\\top + b_2$\n- **Our 185 Trainable Params:** Input (`8`) + MHA (`80`) + 2×LN (`16`) + FFN (`76`) + Head (`5`) = **`185`**\n- **Standard Big Block ($D_{\\mathrm{ff}}=4D$):** MHA $\\approx 4D^2$, FFN $\\approx 8D^2$, মোট $\\approx 12D^2$\n\n**পরের পাঠে কী শিখব?** একটি পূর্ণাঙ্গ Transformer Block তো শিখে ফেললাম! এখন এই একই বিল্ডিং ব্লক দিয়ে কীভাবে **Encoder-only**, **Decoder-only** এবং **Encoder-Decoder (Cross-Attention)**—এই তিনটি জগৎ তৈরি হয়, এবং কোন Task-এ কোনটি বাছাই করতে হয়? চলুন পরের পাঠে দেখে নিই!"
         },
         {
           "type": "checkpoint",
@@ -2087,7 +2087,7 @@
     },
     {
       "id": "ch20_architectures",
-      "title": "Encoder, Decoder ও Cross-Attention আর্কিটেকচার",
+      "title": "Encoder, Decoder ও Cross-Attention Architecture",
       "subtitle": "তথ্যের প্রাপ্যতা দেখে Encoder, Decoder নাকি Encoder-Decoder বাছাই ও Cross-Attention-এর গণিত",
       "duration": "45 min",
       "icon": "code",
@@ -2096,7 +2096,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "আজ আমরা দেখব একই Transformer উপাদান দিয়ে কীভাবে তিনটি প্রধান আর্কিটেকচার পরিবার—**Encoder-only**, **Decoder-only** এবং **Encoder-Decoder (Cross-Attention সহ)**—তৈরি হয়, অনুবাদ Model-এর ৩টি স্তরে $Q, K, V$ ও ৩টি Mask কীভাবে সমন্বয় করে, এবং বাস্তব প্রজেক্টে কোড লেখার আগেই **Information Availability** দেখে কীভাবে সঠিক গঠন নির্বাচন করতে হয়।",
+          "goal": "আজ আমরা দেখব একই Transformer উপাদান দিয়ে কীভাবে তিনটি প্রধান Architecture পরিবার—**Encoder-only**, **Decoder-only** এবং **Encoder-Decoder (Cross-Attention সহ)**—তৈরি হয়, অনুবাদ Model-এর ৩টি স্তরে $Q, K, V$ ও ৩টি Mask কীভাবে সমন্বয় করে, এবং বাস্তব প্রজেক্টে কোড লেখার আগেই **Information Availability** দেখে কীভাবে সঠিক গঠন নির্বাচন করতে হয়।",
           "prerequisites": [
             "আগের পাঠ: Transformer Block, Causal Mask ও Key-Padding Mask",
             "Cross-Attention-এ অসমান দৈর্ঘ্য $T_q \\neq T_k$"
@@ -2111,7 +2111,7 @@
         {
           "type": "text",
           "title": "১. তিনটি Transformer পরিবার ও Translation বোর্ড-ছক",
-          "body": "একই Multi-Head Attention ও FFN উপাদান দিয়ে কেবল **Mask** এবং **$Q, K, V$-এর উৎস** বদলেই তৈরি হয় তিনটি শক্তিশালী আর্কিটেকচার পরিবার:\n\n| পরিবার | Attention ধরন | কখন বাছবেন (Information Availability)? | পরিচিত উদাহরণ |\n| --- | --- | --- | --- |\n| **Encoder-only** | Bidirectional Self-Attention | পুরো Input শুরুতেই জানা; Output Classification/Embedding/Regression | BERT, RoBERTa |\n| **Decoder-only** | Causal Self-Attention | ধাপে ধাপে পরের Token উৎপাদন (Autoregressive Generation) | GPT, LLaMA, Gemma |\n| **Encoder-Decoder** | Encoder Bi-Attn + Decoder Causal + **Cross-Attention** | পুরো Source Context দেখে নতুন Target Sequence তৈরি (Seq2Seq) | Original Transformer, T5 |\n\n### হাতে-কলমে Cross-Attention উদাহরণ ($T_q = 3, T_k = 5, D = 4, H = 2$)\nধরুন, Encoder একটি $5$-শব্দের ইংরেজি বাক্য পড়ে `[1, 5, 4]` Context বানিয়েছে, আর Decoder এখন পর্যন্ত $3$-টি বাংলা Token নিয়েছে (`[1, 3, 4]`)। তাহলে Cross-Attention-এ:\n- **Query ($Q$)** আসে Decoder থেকে: `[1, 2, 3, 2]` (প্রতি Head-এ দৈর্ঘ্য $3$, প্রস্থ $2$)\n- **Key ও Value ($K, V$)** আসে Encoder-এর চূড়ান্ত Output থেকে: `[1, 2, 5, 2]` (দৈর্ঘ্য $5$, প্রস্থ $2$)\n- **Attention Map ($A$):** `[1, 2, 3, 5]` (৩টি বাংলা Query × ৫টি ইংরেজি Key!)\n- **চূড়ান্ত Output:** `[1, 3, 4]` (সবসময় **Decoder-এর Query দৈর্ঘ্য $3$**!)\n\n### Translation Transformer-এর ৩টি Attention স্তর ও ৩টি Mask (ইন্টারভিউ বোর্ড-ছক!)\n\n| Attention স্তর | $Q$-এর উৎস | $K, V$-এর উৎস | প্রধান Mask |\n| --- | --- | --- | --- |\n| **Encoder Self-Attention** | Encoder Input | Encoder Input | Source Key-Padding Mask |\n| **Decoder Self-Attention** | Decoder Input | Decoder Input | Target Causal Mask $\\cap$ Target Padding |\n| **Cross-Attention** | Decoder (নিচের স্তর থেকে) | Encoder চূড়ান্ত Output | **Source Key-Padding Mask** (Causal নয়!) |"
+          "body": "একই Multi-Head Attention ও FFN উপাদান দিয়ে কেবল **Mask** এবং **$Q, K, V$-এর উৎস** বদলেই তৈরি হয় তিনটি শক্তিশালী Architecture পরিবার:\n\n| পরিবার | Attention ধরন | কখন বাছবেন (Information Availability)? | পরিচিত উদাহরণ |\n| --- | --- | --- | --- |\n| **Encoder-only** | Bidirectional Self-Attention | পুরো Input শুরুতেই জানা; Output Classification/Embedding/Regression | BERT, RoBERTa |\n| **Decoder-only** | Causal Self-Attention | ধাপে ধাপে পরের Token উৎপাদন (Autoregressive Generation) | GPT, LLaMA, Gemma |\n| **Encoder-Decoder** | Encoder Bi-Attn + Decoder Causal + **Cross-Attention** | পুরো Source Context দেখে নতুন Target Sequence তৈরি (Seq2Seq) | Original Transformer, T5 |\n\n### হাতে-কলমে Cross-Attention উদাহরণ ($T_q = 3, T_k = 5, D = 4, H = 2$)\nধরুন, Encoder একটি $5$-শব্দের ইংরেজি বাক্য পড়ে `[1, 5, 4]` Context বানিয়েছে, আর Decoder এখন পর্যন্ত $3$-টি বাংলা Token নিয়েছে (`[1, 3, 4]`)। তাহলে Cross-Attention-এ:\n- **Query ($Q$)** আসে Decoder থেকে: `[1, 2, 3, 2]` (প্রতি Head-এ দৈর্ঘ্য $3$, প্রস্থ $2$)\n- **Key ও Value ($K, V$)** আসে Encoder-এর চূড়ান্ত Output থেকে: `[1, 2, 5, 2]` (দৈর্ঘ্য $5$, প্রস্থ $2$)\n- **Attention Map ($A$):** `[1, 2, 3, 5]` (৩টি বাংলা Query × ৫টি ইংরেজি Key!)\n- **চূড়ান্ত Output:** `[1, 3, 4]` (সবসময় **Decoder-এর Query দৈর্ঘ্য $3$**!)\n\n### Translation Transformer-এর ৩টি Attention স্তর ও ৩টি Mask (ইন্টারভিউ বোর্ড-ছক!)\n\n| Attention স্তর | $Q$-এর উৎস | $K, V$-এর উৎস | প্রধান Mask |\n| --- | --- | --- | --- |\n| **Encoder Self-Attention** | Encoder Input | Encoder Input | Source Key-Padding Mask |\n| **Decoder Self-Attention** | Decoder Input | Decoder Input | Target Causal Mask $\\cap$ Target Padding |\n| **Cross-Attention** | Decoder (নিচের স্তর থেকে) | Encoder চূড়ান্ত Output | **Source Key-Padding Mask** (Causal নয়!) |"
         },
         {
           "type": "math",
@@ -2144,7 +2144,7 @@
         },
         {
           "type": "flow_diagram",
-          "title": "আর্কিটেকচার বাছাইয়ের আগে Information Availability সিদ্ধান্ত-চক্র",
+          "title": "Architecture বাছাইয়ের আগে Information Availability সিদ্ধান্ত-চক্র",
           "body": "",
           "steps": [
             {
@@ -2169,7 +2169,7 @@
         {
           "type": "text",
           "title": "৪. যাচাই করা Output, Option B (PyTorch) ও আমাদের Model-এর সুনির্দিষ্ট পরিধি",
-          "body": "### Pure Python (Option A) যাচাই করা Output\n```text\nCross-Attn Output shape: (3, 4)\nPer-Head Weights shape: (2, 3, 5)\nQuery 0 Output (PAD 999 blocked!): [5.7404, 6.2817, 3.7525, 2.6549]\n```\nদেখুন: ৫ম Source Token-এ `999.0` থাকলেও `src_allowed[4] = False` হওয়ায় তার Weight নিখুঁত `0.0` এবং Output-এ `999.0`-এর কোনো ছায়াও পড়েনি!\n\n### Option B — PyTorch-এ ভিন্ন দৈর্ঘ্যের Query (`3`) ও Source (`5`) নিয়ে Cross-Attention\n```python\nimport torch\n\nmha = torch.nn.MultiheadAttention(4, 2, batch_first=True, dtype=torch.float64)\nqueries = torch.zeros(1, 3, 4, dtype=torch.float64)  # T_q = 3 (Decoder)\nsource = torch.zeros(1, 5, 4, dtype=torch.float64)   # T_k = 5 (Encoder)\nout, weights = mha(queries, source, source, average_attn_weights=False)\nassert out.shape == (1, 3, 4) and weights.shape == (1, 2, 3, 5)\nprint(\"Output:\", out.shape, \"| Weights:\", weights.shape)\n```\n\n### আমাদের অধ্যায়ের পরিধি ও Information Availability-র সততা\n- **যা আমাদের Model নয়:** আমাদের ট্রেন করা Bike Sharing Model-টি PyTorch-এর পূর্ণাঙ্গ `nn.Transformer` Encoder-Decoder স্ট্যাক নয়, এতে কোনো Tokenizer বা শব্দ উৎপাদক নেই এবং কোনো Pretrained Checkpoint-ও নেই।\n- **আর্কিটেকচার বনাম Feature Leakage:** আগামীকালের চাহিদা Forecast করার মুহূর্তে বিগত ১৪ দিনের পুরো ইতিহাস জানা থাকে বলে সেই অতীত উইন্ডোর ভেতর Bidirectional Past Encoder ব্যবহার করাও বৈধ হতে পারত। উল্টো দিকে, ভুল করে আগামীকালের অজানা আবহাওয়া বা ছুটির তথ্য আজকের Input-এ ঢুকিয়ে দিলে ভেতরে যত নিখুঁত Causal Mask-ই বসান না কেন, মারাত্মক **Data Leakage** ঘটবেই!"
+          "body": "### Pure Python (Option A) যাচাই করা Output\n```text\nCross-Attn Output shape: (3, 4)\nPer-Head Weights shape: (2, 3, 5)\nQuery 0 Output (PAD 999 blocked!): [5.7404, 6.2817, 3.7525, 2.6549]\n```\nদেখুন: ৫ম Source Token-এ `999.0` থাকলেও `src_allowed[4] = False` হওয়ায় তার Weight নিখুঁত `0.0` এবং Output-এ `999.0`-এর কোনো ছায়াও পড়েনি!\n\n### Option B — PyTorch-এ ভিন্ন দৈর্ঘ্যের Query (`3`) ও Source (`5`) নিয়ে Cross-Attention\n```python\nimport torch\n\nmha = torch.nn.MultiheadAttention(4, 2, batch_first=True, dtype=torch.float64)\nqueries = torch.zeros(1, 3, 4, dtype=torch.float64)  # T_q = 3 (Decoder)\nsource = torch.zeros(1, 5, 4, dtype=torch.float64)   # T_k = 5 (Encoder)\nout, weights = mha(queries, source, source, average_attn_weights=False)\nassert out.shape == (1, 3, 4) and weights.shape == (1, 2, 3, 5)\nprint(\"Output:\", out.shape, \"| Weights:\", weights.shape)\n```\n\n### আমাদের অধ্যায়ের পরিধি ও Information Availability-র সততা\n- **যা আমাদের Model নয়:** আমাদের ট্রেন করা Bike Sharing Model-টি PyTorch-এর পূর্ণাঙ্গ `nn.Transformer` Encoder-Decoder স্ট্যাক নয়, এতে কোনো Tokenizer বা শব্দ উৎপাদক নেই এবং কোনো Pretrained Checkpoint-ও নেই।\n- **Architecture বনাম Feature Leakage:** আগামীকালের চাহিদা Forecast করার মুহূর্তে বিগত ১৪ দিনের পুরো ইতিহাস জানা থাকে বলে সেই অতীত উইন্ডোর ভেতর Bidirectional Past Encoder ব্যবহার করাও বৈধ হতে পারত। উল্টো দিকে, ভুল করে আগামীকালের অজানা আবহাওয়া বা ছুটির তথ্য আজকের Input-এ ঢুকিয়ে দিলে ভেতরে যত নিখুঁত Causal Mask-ই বসান না কেন, মারাত্মক **Data Leakage** ঘটবেই!"
         },
         {
           "type": "concept_check",
@@ -2188,12 +2188,12 @@
         {
           "type": "interview_qa",
           "title": "Encoder, Decoder ও Cross-Attention — সম্ভাব্য Interview প্রশ্ন ও উত্তর",
-          "intro": "Transformer আর্কিটেকচার নির্বাচন ও Cross-Attention নিয়ে ৬টি ইন্টারভিউ প্রশ্ন অনুশীলন করুন।",
+          "intro": "Transformer Architecture নির্বাচন ও Cross-Attention নিয়ে ৬টি ইন্টারভিউ প্রশ্ন অনুশীলন করুন।",
           "items": [
             {
               "concept": "Choosing Architecture Family",
               "level": "Core",
-              "question": "কখন Encoder-only, কখন Decoder-only আর কখন Encoder-Decoder আর্কিটেকচার বেছে নেবেন?",
+              "question": "কখন Encoder-only, কখন Decoder-only আর কখন Encoder-Decoder Architecture বেছে নেবেন?",
               "answer": "**Encoder-only:** পুরো Input একসঙ্গে জানা এবং Output হলো Classification, NER, বা Embedding (যেমন Search/Sentiment)। **Decoder-only:** ধাপে ধাপে মুক্ত টেক্সট বা কোড উৎপাদন (আধুনিক LLM)। **Encoder-Decoder:** একটি সুস্পষ্ট Source Sequence থেকে ভিন্ন দৈর্ঘ্য বা গঠনের Target Sequence তৈরি (যেমন Translation বা Summarization, যেখানে Source-এর ওপর Bidirectional Context উপকারী)।",
               "followUp": "আধুনিক LLM-গুলো Encoder-Decoder-এর বদলে Decoder-only বেশি পছন্দ করে কেন? একটিমাত্র অভিন্ন Causal স্তরে Prefix ও Generation একসঙ্গে স্কেল করা সহজ, Parameter Efficiency ভালো এবং In-Context Learning সহজাতভাবে কাজ করে।"
             },
@@ -2236,8 +2236,8 @@
         },
         {
           "type": "text",
-          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
-          "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **Cross-Attention-এ Causal Mask বসানো:** Source বাক্য শুরু থেকেই জানা—সেখানে কেবল Source Key-Padding Mask লাগে!\n2. **Decoder-এ $Q$ আর $K, V$-এর উৎস উল্টে ফেলা:** Cross-Attention-এ সবসময় $Q$ = Decoder, এবং $K, V$ = Encoder।\n3. **আর্কিটেকচারের নাম দেখে Leakage-মুক্ত ভাবা:** Information Availability সবার আগে কাগজে লিখে অডিট করতে হবে।\n\n### Cheat Sheet\n- **Encoder-only:** Bidirectional | **Decoder-only:** Causal | **Encoder-Decoder:** Bi + Causal + Cross-Attn\n- **Cross-Attn Shapes:** $Q:[T_q, d],\\; K,V:[T_k, d] \\implies A:[T_q, T_k],\\; \\mathrm{Out}:[T_q, d]$\n\n**পরের পাঠে কী শিখব?** আর্কিটেকচারের পুরো তত্ত্ব এখন পরিষ্কার! এবার চলুন আমাদের বাস্তব **UCI Bike Sharing Dataset**-এ ১৮৫-Parameter বিশিষ্ট **Tiny Transformer** ট্রেন করার সুনির্দিষ্ট রেসিপি, সময়ের সীমানা, `float64` Standardization ও `[B]` বনাম `[B, 1]` Broadcasting ফাঁদ হাতে-কলমে শিখি!"
+          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
+          "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **Cross-Attention-এ Causal Mask বসানো:** Source বাক্য শুরু থেকেই জানা—সেখানে কেবল Source Key-Padding Mask লাগে!\n2. **Decoder-এ $Q$ আর $K, V$-এর উৎস উল্টে ফেলা:** Cross-Attention-এ সবসময় $Q$ = Decoder, এবং $K, V$ = Encoder।\n3. **Architecture-এর নাম দেখে Leakage-মুক্ত ভাবা:** Information Availability সবার আগে কাগজে লিখে অডিট করতে হবে।\n\n### Cheat Sheet\n- **Encoder-only:** Bidirectional | **Decoder-only:** Causal | **Encoder-Decoder:** Bi + Causal + Cross-Attn\n- **Cross-Attn Shapes:** $Q:[T_q, d],\\; K,V:[T_k, d] \\implies A:[T_q, T_k],\\; \\mathrm{Out}:[T_q, d]$\n\n**পরের পাঠে কী শিখব?** Architecture-এর পুরো তত্ত্ব এখন পরিষ্কার! এবার চলুন আমাদের বাস্তব **UCI Bike Sharing Dataset**-এ ১৮৫-Parameter বিশিষ্ট **Tiny Transformer** ট্রেন করার সুনির্দিষ্ট রেসিপি, সময়ের সীমানা, `float64` Standardization ও `[B]` বনাম `[B, 1]` Broadcasting ফাঁদ হাতে-কলমে শিখি!"
         },
         {
           "type": "checkpoint",
@@ -2259,7 +2259,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "আজ আমরা আমাদের বাস্তব **Tiny Transformer (`CountTransformer`)** ট্রেন করার শতভাগ Reproducible রেসিপি ও ডেটা চুক্তি শিখব—কেন `day.csv`-এর ৭৩১ দিনের মধ্যে কেবল ২০১১ সালের পরিসংখ্যান দিয়ে Standardization করতে হয়, শেষ ১৮৪ দিন কেন সম্পূর্ণ সংরক্ষিত থাকে, কীভাবে `[B] - [B, 1]` **Silent Broadcasting** Training ধ্বংস করে, এবং আমাদের বাস্তব ৮০-ধাপের Training MSE কার্ভটি আসলে কী প্রমাণ করে আর কী করে না!",
+          "goal": "এই পাঠে **Tiny Transformer (`CountTransformer`)** Train করার Reproducible ধাপ আর Data Contract দেখব। `day.csv`-এর ৭৩১ দিনের মধ্যে শুধু ২০১১ সালের Statistics দিয়ে Standardization করি। শেষ ১৮৪ দিনের Data আলাদা রাখা হয়। তারপর দেখব, `[B] - [B, 1]` হিসাবের Silent Broadcasting কীভাবে Training-এর Objective বদলে দেয় এবং ৮০ ধাপের Training MSE Curve দেখে কী বলা যায়।",
           "prerequisites": [
             "আগের পাঠ: Transformer Block ও ১৮৫টি Parameter বাজেট",
             "Z-score Standardization ও Inverse Scaling",
@@ -2275,7 +2275,7 @@
         {
           "type": "text",
           "title": "১. সময়ের কঠোর সীমানা, ২০১১-ভিত্তিক Standardization ও Broadcasting ফাঁদ",
-          "body": "বাস্তব Time Series-এ Training শুরু করার প্রথম নিয়ম হলো **সময়ের সীমানা (Temporal Split)** এবং **Scaler Leakage প্রতিরোধ**। আমাদের `day.csv`-এ মোট $731$-টি দৈনিক Row থাকলেও আমরা Modeling-এ ব্যবহার করি কেবল প্রথম **$547$-টি দিন**:\n\n| সময়কাল | মোট দিন | তৈরি হওয়া ১৪-দিনের Window / Target | ভূমিকা |\n| --- | --- | --- | --- |\n| **$2011$ (প্রথম বছর)** | $365$ দিন (`0..364`) | **$351$-টি Training Window** (`14..364`) | Model Fit ও Scaler Fit-এর একমাত্র উৎস |\n| **জানু–জুন $2012$** | $182$ দিন (`365..546`) | **$182$-টি One-step Target** | Diagnostic Development (আগের অধ্যায়েও ব্যবহৃত) |\n| **জুলাই–ডিসে $2012$** | $184$ দিন (`547..730`) | Score বা এক্সপোর্ট করা হয়নি | **সংরক্ষিত (Untouched!)** |\n\n### কেবল ২০১১ সালের স্কেলিং ধ্রুবক ও বাস্তব রূপান্তর\nData Leakage ঠেকাতে Mean ও Std বের করা হয়েছে **কেবল এবং কেবলমাত্র ২০১১ সালের ৩৬৫ দিন থেকেই**:\n$$\\mu_{2011} = 3405.7616438356163, \\qquad s_{2011} = 1376.8636667749531$$\n- **বাস্তব উদাহরণ (`t = 365`, ১ জানুয়ারি ২০১২):** আমাদের ট্রেন করা Model Standardized Output দিয়েছে $\\hat{z} = -0.6694$। একে Inverse Scale করলে আসল সাইকেল সংখ্যা দাঁড়ায়:\n  $$\\hat{y} = (-0.6694) \\times 1376.8637 + 3405.7616 \\approx \\mathbf{2484.05} \\quad (\\text{আসল সংখ্যা ছিল } 2294)$$\n\n### PyTorch-এর নীরব খুনি: `[B] - [B, 1]` Broadcasting বাগ!\nআমাদের Model-এর Output এবং Target **উভয়েরই** Shape রাখা হয়েছে $1\\text{D}$ **`[B]`** (`[351]`)। যদি ভুল করে Output থাকে `[351]` আর Target রয়ে যায় `[351, 1]`, তবে PyTorch কোনো Error না দিয়েই বিয়োগফলকে নীরবে Broadcast করে **`[351, 351]`** ($123{,}201$-টি জোড়া!) বানিয়ে ফেলবে—যেখানে প্রতিটি দিনের Prediction-কে অন্য ৩৫০টি ভুল দিনের Target-এর সঙ্গে বিয়োগ করে পুরো Training ধ্বংস হয়ে যাবে!"
+          "body": "বাস্তব Time Series-এ Training শুরু করার প্রথম নিয়ম হলো **সময়ের সীমানা (Temporal Split)** এবং **Scaler Leakage প্রতিরোধ**। আমাদের `day.csv`-এ মোট $731$-টি দৈনিক Row থাকলেও আমরা Modeling-এ ব্যবহার করি কেবল প্রথম **$547$-টি দিন**:\n\n| সময়কাল | মোট দিন | তৈরি হওয়া ১৪-দিনের Window / Target | ভূমিকা |\n| --- | --- | --- | --- |\n| **$2011$ (প্রথম বছর)** | $365$ দিন (`0..364`) | **$351$-টি Training Window** (`14..364`) | Model Fit ও Scaler Fit-এর একমাত্র উৎস |\n| **জানু–জুন $2012$** | $182$ দিন (`365..546`) | **$182$-টি One-step Target** | Diagnostic Development (আগের অধ্যায়েও ব্যবহৃত) |\n| **জুলাই–ডিসে $2012$** | $184$ দিন (`547..730`) | Score বা এক্সপোর্ট করা হয়নি | **সংরক্ষিত (Untouched!)** |\n\n### কেবল ২০১১ সালের Scaling ধ্রুবক ও বাস্তব রূপান্তর\nData Leakage ঠেকাতে Mean ও Std বের করা হয়েছে **কেবল এবং কেবলমাত্র ২০১১ সালের ৩৬৫ দিন থেকেই**:\n$$\\mu_{2011} = 3405.7616438356163, \\qquad s_{2011} = 1376.8636667749531$$\n- **বাস্তব উদাহরণ (`t = 365`, ১ জানুয়ারি ২০১২):** আমাদের ট্রেন করা Model Standardized Output দিয়েছে $\\hat{z} = -0.6694$। একে Inverse Scale করলে আসল সাইকেল সংখ্যা দাঁড়ায়:\n  $$\\hat{y} = (-0.6694) \\times 1376.8637 + 3405.7616 \\approx \\mathbf{2484.05} \\quad (\\text{আসল সংখ্যা ছিল } 2294)$$\n\n### PyTorch-এর নীরব খুনি: `[B] - [B, 1]` Broadcasting বাগ!\nআমাদের Model-এর Output এবং Target **উভয়েরই** Shape রাখা হয়েছে $1\\text{D}$ **`[B]`** (`[351]`)। যদি ভুল করে Output থাকে `[351]` আর Target রয়ে যায় `[351, 1]`, তবে PyTorch কোনো Error না দিয়েই বিয়োগফলকে নীরবে Broadcast করে **`[351, 351]`** ($123{,}201$-টি জোড়া!) বানিয়ে ফেলবে—যেখানে প্রতিটি দিনের Prediction-কে অন্য ৩৫০টি ভুল দিনের Target-এর সঙ্গে বিয়োগ করে পুরো Training ধ্বংস হয়ে যাবে!"
         },
         {
           "type": "math",
@@ -2308,7 +2308,7 @@
         },
         {
           "type": "flow_diagram",
-          "title": "আমাদের Reproducible Tiny Transformer Training পাইপলাইন",
+          "title": "আমাদের Reproducible Tiny Transformer Training Pipeline",
           "body": "",
           "steps": [
             {
@@ -2422,7 +2422,7 @@
         {
           "type": "text",
           "title": "৫. যাচাই করা Output, Option B (PyTorch) ও `train()`/`eval()` শৃঙ্খলা",
-          "body": "### Pure Python (Option A) যাচাই করা Output\n```text\nPredicted bike counts: [2484.06, 3373.28, 5986.14]\nActual bike counts   : [2294.0, 2947.0, 6891.0]\nCorrect 1D MSE (3 pairs)  : 0.182269\nBuggy [B]-[B,1] MSE (9 pairs): 3.34546\n```\nচোখের সামনেই দেখুন: সঠিক 1D MSE হলো **`0.130632`**, কিন্তু `[B]` আর `[B, 1]` অমিল হয়ে Silent Broadcasting ঘটলে MSE লাফিয়ে **`2.617756`** (২০ গুণের বেশি ভুল!) হয়ে যায়!\n\n### Option B — PyTorch-এ `CountTransformer` লোড, ১৮৫ Parameter ও Shape Assert\n```python\nfrom pathlib import Path\nimport importlib.util\nimport torch\n\npath = Path(\"assets/datasets/bike_sharing/attention_workflow.py\")\nspec = importlib.util.spec_from_file_location(\"ch20_budget\", path)\nmodule = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(module)\n\nmodel = module.CountTransformer()\nassert sum(p.numel() for p in model.parameters()) == 185\nX_dummy = torch.zeros(4, 14, 1, dtype=torch.float64)\nmodel.eval()\nwith torch.no_grad():\n    pred = model(X_dummy)\nassert pred.shape == (4,)  # সবসময় 1D [B], কখনো [B, 1] নয়!\nprint(\"Verified CountTransformer params=185, pred shape:\", pred.shape)\n```\n\n### পেশাদার `train()` বনাম `eval()` ও সৎ মূল্যায়ন অভ্যাস\n- **`sdpa` Dropout ফাঁদ:** আমাদের রেসিপিতে `dropout = 0` থাকলেও, ফাংশনাল `scaled_dot_product_attention` নিজে থেকে `self.training` ফ্ল্যাগ পড়ে না—তাই মূল্যায়নে সবসময় স্পষ্টভাবে `dropout_p=0.0` দিন!\n- **Training Loss কমা $\\neq$ Generalization:** ওপরে ৮০ ধাপে MSE `1.1233` থেকে `0.2731`-এ নেমেছে—এটি কেবল প্রমাণ করে **Optimization কাজ করছে**! সত্যিকারের কার্যকারিতা বুঝতে একই সময়ের সীমানায় `naive` ও `seasonal7` Baseline-এর সঙ্গে তুলনা করতে হবে। আর আগের অধ্যায়ের GRU বনাম এই অধ্যায়ের Tiny Transformer দুটি আলাদা স্থির রেসিপিতে ট্রেন করা বলে এদের মধ্যে সরাসরি কোনো আর্কিটেকচার প্রতিযোগিতার রায় টানা সৎ নয়।"
+          "body": "### Pure Python (Option A) যাচাই করা Output\n```text\nPredicted bike counts: [2484.06, 3373.28, 5986.14]\nActual bike counts   : [2294.0, 2947.0, 6891.0]\nCorrect 1D MSE (3 pairs)  : 0.182269\nBuggy [B]-[B,1] MSE (9 pairs): 3.34546\n```\nচোখের সামনেই দেখুন: সঠিক 1D MSE হলো **`0.130632`**, কিন্তু `[B]` আর `[B, 1]` অমিল হয়ে Silent Broadcasting ঘটলে MSE লাফিয়ে **`2.617756`** (২০ গুণের বেশি ভুল!) হয়ে যায়!\n\n### Option B — PyTorch-এ `CountTransformer` লোড, ১৮৫ Parameter ও Shape Assert\n```python\nfrom pathlib import Path\nimport importlib.util\nimport torch\n\npath = Path(\"assets/datasets/bike_sharing/attention_workflow.py\")\nspec = importlib.util.spec_from_file_location(\"ch20_budget\", path)\nmodule = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(module)\n\nmodel = module.CountTransformer()\nassert sum(p.numel() for p in model.parameters()) == 185\nX_dummy = torch.zeros(4, 14, 1, dtype=torch.float64)\nmodel.eval()\nwith torch.no_grad():\n    pred = model(X_dummy)\nassert pred.shape == (4,)  # সবসময় 1D [B], কখনো [B, 1] নয়!\nprint(\"Verified CountTransformer params=185, pred shape:\", pred.shape)\n```\n\n### পেশাদার `train()` বনাম `eval()` ও সৎ মূল্যায়ন অভ্যাস\n- **`sdpa` Dropout ফাঁদ:** আমাদের রেসিপিতে `dropout = 0` থাকলেও, ফাংশনাল `scaled_dot_product_attention` নিজে থেকে `self.training` ফ্ল্যাগ পড়ে না—তাই মূল্যায়নে সবসময় স্পষ্টভাবে `dropout_p=0.0` দিন!\n- **Training Loss কমা $\\neq$ Generalization:** ওপরে ৮০ ধাপে MSE `1.1233` থেকে `0.2731`-এ নেমেছে—এটি কেবল প্রমাণ করে **Optimization কাজ করছে**! সত্যিকারের কার্যকারিতা বুঝতে একই সময়ের সীমানায় `naive` ও `seasonal7` Baseline-এর সঙ্গে তুলনা করতে হবে। আর আগের অধ্যায়ের GRU বনাম এই অধ্যায়ের Tiny Transformer দুটি আলাদা স্থির রেসিপিতে ট্রেন করা বলে এদের মধ্যে সরাসরি কোনো Architecture প্রতিযোগিতার রায় টানা সৎ নয়।"
         },
         {
           "type": "concept_check",
@@ -2482,7 +2482,7 @@
         },
         {
           "type": "text",
-          "title": "৬. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৬. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **ভবিষ্যৎসহ পুরো ডেটায় Scaler Fit করা:** সবসময় কেবল Training সময়কাল (`2011`) থেকেই $\\mu, s$ নিন।\n2. **`[B]` বনাম `[B, 1]` Shape যাচাই না করা:** Loss-এর আগে সবসময় `assert pred.shape == target.shape`।\n3. **সেরা Epoch দেখে গোপনে Cherry-pick করা:** নির্ধারিত স্থির রেসিপি সৎভাবে রিপোর্ট করুন।\n\n### Cheat Sheet\n- **Temporal Split:** `2011` (`351` Train) | `Jan-Jun 2012` (`182` Dev) | `Jul-Dec 2012` (`184` Reserved)\n- **Scaling Constants:** $\\mu_{2011} = 3405.7616$, $s_{2011} = 1376.8637$\n- **Fixed Recipe:** `seed=20`, `float64`, `Adam(lr=0.01)`, `80` updates, `clip_grad_norm_(1.0)`, `dropout=0`\n\n**পরের পাঠে কী শিখব?** আমাদের Bike Sharing Model-টি ছিল One-step সংখ্যার Regression। কিন্তু যখন আমরা GPT বা অনুবাদ Model-এর মতো **Autoregressive Token Generation** ট্রেন করি, তখন কেন কেবল Causal Mask বসালেই হয় না, বরং **Teacher Forcing ও এক ঘর সরানো Shifted Labels** বাধ্যতামূলক হয়ে পড়ে? চলুন পরের পাঠে হাতে-কলমে শিখি!"
         },
         {
@@ -2505,7 +2505,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "আজ আমরা Autoregressive Language Model Training-এর সবচেয়ে গুরুত্বপূর্ণ ডেটা চুক্তি শিখব—কেন নিখুঁত Causal Mask থাকা সত্ত্বেও **Input ও Label এক ঘর না সরালে (Off-by-one Shift)** Model উত্তর কপি করে $100\\%$ ভুয়া Accuracy দেখায়, **Teacher Forcing** বনাম **Exposure Bias** কী, কেন Loss-এ `PAD` বাদ দিলেও **`EOS` অবশ্যই Score করতে হয়**, এবং **Temperature ($\\tau$)** আসলে Probability Distribution-কে কীভাবে বদলায়।",
+          "goal": "Autoregressive Language Model Train করার সময় **Input আর Label এক ঘর সরাতে হয়**। এক ঘরের Shift ভুল হলে (Off-by-one Shift) Causal Mask ঠিক থাকলেও Model উত্তর কপি করে ভুলভাবে $100\\%$ Accuracy দেখাতে পারে। এই পাঠে Teacher Forcing আর Exposure Bias বুঝব। কেন Loss-এ `PAD` বাদ গেলেও `EOS` Score করতে হয় এবং **Temperature ($\\tau$)** বদলালে Probability Distribution কীভাবে পাল্টায়, তাও দেখব।",
           "prerequisites": [
             "আগের পাঠ: Causal Mask ও Key-Padding / Loss Mask",
             "Cross-Entropy Loss ($-\\log p_{\\mathrm{true}}$)",
@@ -2732,7 +2732,7 @@
         },
         {
           "type": "text",
-          "title": "৬. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৬. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **Input ও Label এক ঘর না সরানো:** Causal Mask থাকলেও Model উত্তর কপি করে ভুয়া $100\\%$ Accuracy দেখাবে!\n2. **`EOS`-কে `PAD`-এর সঙ্গে `ignore_index` করে ফেলা:** Model কখনো থামতে শিখবে না।\n3. **কম Temperature মানেই সত্যবাদিতা ভাবা:** $\\tau$ কেবল Distribution-এর তীক্ষ্ণতা বদলায়।\n\n### Cheat Sheet\n- **Shift Contract:** `inputs = seq[:-1]`, `labels = seq[1:]` (`EOS` scored, `PAD` ignored)\n- **Uniform Baseline CE:** সব Logit সমান হলে Cross-Entropy $= \\ln(V)$ (আমাদের $V=8$-এ `2.079442`)\n- **Temperature Softmax:** $p_k = \\frac{\\exp(z_k / \\tau)}{\\sum_j \\exp(z_j / \\tau)}$\n\n**পরের পাঠে কী শিখব?** Training-এ Teacher Forcing দিয়ে পুরো Sequence একসঙ্গে চালানো যায়—কিন্তু Inference-এ যখন একটি একটি করে $1{,}000$ শব্দ তৈরি করতে হয়, তখন প্রতিবার শুরু থেকে সব $K, V$ নতুন করে হিসাব করলে বিপুল অপচয় হয়! পরের পাঠে আমরা শিখব **KV Cache**, তার নিখুঁত Memory সূত্র, এবং আয়তাকার Mask-এ **`is_causal=True` দেওয়ার ভয়াবহ Upper-Left ফাঁদ**!"
         },
         {
@@ -2755,7 +2755,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "আজ আমরা Autoregressive ডিকোডিং দ্রুত করার মূল ইঞ্জিন **KV Cache** শিখব—কেন পুরোনো Token-গুলোর $K, V$ পুনর্ব্যবহার করলে গণিত বিন্দুমাত্র বদলায় না, **আয়তাকার `[T_new, T_total]` Score Matrix-এ অন্ধভাবে `is_causal=True` দিলে** কীভাবে Upper-Left Alignment আপনার পুরোনো Cache-ই কেটে বাদ দেয়, এবং Production-এ KV Cache-এর নিখুঁত Memory সূত্র ($2 L B H T d \\cdot b_{\\mathrm{dtype}}$) ও ৪টি বড় সার্ভিং চ্যালেঞ্জ কী।",
+          "goal": "আজ আমরা Autoregressive Decoding দ্রুত করতে ব্যবহৃত **KV Cache** শিখব—কেন পুরোনো Token-গুলোর $K, V$ পুনর্ব্যবহার করলে হিসাব একই থাকে, **আয়তাকার `[T_new, T_total]` Score Matrix-এ অন্ধভাবে `is_causal=True` দিলে** কীভাবে Upper-Left Alignment আপনার পুরোনো Cache-ই কেটে বাদ দেয়, এবং Production-এ KV Cache-এর নিখুঁত Memory সূত্র ($2 L B H T d \\cdot b_{\\mathrm{dtype}}$) ও ৪টি বড় সার্ভিং চ্যালেঞ্জ কী।",
           "prerequisites": [
             "আগের পাঠ: Causal Mask ও Positional Encoding (RoPE Offset)",
             "Autoregressive Generation-এর ক্রমিক ধাপ",
@@ -2896,7 +2896,7 @@
         },
         {
           "type": "text",
-          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **আয়তাকার Cache Attention-এ অন্ধভাবে `is_causal=True` দেওয়া:** Upper-Left Alignment আপনার Cache কেটে বাদ দেয়!\n2. **নতুন Token-এর Position Offset শূন্যে Reset করা:** প্রতিটি নতুন Token-এর প্রকৃত পরম অবস্থান `t` ধরে রাখতে হবে।\n3. **সঠিকতা প্রমাণের আগেই Speed Benchmark করা:** ভুল Cache যত দ্রুতই চলুক তা অর্থহীন!\n\n### Cheat Sheet\n- **Cache Update:** $K_{\\le t} = [K_{<t}; k_t]$, $V_{\\le t} = [V_{<t}; v_t]$\n- **Safe Offset Mask:** `allowed = k_pos[None, :] <= q_pos[:, None]`\n- **Cache Bytes:** $2 L B H_{\\mathrm{kv}} T d \\cdot b_{\\mathrm{dtype}}$ (আমাদের Tiny Model উপাদান $= 112$)\n\n**পরের পাঠে কী শিখব?** এই যে বললাম Speed মাপার আগেই **গাণিতিক অভেদ (Attention Equivalence)** প্রমাণ করতে হয়—পরের সংক্ষিপ্ত কিন্তু অত্যন্ত তীক্ষ্ণ পাঠে আমরা খাতা-কলমে ও Pure Python কোডে Full বনাম Cached সমতার ঠিক **`3.462117`** ও **`0.0`** পার্থক্য যাচাই করব এবং দেখব ঠিক কোন ৩টি পরিস্থিতিতে এই সমতা আশা করা যায় না!"
         },
         {
@@ -2919,7 +2919,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "আজ আমরা **Attention Equivalence**-এর অলঙ্ঘনীয় নিয়মটি হাতেনাতে প্রমাণ করব—কেন **KV Cache** কোনো নতুন Model নয় বরং কেবল একটি গতিবর্ধক কৌশল, কোন ৪টি শর্ত মানলে Full-Prefix আর Cached ফলাফলের পার্থক্য ঠিক **`0.0`** হতেই হবে, এবং বাস্তব সিস্টেমে ঠিক কোন **৩টি পরিস্থিতিতে** হুবহু সমতা আশা করা যাবে না!",
+          "goal": "আজ আমরা **Attention Equivalence**-এর নিয়ম উদাহরণে যাচাই করব—কেন **KV Cache** কোনো নতুন Model নয় বরং কেবল একই হিসাব দ্রুত করার উপায়, কোন ৪টি শর্ত মানলে Full-Prefix আর Cached ফলাফলের পার্থক্য ঠিক **`0.0`** হতেই হবে, এবং বাস্তব সিস্টেমে ঠিক কোন **৩টি পরিস্থিতিতে** হুবহু সমতা আশা করা যাবে না!",
           "prerequisites": [
             "আগের পাঠ: KV Cache ও Position Offset",
             "Stable Softmax ও Weighted Value Sum"
@@ -2949,10 +2949,10 @@
             },
             {
               "label": "ধাপ ৪ · একই দৃশ্যমান Mask → পার্থক্য নিখুঁত `0.0`",
-              "detail": "যেকোনো Speed Benchmark করার আগে এই গাণিতিক অভেদ যাচাই করা বাধ্যতামূলক!"
+              "detail": "যেকোনো Speed Benchmark করার আগে এই গাণিতিক একই ফল আসে কি না যাচাই করা বাধ্যতামূলক!"
             }
           ],
-          "caption": "সোনালি নিয়ম: **KV Cache নিছক গতি বাড়ানোর একটি ইঞ্জিনিয়ারিং কৌশল—এটি কোনো নতুন Model বা ভিন্ন গাণিতিক সমীকরণ নয়!**"
+          "caption": "মনে রাখার নিয়ম: **KV Cache নিছক গতি বাড়ানোর একটি ইঞ্জিনিয়ারিং কৌশল—এটি কোনো নতুন Model বা ভিন্ন গাণিতিক সমীকরণ নয়!**"
         },
         {
           "type": "text",
@@ -2991,7 +2991,7 @@
         {
           "type": "text",
           "title": "৩. কোডের যাচাই করা Output, Option B (PyTorch) ও কখন হুবহু সমতা ভেঙে পড়ে",
-          "body": "### Pure Python (Option A) যাচাই করা Output\n```text\n3.462117 0.0\n```\nএকদম আমাদের খাতার হিসাবের সাথে নিখুঁত মিল: **`3.462117`** এবং পার্থক্য **`0.0`**!\n\n### Option B — PyTorch-এ একই Full বনাম Cached সমতা যাচাই\n```python\nimport torch\nfrom torch.nn.functional import scaled_dot_product_attention as sdpa\n\nq = torch.tensor([[[[1.0]]]], dtype=torch.float64)\nk_full = torch.tensor([[[[0.0], [1.0]]]], dtype=torch.float64)\nv_full = torch.tensor([[[[2.0], [4.0]]]], dtype=torch.float64)\n\nk_cache, v_cache = k_full[:, :, :1], v_full[:, :, :1]\nk_new = torch.cat([k_cache, k_full[:, :, 1:]], dim=2)\nv_new = torch.cat([v_cache, v_full[:, :, 1:]], dim=2)\n\nout_full = sdpa(q, k_full, v_full, dropout_p=0.0).item()\nout_cached = sdpa(q, k_new, v_new, dropout_p=0.0).item()\nassert abs(out_full - out_cached) == 0.0\nprint(round(out_full, 6), abs(out_full - out_cached))  # 3.462117 0.0\n```\n\n### কোন ৩টি বাস্তব পরিস্থিতিতে হুবহু সমতা আশা করা যাবে না?\nবাস্তব Production সিস্টেমে **৩টি নির্দিষ্ট পরিস্থিতিতে** Full-Prefix ও Cached ফলাফলের বিট-টু-বিট সমতা আশা করবেন না:\n1. **All-Blocked Row:** কোনো Query Row-এর সবগুলো Key ব্লক হয়ে গেলে সাধারণ Softmax অসংজ্ঞায়িত (`NaN`) হয়ে পড়ে।\n2. **Sliding Window / Cache Eviction:** Memory বাঁচাতে লম্বা Cache-এর শুরুর পুরোনো অংশ কেটে ফেললে দৃশ্যমান ইতিহাসই বদলে যায়—ফলে পূর্ণ ইতিহাসের সাথে উত্তর আর মিলবে না।\n3. **ভিন্ন Precision বা Fused GPU Kernel:** CPU `float64`-এর সঙ্গে GPU `float16`/`bfloat16` বা FlashAttention মেলালে Floating-Point যোগ-গুণের ক্রম সামান্য বদলায় বলে বিট-টু-বিট `==` না চেয়ে যুক্তিসঙ্গত Tolerance (`atol`/`rtol`) ব্যবহার করতে হয়।"
+          "body": "### Pure Python (Option A) যাচাই করা Output\n```text\n3.462117 0.0\n```\nএকদম আমাদের হাতে করা হিসাবের সঙ্গে নিখুঁত মিল: **`3.462117`** এবং পার্থক্য **`0.0`**!\n\n### Option B — PyTorch-এ একই Full বনাম Cached সমতা যাচাই\n```python\nimport torch\nfrom torch.nn.functional import scaled_dot_product_attention as sdpa\n\nq = torch.tensor([[[[1.0]]]], dtype=torch.float64)\nk_full = torch.tensor([[[[0.0], [1.0]]]], dtype=torch.float64)\nv_full = torch.tensor([[[[2.0], [4.0]]]], dtype=torch.float64)\n\nk_cache, v_cache = k_full[:, :, :1], v_full[:, :, :1]\nk_new = torch.cat([k_cache, k_full[:, :, 1:]], dim=2)\nv_new = torch.cat([v_cache, v_full[:, :, 1:]], dim=2)\n\nout_full = sdpa(q, k_full, v_full, dropout_p=0.0).item()\nout_cached = sdpa(q, k_new, v_new, dropout_p=0.0).item()\nassert abs(out_full - out_cached) == 0.0\nprint(round(out_full, 6), abs(out_full - out_cached))  # 3.462117 0.0\n```\n\n### কোন ৩টি বাস্তব পরিস্থিতিতে হুবহু সমতা আশা করা যাবে না?\nবাস্তব Production সিস্টেমে **৩টি নির্দিষ্ট পরিস্থিতিতে** Full-Prefix ও Cached ফলাফলের বিট-টু-বিট সমতা আশা করবেন না:\n1. **All-Blocked Row:** কোনো Query Row-এর সবগুলো Key ব্লক হয়ে গেলে সাধারণ Softmax অসংজ্ঞায়িত (`NaN`) হয়ে পড়ে।\n2. **Sliding Window / Cache Eviction:** Memory বাঁচাতে লম্বা Cache-এর শুরুর পুরোনো অংশ কেটে ফেললে দৃশ্যমান ইতিহাসই বদলে যায়—ফলে পূর্ণ ইতিহাসের সাথে উত্তর আর মিলবে না।\n3. **ভিন্ন Precision বা Fused GPU Kernel:** CPU `float64`-এর সঙ্গে GPU `float16`/`bfloat16` বা FlashAttention মেলালে Floating-Point যোগ-গুণের ক্রম সামান্য বদলায় বলে বিট-টু-বিট `==` না চেয়ে যুক্তিসঙ্গত Tolerance (`atol`/`rtol`) ব্যবহার করতে হয়।"
         },
         {
           "type": "concept_check",
@@ -3010,7 +3010,7 @@
         {
           "type": "interview_qa",
           "title": "Attention Equivalence — সম্ভাব্য Interview প্রশ্ন ও উত্তর",
-          "intro": "Full-Prefix বনাম Cached সমতা ও ডিবাগিং নিয়ে ৫টি তীক্ষ্ণ ইন্টারভিউ প্রশ্ন অনুশীলন করুন।",
+          "intro": "Full-Prefix বনাম Cached সমতা ও Debugging নিয়ে ৫টি তীক্ষ্ণ ইন্টারভিউ প্রশ্ন অনুশীলন করুন।",
           "items": [
             {
               "concept": "Semantics Before Speed",
@@ -3051,7 +3051,7 @@
         },
         {
           "type": "text",
-          "title": "৪. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৪. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **Dropout চালু রেখে Full বনাম Cached মেলানো:** Random ড্রপে দুই পথ কখনোই মিলবে না।\n2. **Sliding Window Eviction চালু রেখেও Full-Prefix সমতা দাবি করা:** দৃশ্যমান ইতিহাস বদলে গেলে সমতা আর থাকে না।\n3. **`float16`/GPU-তে `==` চেক করা:** আগে CPU `float64`-এ নিখুঁত লজিক যাচাই করুন, তারপর GPU-তে উপযুক্ত Tolerance দিন।\n\n### Cheat Sheet\n- **Worked Check:** $q=1, k=[0,1], v=[2,4] \\implies o = \\mathbf{3.462117}$, $|o_{\\mathrm{full}} - o_{\\mathrm{cached}}| = \\mathbf{0.0}$\n- **3 Breaks:** All-Blocked Row (`NaN`), Sliding Window Eviction, Mixed Precision / Fused Kernel order.\n\n**পরের পাঠে কী শিখব?** এখন আমরা জানি Attention কীভাবে নিখুঁতভাবে কাজ করে ও Cache কীভাবে পুনর্ব্যবহার হয়। কিন্তু Sequence দৈর্ঘ্য $T$ যদি $14$ থেকে বেড়ে $8{,}192$ হয়, তবে Memory আর Compute কত দ্রুত বিস্ফোরিত হয় এবং **FlashAttention** আসলে কী বদলায় আর কী বদলায় না? চলুন পরের পাঠে **Computational Complexity** হাতে-কলমে হিসাব করি!"
         },
         {
@@ -3074,7 +3074,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "আজ আমরা Attention ও Transformer-এর প্রকৃত কম্পিউটেশনাল খরচ ও Memory সীমা শিখব—কখন **$T^2$ Attention Scores** আর কখন **$T D^2$ Projections / FFN** প্রধান Bottleneck হয়, কেন Training সমান্তরাল হলেও Generation ক্রমিক থাকে, আধুনিক **FlashAttention** ঠিক কী বদলায় ($\\mathcal{O}(T)$ Memory) আর কী বদলায় না ($\\mathcal{O}(T^2)$ FLOPs), এবং Context দৈর্ঘ্য $T$ দ্বিগুণ করলে কোন Memory কত গুণ বাড়ে!",
+          "goal": "আজ আমরা Attention ও Transformer-এর হিসাবের খরচ আর Memory-র সীমা শিখব—কখন **$T^2$ Attention Scores** আর কখন **$T D^2$ Projections / FFN** প্রধান Bottleneck হয়, কেন Training সমান্তরাল হলেও Generation ক্রমিক থাকে, আধুনিক **FlashAttention** ঠিক কী বদলায় ($\\mathcal{O}(T)$ Memory) আর কী বদলায় না ($\\mathcal{O}(T^2)$ FLOPs), এবং Context দৈর্ঘ্য $T$ দ্বিগুণ করলে কোন Memory কত গুণ বাড়ে!",
           "prerequisites": [
             "আগের পাঠ: Multi-Head Attention, FFN ও KV Cache",
             "Big-O Complexity ($\\mathcal{O}(T)$ বনাম $\\mathcal{O}(T^2)$)"
@@ -3225,7 +3225,7 @@
         {
           "type": "text",
           "title": "৫. যাচাই করা Output, FlashAttention-এর সত্য, `need_weights` খরচ ও Long-Context সীমা",
-          "body": "### Pure Python (Option A) যাচাই করা Output\n```text\nBaseline (T=14) -> Score elements: 392 | Cache elements: 112\nT= 14 | Scores=   392 (  1x) | KV Cache= 112 ( 1x)\nT= 28 | Scores=  1568 (  4x) | KV Cache= 224 ( 2x)\nT= 56 | Scores=  6272 ( 16x) | KV Cache= 448 ( 4x)\nT=112 | Scores= 25088 ( 64x) | KV Cache= 896 ( 8x)\nT=224 | Scores=100352 (256x) | KV Cache=1792 (16x)\n```\nএকদম চোখের সামনে প্রমাণ: $T$ মাত্র ১৬ গুণ বাড়াতেই (`14 -> 224`) KV Cache বাড়ল `16x`, কিন্তু Dense Score Matrix লাফিয়ে বাড়ল **`256x`**!\n\n### Option B — PyTorch-এ `need_weights=False` বনাম `True` ব্যবহারের পার্থক্য\n```python\nimport torch\n\nmha = torch.nn.MultiheadAttention(4, 2, dropout=0.0, batch_first=True, dtype=torch.float64)\nx = torch.zeros(1, 14, 4, dtype=torch.float64)\n# প্রোডাকশন Inference-এ need_weights=False রাখলে Fused/Fast পথ চালু হতে পারে:\nout_fast, w_none = mha(x, x, x, need_weights=False)\nassert w_none is None and out_fast.shape == (1, 14, 4)\nprint(\"Fast path output:\", out_fast.shape, \"| weights returned:\", w_none)\n```\n\n### তিনটি সিনিয়র সিস্টেম উপলব্ধি\n1. **FlashAttention কী বদলায় আর কী বদলায় না?** FlashAttention পুরো $[T, T]$ Matrix ধীরগতির মূল GPU Memory (HBM)-এ লিখে না রেখে ছোট ছোট টুকরো (**Tile**) করে দ্রুতগতির অন-চিপ SRAM-এ Online Softmax সেরে ফেলে। এতে Memory খরচ নেমে আসে $\\mathcal{O}(T)$-এ এবং HBM ট্রাফিক কমে গতি অনেক বাড়ে—**কিন্তু নিখুঁত Attention-এর মোট গাণিতিক অপারেশন (FLOPs) তখনো $\\mathcal{O}(T^2)$-ই থাকে!** (Sparse বা Sliding-Window Attention FLOPs কমালেও দৃশ্যমানতার নিয়ম বদলে দেয়।)\n2. **`need_weights=True`-এর লুকানো খরচ:** অডিট বা আমাদের Lab-এর Heatmap দেখার জন্য `need_weights=True` দিলে ফ্রেমওয়ার্ক বাধ্য হয়ে Memory-তে পূর্ণ $[B, H, T, T]$ Matrix তৈরি করে এবং Fused Kernel বন্ধ করে দেয়! তাই কখনো ওজন-পরিদর্শন মোডে টাইম মেপে Production Latency দাবি করবেন না।\n3. **লম্বা Context $\\neq$ নির্ভরযোগ্য যুক্তিবোধ:** Hardware-এ বেশি Memory থাকা মানেই Model ১০০,০০০ শব্দ আগে লুকানো তথ্য নির্ভরযোগ্যভাবে ব্যবহার করতে পারবে না (**Lost in the Middle** সমস্যা)। কার্যকর Long-Context নির্ভর করে Training দৈর্ঘ্য, টাস্কের ধরন ও মূল্যায়ন প্রোটোকলের ওপর।"
+          "body": "### Pure Python (Option A) যাচাই করা Output\n```text\nBaseline (T=14) -> Score elements: 392 | Cache elements: 112\nT= 14 | Scores=   392 (  1x) | KV Cache= 112 ( 1x)\nT= 28 | Scores=  1568 (  4x) | KV Cache= 224 ( 2x)\nT= 56 | Scores=  6272 ( 16x) | KV Cache= 448 ( 4x)\nT=112 | Scores= 25088 ( 64x) | KV Cache= 896 ( 8x)\nT=224 | Scores=100352 (256x) | KV Cache=1792 (16x)\n```\nএকদম চোখের সামনে প্রমাণ: $T$ মাত্র ১৬ গুণ বাড়াতেই (`14 -> 224`) KV Cache বাড়ল `16x`, কিন্তু Dense Score Matrix লাফিয়ে বাড়ল **`256x`**!\n\n### Option B — PyTorch-এ `need_weights=False` বনাম `True` ব্যবহারের পার্থক্য\n```python\nimport torch\n\nmha = torch.nn.MultiheadAttention(4, 2, dropout=0.0, batch_first=True, dtype=torch.float64)\nx = torch.zeros(1, 14, 4, dtype=torch.float64)\n# প্রোডাকশন Inference-এ need_weights=False রাখলে Fused/Fast পথ চালু হতে পারে:\nout_fast, w_none = mha(x, x, x, need_weights=False)\nassert w_none is None and out_fast.shape == (1, 14, 4)\nprint(\"Fast path output:\", out_fast.shape, \"| weights returned:\", w_none)\n```\n\n### তিনটি সিনিয়র সিস্টেম উপলব্ধি\n1. **FlashAttention কী বদলায় আর কী বদলায় না?** FlashAttention পুরো $[T, T]$ Matrix ধীরগতির মূল GPU Memory (HBM)-এ লিখে না রেখে ছোট ছোট টুকরো (**Tile**) করে দ্রুতগতির অন-চিপ SRAM-এ Online Softmax সেরে ফেলে। এতে Memory খরচ নেমে আসে $\\mathcal{O}(T)$-এ এবং HBM ট্রাফিক কমে গতি অনেক বাড়ে—**কিন্তু নিখুঁত Attention-এর মোট গাণিতিক অপারেশন (FLOPs) তখনো $\\mathcal{O}(T^2)$-ই থাকে!** (Sparse বা Sliding-Window Attention FLOPs কমালেও দৃশ্যমানতার নিয়ম বদলে দেয়।)\n2. **`need_weights=True`-এর লুকানো খরচ:** অডিট বা আমাদের Lab-এর Heatmap দেখার জন্য `need_weights=True` দিলে ফ্রেমওয়ার্ক বাধ্য হয়ে Memory-তে পূর্ণ $[B, H, T, T]$ Matrix তৈরি করে এবং Fused Kernel বন্ধ করে দেয়! তাই কখনো ওজন-পরিদর্শন মোডে টাইম মেপে Production Latency দাবি করবেন না।\n3. **লম্বা Context $\\neq$ নির্ভরযোগ্য যুক্তিবোধ:** Hardware-এ বেশি Memory থাকা মানেই Model ১০০,০০০ শব্দ আগে লুকানো তথ্য নির্ভরযোগ্যভাবে ব্যবহার করতে পারবে না (**Lost in the Middle** সমস্যা)। কার্যকর Long-Context নির্ভর করে Training দৈর্ঘ্য, Task-এর ধরন ও মূল্যায়ন প্রোটোকলের ওপর।"
         },
         {
           "type": "concept_check",
@@ -3292,7 +3292,7 @@
         },
         {
           "type": "text",
-          "title": "৬. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৬. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **FlashAttention-কে $\\mathcal{O}(T)$ FLOPs ভাবা:** HBM Memory $\\mathcal{O}(T)$, কিন্তু নিখুঁত Attention FLOPs তখনো $\\mathcal{O}(T^2)$!\n2. **`need_weights=True` রেখে Latency Benchmark করা:** এতে Fused Kernel বন্ধ হয়ে যায়।\n3. **কেবল খাতার সূত্র দেখে Production Latency SLA ঠিক করা:** Activation, Optimizer State ও Hardware Profiling ছাড়া SLA দেওয়া যাবে না।\n\n### Cheat Sheet\n- **Doubling $T$:** Dense Scores ($B H T^2$) $\\to 4\\times$ | KV Cache ($2 L B H T d$) $\\to 2\\times$\n- **Bottleneck Rule:** $T \\ll D \\implies$ Projections/FFN | $T \\gg D \\implies$ Attention $T^2$\n- **FlashAttention:** Exact math, $\\mathcal{O}(T)$ HBM memory, $\\mathcal{O}(T^2)$ FLOPs\n\n**পরের পাঠে কী শিখব?** তত্ত্ব ও সিস্টেম সীমা দুটোই এখন আয়ত্তে! এবার চলুন আমাদের **অফলাইন UCI Bike Sharing ওয়ার্কফ্লো** কোডে ঢুকি—দেখি কীভাবে `day.csv` যাচাই করে, Causal Window বানিয়ে এবং PyTorch `CountTransformer` বনাম স্বতন্ত্র NumPy `manual()` পাশাপাশি চালিয়ে প্রতিটি Tensor-এর শুদ্ধতা পরীক্ষা করা হয়!"
         },
         {
@@ -3315,7 +3315,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "আজ আমরা কাঁচা `day.csv` থেকে শুরু করে পুরো **Offline Attention Pipeline** কোড-স্তরে যাচাই করব—কীভাবে SHA-256 হ্যাশ ও ৫৪৭-দিনের কঠোর সীমানা রক্ষা করা হয়, কীভাবে `windows()` ফাংশন Future Leakage বন্ধ করে, এবং কীভাবে PyTorch-এর `CountTransformer` ও নিরেট স্বাধীন `manual()` ফাংশন প্রতিটি মধ্যবর্তী Tensor-কে দশমিকের ১১ ঘর (`2e-11`) পর্যন্ত মিলিয়ে দেখে!",
+          "goal": "আজ আমরা কাঁচা `day.csv` থেকে শুরু করে পুরো **Offline Attention Pipeline** কোড চালিয়ে যাচাই করব—কীভাবে SHA-256 হ্যাশ ও ৫৪৭-দিনের কঠোর সীমানা রক্ষা করা হয়, কীভাবে `windows()` ফাংশন Future Leakage বন্ধ করে, এবং কীভাবে PyTorch-এর `CountTransformer` ও নিরেট স্বাধীন `manual()` ফাংশন প্রতিটি মধ্যবর্তী Tensor-কে দশমিকের ১১ ঘর (`2e-11`) পর্যন্ত মিলিয়ে দেখে!",
           "prerequisites": [
             "আগের সব পাঠ: QKV, Mask, Positional Encoding, LayerNorm, FFN",
             "PyTorch `nn.Module` ও `state_dict` ধারণা",
@@ -3325,12 +3325,12 @@
             "মূল `day.csv`-এর SHA-256 যাচাই এবং প্রথম `547` দিন Modeling বনাম শেষ `184` দিন সংরক্ষিত রাখার চুক্তি ব্যাখ্যা করতে পারবেন।",
             "`windows()` ফাংশনের সীমানা (`14..364` Train, `365..546` Dev) ও পাশাপাশি উইন্ডোর `13`-দিনের Autocorrelation ঝুঁকি বিশ্লেষণ করতে পারবেন।",
             "`CountTransformer.inspect()` ও স্বাধীন `manual()` Implementation-এর প্রতিটি মধ্যবর্তী ধাপ (`embedding` → `state`) মিলিয়ে ব্যাখ্যা করতে পারবেন।",
-            "`weights_only=True` নিরাপদ Checkpoint লোডিং এবং সংখ্যাগত শুদ্ধতা বনাম আর্কিটেকচারাল শ্রেষ্ঠত্বের পার্থক্য বলতে পারবেন।"
+            "`weights_only=True` নিরাপদ Checkpoint লোডিং এবং সংখ্যাগত শুদ্ধতা বনাম Architectureাল শ্রেষ্ঠত্বের পার্থক্য বলতে পারবেন।"
           ]
         },
         {
           "type": "flow_diagram",
-          "title": "অফলাইন ডেটা যাচাই ও সমান্তরাল Forward অডিট পাইপলাইন",
+          "title": "অফলাইন ডেটা যাচাই ও সমান্তরাল Forward অডিট Pipeline",
           "body": "",
           "steps": [
             {
@@ -3365,7 +3365,7 @@
         {
           "type": "text",
           "title": "১. দুটি কোড ব্লকের ধাপে ধাপে ব্যবচ্ছেদ, Autocorrelation ও নিরাপদ Artifact নীতি",
-          "body": "### স্থানীয় Python পরিবেশ ও Offline প্রস্তুতি\nনিজের কম্পিউটারে পুরো PyTorch ওয়ার্কফ্লো যাচাই করতে প্রয়োজনীয় CPU প্যাকেজ ইনস্টল করুন:\n- `python -m pip install -r tool/requirements-pytorch-qa.txt`\n- মূল Dataset (**UCI Bike Sharing, Fanaee-T 2013, `CC BY 4.0`**) ও স্ক্রিপ্ট সম্পূর্ণ Offline যুক্ত আছে; অ্যাপের নিজস্ব রানটাইম কোনো বাইরের Python বা রিমোট API-র ওপর নির্ভর করে না।\n\n### `windows()` ফাংশন ও ক্রমিক নির্ভরশীলতা (Autocorrelation) সতর্কতা\nপ্রথম কোড ব্লকের `windows()` ফাংশনটি প্রতিটি Target $t$-এর জন্য কেবল **আগের ১৪ দিন** (`y[t-14 : t]`) নেয় এবং `start >= 14`, `scale > 0`, `isfinite` কঠোরভাবে যাচাই করে:\n- **Training (Fit):** Index `14..364` $\\implies$ মোট **$351$-টি Target**।\n- **Development:** Index `365..546` $\\implies$ মোট **$182$-টি Target**।\n- **সংরক্ষিত অংশ:** শেষ **$184$-টি দিন** Modeling বা Export-এর কোথাও ছোঁয়া হয় না।\n- **Autocorrelation সতর্কতা:** Index `20`-এর উইন্ডোতে আছে দিন `6..19`, আর Index `21`-এর উইন্ডোতে আছে দিন `7..20`—অর্থাৎ **`13`-টি দিনই উভয়ে অভিন্ন!** তাই এই উইন্ডোগুলোকে কখনো পরস্পর স্বাধীন (i.i.d.) Sample ধরা যাবে না।\n\n### Option A (Pure Python) — কোনো NumPy/PyTorch ছাড়াই Causal Window তৈরি যাচাই\n```python\ndef pure_causal_windows(y, mean, scale, start, end):\n    # কেবল আগের ১৪ দিন y[t-14 : t] নিয়ে Leakage-মুক্ত Window তৈরি\n    X_list = []\n    targets = []\n    for t in range(start, end):\n        win = []\n        for idx in range(t - 14, t):\n            win.append((y[idx] - mean) / scale)\n        X_list.append(win)\n        targets.append((y[t] - mean) / scale)\n    return X_list, targets\n\n# ২০ দিনের নমুনা ডেটা: start=14, end=20 -> ৬টি Causal Window\nsample_y = []\nfor i in range(20):\n    sample_y.append(100.0 + 10.0 * i)\nXw, yw = pure_causal_windows(sample_y, 200.0, 50.0, 14, 20)\nassert len(Xw) == 6 and len(Xw[0]) == 14\nprint(\"Windows:\", len(Xw), \"| Overlap between w[0] & w[1]: 13/14 days\")\n```\n\n### নিরাপদ Checkpoint ও সংখ্যাগত শুদ্ধতার সীমা\n- **নিরাপদ লোডিং:** PyTorch Checkpoint লোড করার সময় সবসময় `weights_only=True` এবং `map_location=\"cpu\"` ব্যবহার করুন (যাতে অবিশ্বস্ত Pickle কোড এক্সিকিউট না হয়)।\n- **শুদ্ধতা $\\neq$ শ্রেষ্ঠত্ব:** `CountTransformer` আর `manual()`-এর প্রতিটি Tensor (`embedding`, `norm1`, `weights`, `residual1`, `state`, `prediction`) দশমিকের ১১ ঘর পর্যন্ত মিলে যাওয়া প্রমাণ করে আমাদের **কোডে বাগ নেই**—কিন্তু এটি কখনো প্রমাণ করে না যে এই আর্কিটেকচার বাস্তব সমস্যায় অন্য সবার চেয়ে সেরা!"
+          "body": "### স্থানীয় Python পরিবেশ ও Offline প্রস্তুতি\nনিজের কম্পিউটারে পুরো PyTorch ওয়ার্কফ্লো যাচাই করতে প্রয়োজনীয় CPU প্যাকেজ ইনস্টল করুন:\n- `python -m pip install -r tool/requirements-pytorch-qa.txt`\n- মূল Dataset (**UCI Bike Sharing, Fanaee-T 2013, `CC BY 4.0`**) ও স্ক্রিপ্ট সম্পূর্ণ Offline যুক্ত আছে; অ্যাপের নিজস্ব রানটাইম কোনো বাইরের Python বা রিমোট API-র ওপর নির্ভর করে না।\n\n### `windows()` ফাংশন ও ক্রমিক নির্ভরশীলতা (Autocorrelation) সতর্কতা\nপ্রথম কোড ব্লকের `windows()` ফাংশনটি প্রতিটি Target $t$-এর জন্য কেবল **আগের ১৪ দিন** (`y[t-14 : t]`) নেয় এবং `start >= 14`, `scale > 0`, `isfinite` কঠোরভাবে যাচাই করে:\n- **Training (Fit):** Index `14..364` $\\implies$ মোট **$351$-টি Target**।\n- **Development:** Index `365..546` $\\implies$ মোট **$182$-টি Target**।\n- **সংরক্ষিত অংশ:** শেষ **$184$-টি দিন** Modeling বা Export-এর কোথাও ছোঁয়া হয় না।\n- **Autocorrelation সতর্কতা:** Index `20`-এর উইন্ডোতে আছে দিন `6..19`, আর Index `21`-এর উইন্ডোতে আছে দিন `7..20`—অর্থাৎ **`13`-টি দিনই উভয়ে অভিন্ন!** তাই এই উইন্ডোগুলোকে কখনো পরস্পর স্বাধীন (i.i.d.) Sample ধরা যাবে না।\n\n### Option A (Pure Python) — কোনো NumPy/PyTorch ছাড়াই Causal Window তৈরি যাচাই\n```python\ndef pure_causal_windows(y, mean, scale, start, end):\n    # কেবল আগের ১৪ দিন y[t-14 : t] নিয়ে Leakage-মুক্ত Window তৈরি\n    X_list = []\n    targets = []\n    for t in range(start, end):\n        win = []\n        for idx in range(t - 14, t):\n            win.append((y[idx] - mean) / scale)\n        X_list.append(win)\n        targets.append((y[t] - mean) / scale)\n    return X_list, targets\n\n# ২০ দিনের নমুনা ডেটা: start=14, end=20 -> ৬টি Causal Window\nsample_y = []\nfor i in range(20):\n    sample_y.append(100.0 + 10.0 * i)\nXw, yw = pure_causal_windows(sample_y, 200.0, 50.0, 14, 20)\nassert len(Xw) == 6 and len(Xw[0]) == 14\nprint(\"Windows:\", len(Xw), \"| Overlap between w[0] & w[1]: 13/14 days\")\n```\n\n### নিরাপদ Checkpoint ও সংখ্যাগত শুদ্ধতার সীমা\n- **নিরাপদ লোডিং:** PyTorch Checkpoint লোড করার সময় সবসময় `weights_only=True` এবং `map_location=\"cpu\"` ব্যবহার করুন (যাতে অবিশ্বস্ত Pickle কোড এক্সিকিউট না হয়)।\n- **শুদ্ধতা $\\neq$ শ্রেষ্ঠত্ব:** `CountTransformer` আর `manual()`-এর প্রতিটি Tensor (`embedding`, `norm1`, `weights`, `residual1`, `state`, `prediction`) দশমিকের ১১ ঘর পর্যন্ত মিলে যাওয়া প্রমাণ করে আমাদের **কোডে বাগ নেই**—কিন্তু এটি কখনো প্রমাণ করে না যে এই Architecture বাস্তব সমস্যায় অন্য সবার চেয়ে সেরা!"
         },
         {
           "type": "math",
@@ -3444,7 +3444,7 @@
         },
         {
           "type": "text",
-          "title": "৩. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৩. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **ওভারল্যাপিং স্লাইডিং উইন্ডোকে স্বাধীন (i.i.d.) Sample ধরে নেওয়া:** পাশাপাশি উইন্ডোতে ১৩/১৪ দিন কমন!\n2. **`torch.load()`-এ `weights_only=True` বাদ দেওয়া:** Pickle নিরাপত্তা ঝুঁকি এড়ান।\n3. **কোড মিলে যাওয়া দেখে Model সেরা ভাবা:** Numerical Correctness আর Forecasting Superiority দুটি ভিন্ন জিনিস।\n\n### Cheat Sheet\n- **Data Bounds:** Train `14..364` (`351`) | Dev `365..546` (`182`) | Reserved `547..730` (`184`)\n- **Cross-Check:** `CountTransformer.inspect()` $\\leftrightarrow$ `manual()` within `2e-11` (`float64`)\n- **Artifacts:** `transformer.pt`, `schema.json`, `checksums.json`\n\n**পরের পাঠে কী শিখব?** আমাদের `CountTransformer` এবং `manual()` দুটোই প্রস্তুত! এবার পরের পাঠে চলুন পুরো **Experiment স্ক্রিপ্ট** চালিয়ে দেখি—ঠিক কীভাবে `seed=20` একক রানে ৫টি রেফারেন্স মোডে ৩টি বাস্তব দিন (`t = 365, 400, 540`) ক্রস-চেক হয় এবং তাদের বাস্তব Prediction সংখ্যাগুলো কী আসে!"
         },
         {
@@ -3467,7 +3467,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "আজ আমরা পুরো **End-to-End Transformer Experiment** স্ক্রিপ্টটি খুঁটিয়ে দেখব—কীভাবে `fork_rng` ও একক CPU Thread লক করে একটিমাত্র Reproducible রান চালানো হয়, কীভাবে ৩টি বাস্তব Development দিনে (`t = 365, 400, 540`) **৫টি রেফারেন্স মোডে** প্রতিটি Tensor `2e-11`-এ যাচাই হয়, এবং একটি সুশৃঙ্খল Side-Effect-Free CLI স্ক্রিপ্ট কীভাবে নকশা করতে হয়।",
+          "goal": "আজ আমরা পুরো **End-to-End Transformer Experiment** স্ক্রিপ্টটি খুঁটিয়ে দেখব—কীভাবে `fork_rng` ও একটি CPU Thread নির্দিষ্ট করে একটিমাত্র Reproducible রান চালানো হয়, কীভাবে ৩টি বাস্তব Development দিনে (`t = 365, 400, 540`) **৫টি রেফারেন্স মোডে** প্রতিটি Tensor `2e-11`-এ যাচাই হয়, এবং একটি সুশৃঙ্খল Side-Effect-Free CLI স্ক্রিপ্ট কীভাবে নকশা করতে হয়।",
           "prerequisites": [
             "আগের পাঠ: Offline Workflow (`CountTransformer` ও `manual()`)",
             "Reproducibility (`seed`, RNG state, single-thread CPU)",
@@ -3696,7 +3696,7 @@
         },
         {
           "type": "text",
-          "title": "৪. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৪. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **১-ব্লক Model-এ `Causal14 == Full14` দেখে বাগ ভাবা:** শেষ অবস্থান উভয় ক্ষেত্রেই পুরো ১৪টি Key দেখে।\n2. **Inference Intervention-কে আলাদা ট্রেন করা Model ভাবা:** `valid=10` ও `Position Off` একই স্থির Weight-এর ওপর পরীক্ষা।\n3. **ডিফল্ট CLI রানে প্রজেক্ট Asset ওভাররাইট করা:** ফাইল লিখন সবসময় অপ্ট-ইন ফ্ল্যাগে রাখুন।\n\n### Cheat Sheet\n- **Verified 3 Queries (Mode 1):** `t=365 -> 2484.05` (`2294`) | `t=400 -> 3373.28` (`2947`) | `t=540 -> 5986.14` (`6891`)\n- **Cross-Check:** 3 Queries $\\times$ 5 Modes = 15 full intermediate trace checks within `2e-11`\n- **Untouched:** `reserved_outcomes_used == 0` (final `184` days)\n\n**পরের পাঠে কী শিখব?** আমাদের পুরো Experiment তো নিখুঁতভাবে চলল—এবার সবচেয়ে গুরুত্বপূর্ণ প্রশ্ন: **আমাদের Tiny Transformer কি সরল Baseline (`naive` ও `seasonal7`)-কে হারাতে পারল, নাকি পারল না?** পরের পাঠে আমরা বাস্তব MAE ও RMSE সংখ্যাগুলোর সৎ ও নির্মোহ ব্যবচ্ছেদ করব!"
         },
         {
@@ -3719,7 +3719,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "আজ আমরা আমাদের ১৮২-দিনের বাস্তব Development ফলাফলের সৎ ও পেশাদার পাঠ শিখব—কেন একই ১৮২ দিনে **MAE-তে সরল `naive` Baseline (`900.60`) জিতেছে** অথচ **RMSE-তে `Transformer` (`1191.25`) এগিয়ে আছে**, কেন **Inference Intervention $\\neq$ Ablation Study** এবং **Attention Heatmap $\\neq$ Causal Attribution**, আর ইন্টারভিউতে মিশ্র ফলাফল কীভাবে ৬-ধাপের পেশাদার ছন্দে উপস্থাপন করতে হয়!",
+          "goal": "বাস্তব ১৮২ দিনের Development ফল দেখে কতটুকু বলা যায়, তা শিখব। একই ১৮২ দিনের Data-তে MAE-এ `naive` Baseline (`900.60`) ভালো করেছে, আর RMSE-এ `Transformer` (`1191.25`) এগিয়েছে। **Inference Intervention $\\neq$ Ablation Study** আর **Attention Heatmap $\\neq$ Causal Attribution** কেন, তা ব্যাখ্যা করব। শেষে Interview-তে এমন মিশ্র ফল কীভাবে ৬ ধাপে তুলে ধরবেন, তা দেখব।",
           "prerequisites": [
             "আগের পাঠ: পূর্ণাঙ্গ Transformer Experiment",
             "MAE ($L_1$) ও RMSE ($L_2$) ত্রুটি মেট্রিক",
@@ -3735,7 +3735,7 @@
         {
           "type": "text",
           "title": "১. বাস্তব ১৮২ দিনের MAE ও RMSE তুলনা এবং কেন দুই Metric-এ দুই বিজয়ী!",
-          "body": "১৮২টি Development দিনের (`Jan–Jun 2012`) Rolling One-Step Forecast-এর আসল সংখ্যাগুলো দারুণ শিক্ষণীয়—**কোনো অতিরঞ্জন ছাড়া সরাসরি সত্য দেখুন:**\n\n| পদ্ধতি | $\\mathrm{MAE}$ (সাইকেল সংখ্যা) | $\\mathrm{RMSE}$ (সাইকেল সংখ্যা) | মূল পর্যবেক্ষণ |\n| --- | --- | --- | --- |\n| **`naive`** ($\\hat{y}_t = y_{t-1}$) | **`900.604396`** **(সেরা!)** | `1273.461291` | সাধারণ দিনগুলোতে সবচেয়ে কম গড় ভুল |\n| **`seasonal7`** ($\\hat{y}_t = y_{t-7}$) | `1090.791209` | `1469.171726` | দুটি Metric-এই সবচেয়ে পিছিয়ে |\n| **`Transformer`** (স্থির রেসিপি) | `967.508168` | **`1191.254609`** **(সেরা!)** | হঠাৎ বড় ত্রুটির স্পাইক কমাতে তুলনামূলক ভালো |\n\n### হাতে-কলমে ৪-দিনের উদাহরণ: কেন MAE ও RMSE ভিন্ন বিজয়ী বেছে নেয়?\nসহজভাবে বললে, **MAE** সব ভুলকে সমান ওজনে দেখে, কিন্তু **RMSE** প্রতিটি ভুলকে **বর্গ (Square)** করে বলে দু-একটি বিশাল স্পাইক ভুলকে অনেক বেশি গুরুত্ব দেয়! দেখুন:\n- **Steady ভুল (Transformer-ধাঁচের):** `[10, 10, 10, 10]` $\\implies \\mathrm{MAE} = \\mathbf{10.00}$, $\\mathrm{RMSE} = \\mathbf{10.00}$\n- **Spiky ভুল (Naive-ধাঁচের):** `[2, 2, 2, 26]` $\\implies \\mathrm{MAE} = \\frac{32}{4} = \\mathbf{8.00}$ **(কম!)**, কিন্তু $\\mathrm{RMSE} = \\sqrt{\\frac{4+4+4+676}{4}} = \\sqrt{172} \\approx \\mathbf{13.11}$ **(অনেক বেশি!)**\n\nএকদম পরিষ্কার হয়ে গেল! গতকালের সাইকেল সংখ্যা বেশিরভাগ দিন বেশ কাছে থাকে (`naive` MAE কম), কিন্তু হঠাৎ ঝড়-বৃষ্টির দিন এলে গতকালের মান ভয়াবহ স্পাইক ভুল করে (`naive` RMSE বেশি), আর `Transformer` গত ১৪ দিনের প্রেক্ষাপট মিশিয়ে সেই চরম স্পাইকটা খানিকটা সামলায়! *(তবে মনে রাখবেন: এটি কেবল এই নির্দিষ্ট স্থির রানের ফলাফল—কোনো সার্বজনীন আর্কিটেকচার Ranking নয়!)*"
+          "body": "১৮২টি Development দিনের (`Jan–Jun 2012`) Rolling One-Step Forecast-এর আসল সংখ্যাগুলো দারুণ শিক্ষণীয়—**কোনো অতিরঞ্জন ছাড়া সরাসরি সত্য দেখুন:**\n\n| পদ্ধতি | $\\mathrm{MAE}$ (সাইকেল সংখ্যা) | $\\mathrm{RMSE}$ (সাইকেল সংখ্যা) | মূল পর্যবেক্ষণ |\n| --- | --- | --- | --- |\n| **`naive`** ($\\hat{y}_t = y_{t-1}$) | **`900.604396`** **(সেরা!)** | `1273.461291` | সাধারণ দিনগুলোতে সবচেয়ে কম গড় ভুল |\n| **`seasonal7`** ($\\hat{y}_t = y_{t-7}$) | `1090.791209` | `1469.171726` | দুটি Metric-এই সবচেয়ে পিছিয়ে |\n| **`Transformer`** (স্থির রেসিপি) | `967.508168` | **`1191.254609`** **(সেরা!)** | হঠাৎ বড় ত্রুটির স্পাইক কমাতে তুলনামূলক ভালো |\n\n### হাতে-কলমে ৪-দিনের উদাহরণ: কেন MAE ও RMSE ভিন্ন বিজয়ী বেছে নেয়?\nসহজভাবে বললে, **MAE** সব ভুলকে সমান ওজনে দেখে, কিন্তু **RMSE** প্রতিটি ভুলকে **বর্গ (Square)** করে বলে দু-একটি বিশাল স্পাইক ভুলকে অনেক বেশি গুরুত্ব দেয়! দেখুন:\n- **Steady ভুল (Transformer-ধাঁচের):** `[10, 10, 10, 10]` $\\implies \\mathrm{MAE} = \\mathbf{10.00}$, $\\mathrm{RMSE} = \\mathbf{10.00}$\n- **Spiky ভুল (Naive-ধাঁচের):** `[2, 2, 2, 26]` $\\implies \\mathrm{MAE} = \\frac{32}{4} = \\mathbf{8.00}$ **(কম!)**, কিন্তু $\\mathrm{RMSE} = \\sqrt{\\frac{4+4+4+676}{4}} = \\sqrt{172} \\approx \\mathbf{13.11}$ **(অনেক বেশি!)**\n\nএকদম পরিষ্কার হয়ে গেল! গতকালের সাইকেল সংখ্যা বেশিরভাগ দিন বেশ কাছে থাকে (`naive` MAE কম), কিন্তু হঠাৎ ঝড়-বৃষ্টির দিন এলে গতকালের মান ভয়াবহ স্পাইক ভুল করে (`naive` RMSE বেশি), আর `Transformer` গত ১৪ দিনের প্রেক্ষাপট মিশিয়ে সেই চরম স্পাইকটা খানিকটা সামলায়! *(তবে মনে রাখবেন: এটি কেবল এই নির্দিষ্ট স্থির রানের ফলাফল—কোনো সার্বজনীন Architecture Ranking নয়!)*"
         },
         {
           "type": "math",
@@ -3822,7 +3822,7 @@
               "concept": "Reporting Mixed Results Honestly",
               "level": "Core",
               "question": "ইন্টারভিউয়ার জিজ্ঞেস করলেন: 'আপনার Tiny Transformer কি Baseline-কে হারাতে পেরেছে?' আপনি কীভাবে উত্তর দেবেন?",
-              "answer": "সরাসরি সৎ ও সংখ্যাভিত্তিক উত্তর দেব: *'মিশ্র ফলাফল এসেছে! ১৮২ দিনের Jan–Jun 2012 Development সেটে One-step Forecast-এ আমাদের স্থির-রেসিপি Tiny Transformer `seasonal7`-কে দুই Metric-এই হারিয়েছে এবং `naive`-এর তুলনায় RMSE-তে এগিয়ে আছে (`1191.25` বনাম `1273.46`), কিন্তু MAE-তে সরল `naive` Baseline-ই এগিয়ে (`900.60` বনাম `967.51`)। এছাড়া এটি একটি মাত্র স্থির রান ও পুনর্ব্যবহৃত Dev সেট—তাই এটি চূড়ান্ত আর্কিটেকচার রায় নয়।'*",
+              "answer": "সরাসরি সৎ ও সংখ্যাভিত্তিক উত্তর দেব: *'মিশ্র ফলাফল এসেছে! ১৮২ দিনের Jan–Jun 2012 Development সেটে One-step Forecast-এ আমাদের স্থির-রেসিপি Tiny Transformer `seasonal7`-কে দুই Metric-এই হারিয়েছে এবং `naive`-এর তুলনায় RMSE-তে এগিয়ে আছে (`1191.25` বনাম `1273.46`), কিন্তু MAE-তে সরল `naive` Baseline-ই এগিয়ে (`900.60` বনাম `967.51`)। এছাড়া এটি একটি মাত্র স্থির রান ও পুনর্ব্যবহৃত Dev সেট—তাই এটি চূড়ান্ত Architecture রায় নয়।'*",
               "followUp": "বিজনেস যদি বলে আমাদের কাছে বড় স্পাইক ভুল খুব ব্যয়বহুল (যেমন স্টক-আউট), তবে কোন Metric-কে অগ্রাধিকার দেবেন? **RMSE** (অথবা Asymmetric/Pinball Loss)!"
             },
             {
@@ -3844,7 +3844,7 @@
               "level": "Intermediate",
               "question": "গত সপ্তাহের মঙ্গলবারে সর্বোচ্চ Attention Weight `0.65` পড়েছে—কেন এ থেকে বলা যাবে না যে ওই মঙ্গলবারই আজকের চাহিদার আসল কার্যকারণ চালক?",
               "answer": "(১) Attention Weight কেবল Value মেশানোর অনুপাত—ওই দিনের Value Vector ক্ষুদ্র বা $W_O$-তে ছাঁটাই হতে পারে। (২) দুটি শক্তিশালী **Residual পথ** ও **FFN** নিজস্ব অবস্থানের তথ্য বহন করে চূড়ান্ত Output বদলে দেয়। (৩) সময়ের পাশাপাশি দিনগুলো পরস্পর সম্পর্কযুক্ত (Correlated), আর পর্যবেক্ষণমূলক Data থেকে সরাসরি কার্যকারণ (Causality) প্রমাণ হয় না।",
-              "followUp": "তাহলে Attention Heatmap আসলে কোন কাজে সবচেয়ে বেশি উপকারী? ডিবাগিং (যেমন Mask ঠিকমতো ব্লক করছে কি না, Padding-এ `0.0` আছে কি না, সব Weight একটিমাত্র Sink Token-এ ভেঙে পড়ছে কি না তা দেখা)!"
+              "followUp": "তাহলে Attention Heatmap আসলে কোন কাজে সবচেয়ে বেশি উপকারী? Debugging (যেমন Mask ঠিকমতো ব্লক করছে কি না, Padding-এ `0.0` আছে কি না, সব Weight একটিমাত্র Sink Token-এ ভেঙে পড়ছে কি না তা দেখা)!"
             },
             {
               "concept": "One-Step vs Recursive Multi-Step",
@@ -3857,14 +3857,14 @@
               "concept": "Dev Set Reuse & Fresh Confirmation",
               "level": "Senior",
               "question": "জানুয়ারি–জুন ২০১২ সময়কালটি Book 2 এবং Book 3-এর আগের অধ্যায়গুলোতেও বিশ্লেষিত হয়েছে—তাই এখানে নতুন Model ভালো করলেও তা নিয়ে চূড়ান্ত সিদ্ধান্ত নেওয়া যাবে না কেন?",
-              "answer": "একই ডেটা খণ্ডের ওপর বারবার বিভিন্ন আর্কিটেকচার ও ধারণা পরীক্ষা করলে গবেষকের মানবিক সিদ্ধান্তগুলোও পরোক্ষভাবে ওই ডেটার সাথে মানিয়ে নেয় (**Adaptive Overfitting / Data Dredging**)। তাই চূড়ান্ত Production সিদ্ধান্তের জন্য সবসময় সম্পূর্ণ অদেখা ও আগে কখনো স্কোর না করা **Fresh Confirmation Set** (যেমন আমাদের সংরক্ষিত ১৮৪ দিন বা নতুন সময়ের ডেটা) প্রয়োজন!",
-              "followUp": "তাহলে আমাদের এই অধ্যায়ে শেষ ১৮৪ দিন স্কোর করা হয়নি কেন? কারণ এখানে আমরা আর্কিটেকচার বোঝা ও ডায়াগনস্টিক অডিট শিখছি—কোনো Production Model চূড়ান্ত নির্বাচন করছি না!"
+              "answer": "একই ডেটা খণ্ডের ওপর বারবার বিভিন্ন Architecture ও ধারণা পরীক্ষা করলে গবেষকের মানবিক সিদ্ধান্তগুলোও পরোক্ষভাবে ওই ডেটার সাথে মানিয়ে নেয় (**Adaptive Overfitting / Data Dredging**)। তাই চূড়ান্ত Production সিদ্ধান্তের জন্য সবসময় সম্পূর্ণ অদেখা ও আগে কখনো স্কোর না করা **Fresh Confirmation Set** (যেমন আমাদের সংরক্ষিত ১৮৪ দিন বা নতুন সময়ের ডেটা) প্রয়োজন!",
+              "followUp": "তাহলে আমাদের এই অধ্যায়ে শেষ ১৮৪ দিন স্কোর করা হয়নি কেন? কারণ এখানে আমরা Architecture বোঝা ও ডায়াগনস্টিক অডিট শিখছি—কোনো Production Model চূড়ান্ত নির্বাচন করছি না!"
             }
           ]
         },
         {
           "type": "text",
-          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **সুবিধাজনক একটি Metric দেখিয়ে অন্যটি লুকানো:** MAE ও RMSE—দুটিই একসঙ্গে সৎভাবে রিপোর্ট করুন।\n2. **Inference Intervention-কে Ablation Study বা Heatmap-কে Causality দাবি করা:** প্রতিটি প্রমাণের সীমা স্পষ্ট রাখুন।\n3. **পুনর্ব্যবহৃত Dev সেটকে অদেখা Test দাবি করা:** আগের অধ্যায়ে দেখা ডেটা কখনো নতুন Confirmation নয়।\n\n### Cheat Sheet\n- **Verified Dev Metrics (182 days):**\n  - `naive`: MAE **`900.60`** | RMSE `1273.46`\n  - `seasonal7`: MAE `1090.79` | RMSE `1469.17`\n  - `Transformer`: MAE `967.51` | RMSE **`1191.25`**\n- **Train MSE Drop:** `1.123253` $\\to$ `0.273073` (proves optimization, NOT generalization!)\n\n**পরের পাঠে কী শিখব?** আমরা পৌঁছে গেছি Chapter 20-এর চূড়ান্ত প্রস্তুতি পাঠে! পরের পাঠে আমরা পুরো অধ্যায়ের **৫-স্তম্ভের Transformer চুক্তি**, **৮টি Mandatory Edge-Case টেস্ট**, এবং **৮টি Senior-স্তরের চূড়ান্ত Interview প্রশ্ন** দিয়ে আমাদের প্রস্তুতি ১০০% যাচাই করব!"
         },
         {
@@ -3887,7 +3887,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "অধ্যায়ের শেষ প্রান্তে আজ আমরা **Chapter 20: Attention & Transformers**-এর ওপর আপনার পূর্ণ দখল যাচাই করব—কোনো নোট না দেখে মূল সমীকরণগুলো Derive করা, **৮টি Mandatory Edge-Case Unit Test** পাকা করা, আমাদের ১৮৫-Parameter Bike Sharing Experiment-এর প্রতিটি সংখ্যা আত্মবিশ্বাসের সাথে ডিফেন্ড করা, এবং **৪টি সম্পূর্ণ ভিন্ন প্রমাণস্তর** পৃথক রেখে **Book 3 · Chapter 7 (Deep Learning Capstone)**-এর জন্য প্রস্তুত হওয়া!",
+          "goal": "শেষে **Chapter 20: Attention & Transformers** কতটা বুঝেছেন, তা যাচাই করব—কোনো নোট না দেখে মূল সমীকরণগুলো Derive করা, **৮টি প্রয়োজনীয় Edge Case Unit Test** যাচাই করা, আমাদের ১৮৫-Parameter Bike Sharing Experiment-এর প্রতিটি সংখ্যার পক্ষে প্রমাণ দেখানো, এবং **৪টি সম্পূর্ণ ভিন্ন ধরনের প্রমাণ** পৃথক রেখে **Book 3 · Chapter 7 (Deep Learning Capstone)**-এর জন্য প্রস্তুত হওয়া!",
           "prerequisites": [
             "Chapter 20-এর আগের ২০টি পাঠ",
             "Attention Gradient, Mask Polarity, Pre-Norm, LayerNorm, FFN, KV Cache"
@@ -3935,7 +3935,7 @@
         },
         {
           "type": "flow_diagram",
-          "title": "চারটি সম্পূর্ণ ভিন্ন প্রমাণস্তর (কখনো একে অপরের সাথে গোলাবেন না!)",
+          "title": "চারটি সম্পূর্ণ ভিন্ন ধরনের প্রমাণ (কখনো একে অপরের সাথে গোলাবেন না!)",
           "body": "",
           "steps": [
             {
@@ -3964,9 +3964,9 @@
         },
         {
           "type": "concept_check",
-          "title": "চারটি প্রমাণস্তর আগে যাচাই করুন",
+          "title": "চারটি ধরনের প্রমাণ আগে যাচাই করুন",
           "predictMode": true,
-          "question": "আপনার হাতে লেখা স্বাধীন `manual()` NumPy Attention ফাংশনটি PyTorch-এর `CountTransformer`-এর সঙ্গে প্রতিটি মধ্যবর্তী Tensor-এ `2e-11`-এর ভেতর হুবহু মিলে গেল। এটি আমাদের ৪টি প্রমাণস্তরের ঠিক কোনটিকে প্রমাণ করে?",
+          "question": "আপনার হাতে লেখা স্বাধীন `manual()` NumPy Attention ফাংশনটি PyTorch-এর `CountTransformer`-এর সঙ্গে প্রতিটি মধ্যবর্তী Tensor-এ `2e-11`-এর ভেতর হুবহু মিলে গেল। এটি আমাদের ৪টি ধরনের প্রমাণের ঠিক কোনটিকে প্রমাণ করে?",
           "options": [
             "Generalization — অর্থাৎ Model-টি অদেখা ভবিষ্যৎ ডেটায় সব Baseline-কে হারাবে",
             "Numerical Correctness — অর্থাৎ দুটি স্বাধীন Implementation-এর গাণিতিক কোডে কোনো বাগ নেই (কিন্তু Model-এর বাস্তব শ্রেষ্ঠত্ব এখনো প্রমাণিত হয়নি!)",
@@ -3979,7 +3979,7 @@
         {
           "type": "interview_qa",
           "title": "Chapter 20 চূড়ান্ত Capstone Interview প্রস্তুতি (৮টি FAANG-মানের প্রশ্ন)",
-          "intro": "কোডিং, ডিবাগিং, সিস্টেম Trade-off এবং বৈজ্ঞানিক সততা—এই ৪ ক্ষেত্রের ৮টি চূড়ান্ত সিনিয়র প্রশ্ন আগে নিজে উত্তর দিন, তারপর মিলিয়ে নিন!",
+          "intro": "কোডিং, Debugging, সিস্টেম Trade-off এবং বৈজ্ঞানিক সততা—এই ৪ ক্ষেত্রের ৮টি চূড়ান্ত সিনিয়র প্রশ্ন আগে নিজে উত্তর দিন, তারপর মিলিয়ে নিন!",
           "items": [
             {
               "concept": "MHA From Scratch",
@@ -4000,7 +4000,7 @@
               "level": "Intermediate",
               "question": "৩. `key_padding_mask` একদম ঠিক আছে, তবু Sequence-এর শেষে বাড়তি PAD যোগ করলেই Mean-Pooled Prediction বদলে যাচ্ছে কেন?",
               "answer": "কারণ `key_padding_mask` কেবল Padded Key দেখা আটকায়—Padded Query Row-গুলোকে Output থেকে মুছে দেয় না! সেগুলো বৈধ Key দেখে ও Bias/Residual/PE যোগ হয়ে অশূন্য Vector বানায়, যা সাধারণ `mean(dim=1)`-এর লব ও হর উভয়কেই দূষিত করে। সমাধান: স্পষ্ট `valid_mask` দিয়ে **Masked Mean Pooling** ($\\frac{\\sum m_t h_t}{\\sum m_t}$) এবং শেষে `0, 2, 5` PAD যোগ করে Padding Invariance টেস্ট!",
-              "followUp": "Many-to-One টাস্কে Pooling-এর বদলে নির্দিষ্ট শেষ Token তুলতে চাইলে কী করতে হবে? `state[batch_idx, valid_len - 1]` Gather করতে হবে, `state[:, -1]` নয়!"
+              "followUp": "Many-to-One Task-এ Pooling-এর বদলে নির্দিষ্ট শেষ Token তুলতে চাইলে কী করতে হবে? `state[batch_idx, valid_len - 1]` Gather করতে হবে, `state[:, -1]` নয়!"
             },
             {
               "concept": "Pre-Norm & Exact 185 Param Budget",
@@ -4013,7 +4013,7 @@
               "concept": "KV Cache Chunk Offset Debugging",
               "level": "Intermediate",
               "question": "৫. Cached ডিকোডিং Full-Prefix-এর সঙ্গে মিলছে না; কীভাবে ডিবাগ করবেন? আর Prefix `2` থাকা অবস্থায় নতুন ২টি Query (`pos 2, 3`, মোট ৪ Key)-এর সঠিক Allowed Mask কী?",
-              "answer": "ডিবাগ চেকলিস্ট: প্রতি-Layer আলাদা Cache, ডুপ্লিকেট এন্ট্রি নেই তো, প্রকৃত পরম Position/RoPE Offset, `eval()` (`dropout_p=0.0`), এবং আয়তাকার আকারে ভুল `is_causal=True` (Upper-Left বাগ!) আছে কি না। ২-Token চাঙ্কের সঠিক Allowed Mask (`k <= q`): pos `2` $\\to [1, 1, 1, 0]$ (গড় `2.333333` for `v=[1,2,4,8]`), pos `3` $\\to [1, 1, 1, 1]$ (গড় `3.75`)—ভুল Upper-Left দিলে আসত `1.0` ও `1.5`!",
+              "answer": "ডিবাগ Checklist: প্রতি-Layer আলাদা Cache, ডুপ্লিকেট এন্ট্রি নেই তো, প্রকৃত পরম Position/RoPE Offset, `eval()` (`dropout_p=0.0`), এবং আয়তাকার আকারে ভুল `is_causal=True` (Upper-Left বাগ!) আছে কি না। ২-Token চাঙ্কের সঠিক Allowed Mask (`k <= q`): pos `2` $\\to [1, 1, 1, 0]$ (গড় `2.333333` for `v=[1,2,4,8]`), pos `3` $\\to [1, 1, 1, 1]$ (গড় `3.75`)—ভুল Upper-Left দিলে আসত `1.0` ও `1.5`!",
               "followUp": "প্রথম কোন স্তরে সমতা টেস্ট শুরু করা ভালো? একক স্তরের প্রজেক্ট করা $Q, K, V$ দিয়ে মিলিয়ে নিয়ে তারপর বহু-স্তরের End-to-End Decoder টেস্ট!"
             },
             {
@@ -4028,7 +4028,7 @@
               "level": "Senior",
               "question": "৭. Context দৈর্ঘ্য $T$ দ্বিগুণ করলে Memory কত গুণ বাড়ে, এবং FlashAttention ব্যবহার করলেই কি আমাদের Latency SLA নিশ্চিত হয়ে যাবে?",
               "answer": "Dense Score Matrix ($B H T^2$) বাড়ে **$4\\times$**, আর KV Cache ($2 L B H T d$) বাড়ে **$2\\times$**। **FlashAttention** অন-চিপ SRAM Tiling-এর মাধ্যমে HBM Memory $\\mathcal{O}(T)$ করে বড় গতি দেয়, কিন্তু নিখুঁত Attention-এর মোট FLOPs তখনো $\\mathcal{O}(T^2)$ থাকে এবং Decoding তখনো ক্রমিক! তাই নির্দিষ্ট Hardware, `dtype`, `need_weights=False` এবং আসল Workload-এ **Profiling** না করে কখনো SLA প্রতিশ্রুতি দেব না।",
-              "followUp": "Inference-এ KV Cache Memory আরও কমানোর দুটি আর্কিটেকচারাল/সিস্টেম উপায় কী? **GQA/MQA** ($H_{\\mathrm{kv}} < H_q$) এবং **KV Cache Quantization / PagedAttention**!"
+              "followUp": "Inference-এ KV Cache Memory আরও কমানোর দুটি Architectureাল/সিস্টেম উপায় কী? **GQA/MQA** ($H_{\\mathrm{kv}} < H_q$) এবং **KV Cache Quantization / PagedAttention**!"
             },
             {
               "concept": "Scientific Honesty & Causality Limits",
@@ -4338,7 +4338,7 @@
         "না, কারণ এই সময়কালটি আগের অধ্যায়গুলোতেও Diagnostic হিসেবে বিশ্লেষিত হয়েছে",
         "হ্যাঁ, কারণ সংখ্যাগুলো বাস্তব জগতের Data",
         "হ্যাঁ, কারণ এখানে নতুন একটি Random Seed দেওয়া হয়েছে",
-        "হ্যাঁ, কারণ এবার আমরা ভিন্ন একটি আর্কিটেকচার ব্যবহার করেছি"
+        "হ্যাঁ, কারণ এবার আমরা ভিন্ন একটি Architecture ব্যবহার করেছি"
       ],
       "answer": 0,
       "explanation": "একই Data খণ্ড আগের অধ্যায়গুলোতে বারবার দেখা ও বিশ্লেষণ করা হয়ে গেলে কেবল Model বা Seed বদলানোর ফলে সেই Data আবার নতুন অদেখা পরীক্ষায় পরিণত হয় না।"
@@ -4453,7 +4453,7 @@
     {
       "id": "ch20_ex_count",
       "title": "পূর্ণাঙ্গ Model-এর Parameter বাজেট",
-      "prompt": "আমাদের এই স্থির আর্কিটেকচারে Input Projection-এ 8টি, Multi-Head Attention-এ 80টি, দুটি Normalization স্তরে মোট 16টি, FFN অংশে 76টি এবং Output Head-এ 5টি ট্রেনযোগ্য Scalar রয়েছে। সর্বমোট ট্রেনযোগ্য Parameter সংখ্যাটি answer-এ রাখুন।",
+      "prompt": "আমাদের এই স্থির Architecture-এ Input Projection-এ 8টি, Multi-Head Attention-এ 80টি, দুটি Normalization স্তরে মোট 16টি, FFN অংশে 76টি এবং Output Head-এ 5টি ট্রেনযোগ্য Scalar রয়েছে। সর্বমোট ট্রেনযোগ্য Parameter সংখ্যাটি answer-এ রাখুন।",
       "starter": "# Implement locally. Assign the requested scalar to answer.\nanswer = None\n",
       "solution": "answer = float(8 + 80 + 16 + 76 + 5)\n",
       "expected": 185,
@@ -4465,14 +4465,14 @@
       "title": "শূন্য থেকে ফ্রেমওয়ার্ক-সমতুল্য Masked Multi-Head Attention তৈরি",
       "tag": "ATTENTION · ML CODING · 35 MIN",
       "prompt": "হোয়াইটবোর্ডে বা খালি ফাইলে দাঁড়িয়ে লাইব্রেরির ফলাফলের সাথে হুবহু মিলে যায়—এমন একটি Masked Multi-Head Attention ফাংশন কীভাবে ধাপে ধাপে ইমপ্লিমেন্ট ও যাচাই করবেন?",
-      "answer": "ফ্রেমওয়ার্ক-সমতুল্য **Masked Multi-Head Attention** শূন্য থেকে লিখতে গেলে আমি আগে প্রতিটি Tensor Axis স্থির করি, তারপর ধাপে ধাপে গাণিতিক হিসাব লিখে স্বাধীন রেফারেন্স টেস্ট দিয়ে তা যাচাই করি।\n\n**১. ধাপে ধাপে Forward Implementation:**\n- **Shape চুক্তি:** Input $X \\in \\mathbb{R}^{B \\times T \\times D}$, Head সংখ্যা $H$, প্রতি-Head প্রস্থ $d = D / H$।\n- **Projection ও Head Layout:** ফ্রেমওয়ার্কের স্টোরেজ Layout অনুযায়ী $Q, K, V$ প্রজেক্ট করে প্রথমে `[B, T, H, d]` আকারে reshape এবং পরে transpose করে `[B, H, T, d]`-এ আনব।\n- **Scaled Score ও Stable Masked Softmax:**\n  $$\n  S = \\frac{Q K^\\top}{\\sqrt{d}} + M, \\qquad A_{ij} = \\frac{\\exp(S_{ij} - m_i)}{\\sum_{k \\in \\mathcal{A}_i} \\exp(S_{ik} - m_i)}\n  $$\n  ব্লক করা ঘরে $-\\infty$ বসিয়ে কেবল অনুমোদিত Key-গুলোর মধ্য থেকে সর্বোচ্চ মান $m_i$ বিয়োগ করব। আগে নিশ্চিত করব যেন কোনো সক্রিয় Query Row-এর সবগুলো Key ব্লক না থাকে—ফলে Dropout-এর আগে নিষিদ্ধ ঘরের Weight হবে ঠিক $0$ এবং বৈধ ঘরের যোগফল ঠিক $1.0$।\n- **Value মেশানো ও Output Projection:** $Z = A V$ বের করে পুনরায় `[B, T, D]` আকারে জোড়া লাগিয়ে সর্বশেষ Output Projection $Z W_O^\\top + b_O$ গুণ করব।\n\n**২. কঠোর যাচাই প্রোটোকল:**\n- CPU `float64`-এ PyTorch-এর বিল্ট-ইন মডিউলের প্রতিটি মধ্যবর্তী ধাপের সাথে তুলনা করে Unit Test লিখব—যেখানে `Batch = 1`, অসম $T_q \\neq T_k$, একক বৈধ Key এবং `NaN`/`Inf` Input ধরার পরীক্ষা থাকবে।\n- **সততা:** সবশেষে স্পষ্ট করব যে ফ্রেমওয়ার্কের সাথে সংখ্যাগত মিল কেবল **কোডের গাণিতিক শুদ্ধতা** প্রমাণ করে, কোনো নির্দিষ্ট টাস্কে Model-টির বাস্তব শ্রেষ্ঠত্ব নয়।",
+      "answer": "ফ্রেমওয়ার্ক-সমতুল্য **Masked Multi-Head Attention** শূন্য থেকে লিখতে গেলে আমি আগে প্রতিটি Tensor Axis স্থির করি, তারপর ধাপে ধাপে গাণিতিক হিসাব লিখে স্বাধীন রেফারেন্স টেস্ট দিয়ে তা যাচাই করি।\n\n**১. ধাপে ধাপে Forward Implementation:**\n- **Shape চুক্তি:** Input $X \\in \\mathbb{R}^{B \\times T \\times D}$, Head সংখ্যা $H$, প্রতি-Head প্রস্থ $d = D / H$।\n- **Projection ও Head Layout:** ফ্রেমওয়ার্কের স্টোরেজ Layout অনুযায়ী $Q, K, V$ প্রজেক্ট করে প্রথমে `[B, T, H, d]` আকারে reshape এবং পরে transpose করে `[B, H, T, d]`-এ আনব।\n- **Scaled Score ও Stable Masked Softmax:**\n  $$\n  S = \\frac{Q K^\\top}{\\sqrt{d}} + M, \\qquad A_{ij} = \\frac{\\exp(S_{ij} - m_i)}{\\sum_{k \\in \\mathcal{A}_i} \\exp(S_{ik} - m_i)}\n  $$\n  ব্লক করা ঘরে $-\\infty$ বসিয়ে কেবল অনুমোদিত Key-গুলোর মধ্য থেকে সর্বোচ্চ মান $m_i$ বিয়োগ করব। আগে নিশ্চিত করব যেন কোনো সক্রিয় Query Row-এর সবগুলো Key ব্লক না থাকে—ফলে Dropout-এর আগে নিষিদ্ধ ঘরের Weight হবে ঠিক $0$ এবং বৈধ ঘরের যোগফল ঠিক $1.0$।\n- **Value মেশানো ও Output Projection:** $Z = A V$ বের করে পুনরায় `[B, T, D]` আকারে জোড়া লাগিয়ে সর্বশেষ Output Projection $Z W_O^\\top + b_O$ গুণ করব।\n\n**২. কঠোর যাচাই প্রোটোকল:**\n- CPU `float64`-এ PyTorch-এর বিল্ট-ইন মডিউলের প্রতিটি মধ্যবর্তী ধাপের সাথে তুলনা করে Unit Test লিখব—যেখানে `Batch = 1`, অসম $T_q \\neq T_k$, একক বৈধ Key এবং `NaN`/`Inf` Input ধরার পরীক্ষা থাকবে।\n- **সততা:** সবশেষে স্পষ্ট করব যে ফ্রেমওয়ার্কের সাথে সংখ্যাগত মিল কেবল **কোডের গাণিতিক শুদ্ধতা** প্রমাণ করে, কোনো নির্দিষ্ট Task-এ Model-টির বাস্তব শ্রেষ্ঠত্ব নয়।",
       "prerequisiteLessons": [
         "ch20_scaled",
         "ch20_multihead"
       ]
     },
     {
-      "title": "Production-এ Mask Polarity উল্টে যাওয়ার সূক্ষ্ম বাগ ডিবাগিং",
+      "title": "Production-এ Mask Polarity উল্টে যাওয়ার সূক্ষ্ম বাগ Debugging",
       "tag": "ATTENTION · ML CODING · 35 MIN",
       "prompt": "আপনার টিম আগে nn.MultiheadAttention-এর জন্য লেখা একটি Boolean Mask Helper ফাংশন সরাসরি ফাংশনাল scaled_dot_product_attention (SDPA)-তে পুনর্ব্যবহার করেছে, আর তারপর থেকেই Model-এর Output অদ্ভুতভাবে বদলে গেছে। সমস্যাটি কীভাবে ধরবেন ও সমাধান করবেন?",
       "answer": "প্রথম সন্দেহেই আমি দুটি PyTorch API-এর **বিপরীত Boolean Mask Polarity** যাচাই করব—কারণ এটাই এই বাগের সবচেয়ে প্রচলিত ও সরাসরি উৎস!\n\n- **মূল কারণ (Opposite Polarity):**\n  - `nn.MultiheadAttention`-এ Boolean `True` মানে **ব্লক করা (নিষিদ্ধ)**।\n  - ফাংশনাল `scaled_dot_product_attention` (`sdpa`)-এ Boolean `True` মানে **অনুমোদিত (দেখা যাবে)**।\n  - ফলে একই Mask সরাসরি বসিয়ে দিলে দৃশ্যমানতা পুরোপুরি উল্টে যায়—বৈধ অতীত ব্লক হয়ে ভবিষ্যতের নিষিদ্ধ পদ ও Padding উন্মুক্ত হয়ে পড়ে!\n\n**স্থায়ী সমাধান ও প্রতিরোধমূলক অডিট:**\n1. **স্পষ্ট নামকরণ:** অস্পষ্ট `mask` নাম বাদ দিয়ে `allowed_mask` বা `blocked_mask` নামের আলাদা Helper ফাংশন লিখব।\n2. **৩টি হাতে-গোনা Unit Test:**\n   - কেবল একটিমাত্র বৈধ Key খোলা রেখে Output হুবহু সেই Value-এর সমান হয় কি না।\n   - ভবিষ্যতের পদ পাল্টে দিলেও Causal Output অপরিবর্তিত (**Prefix Invariant**) থাকে কি না।\n   - Padded Key-গুলোর Attention Weight নিখুঁত $0.0$ হয় কি না।\n3. **বাড়তি `sdpa` অডিট:** `eval` মোডে ফাংশনাল `sdpa` কলে স্পষ্টভাবে `dropout_p=0.0` পাঠানো হচ্ছে কি না এবং অ-বর্গাকার Mask-এর Broadcasting ও Alignment নির্ভুল কি না তাও পরীক্ষা করব। দুটি API-তে Parameter-এর নাম এক দেখেই ভেতরের আচরণ এক ধরে নেওয়া যাবে না!",
@@ -4496,7 +4496,7 @@
       "title": "ট্রেন করা Model-এ Position বন্ধ করার ফলাফল ব্যাখ্যা",
       "tag": "ATTENTION · ML CODING · 35 MIN",
       "prompt": "একটি ট্রেন করা Transformer Model-এ Inference-এর সময় Positional Encoding বন্ধ করে দেওয়ায় Prediction-এর ত্রুটি বদলে গেছে। এখান থেকে আপনি কী সিদ্ধান্ত টানবেন, আর কী টানবেন না?",
-      "answer": "সবার আগে আমি স্পষ্ট করব যে এটি ইতিমধ্যেই ট্রেন হওয়া স্থির Weight-এর ওপর চালানো একটি **Inference Intervention**—শুরু থেকে Position ছাড়া আলাদাভাবে ট্রেন করা প্রকৃত **Ablation Study নয়**!\n\n- **যা সিদ্ধান্ত টানা যাবে:** Training-এর পুরো সময় Weight-গুলো নির্দিষ্ট স্কেলের Sinusoidal সংকেত পেতে অভ্যস্ত ছিল; হঠাৎ সেটি খুলে নিলে ভেতরের Activation-এর **Distribution Mismatch** তৈরি হয়ে Error বদলে যেতে পারে—অর্থাৎ এই পরীক্ষা কেবল বর্তমান Checkpoint-এর সংবেদনশীলতা (Sensitivity) দেখায়।\n- **গাণিতিক সূক্ষ্মতা (Causal Mask-এর প্রভাব):** সম্পূর্ণ উন্মুক্ত (Unmasked) Attention-এ Position না থাকলে তা Permutation Equivariant হয় বটে, কিন্তু আমাদের Model-এ ত্রিভুজাকার **Causal Mask** এবং সর্বশেষ অবস্থানের Readout থাকায় Asymmetric Visibility-র মাধ্যমে ক্রমের প্রতিসাম্য এমনিতেই ভেঙে যায়।\n- **যা দাবি করা যাবে না:** সমান টিউনিং বাজেট, একাধিক স্বাধীন Seed দিয়ে নতুন করে Training এবং নতুন সময়ের Data-য় পরীক্ষা না চালিয়ে কেবল এই টগল দেখেই কোনো আর্কিটেকচারাল শ্রেষ্ঠত্ব বা Feature Importance দাবি করা কখনোই ঠিক নয়।",
+      "answer": "সবার আগে আমি স্পষ্ট করব যে এটি ইতিমধ্যেই ট্রেন হওয়া স্থির Weight-এর ওপর চালানো একটি **Inference Intervention**—শুরু থেকে Position ছাড়া আলাদাভাবে ট্রেন করা প্রকৃত **Ablation Study নয়**!\n\n- **যা সিদ্ধান্ত টানা যাবে:** Training-এর পুরো সময় Weight-গুলো নির্দিষ্ট স্কেলের Sinusoidal সংকেত পেতে অভ্যস্ত ছিল; হঠাৎ সেটি খুলে নিলে ভেতরের Activation-এর **Distribution Mismatch** তৈরি হয়ে Error বদলে যেতে পারে—অর্থাৎ এই পরীক্ষা কেবল বর্তমান Checkpoint-এর সংবেদনশীলতা (Sensitivity) দেখায়।\n- **গাণিতিক সূক্ষ্মতা (Causal Mask-এর প্রভাব):** সম্পূর্ণ উন্মুক্ত (Unmasked) Attention-এ Position না থাকলে তা Permutation Equivariant হয় বটে, কিন্তু আমাদের Model-এ ত্রিভুজাকার **Causal Mask** এবং সর্বশেষ অবস্থানের Readout থাকায় Asymmetric Visibility-র মাধ্যমে ক্রমের প্রতিসাম্য এমনিতেই ভেঙে যায়।\n- **যা দাবি করা যাবে না:** সমান টিউনিং বাজেট, একাধিক স্বাধীন Seed দিয়ে নতুন করে Training এবং নতুন সময়ের Data-য় পরীক্ষা না চালিয়ে কেবল এই টগল দেখেই কোনো Architectureাল শ্রেষ্ঠত্ব বা Feature Importance দাবি করা কখনোই ঠিক নয়।",
       "prerequisiteLessons": [
         "ch20_positions"
       ]
@@ -4515,7 +4515,7 @@
       "title": "নিখুঁত Causal Mask থাকা সত্ত্বেও সন্দেহজনক ভালো Validation স্কোর",
       "tag": "ATTENTION · ML CODING · 35 MIN",
       "prompt": "Model-এ ত্রিভুজাকার Causal Attention Mask একদম ঠিকমতো বসানো আছে, তবু Validation ফলাফল অস্বাভাবিক রকমের ভালো আসছে! কোথায় কোথায় Data Leakage লুকিয়ে থাকতে পারে?",
-      "answer": "আর্কিটেকচারের ভেতরে নিখুঁত **Causal Mask** থাকা কেবল এতটুকু নিশ্চিত করে যে অবস্থান $i$ তার ডানদিকের অবস্থান $j > i$ দেখছে না—কিন্তু **Input টেবিল তৈরির সময়ই ভবিষ্যৎ ঢুকে পড়লে কোনো Mask-ই তা আটকাতে পারে না!**\n\n**সন্দেহজনক ভালো Validation Score পেলে যে ৪টি জায়গা সবার আগে Audit করব:**\n1. **Shifted Label বাগ:** Input ও Target Label ঠিক এক ঘর সরানো আছে কি না, নাকি বর্তমান ধাপের উত্তরই বর্তমান Input-এ বসে আছে।\n2. **Forecast Issue Time Leakage:** Forecast করার প্রকৃত মুহূর্তে যেসব তথ্য অজানা থাকার কথা (যেমন ওই দিনের দিন-শেষের আবহাওয়া বা আংশিক কাউন্টের যোগফল), তা Feature হিসেবে ঢুকে গেছে কি না।\n3. **Scaler Leakage:** কেবল Training অংশের বদলে ভবিষ্যৎ Data-সহ পুরো Dataset-এর ওপর একসঙ্গে `StandardScaler` বা Mean/Std ফিট করা হয়েছে কি না।\n4. **Random Split on Overlapping Windows:** সময়ের ক্রম ভেঙে ওভারল্যাপিং উইন্ডোগুলোকে এলোমেলোভাবে Train ও Validation-এ ভাগ করা হয়েছে কি না।\n\n- **বিপরীত দিকটিও স্পষ্ট রাখা:** Forecast দেওয়ার মুহূর্তে যদি বিগত পুরো Input উইন্ডো বৈধভাবে জানা থাকে, তবে সেই অতীত উইন্ডোর ভেতর Full Attention চালানো কিন্তু অবৈধ নয়—আসল বিপদ হলো ভবিষ্যতের অজানা Target তথ্য Input-এ ঢুকে পড়া।"
+      "answer": "Architecture-এর ভেতরে নিখুঁত **Causal Mask** থাকা কেবল এতটুকু নিশ্চিত করে যে অবস্থান $i$ তার ডানদিকের অবস্থান $j > i$ দেখছে না—কিন্তু **Input টেবিল তৈরির সময়ই ভবিষ্যৎ ঢুকে পড়লে কোনো Mask-ই তা আটকাতে পারে না!**\n\n**সন্দেহজনক ভালো Validation Score পেলে যে ৪টি জায়গা সবার আগে Audit করব:**\n1. **Shifted Label বাগ:** Input ও Target Label ঠিক এক ঘর সরানো আছে কি না, নাকি বর্তমান ধাপের উত্তরই বর্তমান Input-এ বসে আছে।\n2. **Forecast Issue Time Leakage:** Forecast করার প্রকৃত মুহূর্তে যেসব তথ্য অজানা থাকার কথা (যেমন ওই দিনের দিন-শেষের আবহাওয়া বা আংশিক কাউন্টের যোগফল), তা Feature হিসেবে ঢুকে গেছে কি না।\n3. **Scaler Leakage:** কেবল Training অংশের বদলে ভবিষ্যৎ Data-সহ পুরো Dataset-এর ওপর একসঙ্গে `StandardScaler` বা Mean/Std ফিট করা হয়েছে কি না।\n4. **Random Split on Overlapping Windows:** সময়ের ক্রম ভেঙে ওভারল্যাপিং উইন্ডোগুলোকে এলোমেলোভাবে Train ও Validation-এ ভাগ করা হয়েছে কি না।\n\n- **বিপরীত দিকটিও স্পষ্ট রাখা:** Forecast দেওয়ার মুহূর্তে যদি বিগত পুরো Input উইন্ডো বৈধভাবে জানা থাকে, তবে সেই অতীত উইন্ডোর ভেতর Full Attention চালানো কিন্তু অবৈধ নয়—আসল বিপদ হলো ভবিষ্যতের অজানা Target তথ্য Input-এ ঢুকে পড়া।"
     },
     {
       "title": "লম্বা Sequence-এ Memory-র বাজেট ও সিস্টেম Trade-off",
@@ -4533,7 +4533,7 @@
       "title": "Diagnostic Forecast-এর ফলাফল পেশাদার ও সৎভাবে উপস্থাপন",
       "tag": "ATTENTION · ML CODING · 35 MIN",
       "prompt": "ইন্টারভিউয়ার জানতে চাইলেন: 'আপনার Tiny Transformer কি Baseline-কে হারাতে পেরেছে, নাকি পারেনি? এই Experiment-এর ফলাফল আপনি কীভাবে রিপোর্ট করবেন?' গুছিয়ে উত্তর দিন।",
-      "answer": "আমি কোনো অতিরঞ্জন ছাড়া সরাসরি প্রকৃত সংখ্যা, প্রোটোকল এবং চারটি বৈজ্ঞানিক সীমাবদ্ধতা একসঙ্গে সৎভাবে তুলে ধরব।\n\n**১. প্রকৃত ফলাফল ($2011$ স্কেলিং, জানু–জুন $2012$-এর $182$-টি Development দিনে Rolling One-step):**\n\n| পদ্ধতি | $\\mathrm{MAE}$ (সাইকেল সংখ্যা) | $\\mathrm{RMSE}$ (সাইকেল সংখ্যা) |\n| --- | --- | --- |\n| **`naive`** | **$900.604396$** | $1273.461291$ |\n| **`seasonal7`** | $1090.791209$ | $1469.171726$ |\n| **`Transformer`** (স্থির রেসিপি) | $967.508168$ | **$1191.254609$** |\n\n- **মূল সারাংশ:** বড় ত্রুটির প্রতি সংবেদনশীল **RMSE-তে Transformer উভয় Baseline-কে হারালেও**, গড় পরম ত্রুটি **MAE-তে সরল `naive` পদ্ধতিই এগিয়ে আছে**!\n\n**২. চারটি জরুরি বৈজ্ঞানিক সীমাবদ্ধতা:**\n1. **Development সেট পুনর্ব্যবহার:** জানুয়ারি–জুন $2012$ সময়কালটি আগের অধ্যায়গুলোতেও বিশ্লেষিত হয়েছে—তাই এটি অদেখা চূড়ান্ত পরীক্ষা নয়।\n2. **আর্কিটেকচার প্রতিযোগিতা নয়:** **Book 3 · Chapter 5**-এ দেখা Model-এর রেসিপি আলাদা হওয়ায় এটি সুনিয়ন্ত্রিত আর্কিটেকচারাল তুলনা নয়।\n3. **Intervention বনাম Ablation:** Position বা Mask টগলগুলো একই স্থির Weight-এর ওপর Inference পরীক্ষা—নতুন করে ট্রেন করা Ablation Model নয়।\n4. **সংরক্ষিত $184$ দিন অক্ষত:** শেষের সংরক্ষিত $184$-টি দিন কোনো টিউনিং বা স্কোরিংয়ে ছোঁয়া হয়নি।\n\nভবিষ্যতে Model উন্নত করতে চাইলে সুশৃঙ্খল Validation পরিকল্পনা ও সম্পূর্ণ নতুন **Confirmation Protocol** সাজিয়ে এগোতে হবে।"
+      "answer": "আমি কোনো অতিরঞ্জন ছাড়া সরাসরি প্রকৃত সংখ্যা, প্রোটোকল এবং চারটি বৈজ্ঞানিক সীমাবদ্ধতা একসঙ্গে সৎভাবে তুলে ধরব।\n\n**১. প্রকৃত ফলাফল ($2011$ Scaling, জানু–জুন $2012$-এর $182$-টি Development দিনে Rolling One-step):**\n\n| পদ্ধতি | $\\mathrm{MAE}$ (সাইকেল সংখ্যা) | $\\mathrm{RMSE}$ (সাইকেল সংখ্যা) |\n| --- | --- | --- |\n| **`naive`** | **$900.604396$** | $1273.461291$ |\n| **`seasonal7`** | $1090.791209$ | $1469.171726$ |\n| **`Transformer`** (স্থির রেসিপি) | $967.508168$ | **$1191.254609$** |\n\n- **মূল সারাংশ:** বড় ত্রুটির প্রতি সংবেদনশীল **RMSE-তে Transformer উভয় Baseline-কে হারালেও**, গড় পরম ত্রুটি **MAE-তে সরল `naive` পদ্ধতিই এগিয়ে আছে**!\n\n**২. চারটি জরুরি বৈজ্ঞানিক সীমাবদ্ধতা:**\n1. **Development সেট পুনর্ব্যবহার:** জানুয়ারি–জুন $2012$ সময়কালটি আগের অধ্যায়গুলোতেও বিশ্লেষিত হয়েছে—তাই এটি অদেখা চূড়ান্ত পরীক্ষা নয়।\n2. **Architecture প্রতিযোগিতা নয়:** **Book 3 · Chapter 5**-এ দেখা Model-এর রেসিপি আলাদা হওয়ায় এটি সুনিয়ন্ত্রিত Architectureাল তুলনা নয়।\n3. **Intervention বনাম Ablation:** Position বা Mask টগলগুলো একই স্থির Weight-এর ওপর Inference পরীক্ষা—নতুন করে ট্রেন করা Ablation Model নয়।\n4. **সংরক্ষিত $184$ দিন অক্ষত:** শেষের সংরক্ষিত $184$-টি দিন কোনো টিউনিং বা স্কোরিংয়ে ছোঁয়া হয়নি।\n\nভবিষ্যতে Model উন্নত করতে চাইলে সুশৃঙ্খল Validation পরিকল্পনা ও সম্পূর্ণ নতুন **Confirmation Protocol** সাজিয়ে এগোতে হবে।"
     }
   ],
   "book": {

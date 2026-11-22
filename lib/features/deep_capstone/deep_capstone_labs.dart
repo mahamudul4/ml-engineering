@@ -62,7 +62,7 @@ class _DeepExperimentLabState extends State<DeepExperimentLab> {
           ),
           _gap,
           const Text(
-            'Prior, Logistic আর MLP এই তিনটি নির্ধারিত Candidate-এর Fit-only Grouped CV-তে Mean AP দেখে Model চূড়ান্ত করা হয়। Decision validation বা test দেখে candidate বদলায় না। No-scale MLP একই initialization/budget-এর separately trained diagnostic ablation; selection candidate নয়।',
+            'Prior, Logistic আর MLP এই তিনটি নির্ধারিত Candidate-এর Fit-only Grouped CV-তে Mean AP দেখে Model চূড়ান্ত করা হয়। Decision Validation বা Test-এর ফল দেখে Candidate বদলানো হয় না। No-scale MLP একই Initialization আর Budget দিয়ে আলাদা করে Train করা হয়েছে। Diagnostic Ablation হিসেবে ব্যবহার হয়, Model বাছাইয়ে অংশ নেয় না।',
             style: _bn,
           ),
           _gap,
@@ -166,7 +166,7 @@ class _DeepExperimentLabState extends State<DeepExperimentLab> {
           ),
           _gap,
           const Text(
-            'Curve-এ Training-এর সংরক্ষিত ফল দেখা যায়। Slider দিয়ে সেই ফলের বিভিন্ন ধাপ দেখা যায়। Training আবার চালানো হয় না। একই Seed 21, 105টি Parameter, AdamW .01 ও Decay .001, 80টি Full-batch Update আর Clip 1। Scaling বদলালে optimization path ও effective feature units বদলায়। এক seed/recipe থেকে universal scaling বা neural superiority দাবি নয়।',
+            'Curve-এ Training-এর সংরক্ষিত ফল দেখা যায়। Slider দিয়ে সেই ফলের বিভিন্ন ধাপ দেখা যায়। Training আবার চালানো হয় না। একই Seed 21, 105টি Parameter, AdamW .01 ও Decay .001, 80টি Full-batch Update আর Clip 1। Scaling বদলালে Optimization কোন পথে এগোয় আর Feature কী Unit-এ কাজ করে, দুটোই বদলায়। এক seed/recipe থেকে universal scaling বা neural superiority দাবি নয়।',
             style: _bn,
           ),
           _gap,

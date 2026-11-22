@@ -190,7 +190,7 @@ class _ConvolutionLabState extends State<ConvolutionLab> {
           ),
           _gap,
           const Text(
-            'বাস্তব 8×8 Digit Image-এর Pixel মান 16 দিয়ে ভাগ করা হয়েছে। Sobel/average mathematical kernels দিয়ে cross-correlation; PyTorch Conv2d kernel flip করে না। Input-এ কমলা রঙে বাছাই করা Output Window দেখা যায়। Padding-এর জায়গাগুলোর মান শূন্য। এই filters learned CNN weights নয়। Output cell tap করে হিসাব বদলান।',
+            'বাস্তব 8×8 Digit Image-এর Pixel মান 16 দিয়ে ভাগ করা হয়েছে। এখানে Sobel আর Average Kernel দিয়ে Cross-correlation করা হয়। PyTorch Conv2d Kernel উল্টায় না। Input-এ কমলা রঙে বাছাই করা Output Window দেখা যায়। Padding-এর জায়গাগুলোর মান শূন্য। এই Filter-গুলোর Weight আগে থেকে দেওয়া। CNN এগুলো শেখেনি। Output Cell বেছে তার হিসাব দেখুন।',
             style: _bn,
           ),
           _gap,
@@ -321,7 +321,7 @@ class _PoolingLabState extends State<PoolingLab> {
           ),
           _gap,
           const Text(
-            'Actual image-এ 2×2 window, stride2 দিয়ে max/average pooling। এক Pixel ডানে সরালে ফাঁকা জায়গায় 0 বসে। torch.roll-এর মতো অন্য পাশ থেকে Pixel ফিরে আসে না। Pooling output পরিবর্তন হতে পারে—exact translation invariance নয়। Transformation label-preserving কি না task-specific; main training-এ augmentation নেই।',
+            'বাস্তব ছবিতে 2×2 Window আর Stride 2 দিয়ে Max Pooling ও Average Pooling-এর হিসাব দেখুন। এক Pixel ডানে সরালে ফাঁকা জায়গায় 0 বসে। torch.roll-এর মতো অন্য পাশ থেকে Pixel ফিরে আসে না। Pooling output পরিবর্তন হতে পারে—exact translation invariance নয়। Transformation label-preserving কি না task-specific; main training-এ augmentation নেই।',
             style: _bn,
           ),
           _gap,

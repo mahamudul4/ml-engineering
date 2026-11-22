@@ -28,7 +28,7 @@
           ],
           "outcomes": [
             "যেকোনো PyTorch Tensor-এর ৪টি Contract (`shape`, `dtype`, `device`, `requires_grad`) ও প্রতিটির ব্যর্থতার ধরন ব্যাখ্যা করতে পারবেন।",
-            "Batch-first Linear Score $z = Xw + b \\in \\mathbb{R}^{B}$-এর প্রতিটি Axis-এর আকার হাতে কষে যাচাই করতে পারবেন।",
+            "Batch-first Linear Score $z = Xw + b \\in \\mathbb{R}^{B}$-এর প্রতিটি Axis-এর আকার হাতে হিসাব করে যাচাই করতে পারবেন।",
             "কেন শুধু Loss কমতে দেখা কোড নির্ভুল হওয়ার প্রমাণ নয় তা একটি নীরব Broadcasting বাগ দিয়ে দেখাতে পারবেন।",
             "**Pure Python** ও **`PyTorch`**—দুইভাবেই strict Tensor Contract যাচাই কোড লিখতে পারবেন।"
           ]
@@ -59,7 +59,7 @@
         },
         {
           "type": "text",
-          "title": "১. কেন Tensor Contract সবার আগে? একটি নীরব বিপর্যয়ের গল্প",
+          "title": "১. কেন Tensor Contract সবার আগে? একটি কোড চললেও যে ভুলটা ধরা পড়ে না",
           "body": "ধরুন, Classical ML শেখার পর আপনি প্রথমবার PyTorch-এ একটা Binary Classifier লিখলেন। Training চালিয়ে স্ক্রিনে দেখলেন, **Loss কমছে**। দেখে মনে হলো সব ঠিকঠাক চলছে। অথচ কোডে একটা গুরুতর bug লুকিয়ে থাকতে পারে।\n\nমূল কথা হলো, আপনি কোন ML Objective নিয়ে কাজ করছেন, PyTorch তা জানে না। ধরুন, `predictions`-এর Shape `[B]`, কিন্তু ভুল করে `targets`-এর Shape হয়েছে `[B, 1]`। PyTorch কোনো Error না দিয়েই `[B, B]` Shape-এর ভুল Pairwise Matrix বানিয়ে Loss হিসাব করবে। স্ক্রিনে Loss কমতে থাকলেও বোঝা যাবে না যে Model ভুল Objective শিখছে।\n\n### প্রতিটি Tensor-এর চারটি মৌলিক শর্ত (Contract)\nযেকোনো PyTorch কোড লেখার আগে নিচের ৪টি Attribute স্পষ্ট রাখা বাধ্যতামূলক:\n\n| Attribute | কী ঠিক করে? | ভুল হলে কী সমস্যা হয়? |\n| --- | --- | --- |\n| `shape` | প্রতিটি Axis-এর আকার (যেমন Batch-first `[B, D]`) | Axis উল্টে গেলে বা Broadcast অমিল হলে ভুল Objective তৈরি হয় |\n| `dtype` | সংখ্যার ধরন (`float32`, `float64`, `int64`) | Integer Tensor-এ Derivative হয় না; কম Precision-এ Rounding Error বাড়ে |\n| `device` | Tensor কোথায় আছে (`cpu`, `cuda`, `mps`) | ভিন্ন Device-এর Tensor একসঙ্গে যোগ/গুণ করলে `RuntimeError` আসে |\n| `requires_grad` | Computational Graph-এ রেকর্ড হবে কি না | `False` থাকলে Leaf Parameter-এ কোনো Gradient জমা হয় না |\n\n### হাতে-কলমে ছোট উদাহরণ (কোড চালানোর আগেই হিসাব করি!)\nধরুন, আমাদের হাতে মাত্র $B = 2$ টি Sample এবং $D = 2$ টি Feature আছে:\n\n| Sample | $x_{i,1}$ | $x_{i,2}$ | Weight $w = [0.5, -0.2]$, Bias $b = 0.0$ | হাতে-কলমে $z_i = x_{i,1}w_1 + x_{i,2}w_2 + b$ |\n| --- | --- | --- | --- | --- |\n| Sample 0 | `1.0` | `2.0` | $1.0(0.5) + 2.0(-0.2) + 0.0$ | **`0.1`** |\n| Sample 1 | `3.0` | `4.0` | $3.0(0.5) + 4.0(-0.2) + 0.0$ | **`0.7`** |\n\nখেয়াল করুন: $X$ ছিল `[2, 2]`, $w$ ছিল `[2]`, $b$ ছিল Scalar `[]`—ফলে Output $z$ হয়েছে ঠিক `[2]` আকারের 1D Vector `[0.1, 0.7]`! চলুন নিচের Pure Python কোডে এই Contract সরাসরি চালিয়ে যাচাই করি।"
         },
         {
@@ -98,7 +98,7 @@
         },
         {
           "type": "text",
-          "title": "৪. কোডের Output, Option B (`PyTorch`) ও ৩-পথের বাস্তব Wine Quality অডিট",
+          "title": "৪. কোডের Output, Option B (`PyTorch`) ও বাস্তব Wine Quality Data-তে ৩ পদ্ধতিতে Gradient যাচাই",
           "body": "### Option A (Pure Python) যাচাই করা Output\n- `X shape: (2, 2) | w shape: (2,) | b shape: ()`\n- `z shape: (2,) | z values: [0.1, 0.7]` *(আমাদের হাতে করা হিসাবের সঙ্গে ১০০% মিলেছে!)*\n\n### Option B — `PyTorch`-এ CPU `float64` Tensor Contract\n```python\nimport torch\n\nX = torch.tensor([[1.0, 2.0], [3.0, 4.0]], dtype=torch.float64, device=\"cpu\")\nw = torch.tensor([0.5, -0.2], dtype=X.dtype, device=X.device, requires_grad=True)\nb = torch.zeros((), dtype=X.dtype, device=X.device, requires_grad=True)\nz = X @ w + b\nprint(X.shape, X.dtype, X.device, z.shape)\n```\n**PyTorch রেফারেন্স Output (`Python 3.12.10`, `PyTorch 2.15.0+cpu`):**\n- `torch.Size([2, 2]) torch.float64 cpu torch.Size([2])` *(আর `z` এর মান হুবহু `[0.1, 0.7]`!)*\n\n### এই অধ্যায়ের পরীক্ষিত পরিবেশ ও বাস্তব Dataset-এ ৩-পথের অডিট\nসংখ্যাসূচক তুলনায় দশমিকের সূক্ষ্ম ত্রুটি এড়াতে এই অধ্যায়ের সব রেফারেন্স হিসাব **CPU-তে `float64` Precision** দিয়ে যাচাই করা হয়েছে (এখানে `CUDA`, `MPS` বা Mixed Precision `AMP`-এর গতি দাবি করা হয়নি; এবং অ্যাপের সব পাঠ ও Lab পুরোপুরি অফলাইনে চলে)।\n\nবাস্তব Data-র ওপর তত্ত্ব যাচাই করতে আমরা **UCI Wine Quality Dataset**-এর আগের **966টি Training (fit-role) Row** ($X \\in \\mathbb{R}^{966 \\times 11}$) পুনর্ব্যবহার করছি—এখানে নতুন কোনো Classifier বাছাই বা Test Score মাপা উদ্দেশ্য নয়, বরং ৩টি স্বাধীন পথে Gradient মিলিয়ে দেখা:\n1. **PyTorch Autograd:** $\\nabla_\\theta L_{\\mathrm{autograd}}$\n2. **Analytical সূত্র:** খাতা-কলমে বের করা সঠিক ক্যালকুলাস সূত্র $\\nabla_\\theta L_{\\mathrm{exact}}$\n3. **Central Finite Difference:** $\\frac{L(\\theta + \\epsilon e_j) - L(\\theta - \\epsilon e_j)}{2\\epsilon}$\n\nযখন $\\|\\nabla_{\\mathrm{autograd}} - \\nabla_{\\mathrm{exact}}\\|_\\infty \\approx 10^{-16}$ হয়, তখন আপনি শতভাগ নিশ্চিত হতে পারেন যে আপনার Gradient কোডে কোনো চিহ্নের ভুল বা Denominator বাগ নেই!\n\n### যে ৩টি ভুল শুরুতেই এড়িয়ে চলবেন\n1. **শুধু Loss কমতে দেখে কোড ঠিক ভাবা:** ভুল Broadcast বা ভুলে যাওয়া `zero_grad()` থাকলেও অনেক সময় Loss কমতে দেখা যায়।\n2. **`dtype` ও `device` নির্দিষ্ট না করা:** নতুন Parameter বানানোর সময় সব সময় `dtype=X.dtype, device=X.device` মিলিয়ে নিন।\n3. **অফলাইন Lab-এর শিক্ষামূলক উদাহরণ আর বাস্তব Data গুলিয়ে ফেলা:** ছোট Scalar উদাহরণ (যেমন $f(x) = x^2 + 2x$) আর 966-Row Wine Quality অডিট স্পষ্টভাবে আলাদা রাখুন।\n\n**পরের পাঠে কী শিখব?** Tensor Contract বুঝে নেওয়ার পর প্রথম বাস্তব প্রশ্ন হলো—List বা NumPy Array থেকে Tensor বানানোর সময় কখন নতুন Memory Copy তৈরি হয় আর কখন পুরোনো Storage শেয়ার হয়? চলুন পরের পাঠে **Tensor তৈরি, Dtype এবং Storage মালিকানা** হাতে-কলমে দেখি!"
         },
         {
@@ -113,7 +113,7 @@
             "`z`-এর Shape নিজে থেকেই `[32, 1]` হয়ে `y`-এর সঙ্গে মিলে যাবে"
           ],
           "answer": 2,
-          "explanation": "একদম ঠিক! `z` হলো `[32]` আর `y` হলো `[32, 1]`। Python/PyTorch-এ `float64` আর `int64` বিয়োগে Type Promotion হয়ে `float64` হয়ে যায়, আর Right-aligned Broadcasting-এ `[32] - [32, 1]` নীরবে `[32, 32]` Pairwise Matrix বানিয়ে দেয়—কোনো Error ছাড়াই ভুল Objective শেখা হয়!"
+          "explanation": "একদম ঠিক! `z` হলো `[32]` আর `y` হলো `[32, 1]`। Python/PyTorch-এ `float64` আর `int64` বিয়োগে Type Promotion হয়ে `float64` হয়ে যায়, আর Right-aligned Broadcasting-এ `[32] - [32, 1]` নীরবে `[32, 32]` Pairwise Matrix বানিয়ে দেয়—কোনো Error ছাড়াই Model ভুল Objective ধরে Train হয়!"
         },
         {
           "type": "interview_qa",
@@ -131,7 +131,7 @@
               "concept": "Silent Failure vs RuntimeError",
               "level": "Core",
               "question": "কোন ধরনের Tensor বাগ বেশি বিপজ্জনক—Device মিসম্যাচের `RuntimeError`, নাকি `[B]` বনাম `[B, 1]` Shape মিসম্যাচ?",
-              "answer": "অবশ্যই `[B]` বনাম `[B, 1]` Shape মিসম্যাচ অনেক বেশি বিপজ্জনক! কারণ Device মিসম্যাচে কোড সঙ্গে সঙ্গেই `RuntimeError` দিয়ে আপনাকে থামিয়ে দেয়, কিন্তু Shape মিসম্যাচে Broadcasting নীরবে `[B, B]` Matrix বানিয়ে Training চালিয়ে যায়—ফলে ঘণ্টার পর ঘণ্টা GPU পুড়িয়েও সম্পূর্ণ ভুল Objective শেখা হয়।",
+              "answer": "অবশ্যই `[B]` বনাম `[B, 1]` Shape মিসম্যাচ অনেক বেশি বিপজ্জনক! কারণ Device মিসম্যাচে কোড সঙ্গে সঙ্গেই `RuntimeError` দিয়ে আপনাকে থামিয়ে দেয়, কিন্তু Shape মিসম্যাচে Broadcasting নীরবে `[B, B]` Matrix বানিয়ে Training চালিয়ে যায়—ফলে ঘণ্টার পর ঘণ্টা GPU পুড়িয়েও সম্পূর্ণ Model ভুল Objective ধরে Train হয়।",
               "followUp": "এই নীরব বাগ এক লাইনে ঠেকাবেন কীভাবে? Loss হিসাবের ঠিক আগে `assert logits.shape == targets.shape` লিখে!"
             },
             {
@@ -173,7 +173,7 @@
     },
     {
       "id": "ch15_creation",
-      "title": "Tensor তৈরি, Dtype ও NumPy-র সঙ্গে Storage ভাগাভাগি",
+      "title": "Tensor তৈরি, Dtype ও কখন NumPy-র Storage শেয়ার হয়",
       "subtitle": "নতুন Copy তৈরি বনাম Shared Storage ব্যবহারের সূক্ষ্ম পার্থক্য",
       "duration": "34 min",
       "icon": "grid_view",
@@ -182,7 +182,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "List বা NumPy Array থেকে Tensor বানানোর সময় প্রথম প্রশ্ন হলো: **নতুন Tensor কি আলাদা Memory নিচ্ছে, নাকি আগের Storage শেয়ার করছে?** আজ আমরা শিখব `torch.tensor`, `torch.from_numpy` ও `torch.as_tensor`-এর Storage মালিকানা, Default `dtype`-এর ফাঁদ, Payload Bytes হিসাব, এবং নিরাপদে Tensor থেকে NumPy-তে ফেরার নিয়ম।",
+          "goal": "List বা NumPy Array থেকে Tensor বানানোর সময় প্রথম প্রশ্ন হলো: **নতুন Tensor কি আলাদা Memory নিচ্ছে, নাকি আগের Storage শেয়ার করছে?** আজ আমরা শিখব `torch.tensor`, `torch.from_numpy` ও `torch.as_tensor` কখন মূল Storage শেয়ার করে, Default `dtype`-এর ফাঁদ, Payload Bytes হিসাব, এবং নিরাপদে Tensor থেকে NumPy-তে ফেরার নিয়ম।",
           "prerequisites": [
             "আগের পাঠ: Tensor Contract (`shape`, `dtype`, `device`, `requires_grad`)",
             "Python-এ Mutable List Reference বনাম Copy",
@@ -218,7 +218,7 @@
               "detail": "Default-এর ওপর ভরসা না করে `float64`/`float32`/`int64` স্পষ্ট লিখুন—বিশেষ করে Loss Target-এর ক্ষেত্রে।"
             },
             {
-              "label": "ধাপ ৪ · বাইরে নেওয়ার সময় নিরাপদ সেতু (`detach().cpu().numpy().copy()`)",
+              "label": "ধাপ ৪ · NumPy-তে নেওয়ার নিরাপদ উপায় (`detach().cpu().numpy().copy()`)",
               "detail": "Graph বিচ্ছিন্ন করে CPU-তে এনে প্রয়োজনে `.copy()` নিন, যাতে বাহ্যিক Mutation ভেতরের Tensor নষ্ট না করে।"
             }
           ],
@@ -255,8 +255,8 @@
         },
         {
           "type": "text",
-          "title": "৪. Factory Function, `torch.empty` ঝুঁকি, NumPy সেতু ও Cheat Sheet",
-          "body": "### নির্দিষ্ট Shape-এর Tensor তৈরির সহায়ক Function\n- **নিরাপদ Factory:** `torch.zeros`, `torch.ones`, `torch.arange` পরিষ্কার মানসহ Tensor বানায়। বিদ্যমান Tensor-এর হুবহু একই `shape`, `dtype` ও `device` ধরে রাখতে **`torch.zeros_like(x)`** বা **`torch.ones_like(x)`** সেরা!\n- **`torch.empty()`-এর গোপন ঝুঁকি:** `torch.empty` কেবল কাঁচা RAM বরাদ্দ করে, ঘরগুলো `0` দিয়ে পরিষ্কার করে না! ফলে আগে থেকে পড়ে থাকা এলোমেলো (Garbage) বিট থেকে অদ্ভুত সংখ্যা বা `NaN` ঢুকে পড়তে পারে—যদি না আপনি সঙ্গে সঙ্গেই প্রতিটি ঘরে মান লিখে দেন।\n- **Random Seed-এর সীমা:** `torch.manual_seed(42)` দেওয়া ভালো অভ্যাস, তবে ভিন্ন Hardware বা ভিন্ন PyTorch সংস্করণে এটি বিটে-বিটে হুবহু অভিন্ন সংখ্যার গ্যারান্টি দেয় না।\n\n### Tensor থেকে আবার NumPy-তে নিরাপদ রূপান্তর\n1. `requires_grad=True` থাকলে সরাসরি `x.numpy()` চালালে `RuntimeError` আসে—যাতে আপনার অজান্তে Graph হারিয়ে না যায়।\n2. আদর্শ নিরাপদ চেইন: **`tensor.detach().cpu().numpy()`** (আগে Graph কাটা -> তারপর CPU-তে আনা -> শেষে NumPy View)।\n3. পুরোপুরি স্বাধীন Array চাইলে শেষে **`.copy()`** যোগ করুন। সহজ কথায়, NumPy সেতু কেবল সংখ্যা পারাপার করে—Autograd Graph কখনোই NumPy-এর ভেতর দিয়ে যায় না!\n\n### বাস্তব Wine Quality Dataset-এ আমাদের নীতি\nএই অধ্যায়ের Workflow-তে আমরা উৎস NumPy Array থেকে `torch.tensor(Z, dtype=torch.float64, device=\"cpu\")` দিয়ে নতুন Copy বানাই এবং Binary Label `y`-কে `int64` না রেখে শুরুতেই `torch.float64`-এ রাখি, যাতে `BCEWithLogits`-এ কোনো Dtype মিসম্যাচ না ঘটে।\n\n### Cheat Sheet\n- **Copy:** `torch.tensor(arr)` | **Zero-copy CPU Alias:** `torch.from_numpy(arr)` | **Smart Reuse:** `torch.as_tensor(arr)`\n- **নতুন স্বাধীন Leaf:** `x.detach().clone().requires_grad_()`\n- **নিরাপদ NumPy Export:** `x.detach().cpu().numpy().copy()`\n\n**পরের পাঠে কী শিখব?** Storage ও Dtype চিনে নেওয়ার পর এবার ঢুকব PyTorch-এর সবচেয়ে কুখ্যাত বাগগুলোর একটিতে—কেন `[]`, `[1]` এবং `[1, 1]` দেখতে একই সংখ্যা হলেও আচরণে সম্পূর্ণ ভিন্ন, আর কীভাবে অনির্দিষ্ট `squeeze()` Production-এ কোড ক্র্যাশ করায়!"
+          "title": "৪. Factory Function, `torch.empty` ঝুঁকি, NumPy-তে নেওয়া ও Cheat Sheet",
+          "body": "### নির্দিষ্ট Shape-এর Tensor তৈরির সহায়ক Function\n- **নিরাপদ Factory:** `torch.zeros`, `torch.ones`, `torch.arange` পরিষ্কার মানসহ Tensor বানায়। বিদ্যমান Tensor-এর হুবহু একই `shape`, `dtype` ও `device` ধরে রাখতে **`torch.zeros_like(x)`** বা **`torch.ones_like(x)`** সেরা!\n- **`torch.empty()`-এর গোপন ঝুঁকি:** `torch.empty` কেবল কাঁচা RAM বরাদ্দ করে, ঘরগুলো `0` দিয়ে পরিষ্কার করে না! ফলে আগে থেকে পড়ে থাকা এলোমেলো (Garbage) বিট থেকে অদ্ভুত সংখ্যা বা `NaN` ঢুকে পড়তে পারে—যদি না আপনি সঙ্গে সঙ্গেই প্রতিটি ঘরে মান লিখে দেন।\n- **Random Seed-এর সীমা:** `torch.manual_seed(42)` দেওয়া ভালো অভ্যাস, তবে ভিন্ন Hardware বা ভিন্ন PyTorch সংস্করণে এটি বিটে-বিটে হুবহু অভিন্ন সংখ্যার গ্যারান্টি দেয় না।\n\n### Tensor থেকে আবার NumPy-তে নিরাপদ রূপান্তর\n1. `requires_grad=True` থাকলে সরাসরি `x.numpy()` চালালে `RuntimeError` আসে—যাতে আপনার অজান্তে Graph হারিয়ে না যায়।\n2. আদর্শ নিরাপদ চেইন: **`tensor.detach().cpu().numpy()`** (আগে Graph কাটা -> তারপর CPU-তে আনা -> শেষে NumPy View)।\n3. পুরোপুরি স্বাধীন Array চাইলে শেষে **`.copy()`** যোগ করুন। সহজ কথায়, NumPy-তে নেওয়া কেবল সংখ্যা পারাপার করে—Autograd Graph কখনোই NumPy-এর ভেতর দিয়ে যায় না!\n\n### বাস্তব Wine Quality Dataset-এ আমাদের নীতি\nএই অধ্যায়ের Workflow-তে আমরা উৎস NumPy Array থেকে `torch.tensor(Z, dtype=torch.float64, device=\"cpu\")` দিয়ে নতুন Copy বানাই এবং Binary Label `y`-কে `int64` না রেখে শুরুতেই `torch.float64`-এ রাখি, যাতে `BCEWithLogits`-এ কোনো Dtype মিসম্যাচ না ঘটে।\n\n### Cheat Sheet\n- **Copy:** `torch.tensor(arr)` | **Zero-copy CPU Alias:** `torch.from_numpy(arr)` | **Smart Reuse:** `torch.as_tensor(arr)`\n- **নতুন স্বাধীন Leaf:** `x.detach().clone().requires_grad_()`\n- **নিরাপদ NumPy Export:** `x.detach().cpu().numpy().copy()`\n\n**পরের পাঠে কী শিখব?** Storage ও Dtype চিনে নেওয়ার পর এবার ঢুকব PyTorch-এর সবচেয়ে কুখ্যাত বাগগুলোর একটিতে—কেন `[]`, `[1]` এবং `[1, 1]` দেখতে একই সংখ্যা হলেও আচরণে সম্পূর্ণ ভিন্ন, আর কীভাবে অনির্দিষ্ট `squeeze()` Production-এ কোড ক্র্যাশ করায়!"
         },
         {
           "type": "concept_check",
@@ -301,7 +301,7 @@
             {
               "concept": "Loss Target Dtype Trap",
               "level": "Intermediate",
-              "question": "`y = torch.tensor([0, 1, 0])` কেন `nn.CrossEntropyLoss`-এ দিব্যি চলে, কিন্তু `nn.BCEWithLogitsLoss`-এ Error দেয়?",
+              "question": "`y = torch.tensor([0, 1, 0])` কেন `nn.CrossEntropyLoss`-এ ঠিকভাবেই চলে, কিন্তু `nn.BCEWithLogitsLoss`-এ Error দেয়?",
               "answer": "`[0, 1, 0]` পূর্ণসংখ্যা হওয়ায় এর Default Dtype হয় `int64` (`torch.long`)। `CrossEntropyLoss` Target হিসেবে Class Index (`int64`) চায়, কিন্তু `BCEWithLogitsLoss` প্রতিটি Logit-এর সঙ্গে সরাসরি Target বিয়োগ/গুণ করে বলে Target-কে Logit-এর মতো Floating-point (`float32`/`float64`) হতে হয়।",
               "followUp": "সমাধান কী? `y = torch.tensor([0, 1, 0], dtype=torch.float64)` বা `y = y.to(dtype=logits.dtype)`!"
             },
@@ -339,7 +339,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "একই একটিমাত্র সংখ্যা (`numel = 1`) ধরে রাখা সত্ত্বেও Scalar `[]`, 1D Vector `[1]` এবং 2D Matrix `[1, 1]` PyTorch-এ সম্পূর্ণ ভিন্ন আচরণ করে! আজ আমরা শিখব **Rank (`ndim`) বনাম `numel`**, কেন `B = 1` অবস্থায় অনির্দিষ্ট `squeeze()` Production কোড ক্র্যাশ করায়, এবং `squeeze(-1)`, `unsqueeze(dim)` ও `flatten(start_dim=1)`-এর নিরাপদ নিয়ম।",
+          "goal": "একই একটি সংখ্যা (`numel = 1`) ধরে রাখা সত্ত্বেও Scalar `[]`, 1D Vector `[1]` এবং 2D Matrix `[1, 1]` PyTorch-এ তিনটির আচরণ আলাদা। আজ আমরা শিখব **Rank (`ndim`) বনাম `numel`**, কেন `B = 1` অবস্থায় অনির্দিষ্ট `squeeze()` Production কোড ক্র্যাশ করায়, এবং `squeeze(-1)`, `unsqueeze(dim)` ও `flatten(start_dim=1)`-এর নিরাপদ নিয়ম।",
           "prerequisites": [
             "আগের পাঠ: Tensor Contract ও Creation",
             "Matrix Dimension (Row, Column) ও Batch ধারণা",
@@ -355,7 +355,7 @@
         {
           "type": "text",
           "title": "১. উপাদানের সংখ্যা সমান হলেও Rank কেন পুরো খেলা বদলে দেয়?",
-          "body": "ধরুন, একটি অনলাইন সার্ভিসে আপনার Classifier-টি ল্যাবে `Batch = 64` দিয়ে টেস্ট করে দিব্যি পাস করেছে। Production-এ ডিপ্লয় করার পর প্রথমবার মাত্র **১জন User (`B = 1`)** Request পাঠাতেই Server crash করল! কেন?\n\nমূল কথা হলো, **মোট উপাদান সংখ্যা (`numel`) সমান হলেও Rank (`ndim`) ও Shape আলাদা হলে PyTorch-এর আচরণ বদলে যায়।** নিচের টেবিলটি দেখুন:\n\n| Tensor-এর ধরন | মানের উদাহরণ | `shape` | Rank (`ndim`) | `numel()` |\n| --- | --- | --- | --- | --- |\n| Scalar | `5.0` | `[]` | $0$ | $1$ |\n| এক-উপাদানের 1D Vector | `[5.0]` | `[1]` | $1$ | $1$ |\n| এক-Row, এক-Column 2D Matrix | `[[5.0]]` | `[1, 1]` | $2$ | $1$ |\n\n### Singleton Batch (`B = 1`)-এর ভয়ংকর ফাঁদ\nধরুন, আপনার Linear Layer-এর Output `logits`-এর Shape হলো `[B, 1]`। আপনি শেষের অপ্রয়োজনীয় `1` সরাতে কোডে লিখে দিলেন Argument ছাড়া অনির্দিষ্ট **`logits.squeeze()`**:\n- যখন `B = 64`: `[64, 1].squeeze()` → `[64]` (সব ঠিকঠাক মনে হচ্ছে!)\n- যখন `B = 1`: `[1, 1].squeeze()` → **`[]` (Scalar!)** — সামনের **Batch Axis-ও উধাও** হয়ে গেছে! ফলে পরের লাইনে `len(logits)` বা Loss Function সঙ্গে সঙ্গে ক্র্যাশ করে যাবে!\n\nঅথচ আপনি যদি সুনির্দিষ্টভাবে **`logits.squeeze(-1)`** লিখতেন, তবে `B = 64` হলে পেতেন `[64]` এবং `B = 1` হলেও পেতেন নিরাপদ `[1]`! চলুন Pure Python কোডে এটি সরাসরি দেখে নিই।"
+          "body": "ধরুন, একটি অনলাইন সার্ভিসে আপনার Classifier-টি ল্যাবে `Batch = 64` দিয়ে Test-এ ঠিকভাবেই কাজ করেছে। Production-এ ডিপ্লয় করার পর প্রথমবার মাত্র **১জন User (`B = 1`)** Request পাঠাতেই Server crash করল! কেন?\n\nমূল কথা হলো, **মোট উপাদান সংখ্যা (`numel`) সমান হলেও Rank (`ndim`) ও Shape আলাদা হলে PyTorch-এর আচরণ বদলে যায়।** নিচের টেবিলটি দেখুন:\n\n| Tensor-এর ধরন | মানের উদাহরণ | `shape` | Rank (`ndim`) | `numel()` |\n| --- | --- | --- | --- | --- |\n| Scalar | `5.0` | `[]` | $0$ | $1$ |\n| এক-উপাদানের 1D Vector | `[5.0]` | `[1]` | $1$ | $1$ |\n| এক-Row, এক-Column 2D Matrix | `[[5.0]]` | `[1, 1]` | $2$ | $1$ |\n\n### Singleton Batch (`B = 1`)-এর ভয়ংকর ফাঁদ\nধরুন, আপনার Linear Layer-এর Output `logits`-এর Shape হলো `[B, 1]`। আপনি শেষের অপ্রয়োজনীয় `1` সরাতে কোডে লিখে দিলেন Argument ছাড়া অনির্দিষ্ট **`logits.squeeze()`**:\n- যখন `B = 64`: `[64, 1].squeeze()` → `[64]` (সব ঠিকঠাক মনে হচ্ছে!)\n- যখন `B = 1`: `[1, 1].squeeze()` → **`[]` (Scalar!)** — সামনের **Batch Axis-ও উধাও** হয়ে গেছে! ফলে পরের লাইনে `len(logits)` বা Loss Function সঙ্গে সঙ্গে ক্র্যাশ করে যাবে!\n\nঅথচ আপনি যদি সুনির্দিষ্টভাবে **`logits.squeeze(-1)`** লিখতেন, তবে `B = 64` হলে পেতেন `[64]` এবং `B = 1` হলেও পেতেন নিরাপদ `[1]`! চলুন Pure Python কোডে এটি সরাসরি দেখে নিই।"
         },
         {
           "type": "code",
@@ -432,7 +432,7 @@
         {
           "type": "interview_qa",
           "title": "Rank, Batch Axis ও Singleton Dimension — সম্ভাব্য Interview প্রশ্ন ও উত্তর",
-          "intro": "Production Inference ও Shape ডিবাগিং নিয়ে ইন্টারভিউতে আসা ৫টি বাস্তব প্রশ্ন অনুশীলন করুন।",
+          "intro": "Production Inference ও Shape Debugging নিয়ে ইন্টারভিউতে আসা ৫টি বাস্তব প্রশ্ন অনুশীলন করুন।",
           "items": [
             {
               "concept": "B=1 Production Crash",
@@ -474,7 +474,7 @@
         {
           "type": "callout",
           "title": "হাতে-কলমে অনুশীলন",
-          "body": "কোড চালানোর আগেই খাতা-কলমে নিচের ৪টি Shape অনুমান করুন (ধরি $X \\in \\mathbb{R}^{3 \\times 2}$):\n\n1. `X[0]` → `[2]`\n2. `X[:, 1]` → `[3]`\n3. `X[:, 1].unsqueeze(-1)` → `[3, 1]`\n4. `X.mean(dim=1, keepdim=True)` → `[3, 1]`\n\nপ্রতিটি অপারেশনের পাশে `# [B, D]` কমেন্ট লেখার অভ্যাস বড় প্রজেক্টে ঘণ্টার পর ঘণ্টা ডিবাগিং সময় বাঁচিয়ে দেয়!"
+          "body": "কোড চালানোর আগেই খাতা-কলমে নিচের ৪টি Shape অনুমান করুন (ধরি $X \\in \\mathbb{R}^{3 \\times 2}$):\n\n1. `X[0]` → `[2]`\n2. `X[:, 1]` → `[3]`\n3. `X[:, 1].unsqueeze(-1)` → `[3, 1]`\n4. `X.mean(dim=1, keepdim=True)` → `[3, 1]`\n\nপ্রতিটি অপারেশনের পাশে `# [B, D]` কমেন্ট লেখার অভ্যাস বড় প্রজেক্টে ঘণ্টার পর ঘণ্টা Debugging সময় বাঁচিয়ে দেয়!"
         },
         {
           "type": "checkpoint",
@@ -487,7 +487,7 @@
     },
     {
       "id": "ch15_indexing",
-      "title": "Indexing, Slicing এবং ডেটার প্রকৃত পরিচয়",
+      "title": "Indexing ও Slicing: কোনটা View, কোনটা Copy",
       "subtitle": "কখন Memory-র View তৈরি হয় আর কখন নতুন Copy তৈরি হয়",
       "duration": "34 min",
       "icon": "grid_view",
@@ -496,7 +496,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "Tensor থেকে অংশ কেটে নেওয়ার সময় সেটি কি মূল Memory-র ওপর **View (একই Storage)**, নাকি সম্পূর্ণ আলাদা **Copy**? আজ আমরা শিখব Basic Slicing বনাম Advanced Indexing, Memory Aliasing ও Autograd Version Counter-এর ঝুঁকি, Shuffle-এ `(X, y, row_id)` একসঙ্গে বাঁধার নিয়ম, এবং Boolean Masked Loss-এর সঠিক Denominator!",
+          "goal": "Tensor-এর একটা অংশ নিলে কী হয়? অংশটি কি মূল Storage-এর **View**, নাকি আলাদা **Copy**? আজ আমরা শিখব Basic Slicing বনাম Advanced Indexing, Memory Aliasing ও Autograd Version Counter-এর ঝুঁকি, Shuffle-এ `(X, y, row_id)` একসঙ্গে রাখার নিয়ম, এবং Boolean Masked Loss-এর সঠিক Denominator!",
           "prerequisites": [
             "আগের পাঠ: Tensor Storage মালিকানা ও Shape",
             "Python slicing (`a[1:3]`) ও list indexing",
@@ -528,7 +528,7 @@
               "detail": "Backward Pass-এ সংরক্ষিত Tensor-এর কোনো View-এ In-place পরিবর্তন (`+=`) করলে Version Counter Error আসে।"
             },
             {
-              "label": "ধাপ ৩ · Shuffle-এ `(X, y, row_id)` একসঙ্গে বাঁধা",
+              "label": "ধাপ ৩ · Shuffle-এ `(X, y, row_id)` একসঙ্গে রাখা",
               "detail": "`TensorDataset(X, y, row_id)` ব্যবহার করুন—কখনোই `X` আর `y` আলাদাভাবে Shuffle করবেন না!"
             },
             {
@@ -653,7 +653,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "কম্পিউটারের RAM আসলে এক লাইনের সমতল ফিতা—তবুও সেখানে 2D, 3D বা 4D Tensor কীভাবে সাজানো থাকে এবং Memory না সরিয়েই `transpose` বা `expand` কীভাবে কাজ করে? আজ আমরা **Interactive Layout Lab**-এর সঙ্গে হাতে-কলমে শিখব **Strides, Storage Offset, Contiguity, `view` বনাম `reshape` এবং Zero-stride `expand()`**!",
+          "goal": "RAM-এ মানগুলো এক সরল ক্রমে রাখা থাকে। সেখানে 2D, 3D বা 4D Tensor কীভাবে সাজানো থাকে এবং Memory না সরিয়েই `transpose` বা `expand` কীভাবে কাজ করে? আজ আমরা **Interactive Layout Lab**-এর সঙ্গে হাতে-কলমে শিখব **Strides, Storage Offset, Contiguity, `view` বনাম `reshape` এবং Zero-stride `expand()`**!",
           "prerequisites": [
             "আগের পাঠ: Basic Slicing (View) ও Storage Offset",
             "Matrix Transpose-এর ধারণা",
@@ -813,7 +813,7 @@
     },
     {
       "id": "ch15_broadcast",
-      "title": "Broadcasting: কোড চললেও যখন ভুল Objective শেখা হয়",
+      "title": "Broadcasting: কোড চললেও যখন Model ভুল Objective ধরে Train হয়",
       "subtitle": "[B] ও [B, 1] একসঙ্গে ব্যবহার করলে অজান্তেই কীভাবে Pairwise Loss তৈরি হয়",
       "duration": "38 min",
       "icon": "grid_view",
@@ -822,7 +822,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "Deep Learning-এর সবচেয়ে নীরব ও ভয়ংকর বাগ হলো **ভুল Broadcasting**—কোড কোনো Error ছাড়াই চলে, Loss কমতেও থাকে, অথচ আপনি সম্পূর্ণ ভুল Objective শিখছেন! আজ আমরা **Interactive Broadcast Lab** এবং বাস্তব Wine Quality ডেটায় শিখব Right-aligned Broadcasting নিয়ম, কেন `[B] - [B, 1]` নীরবে `[B, B]` Pairwise Matrix বানায়, কেন `B = 1` এই বাগ লুকিয়ে রাখে, এবং Backward Pass-এ Broadcast Axis কীভাবে Sum হয়।",
+          "goal": "Deep Learning-এ **ভুল Broadcasting** সহজে চোখে পড়ে না। কোড Error ছাড়াই চলে, Loss-ও কমতে পারে। আসলে Model তখন ভুল Objective ধরে Train হয়। আজ আমরা **Interactive Broadcast Lab** এবং বাস্তব Wine Quality ডেটায় শিখব Right-aligned Broadcasting নিয়ম, কেন `[B] - [B, 1]` নীরবে `[B, B]` Pairwise Matrix বানায়, কেন `B = 1` এই বাগ লুকিয়ে রাখে, এবং Backward Pass-এ Broadcast Axis কীভাবে Sum হয়।",
           "prerequisites": [
             "আগের পাঠ: Strides ও Zero-stride `expand()`",
             "MSE ও Binary Cross-Entropy Loss-এর ধারণা",
@@ -998,7 +998,7 @@
         {
           "type": "interview_qa",
           "title": "Broadcasting ও নীরব Loss Bug — সম্ভাব্য Interview প্রশ্ন ও উত্তর",
-          "intro": "ডিবাগিং ইন্টারভিউতে সবচেয়ে বেশি আসা Broadcasting ফাঁদ থেকে ৫টি প্রশ্ন অনুশীলন করুন।",
+          "intro": "Debugging ইন্টারভিউতে সবচেয়ে বেশি আসা Broadcasting ফাঁদ থেকে ৫টি প্রশ্ন অনুশীলন করুন।",
           "items": [
             {
               "concept": "Silent Pairwise Broadcast Bug",
@@ -1062,7 +1062,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "PyTorch-এ `*` এবং `@` (`torch.matmul`) দেখতে কাছাকাছি হলেও এরা সম্পূর্ণ ভিন্ন দুটি গাণিতিক অপারেশন! আজ আমরা একটি ছোট $2 \\times 2$ উদাহরণে **Elementwise Multiplication বনাম Matrix Multiplication**, **Batched `matmul` ও `bmm`**, উচ্চতর Rank-এ `.mT` / `.transpose(-2, -1)` বনাম `.T`, এবং হাতে-কলমে **একটি পূর্ণাঙ্গ Forward + Backward হিসাব** মিলিয়ে দেখব!",
+          "goal": "PyTorch-এ `*` এবং `@` (`torch.matmul`) দুটিতে গুণ হয়, তবে হিসাবের নিয়ম আলাদা। আজ আমরা একটি ছোট $2 \\times 2$ উদাহরণে **Elementwise Multiplication বনাম Matrix Multiplication**, **Batched `matmul` ও `bmm`**, উচ্চতর Rank-এ `.mT` / `.transpose(-2, -1)` বনাম `.T`, এবং হাতে-কলমে **একটি পূর্ণাঙ্গ Forward + Backward হিসাব** মিলিয়ে দেখব!",
           "prerequisites": [
             "আগের পাঠ: Broadcasting ও Shape Contract",
             "Matrix Multiplication ও Transpose-এর নিয়ম",
@@ -1070,7 +1070,7 @@
           ],
           "outcomes": [
             "`*` (Elementwise) এবং `@` (Contraction / Matrix Multiplication)-এর Output Shape ও Memory খরচের পার্থক্য ব্যাখ্যা করতে পারবেন।",
-            "একটি $2 \\times 2$ উদাহরণে Forward Score $\\hat{y} = Xw + b$, MSE Loss এবং Backward Gradient $\\nabla_w L = X^\\top \\frac{\\partial L}{\\partial \\hat{y}}$ হাতে কষে বের করতে পারবেন।",
+            "একটি $2 \\times 2$ উদাহরণে Forward Score $\\hat{y} = Xw + b$, MSE Loss এবং Backward Gradient $\\nabla_w L = X^\\top \\frac{\\partial L}{\\partial \\hat{y}}$ হাতে হিসাব করে বের করতে পারবেন।",
             "3D+ Tensor-এ Batched `matmul` বনাম কঠোর `bmm` এবং কেন `x.T`-এর বদলে `x.transpose(-2, -1)` বা `x.mT` ব্যবহার করতে হয় তা বুঝবেন।",
             "**Pure Python** ও **`PyTorch`**—উভয়ভাবেই Analytical Gradient ও Autograd মিলিয়ে নিতে পারবেন।"
           ]
@@ -1219,7 +1219,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "প্রতিটি Sample-এর Loss `[B]` থেকে একক Scalar বানাতে `sum()` নাকি `mean()` বেছে নিচ্ছেন—তা সরাসরি আপনার **Gradient-এর স্কেল** এবং কার্যকর Learning Rate বদলে দেয়! আজ আমরা শিখব `sum` বনাম `mean` Gradient অনুপাত, `keepdim=True` কেন বর্গাকার Batch-এর নীরব ফাঁদ আটকায়, `torch.std` (`correction=1`) বনাম NumPy (`ddof=0`), এবং অসমান Microbatch-এ নিখুঁত Gradient Accumulation স্কেলিং!",
+          "goal": "প্রতিটি Sample-এর Loss `[B]` থেকে একটি Scalar বের করতে `sum()` নাকি `mean()` ব্যবহার করছেন, তার ওপর **Gradient-এর Scale** ও কার্যকর Learning Rate নির্ভর করে। আজ আমরা শিখব `sum` বনাম `mean` Gradient অনুপাত, `keepdim=True` কেন বর্গাকার Batch-এ ভুল Broadcasting ঠেকায়, `torch.std` (`correction=1`) বনাম NumPy (`ddof=0`), এবং অসমান Microbatch-এ নিখুঁত Gradient Accumulation Scaling!",
           "prerequisites": [
             "আগের পাঠ: Matrix Multiplication ও Broadcasting",
             "গড় (Mean), যোগফল (Sum) ও Standard Deviation",
@@ -1228,23 +1228,23 @@
           "outcomes": [
             "স্থির Batch Size $B$-এ কেন $\\nabla L_{\\mathrm{sum}} = B \\nabla L_{\\mathrm{mean}}$ হয় তা হাতে প্রমাণ করতে পারবেন।",
             "$4 \\times 4$ বর্গাকার Matrix-এ `keepdim=True` ছাড়া `X - X.mean(dim=1)` কীভাবে নীরবে ভুল Column-wise বিয়োগ চালায় তা দেখাতে পারবেন।",
-            "অসমান আকারের Microbatch (যেমন `3` Row + `1` Row)-এ কেন $\\frac{3}{4}$ ও $\\frac{1}{4}$ স্কেলিং ছাড়া সরাসরি যোগ করলে Gradient প্রায় ৩ গুণ ভুল হয় তা হিসাব করতে পারবেন।",
+            "অসমান আকারের Microbatch (যেমন `3` Row + `1` Row)-এ কেন $\\frac{3}{4}$ ও $\\frac{1}{4}$ Scaling ছাড়া সরাসরি যোগ করলে Gradient প্রায় ৩ গুণ ভুল হয় তা হিসাব করতে পারবেন।",
             "`torch.std` (`correction=1`) বনাম `StandardScaler`/`numpy.std(ddof=0)`-এর পার্থক্য ও Masked Loss Denominator ব্যাখ্যা করতে পারবেন।"
           ]
         },
         {
           "type": "text",
           "title": "১. Reduction কীভাবে আপনার Gradient-এর স্কেল ও Objective বদলে দেয়?",
-          "body": "ধরুন, আপনি `B = 32` নিয়ে সুন্দরভাবে একটি Network Train করছিলেন, যেখানে Loss ছিল `mean` Reduction। একদিন কোড পরিষ্কার করতে গিয়ে ভুলে `mean` বদলে `sum` লিখে ফেললেন—কিন্তু Learning Rate এক রাখলেন! ফলাফল? আপনার প্রতিটি Gradient হঠাৎ **৩২ গুণ বড়** হয়ে Training মুহূর্তেই বিস্ফোরিত হবে!\n\n### হাতে-কলমে অসমান Microbatch ফাঁদ (`3` Row + `1` Row বনাম পূর্ণ `4` Row)\nধরুন ৪টি Coefficient $c = [1, 2, 3, 4]$, Scalar Weight $w = 2.0$, আর প্রতি Row-এর Loss $\\ell_i = (w c_i)^2$ (তাই $\\frac{d\\ell_i}{dw} = 2 w c_i^2 = 4 c_i^2$):\n\n| পদ্ধতি | প্রতিটি অংশের হিসাব | চূড়ান্ত Gradient $\\frac{dL}{dw}$ | মন্তব্য |\n| --- | --- | --- | --- |\n| **পূর্ণ 4-Row Batch** | $4 \\times \\frac{1 + 4 + 9 + 16}{4} = 4 \\times 7.5$ | **`30.00`** | আসল সঠিক মান! |\n| **Microbatch 1 (`[1,2,3]`, 3 Row)** | $4 \\times \\frac{1 + 4 + 9}{3} = \\frac{56}{3}$ | `18.6667` | নিজে একক Mean |\n| **Microbatch 2 (`[4]`, 1 Row)** | $4 \\times \\frac{16}{1}$ | `64.0000` | ছোট Batch-এর বিশাল Gradient! |\n| **সঠিক স্কেলিং ($\\frac{3}{4} g_1 + \\frac{1}{4} g_2$)** | $\\frac{3}{4}(18.6667) + \\frac{1}{4}(64.0)$ | **`30.00`** | পূর্ণ Batch-এর হুবহু সমান! |\n| **ভুল সরাসরি যোগ ($g_1 + g_2$)** | $18.6667 + 64.0$ | **`82.6667`** | প্রায় ৩ গুণ ভুল! |\n\nচলুন Pure Python কোডে দুটি সত্য—`sum` বনাম `mean` এবং অসমান Microbatch স্কেলিং—সরাসরি যাচাই করি!"
+          "body": "ধরুন, আপনি `B = 32` নিয়ে সুন্দরভাবে একটি Network Train করছিলেন, যেখানে Loss ছিল `mean` Reduction। একদিন কোড পরিষ্কার করতে গিয়ে ভুলে `mean` বদলে `sum` লিখে ফেললেন—কিন্তু Learning Rate এক রাখলেন! ফলাফল? আপনার প্রতিটি Gradient হঠাৎ **৩২ গুণ বড়** হয়ে Training মুহূর্তেই বিস্ফোরিত হবে!\n\n### হাতে-কলমে অসমান Microbatch ফাঁদ (`3` Row + `1` Row বনাম পূর্ণ `4` Row)\nধরুন ৪টি Coefficient $c = [1, 2, 3, 4]$, Scalar Weight $w = 2.0$, আর প্রতি Row-এর Loss $\\ell_i = (w c_i)^2$ (তাই $\\frac{d\\ell_i}{dw} = 2 w c_i^2 = 4 c_i^2$):\n\n| পদ্ধতি | প্রতিটি অংশের হিসাব | চূড়ান্ত Gradient $\\frac{dL}{dw}$ | মন্তব্য |\n| --- | --- | --- | --- |\n| **পূর্ণ 4-Row Batch** | $4 \\times \\frac{1 + 4 + 9 + 16}{4} = 4 \\times 7.5$ | **`30.00`** | আসল সঠিক মান! |\n| **Microbatch 1 (`[1,2,3]`, 3 Row)** | $4 \\times \\frac{1 + 4 + 9}{3} = \\frac{56}{3}$ | `18.6667` | নিজে একক Mean |\n| **Microbatch 2 (`[4]`, 1 Row)** | $4 \\times \\frac{16}{1}$ | `64.0000` | ছোট Batch-এর বিশাল Gradient! |\n| **সঠিক Scaling ($\\frac{3}{4} g_1 + \\frac{1}{4} g_2$)** | $\\frac{3}{4}(18.6667) + \\frac{1}{4}(64.0)$ | **`30.00`** | পূর্ণ Batch-এর হুবহু সমান! |\n| **ভুল সরাসরি যোগ ($g_1 + g_2$)** | $18.6667 + 64.0$ | **`82.6667`** | প্রায় ৩ গুণ ভুল! |\n\nচলুন Pure Python কোডে দুটি সত্য—`sum` বনাম `mean` এবং অসমান Microbatch Scaling—সরাসরি যাচাই করি!"
         },
         {
           "type": "code",
-          "title": "২. Option A — Pure Python-এ Sum/Mean অনুপাত ও অসমান Microbatch স্কেলিং যাচাই",
+          "title": "২. Option A — Pure Python-এ Sum/Mean অনুপাত ও অসমান Microbatch Scaling যাচাই",
           "body": "# ১) Sum বনাম Mean Reduction-এর Gradient অনুপাত (B গুণ পার্থক্য!)\nx = 2.0\ncoeff = [1.0, 2.0, 3.0]   # B = 3\n\ngrad_sum = 0.0\nfor c in coeff:\n    grad_sum += c          # d/dx (x * c) = c\ngrad_mean = grad_sum / len(coeff)\nprint(\"Sum grad:\", grad_sum, \"| Mean grad:\", grad_mean, \"| Ratio:\", grad_sum / grad_mean)\n\n# ২) অসমান Microbatch (3 Row + 1 Row) বনাম পূর্ণ 4-Row Batch Gradient: L_i = (w * c_i)^2\nc_all = [1.0, 2.0, 3.0, 4.0]\nw = 2.0\n\ndef mean_grad(sub_c, weight):\n    total = 0.0\n    for c in sub_c:\n        total += 2.0 * weight * c * c\n    return total / len(sub_c)\n\nfull_grad = mean_grad(c_all, w)\ng_mb1 = mean_grad(c_all[:3], w)   # 3 rows\ng_mb2 = mean_grad(c_all[3:], w)   # 1 row\n\nweighted_accum = (3.0 / 4.0) * g_mb1 + (1.0 / 4.0) * g_mb2\nnaive_accum = g_mb1 + g_mb2       # ভুল: স্কেল না করেই সরাসরি যোগ!\nprint(f\"Full 4-row grad: {full_grad:.2f} | Weighted (3/4, 1/4): {weighted_accum:.2f} | Naive sum: {naive_accum:.6f}\")\n"
         },
         {
           "type": "flow_diagram",
-          "title": "Reduction, keepdim ও Microbatch স্কেলিংয়ের ৪-ধাপের শৃঙ্খলা",
+          "title": "Reduction, keepdim ও Microbatch Scaling-এর ৪-ধাপের শৃঙ্খলা",
           "body": "",
           "steps": [
             {
@@ -1284,7 +1284,7 @@
             },
             {
               "symbol": "$\\frac{m_k}{N}$",
-              "meaning": "প্রতিটি Microbatch-এর Mean Loss-এর সঠিক স্কেলিং Weight।",
+              "meaning": "প্রতিটি Microbatch-এর Mean Loss-এর সঠিক Scaling Weight।",
               "example": "$\\frac{3}{4}(18.6667) + \\frac{1}{4}(64.0) = 30.0$, যা পূর্ণ 4-Row Batch-এর হুবহু সমান!"
             }
           ],
@@ -1379,7 +1379,7 @@
         {
           "type": "text",
           "title": "৫. কোডের Output, Option B (`PyTorch`), `keepdim=True` ফাঁদ ও `correction` নিয়ম",
-          "body": "### Option A (Pure Python) যাচাই করা Output\n- `Sum grad: 6.0 | Mean grad: 2.0 | Ratio: 3.0`\n- `Full 4-row grad: 30.00 | Weighted (3/4, 1/4): 30.00 | Naive sum: 82.666667`\n\n### Option B — `PyTorch`-এ Sum/Mean অনুপাত ও অসমান Microbatch Gradient যাচাই\n```python\nimport torch\n\nx = torch.tensor(2.0, dtype=torch.float64, requires_grad=True)\ncoeff = torch.tensor([1.0, 2.0, 3.0], dtype=x.dtype)\ngsum = torch.autograd.grad((x * coeff).sum(), x)[0]\ngmean = torch.autograd.grad((x * coeff).mean(), x)[0]\nprint(gsum.item(), gmean.item(), (gsum / gmean).item())\n\nc4 = torch.tensor([1.0, 2.0, 3.0, 4.0], dtype=torch.float64)\nfull = torch.tensor(2.0, dtype=c4.dtype, requires_grad=True)\nfull_grad = torch.autograd.grad((full * c4).square().mean(), full)[0]\n\nacc = torch.tensor(2.0, dtype=c4.dtype, requires_grad=True)\nnaive = torch.tensor(2.0, dtype=c4.dtype, requires_grad=True)\nfor batch in (c4[:3], c4[3:]):\n    ((acc * batch).square().mean() * len(batch) / len(c4)).backward()\n    (naive * batch).square().mean().backward()\ntorch.testing.assert_close(acc.grad, full_grad)\nprint(full_grad.item(), acc.grad.item(), round(naive.grad.item(), 6))\n```\n**PyTorch রেফারেন্স Output:** `6.0 2.0 3.0` এবং `30.0 30.0 82.666667`!\n\n### আরও ২টি সূক্ষ্ম ফাঁদ চিনে রাখুন\n1. **`keepdim=True` এবং বর্গাকার Batch-এর গোপন ফাঁদ:** ধরুন $X \\in \\mathbb{R}^{4 \\times 4}$ (`B = D = 4`)। আপনি প্রতিটি Row থেকে সেই Row-এর গড় বিয়োগ করতে লিখলেন `X - X.mean(dim=1)` (`keepdim=True` ছাড়া)! `X.mean(dim=1)`-এর Shape হয় `[4]`, আর Right-aligned Broadcasting-এ `[4, 4] - [4]` চুপচাপ ভুল **Column-wise** বিয়োগ চালিয়ে দেয়! কিন্তু **`X - X.mean(dim=1, keepdim=True)`** সব সময় `[4, 1]` বানিয়ে সঠিক Row-wise বিয়োগ নিশ্চিত করে!\n2. **`torch.std` বনাম `numpy.std` / `StandardScaler`:**\n\n| লাইব্রেরি / API | ডিফল্ট Divisor | নাম ও বিশেষ সতর্কতা |\n| --- | --- | --- |\n| `torch.std(x)` / `torch.var(x)` | $N - 1$ (`correction=1`) | Sample Estimate — $N = 1$ হলে `0/0 = NaN`! |\n| `numpy.std(x)` / `StandardScaler` | $N$ (`ddof=0` / `correction=0`) | Population Scale — আমাদের Wine Quality Workflow-র চুক্তি |\n\n**পরের পাঠে কী শিখব?** Reduction-এর গাণিতিক স্কেলিং পাকা হলো—এবার দেখব **Dtype, Device ও সংখ্যার হিসাবের সীমা** (`float64` বনাম `float32` বনাম `float16`, GPU Async Timing ও Reproducibility)!"
+          "body": "### Option A (Pure Python) যাচাই করা Output\n- `Sum grad: 6.0 | Mean grad: 2.0 | Ratio: 3.0`\n- `Full 4-row grad: 30.00 | Weighted (3/4, 1/4): 30.00 | Naive sum: 82.666667`\n\n### Option B — `PyTorch`-এ Sum/Mean অনুপাত ও অসমান Microbatch Gradient যাচাই\n```python\nimport torch\n\nx = torch.tensor(2.0, dtype=torch.float64, requires_grad=True)\ncoeff = torch.tensor([1.0, 2.0, 3.0], dtype=x.dtype)\ngsum = torch.autograd.grad((x * coeff).sum(), x)[0]\ngmean = torch.autograd.grad((x * coeff).mean(), x)[0]\nprint(gsum.item(), gmean.item(), (gsum / gmean).item())\n\nc4 = torch.tensor([1.0, 2.0, 3.0, 4.0], dtype=torch.float64)\nfull = torch.tensor(2.0, dtype=c4.dtype, requires_grad=True)\nfull_grad = torch.autograd.grad((full * c4).square().mean(), full)[0]\n\nacc = torch.tensor(2.0, dtype=c4.dtype, requires_grad=True)\nnaive = torch.tensor(2.0, dtype=c4.dtype, requires_grad=True)\nfor batch in (c4[:3], c4[3:]):\n    ((acc * batch).square().mean() * len(batch) / len(c4)).backward()\n    (naive * batch).square().mean().backward()\ntorch.testing.assert_close(acc.grad, full_grad)\nprint(full_grad.item(), acc.grad.item(), round(naive.grad.item(), 6))\n```\n**PyTorch রেফারেন্স Output:** `6.0 2.0 3.0` এবং `30.0 30.0 82.666667`!\n\n### আরও ২টি সূক্ষ্ম ফাঁদ চিনে রাখুন\n1. **`keepdim=True` এবং বর্গাকার Batch-এর সহজে চোখে পড়ে না এমন ভুল:** ধরুন $X \\in \\mathbb{R}^{4 \\times 4}$ (`B = D = 4`)। আপনি প্রতিটি Row থেকে সেই Row-এর গড় বিয়োগ করতে লিখলেন `X - X.mean(dim=1)` (`keepdim=True` ছাড়া)! `X.mean(dim=1)`-এর Shape হয় `[4]`, আর Right-aligned Broadcasting-এ `[4, 4] - [4]` চুপচাপ ভুল **Column-wise** বিয়োগ চালিয়ে দেয়! কিন্তু **`X - X.mean(dim=1, keepdim=True)`** সব সময় `[4, 1]` বানিয়ে সঠিক Row-wise বিয়োগ নিশ্চিত করে!\n2. **`torch.std` বনাম `numpy.std` / `StandardScaler`:**\n\n| লাইব্রেরি / API | ডিফল্ট Divisor | নাম ও বিশেষ সতর্কতা |\n| --- | --- | --- |\n| `torch.std(x)` / `torch.var(x)` | $N - 1$ (`correction=1`) | Sample Estimate — $N = 1$ হলে `0/0 = NaN`! |\n| `numpy.std(x)` / `StandardScaler` | $N$ (`ddof=0` / `correction=0`) | Population Scale — আমাদের Wine Quality Workflow-র চুক্তি |\n\n**পরের পাঠে কী শিখব?** Reduction-এর Scaling-এর হিসাব আমরা দেখলাম—এবার দেখব **Dtype, Device ও সংখ্যার হিসাবের সীমা** (`float64` বনাম `float32` বনাম `float16`, GPU Async Timing ও Reproducibility)!"
         },
         {
           "type": "concept_check",
@@ -1411,13 +1411,13 @@
               "concept": "Uneven Microbatch Accumulation",
               "level": "Core",
               "question": "বড় Batch $N = 10$ কে আপনি `6` এবং `4` আকারের দুটি অসমান Microbatch-এ ভাগ করে Gradient Accumulate করছেন। প্রতিটিতে `.mean() / 2` চালালে কি সঠিক Global Gradient আসবে?",
-              "answer": "**না!** `.mean() / 2` দিলে উভয় Microbatch-কে সমান `0.5` ওজন দেওয়া হয়—ফলে ছোট ৪-Row Batch-এর প্রতিটি Sample বড় ৬-Row Batch-এর প্রতিটি Sample-এর চেয়ে ১.৫ গুণ বেশি গুরুত্ব পেয়ে যায়! সঠিক স্কেলিং হলো প্রথমটিতে `6/10` (`0.6`) এবং দ্বিতীয়টিতে `4/10` (`0.4`)।",
+              "answer": "**না!** `.mean() / 2` দিলে উভয় Microbatch-কে সমান `0.5` ওজন দেওয়া হয়—ফলে ছোট ৪-Row Batch-এর প্রতিটি Sample বড় ৬-Row Batch-এর প্রতিটি Sample-এর চেয়ে ১.৫ গুণ বেশি গুরুত্ব পেয়ে যায়! সঠিক Scaling হলো প্রথমটিতে `6/10` (`0.6`) এবং দ্বিতীয়টিতে `4/10` (`0.4`)।",
               "followUp": "একই কাজ আরও সহজে কীভাবে লেখা যায়? প্রতিটি Microbatch-এ `reduction='sum'` চালিয়ে শেষে মোট $N$ দিয়ে ভাগ করে (`loss_sum / N`)!"
             },
             {
               "concept": "Why BatchNorm Breaks Microbatch Equivalence",
               "level": "Intermediate",
-              "question": "সঠিক $\\frac{m_k}{N}$ স্কেলিং করার পরও `BatchNorm` থাকা Network-এ ৪টি Microbatch (size 8) Accumulate করা আর ১টি পূর্ণ Batch (size 32) চালানো হুবহু এক ফল দেয় না কেন?",
+              "question": "সঠিক $\\frac{m_k}{N}$ Scaling করার পরও `BatchNorm` থাকা Network-এ ৪টি Microbatch (size 8) Accumulate করা আর ১টি পূর্ণ Batch (size 32) চালানো হুবহু এক ফল দেয় না কেন?",
               "answer": "কারণ `BatchNorm` প্রতিটি Forward Pass-এ বর্তমান Microbatch-এর (মাত্র ৮টি Sample-এর) নিজস্ব Mean ও Variance দিয়ে Normalize করে! ফলে ৪টি আলাদা ছোট Batch-এর Statistics আর পূর্ণ ৩২-Sample Batch-এর Statistics আলাদা হয়। এ জন্যই বড় Microbatch Accumulation-এ `BatchNorm`-এর বদলে `LayerNorm` বা `GroupNorm` জনপ্রিয়।",
               "followUp": "Dropout-ও কি হুবহু সমতা নষ্ট করে? যদি Random Seed আলাদা থাকে তবে হ্যাঁ—তবে Expected Value একই থাকে; `BatchNorm`-এর মতো Systematic Bias তৈরি হয় না।"
             },
@@ -1440,7 +1440,7 @@
         {
           "type": "callout",
           "title": "নিজে যাচাই করার অনুশীলন",
-          "body": "বড় Sequence বা Microbatch কোড লেখার আগে সব সময় নিজেকে জিজ্ঞেস করুন: **আমার Global Numerator কী আর Global Denominator কী?** প্রতিটি Microbatch-এ `sum` নিয়ে শেষে মোট বৈধ উপাদান $N$ দিয়ে ভাগ করলে অসমান Batch-এর স্কেলিং বাগ কখনোই ঢুকতে পারে না!"
+          "body": "বড় Sequence বা Microbatch কোড লেখার আগে সব সময় নিজেকে জিজ্ঞেস করুন: **আমার Global Numerator কী আর Global Denominator কী?** প্রতিটি Microbatch-এ `sum` নিয়ে শেষে মোট বৈধ উপাদান $N$ দিয়ে ভাগ করলে অসমান Batch-এর Scaling বাগ কখনোই ঢুকতে পারে না!"
         },
         {
           "type": "checkpoint",
@@ -1462,7 +1462,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "সঠিক `dtype` এবং `device` বেছে নেওয়া মানে **Memory, গতি এবং সংখ্যাসূচক Precision-এর মধ্যে সচেতন ভারসাম্য** রাখা। আজ আমরা শিখব `float64`, `float32`, `float16` ও `bfloat16`-এর সীমা ও অপূরণীয় Overflow/Underflow ক্ষতি, কেন `x.to()` In-place নয়, GPU-র Asynchronous Timing ফাঁদ, এবং Reproducibility-র বাস্তব শর্ত!",
+          "goal": "`dtype` আর `device` বেছে নেওয়ার সময় Memory, গতি আর Precision-এর মধ্যে ভারসাম্য রাখতে হয়। এই পাঠে `float64`, `float32`, `float16` ও `bfloat16`-এর সীমা দেখব। Overflow বা Underflow-এ কোন তথ্য আর ফেরানো যায় না, `x.to()` কেন In-place নয়, GPU-র Asynchronous কাজের সময় কীভাবে মাপতে হয়, আর Reproducibility-র জন্য কী শর্ত মানতে হয়, সেটাও দেখব।",
           "prerequisites": [
             "আগের পাঠ: Payload Bytes ও Tensor Contract",
             "Floating-point সংখ্যার ধারণা (`inf`, `NaN`)",
@@ -1692,14 +1692,14 @@
               "concept": "Reproducibility Reality",
               "level": "Senior",
               "question": "`torch.manual_seed(42)` দেওয়ার পরও আমার ল্যাপটপ আর Linux CI সার্ভারের ফলাফলে `1e-7` পার্থক্য আসছে—কোড কি বাগি?",
-              "answer": "সাধারণত না! ভিন্ন CPU/GPU আর্কিটেকচার, ভিন্ন Parallel Threading বা BLAS/cuDNN Kernel-এ Floating-point যোগের ক্রম $(a+b)+c$ বনাম $a+(b+c)$ বদলে গেলে সামান্য Rounding পার্থক্য স্বাভাবিকভাবেই আসে। তাই বিট-বাই-বিট সমতা আশা না করে Environment নথিভুক্ত করে `atol`/`rtol` Tolerance দিয়ে যাচাই করতে হয়।",
+              "answer": "সাধারণত না! ভিন্ন CPU/GPU Architecture, ভিন্ন Parallel Threading বা BLAS/cuDNN Kernel-এ Floating-point যোগের ক্রম $(a+b)+c$ বনাম $a+(b+c)$ বদলে গেলে সামান্য Rounding পার্থক্য স্বাভাবিকভাবেই আসে। তাই বিট-বাই-বিট সমতা আশা না করে Environment নথিভুক্ত করে `atol`/`rtol` Tolerance দিয়ে যাচাই করতে হয়।",
               "followUp": "Strict Determinism চাইলে PyTorch-এ কোন সুইচ আছে? `torch.use_deterministic_algorithms(True)` (যদিও এতে কিছু অপারেশনের গতি কমতে পারে)।"
             }
           ]
         },
         {
           "type": "callout",
-          "title": "দ্রুত ৬-Attribute ডিবাগিং চেকলিস্ট",
+          "title": "দ্রুত ৬-Attribute Debugging Checklist",
           "body": "কোডে কোনো অদ্ভুত আচরণ দেখলেই সবার আগে ৬টি Attribute একসঙ্গে `print` বা `assert` করুন:\n\n`shape`, `dtype`, `device`, `requires_grad`, `is_leaf`, `torch.isfinite(x).all()`\n\n> Error চাপা দিতে হুট করে `.cpu()` বা `.detach()` বসিয়ে দেবেন না—আগে মূল কারণ চিহ্নিত করুন!"
         },
         {
@@ -1722,7 +1722,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "PyTorch কীভাবে শুধু Forward কোড দেখেই উল্টো পথে নিখুঁত Derivative বের করে ফেলে? আজ আমরা ঢুকছি **PyTorch Autograd-এর হৃদস্পন্দন Dynamic Computational Graph**-এ! শিখব **Leaf বনাম Non-leaf Tensor**, `grad_fn` ও `retain_grad()`, `.to()` দিয়ে Leaf নষ্ট হওয়ার গোপন ফাঁদ, In-place Version Counter এবং `grad_fn` যখন `None` হয় তখন কোথায় খুঁজতে হয়!",
+          "goal": "PyTorch কীভাবে Forward Pass-এর হিসাব ধরে উল্টো দিকে Derivative বের করে? এই পাঠে আমরা **PyTorch Autograd-এর Dynamic Computational Graph** বুঝব। দেখব **Leaf বনাম Non-leaf Tensor**, `grad_fn` ও `retain_grad()`, `.to()` দিয়ে Leaf নষ্ট হওয়ার সহজে চোখে পড়ে না এমন ভুল, In-place Version Counter এবং `grad_fn` যখন `None` হয় তখন কোথায় খুঁজতে হয়!",
           "prerequisites": [
             "আগের পাঠ: Tensor Contract ও Dtype/Device",
             "Chain Rule (যৌগিক ফাংশনের Derivative)",
@@ -1795,8 +1795,8 @@
         },
         {
           "type": "text",
-          "title": "৪. কোডের Output, Option B (`PyTorch`), `.to()` Leaf ফাঁদ ও `grad_fn=None` ডিবাগিং",
-          "body": "### Option A (Pure Python) যাচাই করা Output\n- `x.is_leaf: True | y.is_leaf: False`\n- `Forward -> y: 9.0 | loss: 15.0`\n- `Backward -> x.grad: 8.0 | y.grad (if retained): 1.0`\n\n### Option B — `PyTorch`-এ Leaf, Non-leaf ও `retain_grad()` পর্যবেক্ষণ\n```python\nimport torch\n\nx = torch.tensor(3.0, dtype=torch.float64, requires_grad=True)\ny = x.square()\ny.retain_grad()\nloss = y + 2.0 * x\nloss.backward()\nassert x.is_leaf and not y.is_leaf\nprint(x.grad.item(), y.grad.item())\n```\n**PyTorch রেফারেন্স Output:** `8.0 1.0`!\n\n### নতুনদের সবচেয়ে বেশি বিভ্রান্ত করা ২টি গোপন ফাঁদ\n1. **`.to()` কীভাবে Leaf Parameter নষ্ট করে!**\n   আপনি যদি লেখেন `w = torch.randn(3, requires_grad=True).to(device)`, তবে `.to(device)` নিজেই একটি Differentiable Operation (`ToCopyBackward`) হয়ে যায়! ফলে নতুন `w` হয়ে যায় **Non-leaf (`w.is_leaf == False`)**, আর `backward()` শেষে `w.grad` থাকে **`None`**!\n   - **সঠিক উপায়:** সরাসরি কাঙ্ক্ষিত `device` ও `dtype` দিয়ে Leaf তৈরি করুন: `w = torch.randn(3, dtype=torch.float64, device=device, requires_grad=True)`!\n2. **In-place পরিবর্তনে Version Counter Error:** Forward-এ `y = x.square()` চলার পর `backward()`-এ $2x$ বের করতে `x` সংরক্ষিত থাকে। পরে `x.add_(1)` চালালে Version না মেলায় PyTorch সঙ্গে সঙ্গে `RuntimeError` দেয় (এবং Grad Mode-এ Leaf Parameter-এ সরাসরি In-place পরিবর্তনও আটকে দেয়)।\n\n### `loss.grad_fn` যখন `None` দেখায় — ৫টি জায়গায় খুঁজুন!\n1. মাঝপথে অসতর্ক `.detach()` কল করা।\n2. `with torch.no_grad():` Context-এর ভেতরে Forward হিসাব চালানো।\n3. `.item()` দিয়ে সাধারণ Python `float` বের করে তা দিয়ে পরের হিসাব চালানো।\n4. মাঝপথে NumPy Array-তে নিয়ে আবার `torch.tensor(...)` বানানো।\n5. বিদ্যমান Tensor-এর ওপর আবার `torch.tensor(t)` কল করা।\n\n**পরের পাঠে কী শিখব?** এখানে আমরা একক Scalar `loss.backward()` চালালাম—কিন্তু Output যদি Scalar না হয়ে একটি **Vector** হয়, তখন PyTorch ঠিক কী হিসাব করে? চলুন পরের পাঠে **Vector-Jacobian Product (VJP) ও Backward Seed** শিখি!"
+          "title": "৪. কোডের Output, Option B (`PyTorch`), `.to()` Leaf ফাঁদ ও `grad_fn=None` Debugging",
+          "body": "### Option A (Pure Python) যাচাই করা Output\n- `x.is_leaf: True | y.is_leaf: False`\n- `Forward -> y: 9.0 | loss: 15.0`\n- `Backward -> x.grad: 8.0 | y.grad (if retained): 1.0`\n\n### Option B — `PyTorch`-এ Leaf, Non-leaf ও `retain_grad()` পর্যবেক্ষণ\n```python\nimport torch\n\nx = torch.tensor(3.0, dtype=torch.float64, requires_grad=True)\ny = x.square()\ny.retain_grad()\nloss = y + 2.0 * x\nloss.backward()\nassert x.is_leaf and not y.is_leaf\nprint(x.grad.item(), y.grad.item())\n```\n**PyTorch রেফারেন্স Output:** `8.0 1.0`!\n\n### নতুনদের সবচেয়ে বেশি বিভ্রান্ত করা ২টি সহজে চোখে পড়ে না এমন ভুল\n1. **`.to()` কীভাবে Leaf Parameter নষ্ট করে!**\n   আপনি যদি লেখেন `w = torch.randn(3, requires_grad=True).to(device)`, তবে `.to(device)` নিজেই একটি Differentiable Operation (`ToCopyBackward`) হয়ে যায়! ফলে নতুন `w` হয়ে যায় **Non-leaf (`w.is_leaf == False`)**, আর `backward()` শেষে `w.grad` থাকে **`None`**!\n   - **সঠিক উপায়:** সরাসরি কাঙ্ক্ষিত `device` ও `dtype` দিয়ে Leaf তৈরি করুন: `w = torch.randn(3, dtype=torch.float64, device=device, requires_grad=True)`!\n2. **In-place পরিবর্তনে Version Counter Error:** Forward-এ `y = x.square()` চলার পর `backward()`-এ $2x$ বের করতে `x` সংরক্ষিত থাকে। পরে `x.add_(1)` চালালে Version না মেলায় PyTorch সঙ্গে সঙ্গে `RuntimeError` দেয় (এবং Grad Mode-এ Leaf Parameter-এ সরাসরি In-place পরিবর্তনও আটকে দেয়)।\n\n### `loss.grad_fn` যখন `None` দেখায় — ৫টি জায়গায় খুঁজুন!\n1. মাঝপথে অসতর্ক `.detach()` কল করা।\n2. `with torch.no_grad():` Context-এর ভেতরে Forward হিসাব চালানো।\n3. `.item()` দিয়ে সাধারণ Python `float` বের করে তা দিয়ে পরের হিসাব চালানো।\n4. মাঝপথে NumPy Array-তে নিয়ে আবার `torch.tensor(...)` বানানো।\n5. বিদ্যমান Tensor-এর ওপর আবার `torch.tensor(t)` কল করা।\n\n**পরের পাঠে কী শিখব?** এখানে আমরা একক Scalar `loss.backward()` চালালাম—কিন্তু Output যদি Scalar না হয়ে একটি **Vector** হয়, তখন PyTorch ঠিক কী হিসাব করে? চলুন পরের পাঠে **Vector-Jacobian Product (VJP) ও Backward Seed** শিখি!"
         },
         {
           "type": "concept_check",
@@ -1828,7 +1828,7 @@
               "concept": "Leaf vs Non-leaf .grad Policy",
               "level": "Core",
               "question": "সব `requires_grad=True` Tensor-এর `.grad` কি `backward()` শেষে সংরক্ষিত থাকে?",
-              "answer": "না! Memory বাঁচাতে PyTorch কেবল **Leaf Tensor** (`is_leaf=True, requires_grad=True`)-গুলোর `.grad` সংরক্ষণ করে। মাঝপথের Non-leaf Tensor-গুলোর Gradient Chain Rule-এ ব্যবহৃত হওয়ার পরপরই ফেলে দেওয়া হয়—যদি না ডিবাগিংয়ের জন্য আগে থেকেই `y.retain_grad()` কল করা হয়।",
+              "answer": "না! Memory বাঁচাতে PyTorch কেবল **Leaf Tensor** (`is_leaf=True, requires_grad=True`)-গুলোর `.grad` সংরক্ষণ করে। মাঝপথের Non-leaf Tensor-গুলোর Gradient Chain Rule-এ ব্যবহৃত হওয়ার পরপরই ফেলে দেওয়া হয়—যদি না Debugging-এর জন্য আগে থেকেই `y.retain_grad()` কল করা হয়।",
               "followUp": "`y.retain_grad()` কি Training-এর চূড়ান্ত Weight Gradient বদলে দেয়? কখনোই না—এটি কেবল `y.grad` Memory-তে ধরে রাখে।"
             },
             {
@@ -1879,14 +1879,14 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "একক Scalar-এ `loss.backward()` দিব্যি চলে, কিন্তু Vector Output-এ `y.backward()` চালালে PyTorch সঙ্গে সঙ্গে Error দেখিয়ে `grad_outputs` (Seed) চায় কেন? এই পাঠে আমরা দেখব Reverse-mode Autograd-এর আসল গাণিতিক ইঞ্জিন—**Vector-Jacobian Product (VJP)**! শিখব `backward()` বনাম `torch.autograd.grad()`, Reverse-mode VJP বনাম Forward-mode JVP, এবং অব্যবহৃত Input-এ `None` বনাম `0.0`!",
+          "goal": "Scalar Loss-এর জন্য `loss.backward()` সরাসরি চলে। Vector Output-এ `y.backward()` চালালে PyTorch কেন Error দেখায় আর `grad_outputs` (Seed) দিতে বলে? এই পাঠে আমরা দেখব Reverse-mode Autograd-এর আসল গাণিতিক ইঞ্জিন—**Vector-Jacobian Product (VJP)**! শিখব `backward()` বনাম `torch.autograd.grad()`, Reverse-mode VJP বনাম Forward-mode JVP, এবং অব্যবহৃত Input-এ `None` বনাম `0.0`!",
           "prerequisites": [
             "আগের পাঠ: Dynamic Computational Graph ও Chain Rule",
             "Jacobian Matrix ও Dot Product-এর ধারণা",
             "Python list ও nested loop"
           ],
           "outcomes": [
-            "কেন PyTorch বিশাল $m \\times n$ Jacobian না বানিয়েই সরাসরি $v^\\top J_f(x) = \\nabla_x(v^\\top f(x))$ (VJP) হিসাব করে তা হাতে কষে দেখাতে পারবেন।",
+            "কেন PyTorch বিশাল $m \\times n$ Jacobian না বানিয়েই সরাসরি $v^\\top J_f(x) = \\nabla_x(v^\\top f(x))$ (VJP) হিসাব করে তা হাতে হিসাব করে দেখাতে পারবেন।",
             "`y.backward(v)` (`.grad` Buffer-এ Accumulate) বনাম `torch.autograd.grad(y, x, v)` (সরাসরি Tuple Return)-এর পার্থক্য স্পষ্ট করতে পারবেন।",
             "কোটি Parameter থেকে ১টি Scalar Loss ($n \\gg m = 1$)-এ কেন Reverse-mode VJP, Forward-mode JVP-এর চেয়ে বহুগুণ সাশ্রয়ী তা ব্যাখ্যা করতে পারবেন।",
             "`allow_unused=True`-এ `None` (Graph পথই নেই) বনাম `0.0` (পথ আছে কিন্তু Derivative শূন্য)-এর পার্থক্য চিনতে পারবেন।"
@@ -2036,7 +2036,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "PyTorch-এ `backward()` পুরোনো `.grad` মুছে ফেলে না—বরং **আগের মানের সাথে যোগ (`+`) করে**! আজ আমরা শিখব কেন `zero_grad()` ভুলে গেলে Loss অপরিবর্তিত থাকলেও Gradient দ্বিগুণ ($2g$) হয়ে যায়, কেন **একই Graph-এ দ্বিতীয়বার `backward()`** `RuntimeError` দেয়, কেন `retain_graph=True` সাধারণ Training-এর সমাধান নয়, এবং `set_to_none=True` বনাম `0.0` দিয়ে ভরার সূক্ষ্ম Optimizer পার্থক্য!",
+          "goal": "PyTorch-এ `backward()` পুরোনো `.grad` মুছে ফেলে না—বরং **আগের মানের সঙ্গে যোগ (`+`) করে**! আজ আমরা শিখব কেন `zero_grad()` ভুলে গেলে Loss অপরিবর্তিত থাকলেও Gradient দ্বিগুণ ($2g$) হয়ে যায়, কেন **একই Graph-এ দ্বিতীয়বার `backward()`** `RuntimeError` দেয়, কেন `retain_graph=True` সাধারণ Training-এর সমাধান নয়, এবং `set_to_none=True` বনাম `0.0` দিয়ে ভরার সূক্ষ্ম Optimizer পার্থক্য!",
           "prerequisites": [
             "আগের পাঠ: Dynamic Graph ও VJP",
             "Microbatch Gradient Scaling (পাঠ ৮)",
@@ -2046,7 +2046,7 @@
             "একই Parameter-এ দুটি নতুন Forward+Backward চালালে Zeroing ছাড়া কেন Loss $L$-ই থাকে কিন্তু `.grad` হয়ে যায় $2g$ তা প্রমাণ করতে পারবেন।",
             "দুটি নতুন Forward Graph-এ `backward()` চালানো বনাম একই `loss`-এ পরপর দুবার `backward()` চালানোর পার্থক্য ব্যাখ্যা করতে পারবেন।",
             "`zero_grad(set_to_none=True)` বনাম `set_to_none=False` (`0.0`)-এ Momentum ও Weight Decay কীভাবে ভিন্ন আচরণ করে তা বলতে পারবেন।",
-            "Interactive Lab-এর `Accumulate twice` বাটন ও Microbatch `loss / K` বা $\\frac{m_k}{N}$ স্কেলিং নীতি সঠিকভাবে প্রয়োগ করতে পারবেন।"
+            "Interactive Lab-এর `Accumulate twice` বাটন ও Microbatch `loss / K` বা $\\frac{m_k}{N}$ Scaling নীতি সঠিকভাবে প্রয়োগ করতে পারবেন।"
           ]
         },
         {
@@ -2109,8 +2109,8 @@
         },
         {
           "type": "text",
-          "title": "৪. `set_to_none=True` বনাম `0.0`, Microbatch স্কেলিং ও Lab-এর `Accumulate twice`",
-          "body": "### `zero_grad(set_to_none=True)` বনাম `zero_grad(set_to_none=False)`\n\n| পদ্ধতি | Memory আচরণ | Optimizer-এ (Momentum / Weight Decay) প্রভাব |\n| --- | --- | --- |\n| `zero_grad(set_to_none=True)` | `.grad` রেফারেন্স `None` করে (আধুনিক ডিফল্ট, দ্রুততর) | `grad is None` হলে Optimizer ওই Parameter-এর আপডেট পুরোপুরি **Skip** করে! |\n| `zero_grad(set_to_none=False)` | বিদ্যমান `.grad` Buffer-এ `0.0` লেখে | `0.0` Tensor থাকলেও Momentum বা Weight Decay-এর কারণে Parameter তবুও **বদলাতে পারে**! |\n\n> আমাদের ম্যানুয়াল উদাহরণগুলোতে উদ্দেশ্য পরিষ্কার রাখতে আমরা সরাসরি `x.grad = None` ব্যবহার করেছি।\n\n### একাধিক Microbatch-এ সঠিক স্কেলিং ও Interactive Lab নোট\n- **সমান $K$ টি Microbatch:** প্রতি ধাপে `(loss / K).backward()` চালিয়ে $K$ ধাপ পর `optimizer.step()` + `optimizer.zero_grad(set_to_none=True)`!\n- **অসমান Microbatch:** প্রতিটি Microbatch-এর Mean-কে $\\frac{m_k}{N}$ দিয়ে গুণ করে `backward()` চালান।\n- **সামনের Lab-এর `Accumulate twice` বাটন:** বাটনটি চাপলে একই Parameter-এ ২টি পাসের সমতুল্য $2g$ Gradient দেখায়—কিন্তু Loss $L$ একই থাকে! এরপর Step নিলে ওই $2g$ দিয়েই আপডেট হয়ে Accumulation সংখ্যা আবার `1`-এ ফিরে আসে।\n\n**পরের পাঠে কী শিখব?** Graph-এর জীবনচক্র তো বুঝলাম—এবার দেখব **`detach()`, `clone()` এবং NumPy** ব্যবহার করতে গিয়ে কীভাবে অজান্তে Computational Graph ছিঁড়ে যায় অথবা Shared Storage বদলে `backward()` ক্র্যাশ করে!"
+          "title": "৪. `set_to_none=True` বনাম `0.0`, Microbatch Scaling ও Lab-এর `Accumulate twice`",
+          "body": "### `zero_grad(set_to_none=True)` বনাম `zero_grad(set_to_none=False)`\n\n| পদ্ধতি | Memory আচরণ | Optimizer-এ (Momentum / Weight Decay) প্রভাব |\n| --- | --- | --- |\n| `zero_grad(set_to_none=True)` | `.grad` রেফারেন্স `None` করে (আধুনিক ডিফল্ট, দ্রুততর) | `grad is None` হলে Optimizer ওই Parameter-এর আপডেট পুরোপুরি **Skip** করে! |\n| `zero_grad(set_to_none=False)` | বিদ্যমান `.grad` Buffer-এ `0.0` লেখে | `0.0` Tensor থাকলেও Momentum বা Weight Decay-এর কারণে Parameter তবুও **বদলাতে পারে**! |\n\n> আমাদের ম্যানুয়াল উদাহরণগুলোতে উদ্দেশ্য পরিষ্কার রাখতে আমরা সরাসরি `x.grad = None` ব্যবহার করেছি।\n\n### একাধিক Microbatch-এ সঠিক Scaling ও Interactive Lab নোট\n- **সমান $K$ টি Microbatch:** প্রতি ধাপে `(loss / K).backward()` চালিয়ে $K$ ধাপ পর `optimizer.step()` + `optimizer.zero_grad(set_to_none=True)`!\n- **অসমান Microbatch:** প্রতিটি Microbatch-এর Mean-কে $\\frac{m_k}{N}$ দিয়ে গুণ করে `backward()` চালান।\n- **সামনের Lab-এর `Accumulate twice` বাটন:** বাটনটি চাপলে একই Parameter-এ ২টি পাসের সমতুল্য $2g$ Gradient দেখায়—কিন্তু Loss $L$ একই থাকে! এরপর Step নিলে ওই $2g$ দিয়েই আপডেট হয়ে Accumulation সংখ্যা আবার `1`-এ ফিরে আসে।\n\n**পরের পাঠে কী শিখব?** Graph-এর জীবনচক্র তো বুঝলাম—এবার দেখব **`detach()`, `clone()` এবং NumPy** ব্যবহার করতে গিয়ে কীভাবে অজান্তে Computational Graph ছিঁড়ে যায় অথবা Shared Storage বদলে `backward()` ক্র্যাশ করে!"
         },
         {
           "type": "concept_check",
@@ -2129,7 +2129,7 @@
         {
           "type": "interview_qa",
           "title": "Gradient Accumulation ও Graph Lifecycle — সম্ভাব্য Interview প্রশ্ন ও উত্তর",
-          "intro": "Training Loop ডিবাগিংয়ে সবচেয়ে বেশি আসা ৫টি Accumulation ও Graph প্রশ্ন অনুশীলন করুন।",
+          "intro": "Training Loop Debugging-এ সবচেয়ে বেশি আসা ৫টি Accumulation ও Graph প্রশ্ন অনুশীলন করুন।",
           "items": [
             {
               "concept": "Why PyTorch Accumulates by Default",
@@ -2170,8 +2170,8 @@
         },
         {
           "type": "callout",
-          "title": "ডিবাগিং চেকলিস্ট: Loss এক, Gradient দ্বিগুণ?",
-          "body": "১. প্রতি Step-এ `zero_grad(set_to_none=True)` (বা `x.grad = None`) চলছে কি না দেখুন।\n২. `mean`-এর বদলে `sum` বা ভুল Microbatch স্কেলিং ঢুকেছে কি না দেখুন।\n৩. মূল কারণ না ধরে কখনোই `retain_graph=True` দিয়ে Error চাপা দেবেন না!"
+          "title": "Debugging Checklist: Loss এক, Gradient দ্বিগুণ?",
+          "body": "১. প্রতি Step-এ `zero_grad(set_to_none=True)` (বা `x.grad = None`) চলছে কি না দেখুন।\n২. `mean`-এর বদলে `sum` বা ভুল Microbatch Scaling ঢুকেছে কি না দেখুন।\n৩. মূল কারণ না ধরে কখনোই `retain_graph=True` দিয়ে Error চাপা দেবেন না!"
         },
         {
           "type": "checkpoint",
@@ -2184,8 +2184,8 @@
     },
     {
       "id": "ch15_detach",
-      "title": "detach(), clone(), NumPy এবং অজান্তে Graph ছিঁড়ে যাওয়া",
-      "subtitle": "ভেতরের সংখ্যার মান সমান হওয়া মানেই Computational Graph এক থাকা নয়",
+      "title": "detach(), clone(), NumPy এবং কখন অজান্তেই Graph থেকে Tensor বিচ্ছিন্ন হয়",
+      "subtitle": "Tensor-এর মান সমান হওয়া মানেই Computational Graph এক থাকা নয়",
       "duration": "51 min",
       "icon": "grid_view",
       "blocks": [
@@ -2193,7 +2193,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "ভেতরের সংখ্যার মান `[1.0, 2.0]` হুবহু সমান হওয়া মানেই দুটি Tensor-এর **Storage মালিকানা** বা **Computational Graph সংযোগ** এক নয়! আজ আমরা শিখব `detach()`, `clone()` এবং `detach().clone()`-এর সুস্পষ্ট পার্থক্য, কেন `alias = value.detach(); alias.add_(1)` চালালে `loss.backward()` Version Counter Error দিয়ে থেমে যায়, Logging-এ `.item()`-এর সীমারেখা, এবং RL/GAN-এ কখন `detach()` ইচ্ছাকৃতভাবে জরুরি!",
+          "goal": "দুটি Tensor-এ একই মান `[1.0, 2.0]` থাকতে পারে। তারা একই **Storage** ব্যবহার করছে কি না এবং একই **Computational Graph**-এ যুক্ত কি না, তা আলাদা করে দেখতে হয়। আজ আমরা শিখব `detach()`, `clone()` এবং `detach().clone()`-এর সুস্পষ্ট পার্থক্য, কেন `alias = value.detach(); alias.add_(1)` চালালে `loss.backward()` Version Counter Error দিয়ে থেমে যায়, Logging-এ `.item()`-এর সীমারেখা, এবং RL/GAN-এ কখন `detach()` ইচ্ছাকৃতভাবে জরুরি!",
           "prerequisites": [
             "আগের পাঠ: Autograd Graph, Leaf ও Version Counter",
             "Storage Alias বনাম Independent Copy (পাঠ ২ ও ৪)",
@@ -2293,7 +2293,7 @@
             {
               "concept": "Running Loss Memory Leak",
               "level": "Core",
-              "question": "একটি Training Loop-এ ১০০০ Batch পর হঠাৎ GPU Out-of-Memory (OOM) হয়ে যাচ্ছে, অথচ ১ম Batch দিব্যি চলেছিল—`running_loss += loss` লাইনটি এর জন্য কীভাবে দায়ী?",
+              "question": "একটি Training Loop-এ ১০০০ Batch পর হঠাৎ GPU Out-of-Memory (OOM) হয়ে যাচ্ছে, অথচ ১ম Batch ঠিকভাবেই চলেছিল—`running_loss += loss` লাইনটি এর জন্য কীভাবে দায়ী?",
               "answer": "`loss` হলো Computational Graph-এর সঙ্গে যুক্ত একটি Tensor! `running_loss += loss` করলে প্রতিটি Batch-এর পুরো Forward Activation Graph `running_loss`-এর মাধ্যমে Memory-তে আটকে থাকে এবং Garbage Collect হতে পারে না। সমাধান: `running_loss += loss.item()` (অথবা `loss.detach()`)।",
               "followUp": "GPU-তে প্রতি Step-এ `loss.item()` না করে Sync বাঁচিয়ে নিরাপদে Accumulate করবেন কীভাবে? GPU-তে `running_loss += loss.detach()` জমিয়ে কেবল Epoch শেষে একবার `.item()` কল করে!"
             },
@@ -2302,13 +2302,13 @@
               "level": "Senior",
               "question": "Quantization বা VQ-VAE-তে `y = x + (round(x) - x).detach()` লাইনটি ঠিক কী জাদু করে?",
               "answer": "Forward Pass-এ `x` আর `-x` কাটাকাটি হয়ে ঠিক **`round(x)`** (Quantized মান) দেয়! কিন্তু Backward Pass-এ `(round(x) - x).detach()`-এর Derivative `0` হওয়ায় $\\frac{dy}{dx} = 1$ পাওয়া যায়—অর্থাৎ Non-differentiable `round()` অপারেশনের ভেতর দিয়েও সোজা Gradient প্রবাহিত হয় (Straight-Through Estimator)!",
-              "followUp": "একই `detach()` কৌশল আর কোন আধুনিক আর্কিটেকচারে মূল ভূমিকা রাখে? VQ-VAE, Gumbel-Softmax (Hard mode), BYOL/SimSiam এবং RL Target Networks!"
+              "followUp": "একই `detach()` কৌশল আর কোন আধুনিক Architecture-এ মূল ভূমিকা রাখে? VQ-VAE, Gumbel-Softmax (Hard mode), BYOL/SimSiam এবং RL Target Networks!"
             },
             {
               "concept": "Why Version Counter Fails on Detached Alias",
               "level": "Intermediate",
               "question": "`alias = value.detach()` তো Graph থেকে বিচ্ছিন্ন—তাহলে `alias.add_(1)` চালালে মূল `loss.backward()` কেন `RuntimeError` দেয়?",
-              "answer": "কারণ `detach()` কেবল **Graph সংযোগ** কেটেছে, **Memory Storage** নয়! `alias` ও `value` একই RAM/VRAM ঠিকানার দিকে তাকিয়ে থাকায় `alias.add_(1)` মূল `value`-র মান ও Version Counter বদলে দেয়—আর `loss.backward()`-এর জন্য সংরক্ষিত পুরোনো মান নষ্ট হয়ে যাওয়ায় PyTorch `RuntimeError` ছুড়ে দেয়।",
+              "answer": "কারণ `detach()` কেবল **Graph সংযোগ** কেটেছে, **Memory Storage** নয়! `alias` ও `value` একই RAM/VRAM ঠিকানার দিকে তাকিয়ে থাকায় `alias.add_(1)` মূল `value`-র মান ও Version Counter বদলে দেয়—আর `loss.backward()`-এর জন্য সংরক্ষিত পুরোনো মান নষ্ট হয়ে যাওয়ায় PyTorch `RuntimeError` দেয়।",
               "followUp": "যদি `alias = value.detach().clone()` করতাম তবে কি `alias.add_(1)` Error দিত? না—কারণ Storage আলাদা হওয়ায় মূল `value` অক্ষত থাকত!"
             },
             {
@@ -2345,7 +2345,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "PyTorch-এ Validation বা Inference লেখার সময় নতুনদের সবচেয়ে বড় ভুল হলো `model.eval()` কল করেই ভেবে নেওয়া যে Gradient রেকর্ডিং বন্ধ হয়ে গেছে—অথবা `torch.no_grad()` দিয়েই ভেবে নেওয়া যে `Dropout` বন্ধ হয়ে গেছে! আজ আমরা পরিষ্কার করব **`torch.no_grad()`**, **`torch.inference_mode()`** এবং **`model.eval()`**—এই তিনটি সম্পূর্ণ ভিন্ন নিয়ন্ত্রণ সুইচ এবং **Forward → Backward → `no_grad()` Update → Zero Grad** চক্র!",
+          "goal": "PyTorch-এ Validation বা Inference লেখার সময় দুটো ভুল সহজেই হয়। `model.eval()` চালালে Gradient রেকর্ডিং বন্ধ হয়েছে ধরে নেওয়া, কিংবা `torch.no_grad()` চালালে `Dropout` বন্ধ হয়েছে মনে করা। এই পাঠে **`torch.no_grad()`**, **`torch.inference_mode()`** আর **`model.eval()`** কোনটা কী করে, তা দেখব। তারপর **Forward → Backward → `no_grad()` Update → Zero Grad** ধাপগুলো মিলিয়ে নেব।",
           "prerequisites": [
             "আগের পাঠ: Autograd Graph ও `detach()`",
             "Parameter Update নিয়ম ($w \\leftarrow w - \\eta \\nabla_w L$)",
@@ -2502,7 +2502,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "আলাদাভাবে $\\sigma(z)$ বের করে তারপর $\\log$ নিলে $z = \\pm 100$ হলেই কোড `NaN`/`inf` হয়ে ভেঙে পড়ে! আজ আমরা **Interactive Autograd Lab** ও বাস্তব ১৬-Row Wine Quality ডেটায় দেখব সংখ্যাসূচকভাবে স্থিতিশীল **`BCEWithLogits`**, খাতা-কলমের Analytical Gradient ($\\frac{1}{B}X^\\top(\\sigma(z)-y)$), Heatmap ও Normalized Arrow পাঠ, এবং কেন বড় Learning Rate দিলে নিখুঁত Gradient-এও Loss উল্টো বেড়ে যায়!",
+          "goal": "আগে $\\sigma(z)$ হিসাব করে তারপর $\\log$ নিলে $z = \\pm 100$-এ `NaN` বা `inf` আসতে পারে। **Interactive Autograd Lab** আর Wine Quality Data-র ১৬টি Row দিয়ে দেখব, সংখ্যাগতভাবে স্থিতিশীল **`BCEWithLogits`** কীভাবে কাজ করে। হাতে Analytical Gradient ($\\frac{1}{B}X^\\top(\\sigma(z)-y)$) হিসাব করব এবং Heatmap ও Normalized Arrow পড়ব। Gradient ঠিক হলেও বেশি Learning Rate-এ Loss কেন বেড়ে যেতে পারে, সেটাও দেখব।",
           "prerequisites": [
             "আগের পাঠ: Autograd Graph, VJP ও Modes",
             "Sigmoid ফাংশন ও Binary Cross-Entropy",
@@ -2732,7 +2732,7 @@
         {
           "type": "text",
           "title": "৫. কোডের Output, Option B (`PyTorch`), Heatmap পাঠ ও বড় Learning Rate-এর সত্য",
-          "body": "### Option A (Pure Python) যাচাই করা Output\n- `Extreme z=±100 stable BCE: 0.0` *(কোনো Overflow বা `NaN` ছাড়াই নিখুঁত শূন্য!)*\n- `2x2 zero-param -> loss=0.693147 | gw=[-0.5, 0.25] | gb=0.0`\n\n### Option B — `PyTorch`-এ Autograd বনাম Analytical BCE Gradient তুলনা\n```python\nimport torch\nimport torch.nn.functional as F\n\nX = torch.tensor([[1.0, 2.0], [3.0, 1.0]], dtype=torch.float64)\ny = torch.tensor([0.0, 1.0], dtype=X.dtype)\nw = torch.zeros(2, dtype=X.dtype, requires_grad=True)\nb = torch.zeros((), dtype=X.dtype, requires_grad=True)\nloss = F.binary_cross_entropy_with_logits(X @ w + b, y)\ngw, gb = torch.autograd.grad(loss, (w, b))\nresidual = torch.sigmoid(X @ w + b).detach() - y\nassert torch.allclose(gw, X.T @ residual / len(y))\nprint(loss.item(), gw, gb)\n```\n**PyTorch রেফারেন্স Output:** `0.6931471805599453 tensor([-0.5000, 0.2500], dtype=torch.float64) tensor(0., dtype=torch.float64)`!\n\n### ল্যাবের Heatmap, Normalized Arrow ও Overshoot-এর মূল কথা\n1. **2D Heatmap Slice:** উপরের Lab-এর Heatmap-টি বর্তমান Bias $b$ স্থির রেখে কেবল $(w_1, w_2)$-এর সাপেক্ষে Loss তলের একটি 2D Slice দেখায়।\n2. **Normalized Arrow:** তীরচিহ্নটি ঋণাত্মক Gradient ($-\\nabla_w L$)-এর দিক দেখায়; পরিষ্কার দেখাতে দৈর্ঘ্য Normalized রাখা হয়েছে, তাই Arrow-এর দৈর্ঘ্য Step-এর সমান নয়—আর Step নিলে $(w_1, w_2)$-এর সঙ্গে $b$-ও আপডেট হয়!\n3. **বড় Learning Rate-এ Loss বাড়ে কেন?** ক্যালকুলাস কেবল নিশ্চিত করে যে **অতি ক্ষুদ্র ধাপে ($\\eta \\to 0^+$)** $-\\nabla_\\theta L$ দিকে গেলে Loss কমবে! সসীম বড় $\\eta$ নিলে উপত্যকা পেরিয়ে উল্টো পাশের উঁচু পাহাড়ে উঠে গিয়ে Loss আগের চেয়েও বেড়ে যায় (যেমন ওপরের চার্টে $\\eta = 12.0$-এ হলো)—এটি কখনোই Autograd-এর বাগ নয়!\n4. **কোনো Silent Clipping নয়:** প্রস্তাবিত ধাপ Lab-এর `[-4, 4]` সীমা ছাড়ালে দিক বিকৃত না করতে মান নীরবে Clip করা হয় না। আর এই ১৬টি Training Row-তে Loss কমা কেবল প্রমাণ করে Gradient বাস্তবায়ন সঠিক—অদেখা Test Data-র Generalization নয়!\n\n**পরের পাঠে কী শিখব?** এখানে আমাদের হাতে-কলমের Analytical সূত্র থাকায় Autograd মিলিয়ে নিতে পারলাম—কিন্তু জটিল কাস্টম ফাংশনে যখন খাতার সূত্র ভুল হওয়ার ভয় থাকে, তখন তৃতীয় স্বাধীন বিচারক (Oracle) হলো **Finite Difference, `gradcheck` এবং উচ্চতর ক্রমের Derivative (Hessian-Vector Product)**!"
+          "body": "### Option A (Pure Python) যাচাই করা Output\n- `Extreme z=±100 stable BCE: 0.0` *(কোনো Overflow বা `NaN` ছাড়াই নিখুঁত শূন্য!)*\n- `2x2 zero-param -> loss=0.693147 | gw=[-0.5, 0.25] | gb=0.0`\n\n### Option B — `PyTorch`-এ Autograd বনাম Analytical BCE Gradient তুলনা\n```python\nimport torch\nimport torch.nn.functional as F\n\nX = torch.tensor([[1.0, 2.0], [3.0, 1.0]], dtype=torch.float64)\ny = torch.tensor([0.0, 1.0], dtype=X.dtype)\nw = torch.zeros(2, dtype=X.dtype, requires_grad=True)\nb = torch.zeros((), dtype=X.dtype, requires_grad=True)\nloss = F.binary_cross_entropy_with_logits(X @ w + b, y)\ngw, gb = torch.autograd.grad(loss, (w, b))\nresidual = torch.sigmoid(X @ w + b).detach() - y\nassert torch.allclose(gw, X.T @ residual / len(y))\nprint(loss.item(), gw, gb)\n```\n**PyTorch রেফারেন্স Output:** `0.6931471805599453 tensor([-0.5000, 0.2500], dtype=torch.float64) tensor(0., dtype=torch.float64)`!\n\n### ল্যাবের Heatmap, Normalized Arrow ও Overshoot-এর মূল কথা\n1. **2D Heatmap Slice:** উপরের Lab-এর Heatmap-টি বর্তমান Bias $b$ স্থির রেখে কেবল $(w_1, w_2)$-এর সাপেক্ষে Loss তলের একটি 2D Slice দেখায়।\n2. **Normalized Arrow:** তীরচিহ্নটি ঋণাত্মক Gradient ($-\\nabla_w L$)-এর দিক দেখায়; পরিষ্কার দেখাতে দৈর্ঘ্য Normalized রাখা হয়েছে, তাই Arrow-এর দৈর্ঘ্য Step-এর সমান নয়—আর Step নিলে $(w_1, w_2)$-এর সঙ্গে $b$-ও আপডেট হয়!\n3. **বড় Learning Rate-এ Loss বাড়ে কেন?** ক্যালকুলাস কেবল নিশ্চিত করে যে **অতি ক্ষুদ্র ধাপে ($\\eta \\to 0^+$)** $-\\nabla_\\theta L$ দিকে গেলে Loss কমবে! সসীম বড় $\\eta$ নিলে উপত্যকা পেরিয়ে উল্টো পাশের উঁচু পাহাড়ে উঠে গিয়ে Loss আগের চেয়েও বেড়ে যায় (যেমন ওপরের চার্টে $\\eta = 12.0$-এ হলো)—এটি কখনোই Autograd-এর বাগ নয়!\n4. **কোনো Silent Clipping নয়:** প্রস্তাবিত ধাপ Lab-এর `[-4, 4]` সীমা ছাড়ালে দিক বিকৃত না করতে মান নীরবে Clip করা হয় না। আর এই ১৬টি Training Row-তে Loss কমা কেবল প্রমাণ করে Gradient বাস্তবায়ন সঠিক—অদেখা Test Data-র Generalization নয়!\n\n**পরের পাঠে কী শিখব?** এখানে আমাদের হাতে-কলমের Analytical সূত্র থাকায় Autograd মিলিয়ে নিতে পারলাম—কিন্তু জটিল কাস্টম ফাংশনে যখন খাতার সূত্র ভুল হওয়ার ভয় থাকে, তখন তৃতীয় স্বাধীন বিচারক (Oracle) হলো **Finite Difference, `gradcheck` এবং Higher-order Derivative (Hessian-Vector Product)**!"
         },
         {
           "type": "concept_check",
@@ -2806,7 +2806,7 @@
     },
     {
       "id": "ch15_gradcheck",
-      "title": "Finite Difference, gradcheck এবং উচ্চতর ক্রমের Derivative",
+      "title": "Finite Difference, gradcheck এবং Higher-order Derivative",
       "subtitle": "সংখ্যাগতভাবে Gradient মিলে যাওয়ার শর্ত ও সীমাবদ্ধতা",
       "duration": "55 min",
       "icon": "grid_view",
@@ -2823,8 +2823,8 @@
           ],
           "outcomes": [
             "কেন Central Finite Difference ($\\mathcal{O}(\\epsilon^2)$), Forward Difference ($\\mathcal{O}(\\epsilon)$)-এর চেয়ে বহুগুণ সূক্ষ্ম এবং কেন অতি ক্ষুদ্র $\\epsilon$ (`1e-12`) Rounding Error বাড়ায় তা V-চার্ট দেখে ব্যাখ্যা করতে পারবেন।",
-            "`create_graph=True` (উচ্চতর ক্রমের Derivative-এর জন্য নতুন Graph রেকর্ড) এবং `retain_graph=True` (পুরোনো Graph ধরে রাখা)-এর পার্থক্য স্পষ্ট করতে পারবেন।",
-            "দুবার `autograd.grad` চালিয়ে কীভাবে $\\mathcal{O}(n)$ Memory-তে সরাসরি Hessian-Vector Product $Hv = \\nabla_x(g(x)^\\top v)$ বের করা যায় তা কোডে ও হাতে কষে দেখাতে পারবেন।",
+            "`create_graph=True` (Higher-order Derivative-এর জন্য নতুন Graph রেকর্ড) এবং `retain_graph=True` (পুরোনো Graph ধরে রাখা)-এর পার্থক্য স্পষ্ট করতে পারবেন।",
+            "দুবার `autograd.grad` চালিয়ে কীভাবে $\\mathcal{O}(n)$ Memory-তে সরাসরি Hessian-Vector Product $Hv = \\nabla_x(g(x)^\\top v)$ বের করা যায় তা কোডে ও হাতে হিসাব করে দেখাতে পারবেন।",
             "বাস্তব $966 \\times 11$ Wine Quality অডিটের ৩-পথের ফলাফল (`1.11e-16` ও `9.85e-11`) ব্যাখ্যা করতে পারবেন।"
           ]
         },
@@ -3031,7 +3031,7 @@
         {
           "type": "text",
           "title": "৫. কোডের Output, Option B (`PyTorch`), `create_graph` বনাম `retain_graph` ও Cheat Sheet",
-          "body": "### Option A (Pure Python) যাচাই করা Output\n- `eps=1e-02 | fwd_err=9.01e-02 | cen_err=1.00e-04` *(Central FD এখানে প্রায় ১০০০ গুণ বেশি সূক্ষ্ম!)*\n- `eps=1e-06 | fwd_err=9.01e-06 | cen_err=4.66e-09`\n- `eps=1e-12 | fwd_err=6.24e-04 | cen_err=6.24e-04` *(অতিরিক্ত ছোট $\\epsilon$-এ দুটোই Rounding Error-এ ডুবে গেল!)*\n- `x^3 at x=3 -> f'(3): 27.0 | f''(3): 18.0`\n- `Quadratic at [1,2] -> grad: [8.0, 11.0] | HVP (H @ [1,-1]): [-1.0, -1.0]`\n\n### Option B — `PyTorch`-এ `create_graph=True` দিয়ে ২য় Derivative ও Hessian-Vector Product\n```python\nimport torch\n\n# ১) x^3 এর প্রথম ও দ্বিতীয় Derivative:\nx = torch.tensor(3.0, dtype=torch.float64, requires_grad=True)\nfirst = torch.autograd.grad(x ** 3, x, create_graph=True)[0]\nsecond = torch.autograd.grad(first, x)[0]\nprint(first.item(), second.item())  # 27.0, 18.0\n\n# ২) সরাসরি Hessian-Vector Product (Hv) — পুরো Hessian না বানিয়েই!\npoint = torch.tensor([1.0, 2.0], dtype=torch.float64, requires_grad=True)\ndirection = torch.tensor([1.0, -1.0], dtype=point.dtype)\nobjective = point[0] ** 2 + 3.0 * point[0] * point[1] + 2.0 * point[1] ** 2\ngradient = torch.autograd.grad(objective, point, create_graph=True)[0]\nhessian_vector = torch.autograd.grad(gradient @ direction, point)[0]\nhessian = torch.tensor([[2.0, 3.0], [3.0, 4.0]], dtype=point.dtype)\ntorch.testing.assert_close(hessian_vector, hessian @ direction)\nprint(*gradient.detach().tolist(), *hessian_vector.tolist())\n```\n**PyTorch রেফারেন্স Output:** `27.0 18.0` এবং `8.0 11.0 -1.0 -1.0`!\n\n### `create_graph=True` বনাম `retain_graph=True` — কখনোই গুলিয়ে ফেলবেন না!\n\n| Flag | ভেতরে কী করে? | কখন লাগবে? |\n| --- | --- | --- |\n| `create_graph=True` | প্রথম Derivative বের করার ধাপগুলোকেও **নতুন Graph** হিসেবে রেকর্ড করে | ২য় বা উচ্চতর ক্রমের Derivative, HVP, Gradient Penalty (WGAN-GP) |\n| `retain_graph=True` | পুরোনো Forward Graph-এর Buffer মুক্ত না করে **ধরে রাখে** | একই Forward Graph থেকে একাধিক আলাদা `backward()` চালাতে হলে |\n\n**পরের পাঠে কী শিখব?** এই অধ্যায়ের সব তত্ত্ব ও গাণিতিক যন্ত্রপাতি তৈরি! এবার পাঠ ১৭ ও ১৮-তে আমরা দেখব আমাদের **লোকাল মেশিনে বাস্তব Wine Quality ডেটার পূর্ণাঙ্গ PyTorch Audit Workflow** ও অফলাইন রেফারেন্স Asset!"
+          "body": "### Option A (Pure Python) যাচাই করা Output\n- `eps=1e-02 | fwd_err=9.01e-02 | cen_err=1.00e-04` *(Central FD এখানে প্রায় ১০০০ গুণ বেশি সূক্ষ্ম!)*\n- `eps=1e-06 | fwd_err=9.01e-06 | cen_err=4.66e-09`\n- `eps=1e-12 | fwd_err=6.24e-04 | cen_err=6.24e-04` *(অতিরিক্ত ছোট $\\epsilon$-এ দুটোই Rounding Error-এ ডুবে গেল!)*\n- `x^3 at x=3 -> f'(3): 27.0 | f''(3): 18.0`\n- `Quadratic at [1,2] -> grad: [8.0, 11.0] | HVP (H @ [1,-1]): [-1.0, -1.0]`\n\n### Option B — `PyTorch`-এ `create_graph=True` দিয়ে ২য় Derivative ও Hessian-Vector Product\n```python\nimport torch\n\n# ১) x^3 এর প্রথম ও দ্বিতীয় Derivative:\nx = torch.tensor(3.0, dtype=torch.float64, requires_grad=True)\nfirst = torch.autograd.grad(x ** 3, x, create_graph=True)[0]\nsecond = torch.autograd.grad(first, x)[0]\nprint(first.item(), second.item())  # 27.0, 18.0\n\n# ২) সরাসরি Hessian-Vector Product (Hv) — পুরো Hessian না বানিয়েই!\npoint = torch.tensor([1.0, 2.0], dtype=torch.float64, requires_grad=True)\ndirection = torch.tensor([1.0, -1.0], dtype=point.dtype)\nobjective = point[0] ** 2 + 3.0 * point[0] * point[1] + 2.0 * point[1] ** 2\ngradient = torch.autograd.grad(objective, point, create_graph=True)[0]\nhessian_vector = torch.autograd.grad(gradient @ direction, point)[0]\nhessian = torch.tensor([[2.0, 3.0], [3.0, 4.0]], dtype=point.dtype)\ntorch.testing.assert_close(hessian_vector, hessian @ direction)\nprint(*gradient.detach().tolist(), *hessian_vector.tolist())\n```\n**PyTorch রেফারেন্স Output:** `27.0 18.0` এবং `8.0 11.0 -1.0 -1.0`!\n\n### `create_graph=True` বনাম `retain_graph=True` — কখনোই গুলিয়ে ফেলবেন না!\n\n| Flag | ভেতরে কী করে? | কখন লাগবে? |\n| --- | --- | --- |\n| `create_graph=True` | প্রথম Derivative বের করার ধাপগুলোকেও **নতুন Graph** হিসেবে রেকর্ড করে | ২য় বা Higher-order Derivative, HVP, Gradient Penalty (WGAN-GP) |\n| `retain_graph=True` | পুরোনো Forward Graph-এর Buffer মুক্ত না করে **ধরে রাখে** | একই Forward Graph থেকে একাধিক আলাদা `backward()` চালাতে হলে |\n\n**পরের পাঠে কী শিখব?** এই অধ্যায়ের সব তত্ত্ব ও গাণিতিক যন্ত্রপাতি তৈরি! এবার পাঠ ১৭ ও ১৮-তে আমরা দেখব আমাদের **লোকাল মেশিনে বাস্তব Wine Quality ডেটার পূর্ণাঙ্গ PyTorch Audit Workflow** ও অফলাইন Reference Asset!"
         },
         {
           "type": "concept_check",
@@ -3114,7 +3114,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "এবার আমরা তত্ত্ব থেকে সরাসরি বাস্তব **লোকাল PyTorch Audit Workflow**-তে নামছি! এই পাঠে শিখব কীভাবে Book 2 · Chapter 9 (Classical ML Capstone)-এর **একই ৯৬৬টি Wine Quality Training Row, SHA-256 Hash ও Scaling চুক্তি** অক্ষত রেখে কঠোর Shape Contract-যুক্ত `tensors()`, `objective()`, `analytic_gradient()`, `finite_gradient()` এবং `mse_shape_audit()` ফাংশনগুলো গঠন করা হয়েছে।",
+          "goal": "এবার নিজের মেশিনে বাস্তব Data দিয়ে **PyTorch Audit Workflow** চালাব। এই পাঠে শিখব কীভাবে Book 2 · Chapter 9 (Classical ML Capstone)-এর **একই ৯৬৬টি Wine Quality Training Row, SHA-256 Hash ও Scaling চুক্তি** অক্ষত রেখে কঠোর Shape Contract-যুক্ত `tensors()`, `objective()`, `analytic_gradient()`, `finite_gradient()` এবং `mse_shape_audit()` ফাংশনগুলো গঠন করা হয়েছে।",
           "prerequisites": [
             "আগের পাঠসমূহ: Tensor Contract, Broadcast, BCE Microscope ও Gradcheck",
             "Book 2 · Chapter 9 (Classical ML Capstone)-এর Wine Quality ডেটা স্প্লিট",
@@ -3129,7 +3129,7 @@
         },
         {
           "type": "flow_diagram",
-          "title": "লোকাল বাস্তব ডেটার Tensor Workflow পাইপলাইন (পর্ব ১ ও ২)",
+          "title": "লোকাল বাস্তব ডেটার Tensor Workflow Pipeline (পর্ব ১ ও ২)",
           "body": "",
           "steps": [
             {
@@ -3169,7 +3169,7 @@
         {
           "type": "text",
           "title": "২. কঠোর BCE Contract, Option A (Pure Python সমতুল্য) ও নিরীক্ষার গণ্ডি",
-          "body": "### কেন BCE ফাংশন ভুল Shape সঙ্গে সঙ্গে আটকে দেয়?\n- **`[B, 1]` Target প্রত্যাখ্যান:** Target `[B, 1]` হলেই `tensors()` গার্ড এবং PyTorch-এর `F.binary_cross_entropy_with_logits` দুটোই Error ছুড়ে দেয়। এমন Error পেলে অন্ধভাবে `.reshape()` না বসিয়ে আগে Axis-এর অর্থ মিলিয়ে নিন।\n- **ইচ্ছাকৃত Pairwise Audit:** বিপরীতে `mse_shape_audit`-এ ইচ্ছা করেই `probability - target[:, None]` লিখে প্রমাণ করা হয়েছে কীভাবে সাধারণ বিয়োগে নীরবে `[B, B]` Pairwise Broadcast ঘটে যায়!\n\n### Option A — Pure Python-এ `tensors()` গার্ড ও ৩-পথের অডিট (কোনো `torch`/`numpy`/`pandas` ছাড়াই!)\n```python\nimport math\n\ndef check_strict_contract(X, y, w, b):\n    B = len(X)\n    if B < 1:\n        raise ValueError(\"Empty batch!\")\n    D = len(X[0])\n    if len(y) != B or len(w) != D or not isinstance(b, (int, float)):\n        raise ValueError(\"X[B,D], y[B], w[D], scalar b required\")\n    for i in range(B):\n        if y[i] not in (0.0, 1.0):\n            raise ValueError(\"Binary targets required\")\n        for j in range(D):\n            if not math.isfinite(X[i][j]):\n                raise ValueError(\"Non-finite X\")\n\ndef pure_bce(X, y, w, b):\n    check_strict_contract(X, y, w, b)\n    total = 0.0\n    for i in range(len(y)):\n        z = b\n        for j in range(len(w)):\n            z += X[i][j] * w[j]\n        total += max(z, 0.0) - y[i] * z + math.log1p(math.exp(-abs(z)))\n    return total / len(y)\n\ndef pure_finite_grad(X, y, w, b, eps=1e-6):\n    gw = []\n    for j in range(len(w)):\n        w_plus = list(w)\n        w_minus = list(w)\n        w_plus[j] += eps\n        w_minus[j] -= eps\n        gw.append((pure_bce(X, y, w_plus, b) - pure_bce(X, y, w_minus, b)) / (2.0 * eps))\n    gb = (pure_bce(X, y, w, b + eps) - pure_bce(X, y, w, b - eps)) / (2.0 * eps)\n    return gw, gb\n\nX_demo = [[1.0, 2.0], [3.0, 1.0]]\ny_demo = [0.0, 1.0]\nw_demo = [0.0, 0.0]\nb_demo = 0.0\nloss_0 = pure_bce(X_demo, y_demo, w_demo, b_demo)\nfw, fb = pure_finite_grad(X_demo, y_demo, w_demo, b_demo)\nfw_rounded = []\nfor v in fw:\n    fw_rounded.append(round(v, 8))\nprint(f\"pure_bce={loss_0:.6f} | fd_gw={fw_rounded} | fd_gb={round(fb, 8)}\")\n```\n**Pure Python যাচাই করা Output:** `pure_bce=0.693147 | fd_gw=[-0.5, 0.25] | fd_gb=0.0` *(হুবহু PyTorch Autograd ও Analytical সূত্রের সমান!)*\n\n**পরের পাঠে কী শিখব?** পর্ব ১ ও ২-এর এই ফাংশনগুলো একত্র করে পরের পাঠে দেখব **সম্পূর্ণ স্বয়ংসম্পূর্ণ PyTorch Audit Script** এবং তার উৎপাদিত বাস্তব প্রমাণসমূহ!"
+          "body": "### কেন BCE ফাংশন ভুল Shape সঙ্গে সঙ্গে আটকে দেয়?\n- **`[B, 1]` Target প্রত্যাখ্যান:** Target `[B, 1]` হলেই `tensors()` গার্ড এবং PyTorch-এর `F.binary_cross_entropy_with_logits` দুটোই Error দেয়। এমন Error পেলে অন্ধভাবে `.reshape()` না বসিয়ে আগে Axis-এর অর্থ মিলিয়ে নিন।\n- **ইচ্ছাকৃত Pairwise Audit:** বিপরীতে `mse_shape_audit`-এ ইচ্ছা করেই `probability - target[:, None]` লিখে প্রমাণ করা হয়েছে কীভাবে সাধারণ বিয়োগে নীরবে `[B, B]` Pairwise Broadcast ঘটে যায়!\n\n### Option A — Pure Python-এ `tensors()` গার্ড ও ৩-পথের অডিট (কোনো `torch`/`numpy`/`pandas` ছাড়াই!)\n```python\nimport math\n\ndef check_strict_contract(X, y, w, b):\n    B = len(X)\n    if B < 1:\n        raise ValueError(\"Empty batch!\")\n    D = len(X[0])\n    if len(y) != B or len(w) != D or not isinstance(b, (int, float)):\n        raise ValueError(\"X[B,D], y[B], w[D], scalar b required\")\n    for i in range(B):\n        if y[i] not in (0.0, 1.0):\n            raise ValueError(\"Binary targets required\")\n        for j in range(D):\n            if not math.isfinite(X[i][j]):\n                raise ValueError(\"Non-finite X\")\n\ndef pure_bce(X, y, w, b):\n    check_strict_contract(X, y, w, b)\n    total = 0.0\n    for i in range(len(y)):\n        z = b\n        for j in range(len(w)):\n            z += X[i][j] * w[j]\n        total += max(z, 0.0) - y[i] * z + math.log1p(math.exp(-abs(z)))\n    return total / len(y)\n\ndef pure_finite_grad(X, y, w, b, eps=1e-6):\n    gw = []\n    for j in range(len(w)):\n        w_plus = list(w)\n        w_minus = list(w)\n        w_plus[j] += eps\n        w_minus[j] -= eps\n        gw.append((pure_bce(X, y, w_plus, b) - pure_bce(X, y, w_minus, b)) / (2.0 * eps))\n    gb = (pure_bce(X, y, w, b + eps) - pure_bce(X, y, w, b - eps)) / (2.0 * eps)\n    return gw, gb\n\nX_demo = [[1.0, 2.0], [3.0, 1.0]]\ny_demo = [0.0, 1.0]\nw_demo = [0.0, 0.0]\nb_demo = 0.0\nloss_0 = pure_bce(X_demo, y_demo, w_demo, b_demo)\nfw, fb = pure_finite_grad(X_demo, y_demo, w_demo, b_demo)\nfw_rounded = []\nfor v in fw:\n    fw_rounded.append(round(v, 8))\nprint(f\"pure_bce={loss_0:.6f} | fd_gw={fw_rounded} | fd_gb={round(fb, 8)}\")\n```\n**Pure Python যাচাই করা Output:** `pure_bce=0.693147 | fd_gw=[-0.5, 0.25] | fd_gb=0.0` *(হুবহু PyTorch Autograd ও Analytical সূত্রের সমান!)*\n\n**পরের পাঠে কী শিখব?** পর্ব ১ ও ২-এর এই ফাংশনগুলো একত্র করে পরের পাঠে দেখব **সম্পূর্ণ স্বয়ংসম্পূর্ণ PyTorch Audit Script** এবং তার উৎপাদিত বাস্তব প্রমাণসমূহ!"
         },
         {
           "type": "math",
@@ -3246,7 +3246,7 @@
               "concept": "Numerical Audit vs Model Evaluation Scope",
               "level": "Senior",
               "question": "আমরা একই ৯৬৬টি Training Row আবার ব্যবহার করে PyTorch অডিট করলাম—এ থেকে কি আমরা দাবি করতে পারি যে PyTorch Model-টি `scikit-learn` Model-এর চেয়ে ভালো?",
-              "answer": "**কখনোই না!** এখানে নতুন কোনো Model Selection, Hyperparameter Tuning বা Held-out Test মূল্যায়ন চালানো হয়নি। এর একমাত্র বৈজ্ঞানিক পরিধি হলো CPU `float64`-এ Tensor Shape, Storage ও Autograd ক্যালকুলাসের নির্ভুলতা যাচাই করা।",
+              "answer": "**কখনোই না!** এখানে নতুন কোনো Model Selection, Hyperparameter Tuning বা Held-out Test মূল্যায়ন চালানো হয়নি। এর একমাত্র বৈজ্ঞানিক পরিধি হলো CPU `float64`-এ Tensor Shape, Storage ও Autograd Calculus-এর নির্ভুলতা যাচাই করা।",
               "followUp": "Production ML রিপোর্টে এভাবে Scope ও Assumptions স্পষ্ট লেখা কেন গুরুত্বপূর্ণ? যাতে স্টেকহোল্ডাররা Sanity Check-কে ভুল করে Generalization প্রমাণ ভেবে না বসেন!"
             }
           ]
@@ -3267,7 +3267,7 @@
     },
     {
       "id": "ch15_experiment",
-      "title": "পূর্ণাঙ্গ Autograd Audit এবং অফলাইন রেফারেন্স Asset",
+      "title": "পূর্ণাঙ্গ Autograd Audit এবং অফলাইন Reference Asset",
       "subtitle": "Memory Layout, Loss, VJP এবং Gradient-এর সব প্রমাণ এক জায়গায় পুনরুৎপাদন",
       "duration": "44 min",
       "icon": "grid_view",
@@ -3276,7 +3276,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "আগের ১৭টি পাঠে আমরা যতগুলো ধারণা শিখেছি—Layout/Stride, Broadcasting, তিন পদ্ধতিতে Gradient যাচাই, `gradcheck`, DataLoader Reproducibility, Scalar Accumulation এবং VJP—সব একসঙ্গে একটি **পূর্ণাঙ্গ স্বয়ংসম্পূর্ণ PyTorch Audit Script**-এ কীভাবে পুনরুৎপাদন ও অফলাইন রেফারেন্স Asset (`tensor_lab.json`) হিসেবে সংরক্ষণ করা হয়, আজ তা বিস্তারিত দেখব!",
+          "goal": "আগের ১৭টি পাঠে আমরা যতগুলো ধারণা শিখেছি—Layout/Stride, Broadcasting, তিন পদ্ধতিতে Gradient যাচাই, `gradcheck`, DataLoader Reproducibility, Scalar Accumulation এবং VJP—সব একসঙ্গে একটি **পূর্ণাঙ্গ স্বয়ংসম্পূর্ণ PyTorch Audit Script**-এ কীভাবে পুনরুৎপাদন ও অফলাইন Reference Asset (`tensor_lab.json`) হিসেবে সংরক্ষণ করা হয়, আজ তা বিস্তারিত দেখব!",
           "prerequisites": [
             "আগের পাঠ: লোকাল Tensor Workflow (পর্ব ১ ও ২)",
             "JSON রিপোর্ট ও SHA-256 প্রোভেন্যান্স",
@@ -3316,7 +3316,7 @@
               "detail": "`NaN`/`inf` থাকলে এক্সপোর্ট বাতিল হয়; আর Explicit Flag ছাড়া অ্যাপের বান্ডেল Asset-এ কখনো হাত দেওয়া হয় না!"
             }
           ],
-          "caption": "ইঞ্জিনিয়ারিংয়ের মূল শিক্ষা: নির্ভরযোগ্য রেফারেন্স Asset হাতে টাইপ করে নয়—বরং একটি Deterministic, Self-auditing Script চালিয়ে `assert_close` পাস করে তৈরি করতে হয়!"
+          "caption": "ইঞ্জিনিয়ারিংয়ের মূল শিক্ষা: নির্ভরযোগ্য Reference Asset হাতে টাইপ করে নয়—বরং একটি Deterministic, Self-auditing Script চালিয়ে `assert_close` পাস করে তৈরি করতে হয়!"
         },
         {
           "type": "text",
@@ -3415,7 +3415,7 @@
         },
         {
           "type": "callout",
-          "title": "অডিট রিপোর্ট পড়ার ৭-দফা চেকলিস্ট",
+          "title": "অডিট রিপোর্ট পড়ার ৭-দফা Checklist",
           "body": "সংরক্ষিত অডিট রিপোর্ট পড়ার সময় সবার আগে যাচাই করুন:\n`torch_version`, `device`, `dtype`, ডেটার `sha256` Hash, `fit_rows` (`966`), `gradcheck_passed` এবং `atol`/`rtol` Error Tolerance!\n\n> অফলাইন Asset পুনরুৎপাদন করা আর বাস্তব ML সমস্যায় ভালো Generalization পাওয়া—দুটো সম্পূর্ণ আলাদা স্তরের প্রমাণ।"
         },
         {
@@ -3438,7 +3438,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "Autograd কখনো আপনার মনের ইচ্ছা পড়ে না—**আপনার Reduction ধাপটি যে গাণিতিক Objective বানায়, Autograd ঠিক সেটিরই Gradient দেয়!** আজ আমরা শিখব **‘গড়ের গড়’ (Mean of Means) ফাঁদ**, Additive Sufficient Statistics ($N/A$) দিয়ে নিখুঁত Global Weighted Mean হিসাব, এবং Weight $a_i(\\theta)$ নিজেই যখন **Trainable** হয় তখন কীভাবে **Quotient Rule**-এর অতিরিক্ত পদ $(\\ell_i - L)\\nabla_\\theta a_i$ চলে আসে!",
+          "goal": "**Reduction যে Objective তৈরি করে, Autograd ঠিক সেই Objective-এর Gradient হিসাব করে।** আজ আমরা শিখব **‘গড়ের গড়’ (Mean of Means) ফাঁদ**, Additive Sufficient Statistics ($N/A$) দিয়ে নিখুঁত Global Weighted Mean হিসাব, এবং Weight $a_i(\\theta)$ নিজেই যখন **Trainable** হয় তখন কীভাবে **Quotient Rule**-এর অতিরিক্ত পদ $(\\ell_i - L)\\nabla_\\theta a_i$ চলে আসে!",
           "prerequisites": [
             "আগের পাঠসমূহ: VJP, Reduction ও Microbatch Scaling",
             "Weighted Average (ভারিত গড়)-এর ধারণা",
@@ -3448,7 +3448,7 @@
             "১ম Batch (Weight 1, Mean 2) ও ২য় Batch (Weight 3, Mean 6)-এ কেন সঠিক Global Mean `5.0` কিন্তু ভুল Mean of Means `4.0` হয় তা হাতে প্রমাণ করতে পারবেন।",
             "স্থির Weight $a_i$ বনাম Trainable Weight $a_i(\\theta)$-এর Gradient সমীকরণের মৌলিক পার্থক্য (Quotient Rule-এর অতিরিক্ত পদ) ব্যাখ্যা করতে পারবেন।",
             "কেন Distributed (DDP) Training বা Masked Token Loss-এ Sufficient Statistics ($N = \\sum a_i \\ell_i$, $A = \\sum a_i$) জমা করা অপরিহার্য তা বুঝবেন।",
-            "$a_1 = \\theta, a_2 = 1, \\ell_1 = 2, \\ell_2 = 6$ উদাহরণে $\\theta = 1$ বিন্দুতে $\\frac{dL}{d\\theta} = -1$ হাতে কষে দেখাতে পারবেন।"
+            "$a_1 = \\theta, a_2 = 1, \\ell_1 = 2, \\ell_2 = 6$ উদাহরণে $\\theta = 1$ বিন্দুতে $\\frac{dL}{d\\theta} = -1$ হাতে হিসাব করে দেখাতে পারবেন।"
           ]
         },
         {
@@ -3512,7 +3512,7 @@
         {
           "type": "text",
           "title": "৩. কোডের Output, Option B (`PyTorch`) ও Trainable Weight Quotient Rule হাতে যাচাই",
-          "body": "### Spec কোডের যাচাই করা Output (`python`)\n- `5.0 4.0` *(প্রথমটি সঠিক Global Weighted Mean `5.0`, দ্বিতীয়টি ভুল Naive Mean of Means `4.0`!)*\n\n### Option B — `PyTorch`-এ Tensor Sufficient Statistics ও Trainable Weight Quotient Rule যাচাই\n```python\nimport torch\n\n# ১) Tensor অবস্থাতেই Sufficient Statistics (N / A) দিয়ে Global Weighted Loss:\nmeans = torch.tensor([2.0, 6.0], dtype=torch.float64, requires_grad=True)\nweights = torch.tensor([1.0, 3.0], dtype=torch.float64)\nA = weights.sum()\nassert A.item() > 0.0\nglobal_loss = (means * weights).sum() / A\ng_means = torch.autograd.grad(global_loss, means)[0]\nprint(\"Global loss:\", global_loss.item(), \"| dL/dmeans:\", g_means.tolist())\n\n# ২) Trainable Weight Quotient Rule: a1 = theta, a2 = 1, l1 = 2, l2 = 6 at theta = 1.0\ntheta = torch.tensor(1.0, dtype=torch.float64, requires_grad=True)\na = torch.stack([theta, torch.tensor(1.0, dtype=torch.float64)])\nell = torch.tensor([2.0, 6.0], dtype=torch.float64)\nL_theta = (a * ell).sum() / a.sum()\ndL_dtheta = torch.autograd.grad(L_theta, theta)[0]\nprint(\"L(theta=1):\", L_theta.item(), \"| dL/dtheta:\", dL_dtheta.item())\n```\n**PyTorch রেফারেন্স Output:**\n- `Global loss: 5.0 | dL/dmeans: [0.25, 0.75]` *(প্রতিটি Batch-এর Gradient ঠিক তার Weight অনুপাত `1/4` ও `3/4`!)*\n- `L(theta=1): 4.0 | dL/dtheta: -1.0` *(কারণ $L(\\theta) = \\frac{2\\theta+6}{\\theta+1} \\implies \\frac{dL}{d\\theta} = \\frac{-4}{(\\theta+1)^2} = -1.0$!)*\n\n### স্থির-Weight সূত্রটি কখন প্রযোজ্য নয়?\n1. **Trainable Weight $a_i(\\theta)$:** ওপরের মতো $\\ell_1=2, \\ell_2=6$ স্থির হওয়ায় তাদের নিজস্ব Derivative `0`—ভুল করে স্থির-Weight সূত্র বসালে উত্তর আসত `0`, অথচ সঠিক উত্তর `-1.0`!\n2. **DistributedDataParallel (DDP):** DDP সব GPU Rank-এর Gradient সরাসরি সমান গড় করে (`1 / world_size`)। তাই Rank 0-এ `100` বৈধ Token আর Rank 1-এ `300` বৈধ Token থাকলে আলাদাভাবে Token-count স্কেলিং ঠিক না করলে Mean-of-Means বাগ ঢুকে পড়বে!\n\n**পরের পাঠে কী শিখব?** এখানে আমরা Batch ও Partial-batch গড়ের গাণিতিক চুক্তি শিখলাম—এবার পরের পাঠে দেখব PyTorch **`Dataset`, `DataLoader`**, Windows-নিরাপদ `num_workers=0`, `torch.Generator` Seed এবং $N = 966, B = 32$-এ শেষের ৬-Row Partial Batch সামলানো!"
+          "body": "### Spec কোডের যাচাই করা Output (`python`)\n- `5.0 4.0` *(প্রথমটি সঠিক Global Weighted Mean `5.0`, দ্বিতীয়টি ভুল Naive Mean of Means `4.0`!)*\n\n### Option B — `PyTorch`-এ Tensor Sufficient Statistics ও Trainable Weight Quotient Rule যাচাই\n```python\nimport torch\n\n# ১) Tensor অবস্থাতেই Sufficient Statistics (N / A) দিয়ে Global Weighted Loss:\nmeans = torch.tensor([2.0, 6.0], dtype=torch.float64, requires_grad=True)\nweights = torch.tensor([1.0, 3.0], dtype=torch.float64)\nA = weights.sum()\nassert A.item() > 0.0\nglobal_loss = (means * weights).sum() / A\ng_means = torch.autograd.grad(global_loss, means)[0]\nprint(\"Global loss:\", global_loss.item(), \"| dL/dmeans:\", g_means.tolist())\n\n# ২) Trainable Weight Quotient Rule: a1 = theta, a2 = 1, l1 = 2, l2 = 6 at theta = 1.0\ntheta = torch.tensor(1.0, dtype=torch.float64, requires_grad=True)\na = torch.stack([theta, torch.tensor(1.0, dtype=torch.float64)])\nell = torch.tensor([2.0, 6.0], dtype=torch.float64)\nL_theta = (a * ell).sum() / a.sum()\ndL_dtheta = torch.autograd.grad(L_theta, theta)[0]\nprint(\"L(theta=1):\", L_theta.item(), \"| dL/dtheta:\", dL_dtheta.item())\n```\n**PyTorch রেফারেন্স Output:**\n- `Global loss: 5.0 | dL/dmeans: [0.25, 0.75]` *(প্রতিটি Batch-এর Gradient ঠিক তার Weight অনুপাত `1/4` ও `3/4`!)*\n- `L(theta=1): 4.0 | dL/dtheta: -1.0` *(কারণ $L(\\theta) = \\frac{2\\theta+6}{\\theta+1} \\implies \\frac{dL}{d\\theta} = \\frac{-4}{(\\theta+1)^2} = -1.0$!)*\n\n### স্থির-Weight সূত্রটি কখন প্রযোজ্য নয়?\n1. **Trainable Weight $a_i(\\theta)$:** ওপরের মতো $\\ell_1=2, \\ell_2=6$ স্থির হওয়ায় তাদের নিজস্ব Derivative `0`—ভুল করে স্থির-Weight সূত্র বসালে উত্তর আসত `0`, অথচ সঠিক উত্তর `-1.0`!\n2. **DistributedDataParallel (DDP):** DDP সব GPU Rank-এর Gradient সরাসরি সমান গড় করে (`1 / world_size`)। তাই Rank 0-এ `100` বৈধ Token আর Rank 1-এ `300` বৈধ Token থাকলে আলাদাভাবে Token-count Scaling ঠিক না করলে Mean-of-Means বাগ ঢুকে পড়বে!\n\n**পরের পাঠে কী শিখব?** এখানে আমরা Batch ও Partial-batch গড়ের গাণিতিক চুক্তি শিখলাম—এবার পরের পাঠে দেখব PyTorch **`Dataset`, `DataLoader`**, Windows-নিরাপদ `num_workers=0`, `torch.Generator` Seed এবং $N = 966, B = 32$-এ শেষের ৬-Row Partial Batch সামলানো!"
         },
         {
           "type": "concept_check",
@@ -3595,7 +3595,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "বাস্তব Training-এ পুরো Dataset একসঙ্গে Memory-তে না নিয়ে ছোট ছোট Batch-এ ভাগ করে ব্যবহার করা হয়। আজ আমরা শিখব **`TensorDataset`** দিয়ে `(X, y, row_id)` একসঙ্গে বাঁধা, **`torch.Generator().manual_seed(42)`**-এর State কীভাবে প্রতি Epoch-এ এগোয়, Windows-এ `spawn`-এর কারণে কেন সচেতনভাবে **`num_workers=0`** রাখা হয়েছে, এবং $N = 966, B = 32$-এ শেষের **৬-Row Partial Batch** কীভাবে নিখুঁতভাবে সামলাতে হয়!",
+          "goal": "বাস্তব Training-এ পুরো Dataset একসঙ্গে Memory-তে না নিয়ে ছোট ছোট Batch-এ ভাগ করে ব্যবহার করা হয়। আজ আমরা শিখব **`TensorDataset`** দিয়ে `(X, y, row_id)` একসঙ্গে রাখা, **`torch.Generator().manual_seed(42)`**-এর State কীভাবে প্রতি Epoch-এ এগোয়, Windows-এ `spawn`-এর কারণে কেন সচেতনভাবে **`num_workers=0`** রাখা হয়েছে, এবং $N = 966, B = 32$-এ শেষের **৬-Row Partial Batch** কীভাবে নিখুঁতভাবে সামলাতে হয়!",
           "prerequisites": [
             "আগের পাঠ: Weighted Reduction ও Mean-of-Means ফাঁদ",
             "Indexing ও `B = 1` Singleton Batch সুরক্ষা",
@@ -3615,11 +3615,11 @@
         },
         {
           "type": "flow_diagram",
-          "title": "নিরাপদ ও Reproducible DataLoader পাইপলাইনের ৪ ধাপ",
+          "title": "নিরাপদ ও Reproducible DataLoader Pipeline-এর ৪ ধাপ",
           "body": "",
           "steps": [
             {
-              "label": "ধাপ ১ · `TensorDataset(X, y, row_ids)`-এ একসঙ্গে বাঁধা",
+              "label": "ধাপ ১ · `TensorDataset(X, y, row_ids)`-এ একসঙ্গে রাখা",
               "detail": "একই Index-এ Feature, Label ও অডিট Row ID বাঁধা থাকায় Shuffle করলেও Sample-Label সম্পর্ক কখনো ভাঙে না!"
             },
             {
@@ -3755,7 +3755,7 @@
         {
           "type": "text",
           "title": "৫. Cheat Sheet ও চূড়ান্ত পাঠের সেতু",
-          "body": "### `DataLoader` Cheat Sheet\n- **Row-Label সামঞ্জস্য:** `TensorDataset(X, y, row_ids)` (কখনো `X` ও `y` আলাদা Shuffle নয়!)\n- **Reproducible Shuffle:** `generator=torch.Generator().manual_seed(42)`\n- **Validation/Test Policy:** সব সময় `shuffle=False`, `drop_last=False` এবং `total_loss += batch_loss.item() * len(batch_y)`!\n- **Windows Safe Default:** `num_workers=0` (বাড়াতে চাইলে `if __name__ == \"__main__\":` + `worker_init_fn`)।\n\n**পরের পাঠে কী শিখব?** Chapter 15-এর একদম শেষ পাঠ—**ডিবাগিং চেকলিস্ট, অনুশীলন এবং মূল ডকুমেন্টেশন**, যেখানে পুরো অধ্যায়ের সব কলকব্জা একত্র করে ৩-পাসের মাস্টার Debugging Framework ও ৮টি সিনিয়র ক্যাপস্টোন Interview প্রশ্ন দিয়ে Chapter 16 (Neural Networks & Backpropagation)-এর প্রস্তুতি চূড়ান্ত করব!"
+          "body": "### `DataLoader` Cheat Sheet\n- **Row-Label সামঞ্জস্য:** `TensorDataset(X, y, row_ids)` (কখনো `X` ও `y` আলাদা Shuffle নয়!)\n- **Reproducible Shuffle:** `generator=torch.Generator().manual_seed(42)`\n- **Validation/Test Policy:** সব সময় `shuffle=False`, `drop_last=False` এবং `total_loss += batch_loss.item() * len(batch_y)`!\n- **Windows Safe Default:** `num_workers=0` (বাড়াতে চাইলে `if __name__ == \"__main__\":` + `worker_init_fn`)।\n\n**পরের পাঠে কী শিখব?** Chapter 15-এর একদম শেষ পাঠ—**Debugging Checklist, অনুশীলন এবং মূল ডকুমেন্টেশন**, যেখানে পুরো অধ্যায়ের সব কলকব্জা একত্র করে ৩-পাসের মাস্টার Debugging Framework ও ৮টি সিনিয়র ক্যাপস্টোন Interview প্রশ্ন দিয়ে Chapter 16 (Neural Networks & Backpropagation)-এর প্রস্তুতি চূড়ান্ত করব!"
         },
         {
           "type": "concept_check",
@@ -3829,7 +3829,7 @@
     },
     {
       "id": "ch15_readiness",
-      "title": "ডিবাগিং চেকলিস্ট, অনুশীলন এবং মূল ডকুমেন্টেশন",
+      "title": "Debugging Checklist, অনুশীলন এবং মূল ডকুমেন্টেশন",
       "subtitle": "Gradient বিশ্লেষণ থেকে শুরু করে পরবর্তী অধ্যায় ও Interview-এর পূর্ণ প্রস্তুতি",
       "duration": "30 min",
       "icon": "grid_view",
@@ -3838,7 +3838,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "অভিনন্দন! আপনি PyTorch Tensors ও Autograd-এর পুরো ২০টি পাঠ সম্পন্ন করেছেন! এই চূড়ান্ত প্রস্তুতি পাঠে আমরা পুরো অধ্যায়ের সমস্ত জ্ঞানকে একটি **৩-পাসের মাস্টার ডিবাগিং চেকলিস্ট**, ৪টি কড়া Edge-case Unit Test, অফিশিয়াল PyTorch ডকুমেন্টেশন এবং **৮টি সিনিয়র ক্যাপস্টোন Interview প্রশ্ন**-এ সাজিয়ে পরের অধ্যায় (**Book 3 · Chapter 2: Neural Networks & Backpropagation**)-এর জন্য ১০০% প্রস্তুত হব!",
+          "goal": "অভিনন্দন! আপনি PyTorch Tensors ও Autograd-এর পুরো ২০টি পাঠ সম্পন্ন করেছেন! এই চূড়ান্ত প্রস্তুতি পাঠে আমরা পুরো অধ্যায়ের সমস্ত জ্ঞানকে একটি **৩-পাসের মাস্টার Debugging Checklist**, ৪টি কড়া Edge-case Unit Test, অফিশিয়াল PyTorch ডকুমেন্টেশন এবং **৮টি সিনিয়র ক্যাপস্টোন Interview প্রশ্ন**-এ সাজিয়ে পরের অধ্যায় (**Book 3 · Chapter 2: Neural Networks & Backpropagation**)-এর জন্য ১০০% প্রস্তুত হব!",
           "prerequisites": [
             "Chapter 15-এর সব ২০টি পাঠ (Contract থেকে DataLoader)",
             "৩টি Interactive Lab (Layout, Broadcast, Autograd Microscope)",
@@ -3877,8 +3877,8 @@
         },
         {
           "type": "text",
-          "title": "১. ৩-পাসের মাস্টার ডিবাগিং চেকলিস্ট — না দেখে ঝালিয়ে নিন",
-          "body": "| ডিবাগিং পাস | কী কী যাচাই করবেন? | সবচেয়ে পরিচিত নীরব বাগ |\n| --- | --- | --- |\n| **পাস ১: Shape ও Memory** | `shape`, `stride`, `is_contiguous`, `squeeze(-1)`, `flatten(start_dim=1)`, `keepdim=True`, `.mT`, `assert pred.shape == target.shape` | `[B] - [B, 1] -> [B, B]` Pairwise Broadcast, `B=1`-এ অনির্দিষ্ট `squeeze()`, বর্গাকার Matrix-এ `keepdim=False`, Sliced View Memory Leak |\n| **পাস ২: Autograd Graph** | `requires_grad`, `is_leaf`, `grad_fn`, `zero_grad(set_to_none=True)`, `detach()` বনাম `clone()`, `no_grad()` বনাম `eval()` | `.to()`-এ Leaf নষ্ট হওয়া, ভুলে যাওয়া `zero_grad()` (`2g`), `running_loss += loss` (OOM Leak!), `detach()`-এ In-place Version Error, Validation-এ `no_grad` ভুলে যাওয়া |\n| **পাস ৩: Numerical Stability** | `dtype`, `device`, `torch.isfinite`, `BCEWithLogits`, সক্রিয় Denominator ($\\sum a_i$), `float64` Central FD ও `gradcheck` | `z = ±100`-এ `log(sigmoid(z)) -> NaN`, `float16` Overflow (`>65504`), অসমান Microbatch / Partial Batch-এ Mean-of-Means, বড় $\\eta$-তে Overshoot-কে Autograd বাগ ভাবা |\n\nচলুন Pure Python-এ এই ৩-পাসের Tensor Contract ও Gradient অডিট ইন্সপেক্টর একবার চালিয়ে দেখি!"
+          "title": "১. ৩-পাসের মাস্টার Debugging Checklist — না দেখে ঝালিয়ে নিন",
+          "body": "| Debugging পাস | কী কী যাচাই করবেন? | সবচেয়ে পরিচিত নীরব বাগ |\n| --- | --- | --- |\n| **পাস ১: Shape ও Memory** | `shape`, `stride`, `is_contiguous`, `squeeze(-1)`, `flatten(start_dim=1)`, `keepdim=True`, `.mT`, `assert pred.shape == target.shape` | `[B] - [B, 1] -> [B, B]` Pairwise Broadcast, `B=1`-এ অনির্দিষ্ট `squeeze()`, বর্গাকার Matrix-এ `keepdim=False`, Sliced View Memory Leak |\n| **পাস ২: Autograd Graph** | `requires_grad`, `is_leaf`, `grad_fn`, `zero_grad(set_to_none=True)`, `detach()` বনাম `clone()`, `no_grad()` বনাম `eval()` | `.to()`-এ Leaf নষ্ট হওয়া, ভুলে যাওয়া `zero_grad()` (`2g`), `running_loss += loss` (OOM Leak!), `detach()`-এ In-place Version Error, Validation-এ `no_grad` ভুলে যাওয়া |\n| **পাস ৩: Numerical Stability** | `dtype`, `device`, `torch.isfinite`, `BCEWithLogits`, সক্রিয় Denominator ($\\sum a_i$), `float64` Central FD ও `gradcheck` | `z = ±100`-এ `log(sigmoid(z)) -> NaN`, `float16` Overflow (`>65504`), অসমান Microbatch / Partial Batch-এ Mean-of-Means, বড় $\\eta$-তে Overshoot-কে Autograd বাগ ভাবা |\n\nচলুন Pure Python-এ এই ৩-পাসের Tensor Contract ও Gradient অডিট ইন্সপেক্টর একবার চালিয়ে দেখি!"
         },
         {
           "type": "code",
@@ -3921,7 +3921,7 @@
         },
         {
           "type": "concept_check",
-          "title": "ক্যাপস্টোন ডিবাগিং কুইজ ১ (পাস ১ ও ২): নীরব Training ব্যর্থতা ধরুন!",
+          "title": "ক্যাপস্টোন Debugging কুইজ ১ (পাস ১ ও ২): নীরব Training ব্যর্থতা ধরুন!",
           "predictMode": true,
           "question": "একটি Training Loop-এ দেখলেন: (ক) `loss` প্রতি Step-এ সসীম আছে, (খ) কোনো Error নেই, কিন্তু (গ) সব Parameter-এর মান প্রথম Step থেকে শেষ পর্যন্ত একদমই বদলাচ্ছে না (`w_after == w_before`)! নিচের কোনটি এর সরাসরি কারণ হতে পারে?",
           "options": [
@@ -3935,9 +3935,9 @@
         },
         {
           "type": "concept_check",
-          "title": "ক্যাপস্টোন ডিবাগিং কুইজ ২ (পাস ৩): হঠাৎ Step 1-এই `loss = NaN`!",
+          "title": "ক্যাপস্টোন Debugging কুইজ ২ (পাস ৩): হঠাৎ Step 1-এই `loss = NaN`!",
           "predictMode": true,
-          "question": "আপনার কোডে প্রথম কয়েকটি Batch ভালো চলল, তারপর একটি Batch-এ হঠাৎ `loss = NaN` হয়ে গেল! পাস ৩ (Numerical Stability) চেকলিস্ট ধরে সবচেয়ে সম্ভাব্য ৩টি কারণ কোন গুচ্ছে আছে?",
+          "question": "আপনার কোডে প্রথম কয়েকটি Batch ভালো চলল, তারপর একটি Batch-এ হঠাৎ `loss = NaN` হয়ে গেল! পাস ৩ (Numerical Stability) Checklist ধরে সবচেয়ে সম্ভাব্য ৩টি কারণ কোন গুচ্ছে আছে?",
           "options": [
             "(১) `B = 0` বা `mask.sum() == 0` দিয়ে শূন্য ভাগ, (২) আলাদা `log(sigmoid(z))`-এ চরম $z$ এর `log(0)`, (৩) `float16` Overflow (`>65504`) বা অতি বড় Learning Rate!",
             "(১) `model.eval()` কল করা, (২) `num_workers=0`, (৩) `torch.manual_seed(42)`",
@@ -3945,7 +3945,7 @@
             "PyTorch-এ কখনোই `NaN` আসতে পারে না যদি `dtype=float32` থাকে"
           ],
           "answer": 0,
-          "explanation": "চমৎকার! Training-এ `NaN` আসার প্রধান কারণগুলো হলো `0/0` (খালি Batch বা সব-Masked Batch), অনিরাপদ `log(0)`/`sqrt(negative)`, `float16` Overflow (`>65504`) এবং বিশাল Learning Rate-এ Gradient Explosion! পাস ৩ চেকলিস্ট দিয়ে মুহূর্তেই এগুলো শনাক্ত করা যায়।"
+          "explanation": "চমৎকার! Training-এ `NaN` আসার প্রধান কারণগুলো হলো `0/0` (খালি Batch বা সব-Masked Batch), অনিরাপদ `log(0)`/`sqrt(negative)`, `float16` Overflow (`>65504`) এবং বিশাল Learning Rate-এ Gradient Explosion! পাস ৩ Checklist দিয়ে মুহূর্তেই এগুলো শনাক্ত করা যায়।"
         },
         {
           "type": "interview_qa",
@@ -3983,7 +3983,7 @@
             {
               "concept": "Gradient Accumulation + Masking + DDP",
               "level": "Senior",
-              "question": "একটি Multi-GPU LLM SFT পাইপলাইনে Padding Mask + অসমান Microbatch + Gradient Accumulation চলছে। কীভাবে নিশ্চিত করবেন যে Effective Gradient হুবহু একটি বিশাল একক Batch-এর প্রতি-Token Global Mean-এর সমান?",
+              "question": "একটি Multi-GPU LLM SFT Pipeline-এ Padding Mask + অসমান Microbatch + Gradient Accumulation চলছে। কীভাবে নিশ্চিত করবেন যে Effective Gradient হুবহু একটি বিশাল একক Batch-এর প্রতি-Token Global Mean-এর সমান?",
               "answer": "সঠিক রেসিপি: (১) প্রতিটি Microbatch-এ `reduction='sum'` দিয়ে কেবল বৈধ (Non-pad) Token-এর Loss যোগ করুন, (২) পুরো Accumulation Window ও সব GPU Rank মিলে মোট বৈধ Token সংখ্যা $T_{\\mathrm{global}}$ গুনুন, (৩) প্রতি Microbatch-এ `(micro_sum_loss * world_size / T_global).backward()` চালান (`no_sync()` ব্যবহার করে শেষ ধাপ বাদে), এবং (৪) $K$ ধাপ শেষে `optimizer.step()` + `zero_grad(set_to_none=True)`!",
               "followUp": "কোন Layer থাকলে এই হুবহু সমতা তবুও বজায় থাকবে না? `BatchNorm` (তাই LLM-এ `LayerNorm`/`RMSNorm` ব্যবহার করা হয়)!"
             },
@@ -4168,7 +4168,7 @@
         "সব সময় শূন্য হয়ে যায়"
       ],
       "answer": 0,
-      "explanation": "`mean` Reduction-এ যোগফলকে Denominator `B` দিয়ে ভাগ করা হয় বলে `sum` নিলে Gradient ঠিক `B` গুণ বড় আসে; Microbatch স্কেলিংয়ের সময় এই হিসাবটি অবশ্যই মেলাতে হয়।"
+      "explanation": "`mean` Reduction-এ যোগফলকে Denominator `B` দিয়ে ভাগ করা হয় বলে `sum` নিলে Gradient ঠিক `B` গুণ বড় আসে; Microbatch Scaling-এর সময় এই হিসাবটি অবশ্যই মেলাতে হয়।"
     },
     {
       "id": "ch15_q13",
@@ -4204,7 +4204,7 @@
         "আগে থেকে retain_grad() কল না করলে এতে মান জমা হয় না"
       ],
       "answer": 3,
-      "explanation": "Memory বাঁচাতে PyTorch কেবল Leaf Parameter-এর `.grad` ধরে রাখে; কোনো Non-leaf Tensor-এ `requires_grad=True` থাকলেও ডিবাগিংয়ের জন্য আলাদাভাবে `retain_grad()` না দিলে তার `.grad` Buffer ফাঁকা (`None`) থাকে।"
+      "explanation": "Memory বাঁচাতে PyTorch কেবল Leaf Parameter-এর `.grad` ধরে রাখে; কোনো Non-leaf Tensor-এ `requires_grad=True` থাকলেও Debugging-এর জন্য আলাদাভাবে `retain_grad()` না দিলে তার `.grad` Buffer ফাঁকা (`None`) থাকে।"
     },
     {
       "id": "ch15_q16",
@@ -4252,7 +4252,7 @@
         "প্রথমটি বিদ্যমান সংরক্ষিত Graph পুনর্ব্যবহারযোগ্য রাখে, আর দ্বিতীয়টি Derivative হিসাবকেও নতুন Graph হিসেবে রেকর্ড করে"
       ],
       "answer": 3,
-      "explanation": "একই সংরক্ষিত Graph পুনর্ব্যবহার করা আর উচ্চতর ক্রমের Derivative (যেমন Hessian) বের করার প্রয়োজনীয়তা সম্পূর্ণ আলাদা, এবং দুটোতেই বাড়তি Memory খরচ হয়।"
+      "explanation": "একই সংরক্ষিত Graph পুনর্ব্যবহার করা আর Higher-order Derivative (যেমন Hessian) বের করার প্রয়োজনীয়তা সম্পূর্ণ আলাদা, এবং দুটোতেই বাড়তি Memory খরচ হয়।"
     },
     {
       "id": "ch15_q20",
@@ -4283,7 +4283,7 @@
       "question": "`B` আকারের একটি Batch-এ Mean Reduction সহ `BCEWithLogits` Loss-এর ক্ষেত্রে Logit Vector `z`-এর সাপেক্ষে Gradient কত?",
       "options": [
         "X @ w",
-        "স্কেলিং ছাড়া y - sigmoid(z)",
+        "Scaling ছাড়া y - sigmoid(z)",
         "(sigmoid(z) - y) / B",
         "সব সময় ধ্রুবক 1"
       ],
@@ -4487,7 +4487,7 @@
     {
       "title": "Batch Size 1-এ Model ভেঙে পড়ার সমাধান",
       "tag": "SHAPES · 20 MIN",
-      "prompt": "`Batch = 64` থাকলে আপনার কোড দিব্যি চলে, কিন্তু `Batch = 1` বা Dataset-এর শেষের অসম্পূর্ণ Batch এলেই ভেঙে পড়ে। Shape এবং Data-র সামঞ্জস্য কীভাবে নিশ্ছিদ্র করবেন?",
+      "prompt": "`Batch = 64` থাকলে আপনার কোড ঠিকভাবেই চলে, কিন্তু `Batch = 1` বা Dataset-এর শেষের অসম্পূর্ণ Batch এলেই ভেঙে পড়ে। Shape এবং Data-র সামঞ্জস্য কীভাবে নিশ্ছিদ্র করবেন?",
       "answer": "`B = 64`-এ চলা কোড **`B = 1` বা শেষের Partial Batch-এ ভেঙে পড়ার** প্রধান কারণ হলো অনির্দিষ্ট `squeeze()` ও শিথিল Shape Contract।\n\n- **Singleton Batch Axis সুরক্ষা:** Argument ছাড়া `squeeze()` লিখলে `[64, 1]` ঠিকই `[64]` হয়, কিন্তু `[1, 1]` থেকে সামনের Batch Axis-ও মুছে গিয়ে Scalar `[]` হয়ে যায়! তাই `[B, 1] -> [B]` করতে সব সময় সুনির্দিষ্ট `squeeze(-1)` এবং চ্যাপ্টা করতে `flatten(start_dim=1)` ব্যবহার করব।\n- **Data ও Label সামঞ্জস্য:** `X`, `y` এবং উৎস Row ID একসঙ্গে একটি `TensorDataset`-এ বেঁধে রাখব যাতে Shuffle বা ছোট Batch-এও সম্পর্ক না ভাঙে।\n- **সম্পূর্ণ Edge-case Test:** Unit Test-এ $B = 1$, $B = 2$, নিয়মিত Batch আকার এবং শেষের Partial Batch ($r$ Row)—সব কটিতেই কঠোর Shape Contract যাচাই যোগ করব (`drop_last=True` দিলে কত Sample বাদ পড়ছে তা নথিভুক্ত রাখব)। মনে রাখতে হবে, $B = 1$-এ কেবল সংখ্যা মিলে যাওয়া Shape সঠিক থাকার প্রমাণ নয়।"
     },
     {
@@ -4500,13 +4500,13 @@
       "title": "পুনরুৎপাদনযোগ্য বাস্তব ডেটার Tensor Audit তৈরি",
       "tag": "ENGINEERING · 30 MIN",
       "prompt": "একটি বাস্তব Dataset-এর ওপর হুবহু Reproducible Tensor ও Autograd Audit সাজাতে উৎস Data, Split, Dtype, DataLoader এবং যাচাইয়ের ধাপগুলো কীভাবে ডিজাইন করবেন?",
-      "answer": "একটি হুবহু **Reproducible** বাস্তব Data-র Tensor ও Autograd Audit সাজাতে আমি **পাঁচটি স্তরে চুক্তি লক** করব:\n\n1. **উৎস ও Split যাচাই:** উৎস CSV ফাইলের SHA-256 Hash ও Feature Schema মিলিয়ে আগের নির্ধারিত Training (fit-role) Split পুনর্ব্যবহার করব।\n2. **Leakage-মুক্ত Tensor প্রস্তুতি:** কেবল ওই Training Row-গুলোর Mean ও Population Standard Deviation (`ddof=0`) মিলিয়ে স্পষ্টভাবে `CPU` ও `float64` Tensor বানাব।\n3. **নির্ভুল DataLoader:** `(X, y, row_id)` একসঙ্গে `TensorDataset`-এ বেঁধে নির্দিষ্ট Seed দেওয়া `torch.Generator` ও Windows-নিরাপদ `num_workers=0` ব্যবহার করব—মনে রেখে যে অভিন্ন প্রথম Batch Reproduce করতে প্রতিবার নতুন Generator একই Seed-এ শুরু করতে হয়।\n4. **বহুমুখী যাচাই ও JSON রিপোর্ট:** Autograd বনাম Analytical বনাম Central Finite Difference, `gradcheck`, Stride/Layout Metadata এবং ভুল Broadcast রেফারেন্সগুলো Atomic File Write-এ JSON রিপোর্টে সংরক্ষণ করব।\n5. **Import-safe CLI ও স্বচ্ছ গণ্ডি:** Script-টি অন্য Directory থেকেও নির্বিঘ্নে চলার মতো Import-safe হবে, এবং স্পষ্ট লেখা থাকবে যে এটি Training-ভিত্তিক সংখ্যাসূচক Audit—কোনো নতুন Test Metric নয়।"
+      "answer": "একটি হুবহু **Reproducible** বাস্তব Data-র Tensor ও Autograd Audit সাজাতে আমি **পাঁচটি স্তরে চুক্তি লক** করব:\n\n1. **উৎস ও Split যাচাই:** উৎস CSV ফাইলের SHA-256 Hash ও Feature Schema মিলিয়ে আগের নির্ধারিত Training (fit-role) Split পুনর্ব্যবহার করব।\n2. **Leakage-মুক্ত Tensor প্রস্তুতি:** কেবল ওই Training Row-গুলোর Mean ও Population Standard Deviation (`ddof=0`) মিলিয়ে স্পষ্টভাবে `CPU` ও `float64` Tensor বানাব।\n3. **নির্ভুল DataLoader:** `(X, y, row_id)` একসঙ্গে `TensorDataset`-এ বেঁধে নির্দিষ্ট Seed দেওয়া `torch.Generator` ও Windows-নিরাপদ `num_workers=0` ব্যবহার করব—মনে রেখে যে অভিন্ন প্রথম Batch Reproduce করতে প্রতিবার নতুন Generator একই Seed-এ শুরু করতে হয়।\n4. **বহুমুখী যাচাই ও JSON রিপোর্ট:** Autograd বনাম Analytical বনাম Central Finite Difference, `gradcheck`, Stride/Layout Metadata এবং ভুল Broadcast রেফারেন্সগুলো Atomic File Write-এ JSON রিপোর্টে সংরক্ষণ করব।\n5. **Import-safe CLI ও কী কী যাচাই করা হয়েছে:** Script-টি অন্য Directory থেকেও নির্বিঘ্নে চলার মতো Import-safe হবে, এবং স্পষ্ট লেখা থাকবে যে এটি Training-ভিত্তিক সংখ্যাসূচক Audit—কোনো নতুন Test Metric নয়।"
     },
     {
       "title": "ম্যানুয়াল Gradient Step-এর কোড রিভিউ",
       "tag": "ML CODING · 25 MIN",
       "prompt": "কোনো প্রজেক্টে ম্যানুয়াল Gradient Step রিভিউ করার সময় Buffer ব্যবস্থাপনা, Graph রেকর্ডিং, Parameter আপডেট এবং পরবর্তী ধাপের চুক্তি হিসেবে আপনি কী কী দেখবেন?",
-      "answer": "ম্যানুয়াল Gradient Step-এর কোড রিভিউ করার সময় আমি **চারটি ধাপে কঠোর চেকলিস্ট** মিলিয়ে দেখব:\n\n1. **Buffer ও Loss স্কেলিং:** পুরোনো `.grad` Buffer পরিকল্পিতভাবে পরিষ্কার (`None` বা শূন্য) করা হয়েছে কি না, এবং `mean` বনাম `sum` বা অসমান Microbatch Weight ($\\frac{m_k}{N}$) সঠিক আছে কি না।\n2. **Graph-মুক্ত Update:** Forward ও `backward()` (বা `autograd.grad`) শেষে Leaf Parameter আপডেট $w \\leftarrow w - \\eta \\nabla_w L$ অবশ্যই `with torch.no_grad():` Context-এর ভেতরে হতে হবে, যাতে আপডেটটি নিজে নতুন Training Graph-এ রেকর্ড না হয়।\n3. **নতুন Graph জীবনচক্র:** পরের Iteration অবশ্যই নতুন Forward Pass চালাবে—পুরোনো সংরক্ষিত Graph পুনর্ব্যবহার বা অপ্রয়োজনীয় `retain_graph=True` এড়িয়ে চলতে হবে।\n4. **সংখ্যাসূচক নজরদারি:** সব Parameter ও Gradient `isfinite` কি না, Step Size কত এবং বড় Learning Rate-এ Overshoot হচ্ছে কি না দেখব (সীমা ছাড়ালে নীরবে Clip না করে স্পষ্ট সতর্কতা দেওয়া ভালো)। মনে রাখব, বড় Learning Rate-এ Loss বেড়ে যাওয়া এককভাবে Autograd বাগের প্রমাণ নয়।"
+      "answer": "ম্যানুয়াল Gradient Step-এর কোড রিভিউ করার সময় আমি **চারটি ধাপে কঠোর Checklist** মিলিয়ে দেখব:\n\n1. **Buffer ও Loss Scaling:** পুরোনো `.grad` Buffer পরিকল্পিতভাবে পরিষ্কার (`None` বা শূন্য) করা হয়েছে কি না, এবং `mean` বনাম `sum` বা অসমান Microbatch Weight ($\\frac{m_k}{N}$) সঠিক আছে কি না।\n2. **Graph-মুক্ত Update:** Forward ও `backward()` (বা `autograd.grad`) শেষে Leaf Parameter আপডেট $w \\leftarrow w - \\eta \\nabla_w L$ অবশ্যই `with torch.no_grad():` Context-এর ভেতরে হতে হবে, যাতে আপডেটটি নিজে নতুন Training Graph-এ রেকর্ড না হয়।\n3. **নতুন Graph জীবনচক্র:** পরের Iteration অবশ্যই নতুন Forward Pass চালাবে—পুরোনো সংরক্ষিত Graph পুনর্ব্যবহার বা অপ্রয়োজনীয় `retain_graph=True` এড়িয়ে চলতে হবে।\n4. **সংখ্যাসূচক নজরদারি:** সব Parameter ও Gradient `isfinite` কি না, Step Size কত এবং বড় Learning Rate-এ Overshoot হচ্ছে কি না দেখব (সীমা ছাড়ালে নীরবে Clip না করে স্পষ্ট সতর্কতা দেওয়া ভালো)। মনে রাখব, বড় Learning Rate-এ Loss বেড়ে যাওয়া এককভাবে Autograd বাগের প্রমাণ নয়।"
     }
   ],
   "book": {

@@ -56,7 +56,7 @@ class _OptimizerLabState extends State<OptimizerLab> {
           const Text('The gradient is only part of the update.', style: _title),
           _gap,
           const Text(
-            'বাস্তব Data-র 8টি Row থেকে হিসাব করা Mean BCE Gradient-এর তিনটি নির্দিষ্ট Coordinate বারবার প্রয়োগ করে Optimizer State তুলনা করি। এখানে fixed gradient replay; পরিবর্তিত model-এ gradient recompute বা retraining হচ্ছে না। সব তিন coordinates-এ illustrative decay .1, main recipe-এর parameter-group policy আলাদা।',
+            'বাস্তব Data-র 8টি Row থেকে হিসাব করা Mean BCE Gradient-এর তিনটি নির্দিষ্ট Coordinate বারবার প্রয়োগ করে Optimizer State তুলনা করি। এখানে একই Gradient বারবার ব্যবহার হয়। Model বদলানোর পর Gradient নতুন করে হিসাব করা বা Model আবার Train করা হয় না। উদাহরণের তিনটি Coordinate-এই Decay .1। মূল Training-এ Parameter Group-এর নিয়ম আলাদা।',
             style: _bn,
           ),
           _gap,
@@ -114,7 +114,7 @@ class _OptimizerLabState extends State<OptimizerLab> {
             ),
           _gap,
           const Text(
-            'SGD/momentum/Adam-এ এখানে decay gradient-এ যোগ হয়। AdamW-তে Parameter Shrinkage, Adaptive Moment Update থেকে আলাদাভাবে হয়। Adam-এর bias correction ও epsilon-ও update নির্ধারণ করে; একই gradient মানেই একই parameter step নয়।',
+            'SGD/momentum/Adam-এ এখানে decay gradient-এ যোগ হয়। AdamW-তে Parameter Shrinkage, Adaptive Moment Update থেকে আলাদাভাবে হয়। Adam-এ Bias Correction আর Epsilon-ও Update বদলায়। তাই Gradient একই হলেও Parameter Update আলাদা হতে পারে।',
             style: _bn,
           ),
           _gap,

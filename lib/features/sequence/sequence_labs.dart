@@ -77,7 +77,7 @@ class _RecurrentLabState extends State<RecurrentLab> {
           const Text('Read one step. Carry the right state.', style: _title),
           _gap,
           const Text(
-            'বাস্তব 14 দিনের Count Sequence, Hidden Size 3। RNN/LSTM ও initial GRU seed-defined untrained references; trained GRU main forecasting model। একটি Step বেছে Hidden State, Cell State আর Gate-গুলোর মান দেখুন। প্রতিটি Window শূন্য State থেকে শুরু হয়। Cell-এর মান দেখে Model-এর মানের Ranking করা যায় না।',
+            'বাস্তব 14 দিনের Count Sequence, Hidden Size 3। তুলনার জন্য RNN, LSTM আর Initial GRU নির্দিষ্ট Seed দিয়ে তৈরি করা হয়েছে। এগুলো Train করা হয়নি। আগে Train করা GRU-টিই মূল Forecasting Model। একটি Step বেছে Hidden State, Cell State আর Gate-গুলোর মান দেখুন। প্রতিটি Window শূন্য State থেকে শুরু হয়। Cell-এর মান দেখে Model-এর মানের Ranking করা যায় না।',
             style: _bn,
           ),
           _gap,
@@ -157,7 +157,7 @@ class _RecurrentLabState extends State<RecurrentLab> {
             ),
           _gap,
           const Text(
-            'PyTorch GRU gate order r,z,n। Candidate n=tanh(input_affine + r⊙hidden_affine); hidden bias reset-এর ভেতরে। Textbook variant-এর matrix/reset order ভিন্ন হতে পারে। LSTM order i,f,g,o; cell ও hidden আলাদা state।',
+            'PyTorch GRU-তে Gate-এর ক্রম r,z,n। Candidate n=tanh(input_affine + r⊙hidden_affine); hidden bias reset-এর ভেতরে। Textbook variant-এর matrix/reset order ভিন্ন হতে পারে। LSTM-এ ক্রম i,f,g,o। Cell State আর Hidden State আলাদা।',
             style: _bn,
           ),
           _gap,

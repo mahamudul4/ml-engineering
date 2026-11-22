@@ -61,7 +61,7 @@ class _TensorLayoutLabState extends State<TensorLayoutLab> {
           const Text('Shape is a view of storage.', style: _title),
           _gap,
           const Text(
-            'Training Data-র চারটি Row থেকে alcohol, volatile acidity আর sulphates নিয়ে এই 4×3 Matrix বানানো হয়েছে। View বদলে দেখুন Shape, Stride আর Element Offset কীভাবে বদলায়। Storage indices এখানে conceptual element offsets; device memory addresses নয়। Expanded View-তে একই মান একাধিক Coordinate-এ দেখা যায়।',
+            'Training Data-র চারটি Row থেকে alcohol, volatile acidity আর sulphates নিয়ে এই 4×3 Matrix বানানো হয়েছে। View বদলে দেখুন Shape, Stride আর Element Offset কীভাবে বদলায়। এখানে Storage Index বলতে Element Offset বোঝাচ্ছে। Device Memory Address দেখানো হচ্ছে না। Expanded View-তে একই মান একাধিক Coordinate-এ দেখা যায়।',
             style: _bn,
           ),
           _gap,
@@ -278,7 +278,7 @@ class _BroadcastLabState extends State<BroadcastLab> {
           const Text('A valid broadcast can be a bug.', style: _title),
           _gap,
           const Text(
-            'Actual fit-row probabilities fixed Chapter14 logistic reference থেকে। [B] Shape-এর Prediction থেকে [B,1] Shape-এর Target বিয়োগ করলে [B,B] Shape-এর Pairwise Error তৈরি হয়। এই MSE shape-debugging example, নতুন classifier objective নয়। BCEWithLogitsLoss exact input/target shape চায় এবং এই mismatch reject করে।',
+            'Fit Row-গুলোর Probability নেওয়া হয়েছে Chapter 14-এর নির্ধারিত Logistic Reference থেকে। [B] Shape-এর Prediction থেকে [B,1] Shape-এর Target বিয়োগ করলে [B,B] Shape-এর Pairwise Error তৈরি হয়। এখানে MSE দিয়ে Shape-এর ভুল দেখানো হচ্ছে। Classifier-এর জন্য নতুন Objective নির্ধারণ করা হয়নি। BCEWithLogitsLoss-এ Input আর Target-এর Shape হুবহু মিলতে হয়। না মিললে Error আসে।',
             style: _bn,
           ),
           _gap,

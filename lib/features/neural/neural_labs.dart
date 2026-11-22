@@ -77,7 +77,7 @@ class _ForwardLabState extends State<ForwardLab> {
           const Text('Follow one row through the network.', style: _title),
           _gap,
           const Text(
-            '11টি standardized chemistry features → 4টি hidden units → একটি logit। Inner Training Data থেকে একটি Row বেছে প্রতিটি Weighted Sum আর Activation-এর হিসাব দেখুন। Tanh toggle একই weights-এর what-if; নতুন trained model নয়।',
+            '11টি standardized chemistry features → 4টি hidden units → একটি logit। Inner Training Data থেকে একটি Row বেছে প্রতিটি Weighted Sum আর Activation-এর হিসাব দেখুন। Tanh চালু করলে একই Weight রেখে ফল কীভাবে বদলায়, তা দেখা যায়। এখানে নতুন Model Train হয় না।',
             style: _bn,
           ),
           _gap,
@@ -237,7 +237,7 @@ class _BackpropLabState extends State<BackpropLab> {
           ),
           _gap,
           const Text(
-            'প্রথম 8 actual inner-training rows ও initial weights-এ analytical backprop। Mean-এর বদলে Sum নিলে সব Gradient-এর Scale বদলায়। Hidden detach করলে forward values ও output-layer gradients একই থাকে, কিন্তু first-layer .grad হয় None; সেটিকে zero derivative বলা ঠিক নয়।',
+            'Inner Training-এর প্রথম 8টি Row আর Initial Weight দিয়ে Analytical Backpropagation-এর হিসাব। Mean-এর বদলে Sum নিলে সব Gradient-এর Scale বদলায়। Hidden State Detach করলে Forward Pass-এর মান আর Output Layer-এর Gradient একই থাকে। প্রথম Layer-এর .grad তখন None হয়। এর মানে Derivative শূন্য নয়।',
             style: _bn,
           ),
           _gap,

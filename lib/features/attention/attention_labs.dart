@@ -84,7 +84,7 @@ class _AttentionLabState extends State<AttentionLab> {
           const Text('Project. Compare. Mix the values.', style: _title),
           _gap,
           const Text(
-            'Actual count→4 features, pre-norm থেকে learned Q/K/V। দুই head-এর প্রতিটির dimension2। একটি Query Row ও Key Cell বেছে Scaled Dot Product, Causal Mask আর Weighted Value দেখুন। Attention weight নিজে causal explanation বা feature importance নয়।',
+            'বাস্তব Count থেকে 4টি Feature তৈরি হয়। Pre-Norm-এর পর শেখা Projection দিয়ে Q/K/V বের হয়। দুই Head-এর প্রতিটির Dimension 2। একটি Query Row ও Key Cell বেছে Scaled Dot Product, Causal Mask আর Weighted Value দেখুন। শুধু Attention Weight দেখে Causal Explanation বা Feature Importance জানা যায় না।',
             style: _bn,
           ),
           _gap,
@@ -135,7 +135,7 @@ class _AttentionLabState extends State<AttentionLab> {
           ),
           _gap,
           const Text(
-            'ব্যবহার করা যায় এমন Score-গুলো থেকে সর্বোচ্চ Score বিয়োগ করি। তারপর প্রতিটির exp বের করি। যে Row-এর Score, সেই Row-এর সব exp-এর যোগফল দিয়ে ভাগ করি। Masked Key-গুলোর Weight ঠিক 0। Valid Row-এর Weight যোগ করলে 1 হয়, কারণ এখানে Dropout 0। Head outputs concatenate করার পরে learned output projection ও residual আছে—heatmap পুরো model explanation নয়।',
+            'ব্যবহার করা যায় এমন Score-গুলো থেকে সর্বোচ্চ Score বিয়োগ করি। তারপর প্রতিটির exp বের করি। যে Row-এর Score, সেই Row-এর সব exp-এর যোগফল দিয়ে ভাগ করি। Masked Key-গুলোর Weight ঠিক 0। Valid Row-এর Weight যোগ করলে 1 হয়, কারণ এখানে Dropout 0। Head-গুলোর Output জুড়ে দেওয়ার পর শেখা Output Projection আর Residual আছে। তাই Heatmap দেখে পুরো Model কীভাবে সিদ্ধান্ত নেয়, তা বোঝা যায় না।',
             style: _bn,
           ),
           _gap,
