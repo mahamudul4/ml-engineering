@@ -50,7 +50,7 @@ class _FactorWorkbenchState extends State<FactorWorkbench> {
           const Text('Learn factors. Inspect the interactions.', style: _title),
           _gap,
           const Text(
-            'চারটি trained model-এর complete weights দিয়ে full fit catalog Dart-এ score হয়। User/item factor coordinates latent basis; named genre বা human personality নয়। All observed seen items বাদ যায়। Model score probability নয়।',
+            'আগে Train করা চারটি Model-এর সব Weight দিয়ে Dart-এ পুরো Fit Catalog-এর Score হিসাব করা হয়। User/item factor coordinates latent basis; named genre বা human personality নয়। User আগে দেখেছেন বলে জানা আছে, এমন সব Item বাদ যায়। Model score probability নয়।',
             style: _bn,
           ),
           _gap,

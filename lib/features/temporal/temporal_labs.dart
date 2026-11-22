@@ -271,7 +271,7 @@ class _ForecastLabState extends State<ForecastLab> {
           const Text('Freeze the origin. Forecast forward.', style: _title),
           _gap,
           const Text(
-            'একটি cutoff-এ দাঁড়িয়ে সব h দিনের forecast একসঙ্গে করি। Future actual values শুধু error মাপার জন্য; prediction-এ যায় না। এটি one-step rolling evaluation নয়। Realized future weather এবং same-day casual/registered target components ব্যবহার হয়নি।',
+            'একটি Cutoff থেকে পরের h দিনের Forecast একসঙ্গে করি। Future actual values শুধু error মাপার জন্য; prediction-এ যায় না। এটি one-step rolling evaluation নয়। Realized future weather এবং same-day casual/registered target components ব্যবহার হয়নি।',
             style: _bn,
           ),
           _gap,
@@ -394,7 +394,7 @@ class _BacktestLabState extends State<BacktestLab> {
           const Text('Train on the past. Respect the gap.', style: _title),
           _gap,
           const Text(
-            'Origin slider-এর আগে train, পরে gap, তারপর 14 দিনের validation। Gap মানে forecast lead আরও দীর্ঘ; intermediate outcomes baseline পায় না। Expanding বা last-90-day training বেছে নিন। এটি fixed-origin block; মূল Python workflow-এর one-step CV protocol আলাদা।',
+            'Origin slider-এর আগে train, পরে gap, তারপর 14 দিনের validation। Gap রাখলে Forecast Lead বেড়ে যায়। মাঝের Outcome-গুলো Baseline-এ দেওয়া হয় না। Expanding বা last-90-day training বেছে নিন। এটি fixed-origin block; মূল Python workflow-এর one-step CV protocol আলাদা।',
             style: _bn,
           ),
           _gap,

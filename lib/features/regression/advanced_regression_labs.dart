@@ -47,7 +47,7 @@ class _OptimizationLabState extends State<OptimizationLab> {
         ),
         const SizedBox(height: 10),
         const Text(
-          'Learning rate ও feature scale বদলে training-এর পথ দেখুন।',
+          'Learning Rate আর Feature Scale বদলে দেখুন Training কোন পথে এগোয়।',
           style: TextStyle(
             fontFamily: 'NotoSansBengali',
             height: 2,

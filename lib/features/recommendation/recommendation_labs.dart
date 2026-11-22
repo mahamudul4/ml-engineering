@@ -64,7 +64,7 @@ class _FeedbackBaselineLabState extends State<FeedbackBaselineLab> {
           const Text('Observe the feedback. Build a baseline.', style: _title),
           _gap,
           const Text(
-            'Rating explicit judgement; missing rating অজানা। Threshold দিয়ে binary preference বানালে তথ্য হারায়। Popularity এখানে positive user count; Bayesian mean-এ সব fit ratings ব্যবহার হয়। দুই score-এর unit আলাদা।',
+            'Rating হলো User-এর Explicit Judgement। Rating দেওয়া না থাকলে User কী ভেবেছেন, তা জানা যায় না। Threshold দিয়ে binary preference বানালে তথ্য হারায়। Popularity এখানে positive user count; Bayesian mean-এ সব fit ratings ব্যবহার হয়। দুটি Score-এর Unit আলাদা।',
             style: _bn,
           ),
           _gap,

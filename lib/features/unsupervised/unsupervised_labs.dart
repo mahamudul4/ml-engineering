@@ -60,7 +60,7 @@ class _KMeansLabState extends State<KMeansLab> {
           const Text('Assign. Average. Repeat.', style: _heading),
           _gap,
           const Text(
-            'একই real observations-এ Lloyd steps দেখুন। একটি step-এ আগের assignments-এর mean দিয়ে centers update হয়, তারপর নিকটতম center দিয়ে labels আবার নির্ধারিত হয়। Bundled Python trace; device-এ retraining নয়।',
+            'একই real observations-এ Lloyd steps দেখুন। প্রতিটি Step-এ আগের Assignment-এর Mean দিয়ে Center Update হয়। তারপর সবচেয়ে কাছের Center দেখে আবার Label ঠিক হয়। Bundled Python trace; device-এ retraining নয়।',
             style: _bn,
           ),
           _gap,
@@ -185,7 +185,7 @@ class _DensityLabState extends State<DensityLab> {
           const Text('Density connects core points.', style: _heading),
           _gap,
           const Text(
-            'Radius ও min_samples বদলালে Dart-এ neighborhood এবং core components আবার হিসাব হয়। Border point নিজে core নয়; একাধিক core component-এর কাছে থাকলে lowest component ID বেছে নিই। Border দিয়ে দুটি component জোড়া লাগে না।',
+            'Radius বা min_samples বদলালে Dart নতুন করে Neighborhood ও Core Component হিসাব করে। Border point নিজে core নয়; একাধিক core component-এর কাছে থাকলে lowest component ID বেছে নিই। Border দিয়ে দুটি component জোড়া লাগে না।',
             style: _bn,
           ),
           _gap,

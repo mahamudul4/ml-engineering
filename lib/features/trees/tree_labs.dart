@@ -50,7 +50,7 @@ class _SplitLabState extends State<SplitLab> {
             ),
             const SizedBox(height: 12),
             const Text(
-              'Original Adult file-এর প্রথম 24টি row: age দিয়ে >50K label আলাদা করার একটি split calculator। এটি trained full model বা validation result নয়।',
+              'Original Adult file-এর প্রথম 24টি row: age দিয়ে >50K Label আলাদা করতে Split-এর হিসাব করা হচ্ছে। এটি trained full model বা validation result নয়।',
               style: TextStyle(fontFamily: 'NotoSansBengali', height: 2),
             ),
             const SizedBox(height: 18),
@@ -280,7 +280,7 @@ class _PruningLabState extends State<PruningLab> {
             ),
             const SizedBox(height: 12),
             const Text(
-              'Adult training data-তে age ও education_num দিয়ে fixed depth-5 tree fit করা হয়েছে। Training-only cost-complexity path-এর precomputed subtrees দেখুন; slider runtime training করে না।',
+              'Adult training data-তে age ও education_num দিয়ে fixed depth-5 tree fit করা হয়েছে। শুধু Training Data থেকে আগে হিসাব করা Cost-complexity Path-এর Subtree-গুলো দেখুন। Slider বদলালে আবার Training হয় না।',
               style: TextStyle(fontFamily: 'NotoSansBengali', height: 2),
             ),
             const SizedBox(height: 18),

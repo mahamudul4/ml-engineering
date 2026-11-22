@@ -288,7 +288,7 @@ class _ThresholdLabState extends State<ThresholdLab> {
           ),
           const SizedBox(height: 10),
           const Text(
-            'Threshold বদলান, ভুলের ধরন ও review workload তুলনা করুন।',
+            'Threshold বদলে ভুলের ধরন আর কতগুলো Case Review করতে হবে, তা তুলনা করুন।',
             style: TextStyle(
               fontFamily: 'NotoSansBengali',
               fontSize: 13,

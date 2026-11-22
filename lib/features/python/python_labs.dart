@@ -50,7 +50,7 @@ class _BroadcastingLabState extends State<BroadcastingLab> {
           ),
           const SizedBox(height: 12),
           const Text(
-            'Trailing dimensions মিলিয়ে A + B করুন। (3,1) ও (3,) error দেয় না—তিনটি aligned pair-এর বদলে নয়টি combination হয়।',
+            'Trailing Dimension মিলিয়ে A + B করুন। (3,1) ও (3,) যোগ করলে Error আসে না। তিনটি Aligned Pair-এর বদলে নয়টি Combination তৈরি হয়।',
             style: TextStyle(fontFamily: 'NotoSansBengali', height: 2),
           ),
           const SizedBox(height: 18),
@@ -121,7 +121,7 @@ class _BroadcastingLabState extends State<BroadcastingLab> {
           ],
           const SizedBox(height: 16),
           const Text(
-            'Compatible মানে intended pairing ঠিক নয়। Prediction এবং target-এর shape explicitভাবে validate করুন। Scalar () একটি element; (0,3) empty। Broadcasting input tile না করলেও output/temporary arrays বড় হতে পারে।',
+            'Compatible মানে intended pairing ঠিক নয়। Prediction আর Target-এর Shape আলাদা করে যাচাই করুন। Scalar () একটি element; (0,3) empty। Broadcasting input tile না করলেও output/temporary arrays বড় হতে পারে।',
             style: TextStyle(
               fontFamily: 'NotoSansBengali',
               height: 2,

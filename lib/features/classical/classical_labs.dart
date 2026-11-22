@@ -44,7 +44,7 @@ class _SvmLabState extends State<SvmLab> {
             ),
             const SizedBox(height: 12),
             const Text(
-              'Real Adult age/education_num: training-only standardized coordinates-এ fixed balanced-weight linear SVC fits। C বেছে precomputed model দেখুন; runtime retraining নয়।',
+              'Real Adult age/education_num: training-only standardized coordinates-এ fixed balanced-weight linear SVC fits। C বেছে আগে Train করা Model-টি দেখুন। এখানে আবার Training হয় না।',
               style: TextStyle(fontFamily: 'NotoSansBengali', height: 2),
             ),
             const SizedBox(height: 18),
@@ -353,7 +353,7 @@ class _KnnLabState extends State<KnnLab> {
               ],
             ),
             const Text(
-              'Zero distance হলে selected exact matches-ই weight পায়; epsilon দিয়ে arbitrary huge weight নয়। Feature match মানে একই person নয়। Soft neighbor fraction calibrated deployment probability ধরে নেবেন না।',
+              'Zero distance হলে selected exact matches-ই weight পায়; epsilon দিয়ে arbitrary huge weight নয়। দুটি Row-এর Feature মিললেও সেগুলো একই ব্যক্তির বলে ধরে নেওয়া যায় না। Soft neighbor fraction calibrated deployment probability ধরে নেবেন না।',
               style: TextStyle(
                 fontFamily: 'NotoSansBengali',
                 fontSize: 12,

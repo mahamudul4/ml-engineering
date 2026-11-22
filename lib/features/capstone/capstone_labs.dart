@@ -57,7 +57,7 @@ class _ExperimentLabState extends State<ExperimentLab> {
           const Text('Compare evidence. Lock the rule.', style: _title),
           _gap,
           const Text(
-            '966 fit rows-এ তিনটি group-separated folds। একই folds-এ prior baseline ও ছয় learned candidates compare করা হয়েছে। Selection rule highest mean AP; exact tie হলে declared order। Dropdown শুধু stored evidence inspect করে, নতুন model train বা official winner বদলায় না।',
+            '966 fit rows-এ তিনটি group-separated folds। একই folds-এ prior baseline ও ছয় learned candidates compare করা হয়েছে। যার Mean AP সবচেয়ে বেশি, সেটি বেছে নেওয়া হয়। Mean AP হুবহু সমান হলে আগে ঠিক করা ক্রম অনুসরণ করা হয়। Dropdown শুধু stored evidence inspect করে, নতুন model train বা official winner বদলায় না।',
             style: _bn,
           ),
           _gap,
@@ -295,7 +295,7 @@ class _PipelineLabState extends State<PipelineLab> {
           const Text('Trace every transform to the score.', style: _title),
           _gap,
           const Text(
-            'Actual decision-validation row বেছে raw values → fit-only StandardScaler → weighted contributions → logit → sigmoid অনুসরণ করুন। সব arithmetic Dart-এ। Coordinate-view switch display বদলায়; prediction সবসময় fitted scaling ব্যবহার করে।',
+            'Actual decision-validation row বেছে raw values → fit-only StandardScaler → weighted contributions → logit → sigmoid অনুসরণ করুন। সব arithmetic Dart-এ। Coordinate View বদলালে শুধু দেখানোর ধরন বদলায়। Prediction-এ সব সময় আগের Fit করা Scaling ব্যবহার হয়।',
             style: _bn,
           ),
           _gap,

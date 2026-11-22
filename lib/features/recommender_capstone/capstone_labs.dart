@@ -60,7 +60,7 @@ class _CapstoneRetrievalLabState extends State<CapstoneRetrievalLab> {
           const Text('Build the pool. Explain every rank.', style: _title),
           _gap,
           const Text(
-            'Frozen fit-only popularity/content/user-CF top100 snapshots। App recomputes union ও weighted RRF from rank positions; source retrievers Python-এ fresh fit থেকে তৈরি। Budgets/presets inspection controls, saved validation selection বদলায় না। Missing source contribution 0; score probability নয়।',
+            'Frozen fit-only popularity/content/user-CF top100 snapshots। App recomputes union ও weighted RRF from rank positions; source retrievers Python-এ fresh fit থেকে তৈরি। Budget আর Preset বদলে ফল দেখা যায়। এতে Validation-এ আগে বেছে নেওয়া ফল বদলায় না। কোনো Source-এর Contribution না থাকলে 0 ধরা হয়। Score-কে Probability হিসেবে ধরা যাবে না।',
             style: _bn,
           ),
           _gap,

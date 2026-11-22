@@ -133,7 +133,7 @@ class _PointInTimeFeatureLabState extends State<PointInTimeFeatureLab> {
           ),
           _gap,
           const Text(
-            'lag1/lag7 missing হলে null, rolling mean শুধু known rows-এর denominator। Later backfill দিয়ে historical prediction সাজালে availability leakage হয়। Changing display mode does not change source observations or saved reference protocol.',
+            'lag1/lag7 missing হলে null, rolling mean শুধু known rows-এর denominator। পরে Backfill করা Data দিয়ে আগের Prediction তৈরি করলে Availability Leakage হয়। Changing display mode does not change source observations or saved reference protocol.',
             style: _bn,
           ),
           _gap,

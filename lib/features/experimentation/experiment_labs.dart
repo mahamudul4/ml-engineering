@@ -59,7 +59,7 @@ class _TrialInferenceLabState extends State<TrialInferenceLab> {
           ),
           _space,
           const Text(
-            'Published experimental subset-এর actual outcomes থেকে mean contrast, unbiased variance ও Welch SE/df recompute করি। SciPy reference t-critical/p-value bundled। 1978 earnings-এর monetary units অপরিবর্তিত। Positive মানে re78>0; এটি আলাদাভাবে measured employment status নয়।',
+            'প্রকাশিত Experiment Subset-এর বাস্তব Outcome থেকে Mean Contrast, Unbiased Variance আর Welch SE/df আবার হিসাব করি। SciPy reference t-critical/p-value bundled। 1978 earnings-এর monetary units অপরিবর্তিত। Positive মানে re78>0; এটি আলাদাভাবে measured employment status নয়।',
             style: _bn,
           ),
           _space,

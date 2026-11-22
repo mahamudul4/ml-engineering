@@ -80,7 +80,7 @@ class _ResponseMaskLabState extends State<ResponseMaskLab> {
           const Text('Mask the prompt. Score the response.', style: _title),
           _gap,
           const Text(
-            'Actual claim-এরfirst24 UTF8 bytes+BOS+newline input। Single next-byte response S বা C supervised; prompt token losses বাদ। No evidence passage input,so prediction scientific verification নয়। Source label response input-এরভিতরে দেওয়া হয়নি। Classifier selects only S/C;NLL uses all257 legal output classes।',
+            'বাস্তব Claim-এর প্রথম 24টি UTF8 Byte, BOS আর Newline নিয়ে Input তৈরি হয়। পরের এক Byte, S বা C, Response হিসেবে শেখানো হয়। Prompt Token-এর Loss বাদ যায়। No evidence passage input,so prediction scientific verification নয়। Source label response input-এরভিতরে দেওয়া হয়নি। Classifier selects only S/C;NLL uses all257 legal output classes।',
             style: _bn,
           ),
           _gap,
@@ -259,7 +259,7 @@ class _AdaptationAuditLabState extends State<AdaptationAuditLab> {
           const Text('Lower loss. Check the baseline.', style: _title),
           _gap,
           const Text(
-            'Fixed12-epoch full update ওhead-only LoRA run train loss কমিয়েছে,কিন্তুসব188 diagnostic queries-এSUPPORT predict করেছে। Accuracy124/188≈.659574,the same as the train-majority baseline। Learned task discrimination বাfact verification claim নয়। Class balance,prediction counts ওbaseline inspect করুন।',
+            'নির্ধারিত 12 Epoch-এর Full Update আর Head-only LoRA Run-এ Train Loss কমেছে। তবে 188টি Diagnostic Query-র সবকটিতেই SUPPORT Predict করেছে। Accuracy124/188≈.659574,the same as the train-majority baseline। Learned task discrimination বাfact verification claim নয়। Class balance,prediction counts ওbaseline inspect করুন।',
             style: _bn,
           ),
           _gap,

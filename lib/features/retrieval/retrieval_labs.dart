@@ -28,7 +28,7 @@ Widget _asset(
   },
 );
 Widget _source() => const Text(
-  'SciFact · Wadden et al. (2020), BEIR distribution · 5,183 original documents। Claims/annotations: CC BY 4.0; abstract database: ODC-By 1.0। Source, attribution ও notices bundled। Claim text ভুল হতে পারে; retrieved evidence মানেই claim সমর্থিত নয়। English corpus; Bangla teaching ভাষা। LSA একটি corpus-fitted linear baseline, pretrained neural semantic encoder নয়।',
+  'SciFact · Wadden et al. (2020), BEIR distribution · 5,183 original documents। Claims/annotations: CC BY 4.0; abstract database: ODC-By 1.0। Source, attribution ও notices bundled। Claim-এর লেখায় ভুল থাকতে পারে। Evidence খুঁজে পাওয়া গেলেই যে তা Claim-টিকে সমর্থন করে, এমন নয়। English corpus; Bangla teaching ভাষা। LSA একটি corpus-fitted linear baseline, pretrained neural semantic encoder নয়।',
   style: _bn,
 );
 String _method(String name) => {
@@ -127,7 +127,7 @@ class _EmbeddingGeometryLabState extends State<EmbeddingGeometryLab> {
           const Text('Same direction. Different magnitude.', style: _heading),
           _gap,
           const Text(
-            'বাস্তব source query → sublinear TF-IDF → 32D LSA projection। Selected document একটি judged relevant evidence document; তার stored vector unit length। Raw query vector scale করলে dot product বদলায়, cosine একই থাকে। Zero vector-এর angle সংজ্ঞায়িত নয়; retrieval convention-এ score 0।',
+            'বাস্তব source query → sublinear TF-IDF → 32D LSA projection। Selected document একটি judged relevant evidence document; তার stored vector unit length। Raw Query Vector-এর Scale বদলালে Dot Product বদলায়। Cosine Similarity একই থাকে। Zero vector-এর angle সংজ্ঞায়িত নয়; retrieval convention-এ score 0।',
             style: _bn,
           ),
           _gap,

@@ -36,7 +36,7 @@ class _BayesLabState extends State<BayesLab> {
           ),
           const SizedBox(height: 12),
           const Text(
-            'Generic rare-event flagger: P(flag | event) এবং P(event | flag) এক নয়। Base rate বদলে flagged cases-এর composition দেখুন।',
+            'Generic rare-event flagger: P(flag | event) এবং P(event | flag) এক নয়। Base Rate বদলে দেখুন Flag পাওয়া Case-গুলোর অনুপাত কীভাবে বদলায়।',
             style: TextStyle(fontFamily: 'NotoSansBengali', height: 2),
           ),
           const SizedBox(height: 18),
@@ -228,7 +228,7 @@ class _CoverageLabState extends State<CoverageLab> {
           ),
           const SizedBox(height: 12),
           const Text(
-            'Binomial(n,p) model-এ সব n+1 possible success counts enumerate করি। কোন intervals true p cover করে, সেই outcomes-এর probabilities যোগ করলে actual model coverage পাওয়া যায়।',
+            'Binomial(n,p) Model-এ Success Count-এর সম্ভাব্য n+1টি মান একে একে দেখি। যেসব Outcome-এর Interval-এ প্রকৃত p পড়ে, সেগুলোর Probability যোগ করলে Model-এর প্রকৃত Coverage পাওয়া যায়।',
             style: TextStyle(fontFamily: 'NotoSansBengali', height: 2),
           ),
           const SizedBox(height: 18),

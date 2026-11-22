@@ -55,28 +55,28 @@ def mock_cards():
  'systems':('System & failure defense','Requesttrace,model/source/schema/policycontract,capacityassumptionsওfallbackexplainকরুন।','Dependencylateবাunavailableহলেকীserveকরবেন? Fallbackoverloadওcacheisolationকীভাবেverifyকরবেন?')}
  role_prompts={
  'ml_engineer':{
- 'project':'Red/white wine pipeline-এর source, fit boundary, preprocessing ওmodel/policy version trace করুন। কোন অংশ নিজে implement করেছেন এবংকোনটি provided reference?',
- 'coding':'Frozen classifier-এর confusion matrix ওsymbolic mean cost helper ছাড়া implement করুন। Empty class, shape ওnonfinite input-এর contract এবংindependent oracle দিন।',
- 'statistics':'CV AP winner MLP-এর decision cost logistic-এর চেয়ে বেশি কেন হতে পারে? Objective, threshold, denominator ওselection history আলাদা করে বলুন।',
- 'systems':'একই release-এ scaler/weights/source/policy mismatch হলে কী block করবেন? Compatible fallback, rollback ওmeasured latency gap explain করুন।'},
+ 'project':'Red/White Wine Pipeline-এর Source, Fit Boundary, Preprocessing এবং Model ও Policy-র Version ধরে Trace করুন। কোন অংশ নিজে Implement করেছেন, আর কোনটি Reference হিসেবে দেওয়া ছিল?',
+ 'coding':'Frozen Classifier-এর Confusion Matrix আর Symbolic Mean Cost কোনো Helper ছাড়া Implement করুন। Empty Class, Shape ও Nonfinite Input কীভাবে সামলাবেন, তার Contract এবং একটি Independent Oracle দিন।',
+ 'statistics':'CV AP winner MLP-এর decision cost logistic-এর চেয়ে বেশি কেন হতে পারে? Objective, Threshold, Denominator আর Selection History আলাদা করে ব্যাখ্যা করুন।',
+ 'systems':'একই Release-এ Scaler, Weight, Source বা Policy না মিললে কী Block করবেন? Compatible Fallback, Rollback আর মাপা Latency-র পার্থক্য ব্যাখ্যা করুন।'},
  'data_scientist':{
- 'project':'একটি wine-quality classification brief লিখুন। Proxy label, target population, candidate selection ওaction-cost assumptions কী? নিজের contribution আলাদা করুন।',
- 'coding':'একই decision rows থেকে TP/FP/FN/TN, precision ওrecall implement করুন। Zero denominators এবংpaired policy comparison-এর minimal tests দিন।',
- 'statistics':'Observed development metric থেকে fresh population benefit বলা যায় কি? Estimand, dependence, repeated selection ওnew locked evaluation plan defend করুন।',
- 'systems':'Delayed/selectively observed labels এলে quality monitoring ওpolicy evaluation কীভাবে বদলাবে? Missing outcomes oracle-correct ধরবেন না।'},
+ 'project':'একটি wine-quality classification brief লিখুন। Proxy Label, Target Population, Candidate Selection আর Action Cost-এর Assumption কী? নিজের অবদান আলাদা করে বলুন।',
+ 'coding':'একই Decision Row থেকে TP/FP/FN/TN, Precision আর Recall বের করার কোড লিখুন। Denominator শূন্য হলে কী হয় এবং Paired Policy Comparison ঠিক আছে কি না, তা যাচাইয়ের জন্য ন্যূনতম Test দিন।',
+ 'statistics':'Development-এ দেখা Metric থেকে নতুন Population-এ লাভ হবে বলে কি ধরে নেওয়া যায়? Estimand, Dependence, Repeated Selection আর নতুন Locked Evaluation Plan-এর পক্ষে যুক্তি দিন।',
+ 'systems':'Label দেরিতে এলে বা কিছু ক্ষেত্রেই শুধু দেখা গেলে Quality Monitoring আর Policy Evaluation কীভাবে বদলাবে? Missing Outcome-কে Oracle-correct ধরে নেবেন না।'},
  'recs_engineer':{
- 'project':'MovieLens fit cutoff থেকে candidate sources ওselected RRF ranking পর্যন্ত trace করুন। Eligible gold ওempty-user exclusions-এর scope এবংনিজের implementation দেখান।',
- 'coding':'একজন user-এর DCG/IDCG ওmacro NDCG implement করুন। Duplicate recommendations, empty gold, K boundary ওdeterministic ties test করুন।',
- 'statistics':'Macro user recall বনামpooled recall কোন population weight দেয়? MNAR feedback ওexposure selection কেন online lift identify করে না?',
- 'systems':'Personalized source unavailable হলে popularity fallback কীভাবে seen/eligibility rules মানবে? Cache isolation ওfallback surge capacity explain করুন।'},
+ 'project':'MovieLens-এর Fit Cutoff থেকে Candidate Source আর বেছে নেওয়া RRF Ranking পর্যন্ত Trace করুন। Eligible Gold আর Empty User বাদ দেওয়ার নিয়ম এবং নিজের Implementation দেখান।',
+ 'coding':'একজন User-এর DCG/IDCG এবং Macro NDCG-এর কোড লিখুন। Duplicate Recommendation, Empty Gold, K-এর Boundary আর Tie হলে নির্দিষ্ট নিয়ম যাচাই করুন।',
+ 'statistics':'Macro User Recall আর Pooled Recall-এ কোন Population কী Weight পায়? MNAR Feedback আর Exposure Selection দিয়ে কেন Online Lift বোঝা যায় না?',
+ 'systems':'Personalized Source পাওয়া না গেলে Popularity Fallback কীভাবে Seen Item আর Eligibility-র নিয়ম মানবে? Cache Isolation আর হঠাৎ বেশি Request এলে Fallback-এর Capacity ব্যাখ্যা করুন।'},
  'llm_engineer':{
- 'project':'Six saved SciFact examples-এর tiny decoder, retrieved context ওexact citations explain করুন। Provided weights এবংআপনার verification contribution আলাদা রাখুন।',
- 'coding':'Packed sentence span original source-এর সঙ্গে exact কিনা audit function লিখুন। Empty context, wrong span ওformat-valid but unsupported output-এর tests দিন।',
- 'statistics':'Six mixed train/dev samples-এ quote/format pass থেকে answer accuracy বলা যাবে? Representative annotation, entailment ওabstention utility evaluation plan দিন।',
- 'systems':'Source unavailable, stale index বাscope violation হলে RAG response কী হবে? Proposed permission checks এবংactually verified provenance আলাদা করুন।'}}
+ 'project':'সংরক্ষিত ছয়টি SciFact Example-এর Tiny Decoder, Retrieved Context আর Exact Citation ব্যাখ্যা করুন। দেওয়া Weight আর যাচাইয়ে নিজের অবদান আলাদা করে বলুন।',
+ 'coding':'Packed Sentence Span মূল Source-এর সঙ্গে হুবহু মেলে কি না, তা যাচাইয়ের Function লিখুন। Empty Context, ভুল Span আর Format ঠিক থাকলেও Evidence নেই এমন Output-এর জন্য Test দিন।',
+ 'statistics':'Train আর Dev মিলিয়ে ছয়টি Sample-এ Quote ও Format যাচাইয়ে Pass করলে কি Answer Accuracy বোঝা যাবে? Representative Annotation, Entailment আর Abstention Utility যাচাইয়ের পরিকল্পনা দিন।',
+ 'systems':'Source পাওয়া না গেলে, Index পুরোনো হলে বা Scope ভাঙলে RAG কী Response দেবে? যে Permission Check প্রস্তাব করছেন, তা ইতিমধ্যে যাচাই করা Provenance থেকে আলাদা করে বলুন।'}}
  cards={}
  for role,(name,focus)in roles.items():
-  for stage,(title,prompt,follow)in rounds.items():cards[f'{role}:{stage}']=dict(role=name,stage=title,focus=focus,prompt=role_prompts[role][stage],follow_up='আপনার মূল assumption ভুল হলে কোন result/test বদলাবে? একটি counterexample ওnext independent validation বলুন।',review=dict(contract='Input/output, unit, ties/errors স্পষ্ট করেছি কি?',source='Source/license/role/cutoff ওনিজের contribution বলেছি কি?',baseline='Simple baseline ওcore implementation/invariant দেখিয়েছি কি?',validation='Independent check ওdenominator/assumptions দেখিয়েছি কি?',failure='একটি failure trace/edge case ওresponse defend করেছি কি?',limits='Unknowns ওnext validation সৎভাবে লিখেছি কি?'))
+  for stage,(title,prompt,follow)in rounds.items():cards[f'{role}:{stage}']=dict(role=name,stage=title,focus=focus,prompt=role_prompts[role][stage],follow_up='মূল Assumption ভুল হলে কোন ফল বা Test বদলাবে? একটি Counterexample দিন। এরপর কীভাবে আলাদাভাবে যাচাই করবেন, তা বলুন।',review=dict(contract='Input, Output ও Unit এবং Tie বা Error কীভাবে সামলাব, তা বলেছি কি?',source='Source, License, Role, Cutoff আর নিজের অবদানের কথা বলেছি কি?',baseline='সহজ Baseline, মূল Implementation আর Invariant দেখিয়েছি কি?',validation='Independent Check, Denominator আর Assumption দেখিয়েছি কি?',failure='একটি Failure Trace বা Edge Case দেখিয়ে কীভাবে সামলেছি, তার পক্ষে যুক্তি দিয়েছি কি?',limits='কী কী জানি না আর এরপর কী যাচাই করব, তা স্পষ্ট করে লিখেছি কি?'))
  return cards
 def analyse():
  sources={k:read(ROOT/p)for k,p in FILES.items()};rows=records(sources)

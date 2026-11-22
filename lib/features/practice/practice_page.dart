@@ -89,7 +89,7 @@ class _PracticePageState extends State<PracticePage> {
                   ),
                   const SizedBox(height: 6),
                   const RichProse(
-                    'Decision Tree, Attention, KV Cache, LoRA, DCN-v2 সহ পূর্ণাঙ্গ Codebase-এর `# TODO` ফাংশন নিয়ে আগে ভাবুন—তারপর আলাদা Solution ট্যাবে সমাধান মিলিয়ে নিন।',
+                    'Decision Tree, Attention, KV Cache, LoRA ও DCN-v2-এর পূর্ণাঙ্গ Codebase-এ `# TODO` দেওয়া Function নিয়ে আগে ভাবুন। তারপর Solution Tab-এ উত্তর মিলিয়ে নিন।',
                     selectable: false,
                     style: TextStyle(
                       fontFamilyFallback: ['NotoSansBengali'],
@@ -382,7 +382,7 @@ class _PracticePageState extends State<PracticePage> {
         ),
         const SizedBox(height: 8),
         const Text(
-          'ভুল হওয়া quiz প্রশ্নগুলো এবং star দিয়ে রাখা FAANG interview prompt-গুলো এক জায়গায় ঝালাই করে নিন।',
+          'যেসব Quiz প্রশ্নে ভুল হয়েছে আর যেসব FAANG Interview Prompt-এ Star দিয়েছেন, সেগুলো এক জায়গায় ঝালিয়ে নিন।',
           style: TextStyle(
             fontFamilyFallback: ['NotoSansBengali'],
             fontSize: 12,

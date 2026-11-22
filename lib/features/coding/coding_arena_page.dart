@@ -118,7 +118,7 @@ class _CodingArenaPageState extends State<CodingArenaPage> {
                         ),
                         const SizedBox(height: 10),
                         const RichProse(
-                          'প্রতিটি সমস্যার পূর্ণাঙ্গ ML Codebase পড়ে `# TODO` ফাংশনটি নিয়ে Think-First প্রশ্নের উত্তর দিন—এবং সম্পূর্ণ আলাদা Solution Fragment-এ গিয়ে যাচাইকৃত সমাধান ও ব্যাখ্যা দেখুন।',
+                          'প্রতিটি সমস্যার ML Codebase পড়ে `# TODO` দেওয়া Function নিয়ে Think-First প্রশ্নগুলোর উত্তর দিন। তারপর Solution অংশে যাচাই করা সমাধান আর ব্যাখ্যা দেখুন।',
                           selectable: false,
                           style: TextStyle(
                             fontFamilyFallback: ['NotoSansBengali'],

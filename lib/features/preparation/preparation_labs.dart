@@ -41,7 +41,7 @@ class _PreprocessingLabState extends State<PreprocessingLab> {
           ),
           const SizedBox(height: 10),
           const Text(
-            'Holdout বদলালেও training-fitted statistics একই থাকার কথা।',
+            'Holdout বদলালেও Training Data-তে Fit করা Statistics একই থাকার কথা।',
             style: TextStyle(
               fontFamily: 'NotoSansBengali',
               fontSize: 13,
@@ -226,7 +226,7 @@ class _EncodingLabState extends State<EncodingLab> {
           ),
           const SizedBox(height: 10),
           const Text(
-            'Training vocabulary ও unknown policy আলাদা করে দেখুন।',
+            'Training Vocabulary আর Unknown Category কীভাবে সামলানো হয়, দুটো আলাদা করে দেখুন।',
             style: TextStyle(
               fontFamily: 'NotoSansBengali',
               fontSize: 13,

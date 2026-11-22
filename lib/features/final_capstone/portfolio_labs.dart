@@ -44,7 +44,7 @@ Widget _assets(
       : const Center(child: CircularProgressIndicator()),
 );
 const _notice = Text(
-  'Frozen prior capstones: UCI Wine Quality, GroupLens MovieLens ও SciFact। Original licenses/notices retained। Previously observed diagnostics, নতুন training/holdout scoring/production timing নয়। Portfolio template ব্যবহার করলে নিজের contribution ওindependent evidence যোগ করুন।',
+  'Frozen prior capstones: UCI Wine Quality, GroupLens MovieLens ও SciFact। Original licenses/notices retained। Previously observed diagnostics, নতুন training/holdout scoring/production timing নয়। Portfolio template ব্যবহার করলে নিজের Contribution আর Independent Evidence যোগ করুন।',
   style: _bn,
 );
 Widget _projectPicker(
@@ -88,7 +88,7 @@ class _PortfolioEvidenceLabState extends State<PortfolioEvidenceLab> {
           const Text('Connect each claim to evidence.', style: _heading),
           _gap,
           const Text(
-            'চারটি capstone-এর frozen row-level evidence থেকে summary আবার গণনা করুন। Cross-project metrics-এর task, population ওselection আলাদা; এক leaderboard-এ তুলনা নয়। Model retraining বাnew evaluation হচ্ছে না।',
+            'চারটি Capstone-এর সংরক্ষিত Row-level Evidence থেকে Summary আবার হিসাব করুন। Project-গুলোর Metric-এর Task, Population আর Selection আলাদা। তাই সেগুলোকে একই Leaderboard-এ তুলনা করা যায় না। Model retraining বা নতুন Evaluation হচ্ছে না।',
             style: _bn,
           ),
           _gap,

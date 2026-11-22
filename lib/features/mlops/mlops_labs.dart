@@ -65,7 +65,7 @@ class _ReleaseRoutingLabState extends State<ReleaseRoutingLab> {
           const Text('Route the release. Keep a safe fallback.', style: _title),
           _gap,
           const Text(
-            'Actual float64 Ridge fit: 2011-এর 358 examples, fixed alpha10। Seasonal7 serving baseline ও naive1 benchmark। App local inference/fallback recompute করে। Canary এখানে date-request routing rehearsal; online randomized experiment বা distributed deployment করা হয়নি।',
+            'Actual float64 Ridge fit: 2011-এর 358 examples, fixed alpha10। Seasonal7 serving baseline ও naive1 benchmark। App local inference/fallback recompute করে। এখানে Canary দিয়ে তারিখ অনুযায়ী Request Routing-এর মহড়া হয়। Online Randomized Experiment বা Distributed Deployment করা হয়নি।',
             style: _bn,
           ),
           _gap,
@@ -147,7 +147,7 @@ class _ReleaseRoutingLabState extends State<ReleaseRoutingLab> {
           ),
           _gap,
           const Text(
-            'FNV1a32(request key)%10000 retries জুড়ে deterministic। Key entity+date; user randomization unit নয়। Actual share threshold-এর সমান হতেই হবে না। Missing Ridge input বা candidate contract failure-এ independently validated seasonal7 চলে। Bad baseline contract feature computation-এর আগেই block করে। CLI actual bytes verify করে; এই metadata control একটি software fixture।',
+            'FNV1a32(request key)%10000 retries জুড়ে deterministic। Key entity+date; user randomization unit নয়। বাস্তবে Routed Request-এর অনুপাত Threshold-এর সমান নাও হতে পারে। Missing Ridge input বা candidate contract failure-এ independently validated seasonal7 চলে। Bad baseline contract feature computation-এর আগেই block করে। CLI actual bytes verify করে; এই metadata control একটি software fixture।',
             style: _bn,
           ),
           _gap,

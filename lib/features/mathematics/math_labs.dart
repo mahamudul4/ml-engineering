@@ -39,7 +39,7 @@ class _ProjectionLabState extends State<ProjectionLab> {
           ),
           const SizedBox(height: 12),
           const Text(
-            'x=(3,2)-কে direction u-এর span-এ project করুন। Angle বদলালে projection বদলায়; residual ওই direction-এর orthogonal থাকে।',
+            'x=(3,2)-কে direction u-এর span-এ project করুন। Angle বদলালে Projection বদলায়। Residual ওই Direction-এর সঙ্গে Orthogonal থাকে।',
             style: TextStyle(fontFamily: 'NotoSansBengali', height: 2),
           ),
           const SizedBox(height: 18),
@@ -116,7 +116,7 @@ class _ProjectionLabState extends State<ProjectionLab> {
             ),
           const SizedBox(height: 14),
           const Text(
-            'Nonzero u-কে rescale বা sign flip করলে span/projection একই। Zero vector-এ direction নেই, তাই formula ভাগ করে চালানো যায় না। Dot≈0 numerical orthogonality দেখায়; floating-point equality সবসময় exact নয়।',
+            'Nonzero u-কে rescale বা sign flip করলে span/projection একই। Zero Vector-এর কোনো Direction নেই। তাই ওই Formula-তে ভাগের হিসাব করা যায় না। Dot≈0 numerical orthogonality দেখায়; floating-point equality সবসময় exact নয়।',
             style: TextStyle(
               fontFamily: 'NotoSansBengali',
               height: 2,
@@ -282,7 +282,7 @@ class _CurvatureLabState extends State<CurvatureLab> {
           ),
           const SizedBox(height: 10),
           const Text(
-            'κ বড় হলে one global step size steep direction দ্বারা সীমিত হয়; flat direction-এ progress ধীর। ηL≥2-এ এই SPD quadratic-এর convergence guarantee থাকে না। Plot −4..4-এ clipped; বড় numeric values উপরে দেখানো হয়।',
+            'κ বড় হলে সবচেয়ে খাড়া Direction-টি Global Step Size-এর সীমা ঠিক করে। Flat Direction-এ তাই অগ্রগতি ধীর হয়। ηL≥2-এ এই SPD quadratic-এর convergence guarantee থাকে না। Plot −4..4-এ clipped; বড় numeric values উপরে দেখানো হয়।',
             style: TextStyle(
               fontFamily: 'NotoSansBengali',
               fontSize: 12,

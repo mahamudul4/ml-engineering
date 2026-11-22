@@ -146,7 +146,7 @@ class _ForwardNoiseLabState extends State<ForwardNoiseLab> {
           const Text('Add noise. Track the signal.', style: _title),
           _gap,
           const Text(
-            'একই fixed Gaussian ε দিয়ে বিভিন্ন t-এর marginal corruption তুলনা করি; এই controlled coupling Markov forward trajectory নয়। t=0 clean boundary; denoiser train হয়েছে t=1…32। Noise values unbounded, কিন্তু শুধু display [-1,1] clip করে। Predicted clean image আলাদা one-step estimate, reverse sampling নয়।',
+            'একই fixed Gaussian ε দিয়ে বিভিন্ন t-এর marginal corruption তুলনা করি; এই controlled coupling Markov forward trajectory নয়। t=0 clean boundary; denoiser train হয়েছে t=1…32। Noise-এর মানের সীমা নেই। শুধু দেখানোর সময় মান [-1,1]-এর মধ্যে Clip হয়। Predicted clean image আলাদা one-step estimate, reverse sampling নয়।',
             style: _bn,
           ),
           _gap,

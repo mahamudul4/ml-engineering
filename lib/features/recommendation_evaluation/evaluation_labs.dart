@@ -56,7 +56,7 @@ class _PairedEvaluationLabState extends State<PairedEvaluationLab> {
           ),
           _gap,
           const Text(
-            'Same warm users-এর treatment−control metric differences থেকে5000 paired user-bootstrap replicates, seed33। Model/split fixed; interval training randomness, temporal shift, exposure bias বা causal uplift মাপে না। এটি inspected diagnostic, fresh confirmation নয়।',
+            'একই Warm User-দের Treatment−Control Metric-এর পার্থক্য থেকে 5000টি Paired User Bootstrap Replicate তৈরি হয়েছে। Seed 33। Model/split fixed; interval training randomness, temporal shift, exposure bias বা causal uplift মাপে না। এটি inspected diagnostic, fresh confirmation নয়।',
             style: _bn,
           ),
           _gap,

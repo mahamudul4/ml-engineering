@@ -48,7 +48,7 @@ class _BaggingLabState extends State<BaggingLab> {
             ),
             const SizedBox(height: 12),
             const Text(
-              'Real Adult training observations; 24টি fixed bootstrap tree-এর probabilities ও membership bundled আছে। Row-level OOB মানে ওই row training draw-এ ছিল না; related profile peers বাদ পড়েছে এমন নয়।',
+              'Real Adult training observations; 24টি fixed bootstrap tree-এর probabilities ও membership bundled আছে। Row-level OOB মানে ওই Row Training-এর জন্য তোলা Sample-এ ছিল না। একই ধরনের Profile-এর অন্য Row সেখানে থাকতে পারে।',
               style: TextStyle(fontFamily: 'NotoSansBengali', height: 2),
             ),
             const SizedBox(height: 18),
@@ -344,7 +344,7 @@ class _BoostingLabState extends State<BoostingLab> {
               ],
             ),
             const Text(
-              'Curves precomputed from fixed runs; no runtime fitting or automatic early stopping. Validation দেখে rate/round বাছলে সেটি development selection। Reused historical source; no fresh-test, causal বা deployment claim।',
+              'Curves precomputed from fixed runs; no runtime fitting or automatic early stopping. Validation দেখে Learning Rate বা Round বেছে নিলে সেটা Development Selection-এর অংশ। Reused historical source; no fresh-test, causal বা deployment claim।',
               style: TextStyle(
                 fontFamily: 'NotoSansBengali',
                 height: 2,

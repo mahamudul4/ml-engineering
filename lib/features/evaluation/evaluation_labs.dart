@@ -33,7 +33,7 @@ class _FoldLabState extends State<FoldLab> {
           ),
           const SizedBox(height: 12),
           const Text(
-            '১২টি ordered row; পাশাপাশি দুইটি row একই group। Split policy বদলে overlap ও time order দেখুন।',
+            '১২টি Row ক্রমানুসারে সাজানো আছে। পাশাপাশি দুটি Row একই Group-এর। Split policy বদলে overlap ও time order দেখুন।',
             style: TextStyle(fontFamily: 'NotoSansBengali', height: 2),
           ),
           const SizedBox(height: 20),
@@ -220,7 +220,7 @@ class _BootstrapLabState extends State<BootstrapLab> {
           ),
           const SizedBox(height: 12),
           const Text(
-            'একই আটটি held-out row-এ দুইটি fixed model-এর loss। Pair অক্ষত রেখে replacement-সহ resample করি। Positive difference মানে B-এর loss কম।',
+            'একই আটটি held-out row-এ দুইটি fixed model-এর loss। প্রতিটি Pair একসঙ্গে রেখে Replacement-সহ Resample করি। Positive difference মানে B-এর loss কম।',
             style: TextStyle(fontFamily: 'NotoSansBengali', height: 2),
           ),
           const SizedBox(height: 18),

@@ -128,8 +128,8 @@ class _BookPageState extends State<BookPage> {
               ),
               const SizedBox(height: 12),
               const Text(
-                'পুরো কারিকুলামটি ৬টি স্বতন্ত্র বইয়ে সাজানো—প্রতিটি বই তার নিজস্ব Chapter 1 থেকে শুরু হয়েছে। '
-                'নতুন শুরু করলে Book 1 (ML Foundations) থেকে এগোন, অথবা সরাসরি Classical ML, Deep Learning, LLMs কিংবা Recommender Systems বইটি খুলুন।',
+                'পুরো Curriculum ৬টি বইয়ে সাজানো। প্রতিটি বই Chapter 1 থেকে শুরু। '
+                'একদম শুরু করলে Book 1 (ML Foundations) দিয়ে শুরু করুন, অথবা সরাসরি Classical ML, Deep Learning, LLMs কিংবা Recommender Systems বইটি খুলুন।',
                 style: TextStyle(height: 1.9),
               ),
               const SizedBox(height: 18),
@@ -265,7 +265,7 @@ class _BookPageState extends State<BookPage> {
         children: [
           if (lessons.isNotEmpty) ...[
             const Text(
-              'মিলে যাওয়া Lessons',
+              'খোঁজের সঙ্গে মিলে যাওয়া Lesson',
               style: TextStyle(fontWeight: FontWeight.w800),
             ),
             for (final lesson in lessons)
@@ -314,7 +314,7 @@ class _BookPageState extends State<BookPage> {
             Text('• $outcome', style: const TextStyle(height: 1.9)),
           const SizedBox(height: 10),
           const Text(
-            'বই বন্ধ করে নিজেকে যাচাই করুন',
+            'না দেখে উত্তর দিয়ে নিজের প্রস্তুতি যাচাই করুন',
             style: TextStyle(fontWeight: FontWeight.w800),
           ),
           for (final question in chapter.book.recall)

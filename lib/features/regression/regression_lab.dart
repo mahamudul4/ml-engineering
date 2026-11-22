@@ -37,7 +37,7 @@ class _RegressionLabState extends State<RegressionLab> {
         ),
         const SizedBox(height: 8),
         const Text(
-          'রেখাটি সরান, prediction দেখুন, error কমান।',
+          'রেখাটি সরিয়ে Prediction দেখুন, তারপর Error কমানোর চেষ্টা করুন।',
           style: TextStyle(
             fontFamily: 'NotoSansBengali',
             height: 1.8,

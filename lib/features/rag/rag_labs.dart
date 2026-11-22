@@ -92,7 +92,7 @@ class _RAGChunkLabState extends State<RAGChunkLab> {
           const Text('Keep the boundary. Keep the source.', style: _title),
           _gap,
           const Text(
-            'Original abstract-এর sentence list থেকে overlapping windows বানাই। Citation zero-based start:end-exclusive span বোঝায়। Text normalize/trim না করে original sentences একটি space দিয়ে join হয়। Whole source bytes অক্ষত; BEIR index-এ whitespace-normalized text ছিল। Chunk size বদলালে IDs ও evidence coverage বদলায়।',
+            'মূল Abstract-এর Sentence List থেকে এমন Window বানাই, যেগুলোর কিছু অংশ মিলে যায়। Citation zero-based start:end-exclusive span বোঝায়। Text Normalize বা Trim না করে মূল বাক্যগুলো একটি Space দিয়ে জুড়ে দিই। Whole source bytes অক্ষত; BEIR index-এ whitespace-normalized text ছিল। Chunk size বদলালে IDs ও evidence coverage বদলায়।',
             style: _bn,
           ),
           _gap,

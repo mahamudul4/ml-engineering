@@ -250,7 +250,7 @@ class _CodingProblemPageState extends State<CodingProblemPage>
               const Eyebrow('FULL CODEBASE CONTEXT · IMPLEMENT TARGET FUNCTION'),
               const SizedBox(height: 8),
               const RichProse(
-                'আশেপাশের পুরো Codebase-টি বুঝে নিন এবং `# TODO` চিহ্নিত ফাংশনটি কীভাবে ইমপ্লিমেন্ট করবেন তা আগে নিজে চিন্তা করুন।',
+                'পুরো Codebase দেখে নিন। তারপর `# TODO` দেওয়া Function-টি কীভাবে লিখবেন, আগে নিজে ভাবুন।',
                 selectable: false,
                 style: TextStyle(
                   fontFamilyFallback: ['NotoSansBengali'],
@@ -313,7 +313,7 @@ class _CodingProblemPageState extends State<CodingProblemPage>
               const Eyebrow('THINK FIRST · ফাংশনটি নিয়ে আগে ভাবুন'),
               const SizedBox(height: 8),
               const Text(
-                'সমাধান দেখার আগে এই ফাংশনটির লজিক, শেপ ও Edge Case নিয়ে নিচের প্রশ্নগুলোর উত্তর দিয়ে নিজের ধারণা যাচাই করুন।',
+                'সমাধান দেখার আগে এই Function-এর Logic, Shape আর Edge Case নিয়ে নিচের প্রশ্নগুলোর উত্তর দিয়ে নিজের ধারণা যাচাই করুন।',
                 style: TextStyle(
                   fontFamilyFallback: ['NotoSansBengali'],
                   fontSize: 12,
@@ -572,7 +572,7 @@ class _CodingProblemPageState extends State<CodingProblemPage>
                   ),
                   const SizedBox(height: 10),
                   RichProse(
-                    'Solution-টি ইচ্ছাকৃতভাবে আলাদা Fragment-এ রাখা হয়েছে যাতে `${p.targetFunction}` ফাংশনটি নিয়ে আগে নিজে চিন্তা করতে পারেন। আপনি এখন পর্যন্ত ${_selectedAnswers.length} / ${p.thinkQuestions.length}টি Think-First প্রশ্নের উত্তর দিয়েছেন।',
+                    'Solution আলাদা অংশে আছে, যাতে `${p.targetFunction}` ফাংশনটি নিয়ে আগে নিজে চিন্তা করতে পারেন। আপনি এখন পর্যন্ত ${_selectedAnswers.length} / ${p.thinkQuestions.length}টি Think-First প্রশ্নের উত্তর দিয়েছেন।',
                     selectable: false,
                     style: const TextStyle(
                       fontFamilyFallback: ['NotoSansBengali'],

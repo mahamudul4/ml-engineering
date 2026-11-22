@@ -29,7 +29,7 @@ Widget _asset(
   },
 );
 Widget _source() => const Text(
-  'Alice’s Adventures in Wonderland · Lewis Carroll · Project Gutenberg ebook11। Original source/notices bundled; public domain in the USA। Empirical corpus English; Bangla explanations do not imply Bangla model competence। This5019-parameter decoder is a mechanics model,not a large pretrained LLM। App training নয়,Dart forward চালায়।',
+  'Alice’s Adventures in Wonderland · Lewis Carroll · Project Gutenberg ebook11। Original source/notices bundled; public domain in the USA। Empirical corpus English; Bangla explanations do not imply Bangla model competence। This5019-parameter decoder is a mechanics model,not a large pretrained LLM। App শুধু Dart দিয়ে Forward Pass চালায়। এখানে Training হয় না।',
   style: _bn,
 );
 String _vector(List<double> x) =>
@@ -109,7 +109,7 @@ class _TokenizerLabState extends State<TokenizerLab> {
           const Text('Text is bytes. Tokens are a choice.', style: _title),
           _gap,
           const Text(
-            'Actual source excerpt দিয়ে শুরু। Unicode code points,UTF8 bytes এবং tokenizer IDs এক জিনিস নয়। Byte mode neural model-এর tokenizer; BPE mode আলাদা16-merge demonstration,শুধু fit chapters-এর bounded snippets থেকে শেখা। BPE IDs model-এ পাঠানো হয় না।',
+            'Actual source excerpt দিয়ে শুরু। Unicode Code Point, UTF8 Byte আর Tokenizer ID তিনটি আলাদা জিনিস। Byte mode neural model-এর tokenizer; BPE Mode-এ আলাদা 16-Merge উদাহরণ দেখানো হয়। এটি শুধু Fit Chapter-এর সীমিত অংশ থেকে শেখা। BPE IDs model-এ পাঠানো হয় না।',
             style: _bn,
           ),
           _gap,

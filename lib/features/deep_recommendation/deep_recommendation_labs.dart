@@ -74,7 +74,7 @@ class _DeepRetrievalLabState extends State<DeepRetrievalLab> {
           const Text('Retrieve candidates. Rank the shortlist.', style: _title),
           _gap,
           const Text(
-            'Two-tower query/item vectors ও ranker logits Dart-এ গণনা হয়। Exact full-catalog scan; ANN বা measured latency নয়। Candidate-এর বাইরে থাকা relevant movie reranker উদ্ধার করতে পারে না। Gold labels শুধু inspection metric-এ থাকে, model score-এ নয়।',
+            'Two-tower query/item vectors ও ranker logits Dart-এ গণনা হয়। Exact full-catalog scan; ANN বা measured latency নয়। Relevant কোনো Movie Candidate List-এ না এলে Reranker সেটি ফেরত আনতে পারে না। Gold Label শুধু ফল যাচাইয়ের Metric-এ ব্যবহার হয়। Model-এর Score হিসাব করতে এগুলো লাগে না।',
             style: _bn,
           ),
           _gap,

@@ -61,7 +61,7 @@ class _ArchitectureCapacityLabState extends State<ArchitectureCapacityLab> {
           const Text('Map the path. Budget the bottleneck.', style: _heading),
           _space,
           const Text(
-            'Five source-backed cases; নিচের stage times, load, cache hit ও concurrency স্পষ্ট planning assumptions। Stage group-এর branches parallel হলে max, groups serial হলে sum। এই arithmetic measured latency/p95 বা production sizing recommendation নয়।',
+            'Five source-backed cases; নিচের stage times, load, cache hit ও concurrency স্পষ্ট planning assumptions। একটি Stage Group-এর Branch-গুলো Parallel হলে সবচেয়ে বড় সময়টি নিন। Group-গুলো Serial হলে সময়গুলো যোগ করুন। এই arithmetic measured latency/p95 বা production sizing recommendation নয়।',
             style: _bn,
           ),
           _space,

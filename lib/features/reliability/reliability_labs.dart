@@ -73,7 +73,7 @@ class _EvaluationScoreLabState extends State<EvaluationScoreLab> {
           const Text('Choose the task. Audit the failures.', style: _title),
           _gap,
           const Text(
-            'Accuracy, confusion matrix, Brier ও confidence-bin ECE এক জিনিস নয়। SUPPORT positive label; p = 0.5 হলে SUPPORT বেছে নিই। Full/LoRA majority prediction baseline ছাড়ায়নি। Conditional S/C probability কোনো claim-এর truth confidence নয়। Slice বদলালে denominator বদলায়; model নতুন করে train হয় না।',
+            'Accuracy, confusion matrix, Brier ও confidence-bin ECE এক জিনিস নয়। SUPPORT positive label; p = 0.5 হলে SUPPORT বেছে নিই। Full/LoRA majority prediction baseline ছাড়ায়নি। Conditional S/C probability কোনো claim-এর truth confidence নয়। Slice বদলালে Denominator বদলায়। Model নতুন করে Train হয় না।',
             style: _bn,
           ),
           _gap,

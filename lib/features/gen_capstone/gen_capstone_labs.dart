@@ -85,7 +85,7 @@ class _EvidenceWorkbenchState extends State<EvidenceWorkbench> {
           ),
           _gap,
           const Text(
-            'Full corpus-এ lexical retrieval ও exact quote packing হয়। Small GRU source text-এর hashed features নিয়ে letter-by-letter support/contradict response-word generate করে। Model hypothesis সঠিক verdict নয়; quotes থেকে নিজের evidence audit করুন। Input English source task; Bangla interface multilingual capability প্রমাণ নয়।',
+            'Full corpus-এ lexical retrieval ও exact quote packing হয়। ছোট GRU-টি Source Text-এর Hashed Feature নিয়ে এক অক্ষর করে support বা contradict Response তৈরি করে। Model-এর Hypothesis-কে চূড়ান্ত Verdict ধরে নেবেন না। Quote দেখে নিজে Evidence যাচাই করুন। Input English source task; Bangla interface multilingual capability প্রমাণ নয়।',
             style: _bn,
           ),
           _gap,

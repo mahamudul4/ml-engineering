@@ -104,7 +104,7 @@ class _VaeObjectiveLabState extends State<VaeObjectiveLab> {
           const Text('Encode uncertainty. Trace the objective.', style: _title),
           _gap,
           const Text(
-            'Encoder থেকে μ ও log variance আসে। এখানে ε = [e, −e] একটি ঘোষিত controlled illustration; random sample বা Monte Carlo ELBO estimate নয়। β বদলানো শুধু বর্তমান objective পুনরায় হিসাব করে, model retrain করে না। β = 1 standard ELBO weighting; soft-target BCE grayscale likelihood নয়।',
+            'Encoder থেকে μ ও log variance আসে। এখানে ε = [e, −e] একটি ঘোষিত controlled illustration; random sample বা Monte Carlo ELBO estimate নয়। β বদলালে শুধু বর্তমান Objective-এর হিসাব আবার হয়। Model আবার Train হয় না। β = 1 standard ELBO weighting; soft-target BCE grayscale likelihood নয়।',
             style: _bn,
           ),
           _gap,

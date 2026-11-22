@@ -76,7 +76,7 @@ class _TopKPracticeLabState extends State<TopKPracticeLab> {
           const Text('State the invariant. Then select.', style: _heading),
           _gap,
           const Text(
-            'Frozen MovieLens fit snapshot: 80,668 ratings, 522 users, 7,867 movies। Minimum support দিয়ে eligible items filter করুন; mean rating descending, 12-decimal quantized tie, movie ID ascending। এটি interview algorithm task; personalized quality বা popularity bias সমাধান নয়।',
+            'Frozen MovieLens fit snapshot: 80,668 ratings, 522 users, 7,867 movies। Minimum Support দিয়ে Eligible Item বেছে নিন। Mean Rating বড় থেকে ছোট সাজান। 12 দশমিক ঘর পর্যন্ত Quantize করলে মান সমান হলে Movie ID ছোট থেকে বড় সাজান। এটি interview algorithm task; personalized quality বা popularity bias সমাধান নয়।',
             style: _body,
           ),
           _gap,
