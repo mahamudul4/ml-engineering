@@ -164,7 +164,7 @@
         },
         {
           "type": "text",
-          "title": "৬. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৬. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **শুধু `Weights` পাঠিয়ে Serving শুরু করা:** `Scaler`, `Schema` ও `Fallback Policy` ছাড়া একা `Weights` অর্থহীন।\n2. **একটিই সবুজ Metric দেখে নিশ্চিন্ত হওয়া:** `HTTP 200` বা অফলাইন `MAE`—কোনোটাই পুরো সিস্টেমের সুস্থতা প্রমাণ করে না।\n3. **Simulation-কে Production Benchmark বলা:** ল্যাবের `SLO` উদাহরণ বা লোকাল `HTTP` কলকে কখনোই লাইভ `Latency` দাবি করবেন না।\n\n### Cheat Sheet\n- **Full Release:** $\\mathrm{Model} + \\mathrm{Transform} + \\mathrm{Schema} + \\mathrm{Lineage} + \\mathrm{Policy}$\n- **Bike Lab Split:** `358` Fit (`2011`) | `182` Dev (`Jan–Jun 2012`) | `184` Reserved (`0` touched)\n- **Three Layers:** `Model Quality` $\\ne$ `Service Health` $\\ne$ `Product Impact`\n\n**পরের পাঠে কী শিখব?** Serving Contract তো ঠিক হলো—কিন্তু হাতে-কলমে `Weights`-এর সঙ্গে `Scaler` ও `Schema` কীভাবে একটি **Immutable Model Package**-এ বাঁধবেন, যাতে দুটো Column অদলবদল হয়ে নীরবে ভুল Prediction না দেয়? সেটাই শিখব পরের পাঠে!"
         },
         {
@@ -187,7 +187,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "আজ আমরা শিখব কেন শুধু `Model Weights` ফাইল Server-এ পাঠালে Production-এ নীরব বিপর্যয় ঘটে—কীভাবে `Scaler` ($\\mu, s$), `input_fields` ক্রম, `Clipping` নিয়ম ও `Checksum` একসঙ্গে **Immutable Model Package** হিসেবে বাঁধতে হয় এবং কেন **Atomic Pointer Swap** ছাড়া ফাইল Overwrite করা ভয়ংকর!",
+          "goal": "আজ আমরা শিখব কেন শুধু `Model Weights` ফাইল Server-এ পাঠালে Production-এ Error ছাড়াই ভুল Prediction আসতে পারে—কীভাবে `Scaler` ($\\mu, s$), `input_fields` ক্রম, `Clipping` নিয়ম ও `Checksum` একটি **Immutable Model Package**-এ রাখতে হয় এবং কেন **Atomic Pointer Swap** ছাড়া ফাইল Overwrite করা ভয়ংকর!",
           "prerequisites": [
             "Standardization ($z = (x - \\mu)/s$)",
             "Dot Product ও Linear Prediction",
@@ -203,7 +203,7 @@
         {
           "type": "text",
           "title": "১. শুধু Weights পাঠালে কেন বিপর্যয় ঘটে? হাতে-কলমে Column-Swap ফাঁদ",
-          "body": "ধরুন, আপনি বিদেশ থেকে একটা তালা-চাবি কিনলেন, কিন্তু বাসায় এসে শুধু চাবিটা নিলেন—তালা কোনটা আর চাবিটা কোন দিকে ঘোরাতে হবে তা ভুলে গেলেন! নোটবুক থেকে শুধু `Weights` (`w = [543.46, 57.01, 571.32]`) কপি করে Server-এ পাঠালে ঠিক এমনটাই ঘটে।\n\nএখানে মূল Idea হলো—কাঁচা `Feature` (`lag1 = 3598`, `lag7 = 2368`, `mean7 = 3379.71`) সরাসরি `Weights` দিয়ে গুণ হয় না! আগে Training `Data` থেকে স্থির করা Mean ($\\mu$) ও Standard Deviation ($s$) দিয়ে প্রতিটি মানকে **Standardize** করতে হয়, তাও আবার একদম হুবহু **`['lag1', 'lag7', 'mean7']`** ক্রমে।\n\n### ছোট হাতে-কলমে হিসাব: Day 375 (`2012-01-11`)-এ সঠিক ক্রম বনাম অদলবদল!\nআমাদের আসল `ridge36-v1` Package-এ আছে:\n- `mean` ($\\mu$) = `[3443.34, 3434.81, 3437.08]`\n- `scale` ($s$) = `[1361.71, 1370.09, 1209.35]`\n- `weights` ($w$) = `[543.46, 57.01, 571.32]`, `intercept` ($b$) = `3446.06`\n\nএখন দেখুন Day 375-এ শুধু `lag1` (`3598`) আর `lag7` (`2368`)-এর জায়গা ভুলে অদলবদল হয়ে গেলে কী কাণ্ড ঘটে:\n\n| অবস্থা | `x[0]` (`w=543.46`) | `x[1]` (`w=57.01`) | `x[2]` (`w=571.32`) | Prediction ($\\hat{y}$) |\n| --- | --- | --- | --- | --- |\n| **সঠিক ক্রম** (`lag1, lag7, mean7`) | `3598` ($z_0=+0.1136$) | `2368` ($z_1=-0.7786$) | `3379.71` ($z_2=-0.0474$) | **`3436.29`** |\n| **ভুল ক্রম** (`lag7, lag1, mean7`) | `2368` ($z_0=-0.7897$) | `3598` ($z_1=+0.1191$) | `3379.71` ($z_2=-0.0474$) | **`2996.58`** |\n\nখেয়াল করুন—কোনো `Exception` নেই, কোনো `Shape Error` নেই, Server হাসিমুখে `HTTP 200 OK` দেবে—অথচ চুপচাপ প্রায় **৪৪০ বাইকের ভুল** Prediction বেরিয়ে যাবে!\n\n### আরও দুটি সোনালি নিয়ম\n1. **কখনোই Live Batch-এ নতুন করে `mean`/`scale` মাপবেন না:** তা করলে প্রতি Request-এ আপনার `Model`-এর গাণিতিক Function-টাই বদলে যাবে!\n2. **ফাইল Overwrite করবেন না (Immutable Release):** চলমান Server-এ নতুন `weights` কপি হলো কিন্তু `scaler` ফাইলটা এখনো পুরোনোটা আছে—এই ১ সেকেন্ডের **Mixed-State Bug** ভয়াবহ ভুল উত্তর দেবে। সমাধান: নতুন ফোল্ডারে সব ফাইল সাজিয়ে Checksum যাচাই করে এক ঝটকায় (**Atomically**) `Active Pointer` ঘোরান!"
+          "body": "ধরুন, আপনি বিদেশ থেকে একটা তালা-চাবি কিনলেন, কিন্তু বাসায় এসে শুধু চাবিটা নিলেন—তালা কোনটা আর চাবিটা কোন দিকে ঘোরাতে হবে তা ভুলে গেলেন! নোটবুক থেকে শুধু `Weights` (`w = [543.46, 57.01, 571.32]`) কপি করে Server-এ পাঠালে ঠিক এমনটাই ঘটে।\n\nএখানে মূল Idea হলো—কাঁচা `Feature` (`lag1 = 3598`, `lag7 = 2368`, `mean7 = 3379.71`) সরাসরি `Weights` দিয়ে গুণ হয় না! আগে Training `Data` থেকে স্থির করা Mean ($\\mu$) ও Standard Deviation ($s$) দিয়ে প্রতিটি মানকে **Standardize** করতে হয়, তাও আবার একদম হুবহু **`['lag1', 'lag7', 'mean7']`** ক্রমে।\n\n### ছোট হাতে-কলমে হিসাব: Day 375 (`2012-01-11`)-এ সঠিক ক্রম বনাম অদলবদল!\nআমাদের আসল `ridge36-v1` Package-এ আছে:\n- `mean` ($\\mu$) = `[3443.34, 3434.81, 3437.08]`\n- `scale` ($s$) = `[1361.71, 1370.09, 1209.35]`\n- `weights` ($w$) = `[543.46, 57.01, 571.32]`, `intercept` ($b$) = `3446.06`\n\nএখন দেখুন Day 375-এ শুধু `lag1` (`3598`) আর `lag7` (`2368`)-এর জায়গা ভুলে অদলবদল হয়ে গেলে কী কাণ্ড ঘটে:\n\n| অবস্থা | `x[0]` (`w=543.46`) | `x[1]` (`w=57.01`) | `x[2]` (`w=571.32`) | Prediction ($\\hat{y}$) |\n| --- | --- | --- | --- | --- |\n| **সঠিক ক্রম** (`lag1, lag7, mean7`) | `3598` ($z_0=+0.1136$) | `2368` ($z_1=-0.7786$) | `3379.71` ($z_2=-0.0474$) | **`3436.29`** |\n| **ভুল ক্রম** (`lag7, lag1, mean7`) | `2368` ($z_0=-0.7897$) | `3598` ($z_1=+0.1191$) | `3379.71` ($z_2=-0.0474$) | **`2996.58`** |\n\nখেয়াল করুন—কোনো `Exception` নেই, কোনো `Shape Error` নেই, Server হাসিমুখে `HTTP 200 OK` দেবে—অথচ চুপচাপ প্রায় **৪৪০ বাইকের ভুল** Prediction বেরিয়ে যাবে!\n\n### আরও দুটি মনে রাখার নিয়ম\n1. **কখনোই Live Batch-এ নতুন করে `mean`/`scale` মাপবেন না:** তা করলে প্রতি Request-এ আপনার `Model`-এর গাণিতিক Function-টাই বদলে যাবে!\n2. **ফাইল Overwrite করবেন না (Immutable Release):** চলমান Server-এ নতুন `weights` কপি হলো কিন্তু `scaler` ফাইলটা এখনো পুরোনোটা আছে—এই ১ সেকেন্ডের **Mixed-State Bug** ভয়াবহ ভুল উত্তর দেবে। সমাধান: নতুন ফোল্ডারে সব ফাইল সাজিয়ে Checksum যাচাই করে এক ঝটকায় (**Atomically**) `Active Pointer` ঘোরান!"
         },
         {
           "type": "math",
@@ -319,14 +319,14 @@
               "concept": "Schema vs Semantic Contract",
               "level": "Senior",
               "question": "`input_fields = ['lag1', 'lag7', 'mean7']` এবং তিনটিই `float`—Schema শতভাগ মিলার পরও কেন Parity Test বা Semantic Bug হতে পারে?",
-              "answer": "Schema কেবল নাম আর Data Type (`float`) চেক করে, কিন্তু সংখ্যার **অর্থ ও একক** চেক করতে পারে না! যেমন: Training-এ `lag1` ছিল পুরো শহরের দৈনিক মোট ভাড়া, কিন্তু Production পাইপলাইনে ভুলে শুধু `Registered` ইউজারদের সংখ্যা বা ২ দিন আগের সংখ্যা `lag1` নামে ঢুকতে পারে। তাই Schema-র পাশাপাশি `Feature Contract` এবং স্বাধীন **Cross-Language Parity Test** বাধ্যতামূলক।",
+              "answer": "Schema কেবল নাম আর Data Type (`float`) চেক করে, কিন্তু সংখ্যার **অর্থ ও একক** চেক করতে পারে না! যেমন: Training-এ `lag1` ছিল পুরো শহরের দৈনিক মোট ভাড়া, কিন্তু Production Pipeline-এ ভুলে শুধু `Registered` ইউজারদের সংখ্যা বা ২ দিন আগের সংখ্যা `lag1` নামে ঢুকতে পারে। তাই Schema-র পাশাপাশি `Feature Contract` এবং স্বাধীন **Cross-Language Parity Test** বাধ্যতামূলক।",
               "followUp": "যদি Python ও Production কোড দুটোতেই একই ভুল `Feature` লজিক লেখা থাকে, তবে কি Parity Test তা ধরবে? না! তার জন্য চাই স্বাধীন `Point-in-Time` অডিট ও `Data Distribution` মনিটরিং।"
             }
           ]
         },
         {
           "type": "text",
-          "title": "৬. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৬. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **Column Order-কে হালকাভাবে নেওয়া:** নাম না মিলিয়ে শুধু Positional Index (`[0, 1, 2]`) বসালে নীরবে ভুল `Weight` ভুল `Feature`-এ গুণ হয়।\n2. **Test/Live Batch-এ Scaler রি-ফিট করা:** সবসময় Training-এ স্থির করা `mean` ও `scale` ব্যবহার করুন।\n3. **In-Place File Overwrite:** সবসময় নতুন Immutable Bundle তৈরি করে Verify করে তারপর Atomic Swap করুন।\n\n### Cheat Sheet\n- **Standardization:** $z_j = (x_j - \\mu_j)/s_j$ যেখানে $0 < s_j < \\infty$\n- **Serving Output:** $\\hat{y}_{\\mathrm{serve}} = \\max(0, b + w^\\top z)$\n- **Release Rule:** `Immutable Bundle` + `Checksum Verify` + `Atomic Pointer Swap`\n\n**পরের পাঠে কী শিখব?** Package-এর ভেতরে যে `weights = [543.46, 57.01, 571.32]` আর `intercept = 3446.06` বসানো আছে—সেগুলো ঠিক কোন গাণিতিক রেসিপি ও সময়ের নিয়ম (`Temporal Protocol`) মেনে তৈরি হলো, আর কেন `Sum-Loss` বনাম `Mean-Loss`-এ একই $\\alpha = 10$ সম্পূর্ণ ভিন্ন ফল দেয়? চলুন পরের পাঠে হাতে-কলমে প্রমাণ করি!"
         },
         {
@@ -358,14 +358,14 @@
           "outcomes": [
             "প্রথম `7` দিন বাদ দিয়ে কেন `N = 358` Fit Row এবং Standardized Data-য় কেন Unregularized Intercept $b = \\bar{y}$ হয় তা ব্যাখ্যা করতে পারবেন।",
             "**Sum-Loss** বনাম **Mean-Loss** Normalization-এর ফাঁদ ($\\alpha_{\\mathrm{eff}} = N\\alpha$) প্রমাণ করে দেখাতে পারবেন।",
-            "`Rolling One-Step Evaluation` বনাম `Fixed-Origin Forecast`-এর পার্থক্য এবং `Candidate` (`811.42`) বনাম `naive1` (`900.60`) ও `seasonal7` (`1090.79`)-এর অপারেশনাল ভূমিকা ব্যাখ্যা করতে পারবেন।",
+            "`Rolling One-Step Evaluation` বনাম `Fixed-Origin Forecast`-এর পার্থক্য এবং `Candidate` (`811.42`) বনাম `naive1` (`900.60`) ও `seasonal7` (`1090.79`)-এর Operational ভূমিকা ব্যাখ্যা করতে পারবেন।",
             "**Pure Python 3×3 Linear Solver** এবং **`scikit-learn` `Ridge(alpha=10)`**—দুইভাবেই হুবহু অভিন্ন `Weights` পুনরুৎপাদন করতে পারবেন।"
           ]
         },
         {
           "type": "text",
           "title": "১. Reproducible Recipe: কোন দিন Fit-এ, আর Sum-Loss বনাম Mean-Loss ফাঁদ!",
-          "body": "ধরুন দুজন শেফকে একই রেসিপি দেওয়া হলো—\"এক চামচ লবণ দিন\"। একজন দিলেন পুরো হাঁড়ির (`Sum`) জন্য এক চামচ, আরেকজন দিলেন প্রতি বাটির (`Mean`) জন্য এক চামচ! ফলাফল কিন্তু আকাশ-পাতাল আলাদা হয়ে যাবে।\n\n`Ridge Regression`-এ ঠিক এই ভুলটাই হয় **Sum-Loss বনাম Mean-Loss** নিয়ে!\n- আমাদের Training Population হলো `2011` সালের Target Index **`7` থেকে `364`** — মোট **$N = 358$ দিন**।\n- **প্রথম `7` দিন (`0..6`) বাদ কেন?** কারণ `lag7` আর `mean7` বানাতে অন্তত আগের `7` দিনের বাস্তব ইতিহাস লাগে—অসম্পূর্ণ ইতিহাস দিয়ে আন্দাজে সংখ্যা বসানো নিষিদ্ধ!\n- **Intercept কেন সরাসরি $\\bar{y} = 3446.06$?** প্রতিটি Standardized Column-এর গড় শূন্য ($\\frac{1}{N}\\sum z_{ij} = 0$) এবং Intercept-এর ওপর কোনো Regularization না থাকায় সর্বোত্তম Intercept সরাসরি Training Target-গুলোর গড়!\n\n### ১৮২ দিনের (`Jan–Jun 2012`) Rolling Evaluation তুলনা\n`2011`-এর `Data`-য় `Scaler` ও `Weights` সম্পূর্ণ স্থির (`Frozen`) রেখে `Jan–Jun 2012`-এর `182` দিনে **Rolling One-Step Evaluation** (প্রতিদিন $t-1$ শেষ হলে সেদিনের বাস্তব সংখ্যা পরদিন $t$-এর `Feature` হিসেবে আসে, কিন্তু `Weights` একচুলও বদলায় না) চালালে আমরা পাই:\n\n| Model | $182$-দিনের $\\mathrm{MAE}$ | $\\mathrm{RMSE}$ | অপারেশনাল ভূমিকা |\n| --- | --- | --- | --- |\n| **Candidate (`Ridge`, $\\alpha=10$)** | **`811.421`** | `1083.173` | মূল `Candidate` (`lag1`, `lag7`, `mean7` তিনটিই লাগে) |\n| **`naive1` (গতকালের মান)** | `900.604` | `1273.461` | শক্তিশালী রেফারেন্স, কিন্তু `lag1` দেরি হলেই ভেঙে পড়ে! |\n| **`seasonal7` ($7$ দিন আগের মান)** | `1090.791` | `1469.172` | ঘোষিত Serving `Baseline`—`lag1` না থাকলেও `lag7` দিয়ে সচল! |\n\nএখন প্রশ্ন হলো—`Sum-Loss`-এর গাণিতিক সমীকরণটা ঠিক কী, আর `Mean-Loss` বসালে কেন $\\alpha = 10$ আসলে $358$ গুণ শক্তিশালী হয়ে যায়?"
+          "body": "ধরুন দুজন শেফকে একই রেসিপি দেওয়া হলো—\"এক চামচ লবণ দিন\"। একজন দিলেন পুরো হাঁড়ির (`Sum`) জন্য এক চামচ, আরেকজন দিলেন প্রতি বাটির (`Mean`) জন্য এক চামচ! ফলাফল কিন্তু আকাশ-পাতাল আলাদা হয়ে যাবে।\n\n`Ridge Regression`-এ ঠিক এই ভুলটাই হয় **Sum-Loss বনাম Mean-Loss** নিয়ে!\n- আমাদের Training Population হলো `2011` সালের Target Index **`7` থেকে `364`** — মোট **$N = 358$ দিন**।\n- **প্রথম `7` দিন (`0..6`) বাদ কেন?** কারণ `lag7` আর `mean7` বানাতে অন্তত আগের `7` দিনের বাস্তব ইতিহাস লাগে—অসম্পূর্ণ ইতিহাস দিয়ে আন্দাজে সংখ্যা বসানো নিষিদ্ধ!\n- **Intercept কেন সরাসরি $\\bar{y} = 3446.06$?** প্রতিটি Standardized Column-এর গড় শূন্য ($\\frac{1}{N}\\sum z_{ij} = 0$) এবং Intercept-এর ওপর কোনো Regularization না থাকায় সর্বোত্তম Intercept সরাসরি Training Target-গুলোর গড়!\n\n### ১৮২ দিনের (`Jan–Jun 2012`) Rolling Evaluation তুলনা\n`2011`-এর `Data`-য় `Scaler` ও `Weights` সম্পূর্ণ স্থির (`Frozen`) রেখে `Jan–Jun 2012`-এর `182` দিনে **Rolling One-Step Evaluation** (প্রতিদিন $t-1$ শেষ হলে সেদিনের বাস্তব সংখ্যা পরদিন $t$-এর `Feature` হিসেবে আসে, কিন্তু `Weights` একচুলও বদলায় না) চালালে আমরা পাই:\n\n| Model | $182$-দিনের $\\mathrm{MAE}$ | $\\mathrm{RMSE}$ | Operational ভূমিকা |\n| --- | --- | --- | --- |\n| **Candidate (`Ridge`, $\\alpha=10$)** | **`811.421`** | `1083.173` | মূল `Candidate` (`lag1`, `lag7`, `mean7` তিনটিই লাগে) |\n| **`naive1` (গতকালের মান)** | `900.604` | `1273.461` | শক্তিশালী রেফারেন্স, কিন্তু `lag1` দেরি হলেই ভেঙে পড়ে! |\n| **`seasonal7` ($7$ দিন আগের মান)** | `1090.791` | `1469.172` | ঘোষিত Serving `Baseline`—`lag1` না থাকলেও `lag7` দিয়ে সচল! |\n\nএখন প্রশ্ন হলো—`Sum-Loss`-এর গাণিতিক সমীকরণটা ঠিক কী, আর `Mean-Loss` বসালে কেন $\\alpha = 10$ আসলে $358$ গুণ শক্তিশালী হয়ে যায়?"
         },
         {
           "type": "math",
@@ -605,7 +605,7 @@
         },
         {
           "type": "text",
-          "title": "৬. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৬. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **Sum-Loss ও Mean-Loss-এর $\\alpha$ গুলিয়ে ফেলা:** কোড লাইব্রেরি বদলালে Objective-এ $1/N$ আছে কি না অবশ্যই যাচাই করুন।\n2. **সবচেয়ে নির্ভুল Baseline-কে অন্ধভাবে Fallback বানানো:** যে `Baseline` ঠিক একই Missing `Feature`-এ ভেঙে পড়ে (`naive1`), সে ভালো Fallback নয়।\n3. **Train/Dev মিলিয়ে Scaler Fit করা:** `mean`, `scale` এবং পরের `PSI` Bin—সবই শুধু Fit Set (`N = 358`) থেকে আসতে হবে।\n\n### Cheat Sheet\n- **Fit Population:** `target 7..364` (`N = 358`), Intercept $b = \\bar{y} = 3446.06$\n- **Normal Equation:** $(Z^\\top Z + 10 I)w = Z^\\top(y - \\bar{y})$ $\\implies w = [543.46, 57.01, 571.32]$\n- **182-Day MAE:** Candidate `811.42` < `naive1` `900.60` < `seasonal7` `1090.79`\n\n**পরের পাঠে কী শিখব?** আমাদের `Model Package` তৈরি এবং Reproducibleভাবে যাচাই করা শেষ! এবার এই `Model`-কে একটি **HTTP Inference Endpoint**-এর পেছনে বসিয়ে Request, Response, Status Code এবং `Timeout`/`Retry` চুক্তি কীভাবে সাজাতে হয় তা পরের পাঠে হাতে-কলমে দেখব!"
         },
         {
@@ -628,7 +628,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "আজ আমরা একটি **Inference HTTP Endpoint**-এর সম্পূর্ণ চুক্তি শিখব—Request-এ ঠিক কী কী ফিল্ড অনুমোদিত, Response-এ কেন শুধু Prediction সংখ্যা নয় বরং **Version ও Diagnostic Reason** থাকতে হয়, `200` বনাম `400` বনাম `503` Status Code-এর অপারেশনাল অর্থ কী, এবং `Timeout`, `Retry` ও `Payload Limit` কেন শুরুতেই বাঁধতে হয়।",
+          "goal": "আজ আমরা একটি **Inference HTTP Endpoint**-এর সম্পূর্ণ চুক্তি শিখব—Request-এ ঠিক কী কী ফিল্ড অনুমোদিত, Response-এ কেন শুধু Prediction সংখ্যা নয় বরং **Version ও Diagnostic Reason** থাকতে হয়, `200` বনাম `400` বনাম `503` Status Code-এর Operational অর্থ কী, এবং `Timeout`, `Retry` ও `Payload Limit` কেন শুরুতেই বাঁধতে হয়।",
           "prerequisites": [
             "HTTP GET/POST ও JSON কাঠামো",
             "আগের পাঠ: Model Packaging",
@@ -644,7 +644,7 @@
         {
           "type": "text",
           "title": "১. Endpoint ঠিক কী জানে, আর খালি সংখ্যা পাঠালে বিপদ কোথায়?",
-          "body": "ধরুন, আপনি ডাক্তারের কাছে গিয়ে টেস্ট করালেন, আর রিপোর্টের কাগজে শুধু বড় করে লেখা থাকল **`4120.5`**—কোন টেস্ট, কোন মেশিন, কোন ইউনিট, নাকি মেশিন নষ্ট থাকায় আগের মাসের রিপোর্ট কপি করে দিয়েছে—কিচ্ছু লেখা নেই! সেই সংখ্যা দেখে কি চিকিৎসা করা যাবে?\n\nঠিক একইভাবে, একটা ভালো `Inference Endpoint` কখনোই শুধু `4120.5` ছুড়ে দেয় না। বরং প্রতিটি `Request` এবং `Response`-এর একটি সুনির্দিষ্ট **Contract** থাকে:\n\n### আমাদের Replay Endpoint (`POST /predict`) এর চুক্তি\n- **অনুমোদিত ৪টি Request Key:**\n  1. `target`: Target দিনের Index (`365 <= target <= 546`, Strict Integer)\n  2. `scenario`: `on_time` অথবা `late_fixture`\n  3. `canary_bp`: Canary Threshold (`0`, `1000`, `5000`, `10000`)\n  4. `rollback`: সরাসরি `Baseline`-এ ফেরানোর Boolean ফ্ল্যাগ (`True`/`False`)\n- **Payload ও নিরাপত্তা সীমা:** বডির সর্বোচ্চ আকার `4096` বাইট, অজানা যেকোনো Key সরাসরি বাতিল (`400`), আর Response-এ কখনোই ভবিষ্যতের `outcome` ফাঁস হয় না!\n\n### HTTP Status Code-এর অপারেশনাল মানচিত্র\n| HTTP Status | কখন ফেরত আসে? | ড্যাশবোর্ডে কীভাবে পড়বেন? |\n| --- | --- | --- |\n| **`200 OK`** | বৈধ `Candidate`/`Baseline` **অথবা** অনুমোদিত `Fallback` | আলাদা **`Fallback Rate`** মাপতেই হবে—সবুজ `200`-এর আড়ালে সমস্যা লুকানো যাবে না! |\n| **`400 Bad Request`** | ক্লায়েন্টের ভুল JSON, অজানা Key বা সীমার বাইরের `target` | Client Contract লঙ্ঘন (`Client Error`, Server-এর দোষ নয়) |\n| **`503 Service Unavailable`** | খোদ `Baseline` নষ্ট বা অসামঞ্জস্যপূর্ণ (`BLOCKED`) | তাৎক্ষণিক **Service Outage Alert**! |\n\n> **অফলাইন মোবাইল অ্যাপের সীমানা:** আমাদের মোবাইল অ্যাপ সম্পূর্ণ Offline-এ Dart দিয়ে সব হিসাব করে—ডেস্কটপের এই `127.0.0.1` Python HTTP Server কেবল উৎসাহী ইঞ্জিনিয়ারদের জন্য একটি ঐচ্ছিক (`Optional`) লোকাল ল্যাব; এতে Production-এর `TLS`, `Auth` বা `Autoscaling` নেই।"
+          "body": "ধরুন, আপনি ডাক্তারের কাছে গিয়ে টেস্ট করালেন, আর রিপোর্টের কাগজে শুধু বড় করে লেখা থাকল **`4120.5`**—কোন টেস্ট, কোন মেশিন, কোন ইউনিট, নাকি মেশিন নষ্ট থাকায় আগের মাসের রিপোর্ট কপি করে দিয়েছে—কিচ্ছু লেখা নেই! সেই সংখ্যা দেখে কি চিকিৎসা করা যাবে?\n\nঠিক একইভাবে, একটা ভালো `Inference Endpoint` কখনোই শুধু `4120.5` দেয় না। বরং প্রতিটি `Request` এবং `Response`-এর একটি সুনির্দিষ্ট **Contract** থাকে:\n\n### আমাদের Replay Endpoint (`POST /predict`) এর চুক্তি\n- **অনুমোদিত ৪টি Request Key:**\n  1. `target`: Target দিনের Index (`365 <= target <= 546`, Strict Integer)\n  2. `scenario`: `on_time` অথবা `late_fixture`\n  3. `canary_bp`: Canary Threshold (`0`, `1000`, `5000`, `10000`)\n  4. `rollback`: সরাসরি `Baseline`-এ ফেরানোর Boolean ফ্ল্যাগ (`True`/`False`)\n- **Payload ও নিরাপত্তা সীমা:** বডির সর্বোচ্চ আকার `4096` বাইট, অজানা যেকোনো Key সরাসরি বাতিল (`400`), আর Response-এ কখনোই ভবিষ্যতের `outcome` ফাঁস হয় না!\n\n### HTTP Status Code-এর Operational মানচিত্র\n| HTTP Status | কখন ফেরত আসে? | ড্যাশবোর্ডে কীভাবে পড়বেন? |\n| --- | --- | --- |\n| **`200 OK`** | বৈধ `Candidate`/`Baseline` **অথবা** অনুমোদিত `Fallback` | আলাদা **`Fallback Rate`** মাপতেই হবে—সবুজ `200`-এর আড়ালে সমস্যা লুকানো যাবে না! |\n| **`400 Bad Request`** | ক্লায়েন্টের ভুল JSON, অজানা Key বা সীমার বাইরের `target` | Client Contract লঙ্ঘন (`Client Error`, Server-এর দোষ নয়) |\n| **`503 Service Unavailable`** | খোদ `Baseline` নষ্ট বা অসামঞ্জস্যপূর্ণ (`BLOCKED`) | তাৎক্ষণিক **Service Outage Alert**! |\n\n> **অফলাইন মোবাইল অ্যাপের সীমানা:** আমাদের মোবাইল অ্যাপ সম্পূর্ণ Offline-এ Dart দিয়ে সব হিসাব করে—ডেস্কটপের এই `127.0.0.1` Python HTTP Server কেবল উৎসাহী ইঞ্জিনিয়ারদের জন্য একটি ঐচ্ছিক (`Optional`) লোকাল ল্যাব; এতে Production-এর `TLS`, `Auth` বা `Autoscaling` নেই।"
         },
         {
           "type": "math",
@@ -767,8 +767,8 @@
         },
         {
           "type": "text",
-          "title": "৬. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
-          "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **শুধু খালি সংখ্যা রিটার্ন করা:** `model_version`, `served` ও `reason` ছাড়া Production-এ ডিবাগিং অসম্ভব।\n2. **অজানা Key চুপচাপ এড়িয়ে যাওয়া:** বানান ভুল (`scenerio`) চুপচাপ Default নিয়ে নিলে ভয়াবহ নীরব বাগ হয়।\n3. **`200 OK` দেখে `Fallback Rate` না মাপা:** `Fallback` সবুজ `200`-এর আড়ালে লুকিয়ে থাকে।\n\n### Cheat Sheet\n- **Endpoints:** `GET /healthz`, `GET /readyz`, `GET /metrics`, `POST /predict`\n- **Status Codes:** `200` (Valid/Fallback) | `400` (Client Contract Error) | `503` (Baseline Blocked)\n- **Safety:** `<= 4096 B` payload, strict key allowlist, no `outcome` leakage, `127.0.0.1` loopback demo only\n\n**পরের পাঠে কী শিখব?** Request-এর দরজায় ভুল Input (`target = True`!) আর বৈধ Request-এ Missing `Feature` (`lag1 = None`)—এই দুটি সম্পূর্ণ ভিন্ন ঘটনাকে কীভাবে দুই আলাদা দেয়ালে সামলাতে হয়, তা শিখব পরের পাঠ **Input Validation ও Failure Policy**-তে!"
+          "title": "৬. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
+          "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **শুধু খালি সংখ্যা রিটার্ন করা:** `model_version`, `served` ও `reason` ছাড়া Production-এ Debugging অসম্ভব।\n2. **অজানা Key চুপচাপ এড়িয়ে যাওয়া:** বানান ভুল (`scenerio`) চুপচাপ Default নিয়ে নিলে ভয়াবহ নীরব বাগ হয়।\n3. **`200 OK` দেখে `Fallback Rate` না মাপা:** `Fallback` সবুজ `200`-এর আড়ালে লুকিয়ে থাকে।\n\n### Cheat Sheet\n- **Endpoints:** `GET /healthz`, `GET /readyz`, `GET /metrics`, `POST /predict`\n- **Status Codes:** `200` (Valid/Fallback) | `400` (Client Contract Error) | `503` (Baseline Blocked)\n- **Safety:** `<= 4096 B` payload, strict key allowlist, no `outcome` leakage, `127.0.0.1` loopback demo only\n\n**পরের পাঠে কী শিখব?** Request-এর দরজায় ভুল Input (`target = True`!) আর বৈধ Request-এ Missing `Feature` (`lag1 = None`)—এই দুটি সম্পূর্ণ ভিন্ন ঘটনাকে কীভাবে দুই আলাদা দেয়ালে সামলাতে হয়, তা শিখব পরের পাঠ **Input Validation ও Failure Policy**-তে!"
         },
         {
           "type": "checkpoint",
@@ -798,7 +798,7 @@
           ],
           "outcomes": [
             "Python-এর লুকানো `isinstance(True, int) == True` ফাঁদ এবং `Silent Clamping`-এর বিপদ ব্যাখ্যা করতে পারবেন।",
-            "অনুপস্থিত `lag1 = None`-এ জোর করে `0` বসালে $z_1 \\approx -2.53$ হয়ে কীভাবে ভয়াবহ ভুল Prediction হয় তা হাতে কষে দেখাতে পারবেন।",
+            "অনুপস্থিত `lag1 = None`-এ জোর করে `0` বসালে $z_1 \\approx -2.53$ হয়ে কীভাবে ভয়াবহ ভুল Prediction হয় তা হাতে হিসাব করে দেখাতে পারবেন।",
             "চারটি ব্যর্থতার পথ (ভুল `target`, `lag1` অনুপস্থিত, নষ্ট `Candidate`, নষ্ট `Baseline`) নিখুঁতভাবে আলাদা করতে পারবেন।",
             "**Fail-Closed** ও **Safe Failure Policy** (`Fallback`, `Cached`, `Abstain`, `Human Escalation`) কোডে প্রয়োগ করতে পারবেন।"
           ]
@@ -806,7 +806,7 @@
         {
           "type": "text",
           "title": "১. দুটি আলাদা দেয়াল: ভুল Request বনাম অনুপস্থিত Feature!",
-          "body": "ধরুন, আপনি ব্যাংকে চেক ভাঙাতে গেলেন। এক ঘটনা হলো—চেকে আপনার স্বাক্ষরই ভুল বা তারিখের জায়গায় লেখা `True`! আরেক ঘটনা হলো—আপনার চেক ১০০% সঠিক, কিন্তু আজ ব্যাংকের প্রধান সার্ভারের সাথে গতকালের লেনদেন এখনো সিঙ্ক হয়নি। দুটো কি একই ধরনের ঘটনা? একদমই না!\n\nএখানে মূল Idea হলো—ML Serving-এ এই দুটি ঘটনা সামলাতে **দুটি আলাদা দেয়াল** বসাতে হয়:\n\n### দেয়াল ১: কঠোর Input Schema Validation (দরজাতেই `400`)\n- **Python-এর লুকানো `bool` ফাঁদ:** Python-এ `bool` হলো `int`-এর Subclass (`isinstance(True, int) == True`)! আলাদা করে `type(t) is int` বা `not isinstance(t, bool)` চেক না করলে `target = True` চুপচাপ `1` হয়ে ঢুকে পড়ে!\n- **Silent Clamping নিষিদ্ধ:** `target = 999` এলে চুপচাপ `546` বানিয়ে চালিয়ে দেবেন না—ভুল Input লুকিয়ে রাখলে Contract Monitoring অচল হয়ে যায়।\n- **NaN / Inf পাহারা:** কোনো `Feature`, `Weight` বা `mean`-এ `NaN`/`Inf` ঢুকতে পারবে না এবং প্রতিটি `scale` হতে হবে $0 < s_j < \\infty$।\n\n### দেয়াল ২: বৈধ Request কিন্তু অনুপস্থিত `Feature` (`lag1 = None`)\n`late_fixture` সিনারিওতে Day `375` একদম বৈধ Request, কিন্তু গতকালের সংখ্যা `lag1` এখনো এসে পৌঁছায়নি (`None`)।\n- **সোনালি নিয়ম — অনুপস্থিত মান মানে কখনোই `0` নয়!**\n  - আমাদের গড় দৈনিক ভাড়া $\\mu_1 = 3443.34$ ও $s_1 = 1361.71$।\n  - আপনি যদি `lag1 = None`-এ জোর করে `0` বসান, তবে $z_1 = \\frac{0 - 3443.34}{1361.71} = \\mathbf{-2.5287}$! অর্থাৎ `Model` ধরে নেবে গতকাল পুরো শহরে লকডাউন পড়ে একটা বাইকও ভাড়া হয়নি!\n\n### চারটি ব্যর্থতার পথ এক নজরে\n| পরিস্থিতি | কোন স্তরে ধরা পড়ে? | সিস্টেমের সিদ্ধান্ত | Metric প্রভাব |\n| --- | --- | --- | --- |\n| `target = True` বা `547` | দেয়াল ১ (`Schema Validation`) | **`400 Bad Request`** (Lookup চলেই না) | `Client Error` |\n| `lag1 = None` (`late_fixture`) | দেয়াল ২ (`Feature Completeness`) | নিরাপদ **`Fallback`** (`seasonal7`, `200 OK`) | `Fallback Rate` ↑ |\n| `Candidate` Metadata নষ্ট | `Candidate Contract Check` | নিরাপদ **`Fallback`** (`seasonal7`, `200 OK`) | `Fallback Rate` ↑ |\n| `Baseline` Metadata নষ্ট | `Baseline Gate` (Lookup-এর আগেই!) | সরাসরি **`BLOCKED`** (`503`) | `Server Error` ↑ |"
+          "body": "ধরুন, আপনি ব্যাংকে চেক ভাঙাতে গেলেন। এক ঘটনা হলো—চেকে আপনার স্বাক্ষরই ভুল বা তারিখের জায়গায় লেখা `True`! আরেক ঘটনা হলো—আপনার চেক ১০০% সঠিক, কিন্তু আজ ব্যাংকের প্রধান সার্ভারের সাথে গতকালের লেনদেন এখনো সিঙ্ক হয়নি। দুটো কি একই ধরনের ঘটনা? একদমই না!\n\nএখানে মূল Idea হলো—ML Serving-এ এই দুটি ঘটনা সামলাতে **দুটি আলাদা দেয়াল** বসাতে হয়:\n\n### দেয়াল ১: কঠোর Input Schema Validation (দরজাতেই `400`)\n- **Python-এর লুকানো `bool` ফাঁদ:** Python-এ `bool` হলো `int`-এর Subclass (`isinstance(True, int) == True`)! আলাদা করে `type(t) is int` বা `not isinstance(t, bool)` চেক না করলে `target = True` চুপচাপ `1` হয়ে ঢুকে পড়ে!\n- **Silent Clamping নিষিদ্ধ:** `target = 999` এলে চুপচাপ `546` বানিয়ে চালিয়ে দেবেন না—ভুল Input লুকিয়ে রাখলে Contract Monitoring অচল হয়ে যায়।\n- **NaN / Inf পাহারা:** কোনো `Feature`, `Weight` বা `mean`-এ `NaN`/`Inf` ঢুকতে পারবে না এবং প্রতিটি `scale` হতে হবে $0 < s_j < \\infty$।\n\n### দেয়াল ২: বৈধ Request কিন্তু অনুপস্থিত `Feature` (`lag1 = None`)\n`late_fixture` সিনারিওতে Day `375` একদম বৈধ Request, কিন্তু গতকালের সংখ্যা `lag1` এখনো এসে পৌঁছায়নি (`None`)।\n- **মনে রাখার নিয়ম — অনুপস্থিত মান মানে কখনোই `0` নয়!**\n  - আমাদের গড় দৈনিক ভাড়া $\\mu_1 = 3443.34$ ও $s_1 = 1361.71$।\n  - আপনি যদি `lag1 = None`-এ জোর করে `0` বসান, তবে $z_1 = \\frac{0 - 3443.34}{1361.71} = \\mathbf{-2.5287}$! অর্থাৎ `Model` ধরে নেবে গতকাল পুরো শহরে লকডাউন পড়ে একটা বাইকও ভাড়া হয়নি!\n\n### চারটি ব্যর্থতার পথ এক নজরে\n| পরিস্থিতি | কোন স্তরে ধরা পড়ে? | সিস্টেমের সিদ্ধান্ত | Metric প্রভাব |\n| --- | --- | --- | --- |\n| `target = True` বা `547` | দেয়াল ১ (`Schema Validation`) | **`400 Bad Request`** (Lookup চলেই না) | `Client Error` |\n| `lag1 = None` (`late_fixture`) | দেয়াল ২ (`Feature Completeness`) | নিরাপদ **`Fallback`** (`seasonal7`, `200 OK`) | `Fallback Rate` ↑ |\n| `Candidate` Metadata নষ্ট | `Candidate Contract Check` | নিরাপদ **`Fallback`** (`seasonal7`, `200 OK`) | `Fallback Rate` ↑ |\n| `Baseline` Metadata নষ্ট | `Baseline Gate` (Lookup-এর আগেই!) | সরাসরি **`BLOCKED`** (`503`) | `Server Error` ↑ |"
         },
         {
           "type": "math",
@@ -929,7 +929,7 @@
         },
         {
           "type": "text",
-          "title": "৬. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৬. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **`None`-কে `0` বানানো:** Missing `Feature` মানে `0` নয়—এতে Standardization ও Prediction দুটোই ভেঙে যায়।\n2. **`isinstance(x, int)`-এ `bool` ভুলে যাওয়া:** Python-এ `True == 1` এবং `False == 0`—আলাদা করে আটকাতেই হবে!\n3. **Silent Clamping ও Stack Trace ফাঁস:** ভুল Input দরজায় `400` দিয়ে ফিরান, আর ক্লায়েন্টকে নিরাপদ সংক্ষিপ্ত Error Code দিন।\n\n### Cheat Sheet\n- **Wall 1 (Schema):** Strict key allowlist + `not isinstance(t, bool)` + `math.isfinite()` + `scale > 0`\n- **Wall 2 (Missing Feature):** `lag1 is None` $\\implies$ `seasonal7` Fallback (`200 OK` + `Fallback Counter`)\n- **Broken Baseline:** `BLOCKED` (`503`) before any feature lookup!\n\n**পরের পাঠে কী শিখব?** একটি কন্টেইনার চালু (`Alive`) থাকলেই কি সে ট্রাফিক নেওয়ার জন্য প্রস্তুত (`Ready`)? আর `Ready` থাকলেই কি তার Prediction অর্থবহ (`Semantic Correct`)? পরের পাঠ **Liveness, Readiness ও Semantic Correctness**-এ আমরা এই তিনটি স্তর ও Stale Model ধরার কৌশল শিখব!"
         },
         {
@@ -1045,7 +1045,7 @@
         {
           "type": "interview_qa",
           "title": "Liveness, Readiness ও Semantic Correctness — সম্ভাব্য Interview প্রশ্ন ও উত্তর",
-          "intro": "Production Health Probes, Warmup ও Stale Model ডিবাগিং নিয়ে ৭টি উচ্চ-গুরুত্বের ইন্টারভিউ প্রশ্ন অনুশীলন করুন।",
+          "intro": "Production Health Probes, Warmup ও Stale Model Debugging নিয়ে ৭টি উচ্চ-গুরুত্বের ইন্টারভিউ প্রশ্ন অনুশীলন করুন।",
           "items": [
             {
               "concept": "Liveness vs Readiness",
@@ -1100,7 +1100,7 @@
         },
         {
           "type": "text",
-          "title": "৬. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৬. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **`Liveness`-এ ডাউনস্ট্রিম DB বা Feature Store চেক রাখা:** এটি `CrashLoopBackOff` Outage ডেকে আনে।\n2. **প্রতি Probe কলে ভারী কাজ করা:** যাচাই ও `Warmup` স্টার্টআপে একবার করুন; Probe রাখুন O(1) ও হালকা।\n3. **`/readyz = 200` দেখে `Model` নির্ভুল ধরে নেওয়া:** `Ready` কখনোই `Useful`-এর গ্যারান্টি দেয় না।\n\n### Cheat Sheet\n- **Hierarchy:** $\\mathrm{Useful} \\implies \\mathrm{Ready} \\implies \\mathrm{Alive}$ (বিপরীতটা মিথ্যা!)\n- **Endpoints:** `/healthz` (process alive) | `/readyz` (artifact + schema + warmup ready)\n- **Stale Model Defense:** `model_version` telemetry + parity check + freshness + mature labels\n\n**পরের পাঠে কী শিখব?** আমাদের নতুন `Candidate Model` এখন `Ready`! কিন্তু সঙ্গে সঙ্গেই কি $100\\%$ ট্রাফিক তার ওপর ছেড়ে দেব? একদমই না—পরের পাঠ **Deterministic Canary Routing**-এ আমরা ভাষা-নিরপেক্ষ `FNV-1a` Hash দিয়ে নিরাপদে $10\\% \\to 50\\% \\to 100\\%$ Rollout এবং ইন্টারঅ্যাক্টিভ **Release Lab** হাতে-কলমে পরখ করব!"
         },
         {
@@ -1197,7 +1197,7 @@
               "detail": "সব Gate পাশ করলে পরের ধাপে এগোন; বিপদ দেখলেই `rollback = True` করে নিরাপদ `Baseline`-এ ফিরুন।"
             }
           ],
-          "caption": "সোনালি নিয়ম: Rollout শুরু করার আগেই লিখিত Stop Conditions ঠিক করে রাখুন—আগুন লাগার পর বসে নিয়ম বানানো চলে না!"
+          "caption": "মনে রাখার নিয়ম: Rollout শুরু করার আগেই লিখিত Stop Conditions ঠিক করে রাখুন—আগুন লাগার পর বসে নিয়ম বানানো চলে না!"
         },
         {
           "type": "line_chart",
@@ -1318,7 +1318,7 @@
             "না, কারণ `FNV-1a` কেবল Python-এ কাজ করে"
           ],
           "answer": 1,
-          "explanation": "একদম ঠিক! `Canary Routing`-এর কাজ হলো কম ঝুঁকিতে অপারেশনাল সুস্থতা (`Contract`, `SLO`, `Fallback`) পরখ করা। অফলাইনে ন্যায্য তুলনার জন্য চাই **একই দিনের Paired Comparison**, আর অনলাইনে Causal Lift-এর জন্য চাই সঠিক Randomization Unit ও Power সহ **A/B Experiment** (Chapter 37)!"
+          "explanation": "একদম ঠিক! `Canary Routing`-এর কাজ হলো কম ঝুঁকিতে Operational সুস্থতা (`Contract`, `SLO`, `Fallback`) পরখ করা। অফলাইনে ন্যায্য তুলনার জন্য চাই **একই দিনের Paired Comparison**, আর অনলাইনে Causal Lift-এর জন্য চাই সঠিক Randomization Unit ও Power সহ **A/B Experiment** (Chapter 37)!"
         },
         {
           "type": "interview_qa",
@@ -1357,7 +1357,7 @@
               "concept": "Canary vs A/B Test",
               "level": "Senior",
               "question": "Canary Rollout আর A/B Experiment—দুটোই তো ট্রাফিক ভাগ করে, তাহলে পার্থক্য কোথায়?",
-              "answer": "**Canary Rollout**-এর লক্ষ্য অপারেশনাল নিরাপত্তা (Crash, `5xx`, Tail Latency, Fallback, Contract Bug ধরা)—এটি দ্রুত ছোট ট্রাফিকে চলে এবং `Stop Conditions` মেনে এগোয়। **A/B Experiment**-এর লক্ষ্য পরিসংখ্যানগতভাবে **Causal Business Lift** মাপা—এর জন্য সঠিক `Randomization Unit`, `Sample Size/Power`, `SRM Check` ও `Interference` নিয়ন্ত্রণ লাগে।",
+              "answer": "**Canary Rollout**-এর লক্ষ্য Operational নিরাপত্তা (Crash, `5xx`, Tail Latency, Fallback, Contract Bug ধরা)—এটি দ্রুত ছোট ট্রাফিকে চলে এবং `Stop Conditions` মেনে এগোয়। **A/B Experiment**-এর লক্ষ্য পরিসংখ্যানগতভাবে **Causal Business Lift** মাপা—এর জন্য সঠিক `Randomization Unit`, `Sample Size/Power`, `SRM Check` ও `Interference` নিয়ন্ত্রণ লাগে।",
               "followUp": "Canary-তে কোনো সমস্যা না পেলে কি সরাসরি A/B Test ছাড়াই ১০০% করে দেওয়া যায়? ছোট ইঞ্জিনিয়ারিং রিফ্যাক্টরে করা যায়, কিন্তু বড় `Model` পরিবর্তনে ব্যবসায়িক প্রভাব মাপতে A/B Test জরুরি!"
             },
             {
@@ -1371,7 +1371,7 @@
         },
         {
           "type": "text",
-          "title": "৬. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৬. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **Python `hash()` দিয়ে রাউটিং করা:** প্রতি Restart-এ Bucket পাল্টে যাবে!\n2. **শুধু `10%` লেখা, আসল সংখ্যা না লেখা:** সবসময় `22/182 (12.09%)` আকারে প্রকৃত `Denominator` দেখান।\n3. **Canary-কে A/B Test মনে করা:** ছোট তারিখভিত্তিক Canary থেকে কখনোই Causal Lift দাবি করবেন না।\n\n### Cheat Sheet\n- **FNV-1a 32-bit:** Offset `0x811C9DC5`, Prime `0x01000193`, Mask `0xFFFFFFFF`, `% 10000`\n- **Bike Lab Counts (`N=182`):** `10% -> 22/160` | `50% -> 87/95` | `100% -> 182/0`\n- **Stop Conditions:** Contract Error | Service SLO | Fallback Spike | Quality Drop\n\n**পরের পাঠে কী শিখব?** Canary-তে অন্তত $10\\%$ ইউজার কিন্তু নতুন `Model`-এর উত্তর দেখতে পান! আমরা যদি **একজন ইউজারকেও ঝুঁকিতে না ফেলে** লাইভ Input-এর ওপর পর্দার আড়ালে `Candidate` চালিয়ে `Baseline`-এর সঙ্গে মিলিয়ে দেখতে চাই—সেটাই পরের পাঠের **Shadow Evaluation, Parity ও Load Boundary**!"
         },
         {
@@ -1493,7 +1493,7 @@
               "concept": "Shadow Hidden Costs",
               "level": "Core",
               "question": "Shadow Mode-এ ইউজারকে তো নতুন Model-এর Output দেখানোই হয় না—তাহলে এটিকে 'শূন্য-ঝুঁকি' বলা ভুল কেন?",
-              "answer": "ইউজার-ফেসিং Output ঝুঁকি শূন্য হলেও **অপারেশনাল ও ইনফ্রাস্ট্রাকচার ঝুঁকি** বাস্তব! `100%` ট্রাফিকে Shadow চালালে Compute দ্বিগুণ হয়, শেয়ার্ড `Feature Store` ও লগিং পাইপলাইনে চাপ বাড়ে, আর Isolation না থাকলে Shadow-র `OOM` বা ধীরগতি মূল Production সার্ভিসকে টেনে নামাতে পারে।",
+              "answer": "ইউজার-ফেসিং Output ঝুঁকি শূন্য হলেও **Operational ও ইনফ্রাস্ট্রাকচার ঝুঁকি** বাস্তব! `100%` ট্রাফিকে Shadow চালালে Compute দ্বিগুণ হয়, শেয়ার্ড `Feature Store` ও লগিং Pipeline-এ চাপ বাড়ে, আর Isolation না থাকলে Shadow-র `OOM` বা ধীরগতি মূল Production সার্ভিসকে টেনে নামাতে পারে।",
               "followUp": "কীভাবে এই ঝুঁকি নিয়ন্ত্রণ করবেন? `Traffic Sampling`, আলাদা `Worker Pool`, `Async Non-blocking Dispatch`, `Strict Deadline` ও `Backpressure` দিয়ে!"
             },
             {
@@ -1528,7 +1528,7 @@
         },
         {
           "type": "text",
-          "title": "৬. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৬. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **মূল Critical Path-এ Synchronous Shadow চালানো:** এতে `Candidate`-এর ধীরগতি ইউজারের `Latency` বাড়িয়ে দেয়।\n2. **Parity পাশ করাকে Scientific Correctness ভাবা:** উভয় ভাষাতেই একই ভুল `Feature` থাকলে Parity তা ধরতে পারে না।\n3. **Shadow লগে কাঁচা PII ডাম্প করা:** শুধু `join_key`, `version`, `delta` ও `reason` লগ করুন।\n\n### Cheat Sheet\n- **Disagreement:** $\\Delta(x) = \\hat{y}_{\\mathrm{cand}} - \\hat{y}_{\\mathrm{base}}$ (তাৎক্ষণিক সংকেত, বাগ নয়!)\n- **Paired Gain:** $|y - \\hat{y}_{\\mathrm{base}}| - |y - \\hat{y}_{\\mathrm{cand}}|$ (`+279.37` bikes/day on 182 days)\n- **Safety:** `Sampling` + `Async Isolation` + `Deadline` + `Backpressure`\n\n**পরের পাঠে কী শিখব?** Shadow আর Canary পেরিয়ে Production-এ যাওয়ার পর যদি কোনো গভীর রাতে বড় বিপদ ধরা পড়ে—তখন **Fallback**, **Rollback** আর **Failover**-এর মধ্যে ঠিক কোন লিভার টানবেন, আর কেন আপস্ট্রিম `Data` নষ্ট হলে শুধু `Model Rollback` করে লাভ হয় না? চলুন পরের পাঠে শিখি!"
         },
         {
@@ -1685,7 +1685,7 @@
         },
         {
           "type": "text",
-          "title": "৬. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৬. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **কখনোই Rollback মহড়া না দেওয়া:** জরুরি মুহূর্তে প্রথমবার Rollback চালাতে গিয়ে Schema অমিল ধরা পড়া সবচেয়ে বড় দুঃস্বপ্ন।\n2. **`Data Corruption`-এ অন্ধভাবে `Model Rollback` বা `Retrain` করা:** আগে Input শুদ্ধতা ও Abstention নিশ্চিত করুন।\n3. **Cache Key-তে `model_version` না রাখা:** নইলে Rollback-এর পরও Cache থেকে নষ্ট `Candidate`-এর উত্তর যেতে থাকবে!\n\n### Cheat Sheet\n- **3 Levers:** `Fallback` (per-request) | `Rollback` (release switch) | `Failover` (infra/region)\n- **Bike Lab Rollback:** Both `on_time` & `late_fixture` $\\implies$ `baseline=182, cand=0, fb=0, blocked=0`\n- **Runbook Core:** `Trigger/Owner` $\\to$ `Freeze + Snapshot` $\\to$ `Verified Rollback` $\\to$ `Verify`\n\n**পরের পাঠে কী শিখব?** আমাদের Serving, Canary, Shadow ও Rollback—সব যন্ত্রপাতি প্রস্তুত! কিন্তু কখন বুঝবেন সার্ভিসে সমস্যা হচ্ছে আর ড্যাশবোর্ড কীভাবে সাজালে ভুল সংখ্যা দেখে বিভ্রান্ত হবেন না? সেটাই শিখব পরের পাঠ **Monitoring: Service, Data ও Model আলাদাভাবে দেখা**-এ!"
         },
         {
@@ -1724,7 +1724,7 @@
         {
           "type": "text",
           "title": "১. চার স্তরের Monitoring ও Denominator-এর কঠোর শৃঙ্খলা",
-          "body": "ধরুন, একটি বিমানের ককপিটে জ্বালানির মিটার, ইঞ্জিনের তাপমাত্রা, উচ্চতা আর যাত্রীর সন্তুষ্টি—এই চারটি সূচককে গড় করে একটা সিঙ্গেল সংখ্যা `82%` দেখানো হলো! আপনি কি ওই সংখ্যা দেখে বিমান চালাতে সাহস পাবেন?\n\nMLOps Monitoring-এও ঠিক তাই—সবকিছু এক পাত্রে ঘেঁটে না ফেলে **৪টি স্পষ্ট স্তরে** সাজাতে হয়, আর প্রতিটি কার্ডের পাশে তার নিজস্ব **Denominator ($N$)** লিখে রাখতে হয়!\n\n### আমাদের Bike Sharing Lab-এর ৪ স্তর ও আলাদা Denominator\n| স্তর | কী মাপে? | আমাদের ল্যাবে Denominator ($N$) | কখন সংকেত আসে? |\n| --- | --- | --- | --- |\n| **১. Service Layer** | `Request Rate`, `5xx Error`, `Saturation`, `p50/p95/p99` | **$20$** (`SLO` Telemetry উদাহরণ) | সেকেন্ড–মিনিটে |\n| **২. Data Layer** | `Null Fraction`, `Freshness`, `Schema`, `PSI Drift` | **$182$** (পুরো Development Input) | মিনিট–ঘণ্টায় |\n| **৩. Model Layer** | `Mature MAE`, `RMSE`, `Signed Bias`, `Fallback Rate` | **$175$** (`delay=7` হলে; `7`টি `Pending`!) | দিন–সপ্তাহে |\n| **৪. Business Layer** | Conversion, রেভিনিউ, ইউজার সুরক্ষা, অপারেশনাল খরচ | প্রোডাক্ট Instrumentation + A/B Test | সপ্তাহ–মাসে |\n\n### আরও দুটি দামি মনিটরিং ফাঁদ\n1. **Fallback Selection Bias:** কঠিন দিনগুলোতে `lag1` না থাকায় `Candidate` সরে গিয়ে `Fallback` চালাল; আপনি যদি সেই `11`টি কঠিন দিন বাদ দিয়ে শুধু বাকি `171` দিনে `Candidate` মাপেন আর পুরো `182` দিনে `Baseline` মাপেন, তবে `Candidate`-কে কৃত্রিমভাবে বেশি নির্ভুল মনে হবে!\n2. **High-Cardinality Label বিস্ফোরণ:** Metric-এর গায়ে `model_version` (`2`টি মান) লাগানো দারুণ, কিন্তু ভুলে `request_id` বা `user_id` (`10,000,000` মান) লাগালে লাখ লাখ Time-Series তৈরি হয়ে Prometheus/Monitoring Server অচল হয়ে পড়বে!"
+          "body": "ধরুন, একটি বিমানের ককপিটে জ্বালানির মিটার, ইঞ্জিনের তাপমাত্রা, উচ্চতা আর যাত্রীর সন্তুষ্টি—এই চারটি সূচককে গড় করে একটা সিঙ্গেল সংখ্যা `82%` দেখানো হলো! আপনি কি ওই সংখ্যা দেখে বিমান চালাতে সাহস পাবেন?\n\nMLOps Monitoring-এও ঠিক তাই—সবকিছু এক পাত্রে ঘেঁটে না ফেলে **৪টি স্পষ্ট স্তরে** সাজাতে হয়, আর প্রতিটি কার্ডের পাশে তার নিজস্ব **Denominator ($N$)** লিখে রাখতে হয়!\n\n### আমাদের Bike Sharing Lab-এর ৪ স্তর ও আলাদা Denominator\n| স্তর | কী মাপে? | আমাদের ল্যাবে Denominator ($N$) | কখন সংকেত আসে? |\n| --- | --- | --- | --- |\n| **১. Service Layer** | `Request Rate`, `5xx Error`, `Saturation`, `p50/p95/p99` | **$20$** (`SLO` Telemetry উদাহরণ) | সেকেন্ড–মিনিটে |\n| **২. Data Layer** | `Null Fraction`, `Freshness`, `Schema`, `PSI Drift` | **$182$** (পুরো Development Input) | মিনিট–ঘণ্টায় |\n| **৩. Model Layer** | `Mature MAE`, `RMSE`, `Signed Bias`, `Fallback Rate` | **$175$** (`delay=7` হলে; `7`টি `Pending`!) | দিন–সপ্তাহে |\n| **৪. Business Layer** | Conversion, রেভিনিউ, ইউজার সুরক্ষা, Operational খরচ | প্রোডাক্ট Instrumentation + A/B Test | সপ্তাহ–মাসে |\n\n### আরও দুটি দামি মনিটরিং ফাঁদ\n1. **Fallback Selection Bias:** কঠিন দিনগুলোতে `lag1` না থাকায় `Candidate` সরে গিয়ে `Fallback` চালাল; আপনি যদি সেই `11`টি কঠিন দিন বাদ দিয়ে শুধু বাকি `171` দিনে `Candidate` মাপেন আর পুরো `182` দিনে `Baseline` মাপেন, তবে `Candidate`-কে কৃত্রিমভাবে বেশি নির্ভুল মনে হবে!\n2. **High-Cardinality Label বিস্ফোরণ:** Metric-এর গায়ে `model_version` (`2`টি মান) লাগানো দারুণ, কিন্তু ভুলে `request_id` বা `user_id` (`10,000,000` মান) লাগালে লাখ লাখ Time-Series তৈরি হয়ে Prometheus/Monitoring Server অচল হয়ে পড়বে!"
         },
         {
           "type": "math",
@@ -1835,14 +1835,14 @@
               "concept": "Business Impact Honesty",
               "level": "Senior",
               "question": "আমাদের `Ridge Model`-এ `MAE` `1090` থেকে কমে `811` হয়েছে—আপনি কি Executive-দের বলবেন এতে কোম্পানির আয় `25%` বাড়বে?",
-              "answer": "একদমই না! অফলাইন `MAE` কমার সাথে ব্যবসায়িক লাভের সম্পর্ক কখনোই সরাসরি Linear `1:1` নয়—স্টেশন রিব্যালেন্সিং ট্রাকের ক্ষমতা, দাম, প্রতিযোগী ও অপারেশনাল সীমা এতে যুক্ত থাকে। আমি সৎভাবে বলব: `MAE` `25.6%` কমেছে যা শক্তিশালী অফলাইন সংকেত, তবে প্রকৃত **Business Impact** মাপতে হবে প্রোডাক্ট Instrumentation ও Online Experiment দিয়ে।",
+              "answer": "একদমই না! অফলাইন `MAE` কমার সাথে ব্যবসায়িক লাভের সম্পর্ক কখনোই সরাসরি Linear `1:1` নয়—স্টেশন রিব্যালেন্সিং ট্রাকের ক্ষমতা, দাম, প্রতিযোগী ও Operational সীমা এতে যুক্ত থাকে। আমি সৎভাবে বলব: `MAE` `25.6%` কমেছে যা শক্তিশালী অফলাইন সংকেত, তবে প্রকৃত **Business Impact** মাপতে হবে প্রোডাক্ট Instrumentation ও Online Experiment দিয়ে।",
               "followUp": "কোন ধরনের Regression ত্রুটি ব্যবসায় অসমান ক্ষতি করে? বাইক কম অনুমান করলে গ্রাহক ফিরে যায় (`Lost Revenue`), আর বেশি অনুমান করলে ফাঁকা বাইক পড়ে থাকে (`Holding Cost`)—অর্থাৎ **Asymmetric Loss**!"
             }
           ]
         },
         {
           "type": "text",
-          "title": "৬. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৬. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **আলাদা Denominator গুলিয়ে ফেলা:** `20` SLO, `182` Drift, আর `175` Mature Quality—প্রতিটির হর পাশে লিখুন।\n2. **Metric Label-এ `request_id`/`user_id` ঢোকানো:** High-Cardinality বিস্ফোরণ মনিটরিং সার্ভার বসিয়ে দেয়।\n3. **Pending Label-কে শূন্য ত্রুটি ধরা:** `Pending` সংখ্যা ও Coverage শতাংশ সবসময় স্পষ্ট রাখুন।\n\n### Cheat Sheet\n- **4 Layers:** `Service` (`N=20`) | `Data` (`N=182`) | `Model` (`N=175`, `7` pending) | `Business` (Experiment)\n- **Rate Rule:** $\\mathrm{Rate} = |\\mathrm{eligible\\ \\&\\ cond}| / |\\mathrm{eligible}|$; `N=0` $\\implies$ `Undefined`\n- **Cardinality:** `model_version` -> Metrics | `request_id` -> Structured Logs/Traces\n\n**পরের পাঠে কী শিখব?** Service স্তরের মনিটরিংয়ে শুধু `Availability` আর `Latency` আলাদা না দেখে কীভাবে একটি **Composite Good-Event SLI**, **Error Budget** এবং **Burn Rate** বানিয়ে অর্থবহ Alerting করা যায়—এবং একাধিক Window-এর Burn Rate গড় করলে কেন $5\\times$ ভুল হয়—তা শিখব পরের পাঠ **SLI, SLO, Error Budget ও Burn Rate**-এ!"
         },
         {
@@ -1873,7 +1873,7 @@
           ],
           "outcomes": [
             "`Availability` (`18/20 = 90%`) বনাম `Composite SLI` (`16/20 = 80%`) এবং কেন ব্যর্থ Request হর থেকে বাদ দেওয়া যাবে না তা প্রমাণ করতে পারবেন।",
-            "`Allowed Bad` ($N(1-S) = 0.2$), `Remaining Budget` ($-3.8$) এবং `Burn Rate` ($20\\times$) হাতে কষে ব্যাখ্যা করতে পারবেন।",
+            "`Allowed Bad` ($N(1-S) = 0.2$), `Remaining Budget` ($-3.8$) এবং `Burn Rate` ($20\\times$) হাতে হিসাব করে ব্যাখ্যা করতে পারবেন।",
             "একাধিক Disjoint Window-এ **Naive Mean Burn Rate** (`1.0x`) বনাম সঠিক **Pooled / Request-Weighted Burn Rate** (`0.2x`) আলাদা করতে পারবেন।",
             "**Zero-Traffic Trap** (`N=0 -> Undefined`) এবং **Multi-Window Alerting** কোডে তৈরি করতে পারবেন।"
           ]
@@ -1881,7 +1881,7 @@
         {
           "type": "text",
           "title": "১. শুধু 'সফল' যথেষ্ট নয়: Composite Good Event ও Error Budget",
-          "body": "ধরুন, একটি ফুড ডেলিভারি অ্যাপ গর্ব করে বলল, \"আমাদের `90%` অর্ডার সফলভাবে পৌঁছেছে!\" কিন্তু পরে জানা গেল তার মধ্যে কিছু অর্ডার পৌঁছেছে ৩ ঘণ্টা পর ঠান্ডা হয়ে! ইউজারের কাছে অত দেরিতে আসা সফলতাও আসলে একটি **খারাপ অভিজ্ঞতা (`Bad Event`)**।\n\nএখানে মূল Idea হলো—সফলতা (`ok`) আর গতি (`duration <= 100 ms`)-কে একসঙ্গে বেঁধে **Composite Good-Event SLI** তৈরি করা।\n\n### আমাদের ২০-Request Telemetry Fixture হাতে-কলমে দেখুন\nমোট $N = 20$টি যোগ্য Request-এর মধ্যে:\n- $2$টি Request ব্যর্থ (`ok = False`, সময় `110 ms` ও `200 ms`) $\\implies$ `Availability` $= 18 / 20 = \\mathbf{90\\%}$।\n- বাকি $18$টি সফল Request-এর মধ্যে আরও $2$টি ছিল $100\\,\\mathrm{ms}$-এর বেশি ধীর (`130 ms` ও `150 ms`)!\n- ফলে সত্যিকারের **`Good Event`** (`ok` এবং `<= 100 ms`) হলো মাত্র **$16$টি**, আর **`Bad Event`** হলো **$4$টি**!\n\n| সূচক | হিসাব ($N = 20, S = 99\\%$) | মান | অপারেশনাল অর্থ |\n| --- | --- | --- | --- |\n| **Availability** | $18 / 20$ | `0.90` (`90%`) | ধীর Request লুকিয়ে ফেলে! |\n| **Composite SLI** | $16 / 20$ | **`0.80` (`80%`)** | সফল **এবং** $\\le 100\\,\\mathrm{ms}$ |\n| **Allowed Bad Budget** | $20 \\times (1 - 0.99)$ | **`0.2`** | $99\\%$ SLO-তে অনুমোদিত খারাপ Request-সমতুল্য |\n| **Remaining Budget** | $0.2 - 4$ | **`-3.8`** | ঋণাত্মক মানেই লক্ষ্যমাত্রা বহু আগে ভেঙেছে! |\n| **Burn Rate** | $(4/20) / 0.01$ | **`20.0x`** | অনুমোদিত $1\\%$ হারের চেয়ে $20$ গুণ দ্রুত বাজেট পুড়ছে! |\n\n> **Governance সতর্কতা:** ড্যাশবোর্ড লাল দেখে কেউ যদি `Threshold` $100\\,\\mathrm{ms}$ থেকে বাড়িয়ে $200\\,\\mathrm{ms}$ করে দেয়, তবে `SLI` সঙ্গে সঙ্গে `80%` থেকে `90%` হয়ে যাবে—অথচ ইউজারের বাস্তব অভিজ্ঞতা এক চুলও বদলাবে না! চলমান Incident ঢাকতে কখনোই SLO সংজ্ঞা বদলানো নিষিদ্ধ।"
+          "body": "ধরুন, একটি ফুড ডেলিভারি অ্যাপ গর্ব করে বলল, \"আমাদের `90%` অর্ডার সফলভাবে পৌঁছেছে!\" কিন্তু পরে জানা গেল তার মধ্যে কিছু অর্ডার পৌঁছেছে ৩ ঘণ্টা পর ঠান্ডা হয়ে! ইউজারের কাছে অত দেরিতে আসা সফলতাও আসলে একটি **খারাপ অভিজ্ঞতা (`Bad Event`)**।\n\nএখানে মূল Idea হলো—সফলতা (`ok`) আর গতি (`duration <= 100 ms`)-কে একসঙ্গে বেঁধে **Composite Good-Event SLI** তৈরি করা।\n\n### আমাদের ২০-Request Telemetry Fixture হাতে-কলমে দেখুন\nমোট $N = 20$টি যোগ্য Request-এর মধ্যে:\n- $2$টি Request ব্যর্থ (`ok = False`, সময় `110 ms` ও `200 ms`) $\\implies$ `Availability` $= 18 / 20 = \\mathbf{90\\%}$।\n- বাকি $18$টি সফল Request-এর মধ্যে আরও $2$টি ছিল $100\\,\\mathrm{ms}$-এর বেশি ধীর (`130 ms` ও `150 ms`)!\n- ফলে সত্যিকারের **`Good Event`** (`ok` এবং `<= 100 ms`) হলো মাত্র **$16$টি**, আর **`Bad Event`** হলো **$4$টি**!\n\n| সূচক | হিসাব ($N = 20, S = 99\\%$) | মান | Operational অর্থ |\n| --- | --- | --- | --- |\n| **Availability** | $18 / 20$ | `0.90` (`90%`) | ধীর Request লুকিয়ে ফেলে! |\n| **Composite SLI** | $16 / 20$ | **`0.80` (`80%`)** | সফল **এবং** $\\le 100\\,\\mathrm{ms}$ |\n| **Allowed Bad Budget** | $20 \\times (1 - 0.99)$ | **`0.2`** | $99\\%$ SLO-তে অনুমোদিত খারাপ Request-সমতুল্য |\n| **Remaining Budget** | $0.2 - 4$ | **`-3.8`** | ঋণাত্মক মানেই লক্ষ্যমাত্রা বহু আগে ভেঙেছে! |\n| **Burn Rate** | $(4/20) / 0.01$ | **`20.0x`** | অনুমোদিত $1\\%$ হারের চেয়ে $20$ গুণ দ্রুত বাজেট পুড়ছে! |\n\n> **Governance সতর্কতা:** ড্যাশবোর্ড লাল দেখে কেউ যদি `Threshold` $100\\,\\mathrm{ms}$ থেকে বাড়িয়ে $200\\,\\mathrm{ms}$ করে দেয়, তবে `SLI` সঙ্গে সঙ্গে `80%` থেকে `90%` হয়ে যাবে—অথচ ইউজারের বাস্তব অভিজ্ঞতা এক চুলও বদলাবে না! চলমান Incident ঢাকতে কখনোই SLO সংজ্ঞা বদলানো নিষিদ্ধ।"
         },
         {
           "type": "math",
@@ -2110,7 +2110,7 @@
         },
         {
           "type": "text",
-          "title": "৯. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৯. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **আলাদা Window-এর Burn Rate সরল গড় করা:** সবসময় `sum(bad) / sum(total)` দিয়ে Pooled হার বের করুন (তাও কেবল Disjoint Window-তে!)।\n2. **শূন্য ট্রাফিক (`N=0`)-কে `100%` SLI দেখানো:** `N=0` মানে `Undefined`—Ingress Outage হতে পারে!\n3. **ব্যর্থ Request-কে হর থেকে বাদ দেওয়া বা Threshold ঢিলা করে ড্যাশবোর্ড সবুজ করা।**\n\n### Cheat Sheet\n- **Composite Good Event:** $g_i = \\mathbf{1}(\\mathrm{ok}_i \\land d_i \\le 100)$ $\\implies 16/20 = 0.80$\n- **Error Budget & Burn:** $B = N(1-S) = 0.2$, Remaining $= -3.8$, $\\mathrm{Burn} = (4/20)/0.01 = 20\\times$\n- **Pooled Burn (Disjoint):** `2/100` (`2x`) + `0/900` (`0x`) $\\implies$ Naive `1.0x` (ভুল!), Pooled **`0.2x`** (সঠিক!)\n\n**পরের পাঠে কী শিখব?** এই পাঠে আমরা দেখলাম `<= 100 ms` বনাম `> 100 ms`। কিন্তু একাধিক Server Replica জুড়ে পুরো Cluster-এর **`p95` বা `p99` Latency** কীভাবে মাপবেন—আর প্রতিটি Server-এর নিজস্ব `p95` গড় করলে কেন মারাত্মক ভুল হয়? সেটাই শিখব পরের পাঠ **Percentiles ও Histogram Aggregation**-এ!"
         },
         {
@@ -2140,7 +2140,7 @@
             "Python sorting ও for loop"
           ],
           "outcomes": [
-            "সাজানো Array থেকে Linear Sample Quantile ($h = (n-1)p$) হাতে কষে `p95_all = 152.5 ms` বনাম `p95_ok = 133.0 ms` প্রমাণ করতে পারবেন।",
+            "সাজানো Array থেকে Linear Sample Quantile ($h = (n-1)p$) হাতে হিসাব করে `p95_all = 152.5 ms` বনাম `p95_ok = 133.0 ms` প্রমাণ করতে পারবেন।",
             "**Cumulative Histogram Bucket** (`<=25`, `<=50`, `<=100`, `<=200`, `+Inf`) থেকে একক Bucket-এর সংখ্যা এবং Prometheus-স্টাইল `histogram_quantile` প্রাক্কলন ব্যাখ্যা করতে পারবেন।",
             "`99`টি `10 ms` + `1`টি `1000 ms` পাল্টা-উদাহরণ দিয়ে প্রমাণ করতে পারবেন কেন আলাদা Replica-র `p95` গড় (`505 ms`) বা ওজনযুক্ত গড় (`19.9 ms`) দুটোই ভুল, অথচ প্রকৃত Fleet `p95` মাত্র **`10 ms`**!",
             "End-to-End, Preprocessing, Queue ও Model Inference—৪টি আলাদা Latency Histogram Instrumentation সাজাতে পারবেন।"
@@ -2378,7 +2378,7 @@
         },
         {
           "type": "text",
-          "title": "৯. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৯. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **Replica-গুলোর আলাদা `p95` গড় করা:** Quantile Non-linear—আগে অভিন্ন Bucket Histogram যোগ করুন, তারপর `p95` বের করুন!\n2. **ব্যর্থ কল বাদ দিয়ে শুধু `ok` Latency দেখানো:** এতে Timeout লুকিয়ে পড়ে (`152.5 ms` -> `133.0 ms`)।\n3. **SLO Threshold-এ Exact Bucket সীমানা না রাখা:** `100 ms` SLO থাকলে অবশ্যই `le=\"100\"` Bucket রাখুন।\n\n### Cheat Sheet\n- **Linear Quantile:** $h=(n-1)p$, $Q_p = x_{\\lfloor h\\rfloor} + (h-\\lfloor h\\rfloor)(x_{\\lceil h\\rceil} - x_{\\lfloor h\\rfloor})$\n- **Bike SLO Fixture:** `p95_all = 152.5 ms` | `p95_success = 133.0 ms` | Buckets `[6, 10, 16, 20]`\n- **Fleet Counterexample:** `99×10ms` + `1×1000ms` $\\implies$ Avg `505` (ভুল), Weighted `19.9` (ভুল), True **`10.0 ms`**!\n\n**পরের পাঠে কী শিখব?** Service স্তরের `SLI` ও `Latency` এখন আমাদের নখদর্পণে! এবার চলে যাই **Data ও Model Distribution**-এর জগতে—ড্যাশবোর্ডে \"Drift ধরা পড়েছে\" লেখা উঠলেই অন্ধভাবে `Retrain` না করে কীভাবে **Covariate Shift**, **Label Shift** এবং **Concept Drift** আলাদা করে রোগনির্ণয় করতে হয়, তা শিখব পরের পাঠে!"
         },
         {
@@ -2401,7 +2401,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "আজ আমরা **Distribution Shift-এর সম্পূর্ণ শ্রেণিবিন্যাস (Taxonomy)**—**Covariate Shift**, **Label Shift** এবং **Concept Drift** শিখব—কেন ড্যাশবোর্ডে 'Drift ধরা পড়েছে' লেখাটা কোনো রোগনির্ণয় নয়, কীভাবে প্রতিটি `Slice`-এ `Model` একদম অক্ষত থাকা সত্ত্বেও শুধু ট্রাফিক মিশ্রণ বদলে গড় ত্রুটি **$0.16$ থেকে $0.34$** (দ্বিগুণের বেশি!) হয়ে যায়, এবং কেন শুধু `Feature Monitor`-এর ওপর ভরসা করা বিপজ্জনক!",
+          "goal": "আজ আমরা **Distribution Shift-এর সম্পূর্ণ শ্রেণিবিন্যাস (Taxonomy)**—**Covariate Shift**, **Label Shift** এবং **Concept Drift** শিখব—কেন ড্যাশবোর্ডে 'Drift ধরা পড়েছে' দেখলেই তার ধরন বা কারণ বোঝা যায় না, কীভাবে প্রতিটি `Slice`-এ `Model` একদম অক্ষত থাকা সত্ত্বেও শুধু ট্রাফিক মিশ্রণ বদলে গড় ত্রুটি **$0.16$ থেকে $0.34$** (দ্বিগুণের বেশি!) হয়ে যায়, এবং কেন শুধু `Feature Monitor`-এর ওপর ভরসা করা বিপজ্জনক!",
           "prerequisites": [
             "শর্তসাপেক্ষ সম্ভাবনা $P(y \\mid x)$ ও $P(x \\mid y)$",
             "আগের পাঠ: 4-Layer Monitoring",
@@ -2421,7 +2421,7 @@
           "steps": [
             {
               "label": "ধাপ ১ · আগে Data Pipeline ও Schema যাচাই",
-              "detail": "ইউনিট বদলানো, `Null` স্পাইক বা ভাঙা Join আছে কি না দেখুন—ভাঙা পাইপলাইনে `Retrain` করলে বিপর্যয় বাড়ে!"
+              "detail": "ইউনিট বদলানো, `Null` স্পাইক বা ভাঙা Join আছে কি না দেখুন—ভাঙা Pipeline-এ `Retrain` করলে বিপর্যয় বাড়ে!"
             },
             {
               "label": "ধাপ ২ · Population Composition বনাম Slice Error আলাদা করুন",
@@ -2628,7 +2628,7 @@
         },
         {
           "type": "text",
-          "title": "৭. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৭. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **`Feature Drift = 0` দেখে `Model` নিরাপদ ভাবা:** $P(x)$ স্থির থেকেও ভয়াবহ Concept Drift ঘটতে পারে।\n2. **Slice Error না দেখে শুধু Aggregate Error দেখে `Rollback` করা:** Composition Shift-এ Model আদৌ নষ্ট নাও হতে পারে।\n3. **Pipeline Bug বাদ না দিয়ে Auto-Retrain চালানো।**\n\n### Cheat Sheet\n- **Covariate Shift:** $P(x)$ changes, $P(y \\mid x)$ fixed\n- **Label Shift:** $P(y)$ changes, $P(x \\mid y)$ fixed\n- **Concept Drift:** $P(y \\mid x)$ changes (requires Mature Labels to detect!)\n- **Composition Trap:** `0.8×0.1 + 0.2×0.4 = 0.16` $\\longrightarrow$ `0.2×0.1 + 0.8×0.4 = 0.34`\n\n**পরের পাঠে কী শিখব?** তত্ত্ব তো দারুণ বুঝলাম! এবার হাতে-কলমে বাস্তব Bike Sharing ডেটায় **Fixed Reference Bins**, **0.5 Pseudocount Smoothing** এবং **Population Stability Index (`PSI`)** কীভাবে মাপতে হয়—আর কেন `Marginal PSI = 0` হয়েও `XOR Joint Shift`-এ Error `0%` থেকে `100%` হতে পারে—তা শিখব পরের পাঠ **Feature Drift: Fixed Bins ও PSI Audit**-এ!"
         },
         {
@@ -2886,14 +2886,14 @@
               "concept": "Nulls & PSI",
               "level": "Senior",
               "question": "`Feature` ডেটায় হঠাৎ `30%` মান `Null` আসতে শুরু করলে `PSI` মনিটর কী করবে?",
-              "answer": "যদি আপনার কোড `Null` বাদ দিয়ে শুধু Non-null সংখ্যায় `PSI` মাপে, তবে `PSI` প্রায় অপরিবর্তিত (`~0`) থেকে ভয়াবহ পাইপলাইন ভাঙন লুকিয়ে রাখবে! সঠিক উপায় হলো: (১) `Missingness Rate` আলাদা মেট্রিক হিসেবে ট্র্যাক করা, এবং/অথবা (২) `PSI`-তে আলাদা একটি **`Missing Bin`** রাখা।",
+              "answer": "যদি আপনার কোড `Null` বাদ দিয়ে শুধু Non-null সংখ্যায় `PSI` মাপে, তবে `PSI` প্রায় অপরিবর্তিত (`~0`) থেকে ভয়াবহ Pipeline ভাঙন লুকিয়ে রাখবে! সঠিক উপায় হলো: (১) `Missingness Rate` আলাদা মেট্রিক হিসেবে ট্র্যাক করা, এবং/অথবা (২) `PSI`-তে আলাদা একটি **`Missing Bin`** রাখা।",
               "followUp": "Categorical Feature (যেমন `city` বা `device_os`)-এর জন্য নতুন অচেনা ক্যাটাগরি এলে কীভাবে সামলাবেন? আলাদা **`__OTHER__ / __UNSEEN__` Bin** রেখে!"
             }
           ]
         },
         {
           "type": "text",
-          "title": "৯. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৯. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **প্রতি Window-তে নতুন Bin বানানো:** সবসময় `2011` Fit-Only Frozen Bin ব্যবহার করুন।\n2. **শুধু উচ্চ `PSI` দেখেই অন্ধ `Retrain` বা `Model` বাতিল করা:** `PSI` হলো তদন্তের শুরু, শেষ রায় নয়।\n3. **`Marginal PSI = 0` দেখে Joint Shift নেই ধরে নেওয়া:** `XOR` উদাহরণ মনে রাখুন এবং `Missingness` আলাদা মাপুন।\n\n### Cheat Sheet\n- **Smoothed Mass:** $p_k = (c_k + 0.5)/(N + 0.5K)$, $\\mathrm{PSI} = \\sum (q_k - p_k)\\ln(q_k/p_k)$\n- **Bike Lab `lag1` PSI:** Early `0.351` | Full `0.882` | Late `2.790` (Late `mean7 = 3.781`)\n- **XOR Blind Spot:** `Marginal PSI = [0.0, 0.0]`, অথচ `Error: 0.0 -> 1.0`!\n\n**পরের পাঠে কী শিখব?** `Feature Drift` তো মাপলাম—এবার আসল প্রশ্নে আসি: `Label` আসতে যখন `2` বা `7` দিন দেরি হয়, তখন কীভাবে **অভিন্ন Mature Population**-এ দুটি `Model`-এর ন্যায্য **Paired Quality Evaluation** (`MAE`, `RMSE`, `Signed Bias`) করবেন, আর সহজ `Label` আগে এলে কীভাবে বিজয়ী `Model` পুরো উল্টে যেতে পারে? চলুন পরের পাঠে দেখি!"
         },
         {
@@ -3182,7 +3182,7 @@
         },
         {
           "type": "text",
-          "title": "৯. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৯. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **ভিন্ন Denominator-এ দুটি `Model` তুলনা করা:** সবসময় অভিন্ন Mature Subset-এ Paired তুলনা করুন।\n2. **প্রাথমিক আংশিক Mature Subset দেখে চূড়ান্ত বিজয়ী ঘোষণা:** সহজ `Label` আগে এলে বিজয়ী উল্টে যেতে পারে!\n3. **শুধু `MAE` দেখা, `Signed Bias` ও `Pending Count` লুকিয়ে রাখা।**\n\n### Cheat Sheet\n- **Maturity Rule:** $t + 1 + \\mathrm{delay} \\le t_{\\mathrm{report}}$ (`delay=7` $\\implies$ `175/182` mature, `7` pending)\n- **Full `delay=0` Candidate:** `MAE = 811.42`, `RMSE = 1083.17`, **`Signed Bias = -199.80`**\n- **Selection Bias Flip:** Partial (`50%`) -> Cand `0` vs Base `20` | Full (`100%`) -> Cand `50` vs Base **`20`**!\n\n**পরের পাঠে কী শিখব?** এই পাঠে দেখলাম `Label` আসতে দেরি হলে কী ঝামেলা হয়—কিন্তু এমন অনেক সিস্টেম আছে যেখানে `Model`-এর নিজের সিদ্ধান্তের কারণে কিছু `Label` **কোনোদিনই তৈরি হয় না** (যেমন ব্যাংক যাকে ঋণ দেয়নি)! সেটাই শিখব পরের পাঠ **Feedback Loops ও Monitoring Blind Spots**-এ!"
         },
         {
@@ -3346,7 +3346,7 @@
         },
         {
           "type": "text",
-          "title": "৬. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৬. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **শুধু অনুমোদিত কেসের Accuracy দেখে `Model` দারুণ ভাবা:** Selective Labels-এ রিজেক্ট হওয়া ভালো কেসগুলো অদৃশ্য থাকে।\n2. **অদেখা ফলাফলে কাল্পনিক Synthetic Label বসানো বা উচ্চ-ঝুঁকিতে অন্ধ Random Exploration।**\n3. **ডিপ্লয়ের পর Metric নড়লেই সঙ্গে সঙ্গে `Model`-কে কৃতিত্ব বা দোষ দেওয়া।**\n\n### Cheat Sheet\n- **Feedback Loop:** $\\hat{y}_t \\to a_t \\to \\mathrm{Data}_{t+1} \\to \\hat{y}_{t+1}$\n- **5 Required Logs:** `Policy/Version` | `Eligibility` | `Action` | `Propensity` | `Outcome Join Key`\n- **5 Post-Deploy Checks:** Model | Traffic Mix | Seasonality | Other Policies/UI | Logging Bug\n\n**পরের পাঠে কী শিখব?** Monitoring অ্যালার্ট বেজে উঠেছে—রাত ২টায় পেজার বাজলে কীভাবে মাথা ঠান্ডা রেখে **Triage**, **Containment (Mitigate)**, **Verification** এবং দোষারোপমুক্ত **Blameless Postmortem (Learn)** চালাতে হয়—আর ইন্টারঅ্যাক্টিভ **Incident Lab**-এ মহড়া দিতে হয়—তা শিখব পরের পাঠে!"
         },
         {
@@ -3488,7 +3488,7 @@
               "level": "Intermediate",
               "question": "**Blameless Postmortem** মানে কি কারও কোনো দায়বদ্ধতা (`Accountability`) নেই?",
               "answer": "একদমই না! Blameless মানে হলো ব্যক্তিকে দোষারোপ বা লজ্জা না দিয়ে **সিস্টেমের ফাঁকফোকর** খোঁজা—কারণ ভয়ের পরিবেশ থাকলে ইঞ্জিনিয়াররা ভুল লুকিয়ে রাখবে, আর সত্যি তথ্য না এলে সিস্টেম কখনো শক্তিশালী হবে না। দায়বদ্ধতা থাকে: সৎভাবে ঘটনা তুলে ধরা এবং যাতে একই ভুল আর *কোনো* ইঞ্জিনিয়ার না করতে পারে তার জন্য স্থায়ী Automated Guardrail বানানো!",
-              "followUp": "একটি দুর্বল Action Item বনাম শক্তিশালী Action Item-এর উদাহরণ দিন। দুর্বল: 'ডেপ্লয়ের আগে ডেভেলপাররা আরও সতর্ক থাকবেন।' শক্তিশালী: 'CI পাইপলাইনে `verify_bundle` ও `Manifest Cross-Link` চেক না পাশ করলে Deploy ব্লক হবে (Owner: Hasan, Due: Friday)।'"
+              "followUp": "একটি দুর্বল Action Item বনাম শক্তিশালী Action Item-এর উদাহরণ দিন। দুর্বল: 'ডেপ্লয়ের আগে ডেভেলপাররা আরও সতর্ক থাকবেন।' শক্তিশালী: 'CI Pipeline-এ `verify_bundle` ও `Manifest Cross-Link` চেক না পাশ করলে Deploy ব্লক হবে (Owner: Hasan, Due: Friday)।'"
             },
             {
               "concept": "Retry Storm Incident",
@@ -3515,7 +3515,7 @@
         },
         {
           "type": "text",
-          "title": "৬. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৬. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **`5xx` বা `Fallback` বাড়লে `Mature Label`-এর অপেক্ষা করা:** আগে সার্ভিস বাঁচান!\n2. **`Evidence Snapshot` না রেখেই Restart/Rollback করা:** এতে Postmortem-এর প্রমাণ হারিয়ে যায়।\n3. **ব্যক্তিকে দোষ দিয়ে বা অস্পষ্ট 'আরও সতর্ক থাকব' লিখে Postmortem শেষ করা।**\n\n### Cheat Sheet\n- **5-Step Loop:** $\\mathrm{Detect} \\to \\mathrm{Scope} \\to \\mathrm{Mitigate} \\to \\mathrm{Verify} \\to \\mathrm{Learn}$\n- **Recovery Criteria:** `5xx ≈ 0` + `Fallback normal` + `Expected version` + `Fresh features` + `Finite outputs`\n- **Postmortem Output:** Timeline + Detection Gap + Concrete Automated Guardrail with Owner!\n\n**পরের পাঠে কী শিখব?** Incident শান্ত হলো—কিন্তু সময়ের সাথে যখন আসলেই ডেটা ও পৃথিবী বদলে যায় (যেমন `2012`-এ বাইকের চাহিদা বাড়া), তখন কখন **Retraining Trigger** চালাবেন, আর কেন প্রতিটি নতুন Retrained `Model`-কে কঠোর **Promotion Gate** পেরোতে হয়? চলুন পরের পাঠে শিখি!"
         },
         {
@@ -3538,14 +3538,14 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "আজ আমরা **Retraining Trigger ও Promotion Gate** শিখব—কেন `Retraining` নিজেই একটি নতুন পরীক্ষা (কোনো জাদুকরী অটো-মেরামত নয়!), কেন নষ্ট `Data`-য় অন্ধ Auto-Retrain চালালে Production ধ্বংস হয়, কীভাবে **Adaptive Overfitting** এড়াতে হয়, এবং কেন ইন্টারভিউতে *'সাপ্তাহিক Retrain'* বললে **Freshness of Weights বনাম Freshness of Features** আলাদা করে যুক্তি দিতে হয়!",
+          "goal": "আজ আমরা **Retraining Trigger ও Promotion Gate** শিখব—কেন `Retraining` নিজেই একটি নতুন পরীক্ষা (নিজে থেকেই পুরোনো সমস্যা ঠিক হওয়ার নিশ্চয়তা নেই), কেন ভুল `Data`-তে যাচাই ছাড়াই Auto-Retrain চালালে Production-এর ফল খারাপ হতে পারে, কীভাবে **Adaptive Overfitting** এড়াতে হয়, এবং কেন ইন্টারভিউতে *'সাপ্তাহিক Retrain'* বললে **Freshness of Weights বনাম Freshness of Features** আলাদা করে যুক্তি দিতে হয়!",
           "prerequisites": [
             "Temporal Split ও Data Leakage",
             "Paired Mature-Label Evaluation",
             "আগের পাঠ: Incident Response"
           ],
           "outcomes": [
-            "**Scheduled**, **Event-Driven** এবং **Manual**—তিনটি Retraining Trigger-এর সুবিধা ও সোনালি নিয়ম (*Trigger Training শুরু করে, সরাসরি প্রমোট করে না!*) ব্যাখ্যা করতে পারবেন।",
+            "**Scheduled**, **Event-Driven** এবং **Manual**—তিনটি Retraining Trigger-এর সুবিধা ও মনে রাখার নিয়ম (*Trigger Training শুরু করে, সরাসরি প্রমোট করে না!*) ব্যাখ্যা করতে পারবেন।",
             "৪-স্তরের **Promotion Gate** (`Data Ready` $\\land$ `Quality Gate` $\\land$ `Service Gate` $\\land$ `Recovery Ready`) কোডে বাস্তবায়ন করতে পারবেন।",
             "একই Development সেটে বারবার Retrain ও `Model` বাছাই করলে কীভাবে **Adaptive Overfitting** ঘটে তা ব্যাখ্যা করতে পারবেন।",
             "**Freshness of Weights** বনাম **Freshness of Features**-এর পার্থক্য ও Training জব ব্যর্থ হলে লাইভ সার্ভিসের ৪টি নিরাপত্তা শর্ত বলতে পারবেন।"
@@ -3554,7 +3554,7 @@
         {
           "type": "text",
           "title": "১. Retraining জাদুমন্ত্র নয় — Trigger আর Promotion Gate আলাদা!",
-          "body": "অনেকেই ভাবেন: \"ড্যাশবোর্ডে `Drift` দেখলেই অটোমেটিক `Model Retrain` করে Production-এ পুশ করে দেব—তাহলেই সব সমস্যার সমাধান!\" এটি MLOps-এর সবচেয়ে বিপজ্জনক ভুলগুলোর একটি।\n\nকেন? ধরুন, আপস্ট্রিম `Pipeline`-এ একটা বাগ এসে গত ৭ দিন ধরে সব `lag1` মান `0` হয়ে ঢুকছে। `PSI` লাফিয়ে উঠল—আর আপনার অন্ধ Auto-Retrain সেই নষ্ট `Data` দিয়ে নতুন `Model` Fit করে Production-এ পুশ করে দিল! ফলাফল: **নষ্ট ডেটা শিখে নেওয়া একটি বিষাক্ত `Model`**, যা পাইপলাইন ঠিক হওয়ার পরও ভুল উত্তর দিতে থাকবে!\n\n### তিনটি Retraining Trigger বনাম Promotion Gate\n| Trigger ধরন | কখন Training জব শুরু হয়? | সুবিধা ও ভূমিকা |\n| --- | --- | --- |\n| **Scheduled** | নির্দিষ্ট রুটিনে (যেমন সাপ্তাহিক/মাসিক) | Compute বাজেট ও সময়সূচি পূর্বানুমেয় |\n| **Event-Driven** | `Drift` বা `Mature Quality` পতনের সংকেতে | আকস্মিক পরিবর্তনে দ্রুত সাড়া দেয় |\n| **Manual** | ডোমেইন বিশেষজ্ঞের সিদ্ধান্তে | বড় পলিসি বা প্রোডাক্ট পরিবর্তনে নিরাপদ নিয়ন্ত্রণ |\n\n> **মনে রাখবেন:** এই তিনটি Trigger কেবল একটি নতুন **Candidate Training জব** শুরু করে—কখনোই সরাসরি Production-এ প্রমোট করে না! প্রমোশনের আগে প্রতিটি Candidate-কে কঠোর **Promotion Gate** পেরোতেই হবে।\n\n### আরেকটি গভীর ফাঁদ: `Freshness of Weights` বনাম `Freshness of Features`\nইন্টারভিউতে কেউ যদি বলে *\"আমরা প্রতিদিন `Model` Retrain করব\"*, তবে সঙ্গে সঙ্গে দুটো জিনিস আলাদা করুন:\n- **`Freshness of Features`:** আজকের Input (`lag1`, `mean7`) কত তাজা—এটি প্রতিদিনই তাজা আসছে!\n- **`Freshness of Weights`:** `Model`-এর প্যারামিটার কত নতুন—অনেক সমস্যায় রোজ `Model` রি-ফিট না করে কেবল তাজা `Feature` দিলেই দারুণ ফল মেলে!\n\n> **Adaptive Overfitting সতর্কতা:** একই `182` দিনের Development সেটে ৫০ বার Retrain ও Hyperparameter টিউন করে সেরাটা বাছলে সেই সেটের Noise-এ Overfit হয়ে যায়—এজন্যই আমাদের সংরক্ষিত `184` দিন একদম অস্পৃশ্য রাখা হয়েছে!"
+          "body": "অনেকেই ভাবেন: \"ড্যাশবোর্ডে `Drift` দেখলেই অটোমেটিক `Model Retrain` করে Production-এ পুশ করে দেব—তাহলেই সব সমস্যার সমাধান!\" এটি MLOps-এর সবচেয়ে বিপজ্জনক ভুলগুলোর একটি।\n\nকেন? ধরুন, আপস্ট্রিম `Pipeline`-এ একটা বাগ এসে গত ৭ দিন ধরে সব `lag1` মান `0` হয়ে ঢুকছে। `PSI` লাফিয়ে উঠল—আর আপনার অন্ধ Auto-Retrain সেই নষ্ট `Data` দিয়ে নতুন `Model` Fit করে Production-এ পুশ করে দিল! ফলাফল: **নষ্ট ডেটা শিখে নেওয়া একটি বিষাক্ত `Model`**, যা Pipeline ঠিক হওয়ার পরও ভুল উত্তর দিতে থাকবে!\n\n### তিনটি Retraining Trigger বনাম Promotion Gate\n| Trigger ধরন | কখন Training জব শুরু হয়? | সুবিধা ও ভূমিকা |\n| --- | --- | --- |\n| **Scheduled** | নির্দিষ্ট রুটিনে (যেমন সাপ্তাহিক/মাসিক) | Compute বাজেট ও সময়সূচি পূর্বানুমেয় |\n| **Event-Driven** | `Drift` বা `Mature Quality` পতনের সংকেতে | আকস্মিক পরিবর্তনে দ্রুত সাড়া দেয় |\n| **Manual** | ডোমেইন বিশেষজ্ঞের সিদ্ধান্তে | বড় পলিসি বা প্রোডাক্ট পরিবর্তনে নিরাপদ নিয়ন্ত্রণ |\n\n> **মনে রাখবেন:** এই তিনটি Trigger কেবল একটি নতুন **Candidate Training জব** শুরু করে—কখনোই সরাসরি Production-এ প্রমোট করে না! প্রমোশনের আগে প্রতিটি Candidate-কে কঠোর **Promotion Gate** পেরোতেই হবে।\n\n### আরেকটি গভীর ফাঁদ: `Freshness of Weights` বনাম `Freshness of Features`\nইন্টারভিউতে কেউ যদি বলে *\"আমরা প্রতিদিন `Model` Retrain করব\"*, তবে সঙ্গে সঙ্গে দুটো জিনিস আলাদা করুন:\n- **`Freshness of Features`:** আজকের Input (`lag1`, `mean7`) কত তাজা—এটি প্রতিদিনই তাজা আসছে!\n- **`Freshness of Weights`:** `Model`-এর প্যারামিটার কত নতুন—অনেক সমস্যায় রোজ `Model` রি-ফিট না করে কেবল তাজা `Feature` দিলেই দারুণ ফল মেলে!\n\n> **Adaptive Overfitting সতর্কতা:** একই `182` দিনের Development সেটে ৫০ বার Retrain ও Hyperparameter টিউন করে সেরাটা বাছলে সেই সেটের Noise-এ Overfit হয়ে যায়—এজন্যই আমাদের সংরক্ষিত `184` দিন একদম অস্পৃশ্য রাখা হয়েছে!"
         },
         {
           "type": "math",
@@ -3597,7 +3597,7 @@
         },
         {
           "type": "flow_diagram",
-          "title": "৫. Training ব্যর্থ হলেও লাইভ সার্ভিস সুরক্ষিত রাখার নিরাপদ Retraining পাইপলাইন",
+          "title": "৫. Training ব্যর্থ হলেও লাইভ সার্ভিস সুরক্ষিত রাখার নিরাপদ Retraining Pipeline",
           "body": "",
           "steps": [
             {
@@ -3684,7 +3684,7 @@
         },
         {
           "type": "text",
-          "title": "৬. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৬. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **Trigger-কে Auto-Promote বানিয়ে ফেলা:** Trigger শুধু Candidate তৈরি করে; প্রমোশন দেয় 4-Gate।\n2. **নষ্ট Pipeline ডেটায় Retrain চালানো:** আগে `Data Contract` ও `Label Maturity` যাচাই করুন।\n3. **`Freshness of Weights` আর `Freshness of Features` গুলিয়ে ফেলা।**\n\n### Cheat Sheet\n- **Promotion Gate:** $\\mathrm{DataReady} \\land \\mathrm{QualityGate} \\land \\mathrm{ServiceGate} \\land \\mathrm{RecoveryReady}$\n- **3 Triggers:** `Scheduled` | `Event-Driven` | `Manual`\n- **Bike Lab Retrain Test:** Adding `Early 2012` to `2011` improved Late-2012 paired MAE—yet real promotion still requires Service/Recovery Gates!\n\n**পরের পাঠে কী শিখব?** আমাদের Immutable Release Bundle-এর ৬টি ফাইল যে ডিস্কে এক বাইটও নষ্ট হয়নি তা কীভাবে **Canonical JSON Serialization** ও **`SHA-256` Checksum** দিয়ে যাচাই করবেন—আর কেন শুধু Checksum কখনোই **Cryptographic Authenticity** বা **Scientific Correctness** প্রমাণ করে না—তা শিখব পরের পাঠ **Artifact Verification ও Supply Boundary**-তে!"
         },
         {
@@ -3757,7 +3757,7 @@
         {
           "type": "text",
           "title": "৪. কোডের ব্যাখ্যা ও Option B (HMAC-SHA256 দিয়ে Manifest Authenticity স্বাক্ষর)",
-          "body": "### Pure Python কোডের যাচাই করা Output\n- `1) Canonical SHA-256: 75bf5ec745b107ea | Pretty SHA-256: 1a55a4fadb435cae | Equal? False`\n- `2) Verified bundle: {'verified': True, 'files': 6, 'candidate': 'ridge36-v1', 'baseline': 'seasonal7-v1'} | Files: ['ATTRIBUTION.txt', 'SOURCE_README.txt', 'baseline_model.json', 'feature_definition.json', 'ridge_model.json', 'serving_lab.json']`\n- `3) 1-byte tamper caught -> Checksum mismatch:ridge_model.json`\n- `4) Forged checksums.json caught by cross-link -> Release manifest mismatch`\n\nদেখুন ৪টি ধাপই হাতেনাতে প্রমাণিত:\n1. একই Dictionary `pretty` ফরম্যাট করতেই `SHA-256` পুরো বদলে গেল (`Equal? False`)!\n2. `export_bundle` ও `verify_bundle` ৬টি Payload ফাইল ও Cross-link যাচাই করে `verified: True` দিল।\n3. `ridge_model.json`-এ মাত্র ১টি স্পেস যোগ করতেই `Checksum mismatch` ধরে ফেলল।\n4. আক্রমণকারী `checksums.json` পাল্টে দিলেও `serving_lab.json`-এর ভেতরে থাকা `Manifest Cross-Link` তাকে ধরে ফেলল (`Release manifest mismatch`)! (তবে আক্রমণকারী যদি পুরো ডিরেক্টরি নতুন করে বানায়, তবে তখন নিচের মতো **Cryptographic Signature** লাগে!)\n\n### Option B — Integrity ছাড়িয়ে Authenticity: Signed Manifest (`HMAC-SHA256`)\nProduction-এ CI/CD পাইপলাইনের গোপন Signing Key দিয়ে Manifest-এ স্বাক্ষর করা হয়—ফলে আক্রমণকারী ফাইল ও Checksum দুটোই বদলালেও Signing Key ছাড়া বৈধ স্বাক্ষর বানাতে পারবে না:\n\n```python\nimport hashlib\nimport hmac\nimport json\n\n# Production Supply-Chain নিরাপত্তা: সাধারণ SHA-256 (Integrity) বনাম Signed HMAC/Signature (Authenticity)\nSECRET_SIGNING_KEY = b\"ci-release-signing-key-demo-only\"\n\n\ndef sign_manifest(manifest_dict, secret_key):\n    canonical = json.dumps(manifest_dict, sort_keys=True, separators=(\",\", \":\")).encode(\"utf-8\")\n    sig = hmac.new(secret_key, canonical, hashlib.sha256).hexdigest()\n    return sig\n\n\ndef verify_signed_manifest(manifest_dict, provided_sig, secret_key):\n    expected_sig = sign_manifest(manifest_dict, secret_key)\n    return hmac.compare_digest(expected_sig, provided_sig)\n\n\nchecksums = {\"ridge_model.json\": \"de2b5145abc...\", \"baseline_model.json\": \"91a8f012def...\"}\nvalid_sig = sign_manifest(checksums, SECRET_SIGNING_KEY)\nprint(\"Legit manifest signature valid?\", verify_signed_manifest(checksums, valid_sig, SECRET_SIGNING_KEY))\n\n# আক্রমণকারী ফাইল ও checksums.json দুটোই বদলে দিল (কিন্তু তার কাছে CI Signing Key নেই!)\ntampered_checksums = {\"ridge_model.json\": \"evil_hash_999\", \"baseline_model.json\": \"91a8f012def...\"}\nprint(\"Attacker-edited manifest valid?\", verify_signed_manifest(tampered_checksums, valid_sig, SECRET_SIGNING_KEY))\n```\n\n**Python যাচাই করা Output:**\n- `Legit manifest signature valid? True`\n- `Attacker-edited manifest valid? False`"
+          "body": "### Pure Python কোডের যাচাই করা Output\n- `1) Canonical SHA-256: 75bf5ec745b107ea | Pretty SHA-256: 1a55a4fadb435cae | Equal? False`\n- `2) Verified bundle: {'verified': True, 'files': 6, 'candidate': 'ridge36-v1', 'baseline': 'seasonal7-v1'} | Files: ['ATTRIBUTION.txt', 'SOURCE_README.txt', 'baseline_model.json', 'feature_definition.json', 'ridge_model.json', 'serving_lab.json']`\n- `3) 1-byte tamper caught -> Checksum mismatch:ridge_model.json`\n- `4) Forged checksums.json caught by cross-link -> Release manifest mismatch`\n\nদেখুন ৪টি ধাপই হাতেনাতে প্রমাণিত:\n1. একই Dictionary `pretty` ফরম্যাট করতেই `SHA-256` পুরো বদলে গেল (`Equal? False`)!\n2. `export_bundle` ও `verify_bundle` ৬টি Payload ফাইল ও Cross-link যাচাই করে `verified: True` দিল।\n3. `ridge_model.json`-এ মাত্র ১টি স্পেস যোগ করতেই `Checksum mismatch` ধরে ফেলল।\n4. আক্রমণকারী `checksums.json` পাল্টে দিলেও `serving_lab.json`-এর ভেতরে থাকা `Manifest Cross-Link` তাকে ধরে ফেলল (`Release manifest mismatch`)! (তবে আক্রমণকারী যদি পুরো ডিরেক্টরি নতুন করে বানায়, তবে তখন নিচের মতো **Cryptographic Signature** লাগে!)\n\n### Option B — Integrity ছাড়িয়ে Authenticity: Signed Manifest (`HMAC-SHA256`)\nProduction-এ CI/CD Pipeline-এর গোপন Signing Key দিয়ে Manifest-এ স্বাক্ষর করা হয়—ফলে আক্রমণকারী ফাইল ও Checksum দুটোই বদলালেও Signing Key ছাড়া বৈধ স্বাক্ষর বানাতে পারবে না:\n\n```python\nimport hashlib\nimport hmac\nimport json\n\n# Production Supply-Chain নিরাপত্তা: সাধারণ SHA-256 (Integrity) বনাম Signed HMAC/Signature (Authenticity)\nSECRET_SIGNING_KEY = b\"ci-release-signing-key-demo-only\"\n\n\ndef sign_manifest(manifest_dict, secret_key):\n    canonical = json.dumps(manifest_dict, sort_keys=True, separators=(\",\", \":\")).encode(\"utf-8\")\n    sig = hmac.new(secret_key, canonical, hashlib.sha256).hexdigest()\n    return sig\n\n\ndef verify_signed_manifest(manifest_dict, provided_sig, secret_key):\n    expected_sig = sign_manifest(manifest_dict, secret_key)\n    return hmac.compare_digest(expected_sig, provided_sig)\n\n\nchecksums = {\"ridge_model.json\": \"de2b5145abc...\", \"baseline_model.json\": \"91a8f012def...\"}\nvalid_sig = sign_manifest(checksums, SECRET_SIGNING_KEY)\nprint(\"Legit manifest signature valid?\", verify_signed_manifest(checksums, valid_sig, SECRET_SIGNING_KEY))\n\n# আক্রমণকারী ফাইল ও checksums.json দুটোই বদলে দিল (কিন্তু তার কাছে CI Signing Key নেই!)\ntampered_checksums = {\"ridge_model.json\": \"evil_hash_999\", \"baseline_model.json\": \"91a8f012def...\"}\nprint(\"Attacker-edited manifest valid?\", verify_signed_manifest(tampered_checksums, valid_sig, SECRET_SIGNING_KEY))\n```\n\n**Python যাচাই করা Output:**\n- `Legit manifest signature valid? True`\n- `Attacker-edited manifest valid? False`"
         },
         {
           "type": "flow_diagram",
@@ -3841,14 +3841,14 @@
               "concept": "Zero-Downtime Bundle Update",
               "level": "Senior",
               "question": "মোবাইল বা এজ ডিভাইসে বান্ডল করা নতুন `Model` ভার্সন আপডেট করার সময় কীভাবে নিশ্চিত করবেন যে অর্ধেক ডাউনলোডে অ্যাপ ক্র্যাশ করবে না এবং ইউজারের লোকাল `SQLite` ডেটা হারাবে না?",
-              "answer": "১) নতুন ভার্সনটি একটি আলাদা Staging ডিরেক্টরিতে ডাউনলোড করব; ২) সব ৬টি ফাইলের `SHA-256` ও Signature + Schema যাচাই করব; ৩) যাচাই পাশ হলে তবেই একটি Atomic Symlink/Metadata Pointer ঘুরিয়ে নতুন ভার্সন সক্রিয় করব; ৪) কোনো ত্রুটি হলে পুরোনো ফোল্ডারে অটল থাকব—আর `Model` আর্টিফ্যাক্ট ও ইউজারের `SQLite` প্রোগ্রেস ডেটাবেস সম্পূর্ণ আলাদা স্টোরেজ পাথে রাখব!",
+              "answer": "১) নতুন ভার্সনটি একটি আলাদা Staging ডিরেক্টরিতে ডাউনলোড করব; ২) সব ৬টি ফাইলের `SHA-256` ও Signature + Schema যাচাই করব; ৩) যাচাই পাশ হলে তবেই একটি Atomic Symlink/Metadata Pointer ঘুরিয়ে নতুন ভার্সন সক্রিয় করব; ৪) কোনো ত্রুটি হলে পুরোনো ফোল্ডারে অটল থাকব—আর `Model` Artifact ও ইউজারের `SQLite` প্রোগ্রেস ডেটাবেস সম্পূর্ণ আলাদা স্টোরেজ পাথে রাখব!",
               "followUp": "আপডেটের পর প্রথম Inference-এ যদি অপ্রত্যাশিত ক্র্যাশ ঘটে? Automatic Health-Check Rollback আগের Verified ফোল্ডারে Pointer ফিরিয়ে দেবে!"
             }
           ]
         },
         {
           "type": "text",
-          "title": "৬. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৬. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **Non-Canonical JSON-এ Hash নেওয়া:** `sort_keys`, compact separators ও `LF` ছাড়া OS বদলালেই Hash বদলে যাবে।\n2. **Checksum-কে Security Signature ভাবা:** Unsigned Checksum আক্রমণকারীর বিরুদ্ধে একা টেকে না।\n3. **অবিশ্বস্ত `.pkl` (`pickle`) ফাইল Production-এ লোড করা:** JSON, ONNX বা Safetensors বেছে নিন।\n\n### Cheat Sheet\n- **Canonical JSON:** `sort_keys=True, separators=(\",\", \":\"), ensure_ascii=False` + `\"\\n\"` (`UTF-8`)\n- **Portable Bundle:** `6` Payload files + `checksums.json` + Manifest Cross-Links\n- **Boundary:** $\\mathrm{ByteIdentity} \\ne \\mathrm{Authenticity} \\ne \\mathrm{ScientificCorrectness}$\n\n**পরের পাঠে কী শিখব?** এখন আমাদের হাতে পুরো MLOps-এর সব খণ্ড আছে—Contract, Package, Ridge Recipe, HTTP, Validation, Readiness, Canary, Shadow, Rollback, Monitoring, SLO, Histogram, Drift, Mature Quality, Feedback, Incident, Retraining ও Artifacts! পরের পাঠ **End-to-End Release Review ও Interview Walkthrough**-এ আমরা সবকিছু একসঙ্গে কাজে লাগিয়ে একজন Senior ML Systems Engineer-এর মতো পূর্ণ **Evidence Chain** ও **Design Doc** দাঁড় করাব!"
         },
         {
@@ -4019,7 +4019,7 @@
         },
         {
           "type": "text",
-          "title": "৬. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৬. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **ইন্টারভিউতে শুধু টুলের নাম (Kubernetes, Kafka, MLflow) বলা, কিন্তু Contract, Denominator ও Failure Path না বলা।**\n2. **Design Doc-এ অপ্রমাণিত দাবি বা Simulation-কে লাইভ ট্রাফিক বলে চালানো।**\n3. **বিপদ-প্রশ্নে এক বাক্যে 'Retrain করে দেব' বলা:** আগে Detect, Policy, Verify ও Caveat আলাদা করুন!\n\n### Cheat Sheet — Chapter 36 Master Numbers\n- **Data Split:** `358` Fit (`2011`) | `182` Dev (`Jan–Jun 2012`) | `184` Reserved (`0` touched)\n- **Paired Quality (`N=182`):** Candidate `811.42` (`Bias -199.80`) | `naive1` `900.60` | `seasonal7` `1090.79`\n- **Routing (`N=182`):** `10% -> 22/160` | `50% -> 87/95` | `late_fixture 100% -> 171 Cand + 11 FB`\n- **Monitoring:** `lag1 PSI` `0.882` (Late `2.790`) | `d=7` Mature `175/182` | `SLO` `16/20`, `20x Burn`, `p95=152.5 ms`\n\n**শেষ পাঠে কী করব?** পুরো অধ্যায়ের সূত্র, কোড, টেস্ট ও ইন্টারভিউ যুক্তিগুলো ঝালাই করে নেওয়ার চূড়ান্ত চার-স্তম্ভের প্ল্যান—**Mastery Review ও Coding Practice Plan** (`Derive -> Implement -> Test -> Defend`)—এবং পরবর্তী অধ্যায় **Experimentation & Causal Reasoning**-এর সেতু!"
         },
         {
@@ -4042,7 +4042,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "অভিনন্দন! আজ Chapter 36-এর চূড়ান্ত পাঠে আমরা পুরো **Serving, Monitoring & MLOps** দক্ষতাকে চার স্তম্ভে—**Derive (সূত্র), Implement (১০টি কোডিং অনুশীলনী), Test (প্রান্তিক কেস) এবং Defend (ইন্টারভিউ যুক্তি)**—পাকা করে নেব এবং পরের অধ্যায় **Experimentation & Causal Reasoning**-এর জন্য প্রস্তুত হব!",
+          "goal": "অভিনন্দন! আজ Chapter 36-এর চূড়ান্ত পাঠে আমরা পুরো **Serving, Monitoring & MLOps** অধ্যায়ের ধারণাগুলো চারটি কাজে—**Derive (সূত্র), Implement (১০টি কোডিং অনুশীলনী), Test (প্রান্তিক কেস) এবং Defend (ইন্টারভিউ যুক্তি)**—অনুশীলন করব এবং পরের অধ্যায় **Experimentation & Causal Reasoning**-এর জন্য প্রস্তুত হব!",
           "prerequisites": [
             "Chapter 36-এর সব পাঠ (Lessons 1–20)",
             "Linear Algebra & Ridge Basics (Chapter 8)",
@@ -4167,7 +4167,7 @@
               "concept": "Canary vs A/B",
               "level": "Intermediate",
               "question": "Deterministic `FNV-1a` Canary Routing-এ `10%` Threshold দিলে `182` দিনে `22`টি (`12.09%`) পড়েছে—এটি কি বাগ? আর এটি কি A/B Test?",
-              "answer": "না, এটি সসীম Sample-এ স্বাভাবিক Binomial ওঠানামা (`18.2 ± 4.05`)—তবে সবসময় `22/182` Denominator দেখাতে হবে। আর `entity + date` Canary কোনো User-Randomized **A/B Experiment** নয়—এটি অপারেশনাল নিরাপত্তা পরখ করে, `Causal Lift` প্রমাণ করে না!",
+              "answer": "না, এটি সসীম Sample-এ স্বাভাবিক Binomial ওঠানামা (`18.2 ± 4.05`)—তবে সবসময় `22/182` Denominator দেখাতে হবে। আর `entity + date` Canary কোনো User-Randomized **A/B Experiment** নয়—এটি Operational নিরাপত্তা পরখ করে, `Causal Lift` প্রমাণ করে না!",
               "followUp": "Python-এর বিল্ট-ইন `hash()` কেন ব্যবহার করা যাবে না? প্রতি প্রসেস Restart-এ `PYTHONHASHSEED` বদলে গিয়ে রাউটিং ভেঙে দেয়!"
             },
             {
@@ -4523,7 +4523,7 @@
         "পুরো Population-এও Candidate Model-টি শতভাগ নিশ্চিতভাবে সেরা হবেই",
         "অপেক্ষমাণ সব Pending Label-এর মান শূন্য ধরে পূর্ণ হিসাব করে ফেলতে হবে",
         "কভারেজ শতাংশ, Pending সংখ্যা এবং Label পরিপক্বতার ঝোঁক উল্লেখ করে বর্তমান Subset ফলাফলটি রিপোর্ট করতে হবে",
-        "Label আসতে দেরি হলে Server-এর সব অপারেশনাল Metric-ও বন্ধ রাখতে হবে"
+        "Label আসতে দেরি হলে Server-এর সব Operational Metric-ও বন্ধ রাখতে হবে"
       ],
       "answer": 2,
       "explanation": "যে Label-গুলো আগে এসেছে সেগুলোর গঠন পুরো Population থেকে আলাদা (যেমন সহজ কেস) হতে পারে; তাই একই Subset-এ তুলনার পাশাপাশি কতগুলো Label বাকি আছে এবং সম্ভাব্য Selection অনুমানগুলো স্পষ্টভাবে প্রকাশ করতে হবে।"
@@ -4650,7 +4650,7 @@
       "title": "অর্থবহ SLO, Error Budget ও Burn Rate গণনা",
       "tag": "Reliability / mathematics",
       "prompt": "একটি Window-তে মোট $20$টি যোগ্য Request-এর মধ্যে $18$টি সফল হয়েছে, $16$টি সফল ও দ্রুত ($\\le 100\\,\\mathrm{ms}$), এবং আপনার SLO লক্ষ্যমাত্রা $99\\%$। সবকটি Reliability সূচক হিসাব করে ব্যাখ্যা করুন।",
-      "answer": "প্রতিটি নির্ভরযোগ্যতা সূচকে **সব $20$টি যোগ্য Request** হরে (`Denominator`) থাকবে—ব্যর্থ Request বাদ দিলে চিত্রটা বিকৃত হয়ে যাবে।\n\n$$\n\\mathrm{Availability} = \\frac{18}{20} = 0.90, \\qquad \\mathrm{Composite\\;SLI} = \\frac{16}{20} = 0.80, \\qquad \\mathrm{bad} = 20 - 16 = 4\n$$\n\n$$\n\\mathrm{Allowed\\;Bad} = 20 \\times (1 - 0.99) = 0.2, \\qquad \\mathrm{Remaining\\;Budget} = 0.2 - 4 = -3.8, \\qquad \\mathrm{Burn\\;Rate} = \\frac{4/20}{0.01} = 20\\times\n$$\n\n| সূচক | মান | অপারেশনাল অর্থ |\n| --- | --- | --- |\n| **Availability** | $0.90$ ($90\\%$) | $18/20$টি Request সফল |\n| **Composite SLI** | $0.80$ ($80\\%$) | $16/20$টি Request সফল **এবং** $\\le 100\\,\\mathrm{ms}$ |\n| **Remaining Budget** | $-3.8$ Request-সমতুল্য | ঋণাত্মক মান মানেই $99\\%$ `SLO` লক্ষ্যমাত্রা অতিক্রান্ত |\n| **Burn Rate** | $20\\times$ | অনুমোদিত $1\\%$ ত্রুটি হারের চেয়ে $20$ গুণ দ্রুত বাজেট পুড়ছে |\n\n- **Production প্রেক্ষাপট:** এর সাথে Time Window, `Eligible` সংজ্ঞা, `Retry` নিয়ম এবং কেন $100\\,\\mathrm{ms}$ ও $99\\%$ যৌক্তিক তা নির্ধারণ করব। মনে রাখব মাত্র $20$ Request গাণিতিক স্বচ্ছতার উদাহরণ—আর $20\\times$ `Burn Rate` থেকে কত মিনিটে বাজেট শেষ হবে তা বলতে ভবিষ্যৎ ট্রাফিক হারের অনুমান লাগবে।",
+      "answer": "প্রতিটি নির্ভরযোগ্যতা সূচকে **সব $20$টি যোগ্য Request** হরে (`Denominator`) থাকবে—ব্যর্থ Request বাদ দিলে চিত্রটা বিকৃত হয়ে যাবে।\n\n$$\n\\mathrm{Availability} = \\frac{18}{20} = 0.90, \\qquad \\mathrm{Composite\\;SLI} = \\frac{16}{20} = 0.80, \\qquad \\mathrm{bad} = 20 - 16 = 4\n$$\n\n$$\n\\mathrm{Allowed\\;Bad} = 20 \\times (1 - 0.99) = 0.2, \\qquad \\mathrm{Remaining\\;Budget} = 0.2 - 4 = -3.8, \\qquad \\mathrm{Burn\\;Rate} = \\frac{4/20}{0.01} = 20\\times\n$$\n\n| সূচক | মান | Operational অর্থ |\n| --- | --- | --- |\n| **Availability** | $0.90$ ($90\\%$) | $18/20$টি Request সফল |\n| **Composite SLI** | $0.80$ ($80\\%$) | $16/20$টি Request সফল **এবং** $\\le 100\\,\\mathrm{ms}$ |\n| **Remaining Budget** | $-3.8$ Request-সমতুল্য | ঋণাত্মক মান মানেই $99\\%$ `SLO` লক্ষ্যমাত্রা অতিক্রান্ত |\n| **Burn Rate** | $20\\times$ | অনুমোদিত $1\\%$ ত্রুটি হারের চেয়ে $20$ গুণ দ্রুত বাজেট পুড়ছে |\n\n- **Production প্রেক্ষাপট:** এর সাথে Time Window, `Eligible` সংজ্ঞা, `Retry` নিয়ম এবং কেন $100\\,\\mathrm{ms}$ ও $99\\%$ যৌক্তিক তা নির্ধারণ করব। মনে রাখব মাত্র $20$ Request গাণিতিক স্বচ্ছতার উদাহরণ—আর $20\\times$ `Burn Rate` থেকে কত মিনিটে বাজেট শেষ হবে তা বলতে ভবিষ্যৎ ট্রাফিক হারের অনুমান লাগবে।",
       "prerequisiteLessons": [
         "ch36_slo"
       ]
@@ -4668,7 +4668,7 @@
       "title": "MAE স্থিতিশীল থাকা সত্ত্বেও উচ্চ PSI দেখা দিলে করণীয়",
       "tag": "ML reasoning",
       "prompt": "মনিটরিং ড্যাশবোর্ডে কোনো Feature-এর PSI অনেক বেশি দেখাচ্ছে, কিন্তু Mature Label-এ Model-এর MAE বেশ স্থিতিশীল রয়েছে। আপনি কী পদক্ষেপ নেবেন?",
-      "answer": "উচ্চ `PSI` দেখেই তড়িঘড়ি করে `Model Retrain` না করে আগে `Data`-র ভিত্তি ও কোয়ালিটির গভীর চিত্র যাচাই করব—কারণ `PSI` কেবল একক Input-এর $P(X)$ পরিবর্তন মাপে, এটি কোনো `p-value` বা নিশ্চিত `Concept Drift` নয়।\n\n1. **`Data`-র ভিত্তি যাচাই:** Reference Population, স্থির Bin সীমানা, `Feature Version`, একক (`Units`), `Coverage` এবং স্বাভাবিক ঋতুগত প্রসার (`Seasonality`) ও `Label Maturity` মিলিয়ে দেখব।\n2. **কেন $\\mathrm{MAE}$ স্থিতিশীল থাকতে পারে:** নতুন Input পরিসরেও যদি `Model`-এর `Linear` সম্পর্ক $P(y \\mid x)$ অটুট থাকে, তবে `PSI` বড় হলেও $\\mathrm{MAE}$ ভালো থাকতে পারে।\n3. **গভীর Diagnostic পরীক্ষা:** অভিন্ন `Mature Population`-এর ভেতরকার বিভিন্ন `Slice`, `Signed Bias` এবং অপারেশনাল খরচ দেখব (যেমন এখানে Input হর $182$ আর $7$ দিনের বিলম্বে `Mature Label` হর $175$ আলাদা থাকবে)।\n4. **সিদ্ধান্ত নীতি:** নতুন `Data`-র প্রস্তুতি, আপস্ট্রিম শুদ্ধতা এবং স্বাধীন উন্নতির প্রমাণ ছাড়া কেবল `PSI` দেখে স্বয়ংক্রিয় `Retrain` চালাব না।",
+      "answer": "উচ্চ `PSI` দেখেই তড়িঘড়ি করে `Model Retrain` না করে আগে `Data`-র ভিত্তি ও কোয়ালিটির গভীর চিত্র যাচাই করব—কারণ `PSI` কেবল একক Input-এর $P(X)$ পরিবর্তন মাপে, এটি কোনো `p-value` বা নিশ্চিত `Concept Drift` নয়।\n\n1. **`Data`-র ভিত্তি যাচাই:** Reference Population, স্থির Bin সীমানা, `Feature Version`, একক (`Units`), `Coverage` এবং স্বাভাবিক ঋতুগত প্রসার (`Seasonality`) ও `Label Maturity` মিলিয়ে দেখব।\n2. **কেন $\\mathrm{MAE}$ স্থিতিশীল থাকতে পারে:** নতুন Input পরিসরেও যদি `Model`-এর `Linear` সম্পর্ক $P(y \\mid x)$ অটুট থাকে, তবে `PSI` বড় হলেও $\\mathrm{MAE}$ ভালো থাকতে পারে।\n3. **গভীর Diagnostic পরীক্ষা:** অভিন্ন `Mature Population`-এর ভেতরকার বিভিন্ন `Slice`, `Signed Bias` এবং Operational খরচ দেখব (যেমন এখানে Input হর $182$ আর $7$ দিনের বিলম্বে `Mature Label` হর $175$ আলাদা থাকবে)।\n4. **সিদ্ধান্ত নীতি:** নতুন `Data`-র প্রস্তুতি, আপস্ট্রিম শুদ্ধতা এবং স্বাধীন উন্নতির প্রমাণ ছাড়া কেবল `PSI` দেখে স্বয়ংক্রিয় `Retrain` চালাব না।",
       "prerequisiteLessons": [
         "ch36_drift",
         "ch36_book_shift_taxonomy"
@@ -4693,7 +4693,7 @@
       "title": "স্বয়ংক্রিয় Retraining ও নিরাপদ Recovery নীতিমালা",
       "tag": "MLOps synthesis",
       "prompt": "Drift অ্যালার্ম বাজলেই স্বয়ংক্রিয়ভাবে Model Retrain করে সরাসরি লাইভ Production-এ ডিপ্লয় করার Pipeline কি আপনি সমর্থন করবেন? আপনার নীতিমালা ব্যাখ্যা করুন।",
-      "answer": "না—`Drift` অ্যালার্ম বাজলেই স্বয়ংক্রিয়ভাবে `Model Retrain` করে সরাসরি Production-এ ডিপ্লয় করার অন্ধ স্বয়ংক্রিয়তা আমি সমর্থন করব না।\n\n- **মূল নীতি — Trigger বনাম Promotion:** একটি অ্যালার্ম বড়জোর নতুন `Candidate` Training-এর **পরীক্ষা শুরু (`Trigger`)** করতে পারে, কিন্তু লাইভে **Promotion** হতে হবে কঠোর ও স্বাধীন `Gate` পেরিয়ে—নইলে আপস্ট্রিম নষ্ট `Data` থেকে তৈরি ভুল `Model` সঙ্গে সঙ্গেই Production-এ ঢুকে পড়বে।\n- **আমার প্রস্তাবিত নিরাপদ Retraining ও Recovery Pipeline:**\n  1. **Data ও Label Gate:** সোর্স `Data Contract`, `Freshness` ও `Mature Label` যাচাই।\n  2. **Reproducible Train-Only Fit:** সময়ভিত্তিক Split স্থির রেখে শুধু Training অংশে `Scaler` ও `Model Fit`।\n  3. **Paired Benchmark ও Guardrail:** অভিন্ন Population-এ ঘোষিত `Baseline`-এর সঙ্গে তুলনা, অপারেশনাল খরচ ও `Immutable Package` যাচাই।\n  4. **Staged Rollout ও Recovery:** `Shadow` -> `Canary` ধাপ পেরিয়ে যাচাইকৃত `Rollback` পথসহ প্রমোশন।\n- **ল্যাবের পরিধি ও বাস্তব সিস্টেম:** আমাদের এই অধ্যায়ের `Model`-টি `2011`-এর `Data`-য় স্থির রাখা হয়েছে এবং শেষ $184$টি ফলাফল অস্পৃশ্য; বাস্তব Production-এ এর সাথে `Feedback Loop` ও অনলাইন `Causal Evaluation`-ও যুক্ত করতে হবে।"
+      "answer": "না—`Drift` অ্যালার্ম বাজলেই স্বয়ংক্রিয়ভাবে `Model Retrain` করে সরাসরি Production-এ ডিপ্লয় করার অন্ধ স্বয়ংক্রিয়তা আমি সমর্থন করব না।\n\n- **মূল নীতি — Trigger বনাম Promotion:** একটি অ্যালার্ম বড়জোর নতুন `Candidate` Training-এর **পরীক্ষা শুরু (`Trigger`)** করতে পারে, কিন্তু লাইভে **Promotion** হতে হবে কঠোর ও স্বাধীন `Gate` পেরিয়ে—নইলে আপস্ট্রিম নষ্ট `Data` থেকে তৈরি ভুল `Model` সঙ্গে সঙ্গেই Production-এ ঢুকে পড়বে।\n- **আমার প্রস্তাবিত নিরাপদ Retraining ও Recovery Pipeline:**\n  1. **Data ও Label Gate:** সোর্স `Data Contract`, `Freshness` ও `Mature Label` যাচাই।\n  2. **Reproducible Train-Only Fit:** সময়ভিত্তিক Split স্থির রেখে শুধু Training অংশে `Scaler` ও `Model Fit`।\n  3. **Paired Benchmark ও Guardrail:** অভিন্ন Population-এ ঘোষিত `Baseline`-এর সঙ্গে তুলনা, Operational খরচ ও `Immutable Package` যাচাই।\n  4. **Staged Rollout ও Recovery:** `Shadow` -> `Canary` ধাপ পেরিয়ে যাচাইকৃত `Rollback` পথসহ প্রমোশন।\n- **ল্যাবের পরিধি ও বাস্তব সিস্টেম:** আমাদের এই অধ্যায়ের `Model`-টি `2011`-এর `Data`-য় স্থির রাখা হয়েছে এবং শেষ $184$টি ফলাফল অস্পৃশ্য; বাস্তব Production-এ এর সাথে `Feedback Loop` ও অনলাইন `Causal Evaluation`-ও যুক্ত করতে হবে।"
     }
   ],
   "book": {

@@ -31,13 +31,13 @@
             "**Prompting**, **RAG** এবং **Fine-tuning**—তিনটি কৌশলের মধ্যে কোনটি নতুন তথ্য দেয় আর কোনটি আচরণ/ফরম্যাট বদলায় তা সুনির্দিষ্টভাবে আলাদা করতে পারবেন।",
             "আমাদের নিয়ন্ত্রিত পরীক্ষার **Base Model** ($5{,}019$ Parameter, `SHA-256` Pinned) ও **SciFact** ($505$ Train / $188$ Diagnostic, Evidence-হীন $24$-byte Prefix) চুক্তি ব্যাখ্যা করতে পারবেন।",
             "**Full Fine-tuning** ($5{,}019$ Trainable) বনাম **Head-only LoRA** ($534$ Trainable, $\\approx 10.64\\%$)-এর ন্যায্য তুলনার নিয়ম বুঝিয়ে বলতে পারবেন।",
-            "Pure Python দিয়ে `adaptation_lab.json` অডিট করে কেন **Loss কমা মানেই টাস্ক শেখা নয়** তা সংখ্যা দিয়ে প্রমাণ করতে পারবেন।"
+            "Pure Python দিয়ে `adaptation_lab.json` অডিট করে কেন **Loss কমা মানেই Task শেখা নয়** তা সংখ্যা দিয়ে প্রমাণ করতে পারবেন।"
           ]
         },
         {
           "type": "text",
           "title": "১. Fine-tuning আসলে কী বদলায়? উপমা ও হাতে-কলমে তুলনা",
-          "body": "ধরুন, আপনি একটি ই-কমার্স কোম্পানির নতুন কাস্টমার সাপোর্ট এজেন্ট নিয়োগ দিয়েছেন। তার কাজের মান বাড়াতে আপনার হাতে তিনটি একদম আলাদা উপায় আছে:\n\n- **Prompting (তাৎক্ষণিক নির্দেশনা):** এজেন্টের মাথায় নতুন কিছু মুখস্থ না করিয়ে ডেস্কে একটি স্পষ্ট চেকলিস্ট রেখে দিলেন—*“সবার আগে ভদ্রভাবে শুভেচ্ছা জানাবে, তারপর ৩ পয়েন্টে উত্তর দেবে।”* এখানে Model-এর কোনো **Weight বদলায় না**।\n- **RAG (হাতের কাছে তাজা রেফারেন্স ফাইল):** আজ সকালে রিফান্ড নীতি বদলে গেছে! এজেন্টকে আবার ১ মাস ধরে ট্রেন করার বদলে তার সামনে আজকের আপডেটেড রিফান্ড ডকুমেন্ট খুলে দিলেন। Model-এর **Weight না বদলেই** সে তাজা তথ্য দেখে উত্তর দেয়।\n- **Fine-tuning (অভ্যাস ও আচরণ ভেতরে গেঁথে দেওয়া):** আপনি চান প্রতিবার জটিল লগ দেখে এজেন্ট যেন একদম নির্দিষ্ট সংক্ষিপ্ত ফরম্যাটে ও শান্ত ভঙ্গিতে উত্তর দেয়—যা বারবার Prompt লিখে বোঝানো ব্যয়বহুল বা অস্থিতিশীল। তখন Model-এর **Parameter (Weight)** সরাসরি আপডেট করা হয়!\n\nমূল কথা হলো, **Fine-tuning মূলত নতুন তথ্য মুখস্থ করানোর বদলে Model-এর নির্দিষ্ট আচরণ, টাস্কের ধরন বা Response Format শেখানোর কৌশল।** Production সিস্টেমে এই তিনটি একে অপরের শত্রু নয়—প্রয়োজনমতো একসঙ্গে কাজ করে।\n\n### আমাদের নিয়ন্ত্রিত পরীক্ষার Base Model ও SciFact চুক্তি\nবড় $7\\mathrm{B}$ বা $70\\mathrm{B}$ LLM-এর ভেতরে ঠিক কী ঘটছে তা খালি চোখে যাচাই করা কঠিন। তাই প্রতিটি গণনা হাতে-কলমে মিলিয়ে দেখার জন্য আমরা Book 4 · Chapter 1-এর Alice-trained **`ByteDecoder`**-কে Base Model হিসেবে পিন করে রেখেছি:\n\n| চুক্তির উপাদান | নির্ধারিত মান | প্রকৌশলগত ব্যাখ্যা |\n| --- | --- | --- |\n| **Base Model** | `ByteDecoder` ($5{,}019$ Parameter) | Hidden Width $= 8$, Context Length $= 32$, `SHA-256` Pinned |\n| **Vocabulary** | $259$ Token (`0..255` UTF-8 + `PAD=256`, `BOS=257`, `EOS=258`) | কাঁচা Byte-স্তরের Input, Output-এ `PAD` ও `BOS` ব্লক ($257$ বৈধ ক্লাস) |\n| **Dataset Split** | $505$ Train, $188$ Diagnostic (Dev) | মূল **SciFact** মানব-যাচাইকৃত `SUPPORT` (`S`) ও `CONTRADICT` (`C`) Label |\n| **সীমিত Input** | `[BOS]` + Claim-এর প্রথম $24$ Byte + `\\n` | ইচ্ছাকৃতভাবে **কোনো Evidence অনুচ্ছেদ নেই!** (`no_evidence_input = True`) |\n| **তুলনীয় পদ্ধতি** | Full ($5{,}019$) বনাম Head-only LoRA ($534$) | হুবহু একই Base, Seed `250` Batch ক্রম, `AdamW` ($\\eta = 0.01$), $12$ Epoch |\n\n> **বড় সতর্কতা:** Evidence ছাড়া কেবল একটি বৈজ্ঞানিক বাক্যের প্রথম $24$ Byte (যেমন `\"Vitamin D reduces risk o\\n\"`) দেখে সেটিকে `S` না `C` বলা মানুষের পক্ষেও প্রায় অসম্ভব! তাই এই পরীক্ষার লক্ষ্য বৈজ্ঞানিক সত্যতা যাচাই নয়—বরং **Fine-tuning ও LoRA-এর ভেতরের গাণিতিক মেকানিক্স নির্ভুলভাবে যাচাই করা** এবং সৎভাবে দেখা যে মেকানিক্স নিখুঁত হলেও টাস্ক ব্যর্থ হতে পারে।\n\nএখন প্রশ্ন হলো, Supervised Adaptation-এ আমরা গাণিতিকভাবে ঠিক কোন Optimization সমস্যাটি সমাধান করি? চলুন সূত্রটি Symbol-সহ দেখে নিই!"
+          "body": "ধরুন, আপনি একটি ই-কমার্স কোম্পানির নতুন কাস্টমার সাপোর্ট এজেন্ট নিয়োগ দিয়েছেন। তার কাজের মান বাড়াতে আপনার হাতে তিনটি একদম আলাদা উপায় আছে:\n\n- **Prompting (তাৎক্ষণিক নির্দেশনা):** এজেন্টের মাথায় নতুন কিছু মুখস্থ না করিয়ে ডেস্কে একটি স্পষ্ট Checklist রেখে দিলেন—*“সবার আগে ভদ্রভাবে শুভেচ্ছা জানাবে, তারপর ৩ পয়েন্টে উত্তর দেবে।”* এখানে Model-এর কোনো **Weight বদলায় না**।\n- **RAG (হাতের কাছে তাজা রেফারেন্স ফাইল):** আজ সকালে রিফান্ড নীতি বদলে গেছে! এজেন্টকে আবার ১ মাস ধরে ট্রেন করার বদলে তার সামনে আজকের আপডেটেড রিফান্ড ডকুমেন্ট খুলে দিলেন। Model-এর **Weight না বদলেই** সে তাজা তথ্য দেখে উত্তর দেয়।\n- **Fine-tuning (অভ্যাস ও আচরণ ভেতরে গেঁথে দেওয়া):** আপনি চান প্রতিবার জটিল লগ দেখে এজেন্ট যেন একদম নির্দিষ্ট সংক্ষিপ্ত ফরম্যাটে ও শান্ত ভঙ্গিতে উত্তর দেয়—যা বারবার Prompt লিখে বোঝানো ব্যয়বহুল বা অস্থিতিশীল। তখন Model-এর **Parameter (Weight)** সরাসরি আপডেট করা হয়!\n\nমূল কথা হলো, **Fine-tuning মূলত নতুন তথ্য মুখস্থ করানোর বদলে Model-এর নির্দিষ্ট আচরণ, Task-এর ধরন বা Response Format শেখানোর কৌশল।** Production সিস্টেমে এই তিনটি একে অপরের শত্রু নয়—প্রয়োজনমতো একসঙ্গে কাজ করে।\n\n### আমাদের নিয়ন্ত্রিত পরীক্ষার Base Model ও SciFact চুক্তি\nবড় $7\\mathrm{B}$ বা $70\\mathrm{B}$ LLM-এর ভেতরে ঠিক কী ঘটছে তা খালি চোখে যাচাই করা কঠিন। তাই প্রতিটি গণনা হাতে-কলমে মিলিয়ে দেখার জন্য আমরা Book 4 · Chapter 1-এর Alice-trained **`ByteDecoder`**-কে Base Model হিসেবে পিন করে রেখেছি:\n\n| চুক্তির উপাদান | নির্ধারিত মান | প্রকৌশলগত ব্যাখ্যা |\n| --- | --- | --- |\n| **Base Model** | `ByteDecoder` ($5{,}019$ Parameter) | Hidden Width $= 8$, Context Length $= 32$, `SHA-256` Pinned |\n| **Vocabulary** | $259$ Token (`0..255` UTF-8 + `PAD=256`, `BOS=257`, `EOS=258`) | কাঁচা Byte-স্তরের Input, Output-এ `PAD` ও `BOS` ব্লক ($257$ বৈধ ক্লাস) |\n| **Dataset Split** | $505$ Train, $188$ Diagnostic (Dev) | মূল **SciFact** মানব-যাচাইকৃত `SUPPORT` (`S`) ও `CONTRADICT` (`C`) Label |\n| **সীমিত Input** | `[BOS]` + Claim-এর প্রথম $24$ Byte + `\\n` | ইচ্ছাকৃতভাবে **কোনো Evidence অনুচ্ছেদ নেই!** (`no_evidence_input = True`) |\n| **তুলনীয় পদ্ধতি** | Full ($5{,}019$) বনাম Head-only LoRA ($534$) | হুবহু একই Base, Seed `250` Batch ক্রম, `AdamW` ($\\eta = 0.01$), $12$ Epoch |\n\n> **বড় সতর্কতা:** Evidence ছাড়া কেবল একটি বৈজ্ঞানিক বাক্যের প্রথম $24$ Byte (যেমন `\"Vitamin D reduces risk o\\n\"`) দেখে সেটিকে `S` না `C` বলা মানুষের পক্ষেও প্রায় অসম্ভব! তাই এই পরীক্ষার লক্ষ্য বৈজ্ঞানিক সত্যতা যাচাই নয়—বরং **Fine-tuning ও LoRA-এর ভেতরের গাণিতিক মেকানিক্স নির্ভুলভাবে যাচাই করা** এবং সৎভাবে দেখা যে মেকানিক্স নিখুঁত হলেও Task ব্যর্থ হতে পারে।\n\nএখন প্রশ্ন হলো, Supervised Adaptation-এ আমরা গাণিতিকভাবে ঠিক কোন Optimization সমস্যাটি সমাধান করি? চলুন সূত্রটি Symbol-সহ দেখে নিই!"
         },
         {
           "type": "math",
@@ -99,7 +99,7 @@
               "detail": "Loss কমলেও Model আসলেই দুই ক্লাসের পার্থক্য শিখেছে নাকি সব উত্তরে `SUPPORT` বলছে তা খোলাখুলি রিপোর্ট করা।"
             }
           ],
-          "caption": "সহজ উপমা: বিমানের সব ইঞ্জিন মিটার ঠিকমতো কাজ করছে কি না (**মেকানিক্স যাচাই**) আর বিমানটি সঠিক গন্তব্যে পৌঁছাল কি না (**টাস্ক সাফল্য**)—এই দুটি সম্পূর্ণ আলাদা রিপোর্ট!"
+          "caption": "সহজ উপমা: বিমানের সব ইঞ্জিন মিটার ঠিকমতো কাজ করছে কি না (**মেকানিক্স যাচাই**) আর বিমানটি সঠিক গন্তব্যে পৌঁছাল কি না (**Task সাফল্য**)—এই দুটি সম্পূর্ণ আলাদা রিপোর্ট!"
         },
         {
           "type": "text",
@@ -135,7 +135,7 @@
             {
               "concept": "Loss Drop vs Task Failure",
               "level": "Core",
-              "question": "Training ও Diagnostic Loss ১০ গুণ ($6.66 \\to 0.64$) কমেছে এবং Accuracy $34\\% \\to 66\\%$ হয়েছে—তবু আপনি কেন বলছেন Model-টি আসল টাস্ক শেখেনি?",
+              "question": "Training ও Diagnostic Loss ১০ গুণ ($6.66 \\to 0.64$) কমেছে এবং Accuracy $34\\% \\to 66\\%$ হয়েছে—তবু আপনি কেন বলছেন Model-টি আসল Task শেখেনি?",
               "answer": "কারণ $188$-টি Diagnostic প্রশ্নে $124$-টিই `SUPPORT`—অর্থাৎ কিছুই না শিখে সব প্রশ্নে চোখ বন্ধ করে `SUPPORT` বললেও **Majority Baseline** হয় $\\frac{124}{188} \\approx 65.96\\%$! আমাদের Model ঠিক সেটাই করেছে (`188 SUPPORT, 0 CONTRADICT`)। Loss কমেছে কেবল Format Token (`S`/`C`) এবং সংখ্যাগরিষ্ঠ Prior অনুপাত শেখার কারণে, Input পড়ে দুই ক্লাসের পার্থক্য (**Discrimination**) শেখার কারণে নয়।",
               "followUp": "এ ধরনের Mode Collapse সবার আগে কোন দুটি রিপোর্ট দেখলে ধরা পড়ে? Class-wise Prediction Count (Confusion Matrix) এবং Balanced Accuracy / Macro-F1!"
             },
@@ -171,8 +171,8 @@
         },
         {
           "type": "callout",
-          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
-          "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **তাজা তথ্যের জন্য Fine-tuning চালানো:** নীতি বা ডকুমেন্ট বদলালে Weight না বদলে **RAG** ব্যবহার করুন।\n2. **Loss কমা দেখেই বিজয় ঘোষণা করা:** Majority Baseline আর Class-wise Prediction সংখ্যা ছাড়া Accuracy অর্থহীন।\n3. **মেকানিক্স যাচাইকে Production সক্ষমতা ভাবা:** কোড $100\\%$ নির্ভুল হয়েও দুর্বল Input-এ টাস্ক ব্যর্থ হতে পারে।\n\n### Cheat Sheet\n- **Prompting:** Weight স্থির, নির্দেশনা বদলায় | **RAG:** Weight স্থির, তাজা তথ্য যোগ হয় | **Fine-tuning:** Weight আপডেট হয়।\n- **আমাদের Contract:** `ByteDecoder` ($5{,}019$ params), SciFact ($505$ Train / $188$ Dev), $24$-byte Prefix (no evidence), Full ($5{,}019$) vs LoRA ($534 \\approx 10.64\\%$)।\n- **বাস্তব ফল:** Base Acc `34.04%` (NLL `6.6574`) $\\to$ Full/LoRA Acc `65.96%` (NLL `0.6445`/`0.6461`) = **Majority Baseline (`124/188`)**।\n\n**পরের পাঠে কী শিখব?** চুক্তি তো স্পষ্ট হলো—কিন্তু Supervised Training শুরু করার আগেই সবচেয়ে বড় বিপদ লুকিয়ে থাকে **Dataset Curation ও Leakage**-এ! পরের পাঠে আমরা হাতে-কলমে `claims_train.jsonl` ও `claims_dev.jsonl` খুলে দেখব কীভাবে Source Label, Missing Annotation Policy, Label Conflict Assert এবং Prefix Collision অডিট করতে হয়।"
+          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
+          "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **তাজা তথ্যের জন্য Fine-tuning চালানো:** নীতি বা ডকুমেন্ট বদলালে Weight না বদলে **RAG** ব্যবহার করুন।\n2. **Loss কমা দেখেই বিজয় ঘোষণা করা:** Majority Baseline আর Class-wise Prediction সংখ্যা ছাড়া Accuracy অর্থহীন।\n3. **মেকানিক্স যাচাইকে Production সক্ষমতা ভাবা:** কোড $100\\%$ নির্ভুল হয়েও দুর্বল Input-এ Task ব্যর্থ হতে পারে।\n\n### Cheat Sheet\n- **Prompting:** Weight স্থির, নির্দেশনা বদলায় | **RAG:** Weight স্থির, তাজা তথ্য যোগ হয় | **Fine-tuning:** Weight আপডেট হয়।\n- **আমাদের Contract:** `ByteDecoder` ($5{,}019$ params), SciFact ($505$ Train / $188$ Dev), $24$-byte Prefix (no evidence), Full ($5{,}019$) vs LoRA ($534 \\approx 10.64\\%$)।\n- **বাস্তব ফল:** Base Acc `34.04%` (NLL `6.6574`) $\\to$ Full/LoRA Acc `65.96%` (NLL `0.6445`/`0.6461`) = **Majority Baseline (`124/188`)**।\n\n**পরের পাঠে কী শিখব?** চুক্তি তো স্পষ্ট হলো—কিন্তু Supervised Training শুরু করার আগেই সবচেয়ে বড় বিপদ লুকিয়ে থাকে **Dataset Curation ও Leakage**-এ! পরের পাঠে আমরা হাতে-কলমে `claims_train.jsonl` ও `claims_dev.jsonl` খুলে দেখব কীভাবে Source Label, Missing Annotation Policy, Label Conflict Assert এবং Prefix Collision অডিট করতে হয়।"
         },
         {
           "type": "checkpoint",
@@ -211,7 +211,7 @@
         {
           "type": "text",
           "title": "১. মনগড়া Label বনাম খাঁটি Data Curation: হাতে-কলমে ৫-সারির উদাহরণ",
-          "body": "ধরুন, আপনি একটি বিশ্ববিদ্যালয়ের ভর্তি পরীক্ষার প্রশ্নব্যাংক বানাচ্ছেন। কিছু প্রশ্নের উত্তরপত্র হারিয়ে গেছে—এখন কেউ যদি ফাঁকা জায়গা পূরণ করতে নিজেই সব হারানো প্রশ্নের উত্তর `\"খ\"` বসিয়ে দেয়, তাহলে ছাত্ররা কী শিখবে? ভুল Noise! **SFT Dataset Curation**-এও একই নিয়ম খাটে।\n\nমূল **SciFact** `claims_train.jsonl` ফাইলে মোট **$809$টি** Claim আছে, কিন্তু তাদের সবার বিপরীতে মানব-যাচাইকৃত Evidence Annotation নেই। আমাদের পাইপলাইন ঠিক কীভাবে প্রতিটি সারি ছাঁকনি করে তা নিচের ৫-সারির টেবিলে দেখুন:\n\n| Claim-এর ধরন | মূল SciFact `evidence` | সঠিক Curation নীতি | চূড়ান্ত Output Token |\n| --- | --- | --- | --- |\n| ১. একক সমর্থন | `{\"doc1\": [{\"label\": \"SUPPORT\"}]}` | গ্রহণ করুন (Consistent) | `'S'` (ASCII `83`) |\n| ২. একাধিক নথিতে একই রায় | `{\"doc2\": [CONTRADICT], \"doc5\": [CONTRADICT]}` | একমত হওয়ায় গ্রহণ করুন | `'C'` (ASCII `67`) |\n| ৩. অ্যানোটেশনবিহীন (`{}`) | `{}` (কোনো যাচাইকৃত Evidence নেই) | **বাদ দিন!** (মনগড়া `NEUTRAL`/`C` নয়!) | বাদ (`Excluded`) |\n| ৪. পরস্পরবিরোধী রায় | `{\"doc3\": [SUPPORT], \"doc9\": [CONTRADICT]}` | **থামুন (`assert` ফেল!)** — Protocol রিভিউ | Error / Halt |\n| ৫. Dev-এর হুবহু নকল | Train text $\\in$ Dev texts | **Leakage Filter** দিয়ে Train থেকে বাদ | বাদ (`Excluded`) |\n\n### আমাদের চূড়ান্ত Annotated Split ও Class Imbalance\nছাঁকনি শেষে পাওয়া Train ও Diagnostic (Dev) সেটের আসল ছবি নিচে দেখুন:\n\n| Split | `SUPPORT` (`S`) | `CONTRADICT` (`C`) | মোট উদাহরণ | `SUPPORT` অনুপাত |\n| --- | --- | --- | --- | --- |\n| **Train** | $332$ | $173$ | $505$ | $\\frac{332}{505} \\approx \\mathbf{65.74\\%}$ |\n| **Diagnostic (Dev)** | $124$ | $64$ | $188$ | $\\frac{124}{188} \\approx \\mathbf{65.96\\%}$ |\n\n- **প্রেক্ষাপটনির্ভর সত্য:** SciFact-এর Label-গুলো নির্দিষ্ট Citation নথির সাপেক্ষে দেওয়া, চিরন্তন মেডিকেল ফতোয়া হিসেবে নয়।\n- **Exact Duplicate = 0 মানেই স্বাধীন Split নয়!** দুটি ভিন্ন Claim হুবহু এক না হয়েও একই গবেষণাপত্র (`cited_doc_ids`) থেকে আসতে পারে, কিংবা তাদের প্রথম $24$টি UTF-8 Byte হুবহু মিলে **Prefix Collision** ঘটাতে পারে! যেমন: `\"Aspirin reduces heart attack risk...\"` আর `\"Aspirin reduces heart attack mortality...\"`—দুটোরই প্রথম $24$ Byte একদম অভিন্ন!\n\nচলুন এবার Prompt-Response Dataset ও Contamination সীমানার গাণিতিক রূপটি দেখে নিই।"
+          "body": "ধরুন, আপনি একটি বিশ্ববিদ্যালয়ের ভর্তি পরীক্ষার প্রশ্নব্যাংক বানাচ্ছেন। কিছু প্রশ্নের উত্তরপত্র হারিয়ে গেছে—এখন কেউ যদি ফাঁকা জায়গা পূরণ করতে নিজেই সব হারানো প্রশ্নের উত্তর `\"খ\"` বসিয়ে দেয়, তাহলে ছাত্ররা কী শিখবে? ভুল Noise! **SFT Dataset Curation**-এও একই নিয়ম খাটে।\n\nমূল **SciFact** `claims_train.jsonl` ফাইলে মোট **$809$টি** Claim আছে, কিন্তু তাদের সবার বিপরীতে মানব-যাচাইকৃত Evidence Annotation নেই। আমাদের Pipeline ঠিক কীভাবে প্রতিটি সারি ছাঁকনি করে তা নিচের ৫-সারির টেবিলে দেখুন:\n\n| Claim-এর ধরন | মূল SciFact `evidence` | সঠিক Curation নীতি | চূড়ান্ত Output Token |\n| --- | --- | --- | --- |\n| ১. একক সমর্থন | `{\"doc1\": [{\"label\": \"SUPPORT\"}]}` | গ্রহণ করুন (Consistent) | `'S'` (ASCII `83`) |\n| ২. একাধিক নথিতে একই রায় | `{\"doc2\": [CONTRADICT], \"doc5\": [CONTRADICT]}` | একমত হওয়ায় গ্রহণ করুন | `'C'` (ASCII `67`) |\n| ৩. অ্যানোটেশনবিহীন (`{}`) | `{}` (কোনো যাচাইকৃত Evidence নেই) | **বাদ দিন!** (মনগড়া `NEUTRAL`/`C` নয়!) | বাদ (`Excluded`) |\n| ৪. পরস্পরবিরোধী রায় | `{\"doc3\": [SUPPORT], \"doc9\": [CONTRADICT]}` | **থামুন (`assert` ফেল!)** — Protocol রিভিউ | Error / Halt |\n| ৫. Dev-এর হুবহু নকল | Train text $\\in$ Dev texts | **Leakage Filter** দিয়ে Train থেকে বাদ | বাদ (`Excluded`) |\n\n### আমাদের চূড়ান্ত Annotated Split ও Class Imbalance\nছাঁকনি শেষে পাওয়া Train ও Diagnostic (Dev) সেটের আসল ছবি নিচে দেখুন:\n\n| Split | `SUPPORT` (`S`) | `CONTRADICT` (`C`) | মোট উদাহরণ | `SUPPORT` অনুপাত |\n| --- | --- | --- | --- | --- |\n| **Train** | $332$ | $173$ | $505$ | $\\frac{332}{505} \\approx \\mathbf{65.74\\%}$ |\n| **Diagnostic (Dev)** | $124$ | $64$ | $188$ | $\\frac{124}{188} \\approx \\mathbf{65.96\\%}$ |\n\n- **প্রেক্ষাপটনির্ভর সত্য:** SciFact-এর Label-গুলো নির্দিষ্ট Citation নথির সাপেক্ষে দেওয়া, চিরন্তন মেডিকেল ফতোয়া হিসেবে নয়।\n- **Exact Duplicate = 0 মানেই স্বাধীন Split নয়!** দুটি ভিন্ন Claim হুবহু এক না হয়েও একই গবেষণাপত্র (`cited_doc_ids`) থেকে আসতে পারে, কিংবা তাদের প্রথম $24$টি UTF-8 Byte হুবহু মিলে **Prefix Collision** ঘটাতে পারে! যেমন: `\"Aspirin reduces heart attack risk...\"` আর `\"Aspirin reduces heart attack mortality...\"`—দুটোরই প্রথম $24$ Byte একদম অভিন্ন!\n\nচলুন এবার Prompt-Response Dataset ও Contamination সীমানার গাণিতিক রূপটি দেখে নিই।"
         },
         {
           "type": "math",
@@ -268,8 +268,8 @@
         },
         {
           "type": "text",
-          "title": "৪. যাচাই করা Output, Option B (`GroupShuffleSplit`) ও Data Quality চেকলিস্ট",
-          "body": "### Option A (Pure Python) লাইভ-যাচাই করা Output\n```text\nTrain kept: 505 | Skipped unannotated: 304\nDev kept:   188 | Skipped unannotated: 112\nExact overlap excluded IDs: []\nTrain counts: {'SUPPORT': 332, 'CONTRADICT': 173} (SUPPORT=0.6574)\nDev counts:   {'SUPPORT': 124, 'CONTRADICT': 64} (SUPPORT=0.6596)\nDev claims sharing cited doc with Train: 112\nDev claims with 24-byte prefix collision: 61\n```\nঅসাধারণ একটা বাস্তব আবিষ্কার দেখুন! সরাসরি মূল `claims_train.jsonl` ও `claims_dev.jsonl` অডিট করে আমরা দেখলাম:\n- অ্যানোটেশন না থাকায় Train থেকে `304`টি এবং Dev থেকে `112`টি সারি সচেতনভাবে বাদ দেওয়া হয়েছে—কোনো মনগড়া নেতিবাচক Label চাপানো হয়নি।\n- **Exact Duplicate = `0`** (`[]`) হওয়া সত্ত্বেও, Dev সেটের **`112`টি Claim** Train সেটের **একই গবেষণাপত্র (`cited_doc_ids`) শেয়ার করে**, এবং **`61`টি Dev Claim**-এর প্রথম $24$ Byte-এ Train-এর সঙ্গে **Prefix Collision** রয়েছে! এজন্যই কেবল Exact Match শূন্য দেখে কখনোই দুটি Split-কে সম্পূর্ণ স্বাধীন দাবি করা যাবে না।\n\n### Option B — `scikit-learn`-এ `GroupShuffleSplit` দিয়ে Source-Grouped Split\nভবিষ্যতে নতুন প্রজেক্টে একই গবেষণাপত্রের সব Claim-কে একটি Group-এ বেঁধে Train ও Test আলাদা করতে `GroupShuffleSplit` ব্যবহার করুন:\n\n```python\nfrom sklearn.model_selection import GroupShuffleSplit\n\n# ৬টি Claim এসেছে মাত্র ৩টি মূল গবেষণাপত্র (doc_id) থেকে\nclaims = [\n    \"Claim A1 (doc10)\", \"Claim A2 (doc10)\",\n    \"Claim B1 (doc20)\", \"Claim B2 (doc20)\",\n    \"Claim C1 (doc30)\", \"Claim C2 (doc30)\",\n]\nlabels = [1, 1, 0, 0, 1, 0]\ndoc_groups = [10, 10, 20, 20, 30, 30]\n\nsplitter = GroupShuffleSplit(n_splits=1, test_size=0.33, random_state=42)\nfor train_idx, test_idx in splitter.split(claims, labels, groups=doc_groups):\n    train_docs = set()\n    for i in train_idx:\n        train_docs.add(doc_groups[i])\n    test_docs = set()\n    for i in test_idx:\n        test_docs.add(doc_groups[i])\n    assert len(train_docs & test_docs) == 0\n    print(\"Train doc groups:\", sorted(train_docs), \"| Test doc groups:\", sorted(test_docs))\n```\n\n**`scikit-learn` লাইভ-যাচাই করা Output:**\n```text\nTrain doc groups: [20, 30] | Test doc groups: [10]\n```\n\n### যেকোনো SFT প্রজেক্টের ৪-দফা Data Quality চেকলিস্ট\n1. **Encoding ও Empty Check:** ভাঙা UTF-8, ফাঁকা Prompt বা ফাঁকা Response নেই তো?\n2. **Template ও Truncation Audit:** পুনরাবৃত্ত Template বা কাঁচি পড়ায় আসল তথ্য/Negation কেটে যাচ্ছে না তো?\n3. **Provenance ও License:** প্রতিটি Row-এর উৎস, Split Role এবং আইনি অনুমতি পরিষ্কার নথিভুক্ত আছে তো?\n4. **টাস্কের সামঞ্জস্যতা:** এক-অক্ষরের Claim-prefix Dataset-কে কখনোই বৈচিত্র্যময় Curated Chat/Instruction Dataset-এর সমতুল্য ভাবা যাবে না!"
+          "title": "৪. যাচাই করা Output, Option B (`GroupShuffleSplit`) ও Data Quality Checklist",
+          "body": "### Option A (Pure Python) লাইভ-যাচাই করা Output\n```text\nTrain kept: 505 | Skipped unannotated: 304\nDev kept:   188 | Skipped unannotated: 112\nExact overlap excluded IDs: []\nTrain counts: {'SUPPORT': 332, 'CONTRADICT': 173} (SUPPORT=0.6574)\nDev counts:   {'SUPPORT': 124, 'CONTRADICT': 64} (SUPPORT=0.6596)\nDev claims sharing cited doc with Train: 112\nDev claims with 24-byte prefix collision: 61\n```\nঅসাধারণ একটা বাস্তব আবিষ্কার দেখুন! সরাসরি মূল `claims_train.jsonl` ও `claims_dev.jsonl` অডিট করে আমরা দেখলাম:\n- অ্যানোটেশন না থাকায় Train থেকে `304`টি এবং Dev থেকে `112`টি সারি সচেতনভাবে বাদ দেওয়া হয়েছে—কোনো মনগড়া নেতিবাচক Label চাপানো হয়নি।\n- **Exact Duplicate = `0`** (`[]`) হওয়া সত্ত্বেও, Dev সেটের **`112`টি Claim** Train সেটের **একই গবেষণাপত্র (`cited_doc_ids`) শেয়ার করে**, এবং **`61`টি Dev Claim**-এর প্রথম $24$ Byte-এ Train-এর সঙ্গে **Prefix Collision** রয়েছে! এজন্যই কেবল Exact Match শূন্য দেখে কখনোই দুটি Split-কে সম্পূর্ণ স্বাধীন দাবি করা যাবে না।\n\n### Option B — `scikit-learn`-এ `GroupShuffleSplit` দিয়ে Source-Grouped Split\nভবিষ্যতে নতুন প্রজেক্টে একই গবেষণাপত্রের সব Claim-কে একটি Group-এ বেঁধে Train ও Test আলাদা করতে `GroupShuffleSplit` ব্যবহার করুন:\n\n```python\nfrom sklearn.model_selection import GroupShuffleSplit\n\n# ৬টি Claim এসেছে মাত্র ৩টি মূল গবেষণাপত্র (doc_id) থেকে\nclaims = [\n    \"Claim A1 (doc10)\", \"Claim A2 (doc10)\",\n    \"Claim B1 (doc20)\", \"Claim B2 (doc20)\",\n    \"Claim C1 (doc30)\", \"Claim C2 (doc30)\",\n]\nlabels = [1, 1, 0, 0, 1, 0]\ndoc_groups = [10, 10, 20, 20, 30, 30]\n\nsplitter = GroupShuffleSplit(n_splits=1, test_size=0.33, random_state=42)\nfor train_idx, test_idx in splitter.split(claims, labels, groups=doc_groups):\n    train_docs = set()\n    for i in train_idx:\n        train_docs.add(doc_groups[i])\n    test_docs = set()\n    for i in test_idx:\n        test_docs.add(doc_groups[i])\n    assert len(train_docs & test_docs) == 0\n    print(\"Train doc groups:\", sorted(train_docs), \"| Test doc groups:\", sorted(test_docs))\n```\n\n**`scikit-learn` লাইভ-যাচাই করা Output:**\n```text\nTrain doc groups: [20, 30] | Test doc groups: [10]\n```\n\n### যেকোনো SFT প্রজেক্টের ৪-দফা Data Quality Checklist\n1. **Encoding ও Empty Check:** ভাঙা UTF-8, ফাঁকা Prompt বা ফাঁকা Response নেই তো?\n2. **Template ও Truncation Audit:** পুনরাবৃত্ত Template বা কাঁচি পড়ায় আসল তথ্য/Negation কেটে যাচ্ছে না তো?\n3. **Provenance ও License:** প্রতিটি Row-এর উৎস, Split Role এবং আইনি অনুমতি পরিষ্কার নথিভুক্ত আছে তো?\n4. **Task-এর সামঞ্জস্যতা:** এক-অক্ষরের Claim-prefix Dataset-কে কখনোই বৈচিত্র্যময় Curated Chat/Instruction Dataset-এর সমতুল্য ভাবা যাবে না!"
         },
         {
           "type": "concept_check",
@@ -309,7 +309,7 @@
               "level": "Core",
               "question": "একই Input উদাহরণের জন্য দুজন অ্যানোটেটর বিপরীত Label দিয়েছেন—কোডে চুপচাপ প্রথম Label-টি নেওয়া বিপজ্জনক কেন?",
               "answer": "চুপচাপ প্রথম Label নিলে Data Order-এর ওপর নির্ভর করে ফলাফল বদলে যাবে, প্রকৃত **Inter-Annotator Disagreement** আড়াল হয়ে যাবে এবং আপনার Pipeline নীরবে ভুল Ground Truth-এ ট্রেন হবে। এর বদলে লোডের সময় `assert len(labels) == 1` চালিয়ে হার্ড ফেল করতে হবে, তারপর পরিষ্কার Adjudication বা Majority-Vote Protocol লিখে তবেই এগোতে হবে।",
-              "followUp": "কোডে Conflict পেলে কি চুপচাপ `try/except: pass` দিয়ে এড়িয়ে যাবেন? কখনোই না—Silent Failure ডেটা পাইপলাইনের সবচেয়ে বড় শত্রু!"
+              "followUp": "কোডে Conflict পেলে কি চুপচাপ `try/except: pass` দিয়ে এড়িয়ে যাবেন? কখনোই না—Silent Failure ডেটা Pipeline-এর সবচেয়ে বড় শত্রু!"
             },
             {
               "concept": "Train-Only Majority Baseline",
@@ -336,7 +336,7 @@
         },
         {
           "type": "callout",
-          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **অ্যানোটেশনহীন সারিতে মনগড়া Label বসানো:** ফাঁকা Evidence-কে `CONTRADICT` বানানো মানেই ইচ্ছাকৃত Noise ঢোকানো।\n2. **Exact Match = 0 দেখেই Leakage-মুক্ত দাবি করা:** Shared Document ও $24$-byte Prefix Collision অবশ্যই আলাদাভাবে অডিট করুন।\n3. **দেখা Dev সেটে বারবার টিউন করা:** ইতিমধ্যেই পর্যবেক্ষিত Dev সেটে Hyperparameter ঘুরিয়ে তাকে Fresh Test বলা বৈজ্ঞানিক প্রতারণা।\n\n### Cheat Sheet\n- **SciFact Curation:** $809 \\to 505$ Train ($332$ `S`, $173$ `C`; $65.74\\%$) | $300 \\to 188$ Dev ($124$ `S`, $64$ `C`; $65.96\\%$)।\n- **Consistency Rule:** `assert len(labels) == 1` — পরস্পরবিরোধী Label দেখলেই হার্ড স্টপ।\n- **Group Split:** `GroupShuffleSplit(groups=doc_groups)` নিশ্চিত করে একই গবেষণাপত্র দুদিকে ভাগ হবে না।\n\n**পরের পাঠে কী শিখব?** পরিষ্কার Data তো হাতে এল—এবার প্রতিটি টেক্সট বাক্যকে কাঁচা UTF-8 Byte Token ID-তে বদলে `PAD`, `BOS` এবং Newline (`\\n`) বসাব কীভাবে? আর ভুল ইনডেক্স বা অসতর্ক **Truncation** কীভাবে পুরো Training-কে ধ্বংস করে দেয়, তা দেখব পরের পাঠে!"
         },
         {
@@ -359,7 +359,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "Fine-tuning-এ সবচেয়ে বেশি নীরব বাগ (Silent Bug) লুকিয়ে থাকে **Tokenization, Truncation, Right-Padding এবং Target Position Alignment**-এ! আজ আমরা হাতে-কলমে দেখব `ByteDecoder`-এর $24$-byte চুক্তি কীভাবে কাজ করে, কেন ছোট বাক্যে স্থির ইনডেক্স `25` থেকে Logits নিলে `PAD`-এর ওপর প্রেডিক্ট করার মারাত্মক বাগ হয়, এবং কীভাবে Multi-byte UTF-8 ও Causal Shift নিরাপদে সামলাতে হয়।",
+          "goal": "Fine-tuning-এ কোড Error ছাড়াই ভুল ফল দিতে পারে, বিশেষ করে **Tokenization, Truncation, Right-Padding এবং Target Position Alignment**-এ! আজ আমরা হাতে-কলমে দেখব `ByteDecoder`-এর $24$-byte চুক্তি কীভাবে কাজ করে, কেন ছোট বাক্যে স্থির ইনডেক্স `25` থেকে Logits নিলে `PAD`-এর ওপর প্রেডিক্ট করার মারাত্মক বাগ হয়, এবং কীভাবে Multi-byte UTF-8 ও Causal Shift নিরাপদে সামলাতে হয়।",
           "prerequisites": [
             "UTF-8 Byte Encoding (ASCII = 1 byte, বাংলা = 3 bytes)",
             "Autoregressive Next-Token Prediction ও Causal Mask",
@@ -376,7 +376,7 @@
         {
           "type": "text",
           "title": "১. Byte-স্তরের Input চুক্তি ও সঠিক Target Position-এর হাতে-কলমে হিসাব",
-          "body": "ধরুন, আপনি একটি চিঠি সর্বোচ্চ $24$ অক্ষরের একটি ছোট খামে ভরতে গিয়ে কাঁচি দিয়ে শেষের শব্দটা মাঝখান থেকে কেটে ফেললেন! **Byte-level Truncation** ঠিক এটাই করে। আমাদের `ByteDecoder` কোনো BPE Subword নয়—সরাসরি কাঁচা **UTF-8 Byte** ($0 \\dots 255$) নিয়ে কাজ করে, সাথে ৩টি Special Token (`PAD = 256`, `BOS = 257`, `EOS = 258`)।\n\nপ্রতিটি Claim-কে নিচের নিয়মে একটি Fixed-width Tensor সারি (দৈর্ঘ্য $26$)-তে রূপান্তর করা হয়:\n1. শুরুতে বসবে `BOS = 257` (ইনডেক্স `0`)।\n2. এরপর Claim-এর UTF-8 Byte-এর সর্বোচ্চ প্রথম $24$টি Byte ($b_1 \\dots b_k$, যেখানে $k = \\min(L_{\\mathrm{utf8}}, 24)$)।\n3. Prompt-Response বিভাজক হিসেবে ঠিক শেষে বসবে Newline `'\\n'` (ASCII `10`)।\n4. Batch-এ সব সারি সমান করতে ডান পাশে `PAD = 256` বসিয়ে মোট দৈর্ঘ্য $26$ করা হয়।\n\n### হাতে-কলমে দেখুন: ছোট বাক্য বনাম লম্বা বাক্যে Target Position কোথায় থাকে!\nধরুন, একটি Batch-এ ২টি Claim আছে: (১) ছোট বাক্য `\"Aspirin works.\"` ($14$ Byte) এবং (২) লম্বা বাক্য `\"1 in 5 million in UK have abnormal PrP positivity.\"` ($50$ Byte $\\to$ কাটা পড়ে $24$ Byte):\n\n| উদাহরণ | UTF-8 কাটা দৈর্ঘ্য $k$ | বৈধ Prefix দৈর্ঘ্য $L = k + 2$ | `PAD` সংখ্যা | **সঠিক Target Pos $t^* = L - 1$** | শেষ ইনডেক্স `25`-এ কী আছে? |\n| --- | --- | --- | --- | --- | --- |\n| `\"Aspirin works.\"` | $14$ | $16$ | $10$টি | **`15`** (`NL = 10`) | **`PAD = 256` (ভুল জায়গা!)** |\n| `\"1 in 5 million in UK...\"` | $24$ | $26$ | $0$টি | **`25`** (`NL = 10`) | `NL = 10` |\n\n> **সাবধান! সবচেয়ে কুখ্যাত Alignment বাগ:** আপনি যদি অলসতা করে সব উদাহরণের জন্য `logits[:, -1, :]` (অর্থাৎ ফিক্সড ইনডেক্স `25`) থেকে Logits নেন, তবে লম্বা বাক্যে সেটি কাজ করলেও ছোট `\"Aspirin works.\"` বাক্যে সেটি **`PAD` পজিশনের অর্থহীন Output** তুলে নেবে! আর **Causal Alignment**-এর আরেকটি শর্ত হলো—Target Token (`'S'` বা `'C'`) কখনোই Input Sequence-এর শেষে জুড়ে দেওয়া যাবে না (নইলে Model উত্তর দেখে ফেলবে!); একক-Token টাস্কে কেবল `NL` পজিশন $t^*$ থেকে পরের Token অনুমান করা হয়।\n\n### Multi-byte কাঁচি ও Negation হারানোর মাশুল\n- **Multi-byte কাঁচি:** বাংলায় প্রতিটি অক্ষর UTF-8-এ সাধারণত $3$ Byte। $24$ Byte-এ ঠিক $8$টি বাংলা অক্ষর আঁটে, কিন্তু মাঝখানে ১টি ইংরেজি Space থাকলে শেষের অক্ষরটির মাঝখানে কাঁচি পড়ে ভাঙা Byte তৈরি হয়! `ByteDecoder` নির্বিঘ্নে $0..255$ সংখ্যা নিতে পারে, কিন্তু স্ক্রিনে দেখানোর `errors=\"replace\"` কখনোই আসল Input ডেটা মেরামত করে না—তাই Display Policy আর Model Input সবসময় আলাদা রাখুন।\n- **হারানো Negation:** `\"Drug X significantly reduces pain\"` বনাম `\"Drug X significantly reduces nothing\"`—প্রথম $24$ Byte (`\"Drug X significantly red\"`) হুবহু এক!\n\nচলুন এবার Input Sequence ও Target Position-এর গাণিতিক রূপটি দেখে নিই।"
+          "body": "ধরুন, আপনি একটি চিঠি সর্বোচ্চ $24$ অক্ষরের একটি ছোট খামে ভরতে গিয়ে কাঁচি দিয়ে শেষের শব্দটা মাঝখান থেকে কেটে ফেললেন! **Byte-level Truncation** ঠিক এটাই করে। আমাদের `ByteDecoder` কোনো BPE Subword নয়—সরাসরি কাঁচা **UTF-8 Byte** ($0 \\dots 255$) নিয়ে কাজ করে, সাথে ৩টি Special Token (`PAD = 256`, `BOS = 257`, `EOS = 258`)।\n\nপ্রতিটি Claim-কে নিচের নিয়মে একটি Fixed-width Tensor সারি (দৈর্ঘ্য $26$)-তে রূপান্তর করা হয়:\n1. শুরুতে বসবে `BOS = 257` (ইনডেক্স `0`)।\n2. এরপর Claim-এর UTF-8 Byte-এর সর্বোচ্চ প্রথম $24$টি Byte ($b_1 \\dots b_k$, যেখানে $k = \\min(L_{\\mathrm{utf8}}, 24)$)।\n3. Prompt-Response বিভাজক হিসেবে ঠিক শেষে বসবে Newline `'\\n'` (ASCII `10`)।\n4. Batch-এ সব সারি সমান করতে ডান পাশে `PAD = 256` বসিয়ে মোট দৈর্ঘ্য $26$ করা হয়।\n\n### হাতে-কলমে দেখুন: ছোট বাক্য বনাম লম্বা বাক্যে Target Position কোথায় থাকে!\nধরুন, একটি Batch-এ ২টি Claim আছে: (১) ছোট বাক্য `\"Aspirin works.\"` ($14$ Byte) এবং (২) লম্বা বাক্য `\"1 in 5 million in UK have abnormal PrP positivity.\"` ($50$ Byte $\\to$ কাটা পড়ে $24$ Byte):\n\n| উদাহরণ | UTF-8 কাটা দৈর্ঘ্য $k$ | বৈধ Prefix দৈর্ঘ্য $L = k + 2$ | `PAD` সংখ্যা | **সঠিক Target Pos $t^* = L - 1$** | শেষ ইনডেক্স `25`-এ কী আছে? |\n| --- | --- | --- | --- | --- | --- |\n| `\"Aspirin works.\"` | $14$ | $16$ | $10$টি | **`15`** (`NL = 10`) | **`PAD = 256` (ভুল জায়গা!)** |\n| `\"1 in 5 million in UK...\"` | $24$ | $26$ | $0$টি | **`25`** (`NL = 10`) | `NL = 10` |\n\n> **সাবধান! সবচেয়ে কুখ্যাত Alignment বাগ:** আপনি যদি অলসতা করে সব উদাহরণের জন্য `logits[:, -1, :]` (অর্থাৎ ফিক্সড ইনডেক্স `25`) থেকে Logits নেন, তবে লম্বা বাক্যে সেটি কাজ করলেও ছোট `\"Aspirin works.\"` বাক্যে সেটি **`PAD` পজিশনের অর্থহীন Output** তুলে নেবে! আর **Causal Alignment**-এর আরেকটি শর্ত হলো—Target Token (`'S'` বা `'C'`) কখনোই Input Sequence-এর শেষে জুড়ে দেওয়া যাবে না (নইলে Model উত্তর দেখে ফেলবে!); একক-Token Task-এ কেবল `NL` পজিশন $t^*$ থেকে পরের Token অনুমান করা হয়।\n\n### Multi-byte কাঁচি ও Negation হারানোর মাশুল\n- **Multi-byte কাঁচি:** বাংলায় প্রতিটি অক্ষর UTF-8-এ সাধারণত $3$ Byte। $24$ Byte-এ ঠিক $8$টি বাংলা অক্ষর আঁটে, কিন্তু মাঝখানে ১টি ইংরেজি Space থাকলে শেষের অক্ষরটির মাঝখানে কাঁচি পড়ে ভাঙা Byte তৈরি হয়! `ByteDecoder` নির্বিঘ্নে $0..255$ সংখ্যা নিতে পারে, কিন্তু স্ক্রিনে দেখানোর `errors=\"replace\"` কখনোই আসল Input ডেটা মেরামত করে না—তাই Display Policy আর Model Input সবসময় আলাদা রাখুন।\n- **হারানো Negation:** `\"Drug X significantly reduces pain\"` বনাম `\"Drug X significantly reduces nothing\"`—প্রথম $24$ Byte (`\"Drug X significantly red\"`) হুবহু এক!\n\nচলুন এবার Input Sequence ও Target Position-এর গাণিতিক রূপটি দেখে নিই।"
         },
         {
           "type": "math",
@@ -453,7 +453,7 @@
         {
           "type": "interview_qa",
           "title": "Token Boundaries ও Alignment — সম্ভাব্য Interview প্রশ্ন ও উত্তর",
-          "intro": "SFT কোডিং ও ডিবাগিং রাউন্ডে Token Shift, Padding Position এবং Template Mismatch নিয়ে এই ৬টি প্রশ্ন প্রায়ই আসে।",
+          "intro": "SFT কোডিং ও Debugging রাউন্ডে Token Shift, Padding Position এবং Template Mismatch নিয়ে এই ৬টি প্রশ্ন প্রায়ই আসে।",
           "items": [
             {
               "concept": "Causal Shift Off-by-One Bug",
@@ -488,7 +488,7 @@
               "level": "Senior",
               "question": "Training-এ ব্যবহৃত Chat Template-এ একটি অতিরিক্ত Newline (`\\n`) বা `EOS` Token ছিল, কিন্তু Serving-এ সেটি বাদ পড়ে গেল—কতটা ক্ষতি হতে পারে?",
               "answer": "অনেক বড় ক্ষতি হতে পারে! LLM-গুলো বিশেষ Role Delimiter (`<|im_start|>`, `\\n`, `EOS`) দেখে বোঝে Prompt শেষ হয়েছে ও এখন উত্তর দিতে হবে (বা থামতে হবে)। একটিমাত্র `\\n` বা `EOS` অমিল হলে Model উত্তর না দিয়ে Prompt চালিয়ে যেতে পারে, অসীম লুপে পড়ে থামতে ভুলে যেতে পারে, বা Verbalizer-এর Probability মারাত্মকভাবে কমে যেতে পারে। তাই **Tokenizer + Template + Verbalizer** সবসময় একসঙ্গে Version-Pin করতে হয়।",
-              "followUp": "Production-এ এটি ঠেকানোর সবচেয়ে ভালো টেস্ট কোনটি? Golden Prompt-এর Exact Token IDs ও Golden Logits CI/CD পাইপলাইনে `assert` করে রাখা!"
+              "followUp": "Production-এ এটি ঠেকানোর সবচেয়ে ভালো টেস্ট কোনটি? Golden Prompt-এর Exact Token IDs ও Golden Logits CI/CD Pipeline-এ `assert` করে রাখা!"
             },
             {
               "concept": "Silent Label Leakage in Prompt",
@@ -501,7 +501,7 @@
         },
         {
           "type": "callout",
-          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **Right-padded Batch-এ `logits[:, -1]` নেওয়া:** ছোট বাক্যে `PAD` পজিশন থেকে উত্তর নেওয়া মানেই নীরব বাগ।\n2. **Display Replacement-কে Input ভাবা:** ভাঙা UTF-8 বাইটে Fallback অক্ষর দেখালে Model কিন্তু আসল কাঁচা Byte-ই দেখছে।\n3. **Training ও Serving-এ ভিন্ন Template/Verbalizer রাখা:** একটি Newline-এর অমিলও পুরো Accuracy ধসিয়ে দিতে পারে।\n\n### Cheat Sheet\n- **Byte Contract:** `BOS=257`, `0..255` (max `24` bytes), `NL=10`, Right-`PAD=256` to `MAX_LEN=26`।\n- **Target Position:** সর্বদা $t^* = \\mathrm{len}(\\mathrm{ids}) - 1$, Target $y \\in \\{83\\text{ ('S')},\\, 67\\text{ ('C')}\\}$।\n- **5 Unit Tests:** Short ASCII, Exact 24B, Long ASCII, Multi-byte Bangla, Prefix Collision।\n\n**পরের পাঠে কী শিখব?** Input Sequence আর Target Position তো নিখুঁত হলো—এবার Training-এ **Response-only Loss** হিসাব করব কীভাবে? কেন `ignore_index` বসালেও Softmax-এর হরে $257$টি ক্লাসই থাকে আর Prompt পজিশন বাদ দিয়েও ভেতরের Layer-গুলো ঠিকই শেখে—তা দেখব পরের পাঠে, সাথে থাকবে **Interactive Mask Lab**!"
         },
         {
@@ -524,7 +524,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "SFT-এর প্রাণকেন্দ্র হলো **Response-only Loss**—Model-কে Prompt মুখস্থ করানো নয়, বরং কেবল উত্তর (Response) তৈরিতেই Penalty দেওয়া। আজ আমরা শিখব **Loss Mask (`ignore_index`)**, **Softmax Denominator (`257` বৈধ ক্লাস বনাম `2` ক্লাস)** এবং **Autograd Gradient Flow**-এর সূক্ষ্ম পার্থক্য—এবং সরাসরি **Interactive Mask Lab**-এ Base বনাম Full Fine-tuning-এর Logits মেলাব!",
+          "goal": "SFT-তে মূল হিসাবটা হলো **Response-only Loss**—Loss-এর হিসাবে শুধু Response Token-গুলো ধরা হয়। আজ আমরা শিখব **Loss Mask (`ignore_index`)**, **Softmax Denominator (`257` বৈধ ক্লাস বনাম `2` ক্লাস)** এবং **Autograd Gradient Flow**-এর সূক্ষ্ম পার্থক্য—এবং সরাসরি **Interactive Mask Lab**-এ Base বনাম Full Fine-tuning-এর Logits মেলাব!",
           "prerequisites": [
             "আগের পাঠ: Token Boundaries ও `target_pos = len(ids) - 1`",
             "Softmax, Log-Softmax ও Cross-Entropy Loss",
@@ -552,7 +552,7 @@
             {
               "symbol": "$m_t \\in \\{0, 1\\}$",
               "meaning": "Response Mask: Prompt ও Padding পজিশনে $0$ (`ignore_index`), আর কাঙ্ক্ষিত Response পজিশনে $1$।",
-              "example": "আমাদের Single-token টাস্কে কেবল $t = t^*$ পজিশনে $m_{t^*} = 1$, বাকি সব পজিশনে $0$।"
+              "example": "আমাদের Single-token Task-এ কেবল $t = t^*$ পজিশনে $m_{t^*} = 1$, বাকি সব পজিশনে $0$।"
             },
             {
               "symbol": "$\\sum_{t=1}^{T} m_t$",
@@ -671,7 +671,7 @@
         },
         {
           "type": "callout",
-          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **Padding-সহ মোট দৈর্ঘ্য দিয়ে ভাগ করা:** এতে Loss ভুয়া ছোট দেখায় এবং Gradient-এর স্কেল বিকৃত হয়।\n2. **২-ক্লাস Binary Loss আর ২৫৭-ক্লাস Decoder Loss গুলিয়ে ফেলা:** Training-এ $257$ ক্লাস, আর `{S, C}` শর্তসাপেক্ষ তুলনা কেবল Evaluation-এ।\n3. **All-Ignored Batch গার্ড না রাখা:** লম্বা Prompt Truncate হয়ে Response উধাও হলেই $0/0 =$ `NaN`!\n\n### Cheat Sheet\n- **Response-only Loss:** $\\mathcal{L}_{\\mathrm{resp}} = -\\frac{\\sum_t m_t \\log p_\\theta(y_t \\mid x_{\\le t})}{\\sum_t m_t}$।\n- **Uniform 257-class Baseline:** $\\ln(257) \\approx 5.549076$ (`PAD=256`, `BOS=257` ব্লক)।\n- **Backprop Rule:** Prompt Masked $\\implies$ সরাসরি Logit Grad $= 0$, কিন্তু Shared Weight-এ ঠিকই Gradient যায়!\n\n**পরের পাঠে কী শিখব?** Response-only Loss তো হাতে-কলমে শিখলাম—এবার এই Loss কমিয়ে Model-এর সব $5{,}019$টি Parameter একসঙ্গে আপডেট করলে (**Full Fine-tuning**) ভেতরে কী ঘটে, আর `AdamW` Optimizer State কীভাবে বড় LLM-এ বিশাল Memory দেয়াল তৈরি করে, তা দেখব পরের পাঠে!"
         },
         {
@@ -761,7 +761,7 @@
             },
             {
               "label": "ধাপ ৪ · Retention ও Baseline অডিট",
-              "detail": "নতুন টাস্কে Loss কমার পাশাপাশি পুরোনো সাধারণ দক্ষতা অক্ষত আছে কি না (**Catastrophic Forgetting**) আলাদা Benchmark-এ যাচাই।"
+              "detail": "নতুন Task-এ Loss কমার পাশাপাশি পুরোনো সাধারণ দক্ষতা অক্ষত আছে কি না (**Catastrophic Forgetting**) আলাদা Benchmark-এ যাচাই।"
             }
           ],
           "caption": "সহজ সতর্কতা: Gradient Clipping কেবল Training-কে ক্র্যাশ হওয়া থেকে বাঁচায়—ভুল Data, ত্রুটিপূর্ণ Loss Mask বা Evidence-হীন Input কখনোই সারাতে পারে না!"
@@ -769,7 +769,7 @@
         {
           "type": "text",
           "title": "৪. যাচাই করা Output, Option B (PyTorch AdamW Loop) ও Catastrophic Forgetting",
-          "body": "### Option A (Pure Python) লাইভ-যাচাই করা Output\n```text\nSteps/epoch: 8 | Total optimizer steps: 96\nFP32 AdamW trainable state -> Full: 80,304 B | LoRA: 8,544 B\n7B Full Fine-tuning static memory (no activations): ~112.0 GB\n1-step clipped AdamW: raw_g=2.5 -> clipped_g=1.0 | theta: 1.0 -> 0.9900\nFull Train NLL -> Ep0: 6.6776 | Ep4: 0.6671 | Ep12: 0.6436\n```\nদেখুন, `Full Train NLL` মাত্র ৪ Epoch-এই `6.6776` থেকে নেমে `0.6671` হয়ে গেছে, আর Epoch 12-এ এসে দাঁড়িয়েছে `0.6436`—যা Train Prior-এর তাত্ত্বিক Binary Entropy (`0.6427`)-এর একদম গায়ে লেগে আছে!\n\n### Option B — PyTorch-এ Standard Full Fine-tuning Step (`AdamW` + `clip_grad_norm_`)\n```python\nimport torch\n\n# Full Fine-tuning: Model-এর সব Parameter Optimizer-এ দেওয়া হয়\n# optimizer = torch.optim.AdamW(model.parameters(), lr=0.01, weight_decay=0.0)\n#\n# for x, pos, target in train_batches:\n#     optimizer.zero_grad(set_to_none=True)   # Memory বাঁচাতে set_to_none=True\n#     logits = model(x)\n#     loss = response_loss(logits, pos, target)\n#     loss.backward()\n#     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)\n#     optimizer.step()\n\n# মিনি-ডেমো: ১টি Tensor-এ PyTorch AdamW ও Clipping\nw = torch.tensor([1.0], dtype=torch.float64, requires_grad=True)\nopt = torch.optim.AdamW([w], lr=0.01, weight_decay=0.0)\nopt.zero_grad(set_to_none=True)\nloss = 2.5 * w.sum()\nloss.backward()\ntorch.nn.utils.clip_grad_norm_([w], max_norm=1.0)\nopt.step()\n# রেফারেন্স ফলাফল: w -> 0.9900 (উপরের Pure Python-এর হুবহু সমান!)\n```\n\n### Catastrophic Forgetting ও Retention Benchmark-এর শৃঙ্খলা\nসংকীর্ণ কোনো টাস্কে Model-এর সব Weight বদলে ফেললে আগে শেখা সাধারণ ভাষাদক্ষতা হঠাৎ হারিয়ে যাওয়ার ঝুঁকিকে বলে **Catastrophic Forgetting**।\n- **উদাহরণ:** একটি Chat Model-কে শুধু SQL লিখতে Full Fine-tuning দিলে সেটি SQL-এ চমৎকার হয়ে উঠতে পারে, কিন্তু সাধারণ কথোপকথন বা সারসংক্ষেপ লেখার ক্ষমতা হঠাৎ ভেঙে পড়তে পারে!\n- **মাপার একমাত্র উপায়:** Fine-tuning-এর আগে ও পরে একটি আলাদা **Holdout Retention Benchmark** চালানো। আমাদের বর্তমান পরীক্ষায় মূল Alice গদ্যে পুনরায় NLL মাপা হয়নি—তাই সৎভাবে স্বীকার করতে হবে যে পুরোনো দক্ষতা অক্ষত আছে কি না তা এখানে প্রমাণিত নয়।\n- **Stability-র ৪টি সাধারণ ত্রুটি:** অতিরিক্ত LR, Loss Mask বাগ, Eval-এ `model.eval()` ভুলে গিয়ে Dropout চালু রাখা, অথবা LR Scheduler-কে Batch-এর বদলে ভুলভাবে Epoch-এ Step করা।"
+          "body": "### Option A (Pure Python) লাইভ-যাচাই করা Output\n```text\nSteps/epoch: 8 | Total optimizer steps: 96\nFP32 AdamW trainable state -> Full: 80,304 B | LoRA: 8,544 B\n7B Full Fine-tuning static memory (no activations): ~112.0 GB\n1-step clipped AdamW: raw_g=2.5 -> clipped_g=1.0 | theta: 1.0 -> 0.9900\nFull Train NLL -> Ep0: 6.6776 | Ep4: 0.6671 | Ep12: 0.6436\n```\nদেখুন, `Full Train NLL` মাত্র ৪ Epoch-এই `6.6776` থেকে নেমে `0.6671` হয়ে গেছে, আর Epoch 12-এ এসে দাঁড়িয়েছে `0.6436`—যা Train Prior-এর তাত্ত্বিক Binary Entropy (`0.6427`)-এর একদম গায়ে লেগে আছে!\n\n### Option B — PyTorch-এ Standard Full Fine-tuning Step (`AdamW` + `clip_grad_norm_`)\n```python\nimport torch\n\n# Full Fine-tuning: Model-এর সব Parameter Optimizer-এ দেওয়া হয়\n# optimizer = torch.optim.AdamW(model.parameters(), lr=0.01, weight_decay=0.0)\n#\n# for x, pos, target in train_batches:\n#     optimizer.zero_grad(set_to_none=True)   # Memory বাঁচাতে set_to_none=True\n#     logits = model(x)\n#     loss = response_loss(logits, pos, target)\n#     loss.backward()\n#     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)\n#     optimizer.step()\n\n# মিনি-ডেমো: ১টি Tensor-এ PyTorch AdamW ও Clipping\nw = torch.tensor([1.0], dtype=torch.float64, requires_grad=True)\nopt = torch.optim.AdamW([w], lr=0.01, weight_decay=0.0)\nopt.zero_grad(set_to_none=True)\nloss = 2.5 * w.sum()\nloss.backward()\ntorch.nn.utils.clip_grad_norm_([w], max_norm=1.0)\nopt.step()\n# রেফারেন্স ফলাফল: w -> 0.9900 (উপরের Pure Python-এর হুবহু সমান!)\n```\n\n### Catastrophic Forgetting ও Retention Benchmark-এর শৃঙ্খলা\nসংকীর্ণ কোনো Task-এ Model-এর সব Weight বদলে ফেললে আগে শেখা সাধারণ ভাষাদক্ষতা হঠাৎ হারিয়ে যাওয়ার ঝুঁকিকে বলে **Catastrophic Forgetting**।\n- **উদাহরণ:** একটি Chat Model-কে শুধু SQL লিখতে Full Fine-tuning দিলে সেটি SQL-এ চমৎকার হয়ে উঠতে পারে, কিন্তু সাধারণ কথোপকথন বা সারসংক্ষেপ লেখার ক্ষমতা হঠাৎ ভেঙে পড়তে পারে!\n- **মাপার একমাত্র উপায়:** Fine-tuning-এর আগে ও পরে একটি আলাদা **Holdout Retention Benchmark** চালানো। আমাদের বর্তমান পরীক্ষায় মূল Alice গদ্যে পুনরায় NLL মাপা হয়নি—তাই সৎভাবে স্বীকার করতে হবে যে পুরোনো দক্ষতা অক্ষত আছে কি না তা এখানে প্রমাণিত নয়।\n- **Stability-র ৪টি সাধারণ ত্রুটি:** অতিরিক্ত LR, Loss Mask বাগ, Eval-এ `model.eval()` ভুলে গিয়ে Dropout চালু রাখা, অথবা LR Scheduler-কে Batch-এর বদলে ভুলভাবে Epoch-এ Step করা।"
         },
         {
           "type": "line_chart",
@@ -971,7 +971,7 @@
               "concept": "Catastrophic Forgetting Measurement",
               "level": "Intermediate",
               "question": "Full Fine-tuning করার পর Model-এ Catastrophic Forgetting ঘটেছে কি না তা কীভাবে বৈজ্ঞানিকভাবে প্রমাণ করবেন?",
-              "answer": "Training শুরু করার আগেই একটি **Holdout Retention Suite** ঠিক করতে হয়—যাতে সাধারণ ভাষা বোঝা (যেমন MMLU/Perplexity), কোডিং, রিজনিং এবং Safety/Refusal টেস্ট থাকে। Fine-tuning-এর আগে (Base) এবং পরে (Fine-tuned) একই Suite-এ Score তুলনা করে দেখলে স্পষ্ট বোঝা যায় নতুন টাস্কে লাভের বিনিময়ে পুরোনো দক্ষতা কতটা ক্ষয় হয়েছে।",
+              "answer": "Training শুরু করার আগেই একটি **Holdout Retention Suite** ঠিক করতে হয়—যাতে সাধারণ ভাষা বোঝা (যেমন MMLU/Perplexity), কোডিং, রিজনিং এবং Safety/Refusal টেস্ট থাকে। Fine-tuning-এর আগে (Base) এবং পরে (Fine-tuned) একই Suite-এ Score তুলনা করে দেখলে স্পষ্ট বোঝা যায় নতুন Task-এ লাভের বিনিময়ে পুরোনো দক্ষতা কতটা ক্ষয় হয়েছে।",
               "followUp": "Catastrophic Forgetting কমানোর ৩টি বাস্তব উপায় কী? (১) নতুন ডেটার সাথে ১০–২০% পুরোনো General Replay ডেটা মেশানো, (২) ছোট Learning Rate ও অল্প Epoch, অথবা (৩) Base Weight Freeze রেখে **LoRA/PEFT** ব্যবহার করা।"
             },
             {
@@ -999,7 +999,7 @@
         },
         {
           "type": "callout",
-          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **শুধু Weight সাইজ দেখে GPU বাজেট করা:** Mixed-Precision `AdamW`-এ $16\\text{ B}$/Param + Activation ধরতে ভুলবেন না।\n2. **Retention Benchmark ছাড়া 'No Forgetting' দাবি করা:** আগে-পরের General Benchmark তুলনা ছাড়া এটি প্রমাণ হয় না।\n3. **Training-এ Dropout চালু রেখে Eval চালানো:** মূল্যায়নের আগে সবসময় `model.eval()` ও `torch.no_grad()` নিশ্চিত করুন।\n\n### Cheat Sheet\n- **Steps:** $\\lceil 505 / 64 \\rceil \\times 12 = 8 \\times 12 = 96$ Optimizer Steps।\n- **Mixed-Precision AdamW:** $2\\text{ B (W)} + 2\\text{ B (G)} + 4\\text{ B (Master)} + 4\\text{ B (}m_t\\text{)} + 4\\text{ B (}v_t\\text{)} = 16\\text{ B/param}$।\n- **Full NLL কার্ভ:** `6.6776` (Ep 0) $\\to$ `0.6671` (Ep 4) $\\to$ `0.6436` (Ep 12) $\\approx$ Prior Entropy `0.6427`।\n\n**পরের পাঠে কী শিখব?** $7\\mathrm{B}$ Model-এ $112\\text{ GB}$ Optimizer State-এর দেয়াল ভাঙব কীভাবে? ঠিক এখানেই দৃশ্যপটে আসে আধুনিক LLM যুগের সবচেয়ে প্রভাবশালী কৌশল—**LoRA (Low-Rank Adaptation)**! পরের পাঠে আমরা হাতে-কলমে দেখব কীভাবে $2{,}072$ Parameter-এর Head-কে মাত্র $534$ Parameter-এ নামানো যায়, সাথে থাকবে **Interactive LoRA Lab**!"
         },
         {
@@ -1039,7 +1039,7 @@
         {
           "type": "text",
           "title": "১. মূল বই না ছিঁড়ে স্বচ্ছ ট্রেসিং পেপারে সংশোধনী: LoRA-র মূল ভাবনা",
-          "body": "ধরুন, আপনার হাতে একটি দুষ্প্রাপ্য $1{,}000$ পৃষ্ঠার এনসাইক্লোপিডিয়া আছে ($W_0$)। একটি নতুন কোর্সের জন্য আপনি বইটির ওপর কলম দিয়ে দাগাদাগি না করে ওপরে পাতলা স্বচ্ছ **ট্রেসিং পেপার** ($\\Delta W$) বসিয়ে শুধু দরকারি ছোট ছোট নোট লিখলেন! **LoRA (Hu et al., 2021)** ঠিক এটাই করে।\n\nমূল কথা হলো, নতুন টাস্কে শেখার জন্য প্রয়োজনীয় Weight পরিবর্তন $\\Delta W$-এর আসল তথ্য ঘনত্ব (**Intrinsic Rank**) অনেক কম—তাই পুরো বিশাল $d_{\\mathrm{out}} \\times d_{\\mathrm{in}}$ Matrix না শিখে তাকে দুটি সরু Low-Rank Matrix-এর গুণফল হিসেবে প্রকাশ করা যায়: $B \\in \\mathbb{R}^{d_{\\mathrm{out}} \\times r}$ এবং $A \\in \\mathbb{R}^{r \\times d_{\\mathrm{in}}}$, যেখানে Rank $r \\ll \\min(d_{\\mathrm{out}}, d_{\\mathrm{in}})$!\n\n### হাতে-কলমে হিসাব: আমাদের `ByteDecoder` Head বনাম বড় Transformer Layer\nদেখুন Rank $r$ কীভাবে Trainable Parameter-এর সংখ্যা নাটকীয়ভাবে কমিয়ে দেয়:\n\n| Linear Layer ($d_{\\mathrm{out}} \\times d_{\\mathrm{in}}$) | Full Matrix ($d_{\\mathrm{out}} d_{\\mathrm{in}}$) | LoRA Rank ($r$) | $A$ ($r \\times d_{\\mathrm{in}}$) + $B$ ($d_{\\mathrm{out}} \\times r$) | মোট LoRA Params | Full-এর তুলনায় অনুপাত |\n| --- | --- | --- | --- | --- | --- |\n| **আমাদের Output Head ($259 \\times 8$)** | $2{,}072$ | $r = 2$ | $16 + 518$ | **$534$** | $25.77\\%$ (পুরো Model-এর $10.64\\%$) |\n| **বড় LLM Attention ($4096 \\times 4096$)** | $16{,}777{,}216$ | $r = 8$ | $32{,}768 + 32{,}768$ | **$65{,}536$** | মাত্র **$0.39\\%$!** |\n| **বড় LLM Attention ($4096 \\times 4096$)** | $16{,}777{,}216$ | $r = 16$ | $65{,}536 + 65{,}536$ | **$131{,}072$** | মাত্র **$0.78\\%$!** |\n\n> **সতর্কতার মজার অঙ্ক:** আমাদের Head ($259 \\times 8$)-এ যদি কেউ না ভেবেই $r = 8$ বসায়, তবে LoRA Params দাঁড়াবে $8(259 + 8) = \\mathbf{2{,}136}$—যা আসল Full Head ($2{,}072$)-এর চেয়েও **বেশি!** অর্থাৎ LoRA কেবল তখনই Parameter বাঁচায় যখন $r < \\frac{d_{\\mathrm{out}} d_{\\mathrm{in}}}{d_{\\mathrm{out}} + d_{\\mathrm{in}}}$ (এখানে $< 7.76$)!\n\n### Rank ($r$) বনাম Alpha ($\\alpha$) এবং Asymmetric Init\n- **Rank ($r$):** Adapter-এর Capacity এবং Parameter বাজেট ঠিক করে।\n- **Alpha ($\\alpha$):** একই Rank রেখে আপডেটের প্রাবল্য (**Scaling** $\\frac{\\alpha}{r}$) নিয়ন্ত্রণ করে। আমাদের পরীক্ষায় $\\alpha = 2, r = 2 \\implies \\frac{\\alpha}{r} = 1$। (লক্ষ করুন: আধুনিক **rsLoRA**-তে স্থিতিশীলতার জন্য $\\frac{\\alpha}{\\sqrt{r}}$ Scaling-ও দেখা যায়।)\n- **Asymmetric Initialization:** শুরুতে $A \\sim \\mathcal{N}(0, 0.02^2)$ এবং $B = 0$ নেওয়া হয়, যাতে Step $0$-এ $\\Delta W = 0$ (**Identity Start**) থাকে, অথচ প্রথম ধাপেই $B$ অশূন্য Gradient পায়! দুটোই শূন্য ধরলে চিরস্থায়ী **Dead Gradient Trap** তৈরি হবে।\n\nচলুন এবার LoRA-র মূল সমীকরণটি Symbol-সহ দেখে নিই!"
+          "body": "ধরুন, আপনার হাতে একটি দুষ্প্রাপ্য $1{,}000$ পৃষ্ঠার এনসাইক্লোপিডিয়া আছে ($W_0$)। একটি নতুন কোর্সের জন্য আপনি বইটির ওপর কলম দিয়ে দাগাদাগি না করে ওপরে পাতলা স্বচ্ছ **ট্রেসিং পেপার** ($\\Delta W$) বসিয়ে শুধু দরকারি ছোট ছোট নোট লিখলেন! **LoRA (Hu et al., 2021)** ঠিক এটাই করে।\n\nমূল কথা হলো, নতুন Task-এ শেখার জন্য প্রয়োজনীয় Weight পরিবর্তন $\\Delta W$-এর আসল তথ্য ঘনত্ব (**Intrinsic Rank**) অনেক কম—তাই পুরো বিশাল $d_{\\mathrm{out}} \\times d_{\\mathrm{in}}$ Matrix না শিখে তাকে দুটি সরু Low-Rank Matrix-এর গুণফল হিসেবে প্রকাশ করা যায়: $B \\in \\mathbb{R}^{d_{\\mathrm{out}} \\times r}$ এবং $A \\in \\mathbb{R}^{r \\times d_{\\mathrm{in}}}$, যেখানে Rank $r \\ll \\min(d_{\\mathrm{out}}, d_{\\mathrm{in}})$!\n\n### হাতে-কলমে হিসাব: আমাদের `ByteDecoder` Head বনাম বড় Transformer Layer\nদেখুন Rank $r$ কীভাবে Trainable Parameter-এর সংখ্যা নাটকীয়ভাবে কমিয়ে দেয়:\n\n| Linear Layer ($d_{\\mathrm{out}} \\times d_{\\mathrm{in}}$) | Full Matrix ($d_{\\mathrm{out}} d_{\\mathrm{in}}$) | LoRA Rank ($r$) | $A$ ($r \\times d_{\\mathrm{in}}$) + $B$ ($d_{\\mathrm{out}} \\times r$) | মোট LoRA Params | Full-এর তুলনায় অনুপাত |\n| --- | --- | --- | --- | --- | --- |\n| **আমাদের Output Head ($259 \\times 8$)** | $2{,}072$ | $r = 2$ | $16 + 518$ | **$534$** | $25.77\\%$ (পুরো Model-এর $10.64\\%$) |\n| **বড় LLM Attention ($4096 \\times 4096$)** | $16{,}777{,}216$ | $r = 8$ | $32{,}768 + 32{,}768$ | **$65{,}536$** | মাত্র **$0.39\\%$!** |\n| **বড় LLM Attention ($4096 \\times 4096$)** | $16{,}777{,}216$ | $r = 16$ | $65{,}536 + 65{,}536$ | **$131{,}072$** | মাত্র **$0.78\\%$!** |\n\n> **সতর্কতার মজার অঙ্ক:** আমাদের Head ($259 \\times 8$)-এ যদি কেউ না ভেবেই $r = 8$ বসায়, তবে LoRA Params দাঁড়াবে $8(259 + 8) = \\mathbf{2{,}136}$—যা আসল Full Head ($2{,}072$)-এর চেয়েও **বেশি!** অর্থাৎ LoRA কেবল তখনই Parameter বাঁচায় যখন $r < \\frac{d_{\\mathrm{out}} d_{\\mathrm{in}}}{d_{\\mathrm{out}} + d_{\\mathrm{in}}}$ (এখানে $< 7.76$)!\n\n### Rank ($r$) বনাম Alpha ($\\alpha$) এবং Asymmetric Init\n- **Rank ($r$):** Adapter-এর Capacity এবং Parameter বাজেট ঠিক করে।\n- **Alpha ($\\alpha$):** একই Rank রেখে আপডেটের প্রাবল্য (**Scaling** $\\frac{\\alpha}{r}$) নিয়ন্ত্রণ করে। আমাদের পরীক্ষায় $\\alpha = 2, r = 2 \\implies \\frac{\\alpha}{r} = 1$। (লক্ষ করুন: আধুনিক **rsLoRA**-তে স্থিতিশীলতার জন্য $\\frac{\\alpha}{\\sqrt{r}}$ Scaling-ও দেখা যায়।)\n- **Asymmetric Initialization:** শুরুতে $A \\sim \\mathcal{N}(0, 0.02^2)$ এবং $B = 0$ নেওয়া হয়, যাতে Step $0$-এ $\\Delta W = 0$ (**Identity Start**) থাকে, অথচ প্রথম ধাপেই $B$ অশূন্য Gradient পায়! দুটোই শূন্য ধরলে চিরস্থায়ী **Dead Gradient Trap** তৈরি হবে।\n\nচলুন এবার LoRA-র মূল সমীকরণটি Symbol-সহ দেখে নিই!"
         },
         {
           "type": "math",
@@ -1085,11 +1085,11 @@
             },
             {
               "label": "ধাপ ৩ · Scaling ও যোগ ($+ \\frac{\\alpha}{r} BAx$)",
-              "detail": "শুরুতে $B = 0$ থাকায় প্রথম ধাপে এই শাখা $0$ দেয়; Training এগোলে সূক্ষ্ম টাস্ক-নির্দিষ্ট Delta যোগ করে।"
+              "detail": "শুরুতে $B = 0$ থাকায় প্রথম ধাপে এই শাখা $0$ দেয়; Training এগোলে সূক্ষ্ম Task-নির্দিষ্ট Delta যোগ করে।"
             },
             {
               "label": "ধাপ ৪ · Deployment-এ Merge ($W_{\\mathrm{eff}} = W_0 + \\frac{\\alpha}{r}BA$)",
-              "detail": "একক টাস্কে Serving-এর সময় দুটি শাখা জুড়ে একটি Matrix বানালে কোনো অতিরিক্ত Latency থাকে না!"
+              "detail": "একক Task-এ Serving-এর সময় দুটি শাখা জুড়ে একটি Matrix বানালে কোনো অতিরিক্ত Latency থাকে না!"
             }
           ],
           "caption": "মনে রাখবেন: একটি LoRA Adapter কখনোই একা একা জ্ঞান ধারণ করে না—এটি কেবল নির্দিষ্ট **Base Weight Hash, Tokenizer ও Frozen Bias**-এর সাপেক্ষে শেখা পরিবর্তন (Delta)!"
@@ -1253,7 +1253,7 @@
               "concept": "Rank vs Alpha & rsLoRA",
               "level": "Core",
               "question": "LoRA-তে Rank ($r$) এবং Alpha ($\\alpha$) দুটি আলাদা Hyperparameter রাখা হয় কেন?",
-              "answer": "**Rank ($r$)** ঠিক করে Low-Rank Subspace-এর মাত্রা ও Parameter সংখ্যা। আর **Alpha ($\\alpha$)** ঠিক করে Scaling $\\frac{\\alpha}{r}$—যাতে Rank $r$ বদলালেও আপডেটের গড় Amplitude স্থির রাখা যায় ও বারবার Learning Rate টিউন করতে না হয়। তবে খুব বড় Rank ($r = 64, 128$)-এ $\\frac{\\alpha}{r}$ স্কেলিং Gradient ছোট করে ফেলে বলে আধুনিক **rsLoRA** $\\frac{\\alpha}{\\sqrt{r}}$ ব্যবহার করে।",
+              "answer": "**Rank ($r$)** ঠিক করে Low-Rank Subspace-এর মাত্রা ও Parameter সংখ্যা। আর **Alpha ($\\alpha$)** ঠিক করে Scaling $\\frac{\\alpha}{r}$—যাতে Rank $r$ বদলালেও আপডেটের গড় Amplitude স্থির রাখা যায় ও বারবার Learning Rate টিউন করতে না হয়। তবে খুব বড় Rank ($r = 64, 128$)-এ $\\frac{\\alpha}{r}$ Scaling Gradient ছোট করে ফেলে বলে আধুনিক **rsLoRA** $\\frac{\\alpha}{\\sqrt{r}}$ ব্যবহার করে।",
               "followUp": "প্রায়োগিকভাবে নতুন প্রজেক্টে $r$ আর $\\alpha$ কীভাবে শুরু করবেন? প্রচলিত ভালো শুরু হলো $r = 8$ বা $16$, আর $\\alpha = 2r$ (অর্থাৎ স্কেল $2.0$) অথবা $\\alpha = r$ (স্কেল $1.0$)!"
             },
             {
@@ -1288,14 +1288,14 @@
               "concept": "LoRA vs Full Fine-tuning Tradeoff",
               "level": "Senior",
               "question": "একজন রিসার্চারের কাছে পর্যাপ্ত GPU আছে—তবু তিনি Full Fine-tuning না করে কখন LoRA বেছে নিতে পারেন?",
-              "answer": "তিনটি কারণে: (১) **নিয়মিতকরণ ও কম Forgetting** — Low-Rank সীমাবদ্ধতা Base Model-এর আগের সাধারণ জ্ঞান ধরে রাখতে সাহায্য করে (*\"LoRA Learns Less and Forgets Less\"*), (২) **স্টোরেজ ও Multi-tenant Serving** — প্রতিটি টাস্কের জন্য $14\\text{ GB}$ চেকপয়েন্ট না রেখে মাত্র $50\\text{ MB}$ Adapter রাখা যায়, এবং (৩) **দ্রুত Experimentation ও Rollback**।",
+              "answer": "তিনটি কারণে: (১) **নিয়মিতকরণ ও কম Forgetting** — Low-Rank সীমাবদ্ধতা Base Model-এর আগের সাধারণ জ্ঞান ধরে রাখতে সাহায্য করে (*\"LoRA Learns Less and Forgets Less\"*), (২) **স্টোরেজ ও Multi-tenant Serving** — প্রতিটি Task-এর জন্য $14\\text{ GB}$ চেকপয়েন্ট না রেখে মাত্র $50\\text{ MB}$ Adapter রাখা যায়, এবং (৩) **দ্রুত Experimentation ও Rollback**।",
               "followUp": "কখন আবার Full Fine-tuning-ই এগিয়ে থাকে? বিপুল ডোমেইন ডেটায় নতুন ভাষা/কোডবাইজ গভীরভাবে ঢোকাতে বা কঠিন Math/Coding রিজনিংয়ের সীমা ঠেলতে!"
             }
           ]
         },
         {
           "type": "callout",
-          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **Break-even Rank না গুনে সরু Layer-এ বড় $r$ বসানো:** $259 \\times 8$ Head-এ $r=8$ নিলে Full-এর চেয়েও বেশি Parameter লাগে!\n2. **$A = 0, B = 0$ দিয়ে শুরু করা:** দুটোই শূন্য হলে প্রথম ধাপেই Dead Gradient Trap।\n3. **Shape মিললেই ভিন্ন Base Model-এ Adapter লাগানো:** Base Weight Hash না মিললে নীরবে অদ্ভুত Output আসবে।\n\n### Cheat Sheet\n- **সূত্র:** $W_{\\mathrm{eff}} = W_0 + \\frac{\\alpha}{r} B A$, যেখানে $A \\in \\mathbb{R}^{r \\times d_{\\mathrm{in}}}, B \\in \\mathbb{R}^{d_{\\mathrm{out}} \\times r}$।\n- **Trainable Params:** $r(d_{\\mathrm{out}} + d_{\\mathrm{in}})$ — আমাদের Head-এ $2(259 + 8) = 534$ ($10.64\\%$ of $5{,}019$)।\n- **Asymmetric Init:** $A \\sim \\mathcal{N}(0, \\sigma^2)$, $B = 0 \\implies$ Step $0$-এ $\\Delta W = 0$।\n\n**পরের পাঠে কী শিখব?** $B = 0$ রেখে শুরু করলে Step $1$-এ কিন্তু $A$-এর Gradient হুবহু শূন্য আসে—অনেকে এটাকে বাগ ভেবে ভয় পেয়ে যান! পরের পাঠে আমরা ২x২ উদাহরণে হাতে-কলমে **Step 1 ও Step 2-এর Gradient** কষে দেখব এবং `requires_grad`, `torch.no_grad()` ও Freeze Audit-এর সূক্ষ্ম ফাঁদগুলো ব্যবচ্ছেদ করব!"
         },
         {
@@ -1327,7 +1327,7 @@
           ],
           "outcomes": [
             "`requires_grad`, **Autograd Computation Graph** এবং `train()`/`eval()` মোড—এই তিনটি আলাদা নিয়ন্ত্রণ ব্যবস্থা স্পষ্টভাবে আলাদা করতে পারবেন।",
-            "২x২ Rank-1 উদাহরণে Step $1$ (`dA=[0,0], dB=[-2,-2]`) ও SGD আপডেটের পর Step $2$ (`dA=[0.8, 1.6]`) হাতে কষে প্রমাণ করতে পারবেন।",
+            "২x২ Rank-1 উদাহরণে Step $1$ (`dA=[0,0], dB=[-2,-2]`) ও SGD আপডেটের পর Step $2$ (`dA=[0.8, 1.6]`) হাতে হিসাব করে প্রমাণ করতে পারবেন।",
             "একটি LoRA Model-এর **৩টি Parameter সংখ্যা** (`534` Trainable, `5,553` Registered Unmerged, `5,019` Exported Merged) নিখুঁতভাবে আলাদা করতে পারবেন।",
             "Pure Python-এ 2-Step LoRA Backprop, Finite-Difference Check ও Dead Gradient Trap কোড করে যাচাই করতে পারবেন।"
           ]
@@ -1419,7 +1419,7 @@
               "level": "Core",
               "question": "LoRA Training-এ `loss.backward()` চালানোর পর Base Weight-এর `.grad` থাকে `None`, আর Step 1-এ `A.grad` থাকে `0.0`—দুটির মধ্যে কারিগরি পার্থক্য কী?",
               "answer": "Base Weight-এ `requires_grad=False` থাকায় PyTorch সেগুলোর জন্য কোনো Gradient Tensor বরাদ্দই করে না (তাই `.grad is None`, Memory বাঁচে)। অন্যদিকে `A`-তে `requires_grad=True` থাকায় এটি Autograd Graph-এ সংযুক্ত এবং Memory-তে একটি Tensor বরাদ্দ হয়েছে—কিন্তু Step $1$-এ $B = 0$ হওয়ায় Chain Rule-এর গাণিতিক গুণফল `0.0` এসেছে।",
-              "followUp": "ডিবাগিংয়ে যদি Step $5$-এও `A.grad` শূন্য (`0.0`) থাকে, তবে কী সন্দেহ করবেন? সম্ভবত Optimizer-এ `B` যোগ করতে ভুলে গেছেন, অথবা `B`-এর Learning Rate $0$!"
+              "followUp": "Debugging-এ যদি Step $5$-এও `A.grad` শূন্য (`0.0`) থাকে, তবে কী সন্দেহ করবেন? সম্ভবত Optimizer-এ `B` যোগ করতে ভুলে গেছেন, অথবা `B`-এর Learning Rate $0$!"
             },
             {
               "concept": "requires_grad vs no_grad vs eval",
@@ -1460,7 +1460,7 @@
         },
         {
           "type": "callout",
-          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **Multi-Layer LoRA-র পরের Frozen Layer-এ `torch.no_grad()` বসানো:** মাঝপথে Graph কেটে গিয়ে আগের Adapter অচল হয়ে যায়।\n2. **Step 1-এ `A.grad == 0` দেখে ভয় পেয়ে কোড বদলানো:** $B=0$ থাকলে Step 1-এ `dA=0` স্বাভাবিক; Step 2 চেক করুন!\n3. **`head.bias` ভুলে Trainable রেখে দেওয়া:** Freeze Audit-এ সবসময় `trainable_params` ও Optimizer Parameter ID `assert` করুন।\n\n### Cheat Sheet\n- **Chain Rule:** $\\nabla_B \\mathcal{L} = s g (Ax)^T$, $\\nabla_A \\mathcal{L} = s (B^T g) x^T$।\n- **২×২ রেফারেন্স:** Step 1: `dA=[0,0], dB=[-2,-2]` $\\to$ SGD ($\\eta=0.1$) $\\to$ Step 2: `dA=[0.8, 1.6]`।\n- **Parameter গণনা:** Trainable `534` | Unmerged Total `5,553` | Merged Export `5,019`।\n\n**পরের পাঠে কী শিখব?** Training শেষ করে Adapter তো হাতে এল—এবার Production-এ Deploy করার সময় **Merge** করব নাকি **Unmerged** রাখব? আর কুখ্যাত **Double-Merge Bug** কীভাবে মুহূর্তেই পুরো Output `[0.0, 0.0]` করে দেয়, তা দেখব পরের পাঠে!"
         },
         {
@@ -1483,7 +1483,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "LoRA Training শেষ হওয়া মানেই কাজ শেষ নয়—Deployment-এর সময়ই ঘটে সবচেয়ে মারাত্মক **Silent Production Bugs**! আজ আমরা শিখব কীভাবে শূন্য বাড়তি Latency-তে Adapter **Merge** করতে হয়, কেন ভুলবশত **Double Merge** করলে Output পুরো ধ্বংস হয়ে যায়, কখন **Unmerged Multi-Adapter** Serving জিতে যায়, আর কেন শুধু Adapter ফাইল দিয়ে মাঝপথের Training Resume করা অসম্ভব!",
+          "goal": "LoRA Training শেষ হওয়া মানেই কাজ শেষ নয়—Deployment-এর সময় **Silent Production Bug** দেখা দিতে পারে। আজ আমরা শিখব কীভাবে শূন্য বাড়তি Latency-তে Adapter **Merge** করতে হয়, কেন ভুলবশত **Double Merge** করলে Output ভুল হয়ে যায়, কখন **Unmerged Multi-Adapter** Serving জিতে যায়, আর কেন শুধু Adapter ফাইল দিয়ে মাঝপথের Training Resume করা অসম্ভব!",
           "prerequisites": [
             "আগের পাঠ: LoRA ফ্যাক্টর $A, B$ ও Freeze Audit",
             "Matrix Distributive Property ও Floating-point Tolerance",
@@ -1492,7 +1492,7 @@
           ],
           "outcomes": [
             "Unmerged ফরোয়ার্ড পাস $x W_0^T + \\frac{\\alpha}{r}(x A^T)B^T$ এবং Merged $x(W_0 + \\frac{\\alpha}{r}BA)^T$-এর বীজগণিতিক সমতুল্যতা ও Floating-point Tolerance যাচাই করতে পারবেন।",
-            "২×২ উদাহরণে **Single Merge (`[0.5, 1.0]`)** বনাম **Double Merge বাগ (`[0.0, 0.0]`)** হাতে কষে দেখাতে পারবেন।",
+            "২×২ উদাহরণে **Single Merge (`[0.5, 1.0]`)** বনাম **Double Merge বাগ (`[0.0, 0.0]`)** হাতে হিসাব করে দেখাতে পারবেন।",
             "**Merged Export** বনাম **Multi-tenant Unmerged Adapter** এবং **Inference Export** বনাম **Training Resume Checkpoint**-এর পার্থক্য স্পষ্ট করতে পারবেন।",
             "Quantized Base-এ Merge করলে কেন Exact Equivalence ভাঙে এবং `safetensors` / `weights_only=True` কেন জরুরি তা ব্যাখ্যা করতে পারবেন।"
           ]
@@ -1500,7 +1500,7 @@
         {
           "type": "text",
           "title": "১. Zero-Overhead Merge বনাম কুখ্যাত Double-Merge বাগ: হাতে-কলমে ২×২ হিসাব",
-          "body": "ধরুন, আপনার একটি রেস্টুরেন্টের মূল মেনু ($W_0$) আছে, আর উৎসবের দিনে কিছু পদের দামে ছোট ছাড় ($\\Delta W$) দিলেন। উৎসব যদি স্থায়ী হয়, তাহলে নতুন দাম সরাসরি মেনুতে ছাপিয়ে (**Merged Export**) দিলে ক্যাশিয়ারকে প্রতিবার আলাদা ছাড় গুনতে হয় না (**Zero Extra Latency**)! কিন্তু ভাবুন তো—মেনুতে ছাড়টা ছাপিয়ে দেওয়ার পরও ক্যাশিয়ার যদি ভুলে বিল করার সময় আবারও সেই একই ছাড় বিয়োগ করে বসেন (**Double Merge Bug**)? পুরো হিসাবটাই ধ্বংস হয়ে যাবে!\n\n### হাতে-কলমে ২×২ সংখ্যার উদাহরণ\nধরুন $W_0 = I_2$, $A = [1, -1]$, $B = [0.25, 0.5]^T$, $r = 1$, $\\alpha = 2$ (স্কেল $s = 2$) এবং Input $x = [1, 2]^T$। তাহলে:\n$$\\Delta W = s B A = 2 \\begin{bmatrix} 0.25 \\\\ 0.5 \\end{bmatrix} \\begin{bmatrix} 1 & -1 \\end{bmatrix} = \\begin{bmatrix} 0.5 & -0.5 \\\\ 1.0 & -1.0 \\end{bmatrix}$$\n\nএখন তিনটি ফরোয়ার্ড পথ পাশাপাশি দেখুন:\n\n| ফরোয়ার্ড পথ | সমীকরণ | মধ্যবর্তী হিসাব | চূড়ান্ত Output $y$ | অবস্থা |\n| --- | --- | --- | --- | --- |\n| **১. Unmerged** | $W_0 x + 2 B(Ax)$ | $[1, 2]^T + 2[0.25, 0.5]^T(-1)$ | **`[0.5, 1.0]`** | সঠিক রেফারেন্স |\n| **২. Single Merge** | $(W_0 + \\Delta W) x$ | $\\begin{bmatrix} 1.5 & -0.5 \\\\ 1.0 & 0.0 \\end{bmatrix} \\begin{bmatrix} 1 \\\\ 2 \\end{bmatrix}$ | **`[0.5, 1.0]`** | হুবহু সমান, দ্রুত! |\n| **৩. Double Merge বাগ!** | $(W_0 + 2\\Delta W) x$ | $[1, 2]^T + 2[-0.5, -1.0]^T$ | **`[0.0, 0.0]`** | **সম্পূর্ণ বিকৃত!** |\n\n### Merged বনাম Unmerged — Production-এ কোনটি কখন বেছে নেবেন?\n| Deployment ধরন | কখন সেরা? | প্রধান সুবিধা ও সতর্কতা |\n| --- | --- | --- |\n| **Merged Export** | একটি নির্দিষ্ট টাস্কের জন্য একক Model | শূন্য বাড়তি Inference Latency, সহজ Serving (কিন্তু Merge ফ্ল্যাগ লক রাখতে হবে!) |\n| **Unmerged Adapter** | SaaS প্ল্যাটফর্মে একই Base-এ $50$ গ্রাহকের $50$ Adapter | Memory-তে বিশাল Base একবার রেখে দ্রুত Adapter Hot-swap; $50\\times$ কম VRAM! |\n\nচলুন এবার Unmerged ও Merged ফরোয়ার্ড পাসের সমীকরণটি দেখে নিই।"
+          "body": "ধরুন, আপনার একটি রেস্টুরেন্টের মূল মেনু ($W_0$) আছে, আর উৎসবের দিনে কিছু পদের দামে ছোট ছাড় ($\\Delta W$) দিলেন। উৎসব যদি স্থায়ী হয়, তাহলে নতুন দাম সরাসরি মেনুতে ছাপিয়ে (**Merged Export**) দিলে ক্যাশিয়ারকে প্রতিবার আলাদা ছাড় গুনতে হয় না (**Zero Extra Latency**)! কিন্তু ভাবুন তো—মেনুতে ছাড়টা ছাপিয়ে দেওয়ার পরও ক্যাশিয়ার যদি ভুলে বিল করার সময় আবারও সেই একই ছাড় বিয়োগ করে বসেন (**Double Merge Bug**)? পুরো হিসাবটাই ধ্বংস হয়ে যাবে!\n\n### হাতে-কলমে ২×২ সংখ্যার উদাহরণ\nধরুন $W_0 = I_2$, $A = [1, -1]$, $B = [0.25, 0.5]^T$, $r = 1$, $\\alpha = 2$ (স্কেল $s = 2$) এবং Input $x = [1, 2]^T$। তাহলে:\n$$\\Delta W = s B A = 2 \\begin{bmatrix} 0.25 \\\\ 0.5 \\end{bmatrix} \\begin{bmatrix} 1 & -1 \\end{bmatrix} = \\begin{bmatrix} 0.5 & -0.5 \\\\ 1.0 & -1.0 \\end{bmatrix}$$\n\nএখন তিনটি ফরোয়ার্ড পথ পাশাপাশি দেখুন:\n\n| ফরোয়ার্ড পথ | সমীকরণ | মধ্যবর্তী হিসাব | চূড়ান্ত Output $y$ | অবস্থা |\n| --- | --- | --- | --- | --- |\n| **১. Unmerged** | $W_0 x + 2 B(Ax)$ | $[1, 2]^T + 2[0.25, 0.5]^T(-1)$ | **`[0.5, 1.0]`** | সঠিক রেফারেন্স |\n| **২. Single Merge** | $(W_0 + \\Delta W) x$ | $\\begin{bmatrix} 1.5 & -0.5 \\\\ 1.0 & 0.0 \\end{bmatrix} \\begin{bmatrix} 1 \\\\ 2 \\end{bmatrix}$ | **`[0.5, 1.0]`** | হুবহু সমান, দ্রুত! |\n| **৩. Double Merge বাগ!** | $(W_0 + 2\\Delta W) x$ | $[1, 2]^T + 2[-0.5, -1.0]^T$ | **`[0.0, 0.0]`** | **সম্পূর্ণ বিকৃত!** |\n\n### Merged বনাম Unmerged — Production-এ কোনটি কখন বেছে নেবেন?\n| Deployment ধরন | কখন সেরা? | প্রধান সুবিধা ও সতর্কতা |\n| --- | --- | --- |\n| **Merged Export** | একটি নির্দিষ্ট Task-এর জন্য একক Model | শূন্য বাড়তি Inference Latency, সহজ Serving (কিন্তু Merge ফ্ল্যাগ লক রাখতে হবে!) |\n| **Unmerged Adapter** | SaaS প্ল্যাটফর্মে একই Base-এ $50$ গ্রাহকের $50$ Adapter | Memory-তে বিশাল Base একবার রেখে দ্রুত Adapter Hot-swap; $50\\times$ কম VRAM! |\n\nচলুন এবার Unmerged ও Merged ফরোয়ার্ড পাসের সমীকরণটি দেখে নিই।"
         },
         {
           "type": "math",
@@ -1553,7 +1553,7 @@
               "detail": "$\\mathrm{Scale}=0$ (Base), $\\mathrm{Scale}=1$ (Adapter) Golden Logits এবং ভুল Base Hash দিয়ে রিজেকশন যাচাই।"
             }
           ],
-          "caption": "সোনালি নিয়ম: একটি LoRA ফাইল শুধুই $A$ আর $B$ Matrix নয়—সঠিক Metadata ও Base Hash ছাড়া সেটি পাসপোর্টবিহীন যাত্রীর মতো!"
+          "caption": "মনে রাখার নিয়ম: একটি LoRA ফাইল শুধুই $A$ আর $B$ Matrix নয়—সঠিক Metadata ও Base Hash ছাড়া সেটি পাসপোর্টবিহীন যাত্রীর মতো!"
         },
         {
           "type": "text",
@@ -1619,13 +1619,13 @@
               "level": "Senior",
               "question": "যদি $\\mathrm{rank}(\\Delta W) = 1$ হয়, তবে Merge করার পর $\\mathrm{rank}(W_0 + \\Delta W)$ কি অবশ্যই $1$ হবে?",
               "answer": "**একদমই না!** Rank-এর সাব-অ্যাডিটিভিটি ধর্ম অনুযায়ী $|\\mathrm{rank}(W_0) - \\mathrm{rank}(\\Delta W)| \\le \\mathrm{rank}(W_0 + \\Delta W) \\le \\mathrm{rank}(W_0) + \\mathrm{rank}(\\Delta W)$। আমাদের ২×২ উদাহরণেই দেখুন: $W_0 = I_2$-এর Rank $2$, $\\Delta W$-এর Rank $1$, আর $W_0 + \\Delta W = [[1.5, -0.5], [1.0, 0.0]]$-এর Determinant $+0.5 \\neq 0$, অর্থাৎ Merged Matrix-এর Rank এখনো $2$ (আর $W_0 + 2\\Delta W$-এর Rank নেমে $1$ হয়ে যেতে পারে)!",
-              "followUp": "তাহলে কি একটি Base Model-এ একাধিক ভিন্ন টাস্কের LoRA একসঙ্গে Merge (Task Arithmetic / TIES-Merging) করা যায়? হ্যাঁ, তবে Interference এড়াতে আলাদা Validation ও Sign-Conflict Resolution দরকার হয়।"
+              "followUp": "তাহলে কি একটি Base Model-এ একাধিক ভিন্ন Task-এর LoRA একসঙ্গে Merge (Task Arithmetic / TIES-Merging) করা যায়? হ্যাঁ, তবে Interference এড়াতে আলাদা Validation ও Sign-Conflict Resolution দরকার হয়।"
             }
           ]
         },
         {
           "type": "callout",
-          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **Merged Model-এ সক্রিয় Adapter শাখা রেখে দেওয়া:** এতে নীরবে $W_0 + 2\\Delta W$ (Double Merge) ঘটে।\n2. **শুধু Weight ফাইলকে Training Resume Checkpoint ভাবা:** Optimizer $m_t, v_t$, Scheduler ও RNG ছাড়া হুবহু Resume হয় না।\n3. **অপরিচিত `.pt` ফাইলে `weights_only=False` চালানো:** সবসময় `safetensors` বা `weights_only=True` ব্যবহার করুন।\n\n### Cheat Sheet\n- **Merge Equivalence:** $x(W_0 + \\frac{\\alpha}{r}BA)^T + b_0 = x W_0^T + \\frac{\\alpha}{r}(x A^T)B^T + b_0$ (একই `dtype`-এ)।\n- **২×২ রেফারেন্স:** Single Merge `[0.5, 1.0]` | Double Merge বাগ `[0.0, 0.0]`।\n- **Artifact Contract:** `base_sha256` + `rank` + `alpha` + `target_modules` + `tokenizer_id` + `is_merged` + Golden Logits।\n\n**পরের পাঠে কী শিখব?** Merge ও Artifact তো পাকা হলো—কিন্তু বিশাল Base Model-টাই যদি আমাদের GPU Memory-তে না আঁটে? তখনই আসে **Quantization ও QLoRA**! পরের পাঠে আমরা হাতে-কলমে দেখব Row-wise Symmetric **INT8** কীভাবে কাজ করে, কেন ছোট Gradient আপডেট Quantization Grid-এর ফাঁকে হারিয়ে যায়, আর আমাদের INT8 পরীক্ষার সাথে প্রকৃত **QLoRA**-র পার্থক্য কোথায়!"
         },
         {
@@ -1858,7 +1858,7 @@
         },
         {
           "type": "callout",
-          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **যেকোনো INT8 + LoRA-কে QLoRA বলা:** প্রকৃত QLoRA = 4-bit NF4 + Double Quantization + Paged Optimizer।\n2. **একটি Matrix-এর Byte সাশ্রয়কে পুরো অ্যাপের Peak Memory সাশ্রয় বলা:** Activation, অন্য Layer ও Allocator আলাদাভাবে প্রোফাইল করুন।\n3. **Zero-row গার্ড ভুলে যাওয়া:** শূন্য সারিতে `scale = 0` হলেই `0/0 = NaN`!\n\n### Cheat Sheet\n- **Symmetric INT8:** $s_i = \\max_j |W_{i,j}| / 127$ (বা `1.0`), $q = \\mathrm{clip}(\\mathrm{round}(w/s), -127, 127)$, ত্রুটি $\\le s_i / 2$।\n- **আমাদের Head-only Control:** $16{,}576\\text{ B} \\to 4{,}144\\text{ B}$ ($2{,}072$ কোড + $2{,}072$ Scale), Max Weight Error $= 0.005801$।\n- **৩টি Dtype:** Storage (`NF4`/`INT8`) $\\neq$ Compute (`BF16`/`FP16`) $\\neq$ Accumulation (`FP32`)।\n\n**পরের পাঠে কী শিখব?** Quantization তো Weight-এর জায়গা কমাল—কিন্তু লম্বা Context Length-এ Training দিতে গেলে Weight-এর চেয়েও বড় দানব হয়ে দাঁড়ায় **Activation Memory**! পরের পাঠে আমরা পুরো ৬-খাতের **Memory Accounting**, **Token-Weighted Gradient Accumulation**, **Gradient Checkpointing** এবং **Sequence Packing**-এর গোপন বাগগুলো হাতে-কলমে শিখব!"
         },
         {
@@ -2078,7 +2078,7 @@
         {
           "type": "interview_qa",
           "title": "Memory Accounting ও OOM Engineering — সম্ভাব্য Interview প্রশ্ন ও উত্তর",
-          "intro": "বড় LLM Training-এ OOM ডিবাগিং, Checkpointing, BF16 এবং Sequence Packing নিয়ে সিস্টেম ইন্টারভিউয়ের ৬টি আসল প্রশ্ন।",
+          "intro": "বড় LLM Training-এ OOM Debugging, Checkpointing, BF16 এবং Sequence Packing নিয়ে সিস্টেম ইন্টারভিউয়ের ৬টি আসল প্রশ্ন।",
           "items": [
             {
               "concept": "Diagnosing OOM by Stage",
@@ -2126,7 +2126,7 @@
         },
         {
           "type": "callout",
-          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **অসমান Microbatch-এ `loss.mean() / K` চালানো:** ছোট Microbatch-কে অতিরিক্ত ওজন দেয়—সবসময় Token-Weighted Sum ব্যবহার করুন।\n2. **Sequence Packing-এ Block-Diagonal Mask ও Position Reset ভুলে যাওয়া:** এতে Cross-Example Leakage ঘটে।\n3. **তাত্ত্বিক Byte হিসাবকে মাপা GPU Peak Memory বলে চালানো:** সর্বদা নির্দিষ্ট Hardware-এ প্রোফাইল করুন।\n\n### Cheat Sheet\n- **Peak Memory:** $M_{\\mathrm{weights}} + M_{\\mathrm{grads}} + M_{\\mathrm{optim}} + M_{\\mathrm{act}} + M_{\\mathrm{work}}$।\n- **Token-Weighted Accum:** $\\mathcal{L}_{\\mathrm{eff}} = \\frac{\\sum_k \\sum_{t \\in \\mathcal{R}_k} \\ell_{k,t}}{\\sum_k m_k}$ (`0.80` বনাম ভুল Naive `1.25`)।\n- **Checkpointing Tradeoff:** Activation VRAM $3\\times$–$4\\times$ কমে, Training সময় $\\sim 20\\%$–$30\\%$ বাড়ে।\n\n**পরের পাঠে কী শিখব?** Model তো Memory-র ভেতর এঁটে ট্রেন হয়ে গেল—কিন্তু Training শেষে কীভাবে নির্মোহভাবে বুঝবেন Model আসলেই শিখেছে নাকি কেবল **Mode Collapse** করে আমাদের চোখে ধুলো দিচ্ছে? পরের পাঠে আমরা আমাদের আসল ফলাফলের পূর্ণ ময়নাতদন্ত করব, সাথে থাকবে **Interactive Audit Lab**!"
         },
         {
@@ -2158,7 +2158,7 @@
           ],
           "outcomes": [
             "আসল `adaptation_lab.json` ফলাফলে Base, Full, LoRA ও INT8—চারটি Model-এর Class Prediction, Accuracy এবং NLL পাশাপাশি ব্যবচ্ছেদ করতে পারবেন।",
-            "**Prior Entropy $H(332/505) \\approx 0.6427$** হাতে কষে ব্যাখ্যা করতে পারবেন কীভাবে কোনো বৈজ্ঞানিক জ্ঞান ছাড়াই Raw NLL $6.66$ থেকে $0.64$-এ নেমে এল!",
+            "**Prior Entropy $H(332/505) \\approx 0.6427$** হাতে হিসাব করে ব্যাখ্যা করতে পারবেন কীভাবে কোনো বৈজ্ঞানিক জ্ঞান ছাড়াই Raw NLL $6.66$ থেকে $0.64$-এ নেমে এল!",
             "Imbalanced Dataset-এ একক Accuracy-র ফাঁদ এড়িয়ে **Balanced Accuracy (`0.5000`)**, **Recall (`1.0` বনাম `0.0`)** ও **Macro-F1 (`0.3974`)** (Zero-division policy সহ) Pure Python ও `scikit-learn`-এ হিসাব করতে পারবেন।",
             "কেন আমাদের $188$-উদাহরণের Dev সেটটি কেবল **Diagnostic Set** (Blind Test নয়) এবং **Retention Benchmark** কেন জরুরি তা বলতে পারবেন।"
           ]
@@ -2212,7 +2212,7 @@
             },
             {
               "label": "ধাপ ৩ · Holdout Retention ও Safety Suite",
-              "detail": "টাস্ক Metric-এর পাশাপাশি মূল ভাষাদক্ষতা (যেমন Alice গদ্য) ও Safety অক্ষত আছে কি না (**Forgetting Audit**) যাচাই।"
+              "detail": "Task Metric-এর পাশাপাশি মূল ভাষাদক্ষতা (যেমন Alice গদ্য) ও Safety অক্ষত আছে কি না (**Forgetting Audit**) যাচাই।"
             },
             {
               "label": "ধাপ ৪ · Split ভূমিকা ও নির্মোহ সিদ্ধান্ত",
@@ -2392,7 +2392,7 @@
         {
           "type": "adaptation_audit_lab",
           "title": "ইন্টারেক্টিভ ল্যাব: সামগ্রিক Audit ও Retention ভাবনা",
-          "body": "টাস্কের নিজস্ব Metric উন্নত হলেও Model-এর মূল ভাষাগত সক্ষমতা বা নিরাপত্তা নীতি অক্ষত আছে কি না তা স্বয়ংক্রিয়ভাবে নিশ্চিত হয় না। এর জন্য আগে থেকে নির্ধারিত সাধারণ ভাষা ও টাস্কের Retention Suite, ডোমেইন পরিবর্তনের পরীক্ষা এবং ফরম্যাট ও সেফটি মূল্যায়ন প্রয়োজন। আমাদের বর্তমান ল্যাবে মূল Alice গদ্যের সক্ষমতা ধরে রাখা, সাধারণ সত্যনিষ্ঠতা (Factuality) কিংবা বাংলা চ্যাট দক্ষতা পরীক্ষা করা হয়নি—এবং আমরা এমন কোনো দাবিও করছি না যে LoRA ব্যবহার করলেই স্বয়ংক্রিয়ভাবে Forgetting পুরোপুরি বন্ধ হয়ে যায়।"
+          "body": "Task-এর নিজস্ব Metric উন্নত হলেও Model-এর মূল ভাষাগত সক্ষমতা বা নিরাপত্তা নীতি অক্ষত আছে কি না তা স্বয়ংক্রিয়ভাবে নিশ্চিত হয় না। এর জন্য আগে থেকে নির্ধারিত সাধারণ ভাষা ও Task-এর Retention Suite, ডোমেইন পরিবর্তনের পরীক্ষা এবং ফরম্যাট ও সেফটি মূল্যায়ন প্রয়োজন। আমাদের বর্তমান ল্যাবে মূল Alice গদ্যের সক্ষমতা ধরে রাখা, সাধারণ সত্যনিষ্ঠতা (Factuality) কিংবা বাংলা চ্যাট দক্ষতা পরীক্ষা করা হয়নি—এবং আমরা এমন কোনো দাবিও করছি না যে LoRA ব্যবহার করলেই স্বয়ংক্রিয়ভাবে Forgetting পুরোপুরি বন্ধ হয়ে যায়।"
         },
         {
           "type": "concept_check",
@@ -2439,7 +2439,7 @@
               "level": "Intermediate",
               "question": "অনেকে বলেন, ‘LoRA ব্যবহার করেছি তাই Catastrophic Forgetting হবে না’—এই দাবি কি সত্য?",
               "answer": "**না!** LoRA মূল Base Weight $W_0$ না বদলালেও, অ্যাডাপ্টার $\\Delta W$ সক্রিয় অবস্থায় কার্যকর Weight হলো $W_0 + \\frac{\\alpha}{r}BA$—যা সাধারণ Prompt-এও আচরণ বদলে ফেলতে ও পুরোনো দক্ষতা ক্ষয় করতে পারে! LoRA সাধারণত Full Fine-tuning-এর চেয়ে *কম* ভুলে যায়, কিন্তু শূন্য Forgetting স্বয়ংক্রিয়ভাবে নিশ্চিত করে না—এজন্য আলাদা **Retention Suite** চালিয়ে মাপতেই হয়।",
-              "followUp": "Unmerged LoRA-তে Retention শূন্য-ক্ষতির একটি চতুর উপায় কী? সাধারণ প্রশ্নের জন্য Adapter বন্ধ করে ($\\mathrm{Scale}=0$) মূল Base চালানো, আর নির্দিষ্ট টাস্কে Router দিয়ে Adapter চালু করা!"
+              "followUp": "Unmerged LoRA-তে Retention শূন্য-ক্ষতির একটি চতুর উপায় কী? সাধারণ প্রশ্নের জন্য Adapter বন্ধ করে ($\\mathrm{Scale}=0$) মূল Base চালানো, আর নির্দিষ্ট Task-এ Router দিয়ে Adapter চালু করা!"
             },
             {
               "concept": "Diagnostic Dev vs Confirmation Test",
@@ -2459,7 +2459,7 @@
         },
         {
           "type": "callout",
-          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **Raw NLL নামা দেখেই Discrimination ধরে নেওয়া:** Prior Entropy $H(p)$ না পেরোনো পর্যন্ত NLL নামা কেবল Format + Prior শেখা।\n2. **Confusion Matrix ছাড়া একক Accuracy রিপোর্ট করা:** `Recall_C = 0.0` এবং `BalancedAcc = 0.50` লুকিয়ে থাকে।\n3. **LoRA মানেই ‘শূন্য Forgetting’ দাবি করা:** Retention Suite ছাড়া এই দাবি বৈধ নয়।\n\n### Cheat Sheet\n- **Observed Collapse:** Base `0 S / 188 C (34.04%)` $\\to$ Full/LoRA/INT8 `188 S / 0 C (65.96%)` = Majority Baseline!\n- **Prior Entropy:** $H(332/505) = 0.6427$ vs Full NLL `0.6445`, LoRA NLL `0.6461`।\n- **Imbalanced Metrics:** `BalancedAcc = 0.5000` | `Recall_C = 0.0000` | `Macro-F1 = 0.3974` (`zero_division=0`)।\n\n**পরের পাঠে কী শিখব?** এই সমস্ত নির্ভুল সংখ্যা, ৭টি Export ফাইল এবং Deterministic Run কীভাবে যেকোনো মেশিনে হুবহু পুনরুৎপাদন (**Reproduce**) ও Inference Reload করা হয়, তা দেখব পরের পাঠে!"
         },
         {
@@ -2503,7 +2503,7 @@
         },
         {
           "type": "math",
-          "title": "২. পুনরুৎপাদনযোগ্য Artifact পাইপলাইনের নির্ধারক (Deterministic) চুক্তি",
+          "title": "২. পুনরুৎপাদনযোগ্য Artifact Pipeline-এর নির্ধারক (Deterministic) চুক্তি",
           "lead": "একই পিন করা Base Hash, একই ডেটা Role বিভাজন, একই বিচ্ছিন্ন RNG Seed এবং একই Recipe দিলে দুটি স্বাধীন রান থেকে হুবহু অভিন্ন Artifact Bundle তৈরি হওয়াই Reproducibility চুক্তি:",
           "body": "\\mathrm{ArtifactBundle} = \\mathrm{DeterministicRun}\\!\\left(\\mathrm{SHA256}(W_0),\\, \\mathrm{DataRoles},\\, \\mathrm{Seed}_{\\mathrm{isolated}},\\, \\mathrm{Recipe}\\right)",
           "symbols": [
@@ -2628,7 +2628,7 @@
         },
         {
           "type": "callout",
-          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **গ্লোবাল RNG নষ্ট করে টেস্ট চালানো:** `fork_rng` ছাড়া Seed বসালে অন্য মডিউলের র‍্যান্ডমনেস বদলে যায়।\n2. **অপ্ট-ইন ফ্ল্যাগ ছাড়া বান্ডল অ্যাসেট ওভাররাইট করা:** `--write-labs`-এর মতো সচেতন ফ্ল্যাগ সবসময় রাখুন।\n3. **Training History-তে Dev Metric দেখে সেরা Epoch বাছা:** এতে অজান্তেই Selection Bias ও Dev Leakage ঢুকে পড়ে।\n\n### Cheat Sheet\n- **Deterministic Recipe:** Seed `25` (LoRA) / `250` (Batch), CPU `float64`, `12` Epochs, `fork_rng`।\n- **৭টি Export Artifact:** `model_card.json`, `golden.json`, `adapter.json`, `weights.json`, `full.pt`, `lora_merged.pt`, `checksums.json`।\n- **Sample 0 Base Logits:** `S (83) = -0.4730`, `C (67) = -0.2171` (Python ও App-এ $100\\%$ অভিন্ন!)।\n\n**পরের পাঠে কী শিখব?** পুরো Workflow তো নিখুঁতভাবে পুনরুৎপাদন ও যাচাই হলো—এবার একজন সিনিয়র রিভিউয়ারের সামনে দাঁড়িয়ে আমাদের পুরো বাস্তব পরীক্ষার **নির্মোহ মূল্যায়ন ও যুক্তিখণ্ডন** কীভাবে করব, এবং Cherry-Picking ছাড়াই পরের বৈধ পরীক্ষা কীভাবে সাজাব, তা দেখব পরের পাঠে!"
         },
         {
@@ -2643,7 +2643,7 @@
     {
       "id": "ch25_experiment",
       "title": "বাস্তব পরীক্ষার ফল যাচাই এবং সিদ্ধান্তের পক্ষে যুক্তি",
-      "subtitle": "মেকানিক্স ১০০% প্রমাণিত বনাম টাস্ক ব্যর্থ—সৎ Parameter হিসাব, Causal Ablation ও Anti-Cherry-Picking শৃঙ্খলা",
+      "subtitle": "মেকানিক্স ১০০% প্রমাণিত বনাম Task ব্যর্থ—সৎ Parameter হিসাব, Causal Ablation ও Anti-Cherry-Picking শৃঙ্খলা",
       "duration": "50 min",
       "icon": "code",
       "blocks": [
@@ -2651,7 +2651,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "এখন সময় হলো একজন সিনিয়র রিভিউয়ারের মতো আমাদের পুরো পরীক্ষার চুলচেরা ময়নাতদন্ত করার! আজ আমরা শিখব কীভাবে **প্রমাণিত মেকানিক্স** আর **ব্যর্থ টাস্ক ফলাফল**-কে পরিষ্কার দুটি কলামে আলাদা করতে হয়, কেন `10.64%` Trainable Parameter মানেই `90%` Memory সাশ্রয় নয়, কেন আলাদা **Causal Ablation** ছাড়া কোনো একক কারণকে চূড়ান্ত দায়ী বলা অবৈজ্ঞানিক, এবং কীভাবে **Anti-Cherry-Picking** শৃঙ্খলা ধরে রাখতে হয়!",
+          "goal": "এবার পরীক্ষার কোন দিক কাজ করেছে আর কোন দিক করেনি, তা আলাদা করে দেখব। আজ আমরা শিখব কীভাবে **প্রমাণিত মেকানিক্স** আর **ব্যর্থ Task ফলাফল**-কে পরিষ্কার দুটি কলামে আলাদা করতে হয়, কেন `10.64%` Trainable Parameter মানেই `90%` Memory সাশ্রয় নয়, কেন আলাদা **Causal Ablation** ছাড়া কোনো একক কারণকে চূড়ান্ত দায়ী বলা অবৈজ্ঞানিক, এবং কীভাবে **Anti-Cherry-Picking** শৃঙ্খলা ধরে রাখতে হয়!",
           "prerequisites": [
             "আগের পাঠসমূহ: LoRA, INT8 Control, Mode Collapse ও Workflow",
             "Causal Ablation ও Multiple-Testing Bias (Cherry-Picking)",
@@ -2716,7 +2716,7 @@
               "detail": "সব লক হলে চূড়ান্ত অদেখা Test-এ একবার রান করে Majority Baseline, Macro-F1, Calibration ও Retention একসঙ্গে প্রকাশ।"
             }
           ],
-          "caption": "সোনালি ইন্টারভিউ বাক্য: “আমাদের কোড ও গাণিতিক মেকানিক্স ১০০% নির্ভুল, কিন্তু এই সীমিত Evidence-হীন Input-এ আসল টাস্কটি ব্যর্থ হয়েছে”—এই সততাই প্রকৃত প্রকৌশল!"
+          "caption": "সোনালি ইন্টারভিউ বাক্য: “আমাদের কোড ও গাণিতিক মেকানিক্স ১০০% নির্ভুল, কিন্তু এই সীমিত Evidence-হীন Input-এ আসল Task-টি ব্যর্থ হয়েছে”—এই সততাই প্রকৃত প্রকৌশল!"
         },
         {
           "type": "text",
@@ -2747,7 +2747,7 @@
               "level": "Core",
               "question": "আপনার প্রজেক্টে সব Unit Test (Loss Mask, Gradients, Merge, Golden Logits) ১০০% পাস করেছে—তবু Model কাজে লাগছে না কেন?",
               "answer": "কারণ Unit Test প্রমাণ করে **Implementation Correctness** (কোডে গাণিতিক বাগ নেই)। কিন্তু একটি কাজের Model বানাতে আরও লাগে **Task Signal** (Input-এ যথেষ্ট Evidence থাকা), **Model Capacity** (সঠিক আর্কিটেকচার ও Width) এবং **Clean Supervision**। আমাদের পরীক্ষায় মেকানিক্স $100\\%$ নির্ভুল হলেও Evidence-হীন $24$-byte Input-এ আসল পার্থক্য করার সংকেতই অনুপস্থিত।",
-              "followUp": "Production ML সিস্টেমে তাই কোন দুই ধরনের টেস্ট আলাদাভাবে রাখতে হয়? (১) **Software/Math Unit Tests** (মেকানিক্স) এবং (২) **Offline/Online Behavioral & Baseline Evals** (টাস্ক উপযোগিতা)!"
+              "followUp": "Production ML সিস্টেমে তাই কোন দুই ধরনের টেস্ট আলাদাভাবে রাখতে হয়? (১) **Software/Math Unit Tests** (মেকানিক্স) এবং (২) **Offline/Online Behavioral & Baseline Evals** (Task উপযোগিতা)!"
             },
             {
               "concept": "Why Single Cause Cannot Be Blamed Without Ablation",
@@ -2788,8 +2788,8 @@
         },
         {
           "type": "callout",
-          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
-          "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **মেকানিক্স যাচাইকে টাস্ক সাফল্য বলে চালানো:** Unit Test পাস + Loss নামা $\\neq$ Baseline হারানো।\n2. **Ablation ছাড়াই একক কারণকে দায়ী ঘোষণা করা:** চারটি সম্ভাব্য বাধার প্রতিটির প্রভাব আলাদাভাবে মাপতে হয়।\n3. **দেখা Dev সেটে Seed/Epoch Cherry-Picking করা:** এতে ভুয়া Winner's Curse তৈরি হয়।\n\n### Cheat Sheet\n- **Proven Mechanics:** Frozen Base, Step-1/2 Gradients, Masked 257-NLL, Merge ($<10^{-12}$), INT8 Head (`0.005801`).\n- **Observed Failure:** Full/LoRA/INT8 Gain over Majority $= \\mathbf{0.000000}$ (Paired wins `b=0, c=0`).\n- **Parameter Truth:** `534` Trainable ($10.64\\%$) | `5,553` Unmerged Total | `5,019` Merged Export।\n\n**পরের পাঠে কী শিখব?** এতক্ষণ আমরা শিখলাম **SFT (Supervised Fine-Tuning)**—যেখানে Model-কে একটি নির্দিষ্ট উত্তর নকল করতে শেখানো হয়। কিন্তু খোলামেলা প্রশ্নে যখন একাধিক সঠিক উত্তর সম্ভব, তখন মানুষের তুলনামূলক পছন্দ (**Chosen বনাম Rejected**) থেকে Model-কে কীভাবে Align করবেন? পরের পাঠে আসছে **RLHF-এর অন্তর্দৃষ্টি ও DPO (Direct Preference Optimization)**!"
+          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
+          "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **মেকানিক্স যাচাইকে Task সাফল্য বলে চালানো:** Unit Test পাস + Loss নামা $\\neq$ Baseline হারানো।\n2. **Ablation ছাড়াই একক কারণকে দায়ী ঘোষণা করা:** চারটি সম্ভাব্য বাধার প্রতিটির প্রভাব আলাদাভাবে মাপতে হয়।\n3. **দেখা Dev সেটে Seed/Epoch Cherry-Picking করা:** এতে ভুয়া Winner's Curse তৈরি হয়।\n\n### Cheat Sheet\n- **Proven Mechanics:** Frozen Base, Step-1/2 Gradients, Masked 257-NLL, Merge ($<10^{-12}$), INT8 Head (`0.005801`).\n- **Observed Failure:** Full/LoRA/INT8 Gain over Majority $= \\mathbf{0.000000}$ (Paired wins `b=0, c=0`).\n- **Parameter Truth:** `534` Trainable ($10.64\\%$) | `5,553` Unmerged Total | `5,019` Merged Export।\n\n**পরের পাঠে কী শিখব?** এতক্ষণ আমরা শিখলাম **SFT (Supervised Fine-Tuning)**—যেখানে Model-কে একটি নির্দিষ্ট উত্তর নকল করতে শেখানো হয়। কিন্তু খোলামেলা প্রশ্নে যখন একাধিক সঠিক উত্তর সম্ভব, তখন মানুষের তুলনামূলক পছন্দ (**Chosen বনাম Rejected**) থেকে Model-কে কীভাবে Align করবেন? পরের পাঠে আসছে **RLHF-এর অন্তর্দৃষ্টি ও DPO (Direct Preference Optimization)**!"
         },
         {
           "type": "checkpoint",
@@ -3007,7 +3007,7 @@
             "অসীম (`+inf`)"
           ],
           "answer": 1,
-          "explanation": "একদম ঠিক! $\\pi_\\theta = \\pi_{\\mathrm{ref}}$ হলে $\\log\\frac{\\pi_\\theta}{\\pi_{\\mathrm{ref}}} = \\log(1) = 0$ হয় উভয় উত্তরের জন্যই! ফলে মার্জিন $\\Delta = 0$ এবং $\\mathcal{L}_{\\mathrm{DPO}} = -\\log\\sigma(0) = \\log(2) \\approx 0.693147$—যা DPO পাইপলাইন ঠিকমতো কাজ করছে কি না তা বোঝার দারুণ Sanity Check!"
+          "explanation": "একদম ঠিক! $\\pi_\\theta = \\pi_{\\mathrm{ref}}$ হলে $\\log\\frac{\\pi_\\theta}{\\pi_{\\mathrm{ref}}} = \\log(1) = 0$ হয় উভয় উত্তরের জন্যই! ফলে মার্জিন $\\Delta = 0$ এবং $\\mathcal{L}_{\\mathrm{DPO}} = -\\log\\sigma(0) = \\log(2) \\approx 0.693147$—যা DPO Pipeline ঠিকমতো কাজ করছে কি না তা বোঝার দারুণ Sanity Check!"
         },
         {
           "type": "interview_qa",
@@ -3040,7 +3040,7 @@
               "level": "Intermediate",
               "question": "DPO-তে Response Token-গুলোর লগ-সম্ভাব্যতার যোগফল (Sum) নেওয়ার বদলে গড় (Mean) নিলে কী পরিবর্তন ঘটে?",
               "answer": "গাণিতিকভাবে সমগ্র Sequence-এর যৌথ লগ-সম্ভাব্যতা $\\log \\pi(y \\mid x) = \\sum_{t=1}^{|y|} \\log \\pi(y_t \\mid x, y_{<t})$ হলো **যোগফল**। তাই যোগফলের বদলে গড় নিলে DPO-র মূল KL-নিয়ন্ত্রিত RLHF সমতুল্যতা বদলে যায় (আমাদের উদাহরণেই মার্জিন `0.3` থেকে কমে `0.2` হয়ে গেছে)। তবে লক্ষ্যণীয়: Sum-ভিত্তিক DPO-তে লম্বা উত্তরের প্রতি Length Bias হতে পারে বলে **SimPO**-এর মতো নতুন গবেষণায় সচেতনভাবে Length-normalized মার্জিন ও Target Margin $\\gamma$ আলাদা তত্ত্বে ব্যবহার করা হয়।",
-              "followUp": "DPO পাইপলাইনে Prompt Token-গুলো কি $\\log\\pi(y\\mid x)$ যোগফলে ঢুকবে? কখনোই না—কেবল বৈধ Response Token-গুলোই (`mask == 1`) যোগ হবে, এবং $\\pi_\\theta$ ও $\\pi_{\\mathrm{ref}}$-এ হুবহু একই Mask থাকতে হবে!"
+              "followUp": "DPO Pipeline-এ Prompt Token-গুলো কি $\\log\\pi(y\\mid x)$ যোগফলে ঢুকবে? কখনোই না—কেবল বৈধ Response Token-গুলোই (`mask == 1`) যোগ হবে, এবং $\\pi_\\theta$ ও $\\pi_{\\mathrm{ref}}$-এ হুবহু একই Mask থাকতে হবে!"
             },
             {
               "concept": "Length Shortcut & Reward Hacking",
@@ -3067,7 +3067,7 @@
         },
         {
           "type": "callout",
-          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **Unstable `math.exp(-margin)` লেখা:** বড় ঋণাত্মক মার্জিনে `OverflowError` হবে—সবসময় `softplus` / `logaddexp` ব্যবহার করুন।\n2. **মানুষের পছন্দকে Factual Truth ধরে নেওয়া:** সুন্দর ও লম্বা ভুল উত্তরও Chosen হতে পারে—Factuality আলাদাভাবে মাপুন।\n3. **Token Sum-এর বদলে চুপচাপ Mean বসানো এবং $\\pi_{\\mathrm{ref}}$ Freeze করতে ভুলে যাওয়া।**\n\n### Cheat Sheet\n- **DPO Loss:** $\\mathcal{L}_{\\mathrm{DPO}} = \\log(1 + e^{-\\Delta})$, যেখানে $\\Delta = \\beta(r_w - r_l)$।\n- **Sanity Checks:** Step 0 ($\\pi_\\theta = \\pi_{\\mathrm{ref}}$) $\\implies \\Delta = 0, \\mathcal{L} = \\ln(2) \\approx 0.693147$ | Worked ($r_w=0.4, r_l=-0.2, \\beta=0.5$) $\\implies \\Delta = 0.3, \\mathcal{L} = 0.554355$।\n- **Token Gradient:** $\\frac{\\partial\\mathcal{L}}{\\partial\\log\\pi_\\theta(y_{w,t})} = -\\beta\\sigma(-\\Delta) \\approx -0.212779$ (Chosen), $+\\beta\\sigma(-\\Delta) \\approx +0.212779$ (Rejected)।\n\n**পরের পাঠে কী শিখব?** Prompting, RAG, SFT, LoRA, QLoRA এবং DPO—আমাদের টুলবক্স এখন পরিপূর্ণ! কিন্তু বাস্তব প্রজেক্টে ক্লায়েন্টের চাহিদা শুনে ঠিক **কোন কৌশল কখন বেছে নেবেন** আর কীভাবে SFT বনাম PEFT-এর ভুল দ্বৈততা এড়াবেন, তা সাজিয়ে দেব পরের পাঠে!"
         },
         {
@@ -3090,7 +3090,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "বাস্তব সিস্টেম ডিজাইনে সবচেয়ে দামি ভুল হলো **সমস্যা বোঝার আগেই Fine-tuning শুরু করে দেওয়া!** আজ আমরা একটি স্পষ্ট প্রকৌশলগত সিদ্ধান্ত কাঠামো দাঁড় করাব—কেন সবার আগে **Prompting Baseline** মাপতে হয়, কীভাবে **SFT বনাম PEFT-এর ভুল দ্বৈততা** ভাঙতে হয়, এবং কীভাবে বাস্তব Production-এ **RAG + Prompting + LoRA** একসঙ্গে স্তরে স্তরে (**Layered Architecture**) কাজ করে!",
+          "goal": "বাস্তব সিস্টেম ডিজাইনে বড় খরচের কারণ হলো **সমস্যা বোঝার আগেই Fine-tuning শুরু করে দেওয়া!** আজ আমরা কোন পরিস্থিতিতে কী করবেন, তার নিয়ম গুছিয়ে নেব—কেন সবার আগে **Prompting Baseline** মাপতে হয়, কীভাবে **SFT বনাম PEFT-এর ভুল দ্বৈততা** ভাঙতে হয়, এবং কীভাবে বাস্তব Production-এ **RAG + Prompting + LoRA** একসঙ্গে স্তরে স্তরে (**Layered Architecture**) কাজ করে!",
           "prerequisites": [
             "Book 4 · Chapter 3: RAG Retrieval ও Context Grounding",
             "আগের পাঠসমূহ: SFT, LoRA, QLoRA এবং DPO",
@@ -3235,13 +3235,13 @@
               "level": "Senior",
               "question": "একজন এক্সিকিউটিভ বললেন, ‘প্রতিযোগীরা সবাই কাস্টম Fine-tuned LLM বানাচ্ছে, আমরাও একটা বানাই!’—সিস্টেম ডিজাইন মিটিংয়ে আপনি কীভাবে নেতৃত্ব দেবেন?",
               "answer": "আমি প্রথমেই ব্যবসায়িক সমস্যা ও সাফল্যের Metric (যেমন Resolution Rate, Latency, Cost/Query, Hallucination Rate) নির্ধারণ করব। তারপর প্রস্তাব দেব ১ সপ্তাহের মধ্যে **Prompting + RAG Baseline** মাপার—যদি তাতে লক্ষ্যমাত্রা পূরণ না হয়, তবেই সুনির্দিষ্ট Error Bucket দেখিয়ে **LoRA SFT**-এর Ablation রোডম্যাপে যাব। প্রতি স্তরের ROI ও রক্ষণাবেক্ষণ খরচ (Re-training, Drift Monitoring) টেবিলে সাজিয়ে দেখালে এক্সিকিউটিভরাও ডেটা-চালিত সিদ্ধান্তে একমত হন।",
-              "followUp": "একটি Fine-tuned Model Production-এ নেওয়ার পর সবচেয়ে বড় লুকানো রক্ষণাবেক্ষণ খরচ কী? প্রতি ৬ মাসে যখন নতুন আরও শক্তিশালী Base Model বেরোয়, তখন পুরোনো Base-এর LoRA Adapter তাতে চলে না—পুরো ডেটা পাইপলাইন আবার চালিয়ে Re-train ও Re-evaluate করতে হয়!"
+              "followUp": "একটি Fine-tuned Model Production-এ নেওয়ার পর সবচেয়ে বড় লুকানো রক্ষণাবেক্ষণ খরচ কী? প্রতি ৬ মাসে যখন নতুন আরও শক্তিশালী Base Model বেরোয়, তখন পুরোনো Base-এর LoRA Adapter তাতে চলে না—পুরো ডেটা Pipeline আবার চালিয়ে Re-train ও Re-evaluate করতে হয়!"
             }
           ]
         },
         {
           "type": "callout",
-          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠের সেতু",
+          "title": "৫. সাধারণ ভুল, Cheat Sheet ও পরের পাঠ",
           "body": "### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **Prompting Baseline না মেপেই Fine-tuning-এ ঝাঁপ দেওয়া:** অনেক সময় Few-shot Prompting-ই ৯০%+ সমস্যা মিটিয়ে দেয়।\n2. **‘SFT নাকি LoRA?’—দুটি ভিন্ন অক্ষকে প্রতিদ্বন্দ্বী ভাবা:** SFT হলো কী শিখবে (Objective), LoRA হলো কীভাবে আপডেট হবে (Mechanism)।\n3. **প্রতিটি স্তরের আলাদা Ablation না মাপা:** RAG আর LoRA একসঙ্গে বসালে কে কতটুকু লাভ দিল তা আলাদাভাবে যাচাই করুন।\n\n### Cheat Sheet\n- **Fresh Knowledge + Citations** $\\to$ **RAG** | **Format/Style/Latency** $\\to$ **Prompting $\\to$ LoRA SFT** | **Human Preference/Safety** $\\to$ **DPO**।\n- **2 Orthogonal Axes:** Objective (`SFT / DPO / RLHF`) $\\times$ Update Mechanism (`Full / LoRA / QLoRA`)।\n- **Golden Rule:** Smallest Measured Candidate দিয়ে শুরু করে প্রমাণ দেখে ধাপে ধাপে জটিলতা বাড়ান।\n\n**পরের পাঠে কী শিখব?** এই অধ্যায়ের চূড়ান্ত গন্তব্য—**Interview প্রস্তুতি: সূত্র বের করা, কোডে লেখা ও যাচাই!** পরের পাঠে আমরা পুরো Chapter 25-এর সব সূত্র, সব যাচাইকৃত সংখ্যা, ৬টি কোর কোডিং ফাংশন এবং ৮টি সিনিয়র-লেভেল মক ইন্টারভিউ প্রশ্ন এক ছাদের নিচে সাজিয়ে নিজেকে ১০০% প্রস্তুত করে নেব!"
         },
         {
@@ -3264,7 +3264,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "অভিনন্দন—আপনি Chapter 25-এর একদম চূড়ান্ত প্রস্তুতি পাঠে পৌঁছে গেছেন! আজ আমরা পুরো অধ্যায়ের প্রতিটি গাণিতিক সূত্র, কোডিং প্যাটার্ন, ব্যর্থ পরীক্ষার নির্মোহ ব্যবচ্ছেদ এবং Production সিস্টেম ডিজাইনকে এক সুতোয় বাঁধব—যাতে যেকোনো **Senior LLM Engineering Interview**-তে হোয়াইটবোর্ড, লাইভ কোডিং এবং সিস্টেম ডিজাইন—সব রাউন্ডে আপনি আত্মবিশ্বাসের সাথে নেতৃত্ব দিতে পারেন!",
+          "goal": "অভিনন্দন—আপনি Chapter 25-এর একদম চূড়ান্ত প্রস্তুতি পাঠে পৌঁছে গেছেন! আজ আমরা গাণিতিক সূত্র, Coding Pattern, ব্যর্থ পরীক্ষার বিশ্লেষণ ও Production System Design একসঙ্গে কাজে লাগাব—যাতে যেকোনো **Senior LLM Engineering Interview**-তে হোয়াইটবোর্ড, লাইভ কোডিং এবং সিস্টেম ডিজাইন—সব রাউন্ডে আপনি আত্মবিশ্বাসের সাথে নেতৃত্ব দিতে পারেন!",
           "prerequisites": [
             "Chapter 25-এর আগের সব ১৫টি পাঠ",
             "LoRA, Response Masking, INT8, Memory Accounting ও DPO সূত্রসমূহ",
@@ -3297,7 +3297,7 @@
             {
               "symbol": "$\\Delta\\mathrm{Eval}_{\\mathrm{vs\\ Baseline}} > 0$",
               "meaning": "অদেখা Source-Grouped সেটে Train-locked Majority / Prompting Baseline-কে সত্যিই হারানো (Macro-F1 / BalancedAcc সহ)।",
-              "example": "আমাদের restricted $24$-byte পরীক্ষায় এটি **`False` (`Gain = 0.0`)**—তাই টাস্কটি ব্যর্থ!"
+              "example": "আমাদের restricted $24$-byte পরীক্ষায় এটি **`False` (`Gain = 0.0`)**—তাই Task-টি ব্যর্থ!"
             },
             {
               "symbol": "$\\mathrm{RetentionSafe}$",
@@ -3338,8 +3338,8 @@
         },
         {
           "type": "text",
-          "title": "৪. যাচাই করা Output, ৬টি কোডিং অনুশীলনী ফাংশন ও সিস্টেম ডিজাইন চেকলিস্ট",
-          "body": "### Option A (Pure Python) ৫-ইন-১ মাস্টার অডিটের লাইভ-যাচাই করা Output\n```text\n[OK] 6 source prefixes x 4 complete 259-logit references verified\n[OK] LoRA 534/5019 params | Merge max err=2.22e-16\n[OK] INT8 Head: 16,576 B -> 4,144 B | Max weight err=0.005801\n[OK] Honest Audit: Acc=0.659574 == Majority | Prior H=0.6427 vs Full NLL=0.6445\n[OK] DPO Sanity: Step0=0.693147 | Worked(margin=0.3)=0.554355\n```\nএকই স্ক্রিপ্টে পুরো Chapter 25-এর ৫টি মূল প্রমাণ `[OK]` হয়ে গেল!\n\n### কোডিং রাউন্ডের জন্য যে ৬টি কোর ফাংশন না দেখে লেখা অনুশীলন করবেন\n1. **Prefix + Padding + Target Position:** `build_prefix(text, max_bytes=24, max_len=26)` — ছোট বাক্যে `len(ids) - 1`, Multi-byte UTF-8 ও Prefix Collision টেস্টসহ।\n2. **Safe Masked Response Loss:** `masked_ce_loss(logits, targets, mask, blocked_ids)` — `0/0` All-Ignored Guard এবং `-inf` Vocabulary Blocking সহ।\n3. **LoRA Linear + Merge + Freeze Audit:** `LoRALinear` (Asymmetric Init `B=0, A~N`, `requires_grad=False`, `merge()`, `assert base.grad is None`)।\n4. **Row-wise Symmetric INT8 Round-trip:** `quantize_rowwise_int8(W)` — Zero-row `scale=1.0`, Clamp `[-127, 127]` ও `max_err <= s/2` Assert সহ।\n5. **Token-Weighted Gradient Accumulation:** `accum_loss = sum(microbatch_loss_sums) / total_valid_tokens`।\n6. **Numerically Stable DPO Loss:** `dpo_loss(pol_w, ref_w, pol_l, ref_l, beta)` — `softplus(-margin)` এবং Token-Sum Masking সহ।\n\n### Evaluation ও System Design চূড়ান্ত চেকলিস্ট\n- **Evaluation Matrix:** Majority Baseline, Loss একক/Denominator, Confusion Matrix, Balanced Accuracy, Macro-F1 (`zero_division`), Calibration, Holdout Retention এবং Role Contamination।\n- **Serving & Lifecycle:** Merged বনাম Multi-LoRA Hot-swap, Double-Merge Guard, Base SHA-256 Pinning, নিরাপদ `safetensors` / `weights_only=True`, Tokenizer/Template Pinning এবং Inference Export বনাম Training Resume পার্থক্য।\n- **পরবর্তী গন্তব্য:** **Book 4 · Chapter 5: LLM Evaluation, Reliability & Serving**—যেখানে আমরা Production Evaluation, গার্ডরেইল ও Serving চুক্তি নিয়ে পূর্ণাঙ্গ কাজ করব!"
+          "title": "৪. যাচাই করা Output, ৬টি কোডিং অনুশীলনী ফাংশন ও সিস্টেম ডিজাইন Checklist",
+          "body": "### Option A (Pure Python) ৫-ইন-১ মাস্টার অডিটের লাইভ-যাচাই করা Output\n```text\n[OK] 6 source prefixes x 4 complete 259-logit references verified\n[OK] LoRA 534/5019 params | Merge max err=2.22e-16\n[OK] INT8 Head: 16,576 B -> 4,144 B | Max weight err=0.005801\n[OK] Honest Audit: Acc=0.659574 == Majority | Prior H=0.6427 vs Full NLL=0.6445\n[OK] DPO Sanity: Step0=0.693147 | Worked(margin=0.3)=0.554355\n```\nএকই স্ক্রিপ্টে পুরো Chapter 25-এর ৫টি মূল প্রমাণ `[OK]` হয়ে গেল!\n\n### কোডিং রাউন্ডের জন্য যে ৬টি কোর ফাংশন না দেখে লেখা অনুশীলন করবেন\n1. **Prefix + Padding + Target Position:** `build_prefix(text, max_bytes=24, max_len=26)` — ছোট বাক্যে `len(ids) - 1`, Multi-byte UTF-8 ও Prefix Collision টেস্টসহ।\n2. **Safe Masked Response Loss:** `masked_ce_loss(logits, targets, mask, blocked_ids)` — `0/0` All-Ignored Guard এবং `-inf` Vocabulary Blocking সহ।\n3. **LoRA Linear + Merge + Freeze Audit:** `LoRALinear` (Asymmetric Init `B=0, A~N`, `requires_grad=False`, `merge()`, `assert base.grad is None`)।\n4. **Row-wise Symmetric INT8 Round-trip:** `quantize_rowwise_int8(W)` — Zero-row `scale=1.0`, Clamp `[-127, 127]` ও `max_err <= s/2` Assert সহ।\n5. **Token-Weighted Gradient Accumulation:** `accum_loss = sum(microbatch_loss_sums) / total_valid_tokens`।\n6. **Numerically Stable DPO Loss:** `dpo_loss(pol_w, ref_w, pol_l, ref_l, beta)` — `softplus(-margin)` এবং Token-Sum Masking সহ।\n\n### Evaluation ও System Design চূড়ান্ত Checklist\n- **Evaluation Matrix:** Majority Baseline, Loss একক/Denominator, Confusion Matrix, Balanced Accuracy, Macro-F1 (`zero_division`), Calibration, Holdout Retention এবং Role Contamination।\n- **Serving & Lifecycle:** Merged বনাম Multi-LoRA Hot-swap, Double-Merge Guard, Base SHA-256 Pinning, নিরাপদ `safetensors` / `weights_only=True`, Tokenizer/Template Pinning এবং Inference Export বনাম Training Resume পার্থক্য।\n- **পরবর্তী গন্তব্য:** **Book 4 · Chapter 5: LLM Evaluation, Reliability & Serving**—যেখানে আমরা Production Evaluation, গার্ডরেইল ও Serving চুক্তি নিয়ে পূর্ণাঙ্গ কাজ করব!"
         },
         {
           "type": "concept_check",
@@ -3385,7 +3385,7 @@
               "concept": "Defending a Failed Experiment Honestly",
               "level": "Intermediate",
               "question": "আপনার Fine-tuning পরীক্ষায় Loss ১০ গুণ কমেছে এবং Accuracy $34\\% \\to 66\\%$ হয়েছে, কিন্তু রিভিউয়ার বলছেন Model ব্যর্থ—আপনি কীভাবে জবাব দেবেন?",
-              "answer": "আমি রিভিউয়ারের সাথে পূর্ণ একমত হয়ে Confusion Matrix দেখাব: Base ছিল All-`CONTRADICT` ($64/188 = 34.04\\%$), আর Full/LoRA হলো All-`SUPPORT` ($124/188 = 65.96\\%$)—অর্থাৎ **Majority Baseline-এর ওপরে Gain = `0.0`**, `BalancedAcc = 0.50`, `Recall_C = 0.0`। Loss $6.66 \\to 0.64$ নেমেছে কেবল Format Token ও Train Prior Entropy ($H(332/505) = 0.6427$) শেখার কারণে। মেকানিক্স $100\\%$ নির্ভুল হলেও Evidence-হীন $24$-byte Input-এ টাস্কটি ব্যর্থ।",
+              "answer": "আমি রিভিউয়ারের সাথে পূর্ণ একমত হয়ে Confusion Matrix দেখাব: Base ছিল All-`CONTRADICT` ($64/188 = 34.04\\%$), আর Full/LoRA হলো All-`SUPPORT` ($124/188 = 65.96\\%$)—অর্থাৎ **Majority Baseline-এর ওপরে Gain = `0.0`**, `BalancedAcc = 0.50`, `Recall_C = 0.0`। Loss $6.66 \\to 0.64$ নেমেছে কেবল Format Token ও Train Prior Entropy ($H(332/505) = 0.6427$) শেখার কারণে। মেকানিক্স $100\\%$ নির্ভুল হলেও Evidence-হীন $24$-byte Input-এ Task-টি ব্যর্থ।",
               "followUp": "এই ব্যর্থতার জন্য কি কেবল $24$-byte Truncation-কে এককভাবে দায়ী করবেন? না—আলাদা **Causal Ablation** ছাড়া Domain Mismatch, Width=8 ও Head-only LoRA-র প্রভাব আলাদা করা যায় না।"
             },
             {
@@ -3438,7 +3438,7 @@
       "id": "ch25_q1",
       "question": "LoRA এবং Supervised Fine-Tuning (SFT)-এর মধ্যকার প্রকৃত সম্পর্ক কী?",
       "options": [
-        "এ দুটি পরস্পরবিরোধী টাস্ক, যা একসঙ্গে কখনোই ব্যবহার করা যায় না",
+        "এ দুটি পরস্পরবিরোধী Task, যা একসঙ্গে কখনোই ব্যবহার করা যায় না",
         "SFT হলো Training-এর Objective, আর LoRA ব্যবহার করে সেই SFT Objective অপটিমাইজ করা যায়",
         "SFT মানেই Model-এর Weight কম বিটে Quantize করা",
         "LoRA মানেই বাইরের ডকুমেন্ট থেকে তথ্য Retrieval করা"
@@ -3760,7 +3760,7 @@
     {
       "id": "ch25_ex_scale",
       "title": "Rank ও Alpha থেকে LoRA Scaling নির্ণয়",
-      "prompt": "প্রমিত LoRA সূত্রে Alpha = 2 এবং Rank = 2 হলে আপডেটের কার্যকর স্কেলিং গুণিতক (alpha / rank) হিসাব করে answer ভেরিয়েবলে রাখুন।",
+      "prompt": "প্রমিত LoRA সূত্রে Alpha = 2 এবং Rank = 2 হলে আপডেটের কার্যকর Scaling গুণিতক (alpha / rank) হিসাব করে answer ভেরিয়েবলে রাখুন।",
       "starter": "# Implement locally;assign scalar answer.\nanswer = None\n",
       "solution": "alpha = 2\nrank = 2\nanswer = alpha / rank\n",
       "expected": 1,
@@ -3844,14 +3844,14 @@
       "title": "LoRA-এর গাণিতিক গঠন ও Merge সমতুল্যতা প্রতিপাদন",
       "tag": "ADAPTATION · CODING / DESIGN · 40 MIN",
       "prompt": "আমাদের Model-এর Output Head-এর উদাহরণ ধরে LoRA Factor-গুলোর Shape, Trainable Parameter সংখ্যা, $\\frac{\\alpha}{r}$ Scaling এবং Weight Merge করার গাণিতিক সমতুল্যতা ব্যাখ্যা করুন।",
-      "answer": "আমাদের Output Head-এর মূল Weight Matrix $W_0 \\in \\mathbb{R}^{259 \\times 8}$ (মোট $2072$টি ভুক্তি)। **Rank $r = 2$** বসালে পুরো Model-এর $5019$টি Parameter-এর বদলে মাত্র **$534$টি** Parameter ট্রেন করতে হয়।\n\n- **Factor Shape ও Parameter গণনা:**\n  - $A \\in \\mathbb{R}^{2 \\times 8}$ ($16$টি Parameter) এবং $B \\in \\mathbb{R}^{259 \\times 2}$ ($518$টি Parameter)।\n  - মোট Trainable Parameter $= r(d_{\\mathrm{out}} + d_{\\mathrm{in}}) = 2(259 + 8) = 534$, আর মূল Base Weight ও Bias সম্পূর্ণ Frozen থাকে।\n- **Scaling ও Merge Equivalence:** এখানে $\\alpha = 2, r = 2$ হওয়ায় স্কেলিং $\\frac{\\alpha}{r} = 1$। Matrix Multiplication-এর Distributive Law অনুযায়ী একই `dtype` ও Base Model-এ (Floating-point Tolerance-এর ভেতর):\n\n$$\nh W_0^T + \\frac{\\alpha}{r}(h A^T) B^T = h \\left(W_0 + \\frac{\\alpha}{r} BA\\right)^T\n$$\n\n- **Production Guardrails:** লোড করার সময় **Base SHA-256 Hash**, `Tokenizer ID` ও Target Module সংস্করণ Pin করতে হবে; পাশাপাশি $\\mathrm{Scale} = 0$ ও $\\mathrm{Scale} = 1$-এর Golden Output এবং ভুল Shape-এর Negative Test চালাতে হবে।",
+      "answer": "আমাদের Output Head-এর মূল Weight Matrix $W_0 \\in \\mathbb{R}^{259 \\times 8}$ (মোট $2072$টি ভুক্তি)। **Rank $r = 2$** বসালে পুরো Model-এর $5019$টি Parameter-এর বদলে মাত্র **$534$টি** Parameter ট্রেন করতে হয়।\n\n- **Factor Shape ও Parameter গণনা:**\n  - $A \\in \\mathbb{R}^{2 \\times 8}$ ($16$টি Parameter) এবং $B \\in \\mathbb{R}^{259 \\times 2}$ ($518$টি Parameter)।\n  - মোট Trainable Parameter $= r(d_{\\mathrm{out}} + d_{\\mathrm{in}}) = 2(259 + 8) = 534$, আর মূল Base Weight ও Bias সম্পূর্ণ Frozen থাকে।\n- **Scaling ও Merge Equivalence:** এখানে $\\alpha = 2, r = 2$ হওয়ায় Scaling $\\frac{\\alpha}{r} = 1$। Matrix Multiplication-এর Distributive Law অনুযায়ী একই `dtype` ও Base Model-এ (Floating-point Tolerance-এর ভেতর):\n\n$$\nh W_0^T + \\frac{\\alpha}{r}(h A^T) B^T = h \\left(W_0 + \\frac{\\alpha}{r} BA\\right)^T\n$$\n\n- **Production Guardrails:** লোড করার সময় **Base SHA-256 Hash**, `Tokenizer ID` ও Target Module সংস্করণ Pin করতে হবে; পাশাপাশি $\\mathrm{Scale} = 0$ ও $\\mathrm{Scale} = 1$-এর Golden Output এবং ভুল Shape-এর Negative Test চালাতে হবে।",
       "prerequisiteLessons": [
         "ch25_lora",
         "ch25_merge"
       ]
     },
     {
-      "title": "Response-only SFT পাইপলাইনের বাগ অনুসন্ধান",
+      "title": "Response-only SFT Pipeline-এর বাগ অনুসন্ধান",
       "tag": "ADAPTATION · CODING / DESIGN · 40 MIN",
       "prompt": "একটি SFT রানে দেখা যাচ্ছে Training Loss খুব দ্রুত কমে গেছে, কিন্তু আপনার সন্দেহ হচ্ছে Prompt ও Response-এর Alignment বা Loss Masking-এ কোনো সূক্ষ্ম গলদ আছে। আপনি কীভাবে ধাপে ধাপে এটি ডিবাগ করবেন?",
       "answer": "Training Loss অস্বাভাবিক দ্রুত কমে গেলে আমি ধাপে ধাপে পাঁচটি সম্ভাব্য বাগ অডিট করব:\n\n1. **Shift ও Leakage চেক:** Multi-token SFT-এ Input ও টার্গেট সঠিকভাবে এক ঘর Shift ($x_t \\to y_{t+1}$) হয়েছে কি না এবং Target Label Input-এই ফাঁস হয়ে গেছে কি না।\n2. **Target Position বাগ:** ছোট বাক্যে ডান দিকের `PAD` ইনডেক্সের বদলে প্রকৃত শেষ বৈধ পজিশন (যেমন আমাদের পরীক্ষায় `len(ids) - 1`-এর Newline) থেকে Logits নেওয়া হচ্ছে কি না।\n3. **Mask গোলমাল:** Input-এর **Attention Key Mask** এবং Output-এর **Loss Ignore Mask** একসঙ্গে গুলিয়ে ফেলা হয়েছে কি না।\n4. **Denominator বাগ:** গড় Loss-এর হরে কেবল বৈধ Response Token গোনা হচ্ছে, নাকি ভুলে Prompt বা `PAD` Token-ও ঢুকে Loss-কে কৃত্রিমভাবে ছোট করে দিচ্ছে।\n5. **Output Class সীমানা:** আমাদের `ByteDecoder`-এ `PAD` ও `BOS` ব্লক করে $257$টি বৈধ ক্লাসের ওপর কাঁচা Cross-Entropy মাপা হয়, যা কেবল $\\{S, C\\}$-এর শর্তসাপেক্ষ সম্ভাব্যতা থেকে আলাদা।\n\n- **Unit Test নিশ্চিতকরণ:** শেষে Empty Batch, All-Ignored Batch, `NaN`/`Inf` Guard এবং ছোট Prefix দিয়ে Unit Test লিখে Pipeline যাচাই করব।",
@@ -3873,7 +3873,7 @@
       "title": "ব্যর্থ Task Adaptation-এর বৈজ্ঞানিক ব্যাখ্যা ও প্রতিরক্ষা",
       "tag": "ADAPTATION · CODING / DESIGN · 40 MIN",
       "prompt": "আপনার Training রানে কাঁচা Loss দশ গুণ কমেছে এবং Base Model-এর তুলনায় Accuracy 34% থেকে বেড়ে 66% হয়েছে, অথচ রিভিউয়ার বলছেন Model-টি কাজের কাজ কিছুই শেখেনি। আপনি কীভাবে এই ফলাফল ব্যাখ্যা করবেন?",
-      "answer": "রিভিউয়ারের পর্যবেক্ষণ সম্পূর্ণ সঠিক—আমি নিজেই Prediction Distribution দেখিয়ে স্পষ্ট করব যে Model-টি আসল টাস্ক শেখেনি, কেবল **Majority Baseline** ছুঁয়েছে।\n\n- **Mode Collapse-এর প্রমাণ:**\n  - Base Model সব $188$টি প্রশ্নে `CONTRADICT` বলেছিল ($\\mathrm{Acc} = \\frac{64}{188} \\approx 0.340426$)।\n  - Full ও LoRA—দুটি Model-ই Training-এর পর সব $188$টি প্রশ্নে একচেটিয়া `SUPPORT` বলেছে ($\\mathrm{Acc} = \\frac{124}{188} \\approx 0.659574$), যা হুবহু Train সেটের Majority Baseline।\n- **Loss ১০ গুণ কমার কারণ:** Model $257$টি সাধারণ বাইট থেকে সম্ভাব্যতা কুড়িয়ে এনে কেবল বৈধ Format Token (`S`, `C`) এবং সংখ্যাগরিষ্ঠ ক্লাসের Prior অনুপাতে জড়ো করতে শিখেছে—কিন্তু Input ভেদে আসল **Class Discrimination** শেখেনি।\n- **সীমাবদ্ধতা ও সৎ অবস্থান:** Evidence-হীন মাত্র $24$-byte Claim Input, *Alice* বনাম SciFact Domain পার্থক্য, ক্ষুদ্র $8$-মাত্রার Width এবং Class Imbalance প্রধান বাধা। তবে আলাদা **Ablation** ছাড়া কোনো একক কারণকে চূড়ান্ত দায়ী করব না এবং দেখা Dev সেটে বারবার টিউন করে ভুয়া সাফল্য দেখাব না।"
+      "answer": "রিভিউয়ারের পর্যবেক্ষণ সম্পূর্ণ সঠিক—আমি নিজেই Prediction Distribution দেখিয়ে স্পষ্ট করব যে Model-টি আসল Task শেখেনি, কেবল **Majority Baseline** ছুঁয়েছে।\n\n- **Mode Collapse-এর প্রমাণ:**\n  - Base Model সব $188$টি প্রশ্নে `CONTRADICT` বলেছিল ($\\mathrm{Acc} = \\frac{64}{188} \\approx 0.340426$)।\n  - Full ও LoRA—দুটি Model-ই Training-এর পর সব $188$টি প্রশ্নে একচেটিয়া `SUPPORT` বলেছে ($\\mathrm{Acc} = \\frac{124}{188} \\approx 0.659574$), যা হুবহু Train সেটের Majority Baseline।\n- **Loss ১০ গুণ কমার কারণ:** Model $257$টি সাধারণ বাইট থেকে সম্ভাব্যতা কুড়িয়ে এনে কেবল বৈধ Format Token (`S`, `C`) এবং সংখ্যাগরিষ্ঠ ক্লাসের Prior অনুপাতে জড়ো করতে শিখেছে—কিন্তু Input ভেদে আসল **Class Discrimination** শেখেনি।\n- **সীমাবদ্ধতা ও সৎ অবস্থান:** Evidence-হীন মাত্র $24$-byte Claim Input, *Alice* বনাম SciFact Domain পার্থক্য, ক্ষুদ্র $8$-মাত্রার Width এবং Class Imbalance প্রধান বাধা। তবে আলাদা **Ablation** ছাড়া কোনো একক কারণকে চূড়ান্ত দায়ী করব না এবং দেখা Dev সেটে বারবার টিউন করে ভুয়া সাফল্য দেখাব না।"
     },
     {
       "title": "LoRA-এর Trainable Parameter বনাম প্রকৃত Memory হিসাব",
@@ -3893,14 +3893,14 @@
     {
       "title": "উৎস ডেটার গুণমান ও Data Leakage নিরীক্ষা",
       "tag": "ADAPTATION · CODING / DESIGN · 40 MIN",
-      "prompt": "আমাদের 505টি Train এবং 188টি Diagnostic উদাহরণের টাস্কটির পরিধি ও সম্ভাব্য Data Contamination ঝুঁকি কীভাবে নিরীক্ষা ও ব্যাখ্যা করবেন?",
+      "prompt": "আমাদের 505টি Train এবং 188টি Diagnostic উদাহরণের Task-টির পরিধি ও সম্ভাব্য Data Contamination ঝুঁকি কীভাবে নিরীক্ষা ও ব্যাখ্যা করবেন?",
       "answer": "এই $505$ Train ও $188$ Diagnostic উদাহরণের Dataset-কে আমি তিনটি স্তরে নিরীক্ষা ও ব্যাখ্যা করব:\n\n- **উৎস ও লেবেল শৃঙ্খলা:** মূল SciFact-এর মানব-যাচাইকৃত Evidence Annotation থেকে একক `S` বা `C` Label নিশ্চিত করা হয়েছে, এবং অ্যানোটেশনহীন সারিগুলোকে নেতিবাচক ধরে না নিয়ে বাদ দেওয়া হয়েছে। Input-এ কোনো Evidence ছাড়া কেবল প্রথম $24$টি UTF-8 Byte থাকায় এটি কোনো Fact-checking সিস্টেম নয়।\n- **Contamination অডিট:** Dev সেটের হুবহু পূর্ণ বাক্য Train থেকে বাদ দেওয়ার Filter-এ $0$টি সারি বাদ পড়েছে (`excluded_train_ids == []`)। তবে এরপরও দুই সেটের Claim একই গবেষণাপত্র থেকে আসতে পারে, পরস্পর সম্পর্কিত হতে পারে কিংবা প্রথম $24$ Byte মিলে **Prefix Collision** ঘটাতে পারে।\n- **Diagnostic ভূমিকা:** এই Dev সেটটি আগের অধ্যায়গুলোতেও পর্যবেক্ষিত—তাই এটিকে কেবল **Diagnostic Set** হিসেবেই ধরতে হবে, আনকোরা স্বাধীন Test Set হিসেবে নয়।"
     },
     {
       "title": "Adapter Weight থেকে কি হুবহু Training Resume করা যায়?",
       "tag": "ADAPTATION · CODING / DESIGN · 40 MIN",
       "prompt": "ডিস্কে শুধু সংরক্ষিত LoRA Adapter ফাইলটি থাকলেই কি ক্র্যাশ হওয়া Training ঠিক আগের বিন্দু থেকে হুবহু Resume করা সম্ভব?",
-      "answer": "না—ডিস্কে শুধু LoRA Adapter ফাইলটি থাকলে ক্র্যাশ হওয়া Training ঠিক আগের বিন্দু থেকে হুবহু **Resume** করা সম্ভব নয়।\n\n- **Inference বনাম Resume পার্থক্য:** সঠিক Base Model-এর সঙ্গে Adapter ফাইলটি লোড করে নির্ভুলভাবে **Inference** চালানো যাবে; কিন্তু হুবহু একই গাণিতিক পথ ধরে Training Resume করতে হলে আরও দরকার:\n  1. `Optimizer`-এর মোমেন্ট বাফার ($m_t, v_t$)\n  2. Learning Rate Scheduler স্টেট ও বর্তমান Step সংখ্যা\n  3. Mixed-Precision `GradScaler` স্টেট\n  4. **RNG State**, Data Sampler Cursor এবং পুরো Training Recipe\n- **Production Safety:** আমাদের আর্টিফ্যাক্টগুলো Inference Export হিসেবে যাচাইকৃত। Deployment-এ এর সাথে **Double-Merge Guard**, **Base Hash Check**, নিরাপদ `weights_only=True` লোডিং এবং দ্রুত **Rollback** পরিকল্পনা রাখতে হবে।"
+      "answer": "না—ডিস্কে শুধু LoRA Adapter ফাইলটি থাকলে ক্র্যাশ হওয়া Training ঠিক আগের বিন্দু থেকে হুবহু **Resume** করা সম্ভব নয়।\n\n- **Inference বনাম Resume পার্থক্য:** সঠিক Base Model-এর সঙ্গে Adapter ফাইলটি লোড করে নির্ভুলভাবে **Inference** চালানো যাবে; কিন্তু হুবহু একই গাণিতিক পথ ধরে Training Resume করতে হলে আরও দরকার:\n  1. `Optimizer`-এর মোমেন্ট বাফার ($m_t, v_t$)\n  2. Learning Rate Scheduler স্টেট ও বর্তমান Step সংখ্যা\n  3. Mixed-Precision `GradScaler` স্টেট\n  4. **RNG State**, Data Sampler Cursor এবং পুরো Training Recipe\n- **Production Safety:** আমাদের Artifact-গুলো Inference Export হিসেবে যাচাইকৃত। Deployment-এ এর সাথে **Double-Merge Guard**, **Base Hash Check**, নিরাপদ `weights_only=True` লোডিং এবং দ্রুত **Rollback** পরিকল্পনা রাখতে হবে।"
     },
     {
       "title": "Prompting, RAG এবং SFT/PEFT নির্বাচনের কৌশল",

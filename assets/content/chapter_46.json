@@ -20,7 +20,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "আজ আমরা আধুনিক **Vision-Language Model (VLM)**-এর একদম ভিত্তি শিখব—কীভাবে **Vision Transformer (ViT)** একটি দ্বিমাত্রিক ছবিকে টেক্সটের মতো Token Sequence-এ ভাঙে, কেন ছবির রেজোলিউশন $k$ গুণ বাড়ালে Prefill Attention খরচ লাফ দিয়ে $k^4$ গুণ বাড়ে, কীভাবে Multi-Turn চ্যাটে Visual Token GPU-র **KV Cache**-এ অনেক জায়গা নেয়, এবং কেন বড় Multi-GPU Cluster-এ **CLIP**-কে সরিয়ে **SigLIP** ইন্ডাস্ট্রি স্ট্যান্ডার্ড হয়ে উঠেছে!",
+          "goal": "আজ আমরা আধুনিক **Vision-Language Model (VLM)**-এর একদম ভিত্তি শিখব—কীভাবে **Vision Transformer (ViT)** একটি দ্বিমাত্রিক ছবিকে টেক্সটের মতো Token Sequence-এ ভাঙে, কেন ছবির রেজোলিউশন $k$ গুণ বাড়ালে Prefill Attention খরচ $k^4$ গুণ বাড়ে, কীভাবে Multi-Turn চ্যাটে Visual Token GPU-র **KV Cache**-এ অনেক জায়গা নেয়, এবং কেন বড় Multi-GPU Cluster-এ **CLIP**-কে সরিয়ে **SigLIP** ইন্ডাস্ট্রি স্ট্যান্ডার্ড হয়ে উঠেছে!",
           "prerequisites": [
             "Transformer Self-Attention ও KV Cache",
             "Contrastive Loss (CLIP) ও Sigmoid ফাংশন",
@@ -60,7 +60,7 @@
         {
           "type": "text",
           "title": "১. পিক্সেল গ্রিড থেকে Visual Token: সংখ্যায় দেখুন রেজোলিউশনের $k^4$ বিস্ফোরণ",
-          "body": "আগের অধ্যায়ে (Book 4 · Chapter 11) আমরা দেখেছি কীভাবে একটি Text LLM যুক্তি ও Tool Use করে। কিন্তু বাস্তবের ফ্রন্টিয়ার সিস্টেম কেবল টেক্সট পড়ে বসে থাকে না—তাকে মোবাইল স্ক্রিনশট, হাসপাতালের এক্স-রে, আর্থিক চার্ট আর ই-কমার্সের কোটি কোটি পণ্যের ছবি বুঝতে হয়।\n\nমূল কথা হলো, CNN-এর আলাদা জগতের বদলে ছবিকেও যদি টেক্সটের মতো একটি **Token Sequence** বানানো যায়, তবে একই Transformer Backbone চোখ এবং ভাষা—দুটোই একসঙ্গে চালাতে পারবে!\n\n### হাতে-কলমে হিসাব: প্রথমে ছোট ছবি ($224 \\times 224$), তারপর হাই-রেজোলিউশন PDF\nধরুন, আপনার হাতে একটি $224 \\times 224 \\times 3$ RGB ছবি আছে এবং Patch Size $P = 16$।\n- **মোট Patch সংখ্যা:** $(224/16) \\times (224/16) = 14 \\times 14 = \\mathbf{196}$-টি Visual Token।\n- **প্রতি Patch-এ কাঁচা পিক্সেল:** $16 \\times 16 \\times 3 = \\mathbf{768}$-টি সংখ্যা, যা একটি Linear Matrix $\\mathbf{E}$ দিয়ে গুণ হয়ে $d$-মাত্রার Embedding হয়ে যায়।\n\nএখন প্রশ্ন হলো, ইউজার যখন সূক্ষ্ম লেখার PDF ইনভয়েস বা $1344 \\times 1344$ ড্যাশবোর্ড আপলোড করেন তখন কী ঘটে? নিচের টেবিলটি দেখুন (আধুনিক SigLIP / CLIP-L-এর $P = 14$ ধরে এবং একটি 7B LLM-এ `L=28, H_kv=4, d_h=128, FP16` ধরে):\n\n| ছবির রেজোলিউশন | Patch Grid | Visual Tokens ($N_{\\mathrm{vis}}$) | Token বৃদ্ধি | Prefill Attention ($N^2$) বৃদ্ধি | শুধু ১টি ছবির KV Cache |\n| --- | --- | --- | --- | --- | --- |\n| $336 \\times 336$ | $24 \\times 24$ | $576$ | $1\\times$ | $1\\times$ | $\\approx 33\\text{ MB}$ |\n| $672 \\times 672$ | $48 \\times 48$ | $2{,}304$ | $4\\times$ | $16\\times$ | $\\approx 132\\text{ MB}$ |\n| $1344 \\times 1344$ | $96 \\times 96$ | $9{,}216$ | $16\\times$ | **$256\\times$** | $\\approx 528\\text{ MB}$ |\n\nখেয়াল করুন ভয়ংকর জ্যামিতিক নিয়মটি: রেজোলিউশন $k$ গুণ বাড়ালে Token বাড়ে $k^2$ গুণ, আর Quadratic Self-Attention Prefill খরচ লাফ দিয়ে বাড়ে **$(k^2)^2 = k^4$ গুণ!**\n\n### দ্বিতীয় চ্যালেঞ্জ: বড় GPU Cluster-এ CLIP বনাম SigLIP\nধরুন, আপনি ১২৮টি GPU-তে গ্লোবাল Batch Size $|\\mathcal{B}| = 32{,}768$ নিয়ে Vision Encoder ট্রেন করছেন:\n- **CLIP-এর বাধা (Global Softmax):** প্রতিটি ছবির Softmax Denominator বের করতে সব GPU থেকে সব Embedding একসঙ্গে আনতে (`All-Gather`) হয় এবং বিশাল $|\\mathcal{B}| \\times |\\mathcal{B}|$ Similarity Matrix ধরে রাখতে হয়।\n- **SigLIP-এর সমাধান (Pairwise Sigmoid):** সহজভাবে বললে, SigLIP গ্লোবাল Softmax তুলে দিয়ে প্রতিটি $(i, j)$ জোড়াকে স্বাধীন হ্যাঁ/না ($z_{ij} = +1$ বা $-1$) Binary Classification বানিয়ে দেয়!\n- **কেন শুরুতে $b \\approx -10$ জরুরি?** $|\\mathcal{B}| = 32{,}768$ হলে পজিটিভ জোড়া মাত্র **$32{,}768$-টি**, কিন্তু নেগেটিভ জোড়া **$32{,}768^2 - 32{,}768 \\approx 107$ কোটিরও বেশি!** শুরুতে Bias $b = 0$ রাখলে ওই ১০৭ কোটি নেগেটিভ জোড়া প্রথম স্টেপেই `~0.5` Probability দিয়ে বিশাল Loss ও Gradient ধাক্কায় Training অস্থির করে ফেলবে।\n\nচলুন এই পুরো গল্পটিকে একটি পরিষ্কার গাণিতিক কার্ডে বেঁধে নিই!"
+          "body": "আগের অধ্যায়ে (Book 4 · Chapter 11) আমরা দেখেছি কীভাবে একটি Text LLM যুক্তি ও Tool Use করে। কিন্তু বাস্তবের ফ্রন্টিয়ার সিস্টেম কেবল টেক্সট পড়ে বসে থাকে না—তাকে মোবাইল স্ক্রিনশট, হাসপাতালের এক্স-রে, আর্থিক চার্ট আর ই-কমার্সের কোটি কোটি পণ্যের ছবি বুঝতে হয়।\n\nমূল কথা হলো, CNN-এর আলাদা জগতের বদলে ছবিকেও যদি টেক্সটের মতো একটি **Token Sequence** বানানো যায়, তবে একই Transformer Backbone চোখ এবং ভাষা—দুটোই একসঙ্গে চালাতে পারবে!\n\n### হাতে-কলমে হিসাব: প্রথমে ছোট ছবি ($224 \\times 224$), তারপর হাই-রেজোলিউশন PDF\nধরুন, আপনার হাতে একটি $224 \\times 224 \\times 3$ RGB ছবি আছে এবং Patch Size $P = 16$।\n- **মোট Patch সংখ্যা:** $(224/16) \\times (224/16) = 14 \\times 14 = \\mathbf{196}$-টি Visual Token।\n- **প্রতি Patch-এ কাঁচা পিক্সেল:** $16 \\times 16 \\times 3 = \\mathbf{768}$-টি সংখ্যা, যা একটি Linear Matrix $\\mathbf{E}$ দিয়ে গুণ হয়ে $d$-মাত্রার Embedding হয়ে যায়।\n\nএখন প্রশ্ন হলো, ইউজার যখন সূক্ষ্ম লেখার PDF ইনভয়েস বা $1344 \\times 1344$ ড্যাশবোর্ড আপলোড করেন তখন কী ঘটে? নিচের টেবিলটি দেখুন (আধুনিক SigLIP / CLIP-L-এর $P = 14$ ধরে এবং একটি 7B LLM-এ `L=28, H_kv=4, d_h=128, FP16` ধরে):\n\n| ছবির রেজোলিউশন | Patch Grid | Visual Tokens ($N_{\\mathrm{vis}}$) | Token বৃদ্ধি | Prefill Attention ($N^2$) বৃদ্ধি | শুধু ১টি ছবির KV Cache |\n| --- | --- | --- | --- | --- | --- |\n| $336 \\times 336$ | $24 \\times 24$ | $576$ | $1\\times$ | $1\\times$ | $\\approx 33\\text{ MB}$ |\n| $672 \\times 672$ | $48 \\times 48$ | $2{,}304$ | $4\\times$ | $16\\times$ | $\\approx 132\\text{ MB}$ |\n| $1344 \\times 1344$ | $96 \\times 96$ | $9{,}216$ | $16\\times$ | **$256\\times$** | $\\approx 528\\text{ MB}$ |\n\nখেয়াল করুন ভয়ংকর জ্যামিতিক নিয়মটি: রেজোলিউশন $k$ গুণ বাড়ালে Token বাড়ে $k^2$ গুণ, আর Quadratic Self-Attention Prefill খরচ বাড়ে **$(k^2)^2 = k^4$ গুণ!**\n\n### দ্বিতীয় চ্যালেঞ্জ: বড় GPU Cluster-এ CLIP বনাম SigLIP\nধরুন, আপনি ১২৮টি GPU-তে গ্লোবাল Batch Size $|\\mathcal{B}| = 32{,}768$ নিয়ে Vision Encoder ট্রেন করছেন:\n- **CLIP-এর বাধা (Global Softmax):** প্রতিটি ছবির Softmax Denominator বের করতে সব GPU থেকে সব Embedding একসঙ্গে আনতে (`All-Gather`) হয় এবং বিশাল $|\\mathcal{B}| \\times |\\mathcal{B}|$ Similarity Matrix ধরে রাখতে হয়।\n- **SigLIP-এর সমাধান (Pairwise Sigmoid):** সহজভাবে বললে, SigLIP গ্লোবাল Softmax তুলে দিয়ে প্রতিটি $(i, j)$ জোড়াকে স্বাধীন হ্যাঁ/না ($z_{ij} = +1$ বা $-1$) Binary Classification বানিয়ে দেয়!\n- **কেন শুরুতে $b \\approx -10$ জরুরি?** $|\\mathcal{B}| = 32{,}768$ হলে পজিটিভ জোড়া মাত্র **$32{,}768$-টি**, কিন্তু নেগেটিভ জোড়া **$32{,}768^2 - 32{,}768 \\approx 107$ কোটিরও বেশি!** শুরুতে Bias $b = 0$ রাখলে ওই ১০৭ কোটি নেগেটিভ জোড়া প্রথম স্টেপেই `~0.5` Probability দিয়ে বিশাল Loss ও Gradient ধাক্কায় Training অস্থির করে ফেলবে।\n\nচলুন এই পুরো গল্পটিকে একটি পরিষ্কার গাণিতিক কার্ডে বেঁধে নিই!"
         },
         {
           "type": "math",
@@ -261,7 +261,7 @@
               "concept": "Quadratic Scaling (k^4)",
               "level": "Core",
               "question": "একটি VLM-এ Input ছবির দৈর্ঘ্য ও প্রস্থ উভয়ই ৩ গুণ বাড়ালে Prefill Attention কম্পিউট কত গুণ বাড়বে এবং কেন?",
-              "answer": "রেজোলিউশন $3\\times$ বাড়ালে মোট পিক্সেল ও Patch Token সংখ্যা বাড়ে $3^2 = \\mathbf{9\\times}$। যেহেতু Standard Self-Attention খরচ $\\mathcal{O}(N^2 d)$, তাই শুধু Visual Token-গুলোর Prefill Attention খরচ লাফ দিয়ে বাড়ে $9^2 = \\mathbf{81\\times}$ ($k^4$ সূত্র)!",
+              "answer": "রেজোলিউশন $3\\times$ বাড়ালে মোট পিক্সেল ও Patch Token সংখ্যা বাড়ে $3^2 = \\mathbf{9\\times}$। যেহেতু Standard Self-Attention খরচ $\\mathcal{O}(N^2 d)$, তাই শুধু Visual Token-গুলোর Prefill Attention খরচ বাড়ে $9^2 = \\mathbf{81\\times}$ ($k^4$ সূত্র)!",
               "followUp": "বাস্তবে FlashAttention ব্যবহার করলে কি এই $81\\times$ FLOPs কমে যাবে? না—FlashAttention Memory $\\mathcal{O}(N^2) \\to \\mathcal{O}(N)$ কমায়, কিন্তু গাণিতিক Attention FLOPs তবুও $\\mathcal{O}(N^2)$ থেকে যায়!"
             },
             {
@@ -321,7 +321,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "আগের পাঠে দেখেছি ViT একটি ছবিকে শত শত বা হাজার হাজার Patch Token-এ ভাঙে, যার মাত্রা হয়তো $d_v = 1152$—অথচ LLM বোঝে কেবল তার নিজের $d_\\ell = 4096$ Word Embedding Space! আজ আমরা শিখব কীভাবে একটি সহজ **2-Layer MLP** দুই জগতের সেতু বানায়, কীভাবে **$2 \\times 2$ Pixel-Shuffle** শূন্য তথ্য হারিয়ে Token সংখ্যা $4\\times$ কমায়, কখন **Perceiver Resampler** অপরিহার্য আর কখন তা OCR ধ্বংস করে, এবং কীভাবে **Stage-1 Alignment Freeze** ও **Odd-Grid Padding** Production বাগ ঠেকায়!",
+          "goal": "আগের পাঠে দেখেছি ViT একটি ছবিকে শত শত বা হাজার হাজার Patch Token-এ ভাঙে, যার মাত্রা হয়তো $d_v = 1152$—অথচ LLM বোঝে কেবল তার নিজের $d_\\ell = 4096$ Word Embedding Space! আজ আমরা শিখব কীভাবে একটি সহজ **2-Layer MLP** দুটি Embedding Space মেলায়, কীভাবে **$2 \\times 2$ Pixel-Shuffle** শূন্য তথ্য হারিয়ে Token সংখ্যা $4\\times$ কমায়, কখন **Perceiver Resampler** অপরিহার্য আর কখন তা OCR ধ্বংস করে, এবং কীভাবে **Stage-1 Alignment Freeze** ও **Odd-Grid Padding** Production বাগ ঠেকায়!",
           "prerequisites": [
             "আগের পাঠ: ViT Patch Grid ও Quadratic Attention",
             "MLP (Linear + GELU) ও Cross-Attention",
@@ -532,7 +532,7 @@
         {
           "type": "text",
           "title": "৬. Training স্ট্যাবিলিটি: Stage-1 Alignment Freeze, সাধারণ ভুল ও Cheat Sheet",
-          "body": "### Production-এর দুটি মারাত্মক ফাঁদ ও তাদের রেসিপি\n1. **Stage-1 Alignment Freeze (Catastrophic Forgetting ঠেকানো):** নতুন বসানো MLP বা Pixel-Shuffle Connector-এর Weight শুরুতে সম্পূর্ণ Random থাকে। প্রথম দিন থেকেই ViT, Connector এবং LLM—তিনটিকেই Unfreeze করে বড় Learning Rate-এ ট্রেন করলে ওই Random Connector থেকে আসা এলোমেলো Gradient Pretrained ViT ও LLM-এর অর্জিত জ্ঞান তছনছ করে দেয় (**Catastrophic Forgetting**)!\n   - **Stage-1 (Alignment Warm-up):** ViT ও LLM সম্পূর্ণ **Freeze** রেখে কেবল Connector-টিকে Image-Caption Data-তে ট্রেন করুন।\n   - **Stage-2 (Visual Instruction Tuning):** Connector শান্ত ও Aligned হয়ে যাওয়ার পর LLM (এবং প্রয়োজনে ViT) Unfreeze করে যৌথভাবে Fine-tune করুন।\n2. **বিজোড় Patch Grid-এর Reshape Crash:** যেমন $378 \\times 378$ ছবিতে $P = 14$ হলে Patch Grid হয় $27 \\times 27$ (বিজোড়!)। Reshape-এর আগে ডান ও নিচে $1$ সারি Padding না দিলে Server সরাসরি Runtime Error ছুড়ে দেয়।\n\n### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **ঘন OCR/Table কাজে স্থির `64`-Token Resampler লাগানো:** Vision Encoder-এর রেজোলিউশন বাড়িয়েও কোনো লাভ হবে না—সব তথ্য `64` Token-এর সরু ছিদ্রে আটকে যাবে!\n2. **Stage-1 Freeze বাদ দিয়ে সরাসরি End-to-End Fine-tune করা:** LLM-এর ভাষার দক্ষতা ও Instruction-following ক্ষমতা মারাত্মকভাবে পড়ে যায়।\n3. **Pixel-Shuffle-এ Spatial Order গুলিয়ে ফেলা:** `(H//2, 2, W//2, 2, C)`-কে `permute(0, 1, 3, 2, 4, 5)` না করে সরাসরি reshape করলে দূরের Patch-গুলো ভুলভাবে একসঙ্গে মিশে যায়!\n\n### Cheat Sheet\n- **LLaVA Recipe:** `Linear -> GELU -> Linear` (কোনো কৃত্রিম Bottleneck নেই)\n- **2×2 Pixel-Shuffle:** Token কমে $4\\times$, Prefill Attention কমে $16\\times$, তথ্য হারানো = $0$!\n- **Tradeoff:** OCR/Charts $\\to$ `Pixel-Shuffle + MLP` | Long Video $\\to$ `Perceiver Resampler`\n\n**পরের পাঠে কী শিখব?** ভালো Connector তো বানালাম—কিন্তু ইউজার যখন $800 \\times 3200$ লম্বাটে রসিদ বা $2800 \\times 700$ স্প্রেডশিট পাঠান, তখন বর্গাকার ViT-তে তা চ্যাপ্টা না করে কীভাবে পড়ব? সেটিই পরের পাঠের **Dynamic AnyRes Tiling ও Visual Grounding**!"
+          "body": "### Production-এর দুটি মারাত্মক ফাঁদ ও তাদের রেসিপি\n1. **Stage-1 Alignment Freeze (Catastrophic Forgetting ঠেকানো):** নতুন বসানো MLP বা Pixel-Shuffle Connector-এর Weight শুরুতে সম্পূর্ণ Random থাকে। প্রথম দিন থেকেই ViT, Connector এবং LLM—তিনটিকেই Unfreeze করে বড় Learning Rate-এ ট্রেন করলে ওই Random Connector থেকে আসা এলোমেলো Gradient Pretrained ViT ও LLM-এর অর্জিত জ্ঞান তছনছ করে দেয় (**Catastrophic Forgetting**)!\n   - **Stage-1 (Alignment Warm-up):** ViT ও LLM সম্পূর্ণ **Freeze** রেখে কেবল Connector-টিকে Image-Caption Data-তে ট্রেন করুন।\n   - **Stage-2 (Visual Instruction Tuning):** Connector শান্ত ও Aligned হয়ে যাওয়ার পর LLM (এবং প্রয়োজনে ViT) Unfreeze করে যৌথভাবে Fine-tune করুন।\n2. **বিজোড় Patch Grid-এর Reshape Crash:** যেমন $378 \\times 378$ ছবিতে $P = 14$ হলে Patch Grid হয় $27 \\times 27$ (বিজোড়!)। Reshape-এর আগে ডান ও নিচে $1$ সারি Padding না দিলে Server সরাসরি Runtime Error দেয়।\n\n### যে ৩টি ভুল এড়িয়ে চলবেন\n1. **ঘন OCR/Table কাজে স্থির `64`-Token Resampler লাগানো:** Vision Encoder-এর রেজোলিউশন বাড়িয়েও কোনো লাভ হবে না—সব তথ্য `64` Token-এর সরু ছিদ্রে আটকে যাবে!\n2. **Stage-1 Freeze বাদ দিয়ে সরাসরি End-to-End Fine-tune করা:** LLM-এর ভাষার দক্ষতা ও Instruction-following ক্ষমতা মারাত্মকভাবে পড়ে যায়।\n3. **Pixel-Shuffle-এ Spatial Order গুলিয়ে ফেলা:** `(H//2, 2, W//2, 2, C)`-কে `permute(0, 1, 3, 2, 4, 5)` না করে সরাসরি reshape করলে দূরের Patch-গুলো ভুলভাবে একসঙ্গে মিশে যায়!\n\n### Cheat Sheet\n- **LLaVA Recipe:** `Linear -> GELU -> Linear` (কোনো কৃত্রিম Bottleneck নেই)\n- **2×2 Pixel-Shuffle:** Token কমে $4\\times$, Prefill Attention কমে $16\\times$, তথ্য হারানো = $0$!\n- **Tradeoff:** OCR/Charts $\\to$ `Pixel-Shuffle + MLP` | Long Video $\\to$ `Perceiver Resampler`\n\n**পরের পাঠে কী শিখব?** ভালো Connector তো বানালাম—কিন্তু ইউজার যখন $800 \\times 3200$ লম্বাটে রসিদ বা $2800 \\times 700$ স্প্রেডশিট পাঠান, তখন বর্গাকার ViT-তে তা চ্যাপ্টা না করে কীভাবে পড়ব? সেটিই পরের পাঠের **Dynamic AnyRes Tiling ও Visual Grounding**!"
         },
         {
           "type": "concept_check",
@@ -617,7 +617,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "বাস্তব ইউজাররা কখনোই কেবল বর্গাকার ছবি পাঠান না—তাঁরা পাঠান লম্বাটে সুপারমার্কেটের বিল, চওড়া ফিন্যান্সিয়াল স্প্রেডশিট কিংবা ২১:৯ ফোনের স্ক্রিনশট! আজ আমরা শিখব কেন বর্গাকার Resize ও Center Crop ডকুমেন্ট নষ্ট করে, কীভাবে **Dynamic AnyRes Tiling + Global Thumbnail** অনুপাত অক্ষত রেখে ঝকঝকে OCR দেয়, কীভাবে মোবাইল UI Agent `[0, 1000]` Grounding Box-এ **Letterbox Padding Bug** এড়িয়ে নিখুঁত ক্লিক করে, এবং কীভাবে **Native 2D RoPE** ও `max_pixels` গার্ডরেইল Production OOM ঠেকায়!",
+          "goal": "ব্যবহারকারীরা নানা আকারের ছবি পাঠান। যেমন, লম্বা সুপারমার্কেটের বিল, চওড়া Financial Spreadsheet বা ফোনের ২১:৯ Screenshot। আজ আমরা শিখব কেন বর্গাকার Resize ও Center Crop ডকুমেন্ট নষ্ট করে, কীভাবে **Dynamic AnyRes Tiling + Global Thumbnail** অনুপাত অক্ষত রেখে ঝকঝকে OCR দেয়, কীভাবে মোবাইল UI Agent `[0, 1000]` Grounding Box-এ **Letterbox Padding Bug** এড়িয়ে নিখুঁত ক্লিক করে, এবং কীভাবে **Native 2D RoPE** ও `max_pixels` গার্ডরেইল Production OOM ঠেকায়!",
           "prerequisites": [
             "আগের পাঠ: 2×2 Pixel-Shuffle ও Visual Token বাজেট",
             "Aspect Ratio ও 2D Bounding Box ([x1, y1, x2, y2])",
@@ -872,7 +872,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "আপনি কি জানেন একটি ৭-বিলিয়ন LLM-কে বড় করে ৭০-বিলিয়ন করলে অনেক সময় VLM-এর পাবলিক VQA Score বেড়ে যায় ঠিকই, কিন্তু বাস্তবে **ছবিতে না থাকা বস্তু বানিয়ে বলার প্রবণতা (Hallucination)** আরও বেড়ে যায়? আজ আমরা শিখব কেন **Language Prior** ভিজ্যুয়াল সংকেতকে ছাপিয়ে যায় (**Modality Dominance**), কীভাবে **Blank-Image / Image-Shuffle Negative Control** ও **POPE Adversarial Probing** দিয়ে নকল লিডারবোর্ড উন্নতি ধরা পড়ে, এবং কীভাবে **Counterfactual DPO** ও **Visual Contrastive Decoding (VCD)** দিয়ে সত্যিকারের Visual Grounding ফিরিয়ে আনা যায়!",
+          "goal": "আপনি কি জানেন একটি ৭-বিলিয়ন LLM-কে বড় করে ৭০-বিলিয়ন করলে অনেক সময় VLM-এর Public VQA Score বাড়তে পারে, কিন্তু বাস্তবে **ছবিতে না থাকা বস্তু বানিয়ে বলার প্রবণতা (Hallucination)** আরও বেড়ে যায়? আজ আমরা শিখব কেন **Language Prior** ছবির তথ্যকে ছাপিয়ে যায় (**Modality Dominance**), কীভাবে **Blank-Image / Image-Shuffle Negative Control** ও **POPE Adversarial Probing** দিয়ে নকল লিডারবোর্ড উন্নতি ধরা পড়ে, এবং কীভাবে **Counterfactual DPO** ও **Visual Contrastive Decoding (VCD)** দিয়ে সত্যিকারের Visual Grounding ফিরিয়ে আনা যায়!",
           "prerequisites": [
             "Classification Metrics (Precision, F1, FPR)",
             "Log-Odds ও LLM Decoding Logits",
@@ -1058,7 +1058,7 @@
           "predictMode": true,
           "question": "একটি নতুন VLM-এর অফলাইন মূল্যায়নে আসল ছবিসহ Paired Accuracy এল `82%`, কিন্তু ছবিগুলো অদলবদল করে (Image-Shuffle) দেওয়ার পরও Accuracy এল `78%`। এ থেকে আপনি কী সিদ্ধান্ত নেবেন?",
           "options": [
-            "Model-টি ভুল ছবি থেকেও গোপন ভিজ্যুয়াল সংকেত বের করতে দারুণ দক্ষ",
+            "Model-টি ভুল ছবি থেকেও গোপন ছবির তথ্য বের করতে দারুণ দক্ষ",
             "Model-টির প্রকৃত Visual Grounding Gain মাত্র `4%` — এটি প্রায় পুরোপুরি Language Prior ও প্রশ্নের শর্টকাট দিয়ে অনুমান করছে!",
             "Model-টির কোনো Multimodal Hallucination নেই, সরাসরি Production-এ রিলিজ করা নিরাপদ",
             "Vision Encoder-এর Patch Size কমিয়ে দিলেই শাফেল করা ছবিতে Score `90%` হয়ে যাবে"
@@ -1075,7 +1075,7 @@
               "concept": "Modality Dominance",
               "level": "Core",
               "question": "VLM-এ অনেক সময় Vision Encoder ঠিক রেখে LLM Backbone আরও বড় করলে Hallucination কমে না গিয়ে উল্টো বেড়ে যায় কেন?",
-              "answer": "একে বলা হয় **Modality Dominance**: বড় LLM Backbone (যেমন 70B) ট্রিলিয়ন টেক্সট Token থেকে অত্যন্ত শক্তিশালী **Language Prior** (যেমন প্লেটের পাশে কাঁটাচামচ থাকে) শিখে আসে। ভিজ্যুয়াল সংকেত সামান্য ঝাপসা হলেই ওই প্রবল Language Prior এবং ইতিবাচক প্রশ্নে সায় দেওয়ার ঝোঁক (Sycophancy) ছবি থেকে আসা প্রমাণকে ছাপিয়ে যায়।",
+              "answer": "একে বলা হয় **Modality Dominance**: বড় LLM Backbone (যেমন 70B) ট্রিলিয়ন টেক্সট Token থেকে অত্যন্ত শক্তিশালী **Language Prior** (যেমন প্লেটের পাশে কাঁটাচামচ থাকে) শিখে আসে। ছবির তথ্য সামান্য ঝাপসা হলেই ওই প্রবল Language Prior এবং ইতিবাচক প্রশ্নে সায় দেওয়ার ঝোঁক (Sycophancy) ছবি থেকে আসা প্রমাণকে ছাপিয়ে যায়।",
               "followUp": "এর ফলে পাবলিক বেঞ্চমার্ক Score-এ কী ঘটে? সাধারণ জ্ঞানের প্রশ্নগুলোতে Blank-Image Score বেড়ে গিয়ে লিডারবোর্ডে ভুয়া উন্নতি দেখাতে পারে!"
             },
             {
@@ -1096,7 +1096,7 @@
               "concept": "Visual Contrastive Decoding",
               "level": "Intermediate",
               "question": "Visual Contrastive Decoding (VCD) কীভাবে রি-ট্রেন ছাড়াই Hallucination কমায় এবং Production-এ এর বড় সীমাবদ্ধতা কী?",
-              "answer": "VCD একই প্রশ্ন একবার পরিষ্কার ছবি $\\mathbf{I}$ এবং আরেকবার Noise-মেশানো ঝাপসা ছবি $\\mathbf{I}_{\\mathrm{noisy}}$ দিয়ে চালিয়ে $(1 + \\alpha)\\ell(\\mathbf{I}, q) - \\alpha\\ell(\\mathbf{I}_{\\mathrm{noisy}}, q)$ বের করে। ঝাপসা ছবিতে কেবল Language Prior থাকায় সেটি বিয়োগ হয়ে প্রকৃত ভিজ্যুয়াল সংকেত স্পষ্ট হয়। তবে সীমাবদ্ধতা হলো এটি প্রতি Token-এ **$2\\times$ Decoding Forward Pass** লাগে, যা Latency ও GPU খরচ দ্বিগুণ করে।",
+              "answer": "VCD একই প্রশ্ন একবার পরিষ্কার ছবি $\\mathbf{I}$ এবং আরেকবার Noise-মেশানো ঝাপসা ছবি $\\mathbf{I}_{\\mathrm{noisy}}$ দিয়ে চালিয়ে $(1 + \\alpha)\\ell(\\mathbf{I}, q) - \\alpha\\ell(\\mathbf{I}_{\\mathrm{noisy}}, q)$ বের করে। ঝাপসা ছবিতে কেবল Language Prior থাকায় সেটি বিয়োগ হয়ে প্রকৃত ছবির তথ্য স্পষ্ট হয়। তবে সীমাবদ্ধতা হলো এটি প্রতি Token-এ **$2\\times$ Decoding Forward Pass** লাগে, যা Latency ও GPU খরচ দ্বিগুণ করে।",
               "followUp": "VCD-তে $\\alpha$ অতিরিক্ত বড় (যেমন `5.0`) করলে কী সমস্যা হবে? ভাষার স্বাভাবিকতা (Fluency) নষ্ট হয়ে ব্যাকরণগত ভুল ও অসংলগ্ন Token বেরোতে শুরু করবে।"
             },
             {
@@ -1119,7 +1119,7 @@
           "type": "checkpoint",
           "title": "চূড়ান্ত যাচাই: প্রতারক বেঞ্চমার্ক উন্নতি ও Release Gate",
           "body": "আপনার টিম ৭-বিলিয়ন LLM ব্যাকবোন বদলে একটি নতুন ১৪-বিলিয়ন LLM ব্যাকবোন লাগিয়ে VLM ফাইন-টিউন করার পর দেখাল যে পাবলিক মাল্টিমোডাল বেঞ্চমার্কে গড় Score ৬৮% থেকে বেড়ে ৭৩% হয়েছে। কিন্তু আপনার অটোমেটেড অডিটে দেখা গেল Blank-Image Score-ও ৪৪% থেকে বেড়ে ৫০% হয়েছে এবং POPE Adversarial সেটে False Positive Rate বেড়েছে ৯%। আপনি এই ফলাফল কীভাবে ব্যাখ্যা করবেন?",
-          "solution": "গড় Score-এর ৫% বৃদ্ধির পুরোটাই (+৬% Blank-Image উন্নতি) আসলে বড় ১৪-বিলিয়ন LLM ব্যাকবোনের শক্তিশালী মুখস্থ বিশ্বজ্ঞান ও Language Prior থেকে এসেছে—ভিজ্যুয়াল বোঝাপড়ার উন্নতি থেকে নয় ($\\Delta_{\\mathrm{vis}}$ উল্টো ১% কমেছে!)। উপরন্তু শক্তিশালী Language Prior ভিজ্যুয়াল সংকেতকে ছাপিয়ে যাওয়ায় সহ-উপস্থিত বস্তুর Hallucination ৯% বেড়ে গেছে। তাই এই চেকপয়েন্ট সরাসরি রিলিজ না করে ভিজ্যুয়াল কাউন্টারফ্যাকচুয়াল DPO ও নেগেটিভ প্রোবিং Data দিয়ে পুনরায় এলাইন করতে হবে।",
+          "solution": "গড় Score-এর ৫% বৃদ্ধির পুরোটাই (+৬% Blank-Image উন্নতি) আসলে বড় ১৪-বিলিয়ন LLM ব্যাকবোনের শক্তিশালী মুখস্থ বিশ্বজ্ঞান ও Language Prior থেকে এসেছে—ভিজ্যুয়াল বোঝাপড়ার উন্নতি থেকে নয় ($\\Delta_{\\mathrm{vis}}$ উল্টো ১% কমেছে!)। উপরন্তু শক্তিশালী Language Prior ছবির তথ্যকে ছাপিয়ে যাওয়ায় সহ-উপস্থিত বস্তুর Hallucination ৯% বেড়ে গেছে। তাই এই চেকপয়েন্ট সরাসরি রিলিজ না করে ভিজ্যুয়াল কাউন্টারফ্যাকচুয়াল DPO ও নেগেটিভ প্রোবিং Data দিয়ে পুনরায় এলাইন করতে হবে।",
           "reference": "https://arxiv.org/abs/2305.10355"
         }
       ]
@@ -1135,7 +1135,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "প্রথম চার পাঠে আমরা টেক্সট ও ইমেজ—অর্থাৎ সুশৃঙ্খল ইউক্লিডীয় গ্রিড নিয়ে কাজ করেছি। কিন্তু বাস্তবের সবচেয়ে লাভজনক ও জটিল নেটওয়ার্ক (ই-কমার্স কেনাকাটা, ব্যাংক লেনদেন, ওষুধের অণু) কোনো গ্রিডে থাকে না—তারা বাস করে **অ-ইউক্লিডীয় Graph $\\mathcal{G} = (\\mathcal{V}, \\mathcal{E})$**-এ! আজ আমরা শিখব কীভাবে $(\\mathbf{X}, \\mathbf{A}, \\mathbf{D})$ দিয়ে Graph লেখা হয়, কেন Node-এর ক্রম ঘুরালেই সাধারণ Flat MLP ভেঙে পড়ে, **Permutation Equivariance** বনাম **Permutation Invariance**-এর সূক্ষ্ম পার্থক্য কী, এবং কেন Production-এ Dense Matrix-এর বদলে **Sparse COO/CSR** ও **GIN Sum Readout** ব্যবহার করা হয়!",
+          "goal": "প্রথম চার পাঠে আমরা টেক্সট ও ইমেজ—অর্থাৎ সুশৃঙ্খল ইউক্লিডীয় গ্রিড নিয়ে কাজ করেছি। কিন্তু বাস্তবের সবচেয়ে লাভজনক ও জটিল নেটওয়ার্ক (ই-কমার্স কেনাকাটা, ব্যাংক লেনদেন, ওষুধের অণু) কোনো গ্রিডে থাকে না—সেগুলোকে প্রকাশ করা হয় **Non-Euclidean Graph $\\mathcal{G} = (\\mathcal{V}, \\mathcal{E})$**-এ! আজ আমরা শিখব কীভাবে $(\\mathbf{X}, \\mathbf{A}, \\mathbf{D})$ দিয়ে Graph লেখা হয়, কেন Node-এর ক্রম ঘুরালেই সাধারণ Flat MLP ভেঙে পড়ে, **Permutation Equivariance** বনাম **Permutation Invariance**-এর সূক্ষ্ম পার্থক্য কী, এবং কেন Production-এ Dense Matrix-এর বদলে **Sparse COO/CSR** ও **GIN Sum Readout** ব্যবহার করা হয়!",
           "prerequisites": [
             "Matrix Multiplication ও Transpose",
             "MLP ও Embeddings-এর ধারণা",
@@ -1304,14 +1304,14 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "আগের পাঠে দেখেছি $\\mathbf{A}\\mathbf{H}\\mathbf{W}$ নিখুঁতভাবে Permutation Equivariant। কিন্তু এটিকে বহু-Layer Neural নেটওয়ার্কে বসালেই দুটি বিপর্যয় ঘটে—Node নিজের পরিচয় ভুলে যায় এবং মেগা-হাবগুলোতে Gradient বিস্ফোরণ ঘটে! আজ আমরা শিখব কীভাবে **GCN** ($\\tilde{\\mathbf{D}}^{-1/2}\\tilde{\\mathbf{A}}\\tilde{\\mathbf{D}}^{-1/2}$) প্রাকৃতিক TF-IDF হয়ে Hub Noise থামায়, কেন ফুল-Batch Transductive GCN বিলিয়ন-স্কেলে অচল, এবং কীভাবে **Inductive GraphSAGE** ও Pinterest-এর **PinSage** নতুন Cold-Start Node ও Neighbor Explosion সামলায়!",
+          "goal": "আগের পাঠে দেখেছি $\\mathbf{A}\\mathbf{H}\\mathbf{W}$ নিখুঁতভাবে Permutation Equivariant। কিন্তু এটিকে বহু-Layer Neural নেটওয়ার্কে বসালেই দুটি সমস্যা হতে পারে। Node-এর নিজস্ব তথ্য হারিয়ে যায় আর বড় Hub-এ Gradient অনেক বেড়ে যায়। আজ আমরা শিখব কীভাবে **GCN** ($\\tilde{\\mathbf{D}}^{-1/2}\\tilde{\\mathbf{A}}\\tilde{\\mathbf{D}}^{-1/2}$) প্রাকৃতিক TF-IDF হয়ে Hub Noise থামায়, কেন ফুল-Batch Transductive GCN বিলিয়ন-স্কেলে অচল, এবং কীভাবে **Inductive GraphSAGE** ও Pinterest-এর **PinSage** নতুন Cold-Start Node ও Neighbor Explosion সামলায়!",
           "prerequisites": [
             "আগের পাঠ: Adjacency Matrix ও Permutation Equivariance",
             "Degree Matrix ও L2 Normalization",
             "Python list ও for loop"
           ],
           "outcomes": [
-            "কাঁচা $\\mathbf{A}\\mathbf{H}$ বনাম সাধারণ Row-Mean বনাম **GCN Symmetric Normalization**-এর গাণিতিক ও Hub-দমন পার্থক্য হাতে কষে দেখাতে পারবেন।",
+            "কাঁচা $\\mathbf{A}\\mathbf{H}$ বনাম সাধারণ Row-Mean বনাম **GCN Symmetric Normalization**-এর গাণিতিক ও Hub-দমন পার্থক্য হাতে হিসাব করে দেখাতে পারবেন।",
             "**Transductive GCN** বনাম **Inductive GraphSAGE**-এর মূল পার্থক্য এবং **Ego-Neighbor Concatenation**-এর গুরুত্ব ব্যাখ্যা করতে পারবেন।",
             "গভীরতা $L$ বাড়লে **Neighbor Explosion $\\mathcal{O}(K^L)$** কীভাবে Feature-Fetch I/O Bottleneck তৈরি করে তা সংখ্যায় হিসাব করতে পারবেন।",
             "**PinSage Random Walk Sampling** এবং **Layer-Wise MapReduce Offline Inference** ডিজাইন ব্যাখ্যা করতে পারবেন।"
@@ -1557,7 +1557,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "ধরুন, একজন ফ্রড অ্যাকাউন্ট ছদ্মবেশ ধরতে ৯টি নিরীহ মুদি দোকানে ছোট পেমেন্ট করেছে এবং মাত্র ১টি কুখ্যাত মানি-মিউল অ্যাকাউন্টে বড় টাকা পাঠিয়েছে! সাধারণ GCN বা Mean-GraphSAGE প্রতিবেশীদের গড় নিয়ে সেই অপরাধ ধুয়েমুছে নিরীহ বানিয়ে দেবে। আজ আমরা শিখব কীভাবে **GAT ও GATv2** প্রতিবেশীদের Feature দেখে ডায়নামিক Attention বসায়, মূল GAT-এর **Static Attention** ফাঁদ কী, কেন ১৬-Layer GCN **Over-Smoothing** (Dirichlet Energy $\\to 0$)-এ অন্ধ হয়ে যায়, এবং কীভাবে **Initial Residual**, **Ego-Neighbor Separation** ও **Jumping Knowledge (JK-Net)** Heterophily ও ফ্রড নেটওয়ার্কে বিজয় আনে!",
+          "goal": "ধরুন, একজন ফ্রড অ্যাকাউন্ট ছদ্মবেশ ধরতে ৯টি নিরীহ মুদি দোকানে ছোট পেমেন্ট করেছে এবং মাত্র ১টি কুখ্যাত মানি-মিউল অ্যাকাউন্টে বড় টাকা পাঠিয়েছে! সাধারণ GCN বা Mean-GraphSAGE প্রতিবেশীদের গড় নিলে Fraud-এর সংকেত চাপা পড়ে যেতে পারে। আজ আমরা শিখব কীভাবে **GAT ও GATv2** প্রতিবেশীদের Feature দেখে ডায়নামিক Attention বসায়, মূল GAT-এর **Static Attention** ফাঁদ কী, কেন ১৬-Layer GCN **Over-Smoothing** (Dirichlet Energy $\\to 0$)-এ অন্ধ হয়ে যায়, এবং কীভাবে **Initial Residual**, **Ego-Neighbor Separation** ও **Jumping Knowledge (JK-Net)** Heterophily ও ফ্রড নেটওয়ার্কে বিজয় আনে!",
           "prerequisites": [
             "আগের পাঠ: GCN ও GraphSAGE Aggregation",
             "Transformer Attention ও Softmax",
@@ -1877,7 +1877,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "Link Prediction হলো Graph ML-এর সবচেয়ে লাভজনক কাজ (রিকমেন্ডেশন, People You May Know, ফ্রড চক্র)—কিন্তু এখানেই প্রায় প্রতিটি ইঞ্জিনিয়ারিং দল প্রথমবার একটি ভয়ংকর ফাঁদে পড়ে: অফলাইন নোটবুকে আসে **`99.5% AUC`**, আর পরদিন Production-এ ছাড়তেই লাইভ CTR ধসে পড়ে! আজ আমরা এই রহস্যের দুটি মূল খলনায়ক—**Target Edge Leakage** ও **Future-to-Past Leakage (Random Split)**—হাতে-কলমে প্রমাণ করব এবং শিখব কীভাবে নিশ্ছিদ্র **৩-স্তরের Temporal Cutoff**, **BPR Loss**, **2-Hop Hard Negative Mining** এবং **TGN Temporal Burstiness** বানাতে হয়!",
+          "goal": "Link Prediction হলো Graph ML-এর সবচেয়ে লাভজনক কাজ (রিকমেন্ডেশন, People You May Know, ফ্রড চক্র)—কিন্তু এখানেই প্রায় প্রতিটি ইঞ্জিনিয়ারিং দল শুরুতে একটি গুরুতর Evaluation ভুল করে: অফলাইন নোটবুকে আসে **`99.5% AUC`**, আর পরদিন Production-এ ছাড়তেই লাইভ CTR ধসে পড়ে! আজ আমরা এই রহস্যের দুটি মূল খলনায়ক—**Target Edge Leakage** ও **Future-to-Past Leakage (Random Split)**—হাতে-কলমে প্রমাণ করব এবং শিখব কীভাবে নিশ্ছিদ্র **৩-স্তরের Temporal Cutoff**, **BPR Loss**, **2-Hop Hard Negative Mining** এবং **TGN Temporal Burstiness** বানাতে হয়!",
           "prerequisites": [
             "আগের পাঠ: Message Passing ও Node Embeddings",
             "ROC-AUC, PR-AUC ও Train/Val/Test Split",
@@ -2115,7 +2115,7 @@
           "type": "lesson_header",
           "title": "Lesson Overview",
           "body": "",
-          "goal": "অভিনন্দন—এটি Chapter 46 ও পুরো Book 4-এর সমাপনী **FAANG Staff System Design Capstone**! এখানে আমরা পুরো অধ্যায়ের সবকটি অস্ত্র—**SigLIP, AnyRes + 2×2 Pixel-Shuffle OCR, Inductive GraphSAGE, Ego-Separated GATv2, Leakage-Free Temporal Split এবং Three-Speed Serving**—একসঙ্গে বসিয়ে সমাধান করব একটি বাস্তব ই-কমার্স ও ফ্রড দমন ইন্টারভিউ কেস: `< 40ms` অনলাইন Latency-র মধ্যে প্রতিদিন `50 লক্ষ` শূন্য-ক্লিক নতুন পণ্যের রিকমেন্ডেশন এবং সংঘবদ্ধ নকল পণ্য চক্র দমন!",
+          "goal": "অভিনন্দন—এটি Chapter 46 ও পুরো Book 4-এর সমাপনী **FAANG Staff System Design Capstone**! এখানে আমরা অধ্যায়ে শেখা পদ্ধতিগুলো—**SigLIP, AnyRes + 2×2 Pixel-Shuffle OCR, Inductive GraphSAGE, Ego-Separated GATv2, Leakage-Free Temporal Split এবং Three-Speed Serving**—একসঙ্গে বসিয়ে সমাধান করব একটি বাস্তব ই-কমার্স ও ফ্রড দমন ইন্টারভিউ কেস: `< 40ms` অনলাইন Latency-র মধ্যে প্রতিদিন `50 লক্ষ` শূন্য-ক্লিক নতুন পণ্যের রিকমেন্ডেশন এবং সংঘবদ্ধ নকল পণ্য চক্র দমন!",
           "prerequisites": [
             "AnyRes OCR ও SigLIP Visual Embeddings",
             "Inductive GraphSAGE ও Heterophily GATv2",
@@ -2236,7 +2236,7 @@
               "level": "Core",
               "question": "প্রতিদিন ৫০ লক্ষ নতুন পণ্যের ক্লিক সংখ্যা শূন্য—আপনার GNN আর্কিটেকচার প্রথম মিনিটেই এগুলোকে রিকমেন্ড করবে কীভাবে?",
               "answer": "আমরা আইটেমের আদি Node Feature Random ID না রেখে বসাই স্তর ১-এর সমৃদ্ধ **VLM Embedding** ($\\mathbf{h}_i^{(0)} = \\mathbf{z}_i^{\\mathrm{vlm}}$)। **Inductive GraphSAGE**-এর Ego-Neighbor Concatenation / Self-Path শূন্য-ডিগ্রি Node-কেও তার ভিজ্যুয়াল Content থেকে সঙ্গে সঙ্গেই একই Embedding Space-এ প্রজেক্ট করে Nearline Pipeline-এ ANN Index-এ ঢুকিয়ে দেয়!",
-              "followUp": "কয়েকটি আসল ক্লিক পড়ার পর Embedding কীভাবে আরও ভালো হয়? Nearline / Hourly রিফ্রেশে ওই নতুন ক্লিকগুলো প্রতিবেশী হিসেবে যুক্ত হয়ে ভিজ্যুয়াল সংকেতের সাথে আচরণগত Collaborative Signal জুড়ে দেয়!"
+              "followUp": "কয়েকটি আসল ক্লিক পড়ার পর Embedding কীভাবে আরও ভালো হয়? Nearline / Hourly রিফ্রেশে ওই নতুন ক্লিকগুলো প্রতিবেশী হিসেবে যুক্ত হয়ে ছবির তথ্যের সাথে আচরণগত Collaborative Signal জুড়ে দেয়!"
             },
             {
               "concept": "Counterfeit Near-Dup + OCR",
@@ -2546,7 +2546,7 @@
       ]
     },
     {
-      "title": "মোবাইল ও ওয়েব UI Agent-এ ছোট আইকনে ক্লিক লক্ষ্যভ্রষ্ট হওয়ার ডিবাগিং",
+      "title": "মোবাইল ও ওয়েব UI Agent-এ ছোট আইকনে ক্লিক লক্ষ্যভ্রষ্ট হওয়ার Debugging",
       "tag": "Visual Grounding & Agents",
       "prompt": "আপনার তৈরি একটি Multimodal Browser/Mobile Agent বর্গাকার স্ক্রিনে ঠিকমতো কাজ করলেও $21:9$ লম্বা ফোনের স্ক্রিনে ছোট 'Close ($\\times$)' আইকনগুলোতে ক্রমাগত $10$–$25$ Pixel নিচে বা পাশে ক্লিক করছে। সমস্যার জ্যামিতিক কারণ ও সমাধান ব্যাখ্যা করুন।",
       "answer": "$21:9$ লম্বা ফোনের স্ক্রিনে ছোট `'Close (x)'` আইকনে ক্রমাগত $10$–$25$ পিক্সেল লক্ষ্যভ্রষ্ট হওয়ার মূল কারণ হলো Preprocessing ও Output `[0, 1000]` Coordinate Denormalization-এর মধ্যে **জ্যামিতিক অমিল**।\n\n- **কেন এটি ঘটে?** লম্বা স্ক্রিনশটকে বর্গাকার বা স্থির Grid-এ বসাতে পাশে কালো **Letterbox Padding** যোগ করা হয় কিংবা অসম অনুপাতে Resize করা হয়। তখন সামান্য Rounding বা Padding Offset হিসাবের ভুল হলেই মূল পিক্সেলে তা $20$ পিক্সেল সরে যায়। এছাড়া ছোট `x` আইকন $14 \\times 14$ পিক্সেলের একটি Patch-এর কোণায় পড়লে কম রেজোলিউশনে তার কেন্দ্র ঝাপসা হয়ে যায়।\n\n**৩ ধাপের প্রকৌশল সমাধান:**\n1. **Exact Letterbox-Aware Denormalization:** ইউনিট টেস্ট বসিয়ে নিশ্চিত করব যেন Padded Canvas থেকে আগে `pad_left` ও `pad_top` বিয়োগ করে তারপর আনপ্যাডেড উচ্চতা-প্রস্থে রিস্কেল করা হয়—অথবা **Qwen2-VL**-ধাঁচের Padding-মুক্ত **Native Aspect Ratio 2D RoPE** ব্যবহার করব।\n2. **Set-of-Mark (SoM) Prompting:** সূক্ষ্ম UI আইকনের জন্য আগে DOM / Icon Detector চালিয়ে স্ক্রিনে নম্বরযুক্ত বক্স এঁকে দেব, যাতে Model কাঁচা Coordinate অনুমানের বদলে সরাসরি বক্স ID বেছে নিতে পারে।\n3. **Post-Click Verification Loop:** ক্লিকের পর স্ক্রিনশট ডেল্টা মিলিয়ে একটি হালকা Verification লুপ রাখব।",
