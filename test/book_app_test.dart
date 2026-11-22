@@ -289,6 +289,59 @@ void main() {
     },
   );
 
+  testWidgets(
+    'BookPage search indexes lesson Interview Q&A blocks and LessonPage Quick Jump scrolls cleanly',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: appTheme(Brightness.light),
+          home: BookPage(controller: c),
+        ),
+      );
+      await tester.pumpAndSettle();
+      // Search for a concept tag unique to our upgraded ch10_xgboost interview_qa block.
+      await tester.enterText(
+        find.byKey(const ValueKey('book-search')),
+        'Exact vs Hist Split',
+      );
+      await tester.pumpAndSettle();
+      final ch10Card = find.byKey(const ValueKey('book-chapter_10'));
+      await tester.scrollUntilVisible(
+        ch10Card,
+        250,
+        scrollable: find.byWidgetPredicate(
+          (w) => w is Scrollable && w.axisDirection == AxisDirection.down,
+        ),
+      );
+      expect(ch10Card, findsOneWidget);
+      await tester.tap(ch10Card);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('XGBoost'), findsWidgets);
+      expect(tester.takeException(), isNull);
+
+      // Open ch10_xgboost and tap the Quick Jump pill to Interview Q&A.
+      final ch10 = c.chapters.firstWhere((ch) => ch.id == 'chapter_10');
+      final xgb = ch10.lessons.firstWhere((l) => l.id == 'ch10_xgboost');
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: appTheme(Brightness.light),
+          home: LessonPage(controller: c, lesson: xgb),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final iqaChip = find.textContaining('Interview Q&A (');
+      expect(iqaChip, findsOneWidget);
+      await tester.tap(iqaChip);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   for (final range in [(1, 14), (15, 29), (30, 50)]) {
     testWidgets(
       'expanded foundations and new book content render chapters ${range.$1}–${range.$2}',

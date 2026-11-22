@@ -62,8 +62,75 @@ class LessonPage extends StatefulWidget {
 
 class _LessonPageState extends State<LessonPage> {
   bool saving = false;
+  final Map<int, GlobalKey> _sectionKeys = {};
   LearningController get c => widget.controller;
   Lesson get l => widget.lesson;
+
+  GlobalKey _keyFor(int idx) =>
+      _sectionKeys.putIfAbsent(idx, () => GlobalKey());
+
+  void _jumpTo(int idx) {
+    final ctx = _sectionKeys[idx]?.currentContext;
+    if (ctx == null) return;
+    Scrollable.ensureVisible(
+      ctx,
+      duration: const Duration(milliseconds: 320),
+      curve: Curves.easeOutCubic,
+      alignment: 0.04,
+    );
+  }
+
+  List<(int, String, IconData)> _quickJumpTargets() {
+    final targets = <(int, String, IconData)>[];
+    int? mathIdx, codeIdx, chartIdx, labIdx, quizIdx, iqaIdx, chkIdx;
+    var iqaCount = 0;
+    const standardTypes = {
+      'text',
+      'callout',
+      'lesson_header',
+      'flow_diagram',
+      'math',
+      'code',
+      'line_chart',
+      'concept_check',
+      'interview_qa',
+      'checkpoint',
+    };
+    for (var i = 0; i < l.blocks.length; i++) {
+      final b = l.blocks[i];
+      if (b.type == 'math' && mathIdx == null) mathIdx = i;
+      if (b.type == 'code' && codeIdx == null) codeIdx = i;
+      if (b.type == 'line_chart' && chartIdx == null) chartIdx = i;
+      if (!standardTypes.contains(b.type) && labIdx == null) labIdx = i;
+      if (b.type == 'concept_check' && quizIdx == null) quizIdx = i;
+      if (b.type == 'interview_qa' && iqaIdx == null) {
+        iqaIdx = i;
+        iqaCount = (b.meta['items'] as List? ?? const []).length;
+      }
+      if (b.type == 'checkpoint' && chkIdx == null) chkIdx = i;
+    }
+    if (mathIdx != null) targets.add((mathIdx, 'Math', Icons.functions_rounded));
+    if (codeIdx != null) targets.add((codeIdx, 'Code', Icons.code_rounded));
+    if (labIdx != null) {
+      targets.add((labIdx, 'Interactive Lab', Icons.science_outlined));
+    } else if (chartIdx != null) {
+      targets.add((chartIdx, 'Chart', Icons.show_chart_rounded));
+    }
+    if (quizIdx != null) {
+      targets.add((quizIdx, 'Concept Check', Icons.psychology_alt_outlined));
+    }
+    if (iqaIdx != null) {
+      targets.add((
+        iqaIdx,
+        iqaCount > 0 ? 'Interview Q&A ($iqaCount)' : 'Interview Q&A',
+        Icons.record_voice_over_outlined,
+      ));
+    }
+    if (chkIdx != null) {
+      targets.add((chkIdx, 'Checkpoint', Icons.flag_outlined));
+    }
+    return targets;
+  }
   @override
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: c,
@@ -151,11 +218,35 @@ class _LessonPageState extends State<LessonPage> {
                   ),
                   const SizedBox(height: 24),
                   const Divider(),
+                  if (_quickJumpTargets().length >= 2) ...[
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 6,
+                      children: [
+                        for (final target in _quickJumpTargets())
+                          ActionChip(
+                            key: ValueKey('jump-${target.$1}'),
+                            avatar: Icon(target.$3, size: 15, color: forest),
+                            label: Text(
+                              target.$2,
+                              style: const TextStyle(
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            visualDensity: VisualDensity.compact,
+                            onPressed: () => _jumpTo(target.$1),
+                          ),
+                      ],
+                    ),
+                  ],
                   const SizedBox(height: 12),
-                  for (final block in l.blocks)
+                  for (var bi = 0; bi < l.blocks.length; bi++)
                     Padding(
+                      key: _keyFor(bi),
                       padding: const EdgeInsets.symmetric(vertical: 16),
-                      child: _block(block),
+                      child: _block(l.blocks[bi]),
                     ),
                   const SizedBox(height: 18),
                   Panel(

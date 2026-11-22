@@ -25,6 +25,9 @@ class LearningRepository {
     : _db = null,
       _webChapters = chapters;
 
+  static const _contentSeedVersion = '3.0.1+58';
+  static const _seedSigKey = 'content_seed_sig';
+
   bool get _isWebStore => _db == null;
   Database get db => _db!;
 
@@ -32,20 +35,18 @@ class LearningRepository {
     DatabaseFactory? factory,
     String? path,
   }) async {
-    final catalog =
-        jsonDecode(await rootBundle.loadString('assets/content/catalog.json'))
-            as Map<String, dynamic>;
-    final contents = <Map<String, dynamic>>[];
-    for (final asset in catalog['chapters'] as List) {
-      contents.add(
-        jsonDecode(await rootBundle.loadString(asset as String))
-            as Map<String, dynamic>,
-      );
-    }
+    final catalogRaw = await rootBundle.loadString('assets/content/catalog.json');
+    final catalog = jsonDecode(catalogRaw) as Map<String, dynamic>;
+    final chapterAssets = List<String>.from(catalog['chapters'] as List);
     if (kIsWeb && factory == null) {
-      return LearningRepository._web({
-        for (final content in contents) content['id'] as String: content,
-      });
+      final webMap = <String, Map<String, dynamic>>{};
+      for (final asset in chapterAssets) {
+        final content =
+            jsonDecode(await rootBundle.loadString(asset))
+                as Map<String, dynamic>;
+        webMap[content['id'] as String] = content;
+      }
+      return LearningRepository._web(webMap);
     }
     final f = factory ?? databaseFactory;
     final location = path ?? p.join(await f.getDatabasesPath(), 'ml_path.db');
@@ -73,15 +74,39 @@ class LearningRepository {
         },
       ),
     );
-    // Update curriculum without replacing learner state; stable IDs are permanent.
-    await db.transaction((txn) async {
-      for (final content in contents) {
-        await txn.insert('chapters', {
-          'id': content['id'],
-          'content': jsonEncode(content),
-        }, conflictAlgorithm: ConflictAlgorithm.replace);
+    // Fast cold-start path: skip decoding & re-writing 50 chapters when this
+    // exact build version is already seeded and all chapter rows are intact.
+    final expectedSig = '$_contentSeedVersion:${chapterAssets.length}';
+    final sigRows = await db.query(
+      'settings',
+      where: 'key = ?',
+      whereArgs: [_seedSigKey],
+    );
+    final savedSig = sigRows.isEmpty ? null : sigRows.single['value'] as String;
+    final countRow = await db.rawQuery('SELECT COUNT(*) AS n FROM chapters');
+    final existingCount = (countRow.first['n'] as int?) ?? 0;
+    if (savedSig != expectedSig || existingCount != chapterAssets.length) {
+      final contents = <Map<String, dynamic>>[];
+      for (final asset in chapterAssets) {
+        contents.add(
+          jsonDecode(await rootBundle.loadString(asset))
+              as Map<String, dynamic>,
+        );
       }
-    });
+      // Update curriculum without replacing learner state; stable IDs are permanent.
+      await db.transaction((txn) async {
+        for (final content in contents) {
+          await txn.insert('chapters', {
+            'id': content['id'],
+            'content': jsonEncode(content),
+          }, conflictAlgorithm: ConflictAlgorithm.replace);
+        }
+        await txn.insert('settings', {
+          'key': _seedSigKey,
+          'value': expectedSig,
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      });
+    }
     return LearningRepository(db);
   }
 
@@ -287,7 +312,12 @@ class LearningRepository {
     final progressRows = await _db!.query('progress', orderBy: 'lesson_id');
     final answerRows = await _db.query('quiz_answers', orderBy: 'question_id');
     final exerciseRows = await _db.query('exercises', orderBy: 'id');
-    final settingRows = await _db.query('settings', orderBy: 'key');
+    final settingRows = await _db.query(
+      'settings',
+      where: 'key != ?',
+      whereArgs: [_seedSigKey],
+      orderBy: 'key',
+    );
     return const JsonEncoder.withIndent('  ').convert({
       'format': 'ml_path_backup_v1',
       'progress': progressRows,

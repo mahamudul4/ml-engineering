@@ -29,6 +29,32 @@ class _BookPageState extends State<BookPage> {
   late final Map<String, String> chapterIndex;
   late final Map<String, String> lessonIndex;
 
+  static void _collectMetaStrings(Object? value, List<String> out) {
+    if (value is String) {
+      if (value.isNotEmpty) out.add(value);
+    } else if (value is List) {
+      for (final item in value) {
+        _collectMetaStrings(item, out);
+      }
+    } else if (value is Map) {
+      for (final entry in value.values) {
+        _collectMetaStrings(entry, out);
+      }
+    }
+  }
+
+  static String _blockSearchText(LessonBlock b) {
+    final parts = <String>[
+      if (b.title.isNotEmpty) b.title,
+      if (b.body.isNotEmpty) b.body,
+      if ((b.solution ?? '').isNotEmpty) b.solution!,
+    ];
+    if (b.meta.isNotEmpty) {
+      _collectMetaStrings(b.meta, parts);
+    }
+    return parts.join(' ');
+  }
+
   @override
   void initState() {
     super.initState();
@@ -39,7 +65,7 @@ class _BookPageState extends State<BookPage> {
           lesson.id: [
             lesson.title,
             lesson.subtitle,
-            ...lesson.blocks.map((b) => b.body),
+            ...lesson.blocks.map(_blockSearchText),
           ].join(' ').toLowerCase(),
     };
     chapterIndex = {
