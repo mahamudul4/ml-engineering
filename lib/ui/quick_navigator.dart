@@ -167,7 +167,7 @@ class _QuickNavigatorBodyState extends State<_QuickNavigatorBody> {
                       ),
                     ),
                     Text(
-                      '৬টি বই · ৫০ অধ্যায় · ৮৮০ Lesson · ৩২৩ Viva · ১২০ Coding',
+                      '৬টি বই · ৫১ অধ্যায় · ৮৯০ Lesson · ৩২৩ Viva · ১২০ Coding',
                       style: TextStyle(
                         fontFamilyFallback: const ['NotoSansBengali'],
                         fontSize: 11,

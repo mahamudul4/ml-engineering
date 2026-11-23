@@ -96,7 +96,7 @@ class LearningRepository {
     );
   }
 
-  static const _contentSeedVersion = '3.1.0+59';
+  static const _contentSeedVersion = '3.2.0+60';
   static const _seedSigKey = 'content_seed_sig';
 
   bool get _isWebStore => _db == null;
@@ -145,7 +145,7 @@ class LearningRepository {
         },
       ),
     );
-    // Fast cold-start path: skip decoding & re-writing 50 chapters when this
+    // Fast cold-start path: skip decoding & re-writing 51 chapters when this
     // exact build version is already seeded and all chapter rows are intact.
     final expectedSig = '$_contentSeedVersion:${chapterAssets.length}';
     final sigRows = await db.query(

@@ -231,13 +231,14 @@ void main() {
   );
 
   testWidgets(
-    'new FAANG chapters render cleanly when wired into the 50-chapter catalog',
+    'new FAANG chapters render cleanly when wired into the 51-chapter catalog',
     (tester) async {
-      if (c.chapters.length < 50) return;
+      if (c.chapters.length < 51) return;
       final expectedBooks = {
         'chapter_44': BookPart.deepLearning,
         'chapter_45': BookPart.llm,
         'chapter_46': BookPart.llm,
+        'chapter_51': BookPart.llm,
         'chapter_47': BookPart.recommender,
         'chapter_48': BookPart.systems,
         'chapter_49': BookPart.systems,

@@ -23,7 +23,7 @@ void main() {
   });
   test('catalog seeds the forty-three revised chapters', () async {
     final chapter = await repo.curriculum();
-    expect((await repo.db.query('chapters')).length, 50);
+    expect((await repo.db.query('chapters')).length, 51);
     expect(chapter.id, 'chapter_01');
     expect(chapter.lessons.length, 8);
     expect(chapter.quizzes.length, 10);
@@ -535,7 +535,7 @@ void main() {
       );
       final c = LearningController(repo);
       await c.load();
-      expect(c.chapters.length, 50);
+      expect(c.chapters.length, 51);
       expect(c.chapter.id, 'chapter_06');
       expect(c.nextLesson.id, 'ch06_arrays');
       await c.selectChapter('chapter_07');
@@ -609,7 +609,7 @@ void main() {
       );
       final c = LearningController(repo);
       await c.load();
-      expect(c.chapters.length, 50);
+      expect(c.chapters.length, 51);
       expect(c.chapter.id, 'chapter_07');
       expect(c.nextLesson.id, 'ch07_checking');
       await c.selectChapter('chapter_08');
@@ -683,7 +683,7 @@ void main() {
       );
       final c = LearningController(repo);
       await c.load();
-      expect(c.chapters.length, 50);
+      expect(c.chapters.length, 51);
       expect(c.chapter.id, 'chapter_08');
       expect(c.nextLesson.id, 'ch08_intervals');
       await c.selectChapter('chapter_09');
@@ -757,7 +757,7 @@ void main() {
       );
       final c = LearningController(repo);
       await c.load();
-      expect(c.chapters.length, 50);
+      expect(c.chapters.length, 51);
       expect(c.chapter.id, 'chapter_09');
       expect(c.nextLesson.id, 'ch09_pruning');
       await c.selectChapter('chapter_10');
@@ -831,7 +831,7 @@ void main() {
       );
       final c = LearningController(repo);
       await c.load();
-      expect(c.chapters.length, 50);
+      expect(c.chapters.length, 51);
       expect(c.chapter.id, 'chapter_10');
       expect(c.nextLesson.id, 'ch10_gradient');
       await c.selectChapter('chapter_11');
@@ -905,7 +905,7 @@ void main() {
       );
       final c = LearningController(repo);
       await c.load();
-      expect(c.chapters.length, 50);
+      expect(c.chapters.length, 51);
       expect(c.chapter.id, 'chapter_11');
       expect(c.nextLesson.id, 'ch11_gaussian');
       await c.selectChapter('chapter_12');
@@ -979,7 +979,7 @@ void main() {
       );
       final c = LearningController(repo);
       await c.load();
-      expect(c.chapters.length, 50);
+      expect(c.chapters.length, 51);
       expect(c.chapter.id, 'chapter_12');
       expect(c.nextLesson.id, 'ch12_pca');
       await c.selectChapter('chapter_13');
@@ -1053,7 +1053,7 @@ void main() {
       );
       final c = LearningController(repo);
       await c.load();
-      expect(c.chapters.length, 50);
+      expect(c.chapters.length, 51);
       expect(c.chapter.id, 'chapter_13');
       expect(c.nextLesson.id, 'ch13_backtest');
       await c.selectChapter('chapter_14');
@@ -1127,7 +1127,7 @@ void main() {
       );
       final c = LearningController(repo);
       await c.load();
-      expect(c.chapters.length, 50);
+      expect(c.chapters.length, 51);
       expect(c.chapter.id, 'chapter_14');
       expect(c.nextLesson.id, 'ch14_trace');
       await c.selectChapter('chapter_15');
@@ -1201,7 +1201,7 @@ void main() {
       );
       final c = LearningController(repo);
       await c.load();
-      expect(c.chapters.length, 50);
+      expect(c.chapters.length, 51);
       expect(c.chapter.id, 'chapter_15');
       expect(c.nextLesson.id, 'ch15_microscope');
       await c.selectChapter('chapter_16');
@@ -1275,7 +1275,7 @@ void main() {
       );
       final c = LearningController(repo);
       await c.load();
-      expect(c.chapters.length, 50);
+      expect(c.chapters.length, 51);
       expect(c.chapter.id, 'chapter_16');
       expect(c.nextLesson.id, 'ch16_diagnostics');
       await c.selectChapter('chapter_17');
@@ -1349,7 +1349,7 @@ void main() {
       );
       final c = LearningController(repo);
       await c.load();
-      expect(c.chapters.length, 50);
+      expect(c.chapters.length, 51);
       expect(c.chapter.id, 'chapter_17');
       expect(c.nextLesson.id, 'ch17_resume');
       await c.selectChapter('chapter_18');
@@ -1423,7 +1423,7 @@ void main() {
       );
       final c = LearningController(repo);
       await c.load();
-      expect(c.chapters.length, 50);
+      expect(c.chapters.length, 51);
       expect(c.chapter.id, 'chapter_18');
       expect(c.nextLesson.id, 'ch18_transfer');
       await c.selectChapter('chapter_19');
@@ -1497,7 +1497,7 @@ void main() {
       );
       final c = LearningController(repo);
       await c.load();
-      expect(c.chapters.length, 50);
+      expect(c.chapters.length, 51);
       expect(c.chapter.id, 'chapter_19');
       expect(c.nextLesson.id, 'ch19_evaluation');
       await c.selectChapter('chapter_20');
@@ -1571,7 +1571,7 @@ void main() {
       );
       final c = LearningController(repo);
       await c.load();
-      expect(c.chapters.length, 50);
+      expect(c.chapters.length, 51);
       expect(c.chapter.id, 'chapter_20');
       expect(c.nextLesson.id, 'ch20_evaluation');
       await c.selectChapter('chapter_21');
@@ -1645,7 +1645,7 @@ void main() {
       );
       final c = LearningController(repo);
       await c.load();
-      expect(c.chapters.length, 50);
+      expect(c.chapters.length, 51);
       expect(c.chapter.id, 'chapter_21');
       expect(c.nextLesson.id, 'ch21_report');
       await c.selectChapter('chapter_22');
@@ -1719,7 +1719,7 @@ void main() {
       );
       final c = LearningController(repo);
       await c.load();
-      expect(c.chapters.length, 50);
+      expect(c.chapters.length, 51);
       expect(c.chapter.id, 'chapter_22');
       expect(c.nextLesson.id, 'ch22_evaluation');
       await c.selectChapter('chapter_23');
@@ -1793,7 +1793,7 @@ void main() {
       );
       final c = LearningController(repo);
       await c.load();
-      expect(c.chapters.length, 50);
+      expect(c.chapters.length, 51);
       expect(c.chapter.id, 'chapter_23');
       expect(c.nextLesson.id, 'ch23_evaluation');
       await c.selectChapter('chapter_24');
@@ -1867,7 +1867,7 @@ void main() {
       );
       final c = LearningController(repo);
       await c.load();
-      expect(c.chapters.length, 50);
+      expect(c.chapters.length, 51);
       expect(c.chapter.id, 'chapter_24');
       expect(c.nextLesson.id, 'ch24_evaluation');
       await c.selectChapter('chapter_25');
@@ -1941,7 +1941,7 @@ void main() {
       );
       final c = LearningController(repo);
       await c.load();
-      expect(c.chapters.length, 50);
+      expect(c.chapters.length, 51);
       expect(c.chapter.id, 'chapter_25');
       expect(c.nextLesson.id, 'ch25_evaluation');
       await c.selectChapter('chapter_26');
@@ -2015,7 +2015,7 @@ void main() {
       );
       final c = LearningController(repo);
       await c.load();
-      expect(c.chapters.length, 50);
+      expect(c.chapters.length, 51);
       expect(c.chapter.id, 'chapter_26');
       expect(c.nextLesson.id, 'ch26_statistics');
       await c.selectChapter('chapter_27');
@@ -2089,7 +2089,7 @@ void main() {
       );
       final c = LearningController(repo);
       await c.load();
-      expect(c.chapters.length, 50);
+      expect(c.chapters.length, 51);
       expect(c.chapter.id, 'chapter_27');
       expect(c.nextLesson.id, 'ch27_evaluation');
       await c.selectChapter('chapter_28');
@@ -2163,7 +2163,7 @@ void main() {
       );
       final c = LearningController(repo);
       await c.load();
-      expect(c.chapters.length, 50);
+      expect(c.chapters.length, 51);
       expect(c.chapter.id, 'chapter_28');
       expect(c.nextLesson.id, 'ch28_evaluation');
       await c.selectChapter('chapter_29');
@@ -2237,7 +2237,7 @@ void main() {
       );
       final c = LearningController(repo);
       await c.load();
-      expect(c.chapters.length, 50);
+      expect(c.chapters.length, 51);
       expect(c.chapter.id, 'chapter_29');
       expect(c.nextLesson.id, 'ch29_evaluation');
       await c.selectChapter('chapter_30');
@@ -2311,7 +2311,7 @@ void main() {
       );
       final c = LearningController(repo);
       await c.load();
-      expect(c.chapters.length, 50);
+      expect(c.chapters.length, 51);
       expect(c.chapter.id, 'chapter_30');
       expect(c.nextLesson.id, 'ch30_evaluation');
       await c.selectChapter('chapter_31');
@@ -2385,7 +2385,7 @@ void main() {
       );
       final c = LearningController(repo);
       await c.load();
-      expect(c.chapters.length, 50);
+      expect(c.chapters.length, 51);
       expect(c.chapter.id, 'chapter_31');
       expect(c.nextLesson.id, 'ch31_evaluation');
       await c.selectChapter('chapter_32');
@@ -2459,7 +2459,7 @@ void main() {
       );
       final c = LearningController(repo);
       await c.load();
-      expect(c.chapters.length, 50);
+      expect(c.chapters.length, 51);
       expect(c.chapter.id, 'chapter_32');
       expect(c.nextLesson.id, 'ch32_evaluation');
       await c.selectChapter('chapter_33');
@@ -2533,7 +2533,7 @@ void main() {
       );
       final c = LearningController(repo);
       await c.load();
-      expect(c.chapters.length, 50);
+      expect(c.chapters.length, 51);
       expect(c.chapter.id, 'chapter_33');
       expect(c.nextLesson.id, 'ch33_evaluation');
       await c.selectChapter('chapter_34');
@@ -2607,7 +2607,7 @@ void main() {
       );
       final c = LearningController(repo);
       await c.load();
-      expect(c.chapters.length, 50);
+      expect(c.chapters.length, 51);
       expect(c.chapter.id, 'chapter_34');
       expect(c.nextLesson.id, 'ch34_evaluation');
       await c.selectChapter('chapter_35');
@@ -2681,7 +2681,7 @@ void main() {
       );
       final c = LearningController(repo);
       await c.load();
-      expect(c.chapters.length, 50);
+      expect(c.chapters.length, 51);
       expect(c.chapter.id, 'chapter_35');
       expect(c.nextLesson.id, 'ch35_evaluation');
       await c.selectChapter('chapter_36');
@@ -2755,7 +2755,7 @@ void main() {
       );
       final c = LearningController(repo);
       await c.load();
-      expect(c.chapters.length, 50);
+      expect(c.chapters.length, 51);
       expect(c.chapter.id, 'chapter_36');
       expect(c.nextLesson.id, 'ch36_evaluation');
       await c.selectChapter('chapter_37');
@@ -2829,7 +2829,7 @@ void main() {
       );
       final c = LearningController(repo);
       await c.load();
-      expect(c.chapters.length, 50);
+      expect(c.chapters.length, 51);
       expect(c.chapter.id, 'chapter_37');
       expect(c.nextLesson.id, 'ch37_evaluation');
       await c.selectChapter('chapter_38');
@@ -2903,7 +2903,7 @@ void main() {
       );
       final c = LearningController(repo);
       await c.load();
-      expect(c.chapters.length, 50);
+      expect(c.chapters.length, 51);
       expect(c.chapter.id, 'chapter_38');
       expect(c.nextLesson.id, 'ch38_evaluation');
       await c.selectChapter('chapter_39');
@@ -2977,7 +2977,7 @@ void main() {
       );
       final c = LearningController(repo);
       await c.load();
-      expect(c.chapters.length, 50);
+      expect(c.chapters.length, 51);
       expect(c.chapter.id, 'chapter_39');
       expect(c.nextLesson.id, 'ch39_communication');
       await c.selectChapter('chapter_40');
@@ -3134,7 +3134,7 @@ void main() {
       );
       final c = LearningController(repo);
       await c.load();
-      expect(c.chapters.length, 50);
+      expect(c.chapters.length, 51);
       expect(c.chapter.id, 'chapter_01');
       expect(c.completedCount, 1);
       expect(c.bookmarked('ml_basics'), isTrue);

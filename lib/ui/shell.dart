@@ -606,7 +606,7 @@ class _LearningShellState extends State<LearningShell> {
           ],
           IconButton(
             key: const ValueKey('topbar-global-search'),
-            tooltip: 'Search all 6 books, 880 lessons & 5,017 Q&As',
+            tooltip: 'Search all 6 books, 890 lessons & 5,069 Q&As',
             visualDensity: VisualDensity.compact,
             onPressed: openBook,
             icon: const Icon(Icons.manage_search_rounded, size: 21),

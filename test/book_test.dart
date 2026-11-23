@@ -23,11 +23,11 @@ void main() {
       addTearDown(c.dispose);
       addTearDown(repo.close);
       await c.load();
-      expect(c.chapters.length, 50);
+      expect(c.chapters.length, 51);
       final path = c.readingPath;
       expect(path.take(8).map((ch) => ch.number), [1, 6, 7, 8, 4, 2, 3, 5]);
-      expect(path.map((ch) => ch.id).toSet().length, 50);
-      expect(path.map((ch) => ch.book.order), List.generate(50, (i) => i + 1));
+      expect(path.map((ch) => ch.id).toSet().length, 51);
+      expect(path.map((ch) => ch.book.order), List.generate(51, (i) => i + 1));
       expect(path.skip(27).take(4).map((ch) => ch.number), [26, 42, 43, 27]);
       expect(BookPart.values.length, 6);
       for (final book in BookPart.values) {
@@ -82,6 +82,12 @@ void main() {
       expect(c.nextChapterInBook!.number, 44);
       await c.selectChapter('chapter_44');
       expect(c.nextChapter!.number, 22);
+      expect(c.nextChapterInBook, isNull);
+      await c.selectChapter('chapter_46');
+      expect(c.nextChapter!.number, 51);
+      expect(c.nextChapterInBook!.number, 51);
+      await c.selectChapter('chapter_51');
+      expect(c.nextChapter!.number, 30);
       expect(c.nextChapterInBook, isNull);
       await c.selectChapter('chapter_40');
       expect(c.nextChapter!.number, 48);
@@ -141,7 +147,7 @@ void main() {
       }
       expect(
         chapters.fold<int>(0, (sum, chapter) => sum + chapter.lessons.length),
-        880,
+        890,
       );
     },
   );
@@ -195,7 +201,7 @@ void main() {
       c.chapters
           .where((chapter) => chapter.number >= 42)
           .map((chapter) => chapter.lessons.length),
-      [9, 6, 9, 9, 9, 9, 8, 8, 8],
+      [9, 6, 9, 9, 9, 9, 8, 8, 8, 10],
     );
     for (final original in originals) {
       await c.selectChapter(original.id);

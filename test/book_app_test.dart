@@ -399,7 +399,7 @@ void main() {
     },
   );
 
-  for (final range in [(1, 14), (15, 29), (30, 50)]) {
+  for (final range in [(1, 14), (15, 29), (30, 51)]) {
     testWidgets(
       'expanded foundations and new book content render chapters ${range.$1}–${range.$2}',
       (tester) async {
