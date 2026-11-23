@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../models/book_part.dart';
 import '../../models/curriculum.dart';
 import '../../state/learning_controller.dart';
+import '../../ui/search_ranking.dart';
 import '../../ui/theme.dart';
 import '../coding/coding_arena_page.dart';
 import '../viva/hot_questions_page.dart';
@@ -83,11 +84,24 @@ class _BookPageState extends State<BookPage> {
     };
   }
 
-  List<Lesson> matchingLessons(Curriculum chapter, String term) => term.isEmpty
-      ? []
-      : chapter.lessons
-            .where((lesson) => lessonIndex[lesson.id]!.contains(term))
-            .toList();
+  List<Lesson> matchingLessons(Curriculum chapter, String term) {
+    if (term.isEmpty) return const [];
+    final matcher = CurriculumSearch(term);
+    final scored = <(Lesson, int, bool)>[];
+    for (final lesson in chapter.lessons) {
+      final (score, strong) = matcher.scoreLesson(
+        lesson,
+        fullTextIndex: lessonIndex[lesson.id],
+      );
+      if (score > 0) scored.add((lesson, score, strong));
+    }
+    var filtered = scored;
+    if (matcher.suppressWeakForShortAscii && scored.any((e) => e.$3)) {
+      filtered = scored.where((e) => e.$3).toList();
+    }
+    filtered.sort((a, b) => b.$2.compareTo(a.$2));
+    return [for (final e in filtered) e.$1];
+  }
 
   Future<void> _openBook(BookPart part) async {
     final saved = await widget.controller.repository.setting(
@@ -107,13 +121,36 @@ class _BookPageState extends State<BookPage> {
     final path = widget.controller.readingPath;
     final normalized = query.trim().toLowerCase();
     final browsingTopics = showTopics && normalized.isEmpty;
-    final matches = path
-        .where(
-          (chapter) => browsingTopics
-              ? selectedTopic?.containsStep(chapter.book.order) ?? false
-              : chapterIndex[chapter.id]!.contains(normalized),
-        )
-        .toList();
+    final List<Curriculum> matches;
+    if (normalized.isEmpty) {
+      matches = path
+          .where(
+            (chapter) => browsingTopics
+                ? selectedTopic?.containsStep(chapter.book.order) ?? false
+                : true,
+          )
+          .toList();
+    } else {
+      final matcher = CurriculumSearch(normalized);
+      final scored = <(Curriculum, int, bool)>[];
+      for (final chapter in path) {
+        final (score, strong) = matcher.scoreChapter(
+          chapter,
+          fullTextIndex: chapterIndex[chapter.id],
+        );
+        if (score > 0) scored.add((chapter, score, strong));
+      }
+      var filtered = scored;
+      if (matcher.suppressWeakForShortAscii && scored.any((e) => e.$3)) {
+        filtered = scored.where((e) => e.$3).toList();
+      }
+      filtered.sort((a, b) {
+        final byScore = b.$2.compareTo(a.$2);
+        if (byScore != 0) return byScore;
+        return a.$1.book.order.compareTo(b.$1.book.order);
+      });
+      matches = [for (final e in filtered) e.$1];
+    }
     return Scaffold(
       appBar: AppBar(title: const Text('বইসমূহ ও Reading Path')),
       body: Center(
@@ -221,20 +258,31 @@ class _BookPageState extends State<BookPage> {
               ],
               if (normalized.isNotEmpty && matches.isEmpty)
                 const Text('কোনো অধ্যায় মেলেনি। অন্য Term লিখে খুঁজুন।'),
-              for (final part in BookPart.values)
-                if (matches.any(
-                  (chapter) => part.containsStep(chapter.book.order),
-                )) ...[
-                  _PartHeading(
-                    part: part,
-                    showOverview: normalized.isEmpty,
-                    onOpenBook: () => _openBook(part),
+              if (normalized.isNotEmpty) ...[
+                for (final chapter in matches)
+                  _chapterCard(
+                    context,
+                    chapter,
+                    chapter.bookVolume,
+                    path,
+                    normalized,
                   ),
-                  for (final chapter in matches.where(
+              ] else ...[
+                for (final part in BookPart.values)
+                  if (matches.any(
                     (chapter) => part.containsStep(chapter.book.order),
-                  ))
-                    _chapterCard(context, chapter, part, path, normalized),
-                ],
+                  )) ...[
+                    _PartHeading(
+                      part: part,
+                      showOverview: true,
+                      onOpenBook: () => _openBook(part),
+                    ),
+                    for (final chapter in matches.where(
+                      (chapter) => part.containsStep(chapter.book.order),
+                    ))
+                      _chapterCard(context, chapter, part, path, normalized),
+                  ],
+              ],
               const SizedBox(height: 20),
               const _NotationGuide(),
             ],

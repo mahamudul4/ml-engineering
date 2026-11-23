@@ -54,6 +54,7 @@ import '../features/system_design/design_labs.dart';
 import '../features/interview_practice/practice_labs.dart';
 import '../features/final_capstone/portfolio_labs.dart';
 import 'quick_navigator.dart';
+import 'search_ranking.dart';
 import 'theme.dart';
 
 class LearningShell extends StatefulWidget {
@@ -151,6 +152,110 @@ class _LearningShellState extends State<LearningShell> {
   void openHotQuestions() {
     Navigator.of(context).push(
       MaterialPageRoute<void>(builder: (_) => HotQuestionsPage(controller: c)),
+    );
+  }
+
+  Future<void> _openSearchHit(RankedSearchHit hit) async {
+    await switchChapter(hit.chapter.id);
+    if (mounted && c.chapter.id == hit.chapter.id && hit.lesson != null) {
+      final match = c.chapter.lessons.where((l) => l.id == hit.lesson!.id);
+      if (match.isNotEmpty) openLesson(match.first);
+    }
+  }
+
+  Widget _globalSearchResultsPanel(List<RankedSearchHit> hits, String term) {
+    final primary = Theme.of(context).colorScheme.primary;
+    final muted = Theme.of(context).colorScheme.onSurfaceVariant;
+    final divider = Theme.of(context).dividerColor;
+    return Panel(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Eyebrow(
+                  'সব ৬টি বই ও ${c.chapters.length} অধ্যায়ে ফলাফল (${hits.length})',
+                ),
+              ),
+              TextButton.icon(
+                onPressed: () {
+                  search.clear();
+                  setState(() => query = '');
+                },
+                icon: const Icon(Icons.close_rounded, size: 16),
+                label: const Text('Clear'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          if (hits.isEmpty) ...[
+            Text(
+              '“$term” শিরোনামে মেলেনি। পুরো কনটেন্ট ও ৫,০৬৯টি Q&A খুঁজতে All Books সার্চ খুলুন।',
+              style: TextStyle(
+                fontFamilyFallback: const ['NotoSansBengali'],
+                fontSize: 12,
+                color: muted,
+                height: 1.7,
+              ),
+            ),
+            const SizedBox(height: 10),
+            OutlinedButton.icon(
+              onPressed: openBook,
+              icon: const Icon(Icons.manage_search_rounded, size: 17),
+              label: const Text('All Books Full-Text Search খুলুন'),
+            ),
+          ] else
+            for (final hit in hits)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Material(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withValues(alpha: .025),
+                  borderRadius: BorderRadius.circular(11),
+                  child: ListTile(
+                    dense: true,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(11),
+                      side: BorderSide(color: divider),
+                    ),
+                    leading: Icon(
+                      hit.lesson == null
+                          ? Icons.menu_book_rounded
+                          : Icons.article_outlined,
+                      size: 19,
+                      color: primary,
+                    ),
+                    title: Text(
+                      hit.lesson == null ? hit.chapter.title : hit.lesson!.title,
+                      style: const TextStyle(
+                        fontFamilyFallback: ['NotoSansBengali'],
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    subtitle: Text(
+                      hit.lesson == null
+                          ? '${hit.chapter.bookVolume.label} · ${hit.chapter.label} (${hit.chapter.lessons.length} lessons)'
+                          : '${hit.chapter.bookVolume.shortTitle} · ${hit.chapter.label} · ${hit.chapter.shortTitle}',
+                      style: TextStyle(
+                        fontFamilyFallback: const ['NotoSansBengali'],
+                        fontSize: 11,
+                        color: muted,
+                      ),
+                    ),
+                    trailing: const Icon(
+                      Icons.arrow_forward_ios_rounded,
+                      size: 13,
+                    ),
+                    onTap: () => _openSearchHit(hit),
+                  ),
+                ),
+              ),
+        ],
+      ),
     );
   }
 
@@ -583,19 +688,30 @@ class _LearningShellState extends State<LearningShell> {
           const SizedBox(width: 8),
           if (wide) ...[
             SizedBox(
-              width: 225,
+              width: 245,
               height: 38,
               child: TextField(
+                key: const ValueKey('shell-lesson-search'),
                 controller: search,
                 onChanged: (v) => setState(() {
                   query = v;
                   section = 0;
                 }),
-                decoration: const InputDecoration(
-                  hintText: 'Find a lesson…',
-                  hintStyle: TextStyle(fontSize: 12),
-                  prefixIcon: Icon(Icons.search, size: 18),
-                  contentPadding: EdgeInsets.symmetric(
+                decoration: InputDecoration(
+                  hintText: 'Search all 6 books (e.g. RSI)…',
+                  hintStyle: const TextStyle(fontSize: 12),
+                  prefixIcon: const Icon(Icons.search, size: 18),
+                  suffixIcon: query.trim().isNotEmpty
+                      ? IconButton(
+                          tooltip: 'Clear search',
+                          onPressed: () {
+                            search.clear();
+                            setState(() => query = '');
+                          },
+                          icon: const Icon(Icons.close_rounded, size: 16),
+                        )
+                      : null,
+                  contentPadding: const EdgeInsets.symmetric(
                     horizontal: 12,
                     vertical: 8,
                   ),
@@ -1256,16 +1372,24 @@ class _LearningShellState extends State<LearningShell> {
   );
 
   Widget _learn(bool wide) {
+    final trimmedQuery = query.trim();
+    final globalHits = trimmedQuery.isEmpty
+        ? const <RankedSearchHit>[]
+        : CurriculumSearch(trimmedQuery).searchCatalog(c.readingPath, limit: 25);
     final filtered = c.chapter.lessons
         .where(
           (l) => '${l.title} ${l.subtitle}'.toLowerCase().contains(
-            query.toLowerCase(),
+            trimmedQuery.toLowerCase(),
           ),
         )
         .toList();
     final content = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        if (wide && trimmedQuery.isNotEmpty) ...[
+          _globalSearchResultsPanel(globalHits, trimmedQuery),
+          const SizedBox(height: 22),
+        ],
         _hero(wide),
         const SizedBox(height: 25),
         _stats(),
@@ -1304,17 +1428,32 @@ class _LearningShellState extends State<LearningShell> {
         const SizedBox(height: 18),
         if (!wide) ...[
           TextField(
+            key: const ValueKey('shell-lesson-search'),
             controller: search,
             onChanged: (v) => setState(() => query = v),
-            decoration: const InputDecoration(
-              hintText: 'Find a lesson…',
-              prefixIcon: Icon(Icons.search),
-              hintStyle: TextStyle(fontSize: 12),
+            decoration: InputDecoration(
+              hintText: 'Search all 6 books & lessons (e.g. RSI)…',
+              prefixIcon: const Icon(Icons.search),
+              suffixIcon: trimmedQuery.isNotEmpty
+                  ? IconButton(
+                      tooltip: 'Clear search',
+                      onPressed: () {
+                        search.clear();
+                        setState(() => query = '');
+                      },
+                      icon: const Icon(Icons.close_rounded, size: 18),
+                    )
+                  : null,
+              hintStyle: const TextStyle(fontSize: 12),
             ),
           ),
           const SizedBox(height: 16),
+          if (trimmedQuery.isNotEmpty) ...[
+            _globalSearchResultsPanel(globalHits, trimmedQuery),
+            const SizedBox(height: 18),
+          ],
         ],
-        if (filtered.isEmpty)
+        if (filtered.isEmpty && trimmedQuery.isEmpty)
           const Panel(
             child: Text('No lessons found. Try “training” or “regression”.'),
           ),

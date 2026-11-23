@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/book_part.dart';
 import '../models/curriculum.dart';
 import '../state/learning_controller.dart';
+import 'search_ranking.dart';
 import 'theme.dart';
 
 /// Unified destination returned by [showQuickNavigatorSheet].
@@ -105,28 +106,8 @@ class _QuickNavigatorBodyState extends State<_QuickNavigatorBody> {
   }
 
   List<(Curriculum, Lesson?)> _searchMatches(String q) {
-    final needle = q.trim().toLowerCase();
-    if (needle.isEmpty) return const [];
-    final out = <(Curriculum, Lesson?)>[];
-    for (final ch in c.readingPath) {
-      final chMatch =
-          '${ch.fullLabel} ${ch.title} ${ch.shortTitle} ${ch.bookVolume.title}'
-              .toLowerCase()
-              .contains(needle);
-      if (chMatch) {
-        out.add((ch, null));
-      }
-      for (final l in ch.lessons) {
-        final lMatch = '${l.title} ${l.subtitle}'.toLowerCase().contains(
-          needle,
-        );
-        if (lMatch) {
-          out.add((ch, l));
-        }
-        if (out.length >= 40) return out;
-      }
-    }
-    return out;
+    final ranked = CurriculumSearch(q).searchCatalog(c.readingPath, limit: 40);
+    return [for (final hit in ranked) (hit.chapter, hit.lesson)];
   }
 
   @override
@@ -192,7 +173,7 @@ class _QuickNavigatorBodyState extends State<_QuickNavigatorBody> {
             controller: _searchCtrl,
             onChanged: (v) => setState(() => _query = v),
             decoration: InputDecoration(
-              hintText: 'যেকোনো বই, অধ্যায় বা Lesson খুঁজুন (যেমন XGBoost, RAG, Bellman)…',
+              hintText: 'যেকোনো বই, অধ্যায় বা Lesson খুঁজুন (যেমন RSI, XGBoost, RAG, Bellman)…',
               hintStyle: const TextStyle(
                 fontFamilyFallback: ['NotoSansBengali'],
                 fontSize: 12,
@@ -229,7 +210,7 @@ class _QuickNavigatorBodyState extends State<_QuickNavigatorBody> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text(
-                          'কোনো শিরোনাম মেলেনি। পুরো কনটেন্ট ও ৫,০১৭টি Interview Q&A খুঁজতে All Books Library সার্চ ব্যবহার করুন।',
+                          'কোনো শিরোনাম মেলেনি। পুরো কনটেন্ট ও ৫,০৬৯টি Interview Q&A খুঁজতে All Books Library সার্চ ব্যবহার করুন।',
                           style: TextStyle(
                             fontFamilyFallback: ['NotoSansBengali'],
                             fontSize: 12.5,

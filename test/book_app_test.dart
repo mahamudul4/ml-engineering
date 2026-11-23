@@ -399,6 +399,81 @@ void main() {
     },
   );
 
+  testWidgets(
+    'searching RSI ranks Chapter 51 first across Shell, Quick Navigator, and All Books',
+    (tester) async {
+      tester.view.physicalSize = const Size(1280, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(LearningApp(controller: c));
+      await tester.pumpAndSettle();
+
+      // 1. Desktop Top Bar search finds RSI across all 6 books from Chapter 1
+      await tester.enterText(
+        find.byKey(const ValueKey('shell-lesson-search')),
+        'RSI',
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Recursive Self-Improvement (RSI) & Self-Play AI Systems'),
+        findsOneWidget,
+      );
+      await tester.tap(
+        find.text('Recursive Self-Improvement (RSI) & Self-Play AI Systems'),
+      );
+      for (var i = 0; i < 100 && c.chapter.id != 'chapter_51'; i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 10)),
+        );
+        await tester.pump();
+      }
+      await tester.pumpAndSettle();
+      expect(c.chapter.id, 'chapter_51');
+
+      // 2. Quick Navigator ranks RSI Chapter 51 at the very top (not buried by "version")
+      await tester.tap(find.byKey(const ValueKey('topbar-quick-nav')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('quick-nav-search')),
+        'RSI',
+      );
+      await tester.pumpAndSettle();
+      final dialogTiles = find.descendant(
+        of: find.byType(Dialog),
+        matching: find.byType(ListTile),
+      );
+      expect(dialogTiles, findsWidgets);
+      expect(
+        find.descendant(
+          of: dialogTiles.first,
+          matching: find.text(
+            'Recursive Self-Improvement (RSI) & Self-Play AI Systems',
+          ),
+        ),
+        findsOneWidget,
+      );
+      await tester.tap(
+        find.descendant(
+          of: find.byType(Dialog),
+          matching: find.byIcon(Icons.close_rounded),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // 3. All Books full-text search ranks Chapter 51 first
+      await tester.tap(find.byKey(const ValueKey('topbar-global-search')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const ValueKey('book-search')), 'RSI');
+      await tester.pumpAndSettle();
+      final firstExpansion = tester.widget<ExpansionTile>(
+        find.byType(ExpansionTile).first,
+      );
+      expect(firstExpansion.key, const ValueKey('book-chapter_51'));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   for (final range in [(1, 14), (15, 29), (30, 51)]) {
     testWidgets(
       'expanded foundations and new book content render chapters ${range.$1}–${range.$2}',
